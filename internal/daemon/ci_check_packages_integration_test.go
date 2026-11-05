@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,7 +70,7 @@ esac
 	var archive bytes.Buffer
 	gz := gzip.NewWriter(&archive)
 	tw := tar.NewWriter(gz)
-	manifest := fmt.Sprintf(`{"name":"checker-fixture","version":"1.0.0","main":"index.js","scripts":{"install":"node -e \"require('fs').writeFileSync('%s','ran')\""}}`, marker)
+	manifest := fmt.Sprintf(`{"name":"checker-fixture","version":"1.0.0","main":"index.js","bin":{"fixture-tool":"./index.js"},"scripts":{"install":"node -e \"require('fs').writeFileSync('%s','ran')\""}}`, marker)
 	for name, data := range map[string]string{"package/package.json": manifest, "package/index.js": "module.exports = 'javascript ready';\n"} {
 		require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(data))}))
 		_, err := io.WriteString(tw, data)
@@ -123,5 +124,46 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 		prepareCICheckPackages(t.Context(), localRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
 		assert.NoDirExists(t, filepath.Join(localRepo.Root, "node_modules"), preparationLog.String())
 		assert.Contains(t, preparationLog.String(), "skips JavaScript local dependencies")
+	})
+	t.Run("absolute Bun lock", func(t *testing.T) {
+		bun, err := resolveCICheckCommand(t.Context(), "/", "bun")
+		require.NoError(t, err)
+		archivePath := filepath.Join(t.TempDir(), "package.tgz")
+		require.NoError(t, os.WriteFile(archivePath, archive.Bytes(), 0o600))
+		stage := t.TempDir()
+		localManifest := fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":%q}}`, "file:"+archivePath)
+		require.NoError(t, os.WriteFile(filepath.Join(stage, "package.json"), []byte(localManifest), 0o600))
+		generate := exec.CommandContext(t.Context(), bun, "install", "--ignore-scripts", "--lockfile-only", "--offline", "--no-env-file")
+		generate.Dir = stage
+		for _, dir := range []string{"home", "tmp"} {
+			require.NoError(t, os.Mkdir(filepath.Join(stage, dir), 0o700))
+		}
+		generate.Env = ciCheckPackageEnv(stage, os.Getenv("PATH"), nil)
+		output, err := generate.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		lock, err := os.ReadFile(filepath.Join(stage, "bun.lock"))
+		require.NoError(t, err)
+		registryLock := strings.ReplaceAll(string(lock), fmt.Sprintf("%q", "file:"+archivePath), `"1.0.0"`)
+		require.Contains(t, registryLock, "checker-fixture@"+archivePath)
+		for _, tc := range []struct{ name, source string }{
+			{"absolute", archivePath},
+			{"escaped", `\u002f` + archivePath[1:]},
+			{"registry", server.URL + "/package.tgz"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				localRepo := testutil.NewTestRepoWithCommit(t)
+				localRepo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "registry dependency")
+				sourceLock := strings.ReplaceAll(registryLock, "checker-fixture@"+archivePath, "checker-fixture@"+tc.source)
+				localRepo.CommitFile("bun.lock", sourceLock, "locked archive")
+				var preparationLog bytes.Buffer
+				prepareCICheckPackages(t.Context(), localRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
+				if strings.HasPrefix(tc.source, "http:") {
+					assert.FileExists(t, filepath.Join(localRepo.Root, "node_modules", "checker-fixture", "index.js"), preparationLog.String())
+				} else {
+					assert.NoDirExists(t, filepath.Join(localRepo.Root, "node_modules"), preparationLog.String())
+					assert.Contains(t, preparationLog.String(), "skips JavaScript local dependencies")
+				}
+			})
+		}
 	})
 }

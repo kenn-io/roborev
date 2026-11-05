@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
@@ -96,10 +97,7 @@ func runCICheckInstaller(ctx context.Context, command, dir string, env, args []s
 	return true
 }
 
-var (
-	ciCheckLocalJS     = regexp.MustCompile(`(?i)^(file:|link:|workspace:|\.?\.?/|~/|[A-Z]:[\\/])`)
-	ciCheckLocalJSLock = regexp.MustCompile(`(?i)(file:|link:|workspace:|"link"\s*:\s*true)`)
-)
+var ciCheckLocalJS = regexp.MustCompile(`(?i)^(file:|link:|workspace:|\.?\.?/|~/|[A-Z]:[\\/])`)
 
 func ciCheckLocalJSDependency(value any) bool {
 	switch value := value.(type) {
@@ -128,6 +126,33 @@ func ciCheckLocalNpmLock(lock map[string]any) bool {
 	return false
 }
 
+func ciCheckLocalBunLock(ctx context.Context, command, stage string, data []byte, env []string) (bool, error) {
+	// Bun's JSONC parser handles comments, trailing commas, and escaped source paths.
+	parse := exec.CommandContext(ctx, command, "--no-env-file", "--eval", `process.stdout.write(JSON.stringify(Bun.JSONC.parse(await Bun.stdin.text())))`)
+	parse.Dir, parse.Env, parse.Stdin = stage, env, bytes.NewReader(data)
+	decoded, err := parse.Output()
+	if err != nil {
+		return false, err
+	}
+	var lock struct {
+		Packages map[string][]any `json:"packages"`
+	}
+	if err := json.Unmarshal(decoded, &lock); err != nil {
+		return false, err
+	}
+	for _, tuple := range lock.Packages {
+		if len(tuple) == 0 {
+			continue
+		}
+		source, _ := tuple[0].(string)
+		_, spec, _ := strings.Cut(strings.TrimPrefix(source, "@"), "@")
+		if ciCheckLocalJSDependency(spec) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[string][]byte, env []string, out io.Writer) {
 	var manifest map[string]any
 	if err := json.Unmarshal(metadata["package.json"], &manifest); err != nil {
@@ -152,9 +177,22 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 	} else if metadata["package-lock.json"] != nil || metadata["npm-shrinkwrap.json"] != nil {
 		args[0] = "ci"
 	}
+	command, err := resolveCICheckCommand(ctx, "/", manager)
+	if err != nil {
+		fmt.Fprintf(out, "CI checker package tool unavailable: %s\n", manager)
+		return
+	}
+
 	for _, name := range []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", "bun.lock"} {
 		if data := metadata[name]; data != nil {
-			local := name == "bun.lock" && ciCheckLocalJSLock.Match(data)
+			var local bool
+			if name == "bun.lock" {
+				local, err = ciCheckLocalBunLock(ctx, command, stage, data, env)
+				if err != nil {
+					fmt.Fprintf(out, "CI checker invalid Bun lockfile: %v\n", err)
+					return
+				}
+			}
 			if name == "package-lock.json" || name == "npm-shrinkwrap.json" {
 				var lock map[string]any
 				if err := json.Unmarshal(data, &lock); err != nil {
@@ -172,11 +210,6 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 				return
 			}
 		}
-	}
-	command, err := resolveCICheckCommand(ctx, "/", manager)
-	if err != nil {
-		fmt.Fprintf(out, "CI checker package tool unavailable: %s\n", manager)
-		return
 	}
 	if !runCICheckInstaller(ctx, command, stage, env, args, out) {
 		return

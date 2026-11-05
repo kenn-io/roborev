@@ -273,6 +273,7 @@ func TestCICheckPackagesPreparation(t *testing.T) {
 [ -z "$CHECKER_SECRET" ] && [ -z "$NODE_OPTIONS" ] || exit 6
 [ ! -e .npmrc ] && [ ! -e setup.py ] && [ ! -e sitecustomize.py ] || exit 7
 case "$*" in
+*--eval*) /bin/cat;;
 *download*source-only*) exit 2;;
 *download*) exit 0;;
 *venv*)
