@@ -266,8 +266,8 @@ func ciCheckPackagePythonFixture(t *testing.T) (string, string) {
 	script := `#!/bin/sh
 [ ! -e .npmrc ] && [ ! -e sitecustomize.py ] || exit 7
 [ -z "$GIT_CONFIG_COUNT" ] || exit 10
-case "$*" in
-*pip._vendor.packaging.requirements*)
+case "$2:$3:$5" in
+-c:*)
  shift 4
  printf '['
  separator=''
@@ -278,16 +278,16 @@ case "$*" in
  done
  printf ']'
  ;;
-*download*)
+-m:pip:download)
  printf 'download\n' >> download-calls
- case "$*" in *source-only*) exit 2;; esac
+ for arg do [ "$arg" != source-only ] || exit 2; done
  exit 0;;
-*venv*)
+-m:venv:*)
  for arg do dest="$arg"; done
  /bin/mkdir -p "$dest/bin"
  /bin/cp "$0" "$dest/bin/python"
  ;;
-*install*--find-links*)
+-m:pip:install)
  /bin/mkdir -p "${0%/bin/python}/lib"
  printf '%s\n' "$@" > "${0%/bin/python}/lib/installed"
  ;;
@@ -306,9 +306,8 @@ func TestCICheckPackagesPreparation(t *testing.T) {
 	}
 	selected, shims := ciCheckMiseFixture(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	tools, pythonScript := ciCheckPackagePythonFixture(t)
+	tools, _ := ciCheckPackagePythonFixture(t)
 	t.Setenv("PATH", strings.Join([]string{tools, shims, "/usr/bin", "/bin"}, string(os.PathListSeparator)))
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
 	bunScript := `#!/bin/sh
 [ "$GIT_CONFIG_VALUE_0" = "AUTHORIZATION: synthetic" ] || exit 10
 [ ! -e .npmrc ] || exit 7
@@ -321,7 +320,7 @@ esac
 `
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "bun"), []byte(strings.ReplaceAll(bunScript, "package ready", "system package")), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "bun"), []byte(bunScript), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "python3"), []byte(pythonScript), 0o700))
+	require.NoError(t, os.Rename(filepath.Join(tools, "python3"), filepath.Join(selected, "bin", "python3")))
 	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "npm"), []byte("#!/bin/sh\n[ -z \"$GIT_CONFIG_COUNT\" ] || exit 10\n/bin/mkdir -p node_modules/test-package\nprintf 'package ready' > node_modules/test-package/index.js\n"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
 	repo := testutil.NewTestRepoWithCommit(t)
