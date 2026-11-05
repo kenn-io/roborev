@@ -841,7 +841,7 @@ func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
 				require.NoError(t, json.Unmarshal([]byte(output), &result))
 				assert.Equal(t, !exited, result["running"])
 				assert.Equal(t, err.Error(), result["error"])
-				assert.Equal(t, "", result["web_url"])
+				assert.Empty(t, result["web_url"])
 				for _, field := range []string{"daemon", "health", "jobs"} {
 					assert.NotContains(t, result, field)
 				}

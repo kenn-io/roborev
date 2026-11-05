@@ -124,8 +124,8 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				require.ErrorContains(t, err, "ownership unavailable")
 			} else {
 				require.ErrorContains(t, err, "fixture.service")
-				assert.ErrorContains(t, err, "daemon is unresponsive; run "+serviceRestartCommand+" fixture.service")
-				assert.NotErrorIs(t, err, os.ErrNotExist)
+				require.ErrorContains(t, err, "daemon is unresponsive; run "+serviceRestartCommand+" fixture.service")
+				require.NotErrorIs(t, err, os.ErrNotExist)
 			}
 			assert.Equal(t, 1, lookups)
 			assert.Empty(t, mutations)
