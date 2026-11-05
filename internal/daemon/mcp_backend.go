@@ -59,6 +59,7 @@ func (b mcpBackend) ListJobs(ctx context.Context, q mcpserver.JobsQuery) (mcpser
 		Branch:          q.Branch,
 		JobType:         q.JobType,
 		OmitPrompt:      "true",
+		OmitStats:       "true",
 		IncludeFindings: "true",
 		Limit:           limitNotProvided,
 		Offset:          -1,

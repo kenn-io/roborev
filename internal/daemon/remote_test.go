@@ -431,7 +431,7 @@ func TestRemoteRepositoryGrantSurvivesPathReuse(t *testing.T) {
 	require.NoError(t, s.db.MoveRepo(allowed.ID, "/synthetic/moved", ""))
 	require.NoError(t, s.db.MoveRepo(denied.ID, allowed.RootPath, ""))
 	out := httptest.NewRecorder()
-	handler.ServeHTTP(out, remoteRequest(t, key, "/api/jobs?limit=1"))
+	handler.ServeHTTP(out, remoteRequest(t, key, "/api/jobs?limit=1&omit_stats=true"))
 	require.Equal(t, 200, out.Code)
 	assert.Contains(t, out.Body.String(), "allowed-history")
 	assert.NotContains(t, out.Body.String(), "denied-history")

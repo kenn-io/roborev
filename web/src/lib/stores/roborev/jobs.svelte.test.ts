@@ -504,6 +504,7 @@ describe("createJobsStore sorting", () => {
       direction: "desc",
       cursor: "cost:desc:1",
       limit: 50,
+      omit_stats: "true",
     });
     expect(store.getLoadMoreError()).toBeNull();
     expect(ids(store)).toEqual([3, 8, 1, 6]);
@@ -1555,6 +1556,7 @@ describe("createJobsStore auto-design filter", () => {
     await loadJobs(store);
 
     expect(store.getFilterShowAutoDesign()).toBe(false);
+    expect(api.listJobs.mock.calls[0]?.[0]).not.toHaveProperty("omit_stats");
     expect(api.listJobs).toHaveBeenLastCalledWith(
       expect.objectContaining({
         hide_classify_jobs: "true",
@@ -1572,6 +1574,7 @@ describe("createJobsStore auto-design filter", () => {
       unknown
     >;
     expect(lastQuery).not.toHaveProperty("hide_classify_jobs");
+    expect(lastQuery).toHaveProperty("omit_stats", "true");
   });
 });
 

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -281,6 +282,21 @@ func TestHandleListJobsClosedFilter(t *testing.T) {
 		assert.Equal(t, 1, resp.FilteredStats.Done, "filtered done count")
 		assert.Equal(t, 1, resp.FilteredStats.Open, "filtered open count")
 		assert.Equal(t, 0, resp.FilteredStats.Closed, "filtered closed count")
+	})
+
+	t.Run("omit stats with open filter", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?omit_stats=true&closed=false", nil)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		var body map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.NotContains(t, body, "stats")
+		assert.NotContains(t, body, "filtered_stats")
+		var jobs []storage.ReviewJob
+		require.NoError(t, json.Unmarshal(body["jobs"], &jobs))
+		require.Len(t, jobs, 1)
+		assert.Equal(t, job1.ID, jobs[0].ID)
 	})
 
 	t.Run("branch filter", func(t *testing.T) {

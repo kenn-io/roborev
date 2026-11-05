@@ -532,6 +532,32 @@ func TestListJobsWithClosedFalseExcludesFailedAndCanceled(t *testing.T) {
 		assert.Equal(t, JobStats{Done: 1, Open: 1}, stats)
 	})
 
+	t.Run("close and reopen stats", func(t *testing.T) {
+		for _, closed := range []bool{true, false} {
+			require.NoError(t, db.MarkReviewClosedByJobID(openJob.ID, closed))
+			want := JobStats{Done: 1, Failed: 1, Canceled: 1}
+			if closed {
+				want.Closed = 1
+			} else {
+				want.Open = 1
+			}
+			stats, err := db.CountJobStats("", "")
+			require.NoError(t, err)
+			assert.Equal(t, want, stats)
+			for _, filter := range []bool{true, false} {
+				wantFiltered := JobStats{}
+				if filter == closed {
+					wantFiltered = want
+					wantFiltered.Failed = 0
+					wantFiltered.Canceled = 0
+				}
+				stats, err = db.CountJobStats("", "", WithClosed(filter))
+				require.NoError(t, err)
+				assert.Equal(t, wantFiltered, stats)
+			}
+		}
+	})
+
 	t.Run("explicit status wins", func(t *testing.T) {
 		for _, tc := range []struct {
 			status JobStatus

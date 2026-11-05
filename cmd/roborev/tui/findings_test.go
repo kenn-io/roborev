@@ -196,4 +196,7 @@ func TestTUIFindingsRequestOption(t *testing.T) {
 	assert.Equal(t, "true", queries["more"].Get("include_findings"))
 	assert.Equal(t, "true", queries["panel"].Get("include_findings"))
 	assert.Empty(t, queries["fix"].Get("include_findings"))
+	assert.Equal(t, "true", queries["more"].Get("omit_stats"))
+	assert.Equal(t, "true", queries["fix"].Get("omit_stats"))
+	assert.Empty(t, queries["list"].Get("omit_stats"))
 }

@@ -177,6 +177,10 @@ func listJobsQuery(values neturl.Values) *daemonclient.ListJobsQuery {
 		typed := daemonclient.ListJobsQueryHideClassifyJobs(value)
 		query.HideClassifyJobs = &typed
 	}
+	if value := values.Get("omit_stats"); value != "" {
+		typed := daemonclient.ListJobsQueryOmitStats(value)
+		query.OmitStats = &typed
+	}
 	if value := values.Get("omit_prompt"); value != "" {
 		typed := daemonclient.ListJobsQueryOmitPrompt(value)
 		query.OmitPrompt = &typed
@@ -265,6 +269,7 @@ func (m model) fetchMoreJobs() tea.Cmd {
 		params := neturl.Values{}
 		params.Set("limit", "50")
 		params.Set("offset", fmt.Sprintf("%d", offset))
+		params.Set("omit_stats", "true")
 		params.Set("omit_prompt", "true")
 		params.Set("include_findings", "true")
 		for _, path := range m.activeRepoFilter {
@@ -1492,6 +1497,7 @@ func (m model) fetchFixJobs() tea.Cmd {
 		params := neturl.Values{}
 		params.Set("job_type", "fix")
 		params.Set("limit", "200")
+		params.Set("omit_stats", "true")
 		params.Set("omit_prompt", "true")
 
 		result, err := m.loadJobsPage(params)

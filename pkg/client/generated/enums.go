@@ -176,6 +176,25 @@ func (l ListJobsQueryIncludePanelMembers) Validate() error {
 	}
 }
 
+// ListJobsQueryOmitStats Skip the queue counts (stats and filtered_stats) for callers that only read jobs
+type ListJobsQueryOmitStats string
+
+const (
+	ListJobsQueryOmitStatsEmpty ListJobsQueryOmitStats = ""
+	ListJobsQueryOmitStatsFalse ListJobsQueryOmitStats = "false"
+	ListJobsQueryOmitStatsTrue  ListJobsQueryOmitStats = "true"
+)
+
+// Validate checks if the ListJobsQueryOmitStats value is valid
+func (l ListJobsQueryOmitStats) Validate() error {
+	switch l {
+	case ListJobsQueryOmitStatsEmpty, ListJobsQueryOmitStatsFalse, ListJobsQueryOmitStatsTrue:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListJobsQueryOmitStats value, got: %v", l))
+	}
+}
+
 // ListJobsQueryOmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 type ListJobsQueryOmitPrompt string
 

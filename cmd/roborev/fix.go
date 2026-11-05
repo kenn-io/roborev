@@ -828,7 +828,8 @@ func queryOpenJobs(
 		// omit_prompt: discovery only needs job metadata; prompts would add
 		// megabytes of JSON on repos with a long review history.
 		query := &generated.ListJobsQuery{
-			Status: new("done"), Repo: []string{repoRoot}, Closed: new(generated.ListJobsQueryClosedFalse),
+			OmitStats: new(generated.ListJobsQueryOmitStatsTrue),
+			Status:    new("done"), Repo: []string{repoRoot}, Closed: new(generated.ListJobsQueryClosedFalse),
 			Limit: new(int64(0)), OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue),
 		}
 		if branch != "" {
