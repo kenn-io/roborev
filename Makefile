@@ -272,6 +272,13 @@ test-postgres: postgres-up
 	TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test" \
 		$(MAKE) test-postgres-ci
 
+.PHONY: test-postgres-growth
+test-postgres-growth:
+	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+		--jsonfile gotestsum/postgres-growth.json \
+		--packages "./internal/storage/..." \
+		-- -tags=postgres -v -run '^TestIntegration_(FirstPullGrowth|PullPagingGrowth)$$'
+
 # Run all tests (unit + integration + postgres)
 test-all: test-integration test-postgres
 
