@@ -201,12 +201,23 @@ func (db *DB) MakeTransientReviewAttemptsDue(now time.Time) (int64, error) {
 // does not clear failure health. Empty results and permanent GitHub failures
 // are not agent failures and remain terminal.
 func (db *DB) RearmFailedReviewAttempts(now time.Time) (int64, error) {
-	tx, err := db.Begin()
+	// This storage API has no caller context yet.
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.Query(`SELECT p.id, p.github_repo, p.pr_number, p.head_sha
+	defer conn.Close()
+	if err := beginImmediate(ctx, conn); err != nil {
+		return 0, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = rollbackConn(conn)
+		}
+	}()
+	rows, err := conn.QueryContext(ctx, `SELECT p.id, p.github_repo, p.pr_number, p.head_sha
 		FROM ci_pr_panels p JOIN ci_pr_review_attempts a
 		  ON a.github_repo = p.github_repo AND a.pr_number = p.pr_number AND a.head_sha = p.head_sha
 		WHERE a.state = 'done' AND a.last_error_class IN ('genuine', 'transient')
@@ -236,7 +247,7 @@ func (db *DB) RearmFailedReviewAttempts(now time.Time) (int64, error) {
 		return 0, err
 	}
 	for _, panel := range panels {
-		_, err := tx.Exec(`UPDATE ci_pr_review_attempts
+		_, err := conn.ExecContext(ctx, `UPDATE ci_pr_review_attempts
 			SET state = 'deferred', attempt = 0, consecutive_genuine_attempts = 0,
 			    first_attempt_at = ?, next_attempt_at = ?, updated_at = ?
 			WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
@@ -247,14 +258,15 @@ func (db *DB) RearmFailedReviewAttempts(now time.Time) (int64, error) {
 		}
 		// This finalized failure is retired to free retry ownership. It is
 		// posted history, so it has no unposted discard reason.
-		if _, err := tx.Exec(`UPDATE ci_pr_panels SET retired_at = ?, posting_claimed_at = NULL WHERE id = ?`,
+		if _, err := conn.ExecContext(ctx, `UPDATE ci_pr_panels SET retired_at = ?, posting_claimed_at = NULL WHERE id = ?`,
 			now.Format(time.RFC3339), panel.ID); err != nil {
 			return 0, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return 0, err
 	}
+	committed = true
 	return int64(len(panels)), nil
 }
 

@@ -174,3 +174,38 @@ func TestReadTransactionDoesNotHoldWriters(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestRemapJobWaitsForPullWriter(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		job := h.createPendingJob("old-ref")
+		conn, err := h.db.Conn(t.Context())
+		require.NoError(t, err)
+		defer conn.Close()
+		require.NoError(t, beginImmediate(t.Context(), conn))
+		defer func() { _ = rollbackConn(conn) }()
+		_, err = conn.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('pull-writer', 'committed')`)
+		require.NoError(t, err)
+
+		type result struct {
+			count int
+			err   error
+		}
+		done := make(chan result, 1)
+		go func() {
+			count, err := h.db.RemapJob(h.repo.ID, "old-ref", "new-ref", "patch", "author", "subject", time.Now())
+			done <- result{count, err}
+		}()
+		// RemapJob waits on the in-process gate while SQLite holds the writer.
+		synctest.Wait()
+		_, err = conn.ExecContext(t.Context(), "COMMIT")
+		require.NoError(t, err)
+		remap := <-done
+		require.NoError(t, remap.err)
+		assert.Equal(t, 1, remap.count)
+		stored, err := h.db.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "new-ref", stored.GitRef)
+	})
+}

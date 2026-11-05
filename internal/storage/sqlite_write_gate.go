@@ -93,6 +93,9 @@ func (c *writeGateConn) start(ctx context.Context, query string) (func(error), e
 		}
 		c.holding = true
 	}
+	if !acquired && keyword != "BEGIN" && keyword != "COMMIT" && keyword != "ROLLBACK" {
+		return nil, nil
+	}
 	return func(err error) {
 		switch keyword {
 		case "BEGIN":
@@ -128,7 +131,9 @@ func (c *writeGateConn) gatedExec(ctx context.Context, query string, exec func()
 		return nil, err
 	}
 	result, err := exec()
-	finish(err)
+	if finish != nil {
+		finish(err)
+	}
 	return result, err
 }
 
@@ -136,6 +141,9 @@ func (c *writeGateConn) gatedQuery(ctx context.Context, query string, run func()
 	finish, err := c.start(ctx, query)
 	if err != nil {
 		return nil, err
+	}
+	if finish == nil {
+		return run()
 	}
 	rows, err := run()
 	if err != nil {
