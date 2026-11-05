@@ -867,12 +867,12 @@ verdicts. If every finding drops, the stored review says "No issues found." A
 checker failure or timeout posts the original review unchanged.
 
 For a finding that a test is redundant or tests code the project doesn't own,
-the checker tries a plausible mistake against each behavior the test asserts. It
-keeps the test if any such mistake fails that test alone. A mistake counts when
-it breaks something a user, caller, or the project's docs rely on. Cosmetic
-changes to strings or colors, test-only helpers, and inputs no code or outside
-system produces don't count. One mistake that other tests also catch doesn't
-establish redundancy.
+the checker tries a plausible mistake in the project's code against each
+behavior the test asserts. It keeps the test if any such mistake fails that test
+alone. A mistake counts when it breaks something a user, caller, or the
+project's docs rely on. Cosmetic changes to strings or colors, test-only
+helpers, and inputs no code or outside system produces don't count. One mistake
+that other tests also catch doesn't establish redundancy.
 
 ## Rewriting checked findings
 
