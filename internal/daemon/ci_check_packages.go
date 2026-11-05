@@ -148,6 +148,32 @@ func ciCheckNpmSources(lock map[string]any) []string {
 	return sources
 }
 
+// npm converts a lock without a packages map from its legacy dependency records,
+// turning a directory spec in version, from, or resolved into a link.
+func ciCheckNpmLegacySources(lock map[string]any) []string {
+	if _, ok := lock["packages"].(map[string]any); ok {
+		return nil
+	}
+	var sources []string
+	dependencies, _ := lock["dependencies"].(map[string]any)
+	for _, value := range dependencies {
+		if dep, ok := value.(map[string]any); ok {
+			fields := []string{"version", "from", "resolved"}
+			if integrity, _ := dep["integrity"].(string); integrity != "" {
+				// npm takes version as the spec once integrity is recorded.
+				fields = fields[:1]
+			}
+			for _, field := range fields {
+				if source, ok := dep[field].(string); ok {
+					sources = append(sources, source)
+				}
+			}
+			sources = append(sources, ciCheckNpmLegacySources(dep)...)
+		}
+	}
+	return sources
+}
+
 // Use npm's own source and workspace semantics from its trusted installation.
 func ciCheckLocalJSSources(ctx context.Context, stage string, sources, rejected []string, ancestors map[string]any, env []string) (bool, error) {
 	npm, err := resolveCICheckPackageTool(ctx, env, "npm")
@@ -251,7 +277,7 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 			case "package-lock.json", "npm-shrinkwrap.json":
 				var lock map[string]any
 				err = json.Unmarshal(data, &lock)
-				locked = ciCheckNpmSources(lock)
+				locked = append(ciCheckNpmSources(lock), ciCheckNpmLegacySources(lock)...)
 			}
 			if err != nil {
 				fmt.Fprintf(out, "CI checker invalid %s: %v\n", name, err)
