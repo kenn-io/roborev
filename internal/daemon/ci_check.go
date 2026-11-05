@@ -45,7 +45,7 @@ For each finding:
 2. Keep it if it fails that way and either a user on a normal workflow hits it, or the harm is lost data, a silently saved wrong result, or a security hole. Keep a finding about the project's own tests or CI when a test can't catch the bug it exists for and the fix is small.
 3. Drop it if it doesn't fail, if nothing but a hand-built state reaches it, or if only rare timing or unusual input reaches it and the fix would add new machinery. Count everyone the failure reaches: in a library, a rare input in one consumer is still a broken build or wrong result in every repo that uses it. A bug that predates this PR still counts when the PR's code runs into it.
 
-For a finding that a test is redundant or tests code the project doesn't own, try a plausible mistake in the project's production code that causes a bug a user or caller would notice. Drop the finding only if that change fails the named test and no other test. Cosmetic changes, test-only helpers, unreachable states, and bugs caught by other tests don't count.
+Keep a finding that a test is redundant or tests code the project doesn't own only when no plausible mistake in the project's production code causes a bug a user or caller would notice and fails that test alone. Cosmetic changes, test-only helpers, unreachable states, and bugs caught by other tests don't count.
 
 If the sandbox stops a finding from running, or the code it needs can't build or run here, keep it, unless it asks to remove a test.
 Return a JSON object with verdicts: [{"finding": 1, "keep": true, "evidence": "the command and its output, or what refutes it", "reason": "one sentence"}].

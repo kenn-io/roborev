@@ -866,8 +866,9 @@ Missing or duplicate verdicts keep the finding. The job log records the
 verdicts. If every finding drops, the stored review says "No issues found." A
 checker failure or timeout posts the original review unchanged.
 
-For a finding that asks to remove a test, the checker counts only plausible
-mistakes in production code that cause a bug a user or caller would notice.
+For a finding that a test is redundant or tests code the project doesn't own,
+the checker counts only plausible mistakes in production code that cause a bug
+a user or caller would notice.
 It keeps the test when that test alone catches such a mistake. Cosmetic
 changes, test-only helpers, unreachable states, and bugs caught by other tests
 don't establish that the test is needed.
