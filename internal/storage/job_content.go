@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"log"
+	"runtime"
 	"sync"
 	"time"
 
@@ -32,7 +33,8 @@ var (
 )
 
 func newContentEncoder() (*zstd.Encoder, error) {
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	// Match the decoder's four-worker cap so startup memory stays bounded on many-core hosts.
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault), zstd.WithEncoderConcurrency(min(4, runtime.GOMAXPROCS(0))))
 	if err != nil {
 		return nil, err
 	}
