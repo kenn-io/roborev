@@ -538,84 +538,90 @@ func TestStatusCmdShowsMissingSearchCredential(t *testing.T) {
 }
 
 func TestStatusLockFailureKeepsLiveness(t *testing.T) {
-	isolateDaemonSelection(t)
-	stubServiceRecovery(t)
-	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-	md := NewMockDaemon(t, MockRefineHooks{
-		OnPing: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
-			assert.NoError(t, json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: "v-old", PID: os.Getpid()}))
-			return true
-		},
-	})
-	defer md.Close()
-	serverAddr, parsedServerEndpoint = "", nil
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	findDaemonService = func(context.Context, int) (*daemonService, error) {
-		return &daemonService{unit: "fixture.service", mainPID: os.Getpid(), executable: executable, serviceType: "simple"}, nil
-	}
-	lockPath, err := daemon.RuntimeStore().LockPath()
-	require.NoError(t, err)
-	// A directory at the lock path prevents opening it while discovery still works.
-	require.NoError(t, os.Mkdir(lockPath, 0o700))
-	oldEnsure := statusEnsureDaemon
-	t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
-	statusEnsureDaemon = ensureDaemon
+	for _, responsive := range []bool{true, false} {
+		t.Run(fmt.Sprintf("responsive=%t", responsive), func(t *testing.T) {
+			isolateDaemonSelection(t)
+			stubServiceRecovery(t)
+			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+			md := NewMockDaemon(t, MockRefineHooks{
+				OnPing: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					assert.NoError(t, json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: "v-old", PID: os.Getpid()}))
+					return true
+				},
+			})
+			defer md.Close()
+			serverAddr, parsedServerEndpoint = "", nil
+			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+			executable, err := os.Executable()
+			require.NoError(t, err)
+			oldExecutableInfo := cliExecutableInfo
+			t.Cleanup(func() { cliExecutableInfo = oldExecutableInfo })
+			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(executable) }
+			findDaemonService = func(context.Context, int) (*daemonService, error) {
+				if !responsive {
+					// HTTP disappears after discovery while the recorded process stays alive.
+					md.Close()
+					return nil, nil
+				}
+				return &daemonService{unit: "fixture.service", mainPID: os.Getpid(), executable: executable, serviceType: "simple"}, nil
+			}
+			lockPath, err := daemon.RuntimeStore().LockPath()
+			require.NoError(t, err)
+			// A directory at the lock path prevents opening it while discovery still works.
+			require.NoError(t, os.Mkdir(lockPath, 0o700))
+			oldEnsure := statusEnsureDaemon
+			t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
+			statusEnsureDaemon = func() error {
+				err := ensureDaemon()
+				require.ErrorIs(t, err, errRecoveryLock)
+				return err
+			}
 
-	cmd := statusCmd()
-	cmd.SetArgs([]string{"--json"})
-	output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-	var result statusJSONResult
-	require.NoError(t, json.Unmarshal([]byte(output), &result))
-	assert := assert.New(t)
-	assert.True(result.Running)
-	assert.Contains(result.Error, "wait for daemon recovery lock")
-	assert.Nil(result.Daemon)
-	assert.Nil(result.Health)
-	assert.Empty(result.Jobs)
+			cmd := statusCmd()
+			cmd.SetArgs([]string{"--json"})
+			output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+			var result statusJSONResult
+			require.NoError(t, json.Unmarshal([]byte(output), &result))
+			assert := assert.New(t)
+			assert.True(result.Running)
+			assert.Contains(result.Error, "wait for daemon recovery lock")
+			assert.Nil(result.Daemon)
+			assert.Nil(result.Health)
+			assert.Empty(result.Jobs)
+		})
+	}
 }
 
-func TestStatusLockFailureReportsCheckedLiveness(t *testing.T) {
-	isolateDaemonSelection(t)
+func TestStatusRediscoverManagedRecoveryFailure(t *testing.T) {
 	stubServiceRecovery(t)
-	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-	md := NewMockDaemon(t, MockRefineHooks{
-		OnPing: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
-			assert.NoError(t, json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: "v-old", PID: os.Getpid()}))
-			return true
-		},
-	})
-	defer md.Close()
-	serverAddr, parsedServerEndpoint = "", nil
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	findDaemonService = func(context.Context, int) (*daemonService, error) {
-		// HTTP disappears after discovery while the recorded process stays alive.
-		md.Close()
-		return nil, nil
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+		return nil, &managedRecoveryError{"fixture.service", errors.New("service lookup failed")}
 	}
-	lockPath, err := daemon.RuntimeStore().LockPath()
-	require.NoError(t, err)
-	require.NoError(t, os.Mkdir(lockPath, 0o700))
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
 	oldEnsure := statusEnsureDaemon
 	t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
 	statusEnsureDaemon = func() error {
-		err := ensureDaemon()
-		require.ErrorIs(t, err, errRecoveryLock)
-		return err
+		return recoverDaemon(&daemon.RuntimeInfo{PID: os.Getpid()}, nil, false)
 	}
-
-	cmd := statusCmd()
-	cmd.SetArgs([]string{"--json"})
-	output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-	var result statusJSONResult
-	require.NoError(t, json.Unmarshal([]byte(output), &result))
-	assert := assert.New(t)
-	assert.True(result.Running)
-	assert.Contains(result.Error, "wait for daemon recovery lock")
-	assert.Nil(result.Daemon)
-	assert.Nil(result.Health)
-	assert.Empty(result.Jobs)
+	for _, jsonOutput := range []bool{false, true} {
+		cmd := statusCmd()
+		if jsonOutput {
+			cmd.SetArgs([]string{"--json"})
+		}
+		output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+		if jsonOutput {
+			var result statusJSONResult
+			require.NoError(t, json.Unmarshal([]byte(output), &result))
+			assert.False(t, result.Running)
+			assert.Contains(t, result.Error, "rediscover daemon: ")
+			assert.Contains(t, result.Error, "fixture.service: service lookup failed")
+		} else {
+			assert.Contains(t, output, "Daemon: not running\n")
+			assert.Contains(t, output, "Status: unavailable: rediscover daemon: ")
+			assert.Contains(t, output, "fixture.service: service lookup failed")
+		}
+	}
 }
 
 func TestStatusManagedRecoveryFailure(t *testing.T) {
