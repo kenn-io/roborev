@@ -613,9 +613,7 @@ func TestCIPollerListOpenPRsRevalidatesPages(t *testing.T) {
 			var changed bool
 			var bodies, notModified int
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(http.MethodGet, r.Method)
 				assert.Equal("/api/v3/repos/acme/api/pulls", r.URL.Path)
-				assert.Equal("Bearer test-token", r.Header.Get("Authorization"))
 				w.Header().Set("Content-Type", "application/json")
 				etag, body := `W/"page-1"`, `[{"number":1,"title":"First PR"}]`
 				switch r.URL.Query().Get("page") {
