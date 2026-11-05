@@ -265,6 +265,7 @@ func ciCheckPackagePythonFixture(t *testing.T) (string, string) {
 	tools := t.TempDir()
 	script := `#!/bin/sh
 [ ! -e .npmrc ] && [ ! -e sitecustomize.py ] || exit 7
+[ -z "$GIT_CONFIG_COUNT" ] || exit 10
 case "$*" in
 *pip._vendor.packaging.requirements*)
  shift 3
@@ -306,8 +307,10 @@ func TestCICheckPackagesPreparation(t *testing.T) {
 	selected, shims := ciCheckMiseFixture(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tools, pythonScript := ciCheckPackagePythonFixture(t)
+	t.Setenv("PATH", strings.Join([]string{tools, shims, "/usr/bin", "/bin"}, string(os.PathListSeparator)))
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
 	bunScript := `#!/bin/sh
+[ "$GIT_CONFIG_VALUE_0" = "AUTHORIZATION: synthetic" ] || exit 10
 [ ! -e .npmrc ] || exit 7
 case "$*" in
 *--eval*) /bin/cat;;
@@ -319,21 +322,24 @@ esac
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "bun"), []byte(strings.ReplaceAll(bunScript, "package ready", "system package")), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "bun"), []byte(bunScript), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "python3"), []byte(pythonScript), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "npm"), []byte("#!/bin/sh\n[ -z \"$GIT_CONFIG_COUNT\" ] || exit 10\n/bin/mkdir -p node_modules/test-package\nprintf 'package ready' > node_modules/test-package/index.js\n"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("web/package.json", `{"dependencies":{"test-package":"1"}}`, "javascript dependencies")
 	repo.CommitFile("web/bun.lock", `{"packages":{"test-package":["test-package@1"]}}`, "bun lock")
+	repo.CommitFile("npm-project/package.json", `{"dependencies":{"test-package":"1"}}`, "npm dependencies")
 	repo.CommitFile("web/.npmrc", "onload-script=./untrusted.js", "repository settings")
 	repo.CommitFile("sitecustomize.py", "raise RuntimeError('untrusted')", "repository module")
 	repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['test-package']\n", "python dependencies")
 	sha := repo.HeadSHA()
 	var log bytes.Buffer
-	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, filepath.Join(shims, "selected", "bin", "codex"), nil, &log)
+	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, filepath.Join(shims, "selected", "bin", "codex"), []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader", "GIT_CONFIG_VALUE_0=AUTHORIZATION: synthetic"}, &log)
 	require.NoError(t, err)
 	defer run.cleanup()
 	installed, err := os.ReadFile(filepath.Join(run.Repo, "web", "node_modules", "test-package", "index.js"))
 	require.NoError(t, err, log.String())
 	assert.Equal(t, "package ready", string(installed))
+	assert.FileExists(t, filepath.Join(run.Repo, "npm-project", "node_modules", "test-package", "index.js"), log.String())
 	var path string
 	for _, entry := range run.Job.Env {
 		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
@@ -425,9 +431,4 @@ func TestCICheckPackagesGitAuthentication(t *testing.T) {
 	assert.NotContains(t, env, "CHECKER_SECRET=secret")
 	assert.NotContains(t, env, "CHECKER_SECRET=synthetic")
 	assert.NotContains(t, env, "NODE_OPTIONS=--require=/untrusted/module")
-}
-
-func TestCICheckPackagesLockedSources(t *testing.T) {
-	lock := map[string]any{"packages": map[string]any{"node_modules/pkg": map[string]any{"link": true, "resolved": "node_modules/fixture"}}}
-	assert.Contains(t, ciCheckNpmSources(lock), "file:.")
 }

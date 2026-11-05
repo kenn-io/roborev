@@ -33,7 +33,7 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 			return ""
 		}
 	}
-	env := ciCheckPackageEnv(private, toolPath, gitEnv)
+	env := ciCheckPackageEnv(private, toolPath, nil)
 	projects := map[string]map[string][]byte{}
 	for name := range strings.SplitSeq(string(files), "\x00") {
 		base := filepath.Base(name)
@@ -73,7 +73,11 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 					ancestors[filepath.ToSlash(relative)] = manifest["workspaces"]
 				}
 			}
-			prepareCICheckJS(ctx, project, stage, metadata, ancestors, env, out)
+			jsEnv := env
+			if metadata["bun.lock"] != nil {
+				jsEnv = ciCheckPackageEnv(private, toolPath, gitEnv)
+			}
+			prepareCICheckJS(ctx, project, stage, metadata, ancestors, jsEnv, out)
 		}
 		if data := metadata["pyproject.toml"]; data != nil {
 			if prepareCICheckPython(ctx, project, stage, data, env, out) && dir == "." {

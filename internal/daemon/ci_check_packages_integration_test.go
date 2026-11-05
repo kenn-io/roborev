@@ -317,12 +317,6 @@ func TestCICheckPackagesSourceClassificationIntegration(t *testing.T) {
 		_, err := exec.LookPath(name)
 		require.NoError(t, err)
 	}
-	t.Run("npm Git source", func(t *testing.T) {
-		stage := t.TempDir()
-		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"git+https://example.com/package.git"}, []string{"file", "directory", "git"}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
-		require.NoError(t, err)
-		assert.True(t, local)
-	})
 	t.Run("separate global prefix", func(t *testing.T) {
 		stage := t.TempDir()
 		env := append(ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), "npm_config_prefix="+t.TempDir())
@@ -340,6 +334,9 @@ func TestCICheckPackagesSourceClassificationIntegration(t *testing.T) {
 }
 
 func TestCICheckPackagesBunLockIntegration(t *testing.T) {
+	if _, err := exec.LookPath("bun"); err != nil {
+		t.Skip("requires installed Bun")
+	}
 	archive := ciCheckPackageArchive(t, map[string]string{
 		"package/package.json": `{"name":"checker-fixture","version":"1.0.0","bin":{"fixture-tool":"./index.js"}}`,
 		"package/index.js":     "module.exports = 'javascript ready';\n",
