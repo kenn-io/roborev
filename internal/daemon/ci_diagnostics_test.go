@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	googlegithub "github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -104,14 +102,5 @@ func TestCIHealthSafeDiscoveryDiagnosticsAndRecovery(t *testing.T) {
 		time.Sleep(15 * time.Minute)
 		h.Poller.poll(t.Context())
 		assert.True(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy)
-		time.Sleep(time.Hour)
-		h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return nil, readErr }
-		repos, err := h.Poller.repoResolver.Resolve(t.Context(), &h.Cfg.CI, nil)
-		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-		assert.Equal(t, []string{"acme/api"}, repos)
-		responseError, ok := errors.AsType[*googlegithub.ErrorResponse](err)
-		require.True(t, ok)
-		assert.Equal(t, 503, responseError.Response.StatusCode)
-		assert.Equal(t, "list organization repositories: HTTP 503", ghpkg.ReadErrorSummary(err))
 	})
 }

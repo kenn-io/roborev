@@ -2,17 +2,22 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	googlegithub "github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	ghpkg "go.kenn.io/roborev/internal/github"
 )
 
 func TestRepoResolver_Matching(t *testing.T) {
@@ -495,12 +500,19 @@ func TestRepoResolver_EmptyResultsCached(t *testing.T) {
 
 func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		client, err := ghpkg.NewClient("", ghpkg.WithHTTPClient(&http.Client{Transport: diagnosticTransport(func(r *http.Request) (*http.Response, error) {
+			assert.Equal(t, "/orgs/acme/repos", r.URL.Path)
+			return &http.Response{StatusCode: 503, Request: r, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"sensitive-provider-text"}`))}, nil
+		})}))
+		require.NoError(t, err)
+		_, readErr := client.ListOwnerRepos(t.Context(), "acme", 100)
+		require.Error(t, readErr)
 		calls := make(map[string]int)
 		r := &RepoResolver{listReposFn: func(_ context.Context, owner, _ string) ([]string, error) {
 			calls[owner]++
 			if owner == "acme" {
 				if calls[owner] > 1 {
-					return nil, fmt.Errorf("owner unavailable")
+					return nil, readErr
 				}
 				return []string{"acme/api", "acme/web"}, nil
 			}
@@ -518,6 +530,10 @@ func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
 		assert.Equal(t, []string{"acme/api", "acme/web", "other/new"}, repos)
 		assert.Equal(t, map[string]int{"acme": 2, "other": 2}, calls)
+		responseError, ok := errors.AsType[*googlegithub.ErrorResponse](err)
+		require.True(t, ok)
+		assert.Equal(t, 503, responseError.Response.StatusCode)
+		assert.Equal(t, "list organization repositories: HTTP 503", ghpkg.ReadErrorSummary(err))
 	})
 }
 

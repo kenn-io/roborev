@@ -1055,11 +1055,17 @@ func TestHealthCIPollerDiscoveryFailureAndRecovery(t *testing.T) {
 				if discovery == "wildcard" {
 					h.Cfg.CI.Repos = append(h.Cfg.CI.Repos, "acme/*")
 					h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) {
-						return []string{"acme/api"}, discoveryErr
+						if discoveryErr != nil {
+							return nil, discoveryErr
+						}
+						return []string{"acme/api"}, nil
 					}
 				} else {
 					h.Poller.repoResolver.canonicalRepoFn = func(context.Context, string, string) (string, error) {
-						return "acme/api", discoveryErr
+						if discoveryErr != nil {
+							return "", discoveryErr
+						}
+						return "acme/api", nil
 					}
 				}
 				var visited []string
