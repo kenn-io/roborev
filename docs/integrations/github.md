@@ -878,9 +878,12 @@ sandbox's `PATH`; nested projects can use their own `.venv/bin/python`. An
 existing committed `.venv` is left alone.
 
 Installers run from private copies of dependency metadata, with private caches
-and without repository package-manager settings. Prepared packages live in the
-disposable checker clone. Missing tools and failed downloads are logged; tests
-that still need unavailable packages keep the existing checker failure behavior.
+and without repository package-manager settings. Downloads run on the host,
+follow PR-declared remote URLs, and use CI's existing Git authentication. They
+can reach host-accessible network destinations; the sandbox's network rules
+govern agent and PR-code execution. Prepared packages live in the disposable
+checker clone. Missing tools and failed downloads are logged; tests that still
+need unavailable packages keep the existing checker failure behavior.
 
 The checker works in its own clone of the PR checkout. The clone borrows the
 host clone's object store and none of its Git config, so the checker can't read
