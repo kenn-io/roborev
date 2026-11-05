@@ -173,6 +173,10 @@ api-breaking:
 test:
 	go test ./...
 
+.PHONY: test-search-mirror-growth
+test-search-mirror-growth:
+	go test ./internal/searchindex -run '^TestReconcilerInitialMirrorGrowth$$' -count=1 -v
+
 test-git-isolation:
 	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .
 
