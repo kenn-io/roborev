@@ -29,46 +29,51 @@ type managedRecoveryError struct {
 }
 
 func (e *managedRecoveryError) Error() string {
-	return fmt.Sprintf("systemd service %s: %v", e.unit, e.cause)
+	return fmt.Sprintf("%s %s: %v", serviceDescription, e.unit, e.cause)
 }
 func (e *managedRecoveryError) Unwrap() error { return e.cause }
 
 var (
+	serviceDescription    = "systemd service"
+	serviceRestartCommand = "systemctl --user restart"
+	serviceStartCommand   = "systemctl --user start"
+	cliExecutableInfo     = func() (os.FileInfo, error) { return os.Stat("/proc/self/exe") }
+
 	errRecoveryLock = errors.New("wait for daemon recovery lock")
 
 	findDaemonService  = lookupDaemonService
-	daemonCgroupUnit   = serviceCgroup
+	daemonServiceUnit  = processServiceUnit
 	serviceMainPID     = userServiceMainPID
 	startDaemonService = startUserService
 	drainManagedDaemon = daemon.KillDaemon
 )
 
-// supported reports unit settings that systemctl start cannot replace safely.
+// supported reports unit settings that a service start cannot replace safely.
 func (s *daemonService) supported() error {
 	switch {
 	case s.transient:
-		return fmt.Errorf("transient units require manual restart; run systemctl --user restart %s", s.unit)
+		return fmt.Errorf("transient units require manual restart; run %s %s", serviceRestartCommand, s.unit)
 	case s.remainAfterExit:
-		return fmt.Errorf("RemainAfterExit=yes requires manual restart; run systemctl --user restart %s", s.unit)
+		return fmt.Errorf("RemainAfterExit=yes requires manual restart; run %s %s", serviceRestartCommand, s.unit)
 	case !slices.Contains([]string{"simple", "exec", "notify"}, s.serviceType):
-		return fmt.Errorf("unsupported service Type=%s; run systemctl --user restart %s", s.serviceType, s.unit)
+		return fmt.Errorf("unsupported service Type=%s; run %s %s", s.serviceType, serviceRestartCommand, s.unit)
 	}
 	return nil
 }
 
-// keepReason explains why systemd cannot replace a responsive daemon in
+// keepReason explains why the service manager cannot replace a responsive daemon in
 // place, or returns "" when it can.
 func (s *daemonService) keepReason(pid int) string {
 	if s.mainPID != pid {
-		// A wrapper child stays in use; systemd cannot replace it directly.
-		return fmt.Sprintf("systemd service %s runs the daemon as a child process", s.unit)
+		// A wrapper child stays in use; the service manager cannot replace it directly.
+		return fmt.Sprintf("%s %s runs the daemon as a child process", serviceDescription, s.unit)
 	}
 	same, err := s.sameInstallation()
 	if err != nil {
-		return fmt.Sprintf("systemd service %s: cannot confirm executable %s: %v", s.unit, s.executable, err)
+		return fmt.Sprintf("%s %s: cannot confirm executable %s: %v", serviceDescription, s.unit, s.executable, err)
 	}
 	if !same {
-		return fmt.Sprintf("systemd service %s uses another installation (%s)", s.unit, s.executable)
+		return fmt.Sprintf("%s %s uses another installation (%s)", serviceDescription, s.unit, s.executable)
 	}
 	if err := s.supported(); err != nil {
 		return (&managedRecoveryError{s.unit, err}).Error()
@@ -79,7 +84,7 @@ func (s *daemonService) keepReason(pid int) string {
 func pauseServiceBeforeRecovery(ctx context.Context, info *daemon.RuntimeInfo, unit string) error {
 	resp, err := info.Endpoint().APIClient(0).PauseQueueWithResponse(ctx)
 	if resp != nil && resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart %s and retry roborev pause", unit)
+		return fmt.Errorf("daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run %s %s and retry roborev pause", serviceRestartCommand, unit)
 	}
 	return err
 }
@@ -90,7 +95,7 @@ func (s *daemonService) sameInstallation() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	cli, err := os.Stat("/proc/self/exe")
+	cli, err := cliExecutableInfo()
 	if err != nil {
 		return false, err
 	}
@@ -125,7 +130,7 @@ func snapshotDaemonService(ctx context.Context, pid int, outsideService bool) (*
 // outside every user service. Callers read it before slow probes, while the
 // PID is known to be alive.
 func discoveredOutsideService(pid int) bool {
-	unit, err := daemonCgroupUnit(pid)
+	unit, err := daemonServiceUnit(pid)
 	return err == nil && unit == ""
 }
 
@@ -224,14 +229,14 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 	} else {
 		if owner.mainPID != current.PID {
-			return fail(fmt.Errorf("service child requires attention: %w; run systemctl --user restart %s", probeErr, owner.unit))
+			return fail(fmt.Errorf("service child requires attention: %w; run %s %s", probeErr, serviceRestartCommand, owner.unit))
 		}
 		same, err := owner.sameInstallation()
 		if err != nil {
 			return fail(fmt.Errorf("cannot confirm executable %s: %w", owner.executable, err))
 		}
 		if !same {
-			return fail(fmt.Errorf("installation %s requires attention: %w; run systemctl --user restart %s", owner.executable, probeErr, owner.unit))
+			return fail(fmt.Errorf("installation %s requires attention: %w; run %s %s", owner.executable, probeErr, serviceRestartCommand, owner.unit))
 		}
 		if err := owner.supported(); err != nil {
 			return fail(err)
@@ -241,7 +246,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 	// Persist pause before any drain or service start, or leave it alone.
 	if pendingStartPause != nil && *pendingStartPause {
 		if vanished {
-			return fail(fmt.Errorf("pause queue before shutdown: daemon PID %d has exited; run systemctl --user start %s, then retry roborev pause", current.PID, owner.unit))
+			return fail(fmt.Errorf("pause queue before shutdown: daemon PID %d has exited; run %s %s, then retry roborev pause", current.PID, serviceStartCommand, owner.unit))
 		}
 		if err := pauseServiceBeforeRecovery(ctx, current, owner.unit); err != nil {
 			return fail(fmt.Errorf("pause queue before shutdown: %w", err))

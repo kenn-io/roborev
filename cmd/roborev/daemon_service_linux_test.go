@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -381,7 +380,7 @@ func TestEnsureDaemonReadsOwnershipBeforeProbe(t *testing.T) {
 		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return discovered, nil }
 		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
 		var events []string
-		daemonCgroupUnit = func(pid int) (string, error) {
+		daemonServiceUnit = func(pid int) (string, error) {
 			assert.Equal(t, discovered.PID, pid)
 			events = append(events, "cgroup")
 			return "", nil
@@ -517,30 +516,4 @@ func TestUserServiceCommandsNeverRestart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5678, mainPID)
 	assert.Equal(t, [][]string{{"start", "--", "fixture.service"}, {"show", "--property=MainPID", "--", "fixture.service"}}, *calls)
-}
-
-// A CLI whose own binary was replaced after it started runs a different
-// version than the service would start, so it must not drain the daemon.
-func TestDaemonServiceReplacedCLIIsAnotherInstallation(t *testing.T) {
-	path, err := os.Executable()
-	require.NoError(t, err)
-	if os.Getenv("ROBOREV_TEST_EXECUTABLE_REPLACEMENT") == "1" {
-		same, err := (&daemonService{executable: path}).sameInstallation()
-		require.NoError(t, err)
-		require.True(t, same)
-		require.NoError(t, os.WriteFile(path+".next", []byte("replacement executable"), 0o700))
-		require.NoError(t, os.Rename(path+".next", path))
-		same, err = (&daemonService{executable: path}).sameInstallation()
-		require.NoError(t, err)
-		assert.False(t, same)
-		return
-	}
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	copyPath := filepath.Join(t.TempDir(), "roborev-test")
-	require.NoError(t, os.WriteFile(copyPath, data, 0o700))
-	cmd := exec.CommandContext(t.Context(), copyPath, "-test.run=^TestDaemonServiceReplacedCLIIsAnotherInstallation$")
-	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", output)
 }

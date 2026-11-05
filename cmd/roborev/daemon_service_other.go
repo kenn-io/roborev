@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package main
 
@@ -9,7 +9,7 @@ import (
 
 func lookupDaemonService(context.Context, int) (*daemonService, error) { return nil, nil }
 
-func serviceCgroup(int) (string, error) { return "", nil }
+func processServiceUnit(int) (string, error) { return "", nil }
 
 func userManagerAvailable(context.Context) bool { return false }
 

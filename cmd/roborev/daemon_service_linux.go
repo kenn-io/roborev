@@ -66,7 +66,7 @@ func startUserService(ctx context.Context, unit string) error {
 	return err
 }
 
-func serviceCgroup(pid int) (string, error) {
+func processServiceUnit(pid int) (string, error) {
 	data, err := readServiceProcessFile(fmt.Sprintf("/proc/%d/cgroup", pid))
 	if err != nil {
 		return "", &managedRecoveryError{"unknown", fmt.Errorf("cannot determine owner of daemon PID %d: %w", pid, err)}
@@ -89,7 +89,7 @@ func serviceCgroup(pid int) (string, error) {
 // lookupDaemonService returns the user service that started pid or its parent.
 // A daemon that only shares the unit's cgroup is unmanaged.
 func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
-	unit, err := serviceCgroup(pid)
+	unit, err := processServiceUnit(pid)
 	if err != nil || unit == "" {
 		return nil, err
 	}

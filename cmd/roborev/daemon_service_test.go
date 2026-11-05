@@ -21,13 +21,13 @@ func stubServiceRecovery(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	oldOut, oldVerbose := lifecycleOut, verbose
 	oldFind, oldMainPID, oldStart, oldDrain := findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon
-	oldCgroup := daemonCgroupUnit
+	oldCgroup := daemonServiceUnit
 	oldDiscovery, oldEnsure, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
 	oldPause := pendingStartPause
 	t.Cleanup(func() {
 		lifecycleOut, verbose = oldOut, oldVerbose
 		findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon = oldFind, oldMainPID, oldStart, oldDrain
-		daemonCgroupUnit = oldCgroup
+		daemonServiceUnit = oldCgroup
 		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldEnsure, oldDetached
 		pendingStartPause = oldPause
 	})
