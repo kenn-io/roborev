@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -207,6 +208,7 @@ func TestIndexMigrations(t *testing.T) {
 		{"cost aggregate", 9, "idx_review_jobs_cost", "ON review_jobs(repo_id, branch, CASE WHEN"},
 		{"open failed reviews", 10, "idx_reviews_open_failed", "ON reviews(job_id) WHERE closed = 0 AND verdict_bool = 0"},
 		{"branch list position", 11, "idx_review_jobs_branch_position", "branch, " + sqliteNormalizedTimestampExpr("enqueued_at") + " DESC, id DESC"},
+		{"closed list position", 11, "idx_review_jobs_closed_position", "DESC, id DESC) WHERE review_closed = 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := openUnmigratedDB(t)
@@ -226,6 +228,30 @@ func TestIndexMigrations(t *testing.T) {
 				// Retry after creating the index but before recording the migration.
 				_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = ?`, tc.version)
 				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestQueueListPositionMigrationBackfill(t *testing.T) {
+	t.Parallel()
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprint(partial), func(t *testing.T) {
+			db := openUnmigratedDB(t)
+			require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
+			_, jobs := seedJobs(t, db, "/tmp/migration-closed", 3)
+			_, err := db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1), (?, 'test', '', 0)`, jobs[0].ID, jobs[1].ID)
+			require.NoError(t, err)
+			if partial {
+				_, err := db.ExecContext(t.Context(), `ALTER TABLE review_jobs ADD COLUMN review_closed INTEGER NOT NULL DEFAULT 0`)
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+			for range 2 {
+				var flags string
+				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT group_concat(review_closed) FROM (SELECT review_closed FROM review_jobs ORDER BY id)`).Scan(&flags))
+				assert.Equal(t, "1,0,0", flags)
+				require.NoError(t, migrateQueueListPositionIndexes(t.Context(), db))
 			}
 		})
 	}

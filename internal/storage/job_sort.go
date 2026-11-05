@@ -82,9 +82,10 @@ func WithSortAfter(position JobSortPosition) ListJobsOption {
 // non-NULL so row-value comparisons against a resume position stay defined.
 // NOT NULL columns appear bare, so a sort on an indexed column such as status
 // can read the index in order. The enqueue time is the one nullable
-// expression: it must match idx_review_jobs_enqueued_position and
-// idx_review_jobs_branch_position for the default listing to use those indexes,
-// and it is NULL only for timestamp text SQLite cannot parse.
+// expression: it must match idx_review_jobs_enqueued_position,
+// idx_review_jobs_branch_position, and idx_review_jobs_closed_position for
+// the default listing to use those indexes. It is NULL only for timestamp
+// text SQLite cannot parse.
 // The expressions reproduce what the web table showed when it sorted rows
 // itself, so the server order matches the displayed values.
 func jobSortKeys(sort JobSort, includeFindings bool) ([]string, []any) {

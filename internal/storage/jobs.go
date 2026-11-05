@@ -1941,9 +1941,6 @@ type listJobsOptions struct {
 	branchEmpty        bool
 	branchIncludeEmpty bool
 	closed             *bool
-	// closedByPosition walks each job at most once when closed reviews are dense.
-	// CountJobStats and other non-paging callers keep the plain closed predicate.
-	closedByPosition   bool
 	openFailedReviews  bool
 	jobType            string
 	excludeJobType     string
@@ -2218,11 +2215,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	}
 	if o.closed != nil {
 		if *o.closed {
-			if o.closedByPosition {
-				conditions = append(conditions, "+rv.closed = 1")
-			} else {
-				conditions = append(conditions, "rv.closed = 1")
-			}
+			conditions = append(conditions, "j.review_closed = 1")
 		} else {
 			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
 			// Failed and canceled jobs never produce a review to resolve, so
@@ -2372,30 +2365,9 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	return query, args, len(sortKeys), nil
 }
 
-// closedDensityDivisor uses a half-history cutoff: a full 100k-job walk took
-// 236ms, below the 346ms needed to sort 50,001 oldest closed reviews.
-const closedDensityDivisor = 2
-
-func (db *DB) closedReviewsDense(ctx context.Context) (bool, error) {
-	var dense bool
-	err := db.QueryRowContext(ctx, `
-		SELECT EXISTS (SELECT 1 FROM reviews WHERE closed = 1 LIMIT 1
-			OFFSET (SELECT COALESCE(MAX(id), 0) / ? FROM review_jobs))
-	`, closedDensityDivisor).Scan(&dense)
-	return dense, err
-}
-
 // ListJobs returns jobs with optional status, repo, branch, and closed filters.
 func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	options := collectListJobsOptions(opts...)
-	if options.closed != nil && *options.closed {
-		// ListJobs and its main query have no caller context yet.
-		dense, err := db.closedReviewsDense(context.Background())
-		if err != nil {
-			return nil, err
-		}
-		options.closedByPosition = dense
-	}
 	query, args, sortKeyCount, err := listJobsQuery(statusFilter, repoFilter, limit, offset, options)
 	if err != nil {
 		return nil, err

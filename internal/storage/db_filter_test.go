@@ -2,9 +2,13 @@ package storage
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1331,6 +1335,15 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 			},
 		},
 		{
+			name: "migrated schema",
+			open: func(t *testing.T) *DB {
+				db := openUnmigratedDB(t)
+				require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
+				require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+				return db
+			},
+		},
+		{
 			name: "migrated legacy schema",
 			open: func(t *testing.T) *DB {
 				return prepareMigratedDB(
@@ -1342,6 +1355,13 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := test.open(t)
+			_, jobs := seedJobs(t, db, "/tmp/position-closed", 1)
+			_, err := db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1)`, jobs[0].ID)
+			require.NoError(t, err)
+			closed, err := db.ListJobs("", "/tmp/position-closed", 50, 0, WithClosed(true))
+			require.NoError(t, err)
+			require.Len(t, closed, 1)
+			assert.Equal(t, jobs[0].ID, closed[0].ID)
 			// The web table's first page, a page resumed from a cursor, and a
 			// status sort, which reads idx_review_jobs_status in order.
 			for _, page := range []struct {
@@ -1352,8 +1372,7 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 				{"first page", "idx_review_jobs_enqueued_position", nil},
 				{"branch filter", "idx_review_jobs_branch_position", []ListJobsOption{WithBranch("main")}},
 				{"TUI branch filter", "idx_review_jobs_branch_position", []ListJobsOption{WithBranch("main"), WithExcludeJobType("fix"), WithFindingCounts()}},
-				{"dense closed filter", "idx_review_jobs_enqueued_position", []ListJobsOption{WithClosed(true), func(o *listJobsOptions) { o.closedByPosition = true }}},
-				{"sparse closed filter", "idx_reviews_closed", []ListJobsOption{WithClosed(true)}},
+				{"closed filter", "idx_review_jobs_closed_position", []ListJobsOption{WithClosed(true)}},
 				{"cursor page", "idx_review_jobs_enqueued_position", []ListJobsOption{WithSortAfter(JobSortPosition{
 					Keys: []any{"2026-01-01 00:00:00"}, JobID: 10,
 				})}},
@@ -1367,18 +1386,21 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 					require.NoError(t, err)
 					plan := queryPlan(t, db, query, args...)
 					assert.Contains(t, plan, "USING INDEX "+page.index)
-					if page.name == "sparse closed filter" {
-						assert.Contains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
-					} else {
-						assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
-					}
+					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 				})
 			}
+			t.Run("repo plus closed", func(t *testing.T) {
+				query, args, _, err := listJobsQuery("", "/synthetic/repo", 51, 0, collectListJobsOptions(WithClosed(true)))
+				require.NoError(t, err)
+				plan := queryPlan(t, db, query, args...)
+				assert.Contains(t, plan, "USING INDEX idx_review_jobs_repo_enqueued")
+				assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+			})
 		})
 	}
 }
 
-func TestListJobsClosedPageMatchesBothPlans(t *testing.T) {
+func TestListJobsClosedPages(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
@@ -1394,25 +1416,20 @@ func TestListJobsClosedPageMatchesBothPlans(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		closed  string
-		dense   bool
 		repo    string
 		first   []int64
 		resumed []int64
 	}{
-		{"empty", "0", false, "", []int64{}, []int64{}},
-		{"sparse newest", "job_id >= 78", false, "", []int64{80, 79}, []int64{78}},
-		{"below line", "job_id <= 40", false, "", []int64{40, 39}, []int64{38, 37}},
-		{"at line oldest", "job_id <= 41", true, "", []int64{41, 40}, []int64{39, 38}},
-		{"all closed", "1", true, "", []int64{80, 79}, []int64{78, 77}},
-		{"repo filtered mix", "job_id <= 41 OR job_id >= 77", true, repo.RootPath, []int64{41, 40}, []int64{39, 38}},
+		{"empty", "0", "", []int64{}, []int64{}},
+		{"sparse newest", "job_id >= 78", "", []int64{80, 79}, []int64{78}},
+		{"oldest", "job_id <= 40", "", []int64{40, 39}, []int64{38, 37}},
+		{"all closed", "1", "", []int64{80, 79}, []int64{78, 77}},
+		{"repo filtered mix", "job_id <= 41 OR job_id >= 77", repo.RootPath, []int64{41, 40}, []int64{39, 38}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
 			_, err := db.ExecContext(t.Context(), `UPDATE reviews SET closed = (`+test.closed+`)`)
 			require.NoError(t, err)
-			dense, err := db.closedReviewsDense(t.Context())
-			require.NoError(t, err)
-			assert.Equal(test.dense, dense)
 
 			page, err := db.ListJobs("", test.repo, 2, 0, WithClosed(true))
 			require.NoError(t, err)
@@ -1548,4 +1565,103 @@ func TestListJobsDoesNotParseMarkdownWhenVerdictBoolNull(t *testing.T) {
 
 	require.Len(t, jobs, 1)
 	assert.Nil(t, jobs[0].Verdict)
+}
+
+func TestListJobsClosedFlagUpkeep(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/closed-upkeep", 1)
+	job := jobs[0]
+	setStatus(t, db, job.ID, JobStatusDone)
+	for _, operation := range []struct {
+		name  string
+		apply func() error
+		want  int
+	}{
+		{"sync closed review", func() error {
+			return db.UpsertPulledReview(PulledReview{
+				UUID: uuid.New(), JobUUID: *job.UUID, Agent: "test", Closed: true, StructuredOutput: reviewFixtureJSON("PASS"),
+				JobEnqueuedAt: storedJobEnqueuedAt(t, db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, db, job.ID),
+				CreatedAt: time.Now(), UpdatedAt: time.Now(), UpdatedByMachineID: uuid.New(),
+			})
+		}, 1},
+		{"reopen", func() error { return db.MarkReviewClosedByJobID(job.ID, false) }, 0},
+		{"close", func() error { return db.MarkReviewClosedByJobID(job.ID, true) }, 1},
+		{"rerun", func() error { return db.ReenqueueJob(job.ID, ReenqueueOpts{}) }, 0},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			require.NoError(t, operation.apply())
+			page, err := db.ListJobs("", "", 50, 0, WithClosed(true))
+			require.NoError(t, err)
+			require.Len(t, page, operation.want)
+			if operation.want == 1 {
+				assert.Equal(t, job.ID, page[0].ID)
+			}
+			count, err := db.CountJobStats("", "", WithClosed(true))
+			require.NoError(t, err)
+			assert.Equal(t, operation.want, count.Closed)
+			assert.Equal(t, operation.want, count.Done)
+		})
+	}
+}
+
+func TestListJobsClosedPageWorkBound(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is required to count SQLite VM steps")
+	}
+	// Python's SQLite progress callback counts executed instructions. The
+	// fixture has no compressed content, so its decompressor accepts only NULL.
+	const measure = `
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+def decompress(value):
+    assert value is None
+    return None
+conn.create_function("zstd_decompress", 1, decompress)
+steps = 0
+def progress():
+    global steps
+    steps += 1
+    return 0
+conn.set_progress_handler(progress, 1)
+rows = conn.execute(sys.argv[2], (50,)).fetchall()
+print(steps)
+`
+	work := map[string]int{}
+	for _, size := range []int{1000, 100000} {
+		db := openTestDB(t)
+		t.Cleanup(func() { db.Close() })
+		var path string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+		_, err := db.ExecContext(t.Context(), `
+			INSERT INTO repos(id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
+			WITH RECURSIVE ids(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM ids WHERE id < ?)
+			INSERT INTO review_jobs(id, repo_id, git_ref, agent, status, enqueued_at)
+			SELECT id, 1, 'main', 'test', 'done', datetime('2026-01-01', '+' || id || ' seconds') FROM ids;
+			INSERT INTO reviews(job_id, agent, output, closed) SELECT id, 'test', '', 0 FROM review_jobs;
+		`, size)
+		require.NoError(t, err)
+		for _, shape := range []struct{ name, closed string }{
+			{"all", "1"}, {"oldest 1%", fmt.Sprintf("job_id <= %d", size/100)}, {"none", "0"},
+		} {
+			_, err := db.ExecContext(t.Context(), `UPDATE reviews SET closed = (`+shape.closed+`)`)
+			require.NoError(t, err)
+			query, args, _, err := listJobsQuery("", "", 50, 0, collectListJobsOptions(WithClosed(true), WithoutPrompt()))
+			require.NoError(t, err)
+			require.Equal(t, []any{50}, args)
+			out, err := exec.CommandContext(t.Context(), python, "-c", measure, path, query).CombinedOutput()
+			require.NoError(t, err, "%s", out)
+			steps, err := strconv.Atoi(strings.TrimSpace(string(out)))
+			require.NoError(t, err)
+			t.Logf("%d jobs, %s closed: %d VM steps", size, shape.name, steps)
+			if size == 1000 {
+				work[shape.name] = steps
+			} else {
+				assert.LessOrEqual(t, steps, 5*work[shape.name], shape.name)
+			}
+		}
+	}
 }

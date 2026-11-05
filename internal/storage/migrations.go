@@ -44,12 +44,37 @@ var schemaMigrations = []schemaMigration{
 	{8, "search change log", migrateSearchChanges},
 	{9, "cost aggregate index", migrateCostAggregateIndex},
 	{10, "open failed reviews index", migrateOpenFailedReviewsIndex},
-	{11, "branch list position index", migrateBranchListPositionIndex},
+	{11, "queue list position indexes", migrateQueueListPositionIndexes},
 }
 
-func migrateBranchListPositionIndex(ctx context.Context, db *DB) error {
-	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch_position
-		ON review_jobs(branch, `+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC)`)
+func migrateQueueListPositionIndexes(ctx context.Context, db *DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch_position
+		ON review_jobs(branch, `+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC)`); err != nil {
+		return err
+	}
+	exists, err := hasColumn(ctx, db, "review_jobs", "review_closed")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE review_jobs ADD COLUMN review_closed INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	_, err = db.ExecContext(ctx, `
+		UPDATE review_jobs SET review_closed = 1 WHERE id IN (SELECT job_id FROM reviews WHERE closed = 1);
+		CREATE TRIGGER IF NOT EXISTS review_closed_insert AFTER INSERT ON reviews BEGIN
+			UPDATE review_jobs SET review_closed = NEW.closed WHERE id = NEW.job_id AND review_closed <> NEW.closed;
+		END;
+		CREATE TRIGGER IF NOT EXISTS review_closed_update AFTER UPDATE OF closed ON reviews BEGIN
+			UPDATE review_jobs SET review_closed = NEW.closed WHERE id = NEW.job_id AND review_closed <> NEW.closed;
+		END;
+		CREATE TRIGGER IF NOT EXISTS review_closed_delete AFTER DELETE ON reviews BEGIN
+			UPDATE review_jobs SET review_closed = 0 WHERE id = OLD.job_id AND review_closed <> 0;
+		END;
+		CREATE INDEX IF NOT EXISTS idx_review_jobs_closed_position
+		ON review_jobs(`+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC) WHERE review_closed = 1;
+	`)
 	return err
 }
 
