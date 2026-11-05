@@ -26,8 +26,7 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-// Real installers consume controlled archives, then the real sandbox imports
-// them. Lifecycle and interpreter startup sentinels distinguish host execution.
+// The real sandbox imports prepared packages and starts their .pth files there.
 func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	requireCICheckNpm(t, true)
@@ -43,32 +42,7 @@ func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	require.NoError(t, err, "%s", output)
 	python = filepath.Join(runtime, "bin", "python3")
 	wheels := t.TempDir()
-	for _, pkg := range []struct{ name, version string }{
-		{"checker_fixture", "1.0"}, {"driver_fixture", "1.0"}, {"driver_fixture", "2.0"}, {"project_self", "1.0"}, {"transitive_fixture", "1.0"},
-	} {
-		name, version := pkg.name, pkg.version
-		wheel, err := os.Create(filepath.Join(wheels, name+"-"+version+"-py3-none-any.whl"))
-		require.NoError(t, err)
-		zw := zip.NewWriter(wheel)
-		metadata := "Metadata-Version: 2.1\nName: " + strings.ReplaceAll(name, "_", "-") + "\nVersion: " + version + "\nProvides-Extra: test\n"
-		if name == "transitive_fixture" {
-			metadata += "Requires-Dist: PROJECT.self==1.0\n"
-		}
-		for name, data := range map[string]string{
-			name + ".py":  fmt.Sprintf("value = 'python %s ready'\n", version),
-			name + ".pth": "import sys,pathlib; pathlib.Path(sys.prefix, 'pth-ran').write_text('started')\n",
-			name + "-" + version + ".dist-info/METADATA": metadata,
-			name + "-" + version + ".dist-info/WHEEL":    "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-			name + "-" + version + ".dist-info/RECORD":   "",
-		} {
-			w, err := zw.Create(name)
-			require.NoError(t, err)
-			_, err = io.WriteString(w, data)
-			require.NoError(t, err)
-		}
-		require.NoError(t, zw.Close())
-		require.NoError(t, wheel.Close())
-	}
+	ciCheckPackageWheel(t, wheels, "checker_fixture", "1.0", "")
 	tools := t.TempDir()
 	// The trusted tool fixture redirects registry downloads to our controlled wheel.
 	wrapper := fmt.Sprintf(`#!/bin/sh
@@ -86,29 +60,15 @@ esac
 	mise := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in 'ls --current --installed --json') printf '%%s' '{\"node\":[{\"install_path\":%q}]}';; 'bin-paths') printf '%%s\\n' '%s' '%s';; *) exit 1;; esac\n", filepath.Dir(filepath.Dir(node)), tools, filepath.Dir(node))
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(mise), 0o700))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	lifecycleMarker := filepath.Join(t.TempDir(), "lifecycle-ran")
-	buildMarker := filepath.Join(t.TempDir(), "source-build-ran")
-	require.NoError(t, os.WriteFile(filepath.Join(wheels, "missing_source_only-1.0.tar.gz"), ciCheckPackageArchive(t, map[string]string{
-		"source/pyproject.toml": "[build-system]\nrequires=[]\nbuild-backend='backend'\nbackend-path=['.']\n",
-		"source/backend.py":     fmt.Sprintf("from pathlib import Path\ndef get_requires_for_build_wheel(config_settings=None):\n Path(%q).write_text('source build ran')\n raise RuntimeError('controlled backend')\n", buildMarker),
-	}), 0o600))
-	manifest := fmt.Sprintf(`{"name":"checker-fixture","version":"1.0.0","main":"index.js","bin":{"fixture-tool":"./index.js"},"scripts":{"install":"node -e \"require('fs').writeFileSync('%s','ran')\""}}`, lifecycleMarker)
+	manifest := `{"name":"checker-fixture","version":"1.0.0","main":"index.js","bin":{"fixture-tool":"./index.js"}}`
 	archive := ciCheckPackageArchive(t, map[string]string{"package/package.json": manifest, "package/index.js": "module.exports = 'javascript ready';\n"})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
 	t.Cleanup(server.Close)
 	repo := testutil.NewTestRepoWithCommit(t)
-	repo.CommitFile("pyproject.toml", "[project]\nname = 'Project.Self'\ndependencies = ['checker-fixture [test] >=1; python_version >= \"3\"', 'missing-source-only']\n[project.optional-dependencies]\na = ['driver-fixture==1.0']\nb = ['driver-fixture==2.0']\nall = ['PROJECT_self[dev]']\nc = ['transitive-fixture']\n", "python dependencies")
+	repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['checker-fixture']\n", "python dependencies")
 	repo.CommitFile("web/package.json", `{"name":"fixture","version":"1.0.0","main":"./index.js","exports":"./index.js","overrides":{"checker-fixture":"$checker-fixture"},"dependencies":{"checker-fixture":"1.0.0"}}`, "javascript dependencies")
 	repo.CommitFile("web/package-lock.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q,"hasInstallScript":true,"bin":{"fixture-tool":"./index.js"}}}}`, server.URL+"/package.tgz"), "javascript lock")
 	var log bytes.Buffer
-	prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
-	assert.NoFileExists(t, lifecycleMarker, log.String())
-	assert.NoFileExists(t, buildMarker, log.String())
-	require.FileExists(t, filepath.Join(repo.Root, "web", "node_modules", "checker-fixture", "index.js"), log.String())
-	require.FileExists(t, filepath.Join(repo.Root, ".venv", "bin", "python"), log.String())
-	published, err := filepath.Glob(filepath.Join(repo.Root, ".venv", "lib", "python*", "site-packages", "project_self.py"))
-	require.NoError(t, err)
-	assert.Empty(t, published, "self-referencing extras must leave the PR's package uninstalled")
 	sha := repo.HeadSHA()
 	command := filepath.Join(t.TempDir(), "codex")
 	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
@@ -119,7 +79,7 @@ esac
 	run.Job.Route = sandbox.Route{Name: "fixture", Upstream: server.URL, Path: "/responses", EnvVar: "FIXTURE_TOKEN", Capture: []string{"/bin/echo", "fixture-token"}}
 	probe := fmt.Sprintf(`set -e
 cd '%s'
-python -c 'import checker_fixture,driver_fixture; assert driver_fixture.value == "python 1.0 ready"; print(checker_fixture.value)'
+python -c 'import checker_fixture; print(checker_fixture.value)'
 node -e "console.log(require('./web/node_modules/checker-fixture'))"
 `, run.Repo)
 	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", probe})
@@ -274,20 +234,57 @@ func TestCICheckPackagesPythonRequirementFilterIntegration(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("requires installed Python")
 	}
+	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
+	require.NoError(t, err)
+	wheels := t.TempDir()
+	for _, pkg := range []struct{ name, version, requires string }{
+		{"checker_fixture", "1.0", ""}, {"driver_fixture", "1.0", ""}, {"driver_fixture", "2.0", ""}, {"project_self", "1.0", ""}, {"transitive_fixture", "1.0", "Requires-Dist: PROJECT.self==1.0\n"},
+	} {
+		ciCheckPackageWheel(t, wheels, pkg.name, pkg.version, pkg.requires)
+	}
+	buildMarker := filepath.Join(t.TempDir(), "source-build-ran")
+	require.NoError(t, os.WriteFile(filepath.Join(wheels, "missing_source_only-1.0.tar.gz"), ciCheckPackageArchive(t, map[string]string{
+		"source/pyproject.toml": "[build-system]\nrequires=[]\nbuild-backend='backend'\nbackend-path=['.']\n",
+		"source/backend.py":     fmt.Sprintf("from pathlib import Path\ndef get_requires_for_build_wheel(config_settings=None):\n Path(%q).write_text('source build ran')\n raise RuntimeError('controlled backend')\n", buildMarker),
+	}), 0o600))
+	tools := t.TempDir()
+	wrapper := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+*download*) exec '%s' "$@" --no-index --find-links '%s';;
+*) exec '%s' "$@";;
+esac
+`, python, wheels, python)
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(wrapper), 0o700))
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stage := t.TempDir()
 	for _, dir := range []string{"home", "tmp"} {
 		require.NoError(t, os.Mkdir(filepath.Join(stage, dir), 0o700))
 	}
 	var log bytes.Buffer
-	prepared := prepareCICheckPython(t.Context(), t.TempDir(), stage, []byte(`[project]
-dependencies = ['colorama; python_version < "0"', 'numpy=>1', 'fixture @ https://user:secret@example.com/wheel.whl trailing', 'fixture @ https://user:secret@example.invalid/wheel.whl']
+	project := t.TempDir()
+	prepared := prepareCICheckPython(t.Context(), project, stage, []byte(`[project]
+name = "Project.Self"
+dependencies = ['colorama; python_version < "0"', 'numpy=>1', 'fixture @ https://user:secret@example.com/wheel.whl trailing', 'fixture @ https://user:secret@example.invalid/wheel.whl', 'checker-fixture [test] >=1; python_version >= "3"', 'missing-source-only']
+[project.optional-dependencies]
+a = ['driver-fixture==1.0']
+b = ['driver-fixture==2.0']
+all = ['PROJECT_self[dev]']
+c = ['transitive-fixture']
 `), ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), &log)
 	assert.True(t, prepared, "valid entries must remain available: %s", log.String())
 	assert.Contains(t, log.String(), "invalid requirement in pyproject.toml dependency declaration 2")
 	assert.Contains(t, log.String(), "invalid requirement in pyproject.toml dependency declaration 3")
 	assert.NotContains(t, log.String(), "secret")
 	assert.NotContains(t, log.String(), "https://")
-	assert.NotContains(t, log.String(), "package preparation failed")
+	assert.NoFileExists(t, buildMarker, log.String())
+	sites, err := filepath.Glob(filepath.Join(project, ".venv", "lib", "python*", "site-packages"))
+	require.NoError(t, err)
+	require.Len(t, sites, 1)
+	assert.FileExists(t, filepath.Join(sites[0], "checker_fixture.py"))
+	assert.FileExists(t, filepath.Join(sites[0], "driver_fixture-1.0.dist-info", "METADATA"))
+	assert.NoDirExists(t, filepath.Join(sites[0], "driver_fixture-2.0.dist-info"))
+	assert.NoFileExists(t, filepath.Join(sites[0], "project_self.py"), "direct and transitive references must leave the project's own package uninstalled")
+	assert.NoFileExists(t, filepath.Join(sites[0], "transitive_fixture.py"))
 }
 
 func requireCICheckNpm(t *testing.T, policies bool) {
@@ -310,6 +307,28 @@ func requireCICheckNpm(t *testing.T, policies bool) {
 			}
 		}
 	}
+}
+
+func ciCheckPackageWheel(t *testing.T, dir, name, version, requires string) {
+	t.Helper()
+	wheel, err := os.Create(filepath.Join(dir, name+"-"+version+"-py3-none-any.whl"))
+	require.NoError(t, err)
+	zw := zip.NewWriter(wheel)
+	metadata := "Metadata-Version: 2.1\nName: " + strings.ReplaceAll(name, "_", "-") + "\nVersion: " + version + "\nProvides-Extra: test\n" + requires
+	for name, data := range map[string]string{
+		name + ".py":  fmt.Sprintf("value = 'python %s ready'\n", version),
+		name + ".pth": "import sys,pathlib; pathlib.Path(sys.prefix, 'pth-ran').write_text('started')\n",
+		name + "-" + version + ".dist-info/METADATA": metadata,
+		name + "-" + version + ".dist-info/WHEEL":    "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+		name + "-" + version + ".dist-info/RECORD":   "",
+	} {
+		w, err := zw.Create(name)
+		require.NoError(t, err)
+		_, err = io.WriteString(w, data)
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	require.NoError(t, wheel.Close())
 }
 
 func ciCheckPackageArchive(t *testing.T, files map[string]string) []byte {
@@ -415,8 +434,9 @@ func TestCICheckPackagesBunLockIntegration(t *testing.T) {
 
 func TestCICheckPackagesNpmLayoutsIntegration(t *testing.T) {
 	requireCICheckNpm(t, true)
+	lifecycleMarker := filepath.Join(t.TempDir(), "lifecycle-ran")
 	archive := ciCheckPackageArchive(t, map[string]string{
-		"package/package.json": `{"name":"checker-fixture","version":"1.0.0","bin":{"fixture-tool":"./index.js"}}`,
+		"package/package.json": fmt.Sprintf(`{"name":"checker-fixture","version":"1.0.0","bin":{"fixture-tool":"./index.js"},"scripts":{"install":"node -e \"require('fs').writeFileSync('%s','ran')\""}}`, lifecycleMarker),
 		"package/index.js":     "module.exports = 'ready';\n",
 	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
@@ -453,6 +473,7 @@ func TestCICheckPackagesNpmLayoutsIntegration(t *testing.T) {
 			}
 			var log bytes.Buffer
 			prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
+			assert.NoFileExists(t, lifecycleMarker, log.String())
 			assert.FileExists(t, filepath.Join(repo.Root, tc.module, "node_modules", "checker-fixture", "index.js"), log.String())
 			if tc.missing != "" {
 				assert.NoDirExists(t, filepath.Join(repo.Root, tc.missing), log.String())

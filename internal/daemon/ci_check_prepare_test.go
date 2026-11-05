@@ -25,12 +25,29 @@ func TestCICheckPreparation(t *testing.T) {
 	}
 	miseTools, miseShims, miseData := ciCheckMiseFixture(t)
 	pythonTools, pythonScript := ciCheckPackagePythonFixture(t)
+	pythonRoot := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(pythonRoot, "bin"), 0o700))
+	interpreter := filepath.Join(pythonRoot, "bin", "python")
+	require.NoError(t, os.WriteFile(interpreter, []byte(pythonScript), 0o700))
+	pythonScript = strings.Replace(pythonScript, ` /bin/cp "$0" "$dest/bin/python"`, fmt.Sprintf(` /bin/ln -s '%s' "$dest/bin/python"`, interpreter), 1)
 	require.NoError(t, os.WriteFile(filepath.Join(miseTools, "bin", "python3"), []byte(pythonScript), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(miseTools, "bin", "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(miseTools, "bin", "npm"), []byte("#!/bin/sh\nexit 1\n"), 0o700))
+	bun := `#!/bin/sh
+[ "$GIT_CONFIG_VALUE_0" = "AUTHORIZATION: synthetic" ] || exit 10
+case "$*" in
+*--eval*) /bin/cat;;
+*) /bin/mkdir -p node_modules/test-package;;
+esac
+`
+	require.NoError(t, os.WriteFile(filepath.Join(miseTools, "bin", "bun"), []byte(bun), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(pythonTools, "python3"), []byte("#!/bin/sh\nexit 99\n"), 0o700))
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")
 	repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['test-package']\n", "python dependencies")
+	repo.CommitFile("web/package.json", `{}`, "javascript declaration")
+	repo.CommitFile("web/bun.lock", `{"packages":{}}`, "bun lock")
 	marker := filepath.Join(t.TempDir(), "hook-ran")
 	repo.WriteFile(".githooks/post-checkout", fmt.Sprintf("#!/bin/sh\nprintf 'hook ran' > '%s'\n", marker))
 	require.NoError(t, os.Chmod(filepath.Join(repo.Root, ".githooks", "post-checkout"), 0o700))
@@ -52,7 +69,7 @@ func TestCICheckPreparation(t *testing.T) {
 	command := filepath.Join(t.TempDir(), "codex")
 	require.NoError(t, os.Symlink(filepath.Join(miseShims, "mise"), command))
 	var log bytes.Buffer
-	run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
+	run, err := wp.prepareCICheck(t.Context(), job, command, []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader", "GIT_CONFIG_VALUE_0=AUTHORIZATION: synthetic"}, &log)
 	require.NoError(t, err)
 	defer run.cleanup()
 	var tmp string
@@ -73,7 +90,8 @@ func TestCICheckPreparation(t *testing.T) {
 	assert.Contains(t, run.Job.ReadPaths, tools)
 	assert.Contains(t, run.Job.ReadPaths, moduleCache)
 	assert.Contains(t, run.Job.ReadPaths, miseTools)
-	assert.Contains(t, run.Job.ReadPaths, filepath.Join(run.Repo, ".venv"))
+	assert.Contains(t, run.Job.ReadPaths, pythonRoot)
+	assert.DirExists(t, filepath.Join(run.Repo, "web", "node_modules", "test-package"), log.String())
 	mise, err := filepath.EvalSymlinks(filepath.Join(miseShims, "mise"))
 	require.NoError(t, err)
 	assert.Contains(t, run.Job.ReadPaths, mise)
