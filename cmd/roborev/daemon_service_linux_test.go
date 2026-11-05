@@ -523,3 +523,28 @@ func TestUserServiceCommandsNeverRestart(t *testing.T) {
 	assert.Equal(t, 5678, mainPID)
 	assert.Equal(t, [][]string{{"start", "--", "fixture.service"}, {"show", "--property=MainPID", "--", "fixture.service"}}, *calls)
 }
+
+func TestSystemdRestartKeepsDetachedWorkflow(t *testing.T) {
+	stubServiceRecovery(t)
+	lookups, starts := 0, 0
+	findDaemonService = func(context.Context, int) (*daemonService, error) {
+		lookups++
+		return &daemonService{unit: "fixture.service", serviceType: "exec", mainPID: os.Getpid()}, nil
+	}
+	startDaemonService = func(context.Context, string) error {
+		starts++
+		return nil
+	}
+	var calls []string
+	withDaemonCommandDependencies(t,
+		func() error { calls = append(calls, "ensure"); return nil },
+		func() error { calls = append(calls, "stop"); return nil },
+		func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+	)
+	cmd := daemonCmd()
+	cmd.SetArgs([]string{"restart"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	assert.Equal(t, []string{"stop", "ensure"}, calls)
+	assert.Zero(t, lookups)
+	assert.Zero(t, starts)
+}

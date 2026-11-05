@@ -569,7 +569,33 @@ func runControlledUpdate(
 			_, _ = session.release(releaseCtx)
 		}
 	}()
-	prepareDaemon := func(info *daemon.RuntimeInfo) error {
+	var serviceOwner *daemonService
+	var releaseRecovery func()
+	defer func() {
+		if releaseRecovery != nil {
+			releaseRecovery()
+		}
+	}()
+	prepareDaemon := func(info *daemon.RuntimeInfo, installed bool) error {
+		if restartThroughService {
+			var err error
+			releaseRecovery, err = acquireRecoveryLock()
+			if err != nil {
+				return fmt.Errorf("%w: %w", errRecoveryLock, err)
+			}
+			serviceOwner, err = restartService(operationCtx, []*daemon.RuntimeInfo{info})
+			if err != nil {
+				if installed {
+					return err
+				}
+				return fmt.Errorf("update stopped before install: %w; use --no-restart to install without restarting", err)
+			}
+			if serviceOwner == nil {
+				releaseRecovery()
+				releaseRecovery = nil
+			}
+		}
+
 		prepared, err := prepareUpdateDaemonForCommand(
 			operationCtx,
 			info.Endpoint(),
@@ -611,7 +637,7 @@ func runControlledUpdate(
 		}
 	}
 	if runningDaemon != nil {
-		if err := prepareDaemon(runningDaemon); err != nil {
+		if err := prepareDaemon(runningDaemon, false); err != nil {
 			return err
 		}
 	}
@@ -644,7 +670,17 @@ func runControlledUpdate(
 			if policy == "" {
 				policy = policyWait
 			}
-			if err := prepareDaemon(runningDaemon); err != nil {
+			if restartThroughService {
+				// The install replaced the binary after the CLI captured its identity.
+				installed, err := os.Stat(updatedRoborevBinary(binDir))
+				if err != nil {
+					return installedUpdateInterruption(session, err)
+				}
+				previousIdentity := cliExecutableInfo
+				cliExecutableInfo = func() (os.FileInfo, error) { return installed, nil }
+				defer func() { cliExecutableInfo = previousIdentity }()
+			}
+			if err := prepareDaemon(runningDaemon, true); err != nil {
 				return installedUpdateInterruption(session, err)
 			}
 			session.Installed = true
@@ -678,7 +714,7 @@ func runControlledUpdate(
 			}
 		}
 		if err := restartUpdatedDaemonForCommand(
-			operationCtx, binDir, info.LatestVersion, runningDaemon,
+			operationCtx, binDir, info.LatestVersion, runningDaemon, serviceOwner,
 		); err != nil {
 			if errors.Is(err, context.Canceled) || operationCtx.Err() != nil {
 				return installedUpdateInterruption(session, err)
@@ -690,6 +726,10 @@ func runControlledUpdate(
 		printUpdatePhase(out, "Daemon", "restarted ("+info.LatestVersion+")")
 	}
 
+	if releaseRecovery != nil {
+		releaseRecovery()
+		releaseRecovery = nil
+	}
 	if err := repairHooksForUpdateCommand(ctx, binDir, nil); err != nil {
 		printUpdatePhase(out, "Git hooks", "warning: "+err.Error())
 	} else {

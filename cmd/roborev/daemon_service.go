@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -34,6 +35,7 @@ func (e *managedRecoveryError) Error() string {
 func (e *managedRecoveryError) Unwrap() error { return e.cause }
 
 var (
+	restartThroughService = false
 	serviceDescription    = "systemd service"
 	serviceRestartCommand = "systemctl --user restart"
 	serviceStartCommand   = "systemctl --user start"
@@ -258,8 +260,13 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return fail(err)
 		}
 	}
+	return startServiceReplacement(context.Background(), owner)
+}
+
+func startServiceReplacement(ctx context.Context, owner *daemonService) error {
+	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
 	// Reviews may take longer than startup. Give the replacement a fresh budget.
-	readyCtx, readyCancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	readyCtx, readyCancel := context.WithTimeout(ctx, daemonStartTimeout)
 	defer readyCancel()
 	// Start leaves a socket-activated replacement running.
 	if err := startDaemonService(readyCtx, owner.unit); err != nil {
@@ -294,4 +301,35 @@ func awaitServiceReplacement(ctx context.Context, unit string) error {
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)),
 		backoff.WithMaxElapsedTime(0))
 	return err
+}
+
+// restartService checks ownership before an explicit restart shuts down a daemon.
+func restartService(ctx context.Context, runtimes []*daemon.RuntimeInfo) (*daemonService, error) {
+	if !restartThroughService {
+		return nil, nil
+	}
+	for _, info := range runtimes {
+		if info.PID <= 0 || info.Stale() {
+			continue
+		}
+		owner, err := findDaemonService(ctx, info.PID)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if owner == nil {
+			continue
+		}
+		if reason := owner.keepReason(info.PID); reason != "" {
+			hint := fmt.Sprintf("run %s %s", serviceRestartCommand, owner.unit)
+			if strings.Contains(reason, hint) {
+				return nil, errors.New(reason)
+			}
+			return nil, fmt.Errorf("%s; %s", reason, hint)
+		}
+		return owner, nil
+	}
+	return nil, nil
 }

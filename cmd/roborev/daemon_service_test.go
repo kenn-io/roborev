@@ -24,12 +24,14 @@ func stubServiceRecovery(t *testing.T) {
 	oldCgroup := daemonCgroupUnit
 	oldDiscovery, oldEnsure, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
 	oldPause := pendingStartPause
+	oldRestart, oldCommand, oldIdentity := restartThroughService, serviceRestartCommand, cliExecutableInfo
 	t.Cleanup(func() {
 		lifecycleOut, verbose = oldOut, oldVerbose
 		findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon = oldFind, oldMainPID, oldStart, oldDrain
 		daemonCgroupUnit = oldCgroup
 		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldEnsure, oldDetached
 		pendingStartPause = oldPause
+		restartThroughService, serviceRestartCommand, cliExecutableInfo = oldRestart, oldCommand, oldIdentity
 	})
 }
 

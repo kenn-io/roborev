@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,4 +189,108 @@ func withDaemonCommandDependencies(
 		daemonStop = originalStop
 		daemonDiscover = originalDiscover
 	})
+}
+
+func TestDaemonRestartThroughLaunchdJob(t *testing.T) {
+	for _, tc := range []struct {
+		name, wantError                                        string
+		unmanaged, vanished, stale, child, foreign, unreadable bool
+	}{
+		{name: "owned"},
+		{name: "wrapper", child: true, wantError: "child process"},
+		{name: "foreign", foreign: true, wantError: "another installation"},
+		{name: "unreadable", unreadable: true, wantError: "job unreadable"},
+		{name: "vanished", vanished: true},
+		{name: "stale", stale: true},
+		{name: "unmanaged", unmanaged: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubServiceRecovery(t)
+			restartThroughService = true
+			serviceRestartCommand = "launchctl kickstart -k"
+			path, err := os.Executable()
+			require.NoError(t, err)
+			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
+			owner := &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+			if tc.child {
+				owner.mainPID++
+			}
+			if tc.foreign {
+				owner.executable = filepath.Join(t.TempDir(), "roborev")
+				require.NoError(t, os.WriteFile(owner.executable, nil, 0o600))
+			}
+			runtimeInfo := &daemon.RuntimeInfo{PID: os.Getpid()}
+			if tc.stale {
+				runtimeInfo.PID = 1 << 30
+			}
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{runtimeInfo}, nil }
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+				assert.Equal(t, os.Getpid(), pid)
+				if tc.unreadable {
+					return nil, errors.New("job unreadable")
+				}
+				if tc.vanished {
+					return nil, os.ErrNotExist
+				}
+				if tc.unmanaged {
+					return nil, nil
+				}
+				return owner, nil
+			}
+			assertLocked := func() {
+				release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
+				require.NoError(t, err)
+				if release != nil {
+					release()
+				}
+				assert.False(t, acquired)
+			}
+			var calls []string
+			startDaemonService = func(_ context.Context, unit string) error {
+				assert.Equal(t, owner.unit, unit)
+				assertLocked()
+				calls = append(calls, "kickstart")
+				return nil
+			}
+			serviceMainPID = func(_ context.Context, unit string) (int, error) {
+				assert.Equal(t, owner.unit, unit)
+				return 200, nil
+			}
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return &daemon.RuntimeInfo{PID: 200}, nil }
+			withDaemonCommandDependencies(t,
+				func() error { calls = append(calls, "ensure"); return nil },
+				func() error {
+					if !tc.unmanaged && !tc.vanished && !tc.stale {
+						assertLocked()
+					}
+					calls = append(calls, "stop")
+					return nil
+				},
+				func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+			)
+			var commandErr error
+			output := captureStdout(t, func() {
+				cmd := daemonCmd()
+				cmd.SetArgs([]string{"restart"})
+				commandErr = cmd.ExecuteContext(t.Context())
+			})
+			if tc.wantError != "" {
+				require.ErrorContains(t, commandErr, tc.wantError)
+				assert.Empty(t, calls)
+				if tc.child || tc.foreign {
+					assert.Equal(t, 1, strings.Count(commandErr.Error(), "run launchctl kickstart -k "+owner.unit))
+				}
+				return
+			}
+			require.NoError(t, commandErr)
+			assert.Contains(t, output, "Daemon restarted")
+			if tc.unmanaged || tc.vanished || tc.stale {
+				assert.Equal(t, []string{"stop", "ensure"}, calls)
+			} else {
+				assert.Equal(t, []string{"stop", "kickstart"}, calls)
+			}
+		})
+	}
 }
