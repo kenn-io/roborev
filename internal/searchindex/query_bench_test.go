@@ -22,7 +22,7 @@ func BenchmarkSearchLexicalHistory(b *testing.B) {
 			}
 			_, err = index.RefreshMirrorPage(b.Context(), docs, nil)
 			require.NoError(b, err)
-			for _, query := range []struct{ name, text string }{{"common", "needle"}, {"no-match", "zzqxv"}} {
+			for _, query := range []struct{ name, text string }{{"common", "needle"}, {"identifier", "main"}, {"no-match", "zzqxv"}} {
 				b.Run(query.name, func(b *testing.B) {
 					for b.Loop() {
 						_, err := index.SearchLexical(b.Context(), query.text, SearchFilters{}, 60)

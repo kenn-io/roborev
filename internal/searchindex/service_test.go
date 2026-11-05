@@ -3,6 +3,7 @@ package searchindex
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"html"
@@ -659,6 +660,79 @@ func TestServiceHybridBreaksEqualFusedScoresByRecencyAndLoadsThePageOnce(t *test
 	assert.InDelta(t, result.Hits[0].Score, result.Hits[1].Score, 1e-15)
 	assert.Contains(t, result.Hits[1].Excerpt, "<mark>needle</mark>")
 	assert.Equal(t, 1, store.lookups, "one canonical query loads the whole page")
+}
+
+type searchCountingConnector struct {
+	driver  driver.Driver
+	path    string
+	queries []string
+}
+
+func (connector *searchCountingConnector) Driver() driver.Driver { return connector.driver }
+
+func (connector *searchCountingConnector) Connect(context.Context) (driver.Conn, error) {
+	conn, err := connector.driver.Open(connector.path)
+	if err != nil {
+		return nil, err
+	}
+	return &searchCountingConn{Conn: conn, connector: connector}, nil
+}
+
+type searchCountingConn struct {
+	driver.Conn
+	connector *searchCountingConnector
+}
+
+func (conn *searchCountingConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	conn.connector.queries = append(conn.connector.queries, query)
+	return conn.Conn.(driver.QueryerContext).QueryContext(ctx, query, args)
+}
+
+func TestServiceHybridWidensLexicalWithoutRepeatingSemanticQuery(t *testing.T) {
+	index := openQueryTestIndex(t)
+	var docs []searchdoc.Document
+	vectors := make(map[string][]vector.ChunkVector)
+	for i := range 13 {
+		group := "panel"
+		if i == 0 {
+			group = "older"
+		}
+		doc := queryTestDocument(int64(i+1), group, "needle", queryDocOptions{})
+		docs = append(docs, doc)
+		vectors[doc.DocKey] = []vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}
+	}
+	_, err := index.RefreshMirrorPage(t.Context(), docs, nil)
+	require.NoError(t, err)
+	model := testSpace("widening", 2)
+	seedActiveGeneration(t, index, model, vectors)
+	serving, ok, err := index.ServingGeneration(t.Context(), model)
+	require.NoError(t, err)
+	require.True(t, ok)
+	var sequence int
+	var name, path string
+	require.NoError(t, index.db.QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &path))
+	connector := &searchCountingConnector{driver: index.db.Driver(), path: path}
+	db := sql.OpenDB(connector)
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	service := NewService(newServiceStore(docs...), &Index{db: db, vectors: index.vectors}, nil, nil)
+	groups, semanticGroups, err := service.fuse(t.Context(), "needle",
+		semanticQuery{key: serving.Key, vector: vector.Vector{1, 0}}, SearchFilters{}, 2, 20)
+	require.NoError(t, err)
+	require.Len(t, groups, 2)
+	assert.Equal(t, 2, semanticGroups)
+	assert.Equal(t, docs[12].DocKey, groups[0].Members[0].DocKey)
+	var lexicalQueries, semanticQueries int
+	for _, query := range connector.queries {
+		if strings.Contains(query, "WITH ident AS MATERIALIZED") {
+			lexicalQueries++
+		}
+		if strings.Contains(query, "WITH chunks AS MATERIALIZED") {
+			semanticQueries++
+		}
+	}
+	assert.Equal(t, 2, lexicalQueries, "the panel fills the first lexical window")
+	assert.Equal(t, 1, semanticQueries, "lexical widening leaves semantic inputs unchanged")
 }
 
 func TestServiceSinceFilterIsExactWithinOneSecondOnBothLegs(t *testing.T) {

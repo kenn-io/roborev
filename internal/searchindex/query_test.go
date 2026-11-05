@@ -420,3 +420,32 @@ func TestSearchLexicalBreaksEqualScoresByRecencyPastTheWindow(t *testing.T) {
 	require.Len(t, hits, 3)
 	assert.Equal(t, []string{docs[19].DocKey, docs[18].DocKey, docs[17].DocKey}, []string{hits[0].DocKey, hits[1].DocKey, hits[2].DocKey})
 }
+
+func TestSearchLexicalBoundsIdentifiersAndKeepsMembersPastTheWindow(t *testing.T) {
+	index := openQueryTestIndex(t)
+	older := queryTestDocument(1, "older", "brief review", queryDocOptions{})
+	docs := []searchdoc.Document{older}
+	for i := range 12 {
+		docs = append(docs, queryTestDocument(int64(i+2), "panel", strings.Repeat("filler ", 80), queryDocOptions{}))
+	}
+	_, err := index.RefreshMirrorPage(t.Context(), docs, nil)
+	require.NoError(t, err)
+	for _, limit := range []int{1, 2} {
+		t.Run(fmt.Sprintf("groups=%d", limit), func(t *testing.T) {
+			groups, err := index.SearchLexical(t.Context(), "main", SearchFilters{}, limit)
+			require.NoError(t, err)
+			require.Len(t, groups, limit)
+			require.Len(t, groups[0].Members, 12)
+			for i, member := range groups[0].Members {
+				assert.Equal(t, docs[12-i].DocKey, member.DocKey)
+				assert.True(t, member.Identifier)
+				assert.Equal(t, 1.0, member.Score)
+				assert.Equal(t, docs[12-i].Content, member.Excerpt)
+			}
+			if limit == 2 {
+				require.Len(t, groups[1].Members, 1)
+				assert.Equal(t, older.DocKey, groups[1].Members[0].DocKey)
+			}
+		})
+	}
+}
