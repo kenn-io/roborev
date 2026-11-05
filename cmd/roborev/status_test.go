@@ -555,10 +555,11 @@ func TestStatusLockFailureKeepsLiveness(t *testing.T) {
 			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
 			executable, err := os.Executable()
 			require.NoError(t, err)
-			oldExecutableInfo := cliExecutableInfo
-			t.Cleanup(func() { cliExecutableInfo = oldExecutableInfo })
 			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(executable) }
-			findDaemonService = func(context.Context, int) (*daemonService, error) {
+			lookups, locks, drains, starts := 0, 0, 0, 0
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+				lookups++
+				assert.Equal(t, os.Getpid(), pid)
 				if !responsive {
 					// HTTP disappears after discovery while the recorded process stays alive.
 					md.Close()
@@ -566,15 +567,17 @@ func TestStatusLockFailureKeepsLiveness(t *testing.T) {
 				}
 				return &daemonService{unit: "fixture.service", mainPID: os.Getpid(), executable: executable, serviceType: "simple"}, nil
 			}
-			lockPath, err := daemon.RuntimeStore().LockPath()
-			require.NoError(t, err)
-			// A directory at the lock path prevents opening it while discovery still works.
-			require.NoError(t, os.Mkdir(lockPath, 0o700))
+			lockErr := errors.New("recovery lock unavailable")
+			acquireRecoveryLock = func() (func(), error) { locks++; return nil, lockErr }
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error { drains++; return errors.New("unexpected drain") }
+			startDaemonService = func(context.Context, string) error { starts++; return errors.New("unexpected service start") }
+			startDaemonForEnsure = func() error { starts++; return errors.New("unexpected detached start") }
 			oldEnsure := statusEnsureDaemon
 			t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
 			statusEnsureDaemon = func() error {
 				err := ensureDaemon()
 				require.ErrorIs(t, err, errRecoveryLock)
+				require.ErrorIs(t, err, lockErr)
 				var retained *kitdaemon.UnreachableError
 				require.ErrorAs(t, err, &retained)
 				assert.Equal(t, os.Getpid(), retained.Record.PID)
@@ -592,6 +595,10 @@ func TestStatusLockFailureKeepsLiveness(t *testing.T) {
 			assert.Nil(result.Daemon)
 			assert.Nil(result.Health)
 			assert.Empty(result.Jobs)
+			assert.Equal(1, lookups)
+			assert.Equal(1, locks)
+			assert.Zero(drains)
+			assert.Zero(starts)
 		})
 	}
 }
@@ -814,7 +821,18 @@ func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
 				}
 				binary, err := os.Executable()
 				require.NoError(t, err)
-				findDaemonService = func(context.Context, int) (*daemonService, error) {
+				cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
+				lookups, locks, releases, drains, starts := 0, 0, 0, 0, 0
+				acquireRecoveryLock = func() (func(), error) {
+					locks++
+					return func() { releases++ }, nil
+				}
+				drainManagedDaemon = func(*daemon.RuntimeInfo) error { drains++; return errors.New("unexpected drain") }
+				startDaemonService = func(context.Context, string) error { starts++; return errors.New("unexpected service start") }
+				startDaemonForEnsure = func() error { starts++; return errors.New("unexpected detached start") }
+				findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+					lookups++
+					assert.Equal(t, original.PID, pid)
 					if ownershipFailure {
 						return nil, ownershipErr
 					}
@@ -845,6 +863,11 @@ func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
 				for _, field := range []string{"daemon", "health", "jobs"} {
 					assert.NotContains(t, result, field)
 				}
+				assert.Equal(t, 2, lookups)
+				assert.Equal(t, 1, locks)
+				assert.Equal(t, 1, releases)
+				assert.Zero(t, drains)
+				assert.Zero(t, starts)
 			})
 		}
 	}

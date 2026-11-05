@@ -105,7 +105,7 @@ func (s *daemonService) sameInstallation() (bool, error) {
 // acquireRecoveryLock lets waiting commands share the active review drain.
 // The holder drains without a deadline, so waiters wait as long as it does
 // and then reuse its replacement instead of failing mid-drain.
-func acquireRecoveryLock() (func(), error) {
+var acquireRecoveryLock = func() (func(), error) {
 	store := daemon.RuntimeStore()
 	release, acquired, err := store.TryAcquireStartLock(context.Background())
 	if err != nil || acquired {
