@@ -6,9 +6,12 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/sync/semaphore"
 )
+
+const sqliteWriteWait = 30 * time.Second
 
 var errWriteGateTimeout = errors.New("sqlite write queue timed out")
 
@@ -17,7 +20,7 @@ var errWriteGateTimeout = errors.New("sqlite write queue timed out")
 type writeGate struct{ queue *semaphore.Weighted }
 
 func (g *writeGate) acquire(ctx context.Context) error {
-	wait, cancel := context.WithTimeout(ctx, 30*time.Second)
+	wait, cancel := context.WithTimeout(ctx, sqliteWriteWait)
 	defer cancel()
 	if err := g.queue.Acquire(wait, 1); err != nil {
 		if ctx.Err() != nil {
@@ -73,15 +76,13 @@ func (c *writeGateConn) release() {
 // start uses the leading keyword, leaving reads and unrecognized statements
 // alone. Deferred transactions join the queue only when they first write.
 func (c *writeGateConn) start(ctx context.Context, query string) (func(error), error) {
-	words := strings.Fields(query)
-	keyword := ""
-	if len(words) > 0 {
-		keyword = strings.ToUpper(words[0])
-	}
+	word, rest := leadingSQLKeyword(query)
+	keyword := strings.ToUpper(word)
 	write := false
 	switch keyword {
 	case "BEGIN":
-		write = len(words) > 1 && (strings.EqualFold(words[1], "IMMEDIATE") || strings.EqualFold(words[1], "EXCLUSIVE"))
+		mode, _ := leadingSQLKeyword(rest)
+		write = strings.EqualFold(mode, "IMMEDIATE")
 	case "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "VACUUM":
 		write = true
 	}
@@ -100,7 +101,7 @@ func (c *writeGateConn) start(ctx context.Context, query string) (func(error), e
 			} else if acquired {
 				c.release()
 			}
-		case "COMMIT", "END", "ROLLBACK":
+		case "COMMIT", "ROLLBACK":
 			if err == nil {
 				c.inTx = false
 				c.release()
@@ -111,6 +112,14 @@ func (c *writeGateConn) start(ctx context.Context, query string) (func(error), e
 			}
 		}
 	}, nil
+}
+
+func leadingSQLKeyword(query string) (string, string) {
+	query = strings.TrimLeftFunc(query, unicode.IsSpace)
+	if end := strings.IndexFunc(query, unicode.IsSpace); end >= 0 {
+		return query[:end], query[end:]
+	}
+	return query, ""
 }
 
 func (c *writeGateConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
@@ -136,20 +145,12 @@ func (c *writeGateConn) QueryContext(ctx context.Context, query string, args []d
 	return &writeGateRows{Rows: rows, finish: finish}, nil
 }
 
-func (c *writeGateConn) Prepare(query string) (driver.Stmt, error) {
-	return c.PrepareContext(context.Background(), query)
-}
-
 func (c *writeGateConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	stmt, err := c.sqliteGateConn.PrepareContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 	return &writeGateStmt{Stmt: stmt, conn: c, query: query}, nil
-}
-
-func (c *writeGateConn) Begin() (driver.Tx, error) {
-	return c.BeginTx(context.Background(), driver.TxOptions{})
 }
 
 func (c *writeGateConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
@@ -190,22 +191,6 @@ type writeGateStmt struct {
 	driver.Stmt
 	conn  *writeGateConn
 	query string
-}
-
-func (s *writeGateStmt) Exec(args []driver.Value) (driver.Result, error) {
-	return s.ExecContext(context.Background(), writeGateArgs(args))
-}
-
-func (s *writeGateStmt) Query(args []driver.Value) (driver.Rows, error) {
-	return s.QueryContext(context.Background(), writeGateArgs(args))
-}
-
-func writeGateArgs(args []driver.Value) []driver.NamedValue {
-	values := make([]driver.NamedValue, len(args))
-	for i, value := range args {
-		values[i] = driver.NamedValue{Ordinal: i + 1, Value: value}
-	}
-	return values
 }
 
 func (s *writeGateStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {

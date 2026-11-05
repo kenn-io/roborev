@@ -262,7 +262,7 @@ func Open(dbPath string) (*DB, error) {
 	}
 
 	// Queue in-process writers fairly; busy_timeout covers other processes.
-	connector, err := sqlite.NewConnector(dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
+	connector, err := sqlite.NewConnector(fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)", dbPath, sqliteWriteWait.Milliseconds()))
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -341,7 +341,7 @@ func OpenReadOnly(dbPath string) (*DB, error) {
 	dsn := url.URL{Scheme: "file", Path: uriPath}
 	query := dsn.Query()
 	query.Set("mode", "ro")
-	query.Add("_pragma", "busy_timeout(30000)")
+	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", sqliteWriteWait.Milliseconds()))
 	dsn.RawQuery = query.Encode()
 
 	if err := registerContentFunctions(); err != nil {

@@ -1,9 +1,8 @@
 package storage
 
 import (
-	"context"
-	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -12,56 +11,89 @@ import (
 
 func TestUserWritesQueueBehindPullTransaction(t *testing.T) {
 	t.Parallel()
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("user-write")
-	pulled := PulledJob{
-		UUID: testUUID("continuous-pull"), GitRef: "pulled-ref", Agent: "test",
-		JobType: JobTypeReview, Status: string(JobStatusDone),
-		EnqueuedAt: time.Now().UTC(), SourceMachineID: testUUID("peer"),
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	var commits atomic.Int64
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		for ctx.Err() == nil {
-			pulled.UpdatedAt = time.Now().UTC()
-			if err := h.db.UpsertPulledJob(pulled, h.repo.ID, nil); err != nil {
-				done <- err
-				return
-			}
-			if commits.Add(1) == 1 {
-				close(started)
-			}
-		}
-		done <- nil
-	}()
-	defer func() {
-		cancel()
-		require.NoError(t, <-done)
-	}()
-	select {
-	case <-started:
-	case err := <-done:
-		// Leave the result for cleanup, including if the pull fails at startup.
-		done <- err
-		require.NoError(t, err)
-	}
-	for i := range 20 {
-		before := commits.Load()
-		switch i % 3 {
-		case 0:
-			_, err := h.db.EnqueueJob(EnqueueOpts{RepoID: h.repo.ID, GitRef: "queued", Agent: "test"})
-			require.NoError(t, err)
-		case 1:
-			_, err := h.db.AddCommentToJob(job.ID, "user", "comment during pull")
-			require.NoError(t, err)
-		case 2:
-			require.NoError(t, h.db.MarkReviewClosedByJobID(job.ID, true))
-		}
-		// Each call queues GetMachineID and its own write. Allow the pull
-		// completing before either write and after the final release.
-		require.LessOrEqual(t, commits.Load()-before, int64(4), "user write %d waited behind the pull", i)
+	for _, kind := range []string{"enqueue", "post-commit", "comment", "close"} {
+		t.Run(kind, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := newSyncTestHelper(t)
+				job := h.createCompletedJob("existing")
+				_, err := h.db.ExecContext(t.Context(), `
+					CREATE TABLE write_order (id INTEGER PRIMARY KEY, writer TEXT);
+					CREATE TRIGGER job_write_order AFTER INSERT ON review_jobs BEGIN
+						INSERT INTO write_order (writer) VALUES (NEW.git_ref);
+					END;
+					CREATE TRIGGER comment_write_order AFTER INSERT ON responses BEGIN
+						INSERT INTO write_order (writer) VALUES ('user');
+					END;
+					CREATE TRIGGER close_write_order AFTER UPDATE ON reviews BEGIN
+						INSERT INTO write_order (writer) VALUES ('user');
+					END;
+				`)
+				require.NoError(t, err)
+
+				conn, err := h.db.Conn(t.Context())
+				require.NoError(t, err)
+				defer conn.Close()
+				var gate *writeGate
+				require.NoError(t, conn.Raw(func(raw any) error {
+					gate = raw.(*writeGateConn).gate
+					return nil
+				}))
+				require.NoError(t, conn.Close())
+				require.NoError(t, gate.acquire(t.Context()))
+
+				userDone := make(chan error, 1)
+				go func() {
+					var err error
+					opts := EnqueueOpts{RepoID: h.repo.ID, GitRef: "user", Agent: "test"}
+					switch kind {
+					case "enqueue":
+						_, err = h.db.EnqueueJob(opts)
+					case "post-commit":
+						_, _, err = h.db.EnqueuePostCommitJob(opts)
+					case "comment":
+						_, err = h.db.AddCommentToJob(job.ID, "user", "comment during pull")
+					case "close":
+						err = h.db.MarkReviewClosedByJobID(job.ID, true)
+					}
+					userDone <- err
+				}()
+				synctest.Wait()
+				var committed int
+				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM write_order`).Scan(&committed))
+				assert.Equal(t, 0, committed, "user write must wait for admission")
+				gate.queue.Release(1)
+
+				// Let the user's GetMachineID write finish, then hold admission
+				// until its actual write has joined the queue ahead of the pull.
+				require.NoError(t, gate.acquire(t.Context()))
+				synctest.Wait()
+				pullDone := make(chan error, 1)
+				go func() {
+					pullDone <- h.db.UpsertPulledJob(PulledJob{
+						UUID: testUUID("queued-pull"), GitRef: "pull", Agent: "test",
+						JobType: JobTypeReview, Status: string(JobStatusDone),
+						EnqueuedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+						SourceMachineID: testUUID("peer"),
+					}, h.repo.ID, nil)
+				}()
+				synctest.Wait()
+				gate.queue.Release(1)
+				require.NoError(t, <-userDone)
+				require.NoError(t, <-pullDone)
+
+				rows, err := h.db.QueryContext(t.Context(), `SELECT writer FROM write_order ORDER BY id`)
+				require.NoError(t, err)
+				defer rows.Close()
+				var order []string
+				for rows.Next() {
+					var writer string
+					require.NoError(t, rows.Scan(&writer))
+					order = append(order, writer)
+				}
+				require.NoError(t, rows.Err())
+				assert.Equal(t, []string{"user", "pull"}, order)
+			})
+		})
 	}
 }
 
