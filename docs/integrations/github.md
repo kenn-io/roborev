@@ -849,10 +849,9 @@ installation directories and mise's default managed installs directory. This
 supports Node, Bun, OpenTofu, Terraform, Python, and other installed mise tools.
 It can also run `mise exec` when the mise executable links outside those
 directories. It reads the repository's mise config without loading host or
-parent checkout config.
-Provision the required versions on the host. Starting providers or other
-services remains a separate requirement. The checker logs failed mise queries
-and keeps its existing tools.
+parent checkout config. Provision the required versions on the host. Starting
+providers or other services remains a separate requirement. The checker logs
+failed mise queries and keeps its existing tools.
 
 Before starting the sandbox, the checker prepares committed JavaScript and
 Python package declarations, including nested projects such as `web/`.
