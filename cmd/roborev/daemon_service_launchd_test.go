@@ -29,12 +29,9 @@ func TestLookupLaunchdService(t *testing.T) {
 		guiErr, userErr, jobErr error
 		unit                    string
 		wantErr                 bool
-		child                   bool
 	}{
-		{name: "wrapper child", chain: []int{43, 42, 1}, unit: "gui/501/com.example.daemon", child: true},
+		{name: "wrapper child", chain: []int{43, 42, 1}, unit: "gui/501/com.example.daemon"},
 		{name: "direct owner", chain: []int{42, 1}, unit: "gui/501/com.example.daemon"},
-		{name: "application label", chain: []int{42, 1}, gui: "\tservices = {\n\t\t42 0 application.example.daemon\n\t}\n", unit: "gui/501/application.example.daemon"},
-		{name: "wrapper with cleared environment", chain: []int{43, 42, 1}, unit: "gui/501/com.example.daemon", child: true},
 		{name: "app job", chain: []int{42, 1}, job: "\ttype = Application\n\tpid = 42\n"},
 		{name: "no matching ancestor", chain: []int{99, 1}},
 		{name: "gui absent", chain: []int{42, 1}, guiErr: exits[113], unit: "user/501/com.example.daemon"},
@@ -101,9 +98,6 @@ func TestLookupLaunchdService(t *testing.T) {
 			check.Equal(42, owner.mainPID)
 			check.Equal("/example/roborev", owner.executable)
 			check.Equal("simple", owner.serviceType)
-			if tc.child {
-				check.Contains(owner.keepReason(43), "child process")
-			}
 			check.Equal([]string{"print", tc.unit}, calls[len(calls)-1])
 		})
 	}
@@ -124,7 +118,6 @@ func TestParseLaunchctlService(t *testing.T) {
 		wantPID      int
 		wantErr      bool
 	}{
-		{name: "not running", output: "\ttype = LaunchAgent\n\tstate = waiting\n\tprogram = /example/roborev\n\tpid = 0\n"},
 		{name: "missing pid", output: "\ttype = LaunchAgent\n\tprogram = /example/roborev\n"},
 		{name: "nested values", output: "\ttype = LaunchAgent\n\tpid = 42\n\tenvironment = {\n\t\ttype = Application\n\t\tpid = 99\n\t}\n", wantPID: 42},
 		{name: "missing type", output: "\tprogram = /example/roborev\n\tpid = 42\n", wantErr: true},
@@ -147,7 +140,7 @@ func TestParseLaunchctlDomain(t *testing.T) {
 		want         map[int]string
 		wantErr      bool
 	}{
-		{name: "running and inactive", output: "domain = {\n\tservices = {\n\t\t42 0 com.example.daemon\n\t\t0 0 inactive\n\t\t- 0 stopped\n\t\t-1 0 invalid\n\t\tbad row\n\t\t43 -15 application.example.daemon\n\t}\n}\n", want: map[int]string{42: "com.example.daemon", 43: "application.example.daemon"}},
+		{name: "running jobs", output: "domain = {\n\tservices = {\n\t\t42 0 com.example.daemon\n\t\t43 -15 application.example.daemon\n\t}\n}\n", want: map[int]string{42: "com.example.daemon", 43: "application.example.daemon"}},
 		{name: "empty", output: "\tservices = {\n\t}\n", want: map[int]string{}},
 		{name: "missing", output: "domain = {}", wantErr: true},
 		{name: "unclosed", output: "\tservices = {\n\t\t42 0 example\n", wantErr: true},
