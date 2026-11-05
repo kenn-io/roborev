@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+	"uuid"
 
 	"modernc.org/sqlite"
 
@@ -237,6 +239,9 @@ type DB struct {
 	*sql.DB
 	analytics analyticsStmts
 	attempts  jobAttempts
+
+	machineIDMu sync.Mutex
+	machineID   uuid.UUID
 }
 
 // Close closes the cached prepared statements and then the database.

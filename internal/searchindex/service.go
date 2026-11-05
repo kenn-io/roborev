@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode"
 
-	"go.kenn.io/kit/search/hybrid"
 	"go.kenn.io/kit/search/rrf"
 	"go.kenn.io/kit/vector"
 
@@ -453,30 +452,30 @@ func (service *Service) fuseDeep(
 	return groups, semanticCeilingReached(probeScore, hasProbe), err
 }
 
-// fuse runs both legs through hybrid.RunGroups and returns the fused groups
+// fuse completes lexical widening, then runs semantic retrieval and fuses groups
 // in rank order, plus how many groups the semantic leg found.
 func (service *Service) fuse(
 	ctx context.Context, text string, query semanticQuery, filters SearchFilters,
 	lexicalGroups, semanticCandidates int,
 ) ([]pageGroup, int, error) {
-	lexicalLeg, err := service.index.lexicalLeg(text, filters, lexicalGroups)
-	if err != nil {
-		return nil, 0, err
-	}
-	semanticLeg, err := service.index.semanticLeg(ctx, query.key, query.vector, semanticCandidates, filters)
+	lexical, err := service.index.SearchLexical(ctx, text, filters, lexicalGroups)
 	if err != nil {
 		return nil, 0, service.unavailableError(err)
 	}
-	fused, err := hybrid.RunGroups(ctx, service.index.db, reciprocalRankConstant, []hybrid.GroupLeg[string, legMember]{
-		{Name: MatchLexical, Weight: 1, Query: lexicalLeg, Scan: scanLexicalRow},
-		{Name: MatchSemantic, Weight: 1, Query: semanticLeg, Scan: scanSemanticRow},
+	semantic, err := service.index.SearchSemantic(ctx, query.key, query.vector, semanticCandidates, filters)
+	if err != nil {
+		return nil, 0, service.unavailableError(err)
+	}
+	fused, err := rrf.FuseGroups(reciprocalRankConstant, []rrf.GroupLeg[string, legMember]{
+		{Name: MatchLexical, Weight: 1, Groups: lexical},
+		{Name: MatchSemantic, Weight: 1, Groups: semantic},
 	})
 	if err != nil {
 		return nil, 0, service.unavailableError(err)
 	}
 	semanticGroups := 0
-	groups := make([]pageGroup, 0, len(fused.Hits))
-	for _, hit := range fused.Hits {
+	groups := make([]pageGroup, 0, len(fused))
+	for _, hit := range fused {
 		group := fusedPageGroup(hit)
 		if slices.ContainsFunc(hit.Contributions, func(c rrf.Contribution) bool { return c.Leg == MatchSemantic }) {
 			semanticGroups++
