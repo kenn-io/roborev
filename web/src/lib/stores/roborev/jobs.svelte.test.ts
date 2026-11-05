@@ -1556,7 +1556,6 @@ describe("createJobsStore auto-design filter", () => {
     await loadJobs(store);
 
     expect(store.getFilterShowAutoDesign()).toBe(false);
-    expect(api.listJobs.mock.calls[0]?.[0]).not.toHaveProperty("omit_stats");
     expect(api.listJobs).toHaveBeenLastCalledWith(
       expect.objectContaining({
         hide_classify_jobs: "true",
@@ -1574,6 +1573,28 @@ describe("createJobsStore auto-design filter", () => {
       unknown
     >;
     expect(lastQuery).not.toHaveProperty("hide_classify_jobs");
+  });
+
+  it("keeps stats for filtered requests and omits them for unfiltered requests", async () => {
+    const api = makeApi();
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+
+    await loadJobs(store);
+
+    expect(api.listJobs.mock.calls[0]?.[0]).not.toHaveProperty("omit_stats");
+
+    store.setFilter("showAutoDesign", true);
+    await vi.waitFor(() => {
+      expect(api.listJobs.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    const lastQuery = api.listJobs.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
     expect(lastQuery).toHaveProperty("omit_stats", "true");
   });
 });

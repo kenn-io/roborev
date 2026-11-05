@@ -104,7 +104,7 @@ func TestRemoteScopesIDListAndReplay(t *testing.T) {
 		cfg.Keys[0].AllRepos = false
 		cfg.Keys[0].RepoIDs = []int64{repo.ID}
 		remote := startedRemoteHandler(t, s, cfg)
-		r := remoteRequest(t, key, "/api/jobs")
+		r := remoteRequest(t, key, "/api/jobs?omit_stats=true")
 		replay := r.Clone(r.Context())
 		out := httptest.NewRecorder()
 		remote.ServeHTTP(out, r)
@@ -431,7 +431,7 @@ func TestRemoteRepositoryGrantSurvivesPathReuse(t *testing.T) {
 	require.NoError(t, s.db.MoveRepo(allowed.ID, "/synthetic/moved", ""))
 	require.NoError(t, s.db.MoveRepo(denied.ID, allowed.RootPath, ""))
 	out := httptest.NewRecorder()
-	handler.ServeHTTP(out, remoteRequest(t, key, "/api/jobs?limit=1&omit_stats=true"))
+	handler.ServeHTTP(out, remoteRequest(t, key, "/api/jobs?limit=1"))
 	require.Equal(t, 200, out.Code)
 	assert.Contains(t, out.Body.String(), "allowed-history")
 	assert.NotContains(t, out.Body.String(), "denied-history")

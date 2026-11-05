@@ -160,7 +160,7 @@ func TestTUIFindingsSplitWidthAndNoColor(t *testing.T) { //nolint:paralleltest /
 	assert.NotContains(t, buf.String(), "\x1b[38;")
 }
 
-func TestTUIFindingsRequestOption(t *testing.T) {
+func TestTUIJobsRequestOptions(t *testing.T) {
 	t.Parallel()
 	queries := map[string]url.Values{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -2514,7 +2514,8 @@ func TestEnqueueIfNeededReturnsAuthDeniedDuringJobProbe(t *testing.T) {
 }
 
 func TestVerifyJobForSHAContextReturnsAccessDeniedOnUnauthorized(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "true", r.URL.Query().Get("omit_stats"))
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer ts.Close()
@@ -2546,7 +2547,6 @@ func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	startServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/jobs":
-			assert.Equal(t, "true", r.URL.Query().Get("omit_stats"))
 			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
 		case "/api/enqueue":
 			firstPostCount.Add(1)
@@ -2561,7 +2561,6 @@ func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	recoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/jobs":
-			assert.Equal(t, "true", r.URL.Query().Get("omit_stats"))
 			jobs := []storage.ReviewJob{}
 			if jobExists.Load() {
 				jobs = append(jobs, storage.ReviewJob{ID: 42, GitRef: sha})

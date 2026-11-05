@@ -286,7 +286,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
     const filtered = queryHasActiveFilters(query);
     const countScope = JSON.stringify(query);
     const result = yield* executeRoborevRequest("list Roborev jobs", (signal) =>
-      api.listJobs(filtered ? query : { ...query, omit_stats: "true" }, { signal }),
+      api.listJobs(filtered ? query : { ...query, omit_stats: "true" }, {
+        signal,
+      }),
     ).pipe(
       Effect.catchTag("RoborevHTTPError", (cause) =>
         Effect.fail(
