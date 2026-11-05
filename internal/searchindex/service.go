@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/kit/search/hybrid"
 	"go.kenn.io/kit/search/rrf"
+	"go.kenn.io/kit/search/sqlquery"
 	"go.kenn.io/kit/vector"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -459,17 +460,18 @@ func (service *Service) fuse(
 	ctx context.Context, text string, query semanticQuery, filters SearchFilters,
 	lexicalGroups, semanticCandidates int,
 ) ([]pageGroup, int, error) {
-	lexicalLeg, err := service.index.lexicalLeg(text, filters, lexicalGroups)
-	if err != nil {
-		return nil, 0, err
-	}
 	semanticLeg, err := service.index.semanticLeg(ctx, query.key, query.vector, semanticCandidates, filters)
 	if err != nil {
 		return nil, 0, service.unavailableError(err)
 	}
-	fused, err := hybrid.RunGroups(ctx, service.index.db, reciprocalRankConstant, []hybrid.GroupLeg[string, legMember]{
-		{Name: MatchLexical, Weight: 1, Query: lexicalLeg, Scan: scanLexicalRow},
-		{Name: MatchSemantic, Weight: 1, Query: semanticLeg, Scan: scanSemanticRow},
+	var fused hybrid.GroupResult[string, legMember]
+	err = service.index.runLexicalLeg(ctx, text, filters, lexicalGroups, func(statement sqlquery.Query, scan func(*sql.Rows) (string, legMember, error)) error {
+		var err error
+		fused, err = hybrid.RunGroups(ctx, service.index.db, reciprocalRankConstant, []hybrid.GroupLeg[string, legMember]{
+			{Name: MatchLexical, Weight: 1, Query: statement, Scan: scan},
+			{Name: MatchSemantic, Weight: 1, Query: semanticLeg, Scan: scanSemanticRow},
+		})
+		return err
 	})
 	if err != nil {
 		return nil, 0, service.unavailableError(err)
