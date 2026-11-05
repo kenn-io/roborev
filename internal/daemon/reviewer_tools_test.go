@@ -321,7 +321,6 @@ func TestReviewerToolsIssuedOnlyWhenEnabledAndEligible(t *testing.T) {
 
 	ci := *f.running
 	ci.PromptPrebuilt = true
-	ci.Branch = ""
 	_, _, ok = f.server.workerPool.reviewerToolsFor(&ci, claude, reviewerToolsConfig(), expires)
 	assert.False(t, ok, "CI reviews carry untrusted context")
 
