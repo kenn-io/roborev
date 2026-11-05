@@ -855,8 +855,8 @@ Before starting the sandbox, the checker prepares committed JavaScript and
 Python package declarations, including nested projects such as `web/`.
 JavaScript uses installed npm or Bun, honors their supported lockfiles, includes
 development dependencies, and disables lifecycle scripts. Projects without a
-lockfile use `package.json`. JavaScript workspaces, local dependencies, and
-unsupported package managers are skipped.
+lockfile use `package.json`. JavaScript workspaces and local dependencies are
+skipped.
 
 Python uses installed `python3` with venv and pip. It reads static dependencies
 and optional dependencies from `[project]`, plus string entries in
