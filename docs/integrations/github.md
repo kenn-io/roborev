@@ -859,21 +859,16 @@ contents stay inside the checkout for cleanup and startup recovery. Host Unix
 sockets outside scratch remain blocked. Model calls use nono's credential route,
 which reads the host's current Codex login outside the sandbox. Tests that start
 TCP loopback servers cannot run in this sandbox; the checker keeps findings it
-cannot try, except findings that ask to remove a test.
+cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the
 verdicts. If every finding drops, the stored review says "No issues found." A
 checker failure or timeout posts the original review unchanged.
 
-For a finding that a test is redundant or tests code the project doesn't own,
-the checker tries a plausible mistake in the project's code against each
-behavior the test asserts. It keeps the test if any such mistake fails that test
-alone. A mistake counts when it breaks something a user, caller, or the
-project's docs rely on. Cosmetic changes to strings or colors, test-only
-helpers, and inputs no code or outside system produces don't count. One mistake
-that other tests also catch doesn't establish redundancy. This check applies
-only to findings that ask to remove a test.
+For test-removal findings, unique coverage requires a plausible mistake in the
+project's code that ships a bug a user or caller would notice and fails that
+test alone.
 
 ## Rewriting checked findings
 
