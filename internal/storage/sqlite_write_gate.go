@@ -158,14 +158,6 @@ func (c *writeGateConn) QueryContext(ctx context.Context, query string, args []d
 	return c.gatedQuery(ctx, query, func() (driver.Rows, error) { return c.sqliteGateConn.QueryContext(ctx, query, args) })
 }
 
-func (c *writeGateConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	stmt, err := c.sqliteGateConn.PrepareContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	return &writeGateStmt{Stmt: stmt, conn: c, query: query}, nil
-}
-
 func (c *writeGateConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	// Queue before the first read so a pull cannot invalidate the snapshot
 	// while this transaction waits to write. Read-only snapshots stay concurrent.
@@ -201,20 +193,6 @@ type writeGateTx struct {
 
 func (t *writeGateTx) Commit() error   { return t.conn.endTx(t.Tx.Commit()) }
 func (t *writeGateTx) Rollback() error { return t.conn.endTx(t.Tx.Rollback()) }
-
-type writeGateStmt struct {
-	driver.Stmt
-	conn  *writeGateConn
-	query string
-}
-
-func (s *writeGateStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	return s.conn.gatedExec(ctx, s.query, func() (driver.Result, error) { return s.Stmt.(driver.StmtExecContext).ExecContext(ctx, args) })
-}
-
-func (s *writeGateStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	return s.conn.gatedQuery(ctx, s.query, func() (driver.Rows, error) { return s.Stmt.(driver.StmtQueryContext).QueryContext(ctx, args) })
-}
 
 // database/sql closes driver rows once.
 type writeGateRows struct {

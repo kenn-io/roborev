@@ -101,37 +101,17 @@ func TestUserWritesQueueBehindPullTransaction(t *testing.T) {
 
 				userDone := make(chan error, 1)
 				go func() {
-					// Exercise each caller's write path without its GetMachineID lookup.
 					userDone <- func() error {
+						opts := EnqueueOpts{RepoID: h.repo.ID, GitRef: "user", Agent: "test"}
 						switch kind {
 						case "enqueue":
-							tx, err := h.db.BeginTx(t.Context(), nil)
-							if err != nil {
-								return err
-							}
-							defer func() { _ = tx.Rollback() }()
-							if _, err := tx.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref) VALUES (?, 'user')`, h.repo.ID); err != nil {
-								return err
-							}
-							return tx.Commit()
+							_, err := h.db.EnqueueJob(opts)
+							return err
 						case "post-commit":
-							conn, err := h.db.Conn(t.Context())
-							if err != nil {
-								return err
-							}
-							defer conn.Close()
-							if err := beginImmediate(t.Context(), conn); err != nil {
-								return err
-							}
-							defer func() { _ = rollbackConn(conn) }()
-							if _, err := conn.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref) VALUES (?, 'user')`, h.repo.ID); err != nil {
-								return err
-							}
-							_, err = conn.ExecContext(t.Context(), "COMMIT")
+							_, _, err := h.db.EnqueuePostCommitJob(opts)
 							return err
 						default: // close
-							_, err := h.db.ExecContext(t.Context(), `UPDATE reviews SET closed = 1 WHERE job_id = ?`, job.ID)
-							return err
+							return h.db.MarkReviewClosedByJobID(job.ID, true)
 						}
 					}()
 				}()
@@ -184,8 +164,6 @@ func TestRemapJobWaitsForPullWriter(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				h := newSyncTestHelper(t)
 				job := h.createPendingJob("old-ref")
-				machineID, err := h.db.GetMachineID()
-				require.NoError(t, err)
 				var reviewID int64
 				if kind == "MigrateReview" {
 					result, err := h.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output)
@@ -213,18 +191,7 @@ func TestRemapJobWaitsForPullWriter(t *testing.T) {
 						done <- result{count, err}
 						return
 					}
-					// Exercise MigrateReview's transaction after its machine ID lookup,
-					// so the lookup's write cannot serialize the conversion by itself.
-					tx, err := h.db.BeginTx(t.Context(), nil)
-					if err != nil {
-						done <- result{err: err}
-						return
-					}
-					defer func() { _ = tx.Rollback() }()
-					err = migrateReview(tx, reviewID, jsontext.Value(`{"schema_version":2,"summary":"Converted.","verdict":"pass","findings":[]}`), machineID)
-					if err == nil {
-						err = tx.Commit()
-					}
+					err := h.db.MigrateReview(reviewID, jsontext.Value(`{"schema_version":2,"summary":"Converted.","verdict":"pass","findings":[]}`))
 					done <- result{err: err}
 				}()
 				// The conversion waits on the gate while SQLite holds the writer.
