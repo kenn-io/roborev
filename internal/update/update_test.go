@@ -1,10 +1,8 @@
 package update
 
 import (
-	"archive/tar"
 	"archive/zip"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -22,16 +20,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
-
-type archiveEntry struct {
-	Name     string
-	Content  string
-	TypeFlag byte
-	LinkName string
-	Mode     int64
-}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -411,7 +402,7 @@ func TestUpdaterPerformUpdateInstallsBinary(t *testing.T) {
 				binaryName = "roborev.exe"
 			}
 
-			archiveData := createTestArchiveBytes(t, []archiveEntry{
+			archiveData := testutil.CreateTarGzip(t, []testutil.ArchiveEntry{
 				{Name: binaryName, Content: "new-binary", Mode: 0o755},
 			})
 			sum := sha256.Sum256(archiveData)
@@ -459,7 +450,7 @@ func TestUpdaterPerformUpdateInstallsWindowsZipBinary(t *testing.T) {
 	const binaryName = "roborev.exe"
 	const assetName = "roborev_1.3.0_windows_amd64.zip"
 
-	archiveData := createTestZipArchiveBytes(t, []archiveEntry{
+	archiveData := createTestZipArchiveBytes(t, []testutil.ArchiveEntry{
 		{Name: binaryName, Content: "new-windows-binary", Mode: 0o755},
 	})
 	sum := sha256.Sum256(archiveData)
@@ -548,42 +539,7 @@ func TestUpdaterPerformUpdateContextCancelsBeforeInstall(t *testing.T) {
 	assert.Equal(t, "old-binary", string(installed))
 }
 
-func createTestArchiveBytes(t *testing.T, entries []archiveEntry) []byte {
-	t.Helper()
-
-	var buf bytes.Buffer
-	gzw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gzw)
-
-	for _, entry := range entries {
-		mode := entry.Mode
-		if mode == 0 {
-			mode = 0o644
-		}
-		typeFlag := entry.TypeFlag
-		if typeFlag == 0 {
-			typeFlag = tar.TypeReg
-		}
-		header := &tar.Header{
-			Name:     entry.Name,
-			Mode:     mode,
-			Size:     int64(len(entry.Content)),
-			Typeflag: typeFlag,
-			Linkname: entry.LinkName,
-		}
-		require.NoError(t, tw.WriteHeader(header))
-		if len(entry.Content) > 0 {
-			_, err := tw.Write([]byte(entry.Content))
-			require.NoError(t, err)
-		}
-	}
-
-	require.NoError(t, tw.Close())
-	require.NoError(t, gzw.Close())
-	return buf.Bytes()
-}
-
-func createTestZipArchiveBytes(t *testing.T, entries []archiveEntry) []byte {
+func createTestZipArchiveBytes(t *testing.T, entries []testutil.ArchiveEntry) []byte {
 	t.Helper()
 
 	var buf bytes.Buffer

@@ -3,10 +3,8 @@
 package daemon
 
 import (
-	"archive/tar"
 	"archive/zip"
 	"bytes"
-	"compress/gzip"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -177,13 +175,13 @@ func TestCICheckPackagesPythonConfigIntegration(t *testing.T) {
 		"source/pyproject.toml": "[build-system]\nrequires=[]\nbuild-backend='backend'\nbackend-path=['.']\n",
 		"source/backend.py":     fmt.Sprintf("from pathlib import Path\ndef get_requires_for_build_wheel(config_settings=None):\n Path(%q).write_text('executed')\n raise RuntimeError('controlled backend')\n", marker),
 	})
-	var wheel bytes.Buffer
+	var wheel []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/simple/config-chain-fixture/":
 			_, _ = io.WriteString(w, `<a href="/config_chain_fixture-1.0-py3-none-any.whl">fixture</a>`)
 		case "/config_chain_fixture-1.0-py3-none-any.whl":
-			_, _ = w.Write(wheel.Bytes())
+			_, _ = w.Write(wheel)
 		case "/source.tar.gz":
 			_, _ = w.Write(source)
 		default:
@@ -191,18 +189,10 @@ func TestCICheckPackagesPythonConfigIntegration(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	zw := zip.NewWriter(&wheel)
-	for name, data := range map[string]string{
-		"METADATA": "Metadata-Version: 2.1\nName: config-chain-fixture\nVersion: 1.0\nRequires-Dist: source-fixture @ " + server.URL + "/source.tar.gz\n",
-		"WHEEL":    "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-		"RECORD":   "",
-	} {
-		entry, err := zw.Create("config_chain_fixture-1.0.dist-info/" + name)
-		require.NoError(t, err)
-		_, err = io.WriteString(entry, data)
-		require.NoError(t, err)
-	}
-	require.NoError(t, zw.Close())
+	wheels := t.TempDir()
+	ciCheckPackageWheel(t, wheels, "config_chain_fixture", "1.0", "Requires-Dist: source-fixture @ "+server.URL+"/source.tar.gz\n")
+	wheel, err = os.ReadFile(filepath.Join(wheels, "config_chain_fixture-1.0-py3-none-any.whl"))
+	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(toolVenv, "pip.conf"), []byte("[global]\nindex-url = "+server.URL+"/simple/\n"), 0o600))
 	tools := t.TempDir()
 	wrapper := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *download*) exec '%s/bin/python' \"$@\" --retries 0 --timeout 1;; *) exec '%s/bin/python' \"$@\";; esac\n", toolVenv, toolVenv)
@@ -327,21 +317,11 @@ func ciCheckPackageWheel(t *testing.T, dir, name, version, requires string) {
 
 func ciCheckPackageArchive(t *testing.T, files map[string]string) []byte {
 	t.Helper()
-	var archive bytes.Buffer
-	gz := gzip.NewWriter(&archive)
-	tw := tar.NewWriter(gz)
+	entries := make([]testutil.ArchiveEntry, 0, len(files))
 	for name, data := range files {
-		mode := int64(0o600)
-		if strings.HasSuffix(name, "/git-payload") {
-			mode = 0o700
-		}
-		require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(data))}))
-		_, err := io.WriteString(tw, data)
-		require.NoError(t, err)
+		entries = append(entries, testutil.ArchiveEntry{Name: name, Content: data, Mode: 0o600})
 	}
-	require.NoError(t, tw.Close())
-	require.NoError(t, gz.Close())
-	return archive.Bytes()
+	return testutil.CreateTarGzip(t, entries)
 }
 
 func TestCICheckPackagesSourceClassificationIntegration(t *testing.T) {
