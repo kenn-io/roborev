@@ -1223,7 +1223,13 @@ func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (throt
 // posting goroutine's atomic stale-head retirement discards its review.
 func (p *CIPoller) postDeferredStatus(ghRepo string, pr ghPR, nextEligible time.Time) {
 	desc := fmt.Sprintf("Review deferred — next eligible at %s", nextEligible.UTC().Format("15:04 UTC"))
-	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "pending", desc); err != nil {
+	done, ok := p.startSkipPublish(ciSkipKey{ghRepo, pr.HeadRefOid, "status"}, desc)
+	if !ok {
+		return
+	}
+	err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "pending", desc)
+	done(err)
+	if err != nil {
 		log.Printf("CI poller: failed to set throttle status: %v", err)
 	}
 }
