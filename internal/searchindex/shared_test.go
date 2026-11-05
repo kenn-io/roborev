@@ -6,12 +6,12 @@ import (
 	"math"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -23,6 +23,7 @@ type memorySharedVectors struct {
 	rows         map[string]map[storage.SearchVectorKey][]storage.SearchVectorChunk
 	lookupErr    error
 	publishCalls int
+	lookupKeys   int
 }
 
 func newMemorySharedVectors() *memorySharedVectors {
@@ -37,6 +38,7 @@ func (m *memorySharedVectors) LookupSearchVectors(
 ) (map[storage.SearchVectorKey][]storage.SearchVectorChunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.lookupKeys += len(keys)
 	if m.lookupErr != nil {
 		return nil, m.lookupErr
 	}
@@ -146,8 +148,11 @@ func TestSharedVectorsLetPeersSkipTheProvider(t *testing.T) {
 
 	uuids := []string{sources[0].ReviewUUID, sources[1].ReviewUUID, sources[2].ReviewUUID}
 	shared.push(uuids...)
+	store := origin.reconciler.store.(*reconcilerStore)
+	fullReads := store.callCount()
 	origin.reconciler.ReviewsPushed(uuids)
 	origin.reconcile(t)
+	assert.Equal(fullReads, store.callCount(), "publishing does not scan review history")
 	assert.Equal(3, shared.rowCount(), "pushed reviews publish their existing vectors")
 	assert.Equal(3, origin.embeddedTexts(), "publishing does not re-embed")
 
@@ -249,22 +254,64 @@ func TestSharedVectorsPublishExistingGenerationOnStartup(t *testing.T) {
 	assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
 }
 
-func TestSharedVectorsPublishExistingGenerationOnSweep(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sources := makeSearchSources(1)
-		shared := newMemorySharedVectors()
-		origin := newSharingDaemon(t, sources, shared)
-		origin.reconcile(t)
-		require.Zero(t, shared.rowCount(), "the review has not reached PostgreSQL")
+func TestSharedVectorsSweepLooksUpOnlyChangedReview(t *testing.T) {
+	now := time.Now()
+	r, store, _ := incrementalFixture(t, ReconcilerConfig{Now: func() time.Time { return now }})
+	_, err := store.ExecContext(t.Context(), `UPDATE reviews SET uuid = printf('00000000-0000-4000-8000-%012d', id)`)
+	require.NoError(t, err)
+	shared := newMemorySharedVectors()
+	shared.push("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002")
+	r.embedder = &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 8}
+	r.ShareVectors(shared)
+	sweep := func(change string) int {
+		if change != "" {
+			_, err := store.ExecContext(t.Context(), change)
+			require.NoError(t, err)
+		}
+		shared.mu.Lock()
+		shared.lookupKeys = 0
+		shared.mu.Unlock()
+		now = now.Add(2 * r.config.SweepInterval)
+		for more := true; more; {
+			more, err = r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+		}
+		shared.mu.Lock()
+		defer shared.mu.Unlock()
+		return shared.lookupKeys
+	}
+	sweep("")
+	assert.Zero(t, sweep(""), "an idle sweep looks up no history")
+	assert.Equal(t, 1, sweep(`UPDATE reviews SET closed = 1 WHERE job_id = 1`))
+}
 
-		// The review reaches PostgreSQL without a new local push notification.
-		shared.push(sources[0].ReviewUUID)
-		time.Sleep(defaultSweepInterval)
-		origin.reconcile(t)
-		require.Equal(t, 1, shared.rowCount(), "the sweep publishes the already-covered review")
-
-		peer := newSharingDaemon(t, sources, shared)
-		peer.reconcile(t)
-		assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
+func TestSharedVectorsRetryOutageAtSweep(t *testing.T) {
+	now := time.Now()
+	r, store, _ := incrementalFixture(t, ReconcilerConfig{
+		Now: func() time.Time { return now }, MaxFillBatches: 1,
 	})
+	_, err := store.ExecContext(t.Context(), `UPDATE reviews SET uuid = printf('00000000-0000-4000-8000-%012d', id)`)
+	require.NoError(t, err)
+	r.embedder = &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
+	worker := storage.NewSyncWorker(store.DB, config.SyncConfig{})
+	r.ShareVectors(worker)
+
+	more, err := r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	require.True(t, more, "one review remains to embed")
+
+	shared := newMemorySharedVectors()
+	shared.push("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002")
+	r.ShareVectors(shared)
+	_, err = r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 1, shared.rowCount(), "the next fill only publishes its own review")
+	assert.Empty(t, store.jobReads, "the failed publication waits for the sweep")
+
+	now = now.Add(r.config.SweepInterval)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 2, shared.rowCount(), "the sweep retries the failed publication")
 }

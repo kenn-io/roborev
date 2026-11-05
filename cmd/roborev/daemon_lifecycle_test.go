@@ -636,35 +636,27 @@ func TestStartDaemonWaitsForLogOwnerAfterChildExit(t *testing.T) {
 	})
 }
 
-func TestStartDaemonWaitsForLegacyRuntimeAfterChildExit(t *testing.T) {
-	testenv.SetDataDir(t)
+func TestStartDaemonReportsChildExitWithLegacyRuntime(t *testing.T) {
+	dataDir := testenv.SetDataDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "daemon.legacy.json"),
+		fmt.Appendf(nil, `{"pid":%d,"addr":"127.0.0.1:7373","version":"0.56.0"}`, os.Getpid()), 0o600))
 
-	oldGet, oldStart, oldList := getAnyRunningDaemonForStart, startDaemonDetached, listAllRuntimes
+	oldGet, oldStart := getAnyRunningDaemonForStart, startDaemonDetached
 	t.Cleanup(func() {
-		getAnyRunningDaemonForStart, startDaemonDetached, listAllRuntimes = oldGet, oldStart, oldList
+		getAnyRunningDaemonForStart, startDaemonDetached = oldGet, oldStart
 	})
 	synctest.Test(t, func(t *testing.T) {
-		readyAt := time.Now().Add(time.Second)
 		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-			if !time.Now().Before(readyAt) {
-				return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
-			}
 			return nil, os.ErrNotExist
 		}
-		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-			return []*daemon.RuntimeInfo{{
-				PID:        os.Getpid(),
-				Version:    "0.56.0",
-				SourcePath: filepath.Join(config.DataDir(), "daemon.1234.json"),
-			}}, nil
-		}
+		failure := errors.New("replacement could not bind the legacy daemon endpoint")
 		startDaemonDetached = func(_ context.Context, opts detachedDaemonOptions) error {
 			require.NotNil(t, opts.Exited)
-			opts.Exited(errors.New("synthetic child could not bind the recorded daemon endpoint"))
+			opts.Exited(failure)
 			return nil
 		}
 
-		require.NoError(t, startDaemon())
+		require.ErrorIs(t, startDaemon(), failure)
 	})
 }
 

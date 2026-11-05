@@ -136,51 +136,34 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 		Branch:   opts.Branch,
 	}
 
-	sinceStr := opts.Since.UTC().Format("2006-01-02 15:04:05")
+	from, where, args := summaryWhere(opts)
 
-	// Build shared WHERE clause.
-	// Use datetime() to normalize timestamps — synced rows may use RFC3339
-	// format (with 'T' separator) while local rows use space-separated format.
-	var conditions []string
-	var args []any
-	conditions = append(conditions, "datetime(j.enqueued_at) >= datetime(?)")
-	args = append(args, sinceStr)
-	if opts.RepoPath != "" {
-		conditions = append(conditions, "r.root_path = ?")
-		args = append(args, opts.RepoPath)
-	}
-	if opts.Branch != "" {
-		conditions = append(conditions, "j.branch = ?")
-		args = append(args, opts.Branch)
-	}
-	where := "WHERE " + strings.Join(conditions, " AND ")
-
-	s.Overview, err = summaryOverview(tx, where, args)
+	s.Overview, err = summaryOverview(tx, from, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.Verdicts, err = summaryVerdicts(tx, where, args)
+	s.Verdicts, err = summaryVerdicts(tx, from, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.Agents, err = summaryAgents(tx, where, args)
+	s.Agents, err = summaryAgents(tx, from, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.Duration, err = summaryDurations(tx, where, args)
+	s.Duration, err = summaryDurations(tx, from, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.JobTypes, err = summaryJobTypes(tx, where, args)
+	s.JobTypes, err = summaryJobTypes(tx, from, where, args)
 	if err != nil {
 		return nil, err
 	}
 
-	s.Failures, err = summaryFailures(tx, where, args)
+	s.Failures, err = summaryFailures(tx, from, where, args)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +187,7 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 	}
 
 	if opts.AllRepos || opts.RepoPath == "" {
-		s.Repos, err = summaryRepos(tx, where, args)
+		s.Repos, err = summaryRepos(tx, from, where, args)
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +196,43 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 	return s, nil
 }
 
-func summaryOverview(q querier, where string, args []any) (OverviewStats, error) {
+// aggregateJobScope shares the summary and cost index policy. Branch-only
+// queries retain the plain timestamp predicate to keep historical scans cheap.
+func aggregateJobScope(hasSince, hasRepo, hasBranch bool) (from, sincePredicate string) {
+	from = "FROM review_jobs j"
+	// Unscoped windows must seek by time even with competing status indexes.
+	if hasSince && !hasRepo && !hasBranch {
+		from += " INDEXED BY idx_review_jobs_enqueued_position"
+	}
+	from += "\n\t\tJOIN repos r ON r.id = j.repo_id"
+	sincePredicate = "datetime(j.enqueued_at) >= datetime(?)"
+	if hasRepo || !hasBranch {
+		sincePredicate = sqliteNormalizedTimestampExpr("j.enqueued_at") + " >= datetime(?)"
+	}
+	return from, sincePredicate
+}
+
+func summaryWhere(opts SummaryOptions) (string, string, []any) {
+	from, sincePredicate := aggregateJobScope(true, opts.RepoPath != "", opts.Branch != "")
+
+	sinceStr := opts.Since.UTC().Format("2006-01-02 15:04:05")
+
+	var conditions []string
+	var args []any
+	conditions = append(conditions, sincePredicate)
+	args = append(args, sinceStr)
+	if opts.RepoPath != "" {
+		conditions = append(conditions, "r.root_path = ?")
+		args = append(args, opts.RepoPath)
+	}
+	if opts.Branch != "" {
+		conditions = append(conditions, "j.branch = ?")
+		args = append(args, opts.Branch)
+	}
+	return from, "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func summaryOverview(q querier, from, where string, args []any) (OverviewStats, error) {
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
@@ -224,8 +243,7 @@ func summaryOverview(q querier, where string, args []any) (OverviewStats, error)
 			COALESCE(SUM(CASE WHEN j.status = 'applied' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'rebased' THEN 1 ELSE 0 END), 0),
 			COUNT(*)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		` + where
 
 	var o OverviewStats
@@ -236,15 +254,14 @@ func summaryOverview(q querier, where string, args []any) (OverviewStats, error)
 	return o, err
 }
 
-func summaryVerdicts(q querier, where string, args []any) (VerdictStats, error) {
+func summaryVerdicts(q querier, from, where string, args []any) (VerdictStats, error) {
 	query := `
 		SELECT
 			COUNT(*),
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 1 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 0 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN rv.closed = 1 AND rv.verdict_bool = 0 THEN 1 ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		JOIN reviews rv ON rv.job_id = j.id
 		` + where + ` AND j.status IN ('done', 'applied', 'rebased')
 			AND rv.verdict_bool IS NOT NULL
@@ -264,7 +281,7 @@ func summaryVerdicts(q querier, where string, args []any) (VerdictStats, error) 
 	return v, nil
 }
 
-func summaryAgents(q querier, where string, args []any) ([]AgentStats, error) {
+func summaryAgents(q querier, from, where string, args []any) ([]AgentStats, error) {
 	query := `
 		SELECT
 			j.agent,
@@ -274,8 +291,7 @@ func summaryAgents(q querier, where string, args []any) ([]AgentStats, error) {
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 0
 				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 		` + where + `
 		GROUP BY j.agent
@@ -304,7 +320,7 @@ func summaryAgents(q querier, where string, args []any) ([]AgentStats, error) {
 	}
 
 	for i := range agents {
-		median, err := agentMedianDuration(q, where, args, agents[i].Agent)
+		median, err := agentMedianDuration(q, from, where, args, agents[i].Agent)
 		if err != nil {
 			return nil, err
 		}
@@ -314,11 +330,10 @@ func summaryAgents(q querier, where string, args []any) ([]AgentStats, error) {
 	return agents, nil
 }
 
-func agentMedianDuration(q querier, where string, args []any, agent string) (float64, error) {
+func agentMedianDuration(q querier, from, where string, args []any, agent string) (float64, error) {
 	query := `
 		SELECT CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		` + where + ` AND j.agent = ? AND j.started_at IS NOT NULL AND j.finished_at IS NOT NULL
 		ORDER BY 1`
 
@@ -344,11 +359,10 @@ func agentMedianDuration(q querier, where string, args []any, agent string) (flo
 	return percentile(durations, 0.5), nil
 }
 
-func summaryDurations(q querier, where string, args []any) (DurationStats, error) {
+func summaryDurations(q querier, from, where string, args []any) (DurationStats, error) {
 	reviewQuery := `
 		SELECT CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		` + where + ` AND j.started_at IS NOT NULL AND j.finished_at IS NOT NULL
 		ORDER BY 1`
 
@@ -359,8 +373,7 @@ func summaryDurations(q querier, where string, args []any) (DurationStats, error
 
 	queueQuery := `
 		SELECT CAST((julianday(j.started_at) - julianday(j.enqueued_at)) * 86400 AS REAL)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		` + where + ` AND j.started_at IS NOT NULL
 		ORDER BY 1`
 
@@ -399,15 +412,14 @@ func collectDurations(q querier, query string, args []any) ([]float64, error) {
 	return durations, rows.Err()
 }
 
-func summaryJobTypes(q querier, where string, args []any) ([]JobTypeStats, error) {
+func summaryJobTypes(q querier, from, where string, args []any) ([]JobTypeStats, error) {
 	query := `
 		SELECT
 			COALESCE(NULLIF(j.job_type, ''), 'review') as jt,
 			COUNT(*),
 			COALESCE(SUM(CASE WHEN j.status = 'applied' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'rebased' THEN 1 ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		` + where + `
 		GROUP BY jt
 		ORDER BY COUNT(*) DESC`
@@ -429,7 +441,7 @@ func summaryJobTypes(q querier, where string, args []any) ([]JobTypeStats, error
 	return types, rows.Err()
 }
 
-func summaryRepos(q querier, where string, args []any) ([]RepoSummary, error) {
+func summaryRepos(q querier, from, where string, args []any) ([]RepoSummary, error) {
 	query := `
 		SELECT
 			r.name,
@@ -441,8 +453,7 @@ func summaryRepos(q querier, where string, args []any) ([]RepoSummary, error) {
 				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN rv.closed = 1 AND rv.verdict_bool = 0
 				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 		` + where + `
 		GROUP BY r.id
@@ -465,13 +476,12 @@ func summaryRepos(q querier, where string, args []any) ([]RepoSummary, error) {
 	return repos, rows.Err()
 }
 
-func summaryFailures(q querier, where string, args []any) (FailureStats, error) {
+func summaryFailures(q querier, from, where string, args []any) (FailureStats, error) {
 	countQuery := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN j.retry_count ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		` + where
 
 	var f FailureStats
@@ -481,8 +491,7 @@ func summaryFailures(q querier, where string, args []any) (FailureStats, error) 
 
 	errQuery := `
 		SELECT j.error
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		` + where + ` AND j.status = 'failed' AND j.error != ''`
 
 	rows, err := q.Query(errQuery, args...)

@@ -3,6 +3,7 @@ package searchindex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -17,10 +18,19 @@ import (
 
 type observedSearchStore struct {
 	*storage.DB
-	fullReads atomic.Int64
-	jobReads  []int64
-	afterRead func()
-	readErr   error
+	fullReads             atomic.Int64
+	jobReads              []int64
+	afterRead             func()
+	readErr               error
+	afterEmptyChangesRead func()
+}
+
+func (s *observedSearchStore) ListSearchChanges(ctx context.Context, limit int) ([]int64, int64, error) {
+	jobs, through, err := s.DB.ListSearchChanges(ctx, limit)
+	if err == nil && through == 0 && s.afterEmptyChangesRead != nil {
+		s.afterEmptyChangesRead()
+	}
+	return jobs, through, err
 }
 
 func (s *observedSearchStore) ListSearchDocuments(ctx context.Context, after int64, limit int) ([]storage.SearchReviewSource, error) {
@@ -55,6 +65,125 @@ func incrementalFixture(t *testing.T, config ReconcilerConfig) (*Reconciler, *ob
 	store := &observedSearchStore{DB: db}
 	index := openGenerationTestIndex(t)
 	return NewReconciler(store, index, nil, config), store, index
+}
+
+func TestReconcilerChangeWakeRefreshesLoggedJobs(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		duringScan bool
+		change     func(t *testing.T, r *Reconciler, store *observedSearchStore)
+		jobs       []int64
+	}{{
+		// The scan has already read this review, so only the log can refresh it.
+		name:       "during full scan",
+		duringScan: true,
+		change: func(t *testing.T, r *Reconciler, store *observedSearchStore) {
+			_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'changewake' WHERE job_id = 1`)
+			require.NoError(t, err)
+		},
+		jobs: []int64{1},
+	}, {
+		name: "multiple pages",
+		change: func(t *testing.T, r *Reconciler, store *observedSearchStore) {
+			_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'changewake'`)
+			require.NoError(t, err)
+		},
+		jobs: []int64{1, 2},
+	}, {
+		// An empty log must not starve a pending job refresh.
+		name: "pending job with empty log",
+		change: func(t *testing.T, r *Reconciler, store *observedSearchStore) {
+			_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'changewake' WHERE job_id = 1`)
+			require.NoError(t, err)
+			head, err := store.SearchChangesHead(t.Context())
+			require.NoError(t, err)
+			require.NoError(t, store.DeleteSearchChanges(t.Context(), head))
+			r.WakeJob(1)
+		},
+		jobs: []int64{1},
+	}, {
+		name: "pull after empty read",
+		change: func(t *testing.T, r *Reconciler, store *observedSearchStore) {
+			store.afterEmptyChangesRead = func() {
+				store.afterEmptyChangesRead = nil
+				_, err := store.ExecContext(t.Context(), `
+					INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type)
+					VALUES (3, 1, 'main', 'test', 'done', 'review');
+					INSERT INTO reviews (job_id, agent, output)
+					VALUES (3, 'test', 'changewake');`)
+				require.NoError(t, err)
+				r.WakeChanges()
+			}
+		},
+		jobs: []int64{3},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, SweepInterval: time.Hour})
+			settle := func() {
+				t.Helper()
+				for range 10 {
+					more, err := r.reconcileTurn(t.Context())
+					require.NoError(t, err)
+					if !more {
+						return
+					}
+				}
+				t.Fatal("wakes did not settle")
+			}
+			more, err := r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+			require.True(t, more)
+			if !tc.duringScan {
+				settle()
+			}
+			tc.change(t, r, store)
+			r.WakeChanges()
+			settle()
+			assert.Equal(t, tc.jobs, store.jobReads)
+			assert.Equal(t, int64(3), store.fullReads.Load())
+			var jobs []int64
+			rows, err := index.db.QueryContext(t.Context(), `SELECT job_id FROM review_mirror JOIN review_fts USING (doc_key) WHERE review_fts MATCH 'changewake' ORDER BY job_id`)
+			require.NoError(t, err)
+			defer rows.Close()
+			for rows.Next() {
+				var jobID int64
+				require.NoError(t, rows.Scan(&jobID))
+				jobs = append(jobs, jobID)
+			}
+			require.NoError(t, rows.Err())
+			assert.Equal(t, tc.jobs, jobs)
+		})
+	}
+}
+
+func TestReconcilerPullWriteRefreshesOnlyPulledReview(t *testing.T) {
+	for _, reviews := range []int{1000, 10000} {
+		t.Run(fmt.Sprintf("reviews=%d", reviews), func(t *testing.T) {
+			db, r := seedReconcilerHistory(t, reviews, 0)
+			store := &observedSearchStore{DB: db}
+			r.store = store
+			r.config.SweepInterval = time.Hour
+			r.nextSweep = r.config.Now().Add(time.Hour)
+			jobID := int64(reviews + 1)
+			_, err := db.ExecContext(t.Context(), `
+				INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type)
+				VALUES (?, 1, 'main', 'test', 'done', 'review');
+				INSERT INTO reviews (job_id, agent, output)
+				VALUES (?, 'test', 'pulleduniqueword');`, jobID, jobID)
+			require.NoError(t, err)
+			r.WakeChanges()
+			for more := true; more; {
+				more, err = r.reconcileTurn(t.Context())
+				require.NoError(t, err)
+			}
+			// The same reads at both sizes keep a pull's cost flat in history.
+			assert.Zero(t, store.fullReads.Load())
+			assert.Equal(t, []int64{jobID}, store.jobReads)
+			var got int64
+			require.NoError(t, r.index.db.QueryRowContext(t.Context(), `SELECT job_id FROM review_mirror JOIN review_fts USING (doc_key) WHERE review_fts MATCH 'pulleduniqueword'`).Scan(&got))
+			assert.Equal(t, jobID, got)
+		})
+	}
 }
 
 func TestReconcilerJobUpdatesDoNotReadUnrelatedHistory(t *testing.T) {
@@ -153,7 +282,7 @@ func TestReconcilerKeepsJobWakesDuringScansAndRefreshes(t *testing.T) {
 
 func TestReconcilerJobWakesDoNotPostponeSafetySweep(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		r, store, index := incrementalFixture(t, ReconcilerConfig{SweepInterval: time.Minute})
+		r, store, _ := incrementalFixture(t, ReconcilerConfig{SweepInterval: time.Minute})
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() { done <- r.Run(ctx) }()
@@ -170,11 +299,68 @@ func TestReconcilerJobWakesDoNotPostponeSafetySweep(t *testing.T) {
 		}
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
-		assert.Equal(t, int64(2), store.fullReads.Load())
-		var key string
-		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'sweptchange'`).Scan(&key))
-		assert.Equal(t, "local:2", key)
+		assert.Equal(t, int64(1), store.fullReads.Load())
+		assert.Contains(t, store.jobReads, int64(2))
 		cancel()
 		assert.ErrorIs(t, <-done, context.Canceled)
+	})
+}
+
+func TestReconcilerSweepPreservesChangesDuringScan(t *testing.T) {
+	now := time.Now()
+	r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+	_, err := r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	_, err = store.ExecContext(t.Context(), `UPDATE reviews SET output = 'duringscan' WHERE job_id = 1`)
+	require.NoError(t, err)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	now = now.Add(2 * r.config.SweepInterval)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	var key string
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'duringscan'`).Scan(&key))
+	assert.Equal(t, "local:1", key)
+	assert.Equal(t, int64(3), store.fullReads.Load())
+}
+
+func TestReconcilerSweepDrainsBoundedPages(t *testing.T) {
+	t.Run("repo", func(t *testing.T) {
+		now := time.Now()
+		r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+		for more := true; more; {
+			var err error
+			more, err = r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+		}
+		assert.Equal(t, int64(3), store.fullReads.Load())
+		result, err := store.ExecContext(t.Context(), `UPDATE repos SET name = 'renamed' WHERE id = 1`)
+		require.NoError(t, err)
+		changed, err := result.RowsAffected()
+		require.NoError(t, err)
+		require.Equal(t, int64(1), changed)
+		now = now.Add(2 * r.config.SweepInterval)
+		more, err := r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+		require.True(t, more)
+		assert.False(t, r.Health().MirrorComplete)
+		assert.Nil(t, r.Health().MirrorBacklog)
+		for more {
+			before := len(store.jobReads)
+			more, err = r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+			assert.LessOrEqual(t, len(store.jobReads)-before, 1)
+		}
+		var name string
+		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT repo_name FROM review_mirror WHERE job_id = 1`).Scan(&name))
+		assert.Equal(t, "renamed", name)
+		assert.Equal(t, int64(3), store.fullReads.Load())
+		assert.True(t, r.Health().MirrorComplete)
+		require.NotNil(t, r.Health().MirrorBacklog)
+		assert.Zero(t, *r.Health().MirrorBacklog)
 	})
 }

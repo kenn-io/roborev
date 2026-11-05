@@ -54,7 +54,9 @@ flowchart TD
     Changes -->|No| Skip[Skip review, try next]
     Skip --> Find
     Changes -->|Yes| Commit[Commit fix]
-    Commit --> Wait[Wait for re-review]
+    Commit --> Trivial{Skip flag and docs/test-only fix?}
+    Trivial -->|Yes| Find
+    Trivial -->|No| Wait[Wait for re-review]
     Wait --> Pass{Pass?}
     Pass -->|Yes| Find
     Pass -->|No| MaxCheck{Max iterations?}
@@ -67,7 +69,8 @@ flowchart TD
 1. Finds the **oldest failed review** on your branch
 1. Runs an agent in an **isolated worktree** to address the findings
 1. If the agent makes changes, applies them and **commits**
-1. **Waits for re-review** of the new commit
+1. **Waits for re-review** of the new commit, unless `--skip-trivial-rereview`
+    applies
 1. If the new commit fails review, addresses those findings too
 1. Once all per-commit reviews pass, runs a **whole-branch review**
 1. If the branch review passes, exits successfully
@@ -118,6 +121,7 @@ review.
 | `--plan` | Run a read-only planning phase before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without starting the fix loop |
 | `--max-iterations <n>` | Maximum fix iterations (default: 10) |
+| `--skip-trivial-rereview` | Do not wait for re-reviews of documentation/test-only fixes (default: off) |
 | `--quiet` | Show elapsed time instead of agent output |
 | `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Shorthand for `--reasoning fast` |
@@ -135,7 +139,13 @@ Some flags are mutually exclusive: `--all-branches` cannot be combined with
 With `--plan`, each iteration first uses a fresh read-only agent session in a
 disposable worktree, stores the plan on the review, and passes it into the fix.
 Implementation follows your existing agent permission settings. Re-review
-attempts retain prior plans and implementation output.
+attempts retain earlier implementation output, trusted comments, and any stored
+plans during the same refine run, with or without `--plan`. This context follows
+the fix chain only while the new review covers the latest fix commit. Earlier
+comments stay on their original reviews. Oversized prompts use complete prompt
+files in the disposable worktree. When an agent leaves findings unresolved
+without changes, refine stores its full output as a comment and leaves the
+review open.
 
 `--plan-only` takes a finite snapshot of completed failed reviews. It prints and
 stores their plans, including with `--quiet`, without editing, committing,
@@ -144,6 +154,18 @@ detached worktrees without checking out those branches. Planning flags cannot be
 combined with `--list`. Refine planning also has a clean-working-tree
 precondition; see the
 [refine command options](/docs/commands/#auto-fix-agentic-loop) for details.
+
+### Skipping trivial re-reviews
+
+With `roborev refine --skip-trivial-rereview`, refine does not wait for the
+re-review of a fix commit when every path the fix changes matches `**/*.md`,
+`**/*_test.go`, `**/*.spec.*`, or `**/testdata/**`. Refine checks the committed
+diff, including commits that hooks add, and counts both sides of a rename.
+
+- The post-commit hook still reviews the fix. Refine ignores that review for the
+    rest of the run; a later run considers it normally.
+- The whole-branch review still runs and covers the skipped commits.
+- Refine notes the skip on the original review.
 
 ## Targeting
 

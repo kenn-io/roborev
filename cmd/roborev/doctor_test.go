@@ -634,3 +634,15 @@ func TestDoctorDaemonTLS(t *testing.T) {
 	assert.Equal(t, "config.daemon_tls", checks[0].ID)
 	assert.Contains(t, checks[0].Details[0], "load daemon_tls client certificate")
 }
+
+func TestDoctorCICommentSilenceAdvice(t *testing.T) {
+	clean := false
+	env := &doctorEnv{ctx: t.Context(), global: config.DefaultConfig(), pingErr: errors.New("connection refused")}
+	env.global.CI.Enabled = true
+	env.global.CI.Repos = []string{"example/project"}
+	env.global.CI.CommentWhenClean = &clean
+	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.ci_comments")
+	assert.Equal(t, doctorInfo, got.Status)
+	assert.Equal(t, []string{"Requires commit status-write permission for your GitHub App or personal token."}, got.Details)
+	assert.NotContains(t, got.Summary, "App required")
+}

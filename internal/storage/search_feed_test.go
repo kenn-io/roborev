@@ -11,6 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestListSearchDocumentsSeeksPastCursor(t *testing.T) {
+	t.Parallel()
+	// A fresh database has no ANALYZE statistics to guide join ordering.
+	db := openTestDB(t)
+	defer db.Close()
+
+	plan := queryPlan(t, db, listSearchDocumentsQuery, 25, 50)
+	assert.Contains(t, plan, "SEARCH rv USING INTEGER PRIMARY KEY (rowid>?)")
+	assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")
+}
+
 type searchFeedFixture struct {
 	jobType      string
 	status       JobStatus
@@ -80,6 +91,22 @@ func TestSearchEligibilityAndStablePaging(t *testing.T) {
 	assert.Equal(t, PanelRoleSynthesis, all[5].PanelRole)
 	assert.Equal(t, all[4].PanelRunUUID, all[5].PanelRunUUID)
 	assert.Equal(t, "synthesis", all[5].StructuredOutput["summary"])
+
+	legacyID := seedSearchFeedReview(t, db, repoID, commitID, 100, searchFeedFixture{
+		status: JobStatusDone, gitRef: "main", output: "legacy diff", legacy: true, noCommit: true,
+	})
+	var legacyJobID int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_id FROM reviews WHERE id = ?`, legacyID).Scan(&legacyJobID))
+	_, err = db.ExecContext(t.Context(), `INSERT INTO job_content(job_id, diff_content) VALUES (?, 'diff')`, legacyJobID)
+	require.NoError(t, err)
+	legacy, err := db.GetSearchDocumentForJob(t.Context(), legacyJobID)
+	require.NoError(t, err)
+	require.NotNil(t, legacy)
+	_, err = db.ExecContext(t.Context(), `UPDATE job_content SET diff_content = NULL WHERE job_id = ?`, legacyJobID)
+	require.NoError(t, err)
+	legacy, err = db.GetSearchDocumentForJob(t.Context(), legacyJobID)
+	require.NoError(t, err)
+	assert.Nil(t, legacy)
 }
 
 func TestSearchFeedIncludesGoalReview(t *testing.T) {
@@ -350,4 +377,97 @@ func searchFeedOutputs(sources []SearchReviewSource) []string {
 		outputs[i] = sources[i].Output
 	}
 	return outputs
+}
+
+func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
+	t.Parallel()
+	type changeCase struct {
+		name  string
+		sql   string
+		want  []int64
+		setup string
+	}
+	cases := []changeCase{
+		{"review insert", `INSERT INTO reviews (job_id, agent, output) VALUES (2, 'test', 'second')`, []int64{2}, `DELETE FROM reviews WHERE job_id = 2`},
+		{"review update", `UPDATE reviews SET closed = 1 WHERE job_id = 1`, []int64{1}, ""},
+		{"review uuid", `UPDATE reviews SET uuid = '00000000-0000-4000-8000-000000000001' WHERE job_id = 1`, []int64{1}, ""},
+		{"review delete", `DELETE FROM reviews WHERE job_id = 1`, []int64{1}, ""},
+		{"repo rename", `UPDATE repos SET name = 'renamed' WHERE id = 1`, []int64{1, 2}, ""},
+		{"job comment insert", `INSERT INTO responses (id, job_id, responder, response) VALUES (3, 1, 'author', 'new')`, []int64{1}, ""},
+		{"job comment update", `UPDATE responses SET response = 'edited' WHERE id = 1`, []int64{1}, ""},
+		{"job comment delete", `DELETE FROM responses WHERE id = 1`, []int64{1}, ""},
+		{"commit comment insert", `INSERT INTO responses (id, commit_id, responder, response) VALUES (4, 1, 'author', 'new')`, []int64{1, 2}, ""},
+		{"commit comment update", `UPDATE responses SET response = 'edited' WHERE id = 2`, []int64{1, 2}, ""},
+		{"commit comment delete", `DELETE FROM responses WHERE id = 2`, []int64{1, 2}, ""},
+		{"diff clear", `UPDATE job_content SET diff_content = NULL WHERE job_id = 1`, []int64{1}, ""},
+		{"content delete", `DELETE FROM job_content WHERE job_id = 1`, []int64{1}, ""},
+		{"content insert", `INSERT INTO job_content (job_id, prompt) VALUES (1, 'prompt')`, []int64{1}, `DELETE FROM job_content WHERE job_id = 1`},
+		{"prompt only", `UPDATE job_content SET prompt = 'edited' WHERE job_id = 1`, nil, ""},
+		{"worker only", `UPDATE review_jobs SET worker_id = 'worker' WHERE id = 1`, nil, ""},
+		{"review synced", `UPDATE reviews SET synced_at = CURRENT_TIMESTAMP WHERE job_id = 1`, nil, ""},
+		{"comment synced", `UPDATE responses SET synced_at = CURRENT_TIMESTAMP WHERE id = 1`, nil, ""},
+		{"comment source", `UPDATE responses SET source = 'remote' WHERE id = 1`, nil, ""},
+	}
+	for _, column := range []string{"uuid", "repo_id", "branch", "git_ref", "commit_id", "review_type", "panel_role", "panel_run_uuid", "agent", "finished_at", "status", "job_type"} {
+		cases = append(cases, changeCase{"job update column " + column, fmt.Sprintf("UPDATE review_jobs SET %s = %s WHERE id = 1", column, column), []int64{1}, ""})
+	}
+	cases = append(cases, changeCase{"job delete", `DELETE FROM review_jobs WHERE id = 2`, []int64{2}, ""})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := openTestDB(t)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			repoID, commitID := seedSearchFeedBase(t, db)
+			seedSearchFeedReview(t, db, repoID, commitID, 1, searchFeedFixture{jobType: JobTypeReview, status: JobStatusDone, output: "original"})
+			seedSearchFeedReview(t, db, repoID, commitID, 2, searchFeedFixture{jobType: JobTypeReview, status: JobStatusDone, output: "legacy", legacy: true, noCommit: true})
+			_, err := db.ExecContext(t.Context(), `
+				INSERT INTO job_content (job_id, prompt, diff_content) VALUES (1, 'prompt', 'diff');
+				INSERT INTO responses (id, job_id, responder, response) VALUES (1, 1, 'author', 'comment');
+				INSERT INTO responses (id, commit_id, responder, response) VALUES (2, 1, 'author', 'commit comment');`)
+			require.NoError(t, err)
+			if tc.setup != "" {
+				_, err := db.ExecContext(t.Context(), tc.setup)
+				require.NoError(t, err)
+			}
+			head, err := db.SearchChangesHead(t.Context())
+			require.NoError(t, err)
+			require.NoError(t, db.DeleteSearchChanges(t.Context(), head))
+			_, err = db.ExecContext(t.Context(), tc.sql)
+			require.NoError(t, err)
+			var jobs []int64
+			for {
+				page, through, err := db.ListSearchChanges(t.Context(), 100)
+				require.NoError(t, err)
+				jobs = append(jobs, page...)
+				if through == 0 {
+					break
+				}
+				require.NoError(t, db.DeleteSearchChanges(t.Context(), through))
+			}
+			assert.ElementsMatch(t, tc.want, jobs)
+		})
+	}
+}
+
+func TestSearchChangesPreservesWritesAfterPage(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err := db.ExecContext(t.Context(), `INSERT INTO search_changes(job_id) VALUES (1), (1), (2)`)
+	require.NoError(t, err)
+	jobs, through, err := db.ListSearchChanges(t.Context(), 2)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{1}, jobs)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO search_changes(job_id) VALUES (3)`)
+	require.NoError(t, err)
+	require.NoError(t, db.DeleteSearchChanges(t.Context(), through))
+	jobs, through, err = db.ListSearchChanges(t.Context(), 10)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{2, 3}, jobs)
+	require.NoError(t, db.DeleteSearchChanges(t.Context(), through))
+	_, err = db.ExecContext(t.Context(), `INSERT INTO search_changes(job_id) VALUES (4)`)
+	require.NoError(t, err)
+	head, err := db.SearchChangesHead(t.Context())
+	require.NoError(t, err)
+	assert.Greater(t, head, through)
 }

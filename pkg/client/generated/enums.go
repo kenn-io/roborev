@@ -63,7 +63,7 @@ func (w WebSessionStatusAuthentication) Validate() error {
 	}
 }
 
-// GetCostQueryBranchEmpty Only jobs with empty/unset branch
+// GetCostQueryBranchEmpty Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
 type GetCostQueryBranchEmpty string
 
 const (
@@ -81,7 +81,7 @@ func (g GetCostQueryBranchEmpty) Validate() error {
 	}
 }
 
-// ListJobsQueryBranchEmpty Only jobs with empty or unset branch
+// ListJobsQueryBranchEmpty Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
 type ListJobsQueryBranchEmpty string
 
 const (

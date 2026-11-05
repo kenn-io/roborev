@@ -671,3 +671,9 @@ func TestReconcilerFillsGenerationStoredByEarlierReleaseInPlace(t *testing.T) {
 	require.Len(t, generations, 1)
 	assert.Equal(t, key, generations[0].Key)
 }
+
+func (s *reconcilerStore) SearchChangesHead(context.Context) (int64, error) { return 0, nil }
+func (s *reconcilerStore) ListSearchChanges(context.Context, int) ([]int64, int64, error) {
+	return nil, 0, nil
+}
+func (s *reconcilerStore) DeleteSearchChanges(context.Context, int64) error { return nil }

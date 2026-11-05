@@ -330,6 +330,9 @@ func (m model) isJobVisible(job storage.ReviewJob) bool {
 
 // branchMatchesFilter checks if a job's branch matches the active branch filter
 func (m model) branchMatchesFilter(job storage.ReviewJob) bool {
+	if m.activeBranchFilter == branchNone {
+		return job.Branch == "" || job.Branch == branchNone
+	}
 	branch := m.getBranchForJob(job)
 	// The detached placeholder is display-only; for filter identity those
 	// jobs group under (none), matching how the server-side branch list

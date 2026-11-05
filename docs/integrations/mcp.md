@@ -14,6 +14,12 @@ cannot start or cancel reviews.
 
 Two transports are available and both expose the same tools.
 
+## Server identity (unreleased)
+
+The MCP server declares roborev's website and icon in its implementation
+metadata. The icon is a PNG data URI, so stdio and HTTP clients can load it
+without an external request. Whether it appears depends on the client.
+
 ## Install for coding agents
 
 `roborev mcp install` configures agents whose user configuration directories

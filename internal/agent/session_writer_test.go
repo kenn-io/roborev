@@ -18,23 +18,22 @@ func TestSessionCaptureWriter_LongLineChunkingCost(t *testing.T) {
 	for i, chunkSize := range []int{4096, 65536} {
 		w := NewSessionCaptureWriter(io.Discard, nil)
 		w.buf.Grow(len(payload))
-		for trial := range 3 {
-			w.buf.Reset()
-			start := time.Now()
-			for offset := 0; offset < len(payload); offset += chunkSize {
-				_, _ = w.Write(payload[offset : offset+chunkSize])
+		result := testing.Benchmark(func(b *testing.B) {
+			for b.Loop() {
+				w.buf.Reset()
+				for offset := 0; offset < len(payload); offset += chunkSize {
+					_, _ = w.Write(payload[offset : offset+chunkSize])
+				}
 			}
-			duration := time.Since(start)
-			if trial == 0 || duration < elapsed[i] {
-				elapsed[i] = duration
-			}
-		}
+		})
+		elapsed[i] = time.Duration(result.NsPerOp())
 		require.Equal(payload, w.buf.Bytes())
 	}
 	// Both cases copy the same bytes. Rescanning the unfinished line costs
 	// about 16 times as much with 16 times as many chunks. Allow an eightfold
-	// difference for lock overhead and timing noise, using the fastest of
-	// three trials to reduce interference. Preallocation isolates scanning.
+	// difference for lock overhead and timing noise. Calibrated benchmarks
+	// avoid individual samples rounding to zero on Windows. Preallocation
+	// isolates scanning.
 	require.Less(elapsed[0], 8*elapsed[1], "4KiB and 64KiB chunks: %v", elapsed)
 }
 

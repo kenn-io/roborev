@@ -3,7 +3,7 @@ module go.kenn.io/roborev
 go 1.27.3
 
 require (
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/BurntSushi/toml v1.6.0
@@ -38,8 +38,8 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
 	github.com/yuin/goldmark/v2 v2.1.11
-	gitlab.com/gitlab-org/api/client-go/v3 v3.39.0
-	go.kenn.io/kit v0.47.5
+	gitlab.com/gitlab-org/api/client-go/v3 v3.39.1
+	go.kenn.io/kit v0.48.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.49.0
@@ -76,7 +76,7 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
-	github.com/getkin/kin-openapi v0.149.0 // indirect
+	github.com/getkin/kin-openapi v0.151.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.9.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -107,7 +107,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
-	github.com/oasdiff/oasdiff v1.34.1 // indirect
+	github.com/oasdiff/oasdiff v1.35.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/pb33f/go-yaml v0.1.1 // indirect

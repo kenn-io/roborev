@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +52,8 @@ type refineOptions struct {
 	allBranches       bool
 	list              bool
 	newestFirst       bool
+
+	skipTrivialRereview bool
 }
 
 func refineCmd() *cobra.Command {
@@ -83,6 +86,8 @@ Prerequisites:
 
 Use --since to specify a starting commit when on the main branch or to
 limit how far back to look for reviews to address.
+
+Automatic hook reviews still run.
 
 Use --list to preview which reviews would be refined without running.
 Use --branch to validate the current branch before refining.
@@ -151,6 +156,10 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 	cmd.Flags().StringVar(&opts.model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&opts.reasoning, "reasoning", "", "reasoning level: legacy presets fast, standard (default), thorough, maximum; exact tiers low, medium, high, xhigh, max")
 	cmd.Flags().StringVar(&opts.minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
+	cmd.Flags().BoolVar(
+		&opts.skipTrivialRereview, "skip-trivial-rereview", false,
+		"do not wait for re-reviews of fixes that change only docs and tests",
+	)
 	cmd.Flags().BoolVar(&opts.plan, "plan", false, "plan each fix before implementing")
 	cmd.Flags().BoolVar(&opts.planOnly, "plan-only", false, "print and store plans for existing failed reviews without edits or new reviews")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
@@ -474,6 +483,8 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 	var chainHead string
 	// Track reviews we've given up on this run to avoid re-selecting them
 	skippedReviews := make(map[int64]bool)
+	// Automatic reviews remain untouched; skips last only for this invocation.
+	skippedFixes := make(map[string]bool)
 
 	for iteration := 1; iteration <= opts.maxIterations; {
 		// Get commits on current branch
@@ -487,10 +498,15 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 			return nil
 		}
 
+		reviewCommits := commits
+		if len(skippedFixes) > 0 {
+			reviewCommits = slices.DeleteFunc(slices.Clone(commits), func(sha string) bool { return skippedFixes[sha] })
+		}
+
 		// Only search for a new failed review if we don't have one to work on
 		// (either first iteration, or previous fix passed)
 		if currentFailedReview == nil {
-			currentFailedReview, err = findFailedReviewForBranch(ctx, client, commits, skippedReviews)
+			currentFailedReview, err = findFailedReviewForBranch(ctx, client, reviewCommits, skippedReviews)
 			if err != nil {
 				return fmt.Errorf("error finding reviews: %w", err)
 			}
@@ -498,7 +514,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 
 		if currentFailedReview == nil {
 			// Check for pending jobs before triggering a branch review
-			pendingJob, err := findPendingJobForBranch(ctx, client, repoPath, commits)
+			pendingJob, err := findPendingJobForBranch(ctx, client, repoPath, reviewCommits)
 			if err != nil {
 				return fmt.Errorf("error checking pending jobs: %w", err)
 			}
@@ -586,7 +602,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 			fmt.Printf("Addressing review (job %d)...\n", currentFailedReview.JobID)
 		}
 
-		if opts.plan && len(carriedAttempts) > 0 {
+		if len(carriedAttempts) > 0 {
 			if !refineReviewIncludes(ctx, repoPath, currentFailedReview, chainHead) {
 				carriedAttempts = nil
 				chainHead = ""
@@ -674,15 +690,12 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 			return dirtyRefineSubmodulesError(dirtySubmodules)
 		}
 
-		var cleanupPrompt func()
-		if opts.plan {
-			prepared, prepareErr := builder.Prepare(addressPrompt, prompt.SnapshotTarget{RepoPath: worktreePath, ConfigRepoPath: repoPath})
-			if prepareErr != nil {
-				_ = wt.Close(ctx)
-				return prepareErr
-			}
-			addressPrompt, cleanupPrompt = prepared.Prompt, prepared.Cleanup
+		prepared, prepareErr := builder.Prepare(addressPrompt, prompt.SnapshotTarget{RepoPath: worktreePath, ConfigRepoPath: repoPath})
+		if prepareErr != nil {
+			_ = wt.Close(ctx)
+			return prepareErr
 		}
+		addressPrompt = prepared.Prompt
 
 		// Determine output writer
 		var agentOutput io.Writer
@@ -706,8 +719,8 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 		fixCtx, fixCancel := withAgentCallTimeout(ctx)
 		output, agentErr := addressAgent.Review(fixCtx, worktreePath, "HEAD", addressPrompt, agentOutput)
 		fixCancel()
-		if cleanupPrompt != nil {
-			cleanupPrompt()
+		if prepared.Cleanup != nil {
+			prepared.Cleanup()
 		}
 		if fmtr != nil {
 			fmtr.Flush()
@@ -803,7 +816,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 			}
 
 			fmt.Println("Agent made no changes - skipping this review")
-			if err := client.AddComment(ctx, currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
+			if err := client.AddComment(ctx, currentFailedReview.JobID, "roborev-refine", "No changes made.\n\n"+output); err != nil {
 				fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 			}
 			skippedReviews[currentFailedReview.ID] = true
@@ -833,18 +846,32 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", gitrepo.ShortSHA(newCommit), output)
+		var skippedCommits []string
+		if opts.skipTrivialRereview {
+			if commits, ok := refineTrivialFixCommits(ctx, repoPath, headBefore, newCommit); ok {
+				skippedCommits = commits
+				responseText += "\n\n" + refineSkipNote
+			}
+		}
 		if err := client.AddComment(ctx, currentFailedReview.JobID, "roborev-refine", responseText); err != nil {
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
 
-		if opts.plan {
-			carriedAttempts = append(previousAttempts, storage.Response{Responder: "roborev-refine", Response: responseText, CreatedAt: time.Now()})
-			chainHead = newCommit
-		}
+		carriedAttempts = append(previousAttempts, storage.Response{Responder: "roborev-refine", Response: responseText, CreatedAt: time.Now()})
+		chainHead = newCommit
 
 		// Close old review
 		if err := client.MarkReviewClosed(ctx, currentFailedReview.JobID); err != nil {
 			fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
+		}
+
+		if len(skippedCommits) > 0 {
+			fmt.Println(refineSkipNote)
+			for _, sha := range skippedCommits {
+				skippedFixes[sha] = true
+			}
+			currentFailedReview = nil
+			continue
 		}
 
 		// Wait for new commit to be reviewed

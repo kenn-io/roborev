@@ -1414,7 +1414,10 @@ func GetMainRepoRoot(path string) (string, error) {
 		// repository (for example, commonDir=/path/to/repo.git). In that layout
 		// there is no main working tree, so the current checkout root is the
 		// stable repo-local path to register and use for config resolution.
-		bareCmd := newGitCmd("config", "--file", filepath.Join(commonDir, "config"), "--bool", "core.bare")
+		// Ask git itself rather than reading <commonDir>/config directly, so a
+		// core.bare kept in config.worktree (extensions.worktreeConfig) counts.
+		bareCmd := newGitCmd("--git-dir="+commonDir, "rev-parse", "--is-bare-repository")
+		bareCmd.Dir = path
 		if out, err := bareCmd.Output(); err == nil && strings.TrimSpace(string(out)) == "true" {
 			return GetRepoRoot(path)
 		}

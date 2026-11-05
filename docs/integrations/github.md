@@ -386,7 +386,7 @@ enabled = true
 poll_interval = "5m"
 repos = ["myorg/myrepo"]
 agents = ["codex"]              # which agents to use (or omit for auto-detect)
-review_types = ["security"]     # "security", "design", "lookahead", "test-value", or "default"
+review_types = ["security"]     # "security", "design", "lookahead", "test-value", "exhaustive", or "default"
 ```
 
 > `"default"` runs the standard code review (bugs, security, testing gaps,
@@ -441,7 +441,7 @@ The status context is `roborev` and progresses through these states:
 | State | When |
 |-------|------|
 | `pending` | A panel is queued, running, throttled, or deferred for retry |
-| `success` | The review process completed and a comment was posted, including comments that contain findings |
+| `success` | Review execution completed, including reviews with findings or comments intentionally suppressed by display policy |
 | `failure` | At least one member failed to run for a genuine reason while another member still produced usable review output |
 | `error` | No reviewer produced usable output and no retry remains, or no agent is available |
 
@@ -736,6 +736,51 @@ panels use their own `synthesis_agent`, `synthesis_model`,
 `synthesis_instructions` fields under `[review.panels.<name>]`. The implicit
 matrix has no synthesis instructions setting; use a named panel for that.
 
+## Comment display policy
+
+The GitHub daemon poller can cap synthesized comments and stay silent when
+nothing survives the display filters. Defaults preserve existing behavior:
+
+```toml
+[ci]
+comment_max_findings = 0   # Unlimited structured findings
+comment_when_clean = true # Create comments even when no findings survive
+```
+
+Set `comment_max_findings` to a positive integer to show that many structured
+findings after severity filtering. Comments show critical findings first, then
+high, medium, and low, preserving the original order within each severity. An
+overflow line counts only findings omitted by the cap and points to
+`roborev show --job <synthesis-job-id>` for the complete review. Negative caps
+are invalid, including when loading, saving, or reloading global configuration.
+The omission count and retrieval command remain visible when a long finding
+requires comment truncation. Prose is not capped because it cannot be ranked
+reliably.
+
+Set `comment_when_clean = false` to avoid creating a comment when structured
+synthesis has no findings after filtering. Severity-parsed prose is also silent
+when no labelled findings or unlabelled blocks survive. Verbatim prose and
+legacy Markdown remain publishable, even if their text says the review is clean.
+Roborev does not infer cleanliness from text or the stored verdict. With
+`upsert_comments = true`, silent reviews update an existing marker comment to
+the no-findings line. Missing or deleted comments are successful no-ops; cleanup
+never creates a replacement. Permission and transient delivery errors keep the
+normal error and retry behavior.
+
+Both settings accept per-repo `[ci]` overrides in `.roborev.toml`. An explicit
+repo cap of `0` restores unlimited findings; an explicit `true` restores clean
+comments. These settings apply only to synthesized GitHub daemon comments. Raw
+member fallback diagnostics, daemon-free `roborev ci`, and GitLab keep existing
+behavior. Complete stored reviews, verdicts, prompts, and execution statuses are
+unchanged. Unlike these display settings, `ci.min_severity` also controls the
+synthesis verdict.
+
+Silence relies on commit statuses for visible execution completion. The token
+needs commit status-write permissions; personal tokens and GitHub App tokens can
+both publish statuses. If status delivery fails, a silent review can have no
+visible signal until the normal status retry succeeds. `roborev doctor` includes
+this permission advice when silence is enabled.
+
 ## Comment Upsert
 
 By default, each review run creates a new PR comment. When `upsert_comments` is
@@ -789,6 +834,14 @@ to warm Go modules. See
 [sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
 build and host requirements.
 
+The checker discovers the host's globally selected, installed mise tools outside
+the PR checkout. It runs them directly, ahead of mise shims on `PATH`, and can
+read their installation directories, including runtime support files. This
+supports Node, Bun, OpenTofu, Terraform, Python, and other installed mise tools.
+Provision the required versions on the host. Installing project dependencies and
+starting providers or other services remain separate requirements. The checker
+logs failed mise queries and keeps its existing tools.
+
 The checker works in its own clone of the PR checkout. The clone borrows the
 host clone's object store and none of its Git config, so the checker can't read
 credentials stored there. It has no submodules or Git LFS files. The host warms
@@ -798,10 +851,15 @@ or `go.work.sum` must also be a regular file; otherwise the review posts
 unchecked. Warming cannot change the code being checked. Nested modules and Go
 workspaces receive no separate warming; findings that need unavailable
 dependencies post unchecked. Inside the sandbox, the checker can change its
-scratch files and read the shared object store and warmed caches. Model calls
-use nono's credential route, which reads the host's current Codex login outside
-the sandbox. Tests that start loopback servers cannot run in this sandbox; the
-checker keeps findings it cannot try.
+scratch files and read the shared object store and warmed caches. Tests can bind
+and connect to pathname Unix sockets inside the job's scratch directory,
+including its temporary directory. A short alias under `/tmp` lets provider
+plugins bind Unix sockets even with deeply nested checkout paths. Temporary
+contents stay inside the checkout for cleanup and startup recovery. Host Unix
+sockets outside scratch remain blocked. Model calls use nono's credential route,
+which reads the host's current Codex login outside the sandbox. Tests that start
+TCP loopback servers cannot run in this sandbox; the checker keeps findings it
+cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the
@@ -960,6 +1018,8 @@ set, it takes priority over the matrix fields for that repo.
 | `reviews` | table | global `reviews` | Granular agent-to-review-type map (overrides `agents` and `review_types`; empty table disables reviews) |
 | `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
+| `comment_max_findings` | int | global `comment_max_findings` | Maximum structured findings in synthesized GitHub daemon comments; `0` restores unlimited |
+| `comment_when_clean` | bool | global `comment_when_clean` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
 | `check` | bool | global `check` | Try synthesized findings before posting and keep those that hold up |
@@ -984,7 +1044,7 @@ set, it takes priority over the matrix fields for that repo.
 | `exclude_branches` | array | `[]` | Glob patterns for PR head branches to skip. Wins over `include_branches`. |
 | `max_repos` | int | `100` | Safety cap on total expanded repos (explicit repos have priority over wildcard-expanded ones) |
 | `panel` | string | | Named `[review.panels.<name>]` panel for CI reviews. When set, overrides `agents`, `review_types`, and `reviews`. |
-| `review_types` | array | `["security"]` | Review types to run for each PR: `security`, `design`, `lookahead`, `test-value`, or `default`. `"review"` and `"general"` are accepted as aliases for `"default"`. |
+| `review_types` | array | `["security"]` | Review types to run for each PR: `security`, `design`, `lookahead`, `test-value`, `exhaustive`, or `default`. `"review"` and `"general"` are accepted as aliases for `"default"`. |
 | `agents` | array | auto-detect | Agents to run for each PR (e.g., `["codex", "gemini"]`) |
 | `reviews` | table | | Granular agent-to-review-type map. Overrides `agents` and `review_types` when set. See [Granular Review Matrix](#granular-review-matrix). |
 | `model` | string | | Model override for CI reviews |
@@ -998,6 +1058,8 @@ set, it takes priority over the matrix fields for that repo.
 | `rewrite` | bool | `false` | Rewrite checked findings in plain words; requires `check` |
 | `check_model` | string | | Model override for the checker. Global only |
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
+| `comment_max_findings` | int | `0` | Maximum structured findings in synthesized GitHub daemon comments; `0` is unlimited |
+| `comment_when_clean` | bool | `true` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |
 | `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |

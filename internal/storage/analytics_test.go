@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -722,18 +721,7 @@ func TestAnalyticsRowsQueryReadsOnlyAnalyticsIndexes(t *testing.T) {
 		"all-time": {Until: until},
 	} {
 		query, args := analyticsRowsQuery(opts)
-		rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
-		require.NoError(t, err)
-		var details []string
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-			details = append(details, detail)
-		}
-		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
-		plan := strings.Join(details, "\n")
+		plan := queryPlan(t, db, query, args...)
 		assert.Contains(t, plan, "SEARCH j USING COVERING INDEX idx_review_jobs_analytics", name)
 		assert.Contains(t, plan, "USING COVERING INDEX idx_reviews_job_verdict", name)
 		assert.NotContains(t, plan, "TEMP B-TREE", name)

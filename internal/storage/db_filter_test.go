@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -550,13 +549,27 @@ func TestWithBranchOrEmpty(t *testing.T) {
 	repo, err := db.GetOrCreateRepo("/tmp/repo-branch-empty")
 	require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-	for i, br := range []string{"main", "feature", ""} {
+	for i, br := range []string{"main", "feature", "", "(none)", "NULL"} {
 		sha := fmt.Sprintf("sha-be-%d", i)
 		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
 		require.NoError(t, err, "GetOrCreateCommit failed: %v")
 
-		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Branch: br, Agent: "codex"})
+		storedBranch := br
+		if br == "(none)" || br == "NULL" {
+			storedBranch = ""
+		}
+		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Branch: storedBranch, Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
+
+		if br == "NULL" {
+			_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET branch = NULL WHERE id = ?`, job.ID)
+			require.NoError(t, err)
+		}
+		if br == "(none)" {
+			updated, err := db.UpdateJobBranch(job.ID, br)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), updated)
+		}
 
 		db.ClaimJob("w")
 		completeReviewFixture(db, job.ID, "codex", "", fmt.Sprintf("output %d", i))
@@ -569,18 +582,29 @@ func TestWithBranchOrEmpty(t *testing.T) {
 		assert.Len(t, jobs, 1)
 	})
 
-	t.Run("WithBranchOrEmpty includes branchless", func(t *testing.T) {
+	t.Run("WithBranchOrEmpty includes branchless but excludes (none)", func(t *testing.T) {
+		// agenthook's failedReviewCountsForHead trusts nonempty branch labels
+		// as already scoped, so including (none) would count its failed reviews
+		// toward every named branch.
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranchOrEmpty("main"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2)
+		require.Len(t, jobs, 3)
+		assert.ElementsMatch(t, []string{"main", "", ""}, []string{jobs[0].Branch, jobs[1].Branch, jobs[2].Branch})
 	})
 
-	t.Run("WithEmptyBranch returns only branchless jobs", func(t *testing.T) {
+	t.Run("WithEmptyBranch matches the picker's (none) bucket", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithEmptyBranch())
 		require.NoError(t, err)
-		require.Len(t, jobs, 1)
-		assert.Empty(t, jobs[0].Branch)
+		require.Len(t, jobs, 3)
+		assert.ElementsMatch(t, []string{"", "(none)", ""}, []string{jobs[0].Branch, jobs[1].Branch, jobs[2].Branch})
+		branches, err := db.ListBranchesWithCounts(nil)
+		require.NoError(t, err)
+		counts := make(map[string]int)
+		for _, branch := range branches.Branches {
+			counts[branch.Name] = branch.Count
+		}
+		assert.Equal(t, len(jobs), counts["(none)"])
 	})
 }
 
@@ -1337,19 +1361,7 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 					}, page.extra...)
 					query, args, _, err := listJobsQuery("", "", 51, 0, collectListJobsOptions(opts...))
 					require.NoError(t, err)
-					rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
-					require.NoError(t, err)
-					defer rows.Close()
-
-					var details []string
-					for rows.Next() {
-						var id, parent, unused int
-						var detail string
-						require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-						details = append(details, detail)
-					}
-					require.NoError(t, rows.Err())
-					plan := strings.Join(details, "\n")
+					plan := queryPlan(t, db, query, args...)
 					assert.Contains(t, plan, "USING INDEX "+page.index)
 					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 				})

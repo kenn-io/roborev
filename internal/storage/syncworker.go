@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"os"
 	"strings"
@@ -197,10 +198,20 @@ func (w *SyncWorker) PublishSearchVectors(
 	ctx context.Context, space string, key SearchVectorKey, chunks []SearchVectorChunk,
 ) (bool, error) {
 	pool, err := w.currentPool()
-	if err != nil {
-		return false, err
+	if err == nil {
+		var published bool
+		published, err = pool.PublishSearchVectors(ctx, space, key, chunks)
+		if err == nil {
+			return published, nil
+		}
 	}
-	return pool.PublishSearchVectors(ctx, space, key, chunks)
+
+	// The retry must survive cancellation of the publication attempt.
+	_, queueErr := w.db.ExecContext(context.WithoutCancel(ctx),
+		`INSERT INTO search_changes(job_id) SELECT job_id FROM reviews WHERE uuid = ?`,
+		key.ReviewUUID,
+	)
+	return false, errors.Join(err, queueErr)
 }
 
 // NewSyncWorker creates a new sync worker
@@ -331,8 +342,9 @@ func (w *SyncWorker) FinalPush() error {
 
 	// Loop until all pending items are pushed
 	var totalJobs, totalReviews, totalResponses int
+	cur := pushCursor{}
 	for {
-		stats, err := w.pushChangesWithStats(ctx, pool)
+		stats, err := w.pushChangesWithStats(ctx, pool, &cur)
 		if err != nil {
 			return fmt.Errorf("final push: %w", err)
 		}
@@ -430,8 +442,9 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	// if new jobs keep arriving during sync.
 	const maxPushBatches = 20
 	batchNum := 0
+	cur := pushCursor{}
 	for batchNum < maxPushBatches {
-		pushed, err := w.pushChangesWithStats(ctx, pool)
+		pushed, err := w.pushChangesWithStats(ctx, pool, &cur)
 		if err != nil {
 			w.observeFailure(err)
 			return nil, fmt.Errorf("push: %w", err)
@@ -728,8 +741,9 @@ func (w *SyncWorker) doSync() error {
 	w.passError = nil
 	// Push all local changes to PostgreSQL (loop until no more pending)
 	var totalJobs, totalReviews, totalResponses int
+	cur := pushCursor{}
 	for {
-		stats, err := w.pushChangesWithStats(ctx, pool)
+		stats, err := w.pushChangesWithStats(ctx, pool, &cur)
 		if err != nil {
 			w.observeFailure(err)
 			return fmt.Errorf("push: %w", err)
@@ -766,8 +780,22 @@ const defaultSyncCursorLookback = 5 * time.Minute
 
 const syncCursorLookbackEnv = "ROBOREV_SYNC_CURSOR_LOOKBACK"
 
+// pushCursor lasts one push pass. Earlier rows that change or fail retry next pass.
+type pushCursor struct {
+	job, reviewJob int64
+}
+
+func (cur *pushCursor) advanceReviews(reviews []SyncableReview, throughJobID int64) {
+	if len(reviews) < syncBatchSize {
+		// The query examined the whole range, including jobs without reviews.
+		cur.reviewJob = throughJobID
+	} else {
+		cur.reviewJob = reviews[len(reviews)-1].JobID
+	}
+}
+
 // pushChangesWithStats pushes local changes and returns statistics
-func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pushPullStats, error) {
+func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool, cur *pushCursor) (pushPullStats, error) {
 	stats := pushPullStats{}
 
 	machineID, err := w.db.GetMachineID()
@@ -788,12 +816,13 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	// Push jobs - need to resolve repo/commit IDs first, then batch insert
-	jobs, err := w.db.GetJobsToSync(machineID, syncBatchSize)
+	jobs, err := w.db.jobsToSync(machineID, cur.job, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get jobs to sync: %w", err)
 	}
 
 	if len(jobs) > 0 {
+		cur.job = jobs[len(jobs)-1].ID
 		// Resolve PostgreSQL repo and commit IDs for each job
 		var preparedJobs []JobWithPgIDs
 		for _, j := range jobs {
@@ -875,11 +904,18 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	// Push reviews - batch operation
-	reviews, err := w.db.GetReviewsToSync(machineID, syncBatchSize)
+	// Keep edited reviews of higher, already-synced jobs from moving the
+	// cursor past jobs that will upload later in this pass.
+	throughJobID := int64(math.MaxInt64)
+	if len(jobs) == syncBatchSize {
+		throughJobID = cur.job
+	}
+	reviews, err := w.db.reviewsToSync(machineID, cur.reviewJob, throughJobID, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get reviews to sync: %w", err)
 	}
 
+	cur.advanceReviews(reviews, throughJobID)
 	if len(reviews) > 0 {
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {

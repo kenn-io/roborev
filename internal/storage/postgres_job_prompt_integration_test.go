@@ -195,7 +195,7 @@ func TestIntegrationPullJobsPrefersNewestReviewPrompt(t *testing.T) { //nolint:p
 	}
 	// pulledReviewJobPrompts returns the job prompt each pulled review carries.
 	pulledReviewJobPrompts := func(jobUUID uuid.UUID) []string {
-		reviews, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobUUID}, "", 10)
+		reviews, _, err := pool.PullReviews(ctx, uuid.New(), map[uuid.UUID]struct{}{jobUUID: {}}, "", 10)
 		require.NoError(t, err)
 		var enqueuedAt time.Time
 		require.NoError(t, pool.pool.QueryRow(ctx, `SELECT enqueued_at FROM review_jobs WHERE uuid = $1`, jobUUID).Scan(&enqueuedAt))
@@ -329,14 +329,14 @@ func TestIntegrationMigrationRepushesLegacyRerunPrompt(t *testing.T) { //nolint:
 			require.Len(t, reviews, 1, "a previously synced rerun must republish its producing attempt")
 			_, err = pool.BatchUpsertReviews(ctx, reviews)
 			require.NoError(t, err)
-			pulled, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobUUID}, "", 10)
+			pulled, _, err := pool.PullReviews(ctx, uuid.New(), map[uuid.UUID]struct{}{jobUUID: {}}, "", 10)
 			require.NoError(t, err)
 			require.Len(t, pulled, 1)
 			assert.Equal(reviewUUID, pulled[0].UUID)
 			assert.True(pulled[0].Closed, "attempt repair must retain a newer peer closure")
 			require.True(t, reviews[0].MetadataOnly)
 			require.NoError(t, db.MarkReviewsSynced(reviews[:1]))
-			ownerPull, _, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID}, "", 10)
+			ownerPull, _, err := pool.PullReviews(ctx, machineID, map[uuid.UUID]struct{}{jobUUID: {}}, "", 10)
 			require.NoError(t, err)
 			require.Len(t, ownerPull, 1, "the owner must learn the preserved peer closure")
 			require.NoError(t, db.UpsertPulledReview(ownerPull[0]))

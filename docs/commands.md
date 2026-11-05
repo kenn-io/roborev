@@ -224,6 +224,7 @@ roborev review --type security   # Security-focused review
 roborev review --type design     # Design-focused review
 roborev review --type lookahead  # Time-series look-ahead bias review
 roborev review --type test-value # Find tests that add no value
+roborev review --type exhaustive # Default review that reports every supportable finding
 roborev review --type goal       # Superpowers spec/plan and open Kata graph
 
 # Review panels
@@ -239,7 +240,7 @@ roborev review --branch --panel none          # Force single-agent review
 | `--base <branch>` | Base branch for `--branch` comparison (default: auto-detect) |
 | `--agent <name>` | Use a specific agent for review: a built-in (`codex`, `claude-code`, `gemini`, `copilot`, `opencode`, `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`, `muse`) or a configured ACP agent |
 | `-m, --model <model>` | Model to use (format varies by agent) |
-| `--type <type>` | Review type (`security`, `design`, `lookahead`, `test-value`, `goal`); `goal` reviews Superpowers intent artifacts |
+| `--type <type>` | Review type (`security`, `design`, `lookahead`, `test-value`, `exhaustive`, `goal`); `goal` reviews Superpowers intent artifacts |
 | `--spec <path>` | Design spec for `--type goal`; omit for unambiguous discovery |
 | `--plan <path>` | Linked implementation plan for `--type goal` |
 | `--reasoning <level>` | Set a reasoning level; prefer exact `low`/`medium`/`high`/`xhigh`/`max`, while legacy presets remain supported. See [Reasoning Levels](/docs/configuration/#reasoning-levels) |
@@ -619,13 +620,15 @@ and synthesis agent and model. It also includes retained member and synthesis
 jobs with their timing and model metadata. The panel's `experiments` field is an
 array of assignments when an experiment applies and `null` otherwise.
 
-Terminal outcomes distinguish `review_posted`, `no_review_posted`,
-`giveup_posted`, and `abandoned`. `giveup_posted` is historical; exhausted
-retries now finish with `no_review_posted` and an error status without a PR
-comment. roborev backfills metrics for older finalized panels from retained jobs
-and attempts when the daemon starts. If the source rows have already been
-deleted, the panel remains exportable with outcome `unknown` and unavailable
-fields set to `null`.
+Terminal outcomes distinguish `review_posted`, `review_suppressed`,
+`no_review_posted`, `giveup_posted`, and `abandoned`. `review_suppressed` means
+a usable synthesized review completed without creating or updating a PR comment
+under the clean-comment policy. An actual cleanup update remains
+`review_posted`. `giveup_posted` is historical; exhausted retries now finish
+with `no_review_posted` and an error status without a PR comment. roborev
+backfills metrics for older finalized panels from retained jobs and attempts
+when the daemon starts. If the source rows have already been deleted, the panel
+remains exportable with outcome `unknown` and unavailable fields set to `null`.
 
 Export documents use `schema_version: 1` and the same stable `database_id`
 contract as review exports. Rows are ordered by `(posted_at, panel_id)`
@@ -761,6 +764,7 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--reasoning <level>` | Set reasoning depth |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--max-iterations <n>` | Limit fix attempts (default: 10) |
+| `--skip-trivial-rereview` | Do not wait for re-reviews of documentation/test-only fixes (default: off) |
 | `--plan` | Produce and store a plan before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without edits, commits, or new reviews |
 | `--since <commit>` | Refine commits since specific commit |
@@ -772,6 +776,10 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--allow-unsafe-agents` | Allow agents without sandboxing |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
 
+`--skip-trivial-rereview` stops refine from waiting for the individual re-review
+of a fix that changes only documentation and tests. See
+[skipping trivial re-reviews](/docs/guides/auto-fixing/#skipping-trivial-re-reviews).
+
 `--plan-only` snapshots completed failed reviews in the selected branch or
 `--since` range, including range reviews. Single-branch selection uses commit
 ancestry, so reviews remain eligible after a branch rename or when a side branch
@@ -781,11 +789,17 @@ detached worktrees without switching your checkout. Plans are printed even with
 `--quiet`. `--list` cannot be combined with either planning flag.
 
 Refine planning requires a clean working tree with no rebase in progress. Commit
-or stash changes, and finish or abort any rebase before planning. During the
-same refine run, later fixes receive earlier plans, implementation results, and
-trusted comments as context. Comments remain attached to their original reviews.
-If the caller's working tree, HEAD, or branch changes during planning, refine
-stops even when the planning agent fails.
+or stash changes, and finish or abort any rebase before planning. If the
+caller's working tree, HEAD, or branch changes during planning, refine stops
+even when the planning agent fails.
+
+During the same refine run, later fixes receive earlier implementation results,
+trusted comments, and any stored plans as context, with or without `--plan`.
+This history follows the fix chain only while the new review covers the latest
+fix commit. Comments remain attached to their original reviews. Oversized
+prompts use complete prompt files in the disposable worktree. When an agent
+leaves findings unresolved without changes, refine stores its full output as a
+comment and leaves the review open.
 
 `refine` creates its own fix commits, so `fix_commit_author` and
 `fix_commit_co_authored_by` are applied directly with Git's `--author` and
@@ -1150,7 +1164,7 @@ roborev ci review --comment                  # Post results as PR/MR comment
 | `--gl-host <url>` | GitLab server URL or hostname; selects GitLab (default: `CI_SERVER_URL`, then `GITLAB_HOST`/`GL_HOST`); hardcode it in the job script when `GITLAB_TOKEN` is protected; mutually exclusive with `--gh-repo` |
 | `--pr <number>` | PR number / GitLab MR IID (default: `GITHUB_EVENT_PATH` or `CI_MERGE_REQUEST_IID`) |
 | `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
-| `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `test-value`, `default`) |
+| `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `test-value`, `exhaustive`, `default`) |
 | `--reasoning <level>` | Legacy (`fast`/`standard`/`thorough`/`maximum`) or exact (`low`/`medium`/`high`/`xhigh`/`max`) reasoning |
 | `--min-severity <level>` | Lowest severity that fails the combined review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--upsert-comments` | Update the previous roborev comment instead of adding one (overrides `[ci] upsert_comments`) |

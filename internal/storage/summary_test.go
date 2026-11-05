@@ -298,30 +298,41 @@ func TestGetSummary_SinceFilter(t *testing.T) {
 	assert.Equal(t, 1, s.Overview.Total)
 }
 
-func TestGetSummary_RFC3339Timestamps(t *testing.T) {
+func TestGetSummary_MixedTimestampBoundary(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, "/tmp/test-repo")
-	commit := createCommit(t, db, repo.ID, "abc123")
-
-	j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
-	rfc3339Time := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
-	_, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET enqueued_at = ? WHERE id = ?", rfc3339Time, j.ID)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, "/tmp/summary-boundary")
+	since := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+	for _, stamp := range []string{
+		"2026-01-01 11:59:59", "2026-01-01T06:59:59-05:00",
+		"2026-01-01 12:00:00", "2026-01-01T12:00:00Z", "2026-01-01T07:00:00-05:00",
+	} {
+		commit := createCommit(t, db, repo.ID, stamp)
+		job := enqueueJob(t, db, repo.ID, commit.ID, stamp)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ?,
+			status = 'done', agent_invoked = 1, started_at = ?, finished_at = ? WHERE id = ?`, stamp, stamp, stamp, job.ID)
+		require.NoError(t, err)
+	}
+	otherRepo := createRepo(t, db, "/tmp/another-summary-boundary")
+	otherCommit := createCommit(t, db, otherRepo.ID, "other")
+	otherJob := enqueueJob(t, db, otherRepo.ID, otherCommit.ID, "other")
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ?,
+		status = 'done', agent_invoked = 1, started_at = ?, finished_at = ? WHERE id = ?`,
+		"2026-01-01 12:00:00", "2026-01-01 12:00:00", "2026-01-01 12:00:00", otherJob.ID)
 	require.NoError(t, err)
-
-	s, err := db.GetSummary(SummaryOptions{
-		Since: time.Now().Add(-2 * time.Hour),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, s.Overview.Total)
-
-	s, err = db.GetSummary(SummaryOptions{
-		Since: time.Now(),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 0, s.Overview.Total)
+	for _, scope := range []struct {
+		path string
+		want int
+	}{
+		{path: "", want: 4},
+		{path: repo.RootPath, want: 3},
+	} {
+		summary, err := db.GetSummary(SummaryOptions{Since: since, RepoPath: scope.path})
+		require.NoError(t, err)
+		assert.Equal(t, scope.want, summary.Overview.Total)
+		assert.Equal(t, scope.want, summary.Cost.JobsTotal)
+	}
 }
 
 func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {

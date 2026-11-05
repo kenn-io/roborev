@@ -1941,12 +1941,16 @@ func (db *DB) GetJobRetryCount(jobID int64) (int, error) {
 // ListJobsOption configures optional filters for ListJobs.
 type ListJobsOption func(*listJobsOptions)
 
+// emptyBranchCondition matches branchless jobs. Requires review_jobs aliased as "j".
+const emptyBranchCondition = "(j.branch = '' OR j.branch IS NULL OR j.branch = '(none)')"
+
 type listJobsOptions struct {
 	gitRef             string
 	branch             string
 	branchEmpty        bool
 	branchIncludeEmpty bool
 	closed             *bool
+	openFailedReviews  bool
 	jobType            string
 	excludeJobType     string
 	analysisType       string
@@ -1963,6 +1967,14 @@ type listJobsOptions struct {
 	excludePanelRole   string
 	omitPrompt         bool
 	includeFindings    bool
+	failedReviewsSince *time.Time
+}
+
+// WithFailedReviewsSince selects completed review, range, dirty, or synthesis
+// jobs with a failed verdict, finished at or after since at millisecond resolution.
+// Done jobs without a finish time are excluded.
+func WithFailedReviewsSince(since time.Time) ListJobsOption {
+	return func(o *listJobsOptions) { o.failedReviewsSince = &since }
 }
 
 // WithGitRef filters jobs by git ref.
@@ -1989,7 +2001,7 @@ func WithBranch(branch string) ListJobsOption {
 	return func(o *listJobsOptions) { o.branch = branch }
 }
 
-// WithEmptyBranch filters jobs whose branch is empty or unset.
+// WithEmptyBranch filters jobs whose branch is empty, unset, or the "(none)" backfill sentinel.
 func WithEmptyBranch() ListJobsOption {
 	return func(o *listJobsOptions) { o.branchEmpty = true }
 }
@@ -2006,6 +2018,11 @@ func WithBranchOrEmpty(branch string) ListJobsOption {
 // WithClosed filters jobs by closed state (true/false).
 func WithClosed(closed bool) ListJobsOption {
 	return func(o *listJobsOptions) { o.closed = &closed }
+}
+
+// WithOpenFailedReviews selects jobs with an open review and a stored failed verdict.
+func WithOpenFailedReviews() ListJobsOption {
+	return func(o *listJobsOptions) { o.openFailedReviews = true }
 }
 
 // WithoutPrompt selects an empty string in place of the prompt column for
@@ -2119,11 +2136,28 @@ func findingCountsDiffContentExpr(includeFindings bool) string {
 func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (string, []any) {
 	var args []any
 	var conditions []string
+	if o.openFailedReviews {
+		conditions = append(conditions, `j.id IN (
+			SELECT job_id FROM reviews INDEXED BY idx_reviews_open_failed
+			WHERE closed = 0 AND verdict_bool = 0)`)
+	}
 
 	if statusFilter != "" {
 		conditions = append(conditions, "j.status = ?")
 		args = append(args, statusFilter)
 	}
+	if o.failedReviewsSince != nil {
+		// The indexed probe lets SQLite skip non-failing reviews before the full verdict check.
+		conditions = append(conditions,
+			"j.finished_at IS NOT NULL",
+			"datetime(j.finished_at) >= datetime(?) AND julianday(j.finished_at) >= julianday(?)",
+			"rv.verdict_bool = 0 AND "+jobVerdictSortExpr(false)+" = 'F'",
+			"(j.job_type IN ('"+strings.Join([]string{JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeSynthesis}, "', '")+"') OR "+
+				"(COALESCE(j.job_type, '') = '' AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty' OR instr(j.git_ref, '..') > 0)))")
+		since := o.failedReviewsSince.Format(time.RFC3339Nano)
+		args = append(args, since, since)
+	}
+
 	// Repo scoping precedence: a single positional repoFilter wins, then a
 	// multi-repo IN set (display names spanning repos), then a path prefix.
 	// At most one applies so the clauses never compound into an empty result.
@@ -2179,7 +2213,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		args = append(args, analysisFile)
 	}
 	if o.branchEmpty {
-		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL)")
+		conditions = append(conditions, emptyBranchCondition)
 	} else if o.branch != "" {
 		if o.branchIncludeEmpty {
 			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
@@ -2277,6 +2311,16 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	for i, expr := range sortKeys {
 		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
 	}
+	jobsTable := "review_jobs j"
+	if options.openFailedReviews {
+		// Without statistics, SQLite otherwise scans the repo's job index.
+		// NOT INDEXED keeps rowid lookups driven by the failed-review IN list.
+		jobsTable += " NOT INDEXED"
+	} else if options.failedReviewsSince != nil {
+		// Like analyticsRowsQuery, seek the finished window through the covering
+		// analytics index instead of scanning the repo in enqueue order.
+		jobsTable += " INDEXED BY idx_review_jobs_analytics"
+	}
 	// Stored verdicts avoid loading a result body in queue listings. Review
 	// verdicts come from JSON at write time; only free-form job types may
 	// still need their output here. Keep the large text expressions lazy.
@@ -2284,7 +2328,7 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 		SELECT ` + jobWithReviewSelectColumns(
 		jobTextColumns{Prompt: promptExpr, Diff: diffContentExpr, Patch: "NULL"}, structuredOutputExpr,
 	) + sortKeyColumns.String() + `
-		FROM review_jobs j
+		FROM ` + jobsTable + `
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN job_content jc ON jc.job_id = j.id

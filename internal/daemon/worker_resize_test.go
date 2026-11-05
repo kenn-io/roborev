@@ -173,6 +173,10 @@ func TestConfigReloadAppliesWorkerCountsInOrder(t *testing.T) {
 }
 
 func TestWorkerPoolShrinkDuringClaimBackoff(t *testing.T) {
+	const agentName = "claim-backoff"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: agentName, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		return "No issues found.", nil
+	}})
 	for _, test := range []struct {
 		name   string
 		regrow bool
@@ -183,12 +187,11 @@ func TestWorkerPoolShrinkDuringClaimBackoff(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				assert := assert.New(t)
 				db := testutil.OpenTestDB(t)
 				repo, err := db.GetOrCreateRepo(t.TempDir())
 				require.NoError(t, err)
 				job, err := db.EnqueueJob(storage.EnqueueOpts{
-					RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+					RepoID: repo.ID, GitRef: "prompt", Agent: agentName,
 					Prompt: "Review this codebase", JobType: storage.JobTypeTask,
 				})
 				require.NoError(t, err)
@@ -200,9 +203,11 @@ func TestWorkerPoolShrinkDuringClaimBackoff(t *testing.T) {
 				pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), errorLog, nil)
 				pool.Start()
 				defer pool.Stop()
+				// SQLite's busy handler can durably block before hydration fails.
+				// Poll in virtual time until the worker reaches the intended backoff.
+				require.Eventually(t, func() bool { return len(errorLog.Recent()) > 0 }, time.Minute, time.Millisecond)
 				synctest.Wait()
-				require.NotEmpty(t, errorLog.Recent())
-				assert.Contains(errorLog.Recent()[0].Message, "panel_member_index")
+				assert.Contains(t, errorLog.Recent()[0].Message, "panel_member_index")
 				_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET panel_member_index = NULL WHERE id = ?", job.ID)
 				require.NoError(t, err)
 
@@ -211,10 +216,12 @@ func TestWorkerPoolShrinkDuringClaimBackoff(t *testing.T) {
 					pool.SetMaxWorkers(1)
 				}
 				time.Sleep(10 * time.Second) // pass two claim retry intervals in virtual time
-				synctest.Wait()
-				stored, err := db.GetJobByID(job.ID)
-				require.NoError(t, err)
-				assert.Equal(test.want, stored.Status)
+				// A regrown worker can encounter the same SQLite wait before completion.
+				require.EventuallyWithT(t, func(c *assert.CollectT) {
+					stored, err := db.GetJobByID(job.ID)
+					require.NoError(c, err)
+					assert.Equal(c, test.want, stored.Status)
+				}, time.Minute, time.Millisecond)
 			})
 		})
 	}

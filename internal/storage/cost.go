@@ -19,7 +19,7 @@ type CostAggregate struct {
 type CostOptions struct {
 	RepoPaths   []string  // empty = all repos; multiple = OR over repos.root_path
 	Branch      string    // exact branch; ignored when BranchEmpty is true
-	BranchEmpty bool      // true = only jobs with empty/NULL branch
+	BranchEmpty bool      // true = only jobs with empty/NULL branch or the "(none)" backfill sentinel
 	Since       time.Time // zero = all time; else enqueued_at >= Since
 }
 
@@ -85,6 +85,7 @@ func (db *DB) GetCostAggregate(opts CostOptions) (CostAggregate, error) {
 // can share a read snapshot (e.g. GetSummary's transaction). Panel member rows
 // are included — spend is per-row, not row-count.
 func costAggregate(q querier, opts CostOptions) (CostAggregate, error) {
+	from, sincePredicate := aggregateJobScope(!opts.Since.IsZero(), len(opts.RepoPaths) > 0, opts.Branch != "" || opts.BranchEmpty)
 	var conditions []string
 	var args []any
 
@@ -97,13 +98,13 @@ func costAggregate(q querier, opts CostOptions) (CostAggregate, error) {
 		conditions = append(conditions, "r.root_path IN ("+strings.Join(placeholders, ",")+")")
 	}
 	if opts.BranchEmpty {
-		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL)")
+		conditions = append(conditions, emptyBranchCondition)
 	} else if opts.Branch != "" {
 		conditions = append(conditions, "j.branch = ?")
 		args = append(args, opts.Branch)
 	}
 	if !opts.Since.IsZero() {
-		conditions = append(conditions, "datetime(j.enqueued_at) >= datetime(?)")
+		conditions = append(conditions, sincePredicate)
 		args = append(args, opts.Since.UTC().Format("2006-01-02 15:04:05"))
 	}
 
@@ -120,8 +121,7 @@ func costAggregate(q querier, opts CostOptions) (CostAggregate, error) {
 			COALESCE(SUM(CASE WHEN ` + costEligible + `
 				AND ` + hasCost + `
 				THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
+		` + from + `
 		` + where
 
 	var c CostAggregate

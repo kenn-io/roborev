@@ -1,11 +1,13 @@
 package storage
 
 import (
+	"database/sql"
 	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,12 +45,22 @@ type legacyFixture struct {
 // old created_at and updated_at so a test can tell what a conversion changed.
 func seedLegacyMarkdownReview(t *testing.T, db *DB, repoID int64, name, markdown string, verdict any, closed bool) legacyFixture {
 	t.Helper()
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, GitRef: name, Agent: "test"})
+	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
+	tx := beginSeedTx(t, db)
+	fixture := seedLegacyMarkdownReviewTx(t, db, tx, machineID, repoID, name, markdown, verdict, closed)
+	require.NoError(t, tx.Commit())
+	return fixture
+}
+
+func seedLegacyMarkdownReviewTx(t *testing.T, db *DB, tx *sql.Tx, machineID uuid.UUID, repoID int64, name, markdown string, verdict any, closed bool) legacyFixture {
+	t.Helper()
+	job, err := db.insertJobTx(t.Context(), tx, EnqueueOpts{RepoID: repoID, GitRef: name, Agent: "test"}, uuid.New(), machineID, time.Now())
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	fixture := legacyFixture{jobID: job.ID, markdown: markdown, verdict: verdict, closed: closed, createdAt: "2026-01-05 00:00:00"}
-	_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, created_at, updated_at, closed, verdict_bool, uuid, synced_at)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, created_at, updated_at, closed, verdict_bool, uuid, synced_at)
  VALUES (?, 'test', ?, ?, ?, ?, ?, ?, '2026-01-06T00:00:00Z')`,
 		job.ID, markdown, fixture.createdAt, "2026-01-05T00:00:00Z", closed, verdict, testUUID("legacy-"+name))
 	require.NoError(t, err)

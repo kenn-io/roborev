@@ -63,7 +63,8 @@ Version 0.68.2 runs this migration automatically, including when upgrading
 directly from 0.67.0 or 0.68.0 without installing intermediate versions. If
 migration already completed in 0.68.1, there are no reviews left to migrate.
 Historical review archival, restoration, and verdict backfill process at most
-100 reviews per batch. Archival and verdict updates commit each batch;
+100 reviews per batch. These steps run on each start until they finish once;
+later starts skip them. Archival and verdict updates commit each batch;
 restoration saves each recovered review. Restarting after an interruption
 preserves completed work and continues with the remaining records. Startup
 restoration skips active reviews before loading their archived text and panel
@@ -116,6 +117,10 @@ If the daemon is stopped, start it:
 ```bash
 roborev daemon start
 ```
+
+If a v0.56 daemon is still running, startup reports the replacement's exit
+without waiting for the readiness timeout. Stop the legacy daemon manually
+before retrying.
 
 `roborev init` starts the daemon automatically, but it won't survive a reboot
 unless you've set up a launchd/systemd service. If the daemon was running but

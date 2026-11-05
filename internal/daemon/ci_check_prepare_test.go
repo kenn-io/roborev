@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,7 @@ func TestCICheckPreparation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures and symlinks")
 	}
+	miseTools, miseShims := ciCheckMiseFixture(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")
@@ -43,19 +45,38 @@ func TestCICheckPreparation(t *testing.T) {
 	job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}
 	wp := &WorkerPool{}
 	command := filepath.Join(t.TempDir(), "codex")
-	require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
+	require.NoError(t, os.Symlink(filepath.Join(miseShims, "mise"), command))
 	var log bytes.Buffer
 	run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
 	require.NoError(t, err)
-	t.Cleanup(run.cleanup)
+	defer run.cleanup()
+	var tmp string
+	for _, entry := range run.Job.Env {
+		if value, ok := strings.CutPrefix(entry, "TMPDIR="); ok {
+			tmp = value
+		}
+	}
+	require.NotEmpty(t, tmp)
+	t.Cleanup(func() { assert.NoDirExists(t, filepath.Dir(tmp)) })
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "temporary"), []byte("scratch"), 0o600))
+	contents, err := os.ReadFile(filepath.Join(run.Job.WorkDir, "tmp", "temporary"))
+	require.NoError(t, err)
+	assert.Equal(t, "scratch", string(contents))
 	assert.NoFileExists(t, marker, "checker preparation must leave repository hooks unexecuted on the host")
 	assert.Contains(t, log.String(), "module warming failed: exit status 1")
 	assert.Contains(t, run.Job.Env, "GOMODCACHE="+moduleCache, log.String())
 	assert.Contains(t, run.Job.ReadPaths, tools)
 	assert.Contains(t, run.Job.ReadPaths, moduleCache)
+	assert.Contains(t, run.Job.ReadPaths, miseTools)
+	assert.Contains(t, run.Job.Env, "PATH="+filepath.Join(tools, "bin")+string(os.PathListSeparator)+filepath.Join(miseTools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	module, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
 	require.NoError(t, err)
 	assert.Equal(t, "module example.com/check\n\ngo 1.25.0\n", string(module))
+	home := filepath.Join(miseTools, "home")
+	require.NoError(t, os.Mkdir(home, 0o700))
+	t.Setenv("HOME", home)
+	_, err = wp.prepareCICheck(t.Context(), job, command, nil, io.Discard)
+	require.ErrorContains(t, err, "read grant contains host home")
 }
 
 // Recovery restores write access inside checker roots without following symlinks.
@@ -134,11 +155,9 @@ func TestCICheckWarming(t *testing.T) {
 		cache := filepath.Join(t.TempDir(), "missing", "mod")
 		tools := t.TempDir()
 		require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
-		// Version-manager shims must resolve outside the checkout.
-		outside, err := filepath.EvalSymlinks(os.TempDir())
-		require.NoError(t, err)
+		// Version-manager shims must resolve globally, outside temporary directory ancestry.
 		tokenFile := filepath.Join(t.TempDir(), "download-token")
-		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then [ \"$(pwd -P)\" = '%s' ] || exit 4; printf '%%s\\n' '%s' '%s'; else [ \"$1\" = mod ] && [ \"$2\" = download ] || exit 3; printf '%%s' \"$CHECKER_GIT_TOKEN\" > '%s'; fi\n", outside, tools, cache, tokenFile)
+		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then [ \"$(pwd -P)\" = '/' ] || exit 4; printf '%%s\\n' '%s' '%s'; else [ \"$1\" = mod ] && [ \"$2\" = download ] || exit 3; printf '%%s' \"$CHECKER_GIT_TOKEN\" > '%s'; fi\n", tools, cache, tokenFile)
 		require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
 		t.Setenv("PATH", filepath.Join(tools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 		checkout := t.TempDir()
@@ -166,4 +185,76 @@ func TestCICheckCredentialOverlap(t *testing.T) {
 	require.NoError(t, os.Mkdir(home, 0o700))
 	t.Setenv("HOME", home)
 	require.ErrorContains(t, validateCICheckReadPaths([]string{tools}), "read grant contains host")
+}
+
+// The inherited shims fail under a disposable HOME; discovery must select the real tools.
+func ciCheckMiseFixture(t *testing.T) (string, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell fixtures")
+	}
+	tools, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	shims := t.TempDir()
+	bin := filepath.Join(tools, "bin")
+	require.NoError(t, os.Mkdir(bin, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "runtime.txt"), []byte("runtime ready\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(shims, "node"), []byte("#!/bin/sh\nexit 126\n"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\ncat \"${0%/*}/../runtime.txt\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "codex"), []byte("\x7fELFnative fixture"), 0o700))
+	selected := filepath.Join(shims, "selected")
+	require.NoError(t, os.Symlink(tools, selected))
+	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'which codex') [ \"$(pwd -P)\" = '/' ] || exit 4; printf '%%s\\n' '%s';;\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n*) exit 3;;\nesac\n", filepath.Join(bin, "codex"), inventory, filepath.Join(selected, "bin"))
+	require.NoError(t, os.WriteFile(filepath.Join(shims, "mise"), []byte(script), 0o700))
+	t.Setenv("PATH", shims+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return tools, shims
+}
+
+func TestCICheckMiseDiscovery(t *testing.T) {
+	tools, shims := ciCheckMiseFixture(t)
+	selected := filepath.Join(shims, "selected")
+	missing := filepath.Join(tools, "installs", "python", "system")
+	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
+	// An installation can disappear after mise lists its executable directory.
+	removedBin := filepath.Join(tools, "removed-bin")
+	require.NoError(t, os.Mkdir(removedBin, 0o700))
+	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
+	// mise reports system selections as installed even though this directory doesn't exist.
+	mixedInventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}]}`, missing, selected)
+	mixedScript := fmt.Sprintf(`#!/bin/sh
+[ "$(pwd -P)" = '/' ] || { printf 'mise discovery ran from unexpected directory: %%s\n' "$(pwd -P)" >&2; exit 4; }
+case "$*" in
+'ls --current --installed --json') printf '%%s' '%s';;
+'bin-paths') printf '%%s\n' '%s' '%s'; /bin/rmdir '%s';;
+*) exit 3;;
+esac
+`, mixedInventory, removedBin, filepath.Join(selected, "bin"), removedBin)
+	for _, tc := range []struct {
+		name, script, message string
+		roots, bins           []string
+	}{
+		{name: "absent"},
+		{name: "malformed", script: "#!/bin/sh\nprintf 'invalid json'\n", message: "mise discovery failed"},
+		{name: "inventory failure", script: "#!/bin/sh\nexit 3\n", message: "exit status 3"},
+		{name: "bin paths failure", script: fmt.Sprintf("#!/bin/sh\n[ \"$1\" = ls ] && { printf '%%s' '%s'; exit 0; }; exit 4\n", inventory), message: "exit status 4"},
+		{name: "runs from root and skips unavailable paths", script: mixedScript, message: missing, roots: []string{tools}, bins: []string{filepath.Join(tools, "bin")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commands := t.TempDir()
+			if tc.script != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(commands, "mise"), []byte(tc.script), 0o700))
+			}
+			t.Setenv("PATH", commands)
+			var log bytes.Buffer
+			roots, bins := ciCheckMisePaths(t.Context(), &log)
+			assert.Equal(t, tc.roots, roots, log.String())
+			assert.Equal(t, tc.bins, bins, log.String())
+			if tc.message == "" {
+				assert.Empty(t, log.String())
+			} else {
+				assert.Contains(t, log.String(), tc.message)
+			}
+		})
+	}
 }

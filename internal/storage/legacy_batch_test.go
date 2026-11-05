@@ -1,28 +1,101 @@
 package storage
 
 import (
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+func TestOpenRetriesInterruptedHistoricalReviewMigration(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	repo, err := db.GetOrCreateRepo(t.TempDir())
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated)
+	require.NoError(t, err)
+	fixture := seedLegacyMarkdownReview(t, db, repo.ID, "retry", "", nil, false)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(reviewFixtureJSON("No issues found.")), fixture.jobID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `CREATE TRIGGER stop_open_backfill BEFORE UPDATE OF verdict_bool ON reviews
+ BEGIN SELECT RAISE(ABORT, 'stop verdict backfill'); END`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	_, err = Open(path)
+	require.ErrorContains(t, err, "stop verdict backfill")
+	// Inspect the interrupted upgrade without running startup work again.
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { raw.Close() })
+	var markers int
+	require.NoError(t, raw.QueryRowContext(t.Context(), `SELECT count(*) FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated).Scan(&markers))
+	assert.Zero(t, markers)
+	_, err = raw.ExecContext(t.Context(), `DROP TRIGGER stop_open_backfill`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+	db, err = Open(path)
+	require.NoError(t, err)
+	state, err := db.GetSyncState(SyncStateHistoricalReviewsMigrated)
+	require.NoError(t, err)
+	assert.Equal(t, "done", state)
+}
+
+func TestOpenSkipsHistoricalReviewStepsAfterCompletion(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	repo, err := db.GetOrCreateRepo(t.TempDir())
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated)
+	require.NoError(t, err)
+	first := seedLegacyMarkdownReview(t, db, repo.ID, "first", legacyProseMarkdown, 0, false)
+	require.NoError(t, db.Close())
+	db, err = Open(path)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM reviews WHERE job_id = ?`, first.jobID)
+	require.NoError(t, err)
+	// Synthetic probes make each skipped step observable after completion.
+	second := seedLegacyMarkdownReview(t, db, repo.ID, "second", legacyNoIssuesMarkdown, nil, false)
+	third := seedLegacyMarkdownReview(t, db, repo.ID, "third", "", nil, false)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(reviewFixtureJSON("No issues found.")), third.jobID)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	db, err = Open(path)
+	require.NoError(t, err)
+	var restored int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews WHERE job_id = ?`, first.jobID).Scan(&restored))
+	assert.Zero(t, restored)
+	assert.Empty(t, readStoredReview(t, db, second.jobID).document)
+	assert.Nil(t, readStoredReview(t, db, third.jobID).verdict)
+}
+
 func TestLegacyMigrationCommitsBatchesAndResumes(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "batch-migration")
+	machineID, err := env.db.GetMachineID()
+	require.NoError(t, err)
+	tx := beginSeedTx(t, env.db)
 	// More than two batches, including a partial final batch.
 	const count = 205
 	var blockedJob int64
 	for i := range count {
-		fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, fmt.Sprintf("batch-%d", i), "Keep this original historical text.", 0, true)
+		fixture := seedLegacyMarkdownReviewTx(t, env.db, tx, machineID, env.repo.ID, fmt.Sprintf("batch-%d", i), "Keep this original historical text.", 0, true)
 		if i == 100 {
 			blockedJob = fixture.jobID
 		}
 	}
+	require.NoError(t, tx.Commit())
 	// Fail a write in the second batch. The first batch must already be
 	// committed, while the failing batch must retain its original active rows.
-	_, err := env.db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER stop_archive_batch BEFORE DELETE ON reviews
+	_, err = env.db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER stop_archive_batch BEFORE DELETE ON reviews
  WHEN OLD.job_id = %d BEGIN SELECT RAISE(ABORT, 'stop second batch'); END`, blockedJob))
 	require.NoError(t, err)
 	require.ErrorContains(t, env.db.migrateLegacyReviews(), "stop second batch")

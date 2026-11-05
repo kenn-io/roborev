@@ -24,7 +24,7 @@ func TestAgentHookSessionsLoadsExistingSnapshot(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
 	body, err := json.Marshal(agenthook.Snapshot{
 		Sessions: map[string]agenthook.SessionState{
-			"session-1": {Count: 7, ReminderPromptCount: 2},
+			"session-1": {Count: 7, ReminderPromptCount: 2, LastSeenAt: time.Now().UTC()},
 		},
 	})
 	require.NoError(t, err)
@@ -147,8 +147,8 @@ func TestAgentHookResetPersistsSelectedSession(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
 	body, err := json.Marshal(agenthook.Snapshot{Sessions: map[string]agenthook.SessionState{
-		"session-1": {Count: 1},
-		"session-2": {Count: 2},
+		"session-1": {Count: 1, LastSeenAt: time.Now().UTC()},
+		"session-2": {Count: 2, LastSeenAt: time.Now().UTC()},
 	}})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(agenthook.StatePath(), body, 0o600))
@@ -254,4 +254,22 @@ func TestAgentHookEventAcceptsLargeToolResponse(t *testing.T) {
 	got := serveHuma(t, server, http.MethodPost, "/api/agent-hook/event", body)
 
 	assert.Equal(t, http.StatusOK, got.Code, got.Body.String())
+}
+
+func TestAgentHookOpenFailedReviewBehindPassingHistory(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	_, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFiles(map[string]string{
+		"main.go":       "package main\n",
+		".roborev.toml": "review_guidelines = \"Flag unsafe queries.\"\n",
+	}, "initial")
+	storedRepo, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	seedAgentHookReviewHistory(t, db, storedRepo.ID, head, 1, 10001)
+
+	jobs, ok := (daemonAgentHookSource{db: db}).ListOpenFailedReviewJobs(t.Context(), storedRepo.RootPath, "main")
+	require.True(t, ok)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, int64(1), jobs[0].ID)
 }

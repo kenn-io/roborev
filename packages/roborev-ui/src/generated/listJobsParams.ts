@@ -39,7 +39,7 @@ export type ListJobsParams = {
    */
   branch?: string;
   /**
-   * Only jobs with empty or unset branch
+   * Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
    */
   branch_empty?: ListJobsBranchEmpty;
   /**

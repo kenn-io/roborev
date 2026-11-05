@@ -19,10 +19,11 @@ import (
 //   - A migration may manage its own transactions, for example to work in
 //     batches or to run VACUUM, which SQLite does not allow in a transaction.
 //
-// The steps Open runs after the migrations on every start are not numbered:
+// The steps Open runs after the migrations are not numbered:
 // the auto-design dedup index widening, which waits until duplicate rows are
-// gone, and the data steps (legacy review conversion, job ID preservation,
-// verdict backfill).
+// gone, and the data steps. Job and repository ID preservation run on every
+// start. Historical review conversion, restoration, and verdict backfill run
+// on each start until they complete once.
 
 // schemaMigration is one numbered step of the SQLite schema.
 type schemaMigration struct {
@@ -37,7 +38,22 @@ var schemaMigrations = []schemaMigration{
 	{2, "compress job content", migrateJobContent},
 	{3, "CI panel retirement reasons", migrateCIPanelRetireReason},
 	{4, "CI panel PR head index", migrateCIPanelPRHeadIndex},
-	{5, "rebuttal review version", migrateRebuttalReviewVersion},
+	{5, "token cost started-at index", migrateTokenCostStartedIndex},
+	{6, "summary repo window index", migrateSummaryRepoWindowIndex},
+	{7, "review export completion index", migrateReviewExportCompletedIndex},
+	{8, "search change log", migrateSearchChanges},
+	{9, "cost aggregate index", migrateCostAggregateIndex},
+	{10, "open failed reviews index", migrateOpenFailedReviewsIndex},
+	{11, "rebuttal review version", migrateRebuttalReviewVersion},
+}
+
+func migrateCostAggregateIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_cost
+		ON review_jobs(repo_id, branch, CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) THEN 1 ELSE 0 END,
+			CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) AND json_valid(token_usage) AND COALESCE(json_extract(token_usage, '$.has_cost'), 0) AND json_extract(token_usage, '$.cost_usd') IS NOT NULL AND COALESCE(json_extract(token_usage, '$.expected_provider_sessions'), 0) <= COALESCE(json_array_length(token_usage, '$.provider_session_ids'), 0) THEN 1 ELSE 0 END,
+			CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) AND json_valid(token_usage) AND COALESCE(json_extract(token_usage, '$.has_cost'), 0) AND json_extract(token_usage, '$.cost_usd') IS NOT NULL THEN json_extract(token_usage, '$.cost_usd') ELSE 0 END
+		)`)
+	return err
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -103,9 +119,86 @@ func migrateCIPanelRetireReason(ctx context.Context, db *DB) error {
 	return err
 }
 
+func migrateOpenFailedReviewsIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_reviews_open_failed
+		ON reviews(job_id) WHERE closed = 0 AND verdict_bool = 0`)
+	return err
+}
+
 func migrateCIPanelPRHeadIndex(ctx context.Context, db *DB) error {
 	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_ci_panels_pr_head
 		ON ci_pr_panels(github_repo, pr_number, head_sha)`)
+	return err
+}
+
+func migrateTokenCostStartedIndex(ctx context.Context, db *DB) error {
+	// Token-cost queries must use the same normalized started-at expression.
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_source_started
+		ON review_jobs(source_machine_id, `+sqliteNormalizedTimestampExpr("started_at")+`)`)
+	return err
+}
+
+func migrateSummaryRepoWindowIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_repo_enqueued
+		ON review_jobs(repo_id, `+sqliteNormalizedTimestampExpr("enqueued_at")+`)`)
+	return err
+}
+
+func migrateReviewExportCompletedIndex(ctx context.Context, db *DB) error {
+	// Export's ORDER BY and cursor must use the same normalized expression.
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_reviews_export_completed
+		ON reviews(`+sqliteNormalizedTimestampExpr("created_at")+`, uuid)`)
+	return err
+}
+
+// migrateSearchChanges records local search feed writes, including deletes.
+func migrateSearchChanges(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS search_changes (
+		seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, repo_id INTEGER, commit_id INTEGER
+	);
+	CREATE INDEX IF NOT EXISTS idx_review_jobs_commit_id ON review_jobs(commit_id);
+	CREATE TRIGGER IF NOT EXISTS search_reviews_insert AFTER INSERT ON reviews BEGIN
+		INSERT INTO search_changes(job_id) VALUES (NEW.job_id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_reviews_update AFTER UPDATE OF id, job_id, uuid, closed, output, structured_output, verdict_bool ON reviews BEGIN
+		INSERT INTO search_changes(job_id) VALUES (NEW.job_id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_reviews_delete AFTER DELETE ON reviews BEGIN
+		INSERT INTO search_changes(job_id) VALUES (OLD.job_id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_jobs_update AFTER UPDATE OF
+		uuid, repo_id, branch, git_ref, commit_id, review_type, panel_role,
+		panel_run_uuid, agent, finished_at, status, job_type ON review_jobs BEGIN
+		INSERT INTO search_changes(job_id) VALUES (NEW.id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_jobs_delete AFTER DELETE ON review_jobs BEGIN
+		INSERT INTO search_changes(job_id) VALUES (OLD.id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_repos_update AFTER UPDATE OF name ON repos BEGIN
+		INSERT INTO search_changes(repo_id) VALUES (NEW.id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_responses_insert AFTER INSERT ON responses BEGIN
+		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
+		INSERT INTO search_changes(commit_id) SELECT NEW.commit_id WHERE NEW.job_id IS NULL AND NEW.commit_id IS NOT NULL;
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_responses_update AFTER UPDATE OF id, job_id, commit_id, responder, response, created_at, uuid ON responses BEGIN
+		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
+		INSERT INTO search_changes(commit_id) SELECT NEW.commit_id WHERE NEW.job_id IS NULL AND NEW.commit_id IS NOT NULL;
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_responses_delete AFTER DELETE ON responses BEGIN
+		INSERT INTO search_changes(job_id) SELECT OLD.job_id WHERE OLD.job_id IS NOT NULL;
+		INSERT INTO search_changes(commit_id) SELECT OLD.commit_id WHERE OLD.job_id IS NULL AND OLD.commit_id IS NOT NULL;
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_job_content_insert AFTER INSERT ON job_content BEGIN
+		INSERT INTO search_changes(job_id) VALUES (NEW.job_id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_job_content_update AFTER UPDATE OF diff_content ON job_content BEGIN
+		INSERT INTO search_changes(job_id) VALUES (NEW.job_id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_job_content_delete AFTER DELETE ON job_content BEGIN
+		INSERT INTO search_changes(job_id) VALUES (OLD.job_id);
+	END;
+	`)
 	return err
 }
 

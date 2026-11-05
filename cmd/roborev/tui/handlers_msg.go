@@ -2297,8 +2297,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 // refill. Mutates loadingJobs when it dispatches.
 func (m *model) maybeResizeRefill() tea.Cmd {
 	if m.loadingMore || m.loadingJobs ||
-		len(m.jobs) == 0 || !m.hasMore ||
-		m.activeBranchFilter == branchNone {
+		len(m.jobs) == 0 || !m.hasMore {
 		return nil
 	}
 	visibleRows := m.queueVisibleRows()

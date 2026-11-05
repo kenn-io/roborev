@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"uuid"
@@ -23,6 +24,7 @@ const (
 	SyncStateLastResponseID                 = "last_response_id"   // inserted_at/id cursor of last synced response
 	SyncStateSyncTargetID                   = "sync_target_id"     // Database ID of last synced Postgres
 	SyncStateDatabaseID                     = "database_id"        // Stable identity of this local SQLite database
+	SyncStateHistoricalReviewsMigrated      = "historical_reviews_migrated"
 	SyncStateSetupFinished                  = "telemetry.setup_finished"
 )
 
@@ -543,10 +545,7 @@ type SyncableJob struct {
 	FinishedAtRaw         string
 }
 
-// GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
-// These are attempts owned locally that have not been synced or were updated since last sync.
-func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, error) {
-	rows, err := db.Query(`
+var jobsToSyncQuery = `
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
@@ -556,17 +555,27 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, 0),
 			j.source_machine_id, j.updated_at
-		FROM review_jobs j
+		FROM review_jobs j NOT INDEXED
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
 		LEFT JOIN job_content jc ON jc.job_id = j.id
 		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased')
 		AND j.source_machine_id = ?
+		AND j.id > ?
 		AND j.uuid IS NOT NULL
-		AND (j.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`)
+		AND (j.synced_at IS NULL OR ` + sqliteNormalizedTimestampExpr("j.updated_at") + ` > ` + sqliteNormalizedTimestampExpr("j.synced_at") + `)
 		ORDER BY j.id
 		LIMIT ?
-	`, machineID, limit)
+	`
+
+// GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
+// These are attempts owned locally that have not been synced or were updated since last sync.
+func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, error) {
+	return db.jobsToSync(machineID, 0, limit)
+}
+
+func (db *DB) jobsToSync(machineID uuid.UUID, afterID int64, limit int) ([]SyncableJob, error) {
+	rows, err := db.Query(jobsToSyncQuery, machineID, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query jobs to sync: %w", err)
 	}
@@ -769,14 +778,7 @@ type SyncableReview struct {
 	UpdatedAt          time.Time
 }
 
-// GetReviewsToSync returns local edits and completed parent uploads whose
-// review attempt needs to follow them. Previously synced content is sent as a
-// metadata-only repair so a cached copy cannot overwrite a peer edit.
-// Local edits clear synced_at. Do not compare a pulled PostgreSQL timestamp
-// with a local acknowledgment: the server's clock can be ahead. Parent and
-// review acknowledgments both use the local clock; keep their full precision.
-func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
-	rows, err := db.Query(`
+const reviewsToSyncQuery = `
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'),
 			r.agent, r.output, r.closed,
@@ -786,15 +788,30 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.uuid IS NOT NULL
+		AND r.job_id > ?
+		AND r.job_id <= ?
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
 		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
 		AND ((r.updated_by_machine_id = ? AND r.synced_at IS NULL)
 		 OR (j.source_machine_id = ? AND (r.synced_at IS NULL
 		 OR replace(rtrim(j.synced_at, 'Z'), ' ', 'T') > replace(rtrim(r.synced_at, 'Z'), ' ', 'T'))))
-		ORDER BY r.id
+		ORDER BY r.job_id
 		LIMIT ?
-	`, machineID, machineID, machineID, limit)
+	`
+
+// GetReviewsToSync returns local edits and completed parent uploads whose
+// review attempt needs to follow them. Previously synced content is sent as a
+// metadata-only repair so a cached copy cannot overwrite a peer edit.
+// Local edits clear synced_at. Do not compare a pulled PostgreSQL timestamp
+// with a local acknowledgment: the server's clock can be ahead. Parent and
+// review acknowledgments both use the local clock; keep their full precision.
+func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
+	return db.reviewsToSync(machineID, 0, math.MaxInt64, limit)
+}
+
+func (db *DB) reviewsToSync(machineID uuid.UUID, afterJobID, throughJobID int64, limit int) ([]SyncableReview, error) {
+	rows, err := db.Query(reviewsToSyncQuery, machineID, afterJobID, throughJobID, machineID, machineID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query reviews to sync: %w", err)
 	}
@@ -976,17 +993,29 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	if err != nil {
 		return false, err
 	}
-	tx, err := db.Begin()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer conn.Close()
+	// Acquire the writer before reading attempt state. A deferred read
+	// transaction cannot upgrade while another connection is writing.
+	if err := beginImmediate(ctx, conn); err != nil {
+		return false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = rollbackConn(conn)
+		}
+	}()
 	var enqueuedAt string
 	var localID int64
 	var sourceMachineID uuid.UUID
 	var localReviewUUID sql.NullString
 	var pendingReview bool
-	err = tx.QueryRow(`SELECT j.id, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'), rv.uuid,
+	err = conn.QueryRowContext(ctx, `SELECT j.id, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'), rv.uuid,
 		COALESCE(rv.synced_at IS NULL AND rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0)
 		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`, j.UUID).
 		Scan(&localID, &enqueuedAt, &sourceMachineID, &localReviewUUID, &pendingReview)
@@ -1007,7 +1036,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		}
 		keepReview = localReviewUUID.Valid && j.CurrentReviewUUID != nil && strings.EqualFold(localReviewUUID.String, j.CurrentReviewUUID.String())
 	}
-	result, err := tx.Exec(`
+	result, err := conn.ExecContext(ctx, `
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, branch, session_id, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic, agent_invoked,
 			enqueued_at, started_at, finished_at, dirty_files, error, token_usage,
@@ -1110,14 +1139,14 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		// Retire a different attempt, but retain the same canonical review
 		// and its archive during historical association repair.
 		if !keepReview {
-			if _, err := tx.Exec(`DELETE FROM reviews WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
+			if _, err := conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
 				return false, fmt.Errorf("clear previous attempt review: %w", err)
 			}
-			if _, err := tx.Exec(`UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?) AND resolved_at IS NULL`, now, j.UUID); err != nil {
+			if _, err := conn.ExecContext(ctx, `UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?) AND resolved_at IS NULL`, now, j.UUID); err != nil {
 				return false, fmt.Errorf("retire previous attempt archive: %w", err)
 			}
 		}
-		if _, err := tx.Exec(`UPDATE job_content SET prompt = NULL, patch = NULL WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
+		if _, err := conn.ExecContext(ctx, `UPDATE job_content SET prompt = NULL, patch = NULL WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
 			return false, fmt.Errorf("clear previous attempt content: %w", err)
 		}
 	}
@@ -1130,7 +1159,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		diff = *j.DiffContent
 	}
 	if rows > 0 && (j.Prompt != "" || diff != "") {
-		if _, err := tx.Exec(`
+		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO job_content (job_id, prompt, diff_content)
 			SELECT id, zstd_compress(?), zstd_compress(?) FROM review_jobs WHERE uuid = ?
 			ON CONFLICT(job_id) DO UPDATE SET
@@ -1140,9 +1169,10 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 			return false, fmt.Errorf("store pulled job content: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return false, err
 	}
+	committed = true
 	if rows > 0 {
 		if active := db.attempts.active[localID]; active != nil {
 			active.cancel()
@@ -1160,17 +1190,29 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 // upsertPulledReview reports whether the canonical review row committed a
 // change. A skipped orphan or stale timestamp is a successful no-op.
 func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
-	tx, err := db.Begin()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer conn.Close()
+	// Acquire the writer before reading attempt state. A deferred read
+	// transaction cannot upgrade while another connection is writing.
+	if err := beginImmediate(ctx, conn); err != nil {
+		return false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = rollbackConn(conn)
+		}
+	}()
 	// First, find the job_id by uuid
 	var jobID int64
 	var jobType, threshold, enqueuedAt, status, reviewCreatedAt, reviewUpdatedAt string
 	var locallyOwned, hasReview, sameReview, pendingReview bool
 	var sourceMachineID uuid.UUID
-	err = tx.QueryRow(`SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
+	err = conn.QueryRowContext(ctx, `SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
 		COALESCE(j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0),
 		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(rv.updated_at, ''), COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'),
 		COALESCE(rv.synced_at IS NULL AND rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0)
@@ -1216,7 +1258,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		// PullReviews selects the newest PostgreSQL row, including equal-time
 		// ties. Replace the old attempt completely so nullable verdict and
 		// coverage fields do not leak into the incoming review.
-		if _, err := tx.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID); err != nil {
+		if _, err := conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID); err != nil {
 			return false, fmt.Errorf("replace pulled review attempt: %w", err)
 		}
 	}
@@ -1269,7 +1311,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	if noVerdict {
 		verdictOnConflict = "NULL"
 	}
-	result, err := tx.Exec(`
+	result, err := conn.ExecContext(ctx, `
 		INSERT INTO reviews (
 			uuid, job_id, agent, output, closed,
 			verdict_bool, structured_output, reviewed_file_count, excluded_file_count,
@@ -1297,7 +1339,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		return false, fmt.Errorf("read pulled review rows affected: %w", err)
 	}
 	if legacyDocument {
-		if _, err := tx.Exec(`INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error)
+		if _, err := conn.ExecContext(ctx, `INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error)
  SELECT id, job_id, agent, json_extract(structured_output, '$.legacy.markdown'), created_at, closed,
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at, synced_at,
  'Unstructured historical review' FROM reviews WHERE uuid = ? AND json_extract(structured_output, '$.legacy') IS NOT NULL
@@ -1306,7 +1348,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		}
 	}
 	if requiresReviewDocument(jobType) && !legacyDocument {
-		if _, err := tx.Exec(`UPDATE legacy_reviews SET resolved_at = ? WHERE uuid = ? AND resolved_at IS NULL`, now, r.UUID); err != nil {
+		if _, err := conn.ExecContext(ctx, `UPDATE legacy_reviews SET resolved_at = ? WHERE uuid = ? AND resolved_at IS NULL`, now, r.UUID); err != nil {
 			return false, err
 		}
 	}
@@ -1316,7 +1358,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	// an unchanged review writes nothing, so a prompt removed by retention
 	// stays removed.
 	if rows > 0 && r.JobPrompt != "" {
-		if _, err := tx.Exec(`
+		if _, err := conn.ExecContext(ctx, `
 			INSERT INTO job_content (job_id, prompt)
 			SELECT id, zstd_compress(?) FROM review_jobs
 			WHERE id = ? AND source_machine_id != (SELECT value FROM sync_state WHERE key = ?)
@@ -1325,9 +1367,10 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 			return false, fmt.Errorf("store pulled review's job prompt: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return false, err
 	}
+	committed = true
 	return rows > 0, nil
 }
 
@@ -1380,20 +1423,20 @@ func (db *DB) upsertPulledResponse(r PulledResponse) (bool, error) {
 
 // GetKnownJobUUIDs returns UUIDs of all jobs that have a UUID.
 // Used to filter reviews when pulling from PostgreSQL.
-func (db *DB) GetKnownJobUUIDs() ([]uuid.UUID, error) {
+func (db *DB) GetKnownJobUUIDs() (map[uuid.UUID]struct{}, error) {
 	rows, err := db.Query(`SELECT uuid FROM review_jobs WHERE uuid IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("query job UUIDs: %w", err)
 	}
 	defer rows.Close()
 
-	var uuids []uuid.UUID
+	uuids := make(map[uuid.UUID]struct{})
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("scan UUID: %w", err)
 		}
-		uuids = append(uuids, id)
+		uuids[id] = struct{}{}
 	}
 	return uuids, rows.Err()
 }

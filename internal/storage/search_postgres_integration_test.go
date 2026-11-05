@@ -78,7 +78,7 @@ func TestIntegration_SearchPullWakeReconcilesAllModes(t *testing.T) { //nolint:p
 		_, serving, err := index.ServingGeneration(ctx, client.Space())
 		return err == nil && serving
 	})
-	targetWorker.SetAfterPullWrite(reconciler.Wake)
+	targetWorker.SetAfterPullWrite(reconciler.WakeChanges)
 
 	stats, err := targetWorker.SyncNow()
 	require.NoError(t, err)

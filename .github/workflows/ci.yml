@@ -48,6 +48,7 @@ jobs:
               - 'mise.toml'
               - 'mise.lock'
               - '.github/workflows/ci.yml'
+              - '.github/actions/**'
               - 'docs/screenshots/prepare-demo-db.sh'
               - '.custom-gcl.yml'
               - '.golangci.yml'
@@ -70,6 +71,7 @@ jobs:
               - 'Makefile'
               - 'prek.toml'
               - '.github/workflows/ci.yml'
+              - '.github/actions/**'
             web:
               - 'package.json'
               - 'bun.lock'
@@ -90,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -143,7 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -256,7 +258,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
         if: runner.os == 'Linux'
 
       - name: Install SQLite headers
@@ -276,9 +278,15 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: ${{ runner.os }}
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@v5.2.3
+      - uses: jdx/mise-action@v5.2.4
 
       - name: Build
         if: runner.os != 'Windows' || matrix.shard == 'windows-remaining'
@@ -385,6 +393,10 @@ jobs:
         env:
           CGO_ENABLED: 0
 
+      - name: Save Go caches
+        if: ${{ !cancelled() && (runner.os != 'Windows' || matrix.shard == 'windows-remaining') }}
+        uses: $/.github/actions/go-cache-save
+
   daemon-race:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
@@ -404,7 +416,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -412,6 +424,12 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: Linux
 
       - name: Test daemon with race detection
         env:
@@ -449,7 +467,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -457,9 +475,15 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: Linux
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@v5.2.3
+      - uses: jdx/mise-action@v5.2.4
 
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here
@@ -517,7 +541,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -525,6 +549,12 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: Linux
 
       - name: Run integration tests
         run: make test-postgres-ci GOFLAGS=-shuffle=on
@@ -558,13 +588,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
 
       - name: Install SQLite headers
         if: needs.go-changes.outputs.changed == 'true'
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
+        id: setup_go
         if: needs.go-changes.outputs.changed == 'true'
         with:
           go-version: '1.27.3'
@@ -574,20 +605,42 @@ jobs:
         id: golangci
         run: echo "version=v$(make -s print-golangci-lint-version)" >> "$GITHUB_OUTPUT"
 
-      - name: golangci-lint
+      - name: Restore linter cache
         if: needs.go-changes.outputs.changed == 'true'
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: lint-${{ steps.golangci.outputs.version }}-${{ hashFiles('.custom-gcl.yml') }}-${{ steps.setup_go.outputs.go-version }}
+          path: |
+            ${{ github.workspace }}/custom-gcl
+            ~/.cache/golangci-lint
+
+      # Build only on a cache miss; the key validates the custom binary.
+      - name: Build custom linter
+        if: needs.go-changes.outputs.changed == 'true' && hashFiles('custom-gcl') == ''
         uses: step-security/golangci-lint-action@v9.3.0
         with:
           version: ${{ steps.golangci.outputs.version }}
+          install-only: true
+          skip-cache: true
 
-      # Reuse the custom binary the previous step built; the action would build a Windows binary here.
+      - name: golangci-lint
+        if: needs.go-changes.outputs.changed == 'true'
+        run: |
+          ./custom-gcl config verify
+          ./custom-gcl run ./...
+
+      # Reuse the restored or freshly built custom binary for Windows analysis.
       - name: golangci-lint for Windows
         if: needs.go-changes.outputs.changed == 'true'
         env:
           GOOS: windows
         run: ./custom-gcl run ./...
 
-      - uses: astral-sh/setup-uv@v10.3.2
+      - name: Save linter cache
+        if: needs.go-changes.outputs.changed == 'true'
+        uses: $/.github/actions/go-cache-save
+
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: '0.13.6'
           enable-cache: true

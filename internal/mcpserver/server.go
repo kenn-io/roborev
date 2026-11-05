@@ -27,7 +27,7 @@ func New(backend Backend, version string, activity func(context.Context)) *Serve
 	}
 	s := &Server{backend: backend}
 	s.mcp = mcp.NewServer(
-		&mcp.Implementation{Name: "roborev", Version: version},
+		serverImplementation(version),
 		&mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{
 			Resources: &mcp.ResourceCapabilities{},
 			Tools:     &mcp.ToolCapabilities{},

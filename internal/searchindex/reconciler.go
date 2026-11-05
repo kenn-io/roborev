@@ -26,6 +26,9 @@ const (
 )
 
 type searchDocumentStore interface {
+	SearchChangesHead(context.Context) (int64, error)
+	ListSearchChanges(context.Context, int) ([]int64, int64, error)
+	DeleteSearchChanges(context.Context, int64) error
 	ListSearchDocuments(context.Context, int64, int) ([]storage.SearchReviewSource, error)
 	GetSearchDocumentForJob(context.Context, int64) (*storage.SearchReviewSource, error)
 }
@@ -57,8 +60,11 @@ type Reconciler struct {
 	mu                 sync.Mutex
 	health             HealthSnapshot
 	mirrorCursor       int64
+	fillAfter          *string
+	mirrorHead         int64
 	mirrorSeen         map[string]struct{}
 	mirrorRequested    bool
+	changesRequested   bool
 	pendingJobs        map[int64]struct{}
 	nextSweep          time.Time
 	generationStarted  time.Time
@@ -128,6 +134,15 @@ func normalizeReconcilerConfig(config ReconcilerConfig) ReconcilerConfig {
 func (r *Reconciler) Wake() {
 	r.mu.Lock()
 	r.mirrorRequested = true
+	r.mu.Unlock()
+	r.signalWake()
+}
+
+// WakeChanges refreshes jobs recorded in the change log for writes without a
+// job ID, such as a sync pull.
+func (r *Reconciler) WakeChanges() {
+	r.mu.Lock()
+	r.changesRequested = true
 	r.mu.Unlock()
 	r.signalWake()
 }
@@ -220,10 +235,23 @@ func (r *Reconciler) reconcileTurn(ctx context.Context) (bool, error) {
 
 func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 	r.mu.Lock()
-	fullScan := r.mirrorSeen != nil || r.mirrorRequested || !r.config.Now().Before(r.nextSweep)
+	fullScan := r.mirrorSeen != nil || r.mirrorRequested
+	sweep := r.changesRequested || !r.config.Now().Before(r.nextSweep)
+	if !fullScan && sweep {
+		r.changesRequested = false
+	}
 	r.mu.Unlock()
 	if fullScan {
 		return r.scanMirrorPage(ctx)
+	}
+	if sweep {
+		more, err := r.drainChanges(ctx)
+		if err != nil {
+			r.mu.Lock()
+			r.changesRequested = true
+			r.mu.Unlock()
+		}
+		return more, err
 	}
 	return r.refreshJobs(ctx)
 }
@@ -231,6 +259,12 @@ func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 	r.mu.Lock()
 	if r.mirrorSeen == nil {
+		head, err := r.store.SearchChangesHead(ctx)
+		if err != nil {
+			r.mu.Unlock()
+			return false, err
+		}
+		r.mirrorHead = head
 		r.mirrorSeen = make(map[string]struct{})
 		r.mirrorRequested = false
 	}
@@ -257,25 +291,23 @@ func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 		if _, err := r.index.DeleteMissing(ctx, seen); err != nil {
 			return false, err
 		}
+		if err := r.store.DeleteSearchChanges(ctx, r.mirrorHead); err != nil {
+			return false, err
+		}
 	}
 	indexed, err := r.index.mirrorCount(ctx)
 	if err != nil {
 		return false, err
 	}
 	now := r.config.Now()
-	r.mu.Lock()
-	// Startup and periodic scans revisit covered reviews, including vectors
+	// Full scans revisit covered reviews, including vectors
 	// whose earlier publication failed or preceded canonical sync.
-	if r.shared != nil && r.embedder != nil {
-		if r.pendingPublish == nil {
-			r.pendingPublish = make(map[string]struct{})
-		}
-		for _, source := range sources {
-			if source.ReviewUUID != "" {
-				r.pendingPublish[source.ReviewUUID] = struct{}{}
-			}
+	for _, source := range sources {
+		if source.ReviewUUID != "" {
+			r.queuePublish(source.ReviewUUID)
 		}
 	}
+	r.mu.Lock()
 	r.health.Indexed = indexed
 	r.health.MirrorComplete = complete
 	if complete {
@@ -289,10 +321,12 @@ func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 	}
 	r.health.LastSuccessAt = new(now)
 	clearNonAuthenticationError(&r.health)
-	more := !complete || r.mirrorRequested || len(r.pendingJobs) > 0
+	more := !complete || r.mirrorRequested || r.changesRequested || len(r.pendingJobs) > 0
 	r.mu.Unlock()
 	return more, nil
 }
+
+const mirrorKeysForJobSQL = `SELECT doc_key FROM review_mirror WHERE job_id = ?`
 
 func (r *Reconciler) refreshJobs(ctx context.Context) (more bool, err error) {
 	r.mu.Lock()
@@ -318,20 +352,7 @@ func (r *Reconciler) refreshJobs(ctx context.Context) (more bool, err error) {
 		}
 	}()
 	for id := range jobs {
-		source, err := r.store.GetSearchDocumentForJob(ctx, id)
-		if err != nil {
-			return false, err
-		}
-		seen := make(map[string]struct{})
-		if source != nil {
-			if _, err := r.index.RefreshMirrorPage(ctx, []searchdoc.Document{searchdoc.Render(*source)}, seen); err != nil {
-				return false, err
-			}
-		}
-		// Remove a deleted review or an old document key after UUID assignment,
-		// without treating the rest of the corpus as missing.
-		if _, err := r.index.deleteMissing(ctx, seen,
-			`SELECT doc_key FROM review_mirror WHERE job_id = ?`, id); err != nil {
+		if err := r.refreshJob(ctx, id, false); err != nil {
 			return false, err
 		}
 	}
@@ -343,7 +364,7 @@ func (r *Reconciler) refreshJobs(ctx context.Context) (more bool, err error) {
 	r.health.Indexed = indexed
 	r.health.LastSuccessAt = new(r.config.Now())
 	clearNonAuthenticationError(&r.health)
-	more = r.mirrorRequested || len(r.pendingJobs) > 0
+	more = r.mirrorRequested || r.changesRequested || len(r.pendingJobs) > 0
 	r.mu.Unlock()
 	return more, nil
 }
@@ -354,6 +375,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	var store vector.Store[string, string] = r.index.vectors
+	var sharing *sharingStore
 	if shared := r.sharedVectors(); shared != nil {
 		space, err := sharedSpace(r.embedder.Space())
 		if err != nil {
@@ -362,7 +384,8 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		if err := r.publishPending(ctx, shared, space, key); err != nil {
 			return false, err
 		}
-		store = newSharingStore(store, r.index, shared, space)
+		sharing = newSharingStore(store, r.index, shared, space)
+		store = sharing
 	}
 	counts, err := r.index.GenerationCounts(ctx, key)
 	if err != nil {
@@ -387,14 +410,26 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 
 	fillCtx, cancel := context.WithTimeout(ctx, r.config.MaxFillTime)
 	defer cancel()
+	r.mu.Lock()
+	limiter := &turnLimitedStore{Store: store, remaining: r.config.MaxFillBatches, resume: r.fillAfter}
+	r.mu.Unlock()
 	_, err = r.index.Fill(
 		fillCtx,
-		&turnLimitedStore{Store: store, remaining: r.config.MaxFillBatches},
+		limiter,
 		key,
 		encodeDocuments(r.embedder),
 		r.embedder.Batch(),
 		nil,
 	)
+	if err == nil {
+		r.mu.Lock()
+		// An exhausted scan wraps next turn; failed fills retry the same cursor.
+		r.fillAfter = limiter.last
+		if sharing != nil {
+			r.fillAfter = sharing.scanned
+		}
+		r.mu.Unlock()
+	}
 	countsAfter, countErr := r.index.GenerationCounts(ctx, key)
 	if countErr == nil {
 		counts = countsAfter
@@ -418,16 +453,22 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 type turnLimitedStore struct {
 	vector.Store[string, string]
 	remaining int
+	resume    *string
+	last      *string
 }
 
-func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string, limit int) ([]vector.Pending[string], error) {
+func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string, after *string, limit int) ([]vector.Pending[string], error) {
 	if s.remaining <= 0 {
 		return nil, nil
 	}
 	if limit > s.remaining {
 		limit = s.remaining
 	}
-	pending, err := s.Store.PendingForGeneration(ctx, gen, limit)
+	if after == nil {
+		after = s.resume
+	}
+	s.resume = nil // Only the first scan resumes; kit may restart from the top.
+	pending, err := s.Store.PendingForGeneration(ctx, gen, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -435,6 +476,9 @@ func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string,
 		pending = pending[:s.remaining]
 	}
 	s.remaining -= len(pending)
+	if len(pending) > 0 {
+		s.last = new(pending[len(pending)-1].Doc)
+	}
 	return pending, nil
 }
 
@@ -597,4 +641,73 @@ func (r *Reconciler) backoffFor(err error) time.Duration {
 		delay *= 2
 	}
 	return min(delay, r.config.MaxBackoff)
+}
+
+func (r *Reconciler) refreshJob(ctx context.Context, id int64, publish bool) error {
+	source, err := r.store.GetSearchDocumentForJob(ctx, id)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]struct{})
+	if source != nil {
+		if _, err := r.index.RefreshMirrorPage(ctx, []searchdoc.Document{searchdoc.Render(*source)}, seen); err != nil {
+			return err
+		}
+	}
+	// Remove a deleted review or an old document key after UUID assignment,
+	// without treating the rest of the corpus as missing.
+	if _, err := r.index.deleteMissing(ctx, seen, mirrorKeysForJobSQL, id); err != nil {
+		return err
+	}
+	if publish && source != nil && source.ReviewUUID != "" {
+		r.queuePublish(source.ReviewUUID)
+	}
+	return nil
+}
+
+func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
+	jobs, through, err := r.store.ListSearchChanges(ctx, r.config.MirrorPageSize)
+	if err != nil {
+		return false, err
+	}
+	if through > 0 {
+		r.mu.Lock()
+		r.changesRequested = true
+		r.health.MirrorComplete = false
+		r.health.MirrorBacklog = nil
+		r.mu.Unlock()
+	}
+	for _, id := range jobs {
+		if err := r.refreshJob(ctx, id, true); err != nil {
+			return false, err
+		}
+	}
+	// A log row can expand to many jobs, or none, so drain until a page is empty.
+	more := through > 0
+	if more {
+		if err := r.store.DeleteSearchChanges(ctx, through); err != nil {
+			return false, err
+		}
+	}
+	if len(jobs) > 0 {
+		indexed, err := r.index.mirrorCount(ctx)
+		if err != nil {
+			return false, err
+		}
+		r.mu.Lock()
+		r.health.Indexed = indexed
+		r.mu.Unlock()
+	}
+	if !more {
+		r.mu.Lock()
+		now := r.config.Now()
+		r.nextSweep = now.Add(r.config.SweepInterval)
+		r.health.MirrorComplete = true
+		r.health.MirrorBacklog = new(int64)
+		r.health.LastSuccessAt = new(now)
+		clearNonAuthenticationError(&r.health)
+		more = r.mirrorRequested || r.changesRequested || len(r.pendingJobs) > 0
+		r.mu.Unlock()
+	}
+	return more, nil
 }

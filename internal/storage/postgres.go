@@ -1098,6 +1098,20 @@ func (p *PgPool) PullExperimentDefinitions(ctx context.Context, excludeMachineID
 	return definitions, rows.Err()
 }
 
+// OFFSET 0 keeps cached plans from sorting every remaining assignment.
+const pgPullExperimentAssignmentsQuery = `
+		SELECT a.review_unit_kind, a.review_unit_uuid::uuid, a.experiment_id, a.arm, a.subject_hash,
+		       a.effective_config_hash, a.effective_config_json, a.assigned_at, a.source_machine_id,
+		       a.inserted_at, a.id
+		FROM experiment_assignments a
+		CROSS JOIN LATERAL (
+			SELECT 1 WHERE a.source_machine_id != $1
+			OFFSET 0
+		) peer
+		WHERE (a.inserted_at, a.id) > ($2, $3)
+		ORDER BY a.inserted_at, a.id
+		LIMIT $4`
+
 func (p *PgPool) PullExperimentAssignments(
 	ctx context.Context, excludeMachineID uuid.UUID, cursor string, limit int,
 ) ([]SyncableExperimentAssignment, string, error) {
@@ -1106,15 +1120,7 @@ func (p *PgPool) PullExperimentAssignments(
 	if cursor != "" {
 		cursorTime, cursorID, _ = parseTimestampIDCursor(cursor)
 	}
-	rows, err := p.pool.Query(ctx, `
-		SELECT review_unit_kind, review_unit_uuid::uuid, experiment_id, arm, subject_hash,
-		       effective_config_hash, effective_config_json, assigned_at, source_machine_id,
-		       inserted_at, id
-		FROM experiment_assignments
-		WHERE source_machine_id != $1
-		  AND (inserted_at > $2 OR (inserted_at = $2 AND id > $3))
-		ORDER BY inserted_at, id
-		LIMIT $4`, excludeMachineID, cursorTime, cursorID, limit)
+	rows, err := p.pool.Query(ctx, pgPullExperimentAssignmentsQuery, excludeMachineID, cursorTime, cursorID, limit)
 	if err != nil {
 		return nil, cursor, fmt.Errorf("query experiment assignments: %w", err)
 	}
@@ -1228,6 +1234,34 @@ func pgNewestReviewPrompt(filter string) string {
 		ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1)`
 }
 
+// OFFSET 0 keeps the generic plan from sorting every remaining job before LIMIT.
+var pgPullJobsQuery = `
+		SELECT
+			j.uuid, parent.identity, COALESCE(parent.sha, ''), COALESCE(parent.author, ''), COALESCE(parent.subject, ''), COALESCE(parent.timestamp, '1970-01-01'::timestamptz),
+			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
+			j.enqueued_at, j.started_at, j.finished_at,
+			` + pgPulledJobPromptExpr + `,
+			j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
+			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
+			NULLIF(j.panel_run_uuid, '')::uuid, COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, FALSE),
+			j.source_machine_id, j.updated_at, j.id,
+			(SELECT rv.uuid FROM reviews rv WHERE rv.job_uuid = j.uuid
+			 AND rv.job_enqueued_at = j.enqueued_at AND rv.job_source_machine_id = j.source_machine_id
+			 ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1)
+		FROM review_jobs j
+		CROSS JOIN LATERAL (
+			SELECT r.identity, c.sha, c.author, c.subject, c.timestamp
+			FROM repos r
+			LEFT JOIN commits c ON c.id = j.commit_id
+			WHERE r.id = j.repo_id
+			AND (j.source_machine_id IS NULL OR j.source_machine_id != $1)
+			OFFSET 0
+		) parent
+		WHERE (j.updated_at, j.id) > ($2, $3)
+		ORDER BY j.updated_at, j.id
+		LIMIT $4
+	`
+
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
 // Cursor format: "updated_at id" (space-separated) or empty for first pull.
 // Returns jobs not from the given machineID (to avoid echo).
@@ -1243,27 +1277,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 		}
 	}
 
-	rows, err := p.pool.Query(ctx, `
-		SELECT
-			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
-			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
-			j.enqueued_at, j.started_at, j.finished_at,
-			`+pgPulledJobPromptExpr+`,
-			j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
-			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
-			NULLIF(j.panel_run_uuid, '')::uuid, COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, FALSE),
-			j.source_machine_id, j.updated_at, j.id,
-			(SELECT rv.uuid FROM reviews rv WHERE rv.job_uuid = j.uuid
-			 AND rv.job_enqueued_at = j.enqueued_at AND rv.job_source_machine_id = j.source_machine_id
-			 ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1)
-		FROM review_jobs j
-		JOIN repos r ON j.repo_id = r.id
-		LEFT JOIN commits c ON j.commit_id = c.id
-		WHERE (j.source_machine_id IS NULL OR j.source_machine_id != $1)
-		AND (j.updated_at > $2 OR (j.updated_at = $2 AND j.id > $3))
-		ORDER BY j.updated_at, j.id
-		LIMIT $4
-	`, excludeMachineID, cursorTime, cursorID, limit)
+	rows, err := p.pool.Query(ctx, pgPullJobsQuery, excludeMachineID, cursorTime, cursorID, limit)
 	if err != nil {
 		return nil, cursor, fmt.Errorf("query jobs: %w", err)
 	}
@@ -1334,10 +1348,36 @@ type PulledReview struct {
 	UpdatedAt          time.Time
 }
 
+// OFFSET 0 keeps the planner from hashing every job.
+var pgPullReviewsQuery = `
+		SELECT
+			r.uuid, r.job_uuid, r.agent, r.output, r.closed,
+			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
+			r.updated_by_machine_id, r.created_at, r.updated_at, r.id, j.prompt, r.job_enqueued_at, r.job_source_machine_id
+		FROM reviews r
+		CROSS JOIN LATERAL (
+			SELECT ` + pgPulledJobPromptExpr + ` AS prompt
+			FROM review_jobs j
+			WHERE j.uuid = r.job_uuid
+			AND (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1 OR j.source_machine_id != $1)
+			AND r.job_enqueued_at = j.enqueued_at AND r.job_source_machine_id = j.source_machine_id
+			AND j.status IN ('done', 'applied', 'rebased')
+			AND NOT EXISTS (
+				SELECT 1 FROM reviews newer WHERE newer.job_uuid = r.job_uuid AND newer.job_enqueued_at = r.job_enqueued_at AND newer.job_source_machine_id = r.job_source_machine_id
+				AND (newer.created_at, newer.id) > (r.created_at, r.id)
+			)
+			AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
+			OFFSET 0
+		) j
+		WHERE (r.updated_at, r.id) > ($2, $3)
+		ORDER BY r.updated_at, r.id
+		LIMIT $4
+	`
+
 // PullReviews fetches reviews from PostgreSQL updated after the given cursor.
 // Only fetches reviews for jobs in knownJobUUIDs to avoid cursor advancement past unknown jobs.
 // PostgreSQL retains previous attempts; SQLite stores only the newest review.
-func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, knownJobUUIDs []uuid.UUID, cursor string, limit int) ([]PulledReview, string, error) {
+func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, knownJobUUIDs map[uuid.UUID]struct{}, cursor string, limit int) ([]PulledReview, string, error) {
 	var cursorTime time.Time
 	var cursorID int64
 
@@ -1354,65 +1394,53 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, kn
 		return nil, cursor, nil
 	}
 
-	// Include this machine's edits to imported jobs. Pulling a repaired
-	// parent can retire its old local review before this phase restores it.
-	rows, err := p.pool.Query(ctx, `
-		SELECT
-			r.uuid, r.job_uuid, r.agent, r.output, r.closed,
-			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
-			r.updated_by_machine_id, r.created_at, r.updated_at, r.id, `+pgPulledJobPromptExpr+`, r.job_enqueued_at, r.job_source_machine_id
-		FROM reviews r
-		JOIN review_jobs j ON j.uuid = r.job_uuid
-		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1 OR j.source_machine_id != $1)
-		AND r.job_uuid = ANY($2)
-		AND r.job_enqueued_at = j.enqueued_at AND r.job_source_machine_id = j.source_machine_id
-		AND j.status IN ('done', 'applied', 'rebased')
-		AND NOT EXISTS (
-			SELECT 1 FROM reviews newer WHERE newer.job_uuid = r.job_uuid AND newer.job_enqueued_at = r.job_enqueued_at AND newer.job_source_machine_id = r.job_source_machine_id
-			AND (newer.created_at, newer.id) > (r.created_at, r.id)
-		)
-		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
-		AND (r.updated_at > $3 OR (r.updated_at = $3 AND r.id > $4))
-		ORDER BY r.updated_at, r.id
-		LIMIT $5
-	`, excludeMachineID, knownJobUUIDs, cursorTime, cursorID, limit)
-	if err != nil {
-		return nil, cursor, fmt.Errorf("query reviews: %w", err)
-	}
-	defer rows.Close()
-
 	var reviews []PulledReview
-	var lastUpdatedAt time.Time
-	var lastID int64
-
-	for rows.Next() {
-		var r PulledReview
-		var structuredOutput []byte
-		var reviewedFileCount, excludedFileCount *int
-
-		err := rows.Scan(
-			&r.UUID, &r.JobUUID, &r.Agent, &r.Output, &r.Closed,
-			&r.VerdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
-			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID, &r.JobPrompt, &r.JobEnqueuedAt, &r.JobSourceMachineID,
-		)
-		if err != nil {
-			return nil, cursor, fmt.Errorf("scan review: %w", err)
-		}
-
-		lastUpdatedAt = r.UpdatedAt
-		r.StructuredOutput = append(jsontext.Value(nil), structuredOutput...)
-		r.ReviewedFileCount = reviewedFileCount
-		r.ExcludedFileCount = excludedFileCount
-		reviews = append(reviews, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, cursor, fmt.Errorf("rows error: %w", err)
-	}
-
 	newCursor := cursor
-	if len(reviews) > 0 {
-		newCursor = fmt.Sprintf("%s %d", lastUpdatedAt.Format(time.RFC3339Nano), lastID)
+	for {
+		// Include this machine's edits to imported jobs. Pulling a repaired
+		// parent can retire its old local review before this phase restores it.
+		rows, err := p.pool.Query(ctx, pgPullReviewsQuery, excludeMachineID, cursorTime, cursorID, limit)
+		if err != nil {
+			return nil, cursor, fmt.Errorf("query reviews: %w", err)
+		}
+		pageSize := 0
+		var lastID int64
+		for rows.Next() {
+			var r PulledReview
+			var structuredOutput []byte
+			var reviewedFileCount, excludedFileCount *int
+
+			err := rows.Scan(
+				&r.UUID, &r.JobUUID, &r.Agent, &r.Output, &r.Closed,
+				&r.VerdictBool, &structuredOutput, &reviewedFileCount, &excludedFileCount,
+				&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID, &r.JobPrompt, &r.JobEnqueuedAt, &r.JobSourceMachineID,
+			)
+			if err != nil {
+				rows.Close()
+				return nil, cursor, fmt.Errorf("scan review: %w", err)
+			}
+
+			cursorTime, cursorID = r.UpdatedAt, lastID
+			pageSize++
+			if _, known := knownJobUUIDs[r.JobUUID]; !known {
+				continue
+			}
+			newCursor = formatTimestampIDCursor(r.UpdatedAt, lastID)
+			r.StructuredOutput = append(jsontext.Value(nil), structuredOutput...)
+			r.ReviewedFileCount = reviewedFileCount
+			r.ExcludedFileCount = excludedFileCount
+			reviews = append(reviews, r)
+			if len(reviews) == limit {
+				break
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, cursor, fmt.Errorf("rows error: %w", err)
+		}
+		if len(reviews) == limit || pageSize < limit {
+			break
+		}
 	}
 
 	return reviews, newCursor, nil
@@ -1430,6 +1458,16 @@ type PulledResponse struct {
 	InsertedAt      time.Time
 }
 
+const pgPullResponsesQuery = `
+		SELECT
+			r.uuid, r.job_uuid, r.responder, r.response, r.source, r.source_machine_id, r.created_at, r.inserted_at, r.id
+		FROM responses r
+		WHERE (r.source_machine_id IS NULL OR r.source_machine_id != $1)
+		AND (r.inserted_at, r.id) > ($2, $3)
+		ORDER BY r.inserted_at, r.id
+		LIMIT $4
+	`
+
 // PullResponses fetches responses from PostgreSQL inserted after the given cursor.
 // Cursor format: "inserted_at id" (space-separated) or empty for first pull.
 func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID uuid.UUID, cursor string, limit int) ([]PulledResponse, string, error) {
@@ -1443,15 +1481,7 @@ func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID uuid.UUID, 
 		}
 	}
 
-	rows, err := p.pool.Query(ctx, `
-		SELECT
-			r.uuid, r.job_uuid, r.responder, r.response, r.source, r.source_machine_id, r.created_at, r.inserted_at, r.id
-		FROM responses r
-		WHERE (r.source_machine_id IS NULL OR r.source_machine_id != $1)
-		AND (r.inserted_at > $2 OR (r.inserted_at = $2 AND r.id > $3))
-		ORDER BY r.inserted_at, r.id
-		LIMIT $4
-	`, excludeMachineID, cursorTime, cursorID, limit)
+	rows, err := p.pool.Query(ctx, pgPullResponsesQuery, excludeMachineID, cursorTime, cursorID, limit)
 	if err != nil {
 		return nil, cursor, fmt.Errorf("query responses: %w", err)
 	}
