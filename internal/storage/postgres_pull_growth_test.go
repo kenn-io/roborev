@@ -61,25 +61,11 @@ func TestIntegration_FirstPullQueryGrowth(t *testing.T) { //nolint:paralleltest 
 			pool := newIntegrationEnv(t).Pool
 			seedPullHistory(t, pool, size)
 			ctx := t.Context()
-			tx, err := pool.pool.Begin(ctx)
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
-			_, err = tx.Exec(ctx, "SET LOCAL plan_cache_mode = force_generic_plan")
-			require.NoError(t, err)
-			probes := []struct {
-				name, table, column, query string
-				cursors                    []string
-			}{
-				{name: "jobs", table: "review_jobs", column: "updated_at", query: pgPullJobsQuery},
-				{name: "reviews", table: "reviews", column: "updated_at", query: pgPullReviewsQuery},
-				{name: "responses", table: "responses", column: "inserted_at", query: pgPullResponsesQuery},
-				{name: "assignments", table: "experiment_assignments", column: "inserted_at", query: pgPullExperimentAssignmentsQuery},
-			}
-			for i := range probes {
-				probe := &probes[i]
-				_, err := tx.Exec(ctx, "PREPARE growth_"+probe.name+" AS "+probe.query)
-				require.NoError(t, err)
-				probe.cursors = []string{"'1970-01-01T00:00:00Z', 0"}
+			tx, probes := preparePullPlans(t, pool)
+			// Use fixture page boundaries to explain every first-pull page.
+			cursors := make([][]string, len(probes))
+			for i, probe := range probes {
+				cursors[i] = []string{"'1970-01-01T00:00:00Z', 0"}
 				rows, err := tx.Query(ctx, fmt.Sprintf("SELECT %s, id FROM %s ORDER BY %s, id", probe.column, probe.table, probe.column))
 				require.NoError(t, err)
 				count := 0
@@ -89,7 +75,7 @@ func TestIntegration_FirstPullQueryGrowth(t *testing.T) { //nolint:paralleltest 
 					require.NoError(t, rows.Scan(&updated, &id))
 					count++
 					if count%100 == 0 && count < size {
-						probe.cursors = append(probe.cursors, fmt.Sprintf("'%s', %d", updated.Format(time.RFC3339Nano), id))
+						cursors[i] = append(cursors[i], fmt.Sprintf("'%s', %d", updated.Format(time.RFC3339Nano), id))
 					}
 				}
 				rows.Close()
@@ -100,12 +86,10 @@ func TestIntegration_FirstPullQueryGrowth(t *testing.T) { //nolint:paralleltest 
 			return func() {
 				defer func() { require.NoError(t, tx.Rollback(context.WithoutCancel(ctx))) }()
 				var totalWork float64
-				for _, probe := range probes {
+				for i, probe := range probes {
 					var returned float64
-					for _, cursor := range probe.cursors {
-						query := fmt.Sprintf("EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) EXECUTE growth_%s('%s', %s, 100)", probe.name, machineID, cursor)
-						var raw []byte
-						require.NoError(t, tx.QueryRow(ctx, query).Scan(&raw))
+					for _, cursor := range cursors[i] {
+						raw := probe.explain(t, tx, machineID, cursor)
 						rows, work := pullPlanWork(t, raw)
 						require.InDelta(t, 100, rows, 0, probe.name)
 						returned += rows

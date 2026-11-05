@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -87,6 +88,39 @@ func assertPullPlanBounded(t *testing.T, raw []byte) {
 	assert.LessOrEqual(t, work, float64(500), "plan processed too many rows")
 }
 
+type pullPlanProbe struct {
+	name, table, column, query string
+}
+
+func preparePullPlans(t *testing.T, pool *PgPool) (pgx.Tx, []pullPlanProbe) {
+	t.Helper()
+	ctx := t.Context()
+	tx, err := pool.pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+	_, err = tx.Exec(ctx, "SET LOCAL plan_cache_mode = force_generic_plan")
+	require.NoError(t, err)
+	probes := []pullPlanProbe{
+		{"jobs", "review_jobs", "updated_at", pgPullJobsQuery},
+		{"reviews", "reviews", "updated_at", pgPullReviewsQuery},
+		{"responses", "responses", "inserted_at", pgPullResponsesQuery},
+		{"assignments", "experiment_assignments", "inserted_at", pgPullExperimentAssignmentsQuery},
+	}
+	for _, probe := range probes {
+		_, err := tx.Exec(ctx, "PREPARE pull_"+probe.name+" AS "+probe.query)
+		require.NoError(t, err)
+	}
+	return tx, probes
+}
+
+func (p pullPlanProbe) explain(t *testing.T, tx pgx.Tx, machineID uuid.UUID, cursor string) []byte {
+	t.Helper()
+	query := fmt.Sprintf("EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) EXECUTE pull_%s('%s', %s, 100)", p.name, machineID, cursor)
+	var raw []byte
+	require.NoError(t, tx.QueryRow(t.Context(), query).Scan(&raw))
+	return raw
+}
+
 func TestIntegration_PullCursorPlans(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
 	pool := newIntegrationEnv(t).Pool
 	seedPullHistory(t, pool, 10000)
@@ -99,27 +133,16 @@ func TestIntegration_PullCursorPlans(t *testing.T) { //nolint:paralleltest // sh
 		_, err := pool.pool.Exec(ctx, query)
 		require.NoError(t, err)
 	}
-	tx, err := pool.pool.Begin(ctx)
-	require.NoError(t, err)
+	tx, probes := preparePullPlans(t, pool)
 	defer func() { require.NoError(t, tx.Rollback(context.WithoutCancel(ctx))) }()
-	_, err = tx.Exec(ctx, "SET LOCAL plan_cache_mode = force_generic_plan")
-	require.NoError(t, err)
-	for _, tc := range []struct{ name, table, column, query string }{
-		{"jobs", "review_jobs", "updated_at", pgPullJobsQuery},
-		{"reviews", "reviews", "updated_at", pgPullReviewsQuery},
-		{"responses", "responses", "inserted_at", pgPullResponsesQuery},
-		{"assignments", "experiment_assignments", "inserted_at", pgPullExperimentAssignmentsQuery},
-	} {
+	for _, tc := range probes {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := tx.Exec(ctx, "PREPARE pull_"+tc.name+" AS "+tc.query)
-			require.NoError(t, err)
 			var cursorTime time.Time
 			var cursorID int64
 			cursorQuery := fmt.Sprintf("SELECT %s, id FROM %s ORDER BY %s, id OFFSET 1000 LIMIT 1", tc.column, tc.table, tc.column)
 			require.NoError(t, tx.QueryRow(ctx, cursorQuery).Scan(&cursorTime, &cursorID))
-			args := fmt.Sprintf("'%s', '%s', %d, 100", uuid.New(), cursorTime.Format(time.RFC3339Nano), cursorID)
-			var raw []byte
-			require.NoError(t, tx.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE pull_"+tc.name+"("+args+")").Scan(&raw))
+			cursor := fmt.Sprintf("'%s', %d", cursorTime.Format(time.RFC3339Nano), cursorID)
+			raw := tc.explain(t, tx, uuid.New(), cursor)
 			assertPullPlanBounded(t, raw)
 		})
 	}
