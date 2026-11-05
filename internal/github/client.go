@@ -26,6 +26,8 @@ type Client struct {
 	api *googlegithub.Client
 }
 
+type key struct{ base, token string }
+
 const defaultHTTPTimeout = 30 * time.Second
 
 var ghAuthTokenFn = func(ctx context.Context, hostname string) (string, error) {
@@ -148,9 +150,16 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
+	clientCopy := *httpClient
+	next := clientCopy.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	transport := &limitTransport{next: next, key: key{token: strings.TrimSpace(token)}}
+	clientCopy.Transport = transport
 
 	apiOpts := []googlegithub.ClientOptionsFunc{
-		googlegithub.WithHTTPClient(httpClient),
+		googlegithub.WithHTTPClient(&clientCopy),
 	}
 	if cfg.baseURL != nil {
 		base := cfg.baseURL.String()
@@ -164,6 +173,7 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	transport.key.base = api.BaseURL()
 	return &Client{api: api}, nil
 }
 
