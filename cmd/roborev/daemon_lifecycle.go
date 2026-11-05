@@ -381,7 +381,10 @@ func ensureDaemon() (err error) {
 	defer cancel()
 	for _, info := range runtimes {
 		owner, err := findDaemonService(ctx, info.PID)
-		if errors.Is(err, os.ErrNotExist) || err == nil && owner == nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("daemon exited during startup; run it again: %w", err)
+		}
+		if err == nil && owner == nil {
 			continue
 		}
 		return recoverDaemonWithSnapshot(info, errors.New("no reply to discovery"), owner, err)

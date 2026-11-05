@@ -93,12 +93,23 @@ func TestLiveDaemonRuntimes(t *testing.T) {
 }
 
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
-	for _, ownership := range []string{"managed", "unmanaged", "unknown owner", "vanished"} {
+	for _, ownership := range []string{"managed", "unmanaged", "unknown owner", "vanished ancestor", "vanished"} {
 		t.Run(ownership, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			stubServiceRecovery(t)
 			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
 			require.NoError(t, daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, version.Version, nil))
+			info, err := daemon.ReadRuntime()
+			require.NoError(t, err)
+			if ownership == "vanished" {
+				info.PID = exitedDaemonPID(t)
+				require.True(t, info.Stale())
+			} else {
+				require.False(t, info.Stale())
+			}
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{info}, nil }
 			binary, err := os.Executable()
 			require.NoError(t, err)
 			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
@@ -107,7 +118,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				if ownership == "unknown owner" {
 					return nil, &managedRecoveryError{"unknown", errors.New("cannot read process cgroup")}
 				}
-				if ownership == "vanished" {
+				if ownership == "vanished ancestor" {
 					return nil, &managedRecoveryError{"unknown", os.ErrNotExist}
 				}
 				if ownership == "unmanaged" {
@@ -128,14 +139,17 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				assert.Equal(t, []string{"cleanup", "detached start"}, mutations)
 				return
 			}
+			assert.Equal(t, []string{"cleanup"}, mutations)
 			require.Error(t, err)
-			if ownership == "unknown owner" {
+			switch ownership {
+			case "unknown owner":
 				require.ErrorContains(t, err, "cannot read process cgroup")
-			} else {
+			case "vanished ancestor":
+				require.ErrorIs(t, err, os.ErrNotExist)
+			default:
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
 			}
-			assert.Equal(t, []string{"cleanup"}, mutations)
 		})
 	}
 }
