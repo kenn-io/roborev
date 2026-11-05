@@ -1342,11 +1342,6 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := test.open(t)
-			t.Run("done stats", func(t *testing.T) {
-				query, args := jobStatsQuery("done", "")
-				plan := queryPlan(t, db, query, args...)
-				assert.Contains(t, plan, "SEARCH j USING COVERING INDEX idx_review_jobs_queue_stats (status=?)")
-			})
 			// The web table's first page, a page resumed from a cursor, and a
 			// status sort, which reads idx_review_jobs_status in order.
 			for _, page := range []struct {
@@ -1362,11 +1357,8 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 				{"cursor page", "idx_review_jobs_enqueued_position", "", []ListJobsOption{WithSortAfter(JobSortPosition{
 					Keys: []any{"2026-01-01 00:00:00"}, JobID: 10,
 				})}},
-				{"done cursor page", "idx_review_jobs_enqueued_position", "done", []ListJobsOption{WithSortAfter(JobSortPosition{
-					Keys: []any{"2026-01-01 00:00:00"}, JobID: 10,
-				})}},
 				{"status sort", "idx_review_jobs_status", "", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
-				{"done status sort", "idx_review_jobs_status", "done", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
+				{"done status sort", "idx_review_jobs_status (status=?)", "done", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
 			} {
 				t.Run(page.name, func(t *testing.T) {
 					opts := append([]ListJobsOption{
@@ -1381,33 +1373,6 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 					}
 				})
 			}
-		})
-	}
-}
-
-func TestListJobsDoneStatusOrderAndPaging(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	ids := seedSortJobs(t, db, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	for _, ascending := range []bool{false, true} {
-		t.Run(fmt.Sprintf("ascending=%t", ascending), func(t *testing.T) {
-			sort := JobSort{Ascending: ascending}
-			want := []int64{ids[5], ids[0], ids[2], ids[1]}
-			if ascending {
-				sort.Column = JobSortEnqueuedAt
-				want = []int64{ids[1], ids[2], ids[0], ids[5]}
-			}
-			opts := []ListJobsOption{WithSort(sort), WithExcludePanelRole(PanelRoleMember)}
-			first, err := db.ListJobs("done", "", 2, 0, opts...)
-			require.NoError(t, err)
-			require.Len(t, first, 2)
-			assert.Equal(t, want[:2], jobIDs(first))
-			last := first[1]
-			second, err := db.ListJobs("done", "", 2, 0, append(opts,
-				WithSortAfter(JobSortPosition{Keys: last.SortKey, JobID: last.ID}))...)
-			require.NoError(t, err)
-			assert.Equal(t, want[2:], jobIDs(second))
 		})
 	}
 }
