@@ -338,7 +338,7 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string)
 	}
 	var results [][]byte
 	for _, args := range [][]string{{"ls", "--current", "--installed", "--json"}, {"bin-paths"}} {
-		cmd := exec.CommandContext(ctx, mise, args...)
+		cmd := HiddenCommand(ctx, mise, args...)
 		// Temporary directory ancestors can contain mise config; select global host tools from /.
 		cmd.Dir = "/"
 		var stderr strings.Builder
@@ -405,7 +405,7 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 			return nil, fmt.Errorf("checker root %s must be a regular file", name)
 		}
 	}
-	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
+	goEnv := HiddenCommand(ctx, "go", "env", "GOROOT", "GOMODCACHE")
 	// Resolve Go globally without loading checkout or temporary directory ancestor config.
 	goEnv.Dir = "/"
 	var stderr strings.Builder
@@ -423,7 +423,7 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 	if err := os.MkdirAll(paths[1], 0o755); err != nil {
 		return nil, fmt.Errorf("create checker module cache: %w", err)
 	}
-	warm := exec.CommandContext(ctx, filepath.Join(paths[0], "bin", "go"), "mod", "download")
+	warm := HiddenCommand(ctx, filepath.Join(paths[0], "bin", "go"), "mod", "download")
 	warm.Dir = checkout
 	warm.Env = gitEnv
 	if output, err := warm.CombinedOutput(); err != nil {
