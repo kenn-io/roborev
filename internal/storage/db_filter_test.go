@@ -1440,7 +1440,8 @@ func TestListJobsSparseClosedIDPages(t *testing.T) {
 				query, args, _, err := listJobsQuery("", "", 2, 0, collectListJobsOptions(opts...))
 				require.NoError(t, err)
 				plan := queryPlan(t, db, query, args...)
-				assert.NotContains(plan, "USE TEMP B-TREE FOR ORDER BY")
+				assert.Contains(plan, "SEARCH rv USING INDEX idx_reviews_closed (closed=?)")
+				assert.Contains(plan, "SEARCH j USING INTEGER PRIMARY KEY (rowid=?)")
 
 				page, err := db.ListJobs("", "", 2, 0, opts...)
 				require.NoError(t, err)
