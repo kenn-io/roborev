@@ -105,13 +105,9 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 		} else {
 			enabled = s.autoDesignScanEnabled
 			if time.Since(s.autoDesignScanAt) >= autoDesignRepoScanTTL && !s.autoDesignScanRunning {
-				s.shutdownDrainMu.Lock()
-				if !s.shutdownDraining {
-					s.autoDesignScanRunning = true
-					// Repo config can stall in git, so Stop must not wait for this scan.
-					go s.refreshAutoDesignRepoScan()
-				}
-				s.shutdownDrainMu.Unlock()
+				s.autoDesignScanRunning = true
+				// Repo config can stall in git, so Stop must not wait for this scan.
+				go s.refreshAutoDesignRepoScan()
 			}
 		}
 		s.autoDesignScanMu.Unlock()
