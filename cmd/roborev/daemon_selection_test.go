@@ -82,7 +82,7 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 }
 
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
-	for _, ownership := range []string{"managed", "unmanaged", "lookup failure", "unknown owner", "vanished"} {
+	for _, ownership := range []string{"managed", "unmanaged", "lookup failure", "launchd lookup failure", "unknown owner", "vanished"} {
 		t.Run(ownership, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			stubServiceRecovery(t)
@@ -98,6 +98,9 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				assert.True(t, bounded)
 				if ownership == "lookup failure" {
 					return nil, errors.New("ownership unavailable")
+				}
+				if ownership == "launchd lookup failure" {
+					return nil, &managedRecoveryError{"gui/501", errors.New("launchd ownership unavailable")}
 				}
 				if ownership == "unknown owner" {
 					return nil, &managedRecoveryError{"unknown", errors.New("cannot read process cgroup")}
@@ -126,8 +129,12 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			require.Error(t, err)
 			if ownership == "lookup failure" {
 				require.ErrorContains(t, err, "ownership unavailable")
-			} else if ownership == "unknown owner" {
-				require.ErrorContains(t, err, "cannot read process cgroup")
+			} else if ownership == "unknown owner" || ownership == "launchd lookup failure" {
+				if ownership == "unknown owner" {
+					require.ErrorContains(t, err, "cannot read process cgroup")
+				} else {
+					require.ErrorContains(t, err, "launchd ownership unavailable")
+				}
 				exit, ok := errors.AsType[*exitError](err)
 				require.True(t, ok)
 				assert.Equal(t, "run 'roborev doctor' to diagnose setup", exit.hint)
