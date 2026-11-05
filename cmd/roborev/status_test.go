@@ -575,7 +575,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 				if tc.lockFailure {
 					return recoveryErr
 				}
-				return &managedRecoveryError{"fixture.service", errors.New(cause)}
+				return &unresponsiveDaemonError{original, &managedRecoveryError{"fixture.service", errors.New(cause)}}
 			}
 			cmd := statusCmd()
 			cmd.SetArgs([]string{"--json"})

@@ -253,7 +253,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return fail(err)
 		}
 		if probeFailed && liveDaemon(current) {
-			return fail(fmt.Errorf("daemon is unresponsive: %w; run %s %s", probeErr, serviceRestartCommand, owner.unit))
+			return managedUnresponsiveError(owner, probeErr)
 		}
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.

@@ -86,9 +86,6 @@ func statusCmd() *cobra.Command {
 				if _, retained := errors.AsType[*unresponsiveDaemonError](err); retained {
 					return writeStatusUnavailable(managedRecoveryStatus(err))
 				}
-				if _, managed := errors.AsType[*managedRecoveryError](err); managed || errors.Is(err, errRecoveryLock) {
-					return writeStatusUnavailable(managedRecoveryStatus(err))
-				}
 				if errors.Is(err, daemon.ErrClientConfig) {
 					return err
 				}

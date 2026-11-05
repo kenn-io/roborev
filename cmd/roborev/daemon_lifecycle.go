@@ -382,7 +382,7 @@ func ensureDaemon() (err error) {
 			return &unresponsiveDaemonError{runtime, err}
 		}
 		if owner != nil {
-			return &unresponsiveDaemonError{runtime, &managedRecoveryError{owner.unit, fmt.Errorf("daemon is unresponsive: %w; run %s %s", discoveryErr, serviceRestartCommand, owner.unit)}}
+			return &unresponsiveDaemonError{runtime, managedUnresponsiveError(owner, nil)}
 		}
 	}
 
