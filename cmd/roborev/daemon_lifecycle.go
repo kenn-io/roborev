@@ -383,7 +383,8 @@ func ensureDaemon() (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
 	for _, info := range runtimes {
-		owner, err := findDaemonService(ctx, info.PID)
+		outside := discoveredOutsideService(info.PID)
+		owner, err := snapshotDaemonService(ctx, info.PID, outside)
 		if err == nil && owner == nil {
 			continue
 		}

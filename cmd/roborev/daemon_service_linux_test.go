@@ -317,10 +317,7 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 
 func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		isolateDaemonSelection(t)
 		stubServiceRecovery(t)
-		oldList := listAllRuntimes
-		t.Cleanup(func() { listAllRuntimes = oldList })
 		var progress bytes.Buffer
 		lifecycleOut, verbose = &progress, false
 		old := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
@@ -337,8 +334,6 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 			}
 			return current.Load(), nil
 		}
-		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return getAnyRunningDaemonForStart(t.Context()) }
-		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{old}, nil }
 		serviceMainPID = func(context.Context, string) (int, error) { return current.Load().PID, nil }
 		drains := 0
 		drainManagedDaemon = func(*daemon.RuntimeInfo) error {
@@ -364,8 +359,9 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		synctest.Wait()
 		assert.Contains(t, progress.String(), "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...\n")
 		assert.Empty(t, recovery, "recovery must remain blocked while reviews drain")
+		progress.Reset()
 		go func() { coldStart <- startDaemon() }()
-		go func() { competingRecovery <- ensureDaemon() }()
+		go func() { competingRecovery <- recoverDaemon(old, nil, false) }()
 		synctest.Wait()
 		assert.Contains(t, progress.String(), "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...\n")
 		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")

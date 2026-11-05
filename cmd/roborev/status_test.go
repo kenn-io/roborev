@@ -560,7 +560,12 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			runtime := &daemon.RuntimeInfo{PID: pid, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1", WebOrigin: tc.webOrigin, WebDisabledReason: tc.disabledReason}
 			oldList := listAllRuntimes
 			t.Cleanup(func() { listAllRuntimes = oldList })
-			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{runtime}, nil }
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+				if tc.responsive {
+					return nil, nil
+				}
+				return []*daemon.RuntimeInfo{runtime}, nil
+			}
 			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
 				if tc.responsive {
 					return runtime, nil
