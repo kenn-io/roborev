@@ -45,11 +45,11 @@ func TestParseLaunchctlDomain(t *testing.T) {
 		want         map[int]string
 		wantErr      bool
 	}{
-		{name: "running jobs", output: "domain = {\n\tservices = {\n\t\t42 0 com.example.daemon\n\t\t43 -15 application.example.daemon\n\t}\n}\n", want: map[int]string{42: "com.example.daemon", 43: "application.example.daemon"}},
+		{name: "running jobs", output: "domain = {\n\tservices = {\n\t\t42 0 com.example.daemon\n\t\t43 -15 application.example.daemon\n\t\t44 0 com.example.spaced daemon\n\t}\n}\n", want: map[int]string{42: "com.example.daemon", 43: "application.example.daemon", 44: "com.example.spaced daemon"}},
 		{name: "empty", output: "\tservices = {\n\t}\n", want: map[int]string{}},
 		{name: "inactive", output: "\tservices = {\n\t\t0 0 com.example.daemon\n\t}\n", want: map[int]string{}},
 		{name: "malformed row", output: "\tservices = {\n\t\tinvalid row\n\t}\n", wantErr: true},
-		{name: "extra column", output: "\tservices = {\n\t\t42 0 com.example.daemon extra\n\t}\n", wantErr: true},
+		{name: "spaced label", output: "\tservices = {\n\t\t42\t0\t com.example.daemon  extra \t\n\t}\n", want: map[int]string{42: "com.example.daemon  extra"}},
 		{name: "invalid pid", output: "\tservices = {\n\t\tinvalid 0 com.example.daemon\n\t}\n", wantErr: true},
 		{name: "negative pid", output: "\tservices = {\n\t\t-42 0 com.example.daemon\n\t}\n", wantErr: true},
 		{name: "signed pid", output: "\tservices = {\n\t\t+42 0 com.example.daemon\n\t}\n", wantErr: true},

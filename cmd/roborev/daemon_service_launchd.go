@@ -25,7 +25,7 @@ func parseLaunchctlDomain(output []byte) (map[int]string, error) {
 			return jobs, nil
 		}
 		fields := strings.Fields(line)
-		if !strings.HasPrefix(line, "\t\t") || len(fields) != 3 {
+		if !strings.HasPrefix(line, "\t\t") || len(fields) < 3 {
 			return nil, errors.New("cannot read launchd jobs")
 		}
 		pid, err := strconv.Atoi(fields[0])
@@ -33,7 +33,9 @@ func parseLaunchctlDomain(output []byte) (map[int]string, error) {
 			return nil, errors.New("cannot read launchd jobs")
 		}
 		if pid > 0 {
-			jobs[pid] = fields[2]
+			label := strings.TrimSpace(line)
+			label = strings.TrimSpace(label[len(fields[0]):])
+			jobs[pid] = strings.TrimSpace(label[len(fields[1]):])
 		}
 	}
 	return nil, errors.New("cannot read launchd jobs")
