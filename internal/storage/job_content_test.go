@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+//nolint:paralleltest // Keep this test serial because it changes GOMAXPROCS and measures heap use.
 func TestContentEncoderMemoryBounded(t *testing.T) {
-	// Keep this test serial because it changes GOMAXPROCS and measures heap use.
 	previous := runtime.GOMAXPROCS(64)
 	defer runtime.GOMAXPROCS(previous)
 
