@@ -72,6 +72,9 @@ func TestCICheckPreparation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, run.Job.ReadPaths, mise)
 	assert.Contains(t, run.Job.Env, "MISE_DATA_DIR="+miseData)
+	assert.Contains(t, run.Job.Env, "MISE_STATE_DIR="+filepath.Join(run.Job.WorkDir, "mise-state"))
+	assert.Contains(t, run.Job.Env, "MISE_SYSTEM_DIR="+filepath.Join(run.Job.WorkDir, "mise-system"))
+	assert.Contains(t, run.Job.Env, "MISE_CEILING_PATHS="+filepath.Dir(run.Job.WorkDir))
 	assert.NotContains(t, run.Job.ReadPaths, miseData)
 	assert.Contains(t, run.Job.Env, "PATH="+filepath.Join(tools, "bin")+string(os.PathListSeparator)+filepath.Join(miseTools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	module, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
@@ -224,10 +227,6 @@ func ciCheckMiseFixture(t *testing.T) (string, string, string) {
 func TestCICheckMiseDiscovery(t *testing.T) {
 	tools, _, data := ciCheckMiseFixture(t)
 	selected := filepath.Join(data, "installs", "node", "1.2.3")
-	sdkRoot, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	sdk := filepath.Join(sdkRoot, "go-sdk")
-	require.NoError(t, os.Mkdir(sdk, 0o700))
 	missing := filepath.Join(tools, "installs", "python", "system")
 	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
 	// An installation can disappear after mise lists its executable directory.
@@ -235,7 +234,7 @@ func TestCICheckMiseDiscovery(t *testing.T) {
 	require.NoError(t, os.Mkdir(removedBin, 0o700))
 	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
 	// mise reports system selections as installed even though this directory doesn't exist.
-	mixedInventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}],"go":[{"version":%q,"install_path":%q,"installed":true,"active":true}]}`, missing, selected, "path:"+sdk, sdk)
+	mixedInventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"version":%q,"install_path":%q,"installed":true,"active":true}]}`, missing, "path:"+tools, tools)
 	mixedScript := fmt.Sprintf(`#!/bin/sh
 [ "$(pwd -P)" = '/' ] || { printf 'mise discovery ran from unexpected directory: %%s\n' "$(pwd -P)" >&2; exit 4; }
 case "$*" in
@@ -253,7 +252,7 @@ esac
 		{name: "malformed", script: "#!/bin/sh\nprintf 'invalid json'\n", message: "mise discovery failed"},
 		{name: "inventory failure", script: "#!/bin/sh\nexit 3\n", message: "exit status 3"},
 		{name: "bin paths failure", script: fmt.Sprintf("#!/bin/sh\n[ \"$1\" = ls ] && { printf '%%s' '%s'; exit 0; }; exit 4\n", inventory), message: "exit status 4"},
-		{name: "runs from root and skips unavailable paths", script: mixedScript, message: missing, dataDir: data, roots: []string{tools, sdk, filepath.Join(data, "installs")}, bins: []string{filepath.Join(tools, "bin")}},
+		{name: "runs from root and skips unavailable paths", script: mixedScript, message: missing, dataDir: data, roots: []string{tools, filepath.Join(data, "installs")}, bins: []string{filepath.Join(tools, "bin")}},
 		{name: "without doctor JSON", script: fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n'doctor --json') echo 'unexpected argument --json' >&2; exit 2;;\n*) exit 3;;\nesac\n", inventory, filepath.Join(selected, "bin")), message: "mise discovery failed", roots: []string{tools}, bins: []string{filepath.Join(tools, "bin")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
