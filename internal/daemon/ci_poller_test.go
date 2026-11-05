@@ -597,6 +597,73 @@ func TestGitHubTokenForRepo_CaseInsensitiveOwner(t *testing.T) {
 	assert.Equal(t, "ghs_token_wesm", p.githubTokenForRepo("Wesm/my-repo"))
 }
 
+func TestCIPollerListOpenPRsRevalidatesPages(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	for _, tt := range []struct {
+		name       string
+		changed    bool
+		wantBodies int
+		want304s   int
+	}{
+		{name: "unchanged", wantBodies: 0, want304s: 2},
+		{name: "page changed", changed: true, wantBodies: 1, want304s: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			var changed bool
+			var bodies, notModified int
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("/api/v3/repos/acme/api/pulls", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				etag, body := `W/"page-1"`, `[{"number":1,"title":"First PR"}]`
+				switch r.URL.Query().Get("page") {
+				case "":
+				case "2":
+					etag, body = `W/"page-2"`, `[{"number":2,"title":"Second PR"}]`
+					if changed {
+						etag, body = `W/"page-2-changed"`, `[{"number":3,"title":"New PR"}]`
+					}
+				default:
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("ETag", etag)
+				if r.Header.Get("If-None-Match") == etag {
+					notModified++
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				if r.URL.Query().Get("page") == "" {
+					w.Header().Set("Link", fmt.Sprintf("<http://%s%s?page=2>; rel=\"next\"", r.Host, r.URL.Path))
+				}
+				bodies++
+				fmt.Fprint(w, body)
+			}))
+			t.Cleanup(api.Close)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Poller.githubAPIURL = api.URL + "/api/v3"
+
+			prs, err := h.Poller.listOpenPRs(t.Context(), "acme/api")
+			require.NoError(t, err)
+			assert.Equal([]ghPR{{Number: 1, Title: "First PR", Labels: []string{}}, {Number: 2, Title: "Second PR", Labels: []string{}}}, prs)
+			assert.Equal(2, bodies)
+			assert.Zero(notModified)
+
+			bodies, notModified = 0, 0
+			changed = tt.changed
+			next, err := h.Poller.listOpenPRs(t.Context(), "acme/api")
+			require.NoError(t, err)
+			if tt.changed {
+				assert.Equal([]ghPR{{Number: 1, Title: "First PR", Labels: []string{}}, {Number: 3, Title: "New PR", Labels: []string{}}}, next)
+			} else {
+				assert.Equal(prs, next)
+			}
+			assert.Equal(tt.wantBodies, bodies)
+			assert.Equal(tt.want304s, notModified)
+		})
+	}
+}
+
 func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
 	t.Setenv("GITHUB_API_URL", "")
 	var authHeader string

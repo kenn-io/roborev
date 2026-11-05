@@ -45,6 +45,8 @@ github.com/bitfield/gotestdox v0.2.2 h1:x6RcPAbBbErKLnapz1QeAlf3ospg8efBsedU93CD
 github.com/bitfield/gotestdox v0.2.2/go.mod h1:D+gwtS0urjBrzguAkTM2wodsTQYFHdpx8eqRJ3N+9pY=
 github.com/bmatcuk/doublestar/v4 v4.10.4 h1:oTKkRmRuOsKMqFe1AQazd9gGBFNEpOmgKp/xzB97dnA=
 github.com/bmatcuk/doublestar/v4 v4.10.4/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
+github.com/bored-engineer/github-conditional-http-transport v0.0.8 h1:lEYbIth9W/EGGhpkSD8UJx4IKY3oOG1YcbaFmtuvOAI=
+github.com/bored-engineer/github-conditional-http-transport v0.0.8/go.mod h1:ijbFbpup2Nujm7jjGZdxBYXLJc3QFjIi5AGOG709LTA=
 github.com/buger/jsonparser v1.6.1 h1:I0phFv0PlbLHnM7TZAVjZ2MJ2/eWRTDyuO7GLR98IEs=
 github.com/buger/jsonparser v1.6.1/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/cenkalti/backoff/v7 v7.0.2 h1:BNsyJsriOksnzphDFm5hBB51nl9AQaedacdrC9mXsi0=
