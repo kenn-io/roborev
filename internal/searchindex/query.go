@@ -142,10 +142,10 @@ func identifierFTSQuery(query string) string {
 
 // lexicalLeg bounds rows kept and ranked after FTS scoring, which still scores
 // every hit. It then loads every matching member of the selected groups.
-func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit, window int) (sqlquery.Query, error) {
+func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit, window int) sqlquery.Query {
 	match := literalFTSQuery(query)
 	if match == "" {
-		return sqlquery.Query{SQL: `SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL WHERE 0`}, nil
+		return sqlquery.Query{SQL: `SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL WHERE 0`}
 	}
 	predicate := filterPredicate(filters)
 	exact := `instr(char(10) || lower(d.identifiers) || char(10), char(10) || lower(?) || char(10)) > 0`
@@ -222,7 +222,7 @@ func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit, 
 	args = append(args, exactArgs...)
 	args = append(args, predicate.Args...)
 	args = append(args, match)
-	return sqlquery.Query{SQL: statement, Args: args}, nil
+	return sqlquery.Query{SQL: statement, Args: args}
 }
 
 // SearchLexical widens full candidate windows until they contain enough groups.
@@ -234,10 +234,7 @@ func (index *Index) SearchLexical(
 		return nil, nil
 	}
 	for window := groupLimit * lexicalWindowFactor; ; window *= lexicalWindowFactor {
-		statement, err := index.lexicalLeg(query, filters, groupLimit, window)
-		if err != nil {
-			return nil, err
-		}
+		statement := index.lexicalLeg(query, filters, groupLimit, window)
 		short := false
 		groups, err := runLeg(ctx, index.db, statement, func(rows *sql.Rows) (string, legMember, error) {
 			var group string

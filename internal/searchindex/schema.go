@@ -40,7 +40,6 @@ CREATE TABLE review_mirror (
 );
 
 CREATE INDEX review_mirror_job_id ON review_mirror(job_id);
-CREATE INDEX IF NOT EXISTS review_mirror_group_key ON review_mirror(group_key);
 
 CREATE VIRTUAL TABLE review_fts USING fts5(
   doc_key UNINDEXED,

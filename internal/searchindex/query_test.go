@@ -337,8 +337,7 @@ func flatten(groups []legGroup, err error) ([]legMember, error) {
 
 func TestSearchLexicalReadsNoMirrorRowOutsideItsMatches(t *testing.T) {
 	index := openQueryTestIndex(t)
-	statement, err := index.lexicalLeg("zzqxv", SearchFilters{}, 3, 12)
-	require.NoError(t, err)
+	statement := index.lexicalLeg("zzqxv", SearchFilters{}, 3, 12)
 	rows, err := index.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+statement.SQL, statement.Args...)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
