@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json/jsontext"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -164,7 +166,7 @@ func TestReadTransactionDoesNotHoldWriters(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newSyncTestHelper(t)
 		job := h.createCompletedJob("read-transaction")
-		tx, err := h.db.BeginTx(t.Context(), nil)
+		tx, err := h.db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		var count int
@@ -177,35 +179,72 @@ func TestReadTransactionDoesNotHoldWriters(t *testing.T) {
 
 func TestRemapJobWaitsForPullWriter(t *testing.T) {
 	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		h := newSyncTestHelper(t)
-		job := h.createPendingJob("old-ref")
-		conn, err := h.db.Conn(t.Context())
-		require.NoError(t, err)
-		defer conn.Close()
-		require.NoError(t, beginImmediate(t.Context(), conn))
-		defer func() { _ = rollbackConn(conn) }()
-		_, err = conn.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('pull-writer', 'committed')`)
-		require.NoError(t, err)
+	for _, kind := range []string{"RemapJob", "MigrateReview"} {
+		t.Run(kind, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := newSyncTestHelper(t)
+				job := h.createPendingJob("old-ref")
+				machineID, err := h.db.GetMachineID()
+				require.NoError(t, err)
+				var reviewID int64
+				if kind == "MigrateReview" {
+					result, err := h.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output)
+ VALUES (?, 'test', '', '{"schema_version":0,"legacy":{"markdown":"Old finding.","recorded_verdict":null}}')`, job.ID)
+					require.NoError(t, err)
+					reviewID, err = result.LastInsertId()
+					require.NoError(t, err)
+				}
+				conn, err := h.db.Conn(t.Context())
+				require.NoError(t, err)
+				defer conn.Close()
+				require.NoError(t, beginImmediate(t.Context(), conn))
+				defer func() { _ = rollbackConn(conn) }()
+				_, err = conn.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('pull-writer', 'committed')`)
+				require.NoError(t, err)
 
-		type result struct {
-			count int
-			err   error
-		}
-		done := make(chan result, 1)
-		go func() {
-			count, err := h.db.RemapJob(h.repo.ID, "old-ref", "new-ref", "patch", "author", "subject", time.Now())
-			done <- result{count, err}
-		}()
-		// RemapJob waits on the in-process gate while SQLite holds the writer.
-		synctest.Wait()
-		_, err = conn.ExecContext(t.Context(), "COMMIT")
-		require.NoError(t, err)
-		remap := <-done
-		require.NoError(t, remap.err)
-		assert.Equal(t, 1, remap.count)
-		stored, err := h.db.GetJobByID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, "new-ref", stored.GitRef)
-	})
+				type result struct {
+					count int
+					err   error
+				}
+				done := make(chan result, 1)
+				go func() {
+					if kind == "RemapJob" {
+						count, err := h.db.RemapJob(h.repo.ID, "old-ref", "new-ref", "patch", "author", "subject", time.Now())
+						done <- result{count, err}
+						return
+					}
+					// Exercise MigrateReview's transaction after its machine ID lookup,
+					// so the lookup's write cannot serialize the conversion by itself.
+					tx, err := h.db.BeginTx(t.Context(), nil)
+					if err != nil {
+						done <- result{err: err}
+						return
+					}
+					defer func() { _ = tx.Rollback() }()
+					err = migrateReview(tx, reviewID, jsontext.Value(`{"schema_version":2,"summary":"Converted.","verdict":"pass","findings":[]}`), machineID)
+					if err == nil {
+						err = tx.Commit()
+					}
+					done <- result{err: err}
+				}()
+				// The conversion waits on the gate while SQLite holds the writer.
+				synctest.Wait()
+				_, err = conn.ExecContext(t.Context(), "COMMIT")
+				require.NoError(t, err)
+				converted := <-done
+				require.NoError(t, converted.err)
+				if kind == "RemapJob" {
+					assert.Equal(t, 1, converted.count)
+					stored, err := h.db.GetJobByID(job.ID)
+					require.NoError(t, err)
+					assert.Equal(t, "new-ref", stored.GitRef)
+				} else {
+					stored, err := h.db.GetReviewByJobID(job.ID)
+					require.NoError(t, err)
+					assert.Equal(t, "Converted.", stored.StructuredOutput["summary"])
+					assert.Equal(t, VerdictPass, stored.Verdict())
+				}
+			})
+		})
+	}
 }

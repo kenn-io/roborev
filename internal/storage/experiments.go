@@ -413,25 +413,15 @@ func (db *DB) UpsertPulledExperimentAssignment(assignment SyncableExperimentAssi
 	); err != nil {
 		return err
 	}
-	// This storage API has no caller context yet.
 	ctx := context.Background()
-	conn, err := db.Conn(ctx)
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	if err := beginImmediate(ctx, conn); err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = rollbackConn(conn)
-		}
-	}()
+	defer func() { _ = tx.Rollback() }()
 
 	var existingID, existingArm, existingSubject, existingConfig, existingConfigJSON string
-	err = conn.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		SELECT experiment_id, arm, subject_hash, effective_config_hash,
 		       effective_config_json
 		FROM experiment_assignments
@@ -449,7 +439,7 @@ func (db *DB) UpsertPulledExperimentAssignment(assignment SyncableExperimentAssi
 		return fmt.Errorf("conflicting experiment assignment for %s/%s",
 			assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
 	}
-	_, err = conn.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO experiment_assignments (
 			review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
 			effective_config_hash, effective_config_json, assigned_at, source_machine_id, synced_at
@@ -462,9 +452,5 @@ func (db *DB) UpsertPulledExperimentAssignment(assignment SyncableExperimentAssi
 	if err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+	return tx.Commit()
 }

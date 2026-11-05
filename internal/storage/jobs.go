@@ -2597,25 +2597,14 @@ func (db *DB) RemapJob(
 	repoID int64, oldSHA, newSHA, patchID string,
 	author, subject string, timestamp time.Time,
 ) (int, error) {
-	// This storage API has no caller context yet.
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
+	tx, err := db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin remap tx: %w", err)
 	}
-	defer conn.Close()
-	if err := beginImmediate(ctx, conn); err != nil {
-		return 0, fmt.Errorf("begin remap tx: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = rollbackConn(conn)
-		}
-	}()
+	defer tx.Rollback() //nolint:errcheck
 
 	var matchCount int
-	err = conn.QueryRowContext(ctx, `
+	err = tx.QueryRow(`
 		SELECT COUNT(*) FROM review_jobs
 		WHERE git_ref = ? AND repo_id = ?
 		AND status != 'running'
@@ -2630,12 +2619,12 @@ func (db *DB) RemapJob(
 
 	// Create or find commit row for the new SHA
 	var commitID int64
-	err = conn.QueryRowContext(ctx,
+	err = tx.QueryRow(
 		`SELECT id FROM commits WHERE repo_id = ? AND sha = ?`,
 		repoID, newSHA,
 	).Scan(&commitID)
 	if errors.Is(err, sql.ErrNoRows) {
-		result, insertErr := conn.ExecContext(ctx, `
+		result, insertErr := tx.Exec(`
 			INSERT INTO commits (repo_id, sha, author, subject, timestamp)
 			VALUES (?, ?, ?, ?, ?)
 		`, repoID, newSHA, author, subject,
@@ -2649,7 +2638,7 @@ func (db *DB) RemapJob(
 	}
 
 	now := time.Now().Format(time.RFC3339)
-	result, err := conn.ExecContext(ctx, `
+	result, err := tx.Exec(`
 		UPDATE review_jobs
 		SET git_ref = ?, commit_id = ?, patch_id = ?, updated_at = ?
 		WHERE git_ref = ? AND repo_id = ?
@@ -2665,10 +2654,9 @@ func (db *DB) RemapJob(
 		return 0, err
 	}
 
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit remap tx: %w", err)
 	}
-	committed = true
 	return int(n), nil
 }
 

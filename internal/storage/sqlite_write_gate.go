@@ -62,8 +62,8 @@ func (c *writeGateConnector) Connect(ctx context.Context) (driver.Conn, error) {
 
 type writeGateConn struct {
 	sqliteGateConn
-	gate          *writeGate
-	holding, inTx bool
+	gate    *writeGate
+	holding bool
 }
 
 func (c *writeGateConn) release() {
@@ -74,7 +74,7 @@ func (c *writeGateConn) release() {
 }
 
 // start uses the leading keyword, leaving reads and unrecognized statements
-// alone. Deferred transactions join the queue only when they first write.
+// alone. Writable transactions already hold the gate from BeginTx.
 func (c *writeGateConn) start(ctx context.Context, query string) (func(error), error) {
 	word, rest := leadingSQLKeyword(query)
 	keyword := strings.ToUpper(word)
@@ -99,18 +99,15 @@ func (c *writeGateConn) start(ctx context.Context, query string) (func(error), e
 	return func(err error) {
 		switch keyword {
 		case "BEGIN":
-			if err == nil {
-				c.inTx = true
-			} else if acquired {
+			if err != nil && acquired {
 				c.release()
 			}
 		case "COMMIT", "ROLLBACK":
 			if err == nil {
-				c.inTx = false
 				c.release()
 			}
 		default:
-			if acquired && !c.inTx {
+			if acquired {
 				c.release()
 			}
 		}
@@ -170,11 +167,19 @@ func (c *writeGateConn) PrepareContext(ctx context.Context, query string) (drive
 }
 
 func (c *writeGateConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	// Queue before the first read so a pull cannot invalidate the snapshot
+	// while this transaction waits to write. Read-only snapshots stay concurrent.
+	if !opts.ReadOnly {
+		if err := c.gate.acquire(ctx); err != nil {
+			return nil, err
+		}
+		c.holding = true
+	}
 	tx, err := c.sqliteGateConn.BeginTx(ctx, opts)
 	if err != nil {
+		c.release()
 		return nil, err
 	}
-	c.inTx = true
 	return &writeGateTx{Tx: tx, conn: c}, nil
 }
 
@@ -185,7 +190,6 @@ func (c *writeGateConn) Close() error {
 }
 
 func (c *writeGateConn) endTx(err error) error {
-	c.inTx = false
 	c.release()
 	return err
 }
