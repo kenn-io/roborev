@@ -7,6 +7,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	goversion "go/version"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -352,7 +353,7 @@ echo 'OK rewrite read-only'
 
 func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
-	for _, name := range []string{"direct runtime", "linked mise"} {
+	for _, name := range []string{"direct runtime", "linked mise", "linked mise custom installs"} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			repo := testutil.NewTestRepoWithCommit(t)
@@ -370,8 +371,23 @@ func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 				if err != nil {
 					t.Skipf("requires a globally selected installed Go version: %v", err)
 				}
-				pin := strings.TrimPrefix(strings.TrimSpace(string(version)), "go")
-				pin = pin[:strings.LastIndex(pin, ".")]
+				language := goversion.Lang(strings.TrimSpace(string(version)))
+				if language == "" {
+					t.Skip("requires a released Go version")
+				}
+				pin := strings.TrimPrefix(language, "go")
+				if name == "linked mise custom installs" {
+					pin = strings.TrimPrefix(strings.TrimSpace(string(version)), "go")
+					whereCmd := exec.CommandContext(t.Context(), mise, "where", "go")
+					whereCmd.Dir = "/"
+					installed, err := whereCmd.Output()
+					require.NoError(t, err)
+					installs := t.TempDir()
+					require.NoError(t, os.Mkdir(filepath.Join(installs, "go"), 0o700))
+					require.NoError(t, os.Symlink(strings.TrimSpace(string(installed)), filepath.Join(installs, "go", pin)))
+					t.Setenv("MISE_DATA_DIR", t.TempDir())
+					t.Setenv("MISE_INSTALLS_DIR", installs)
+				}
 				// The executable target sits outside the PATH directory and installed tool roots.
 				binary, err := os.ReadFile(mise)
 				require.NoError(t, err)
@@ -382,7 +398,7 @@ func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 				t.Setenv("PATH", commands+string(os.PathListSeparator)+os.Getenv("PATH"))
 				repo.CommitFile("mise.toml", fmt.Sprintf("[tools]\ngo = %q\n[env]\nCHECKER_MISE = 'trusted config'\n", pin), "mise fixture")
 				probe = `mise exec -- sh -c 'go version && printf "%s\n" "$CHECKER_MISE"'`
-				want = "go version go" + pin + "."
+				want = "go version " + language
 			}
 			sha := repo.HeadSHA()
 			command := filepath.Join(t.TempDir(), "codex")

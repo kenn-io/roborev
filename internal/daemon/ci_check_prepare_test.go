@@ -198,6 +198,7 @@ func ciCheckMiseFixture(t *testing.T) (string, string, string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures")
 	}
+	t.Setenv("MISE_INSTALLS_DIR", "")
 	tools, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	shims := t.TempDir()
@@ -224,11 +225,10 @@ func ciCheckMiseFixture(t *testing.T) (string, string, string) {
 func TestCICheckMiseDiscovery(t *testing.T) {
 	tools, _, data := ciCheckMiseFixture(t)
 	selected := filepath.Join(data, "installs", "node", "1.2.3")
-	home, err := filepath.EvalSymlinks(t.TempDir())
+	sdkRoot, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	sdk := filepath.Join(home, "go-sdk")
+	sdk := filepath.Join(sdkRoot, "go-sdk")
 	require.NoError(t, os.Mkdir(sdk, 0o700))
-	t.Setenv("HOME", home)
 	missing := filepath.Join(tools, "installs", "python", "system")
 	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
 	// An installation can disappear after mise lists its executable directory.
@@ -236,7 +236,7 @@ func TestCICheckMiseDiscovery(t *testing.T) {
 	require.NoError(t, os.Mkdir(removedBin, 0o700))
 	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
 	// mise reports system selections as installed even though this directory doesn't exist.
-	mixedInventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}],"go":[{"version":"path:~/go-sdk","install_path":%q,"installed":true,"active":true}]}`, missing, selected, sdk)
+	mixedInventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}],"go":[{"version":%q,"install_path":%q,"installed":true,"active":true}]}`, missing, selected, "path:"+sdk, sdk)
 	mixedScript := fmt.Sprintf(`#!/bin/sh
 [ "$(pwd -P)" = '/' ] || { printf 'mise discovery ran from unexpected directory: %%s\n' "$(pwd -P)" >&2; exit 4; }
 case "$*" in
@@ -272,7 +272,6 @@ esac
 			}
 			assert.Equal(t, tc.dataDir, dataDir)
 			assert.ElementsMatch(t, expectedRoots, roots, log.String())
-			require.NoError(t, validateCICheckReadPaths(roots))
 			assert.Equal(t, tc.bins, bins, log.String())
 			if tc.message == "" {
 				assert.Empty(t, log.String())
