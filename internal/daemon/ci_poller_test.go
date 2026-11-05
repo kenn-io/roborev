@@ -3119,6 +3119,45 @@ func TestToReviewResults(t *testing.T) {
 	assert.True(t, rrs[1].AllowFailure)
 }
 
+func TestCIPollerDeferredStatusRepublishesWhenNeeded(t *testing.T) {
+	for _, change := range []string{"deadline", "other status", "failed write"} {
+		t.Run(change, func(t *testing.T) {
+			h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+			pr := ghPR{Number: 70, HeadRefOid: "head-sha"}
+			nextEligible := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+			statuses := h.CaptureCommitStatuses()
+			h.Poller.postDeferredStatus("acme/api", pr, nextEligible)
+			require.Len(t, *statuses, 1)
+
+			wantDesc := "Review deferred — next eligible at 12:00 UTC"
+			switch change {
+			case "deadline":
+				nextEligible = nextEligible.Add(time.Hour)
+				wantDesc = "Review deferred — next eligible at 13:00 UTC"
+			case "other status":
+				require.NoError(t, h.Poller.callSetCommitStatus("acme/api", pr.HeadRefOid, "pending", "Review pending"))
+			case "failed write":
+				nextEligible = nextEligible.Add(time.Hour)
+				wantDesc = "Review deferred — next eligible at 13:00 UTC"
+				calls := 0
+				h.Poller.setCommitStatusFn = func(string, string, string, string) error {
+					calls++
+					return errors.New("status unavailable")
+				}
+				h.Poller.postDeferredStatus("acme/api", pr, nextEligible)
+				assert.Equal(t, 1, calls)
+				statuses = h.CaptureCommitStatuses()
+			}
+
+			*statuses = nil
+			h.Poller.postDeferredStatus("acme/api", pr, nextEligible)
+			assert.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: "head-sha", State: "pending", Desc: wantDesc}}, *statuses)
+			h.Poller.postDeferredStatus("acme/api", pr, nextEligible)
+			assert.Len(t, *statuses, 1, "successful retry must suppress subsequent duplicates")
+		})
+	}
+}
+
 func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
@@ -3169,6 +3208,13 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	require.Len(t, *captured, 1, "expected one deferred status")
 	assert.Equal("pending", (*captured)[0].State)
 	assert.Contains((*captured)[0].Desc, "Review deferred")
+
+	for range 3 {
+		require.NoError(t, h.Poller.processPR(
+			t.Context(), "acme/api",
+			ghPR{Number: 70, HeadRefOid: "second-sha", BaseRefName: "main"}, h.Cfg))
+	}
+	require.Len(t, *captured, 1, "repeated polls must publish the deferred status only once")
 
 	// A third poll inside the same throttle window must still be throttled even
 	// though the first active run was retired.
