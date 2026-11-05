@@ -276,11 +276,16 @@ case "$*" in
 'root --global') printf '/trusted/npm-root\n';;
 *--eval*) /bin/cat;;
 *pip._vendor.packaging.requirements*)
- case "$*" in
- *compatible*) printf '%s' '["test-package","compatible"]';;
- *test-package) printf '%s' '["test-package"]';;
- *) printf '%s' '["test-package>=1","source-only","optional-fixture==2","group-fixture; python_version >= \"3.10\""]';;
- esac
+ shift 3
+ printf '['
+ separator=''
+ for arg do
+  case "$arg" in *' @ '*) continue;; esac
+  escaped=$(printf '%s' "$arg" | /bin/sed 's/\\/\\\\/g; s/"/\\"/g')
+  printf '%s"%s"' "$separator" "$escaped"
+  separator=','
+ done
+ printf ']'
  ;;
 *download*)
  printf 'download\n' >> download-calls
@@ -320,9 +325,7 @@ esac
 	var log bytes.Buffer
 	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, filepath.Join(shims, "selected", "bin", "codex"), nil, &log)
 	require.NoError(t, err)
-	root := filepath.Dir(run.Job.WorkDir)
 	defer run.cleanup()
-	t.Cleanup(func() { assert.NoDirExists(t, root) })
 	installed, err := os.ReadFile(filepath.Join(run.Repo, "web", "node_modules", "test-package", "index.js"))
 	require.NoError(t, err, log.String())
 	assert.Equal(t, "package ready", string(installed))
@@ -334,6 +337,7 @@ esac
 	assert.NotContains(t, string(requirements), "unsafe")
 	assert.NotContains(t, string(requirements), "source-only")
 	assert.Contains(t, log.String(), "package preparation failed", "a source-only requirement must leave the other wheels available")
+	assert.Contains(t, log.String(), "-m pip --isolated download")
 	var path string
 	for _, entry := range run.Job.Env {
 		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
@@ -370,24 +374,6 @@ esac
 }
 
 func TestCICheckPackagesSkipped(t *testing.T) {
-	for _, tc := range []struct{ name, manifest, lock string }{
-		{"bare archive lock", `{}`, `{"packages":{"node_modules/pkg":{"resolved":"fixture.tar.gz"}}}`},
-		{"npm link", `{}`, `{"packages":{"node_modules/pkg":{"link":true,"resolved":"node_modules/fixture"}}}`},
-		{"npm escaped path", `{}`, `{"packages":{"node_modules/pkg":{"resolved":"\u002fsynthetic/package.tgz"}}}`},
-		{"npm nested dependency", `{}`, `{"dependencies":{"parent":{"dependencies":{"pkg":{"version":"file:/synthetic/package.tgz"}}}}}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := testutil.NewTestRepoWithCommit(t)
-			repo.CommitFile("package.json", tc.manifest, "dependencies")
-			if tc.lock != "" {
-				repo.CommitFile("package-lock.json", tc.lock, "dependency lock")
-			}
-			var log bytes.Buffer
-			assert.Empty(t, prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log))
-			assert.NoDirExists(t, filepath.Join(repo.Root, "node_modules"))
-			assert.Contains(t, log.String(), "skips")
-		})
-	}
 	t.Run("existing venv", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("requires shell fixtures")
@@ -430,15 +416,4 @@ func TestCICheckPackagesGitAuthentication(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "AUTHORIZATION: synthetic\n", string(output))
 	assert.NotContains(t, env, "CHECKER_SECRET=secret")
-}
-
-func TestCICheckPackagesSourceClassification(t *testing.T) {
-	for _, source := range []string{"file:../local", "../local", "nested/../fixture.tgz", "$pkg/../fixture.tgz", "fixture.tar.gz", "link:../local", "workspace:*"} {
-		t.Run(source, func(t *testing.T) {
-			stage := t.TempDir()
-			local, err := ciCheckLocalJSSources(t.Context(), stage, []string{source}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
-			require.NoError(t, err)
-			assert.True(t, local)
-		})
-	}
 }

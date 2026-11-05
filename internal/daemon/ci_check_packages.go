@@ -99,7 +99,7 @@ func runCICheckInstaller(ctx context.Context, command, dir string, env, args []s
 	cmd.Dir, cmd.Env = dir, env
 	// Package-manager output can contain authenticated URLs. Report the failing step only.
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(out, "CI checker package preparation failed (%s %s): %v\n", filepath.Base(command), args[0], err)
+		fmt.Fprintf(out, "CI checker package preparation failed (%s %s): %v\n", filepath.Base(command), strings.Join(args[:min(5, len(args))], " "), err)
 		return false
 	}
 	return true
@@ -322,14 +322,14 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 	const script = `import json, sys
 from pip._vendor.packaging.requirements import Requirement, InvalidRequirement
 accepted = []
-for value in sys.argv[1:]:
+for index, value in enumerate(sys.argv[1:], 1):
  try:
   if Requirement(value).url is None: accepted.append(value)
  except InvalidRequirement:
-  pass
+  print(f"CI checker invalid requirement in pyproject.toml dependency declaration {index}: invalid requirement syntax", file=sys.stderr)
 json.dump(accepted, sys.stdout)`
 	parse := exec.CommandContext(ctx, python, append([]string{"-I", "-c", script}, requirements...)...)
-	parse.Dir, parse.Env = stage, env
+	parse.Dir, parse.Env, parse.Stderr = stage, env, out
 	data, err = parse.Output()
 	if err == nil {
 		err = json.Unmarshal(data, &requirements)
