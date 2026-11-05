@@ -2824,8 +2824,12 @@ commit degrades to the classifier instead of being silently skipped.
 The daemon `/api/status` endpoint exposes a `SkippedJobs` aggregate count, plus
 an `auto_design` subobject with five per-outcome counters (`triggered`,
 `skipped_heuristic`, `triggered_classifier`, `skipped_classifier`, `errored`)
-when the feature is enabled anywhere. The subobject is omitted from the JSON
-when the feature is disabled across all repos.
+when the feature is enabled globally or the latest completed repo scan found it
+enabled. The initial scan runs in the background at daemon startup; the
+subobject is omitted until global config or a completed scan enables it. Once
+the cached scan is 30 seconds old, the next status request starts a background
+rescan and returns the cached answer. Requests after it finishes reflect
+per-repo changes, including newly registered repos.
 
 ## Reasoning Levels
 

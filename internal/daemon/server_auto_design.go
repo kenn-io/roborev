@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -28,6 +29,9 @@ type AutoDesignMetrics struct {
 
 // autoDesignMetrics is the process-global instance.
 var autoDesignMetrics = &AutoDesignMetrics{}
+
+// Repo config has no watcher, and scanning worktrees can spawn git per repo.
+const autoDesignRepoScanTTL = 30 * time.Second
 
 const (
 	autoDesignHookSource           = "post_commit"
@@ -90,17 +94,10 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 	enabled := cfg != nil && (cfg.AutoDesignReview.Enabled || cfg.AutoDesignReview.HookEnabled)
 
 	if !enabled {
-		repos, err := s.db.ListRepos()
-		if err == nil {
-			for _, r := range repos {
-				repoCfg, _ := config.LoadRepoConfig(r.RootPath)
-				if config.AutoDesignEnabledFromConfig(repoCfg, cfg) ||
-					config.AutoDesignHookEnabledFromConfig(repoCfg, cfg) {
-					enabled = true
-					break
-				}
-			}
-		}
+		s.startAutoDesignRepoScan()
+		s.autoDesignScanMu.Lock()
+		enabled = s.autoDesignScanEnabled
+		s.autoDesignScanMu.Unlock()
 	}
 
 	if !enabled {
@@ -109,6 +106,42 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 	snap := autoDesignMetrics.Snapshot()
 	snap.Enabled = true
 	return &snap
+}
+
+func (s *Server) startAutoDesignRepoScan() {
+	s.autoDesignScanMu.Lock()
+	defer s.autoDesignScanMu.Unlock()
+	if !s.autoDesignScanRunning && (s.autoDesignScanAt.IsZero() || time.Since(s.autoDesignScanAt) >= autoDesignRepoScanTTL) {
+		s.autoDesignScanRunning = true
+		// Repo config can stall in git, so Stop must not wait for this scan.
+		go s.refreshAutoDesignRepoScan()
+	}
+}
+
+func (s *Server) refreshAutoDesignRepoScan() {
+	enabled, err := s.anyRepoEnablesAutoDesign()
+	s.autoDesignScanMu.Lock()
+	defer s.autoDesignScanMu.Unlock()
+	s.autoDesignScanRunning = false
+	if err == nil {
+		s.autoDesignScanEnabled = enabled
+		s.autoDesignScanAt = time.Now()
+	}
+}
+
+func (s *Server) anyRepoEnablesAutoDesign() (bool, error) {
+	repos, err := s.db.ListRepos()
+	if err != nil {
+		return false, err
+	}
+	for _, r := range repos {
+		repoCfg, _ := config.LoadRepoConfig(r.RootPath)
+		if config.AutoDesignEnabledFromConfig(repoCfg, nil) ||
+			config.AutoDesignHookEnabledFromConfig(repoCfg, nil) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ResetAutoDesignMetricsForTest zeroes the global counters. Tests only.

@@ -58,6 +58,10 @@ type Server struct {
 	search                  reviewSearcher
 	searchReconciler        searchReconciler
 	searchNow               func() time.Time
+	autoDesignScanMu        sync.Mutex
+	autoDesignScanAt        time.Time
+	autoDesignScanEnabled   bool
+	autoDesignScanRunning   bool
 	searchMu                sync.Mutex
 	searchCancel            context.CancelFunc
 	searchSubscriberID      int
@@ -410,6 +414,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
 	s.startSearch(ctx)
+	s.startAutoDesignRepoScan()
 
 	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh, s.startupAuth())
 	if err != nil {

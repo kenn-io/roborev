@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -339,6 +342,8 @@ func TestAutoDesignStatusForResponse_DisabledOmitted(t *testing.T) {
 	ResetAutoDesignMetricsForTest()
 	srv, _ := newAutoDesignTestServer(t)
 	// No repo enables auto_design_review.
+	srv.autoDesignStatusForResponse()
+	waitForAutoDesignRepoScan(t, srv)
 	got := srv.autoDesignStatusForResponse()
 	assert.Nil(t, got)
 }
@@ -361,10 +366,137 @@ func TestAutoDesignStatusForResponse_DisabledRegularRepoDoesNotSpawnGit(t *testi
 	restore := testutil.MockBinaryInPath(t, "git", fakeGit)
 	defer restore()
 
+	srv.autoDesignStatusForResponse()
+	waitForAutoDesignRepoScan(t, srv)
 	got := srv.autoDesignStatusForResponse()
 	assert.Nil(t, got)
 	_, err = os.Stat(marker)
 	assert.True(t, os.IsNotExist(err), "disabled status path must not shell out to git for regular repos without config")
+}
+
+func waitForAutoDesignRepoScan(t *testing.T, srv *Server) {
+	t.Helper()
+	// The scan waits on external SQLite queries and git subprocesses.
+	require.Eventually(t, func() bool {
+		srv.autoDesignScanMu.Lock()
+		defer srv.autoDesignScanMu.Unlock()
+		return !srv.autoDesignScanRunning
+	}, 5*time.Second, time.Millisecond)
+}
+
+func TestAutoDesignStatus_FirstRequestReturnsWhileGitStalls(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake git uses a shell script")
+	}
+	srv, db, _ := newTestServer(t)
+	_, err := db.GetOrCreateRepo(t.TempDir())
+	require.NoError(t, err)
+	marker := filepath.Join(t.TempDir(), "git-invoked")
+	release := filepath.Join(t.TempDir(), "release-git")
+	t.Setenv("ROBOREV_GIT_MARKER", marker)
+	t.Setenv("ROBOREV_GIT_RELEASE", release)
+	restore := testutil.MockBinaryInPath(t, "git", `#!/bin/sh
+: > "$ROBOREV_GIT_MARKER"
+while [ ! -f "$ROBOREV_GIT_RELEASE" ]; do sleep 0.01; done
+exit 1
+`)
+	t.Cleanup(restore)
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		assert.NoError(t, os.WriteFile(release, nil, 0o600))
+		<-done
+		waitForAutoDesignRepoScan(t, srv)
+	})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil)
+	go func() {
+		srv.httpServer.Handler.ServeHTTP(w, r)
+		close(done)
+	}()
+	// Wait for the external fake git process to stall before checking the response.
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	}, 5*time.Second, time.Millisecond)
+	// HTTP status must finish while the external git process remains blocked.
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, time.Millisecond)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotContains(t, w.Body.String(), `"auto_design"`)
+}
+
+func TestAutoDesignStatusForResponse_StaleRequestsShareRefresh(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, db, _ := newTestServer(t)
+		db.SetMaxOpenConns(1)
+		require.Nil(t, srv.autoDesignStatusForResponse())
+		waitForAutoDesignRepoScan(t, srv)
+		time.Sleep(autoDesignRepoScanTTL + time.Second)
+		// A newly registered repo must also appear after a refresh.
+		repoPath := t.TempDir()
+		enableAutoDesignReviewForRepo(t, repoPath)
+		_, err := db.GetOrCreateRepo(repoPath)
+		require.NoError(t, err)
+		conn, err := db.Conn(t.Context())
+		require.NoError(t, err)
+		defer conn.Close()
+		waits := db.Stats().WaitCount
+
+		assert.Nil(t, srv.autoDesignStatusForResponse())
+		assert.Nil(t, srv.autoDesignStatusForResponse())
+		synctest.Wait()
+		assert.Equal(t, waits+1, db.Stats().WaitCount, "both requests share one blocked scan")
+		require.NoError(t, conn.Close())
+		waitForAutoDesignRepoScan(t, srv)
+		got := srv.autoDesignStatusForResponse()
+		require.NotNil(t, got)
+		assert.True(t, got.Enabled)
+	})
+}
+
+func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.WriteFile(".gitignore", ".roborev.toml\n")
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	repo.Run("worktree", "add", "--detach", worktree, "HEAD")
+	_, err := db.GetOrCreateRepo(worktree)
+	require.NoError(t, err)
+
+	srv := NewServer(db, config.DefaultConfig(), "")
+	t.Cleanup(func() { _ = srv.Close() })
+	require.Nil(t, srv.autoDesignStatusForResponse())
+	waitForAutoDesignRepoScan(t, srv)
+
+	enableAutoDesignReviewForRepo(t, repo.Path())
+	assert.Nil(t, srv.autoDesignStatusForResponse())
+	srv.autoDesignScanAt = time.Now().Add(-autoDesignRepoScanTTL - time.Second)
+	assert.Nil(t, srv.autoDesignStatusForResponse())
+	waitForAutoDesignRepoScan(t, srv)
+	got := srv.autoDesignStatusForResponse()
+	require.NotNil(t, got)
+	assert.True(t, got.Enabled)
+
+	require.NoError(t, os.Remove(filepath.Join(repo.Path(), ".roborev.toml")))
+	srv.refreshAutoDesignRepoScan()
+	assert.Nil(t, srv.autoDesignStatusForResponse())
+}
+
+func TestAutoDesignStatusForResponse_GlobalEnableBypassesCache(t *testing.T) {
+	srv, _ := newAutoDesignTestServer(t)
+	require.Nil(t, srv.autoDesignStatusForResponse())
+	waitForAutoDesignRepoScan(t, srv)
+
+	srv.configWatcher.Config().AutoDesignReview.Enabled = true
+	got := srv.autoDesignStatusForResponse()
+	require.NotNil(t, got)
+	assert.True(t, got.Enabled)
 }
 
 func TestAutoDesignStatusForResponse_EnabledRepoSurfaces(t *testing.T) {
@@ -372,6 +504,8 @@ func TestAutoDesignStatusForResponse_EnabledRepoSurfaces(t *testing.T) {
 	srv, repo := newAutoDesignTestServer(t)
 	enableAutoDesignReviewForRepo(t, repo.RootPath)
 
+	srv.autoDesignStatusForResponse()
+	waitForAutoDesignRepoScan(t, srv)
 	got := srv.autoDesignStatusForResponse()
 	require.NotNil(t, got)
 	assert.True(t, got.Enabled)
@@ -382,6 +516,8 @@ func TestAutoDesignStatusForResponse_HookEnabledRepoSurfaces(t *testing.T) {
 	srv, repo := newAutoDesignTestServer(t)
 	enableHookAutoDesignReviewForRepo(t, repo.RootPath)
 
+	srv.autoDesignStatusForResponse()
+	waitForAutoDesignRepoScan(t, srv)
 	got := srv.autoDesignStatusForResponse()
 	require.NotNil(t, got)
 	assert.True(t, got.Enabled)
