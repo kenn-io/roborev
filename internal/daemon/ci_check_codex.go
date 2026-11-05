@@ -52,7 +52,7 @@ func resolveCICheckCommand(ctx context.Context, dir, name string) (string, error
 	}
 	// Resolve mise outside the checkout so repository config cannot select a tool.
 	if filepath.Base(real) == "mise" {
-		which := exec.CommandContext(ctx, real, "which", filepath.Base(name))
+		which := HiddenCommand(ctx, real, "which", filepath.Base(name))
 		which.Dir = dir
 		path, err := which.Output()
 		if err != nil {

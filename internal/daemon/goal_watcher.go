@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -165,7 +164,7 @@ func (s *Server) goalCheckouts(ctx context.Context) ([]goalCheckout, error) {
 		if !cfg.Enabled || len(cfg.Watch) == 0 {
 			continue
 		}
-		cmd := exec.CommandContext(ctx, "git", "-C", repo.RootPath, "worktree", "list", "--porcelain", "-z")
+		cmd := HiddenCommand(ctx, "git", "-C", repo.RootPath, "worktree", "list", "--porcelain", "-z")
 		out, err := cmd.Output()
 		if err != nil {
 			if ctx.Err() != nil {
