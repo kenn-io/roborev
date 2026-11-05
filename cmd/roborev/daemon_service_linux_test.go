@@ -523,6 +523,11 @@ func TestUserServiceCommandsNeverRestart(t *testing.T) {
 
 func TestSystemdRestartKeepsDetachedWorkflow(t *testing.T) {
 	stubServiceRecovery(t)
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: os.Getpid()}}, nil
+	}
 	lookups, starts := 0, 0
 	findDaemonService = func(context.Context, int) (*daemonService, error) {
 		lookups++
