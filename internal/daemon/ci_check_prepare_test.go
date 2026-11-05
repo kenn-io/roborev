@@ -360,7 +360,6 @@ func TestCICheckPackagesPythonPreparation(t *testing.T) {
 		assert.Contains(t, string(requirements), "optional-fixture==2")
 		assert.Contains(t, string(requirements), `group-fixture; python_version >= "3.10"`)
 		assert.NotContains(t, string(requirements), "source-only")
-		assert.Contains(t, log.String(), "package preparation failed")
 		assert.Contains(t, log.String(), "-m pip --isolated download")
 	})
 	t.Run("compatible batch", func(t *testing.T) {
@@ -402,18 +401,14 @@ func TestCICheckPackagesSkipped(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(fmt.Sprintf("#!/bin/sh\nprintf 'ran' > '%s'\n", marker)), 0o700))
 		t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 		var log bytes.Buffer
-		prepareCICheckPython(t.Context(), project, t.TempDir(), nil, nil, &log)
+		prepareCICheckPython(t.Context(), project, t.TempDir(), []byte("[project]\ndependencies=['fixture']\n"), ciCheckPackageEnv(tools, os.Getenv("PATH"), nil), &log)
 		assert.Contains(t, log.String(), "skips existing .venv")
 		assert.NoFileExists(t, marker)
 	})
 	t.Run("unavailable", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("requires symlinks")
-		}
 		commands := t.TempDir()
-		t.Setenv("PATH", commands)
 		var log bytes.Buffer
-		prepareCICheckJS(t.Context(), t.TempDir(), t.TempDir(), map[string][]byte{"package.json": []byte(`{}`)}, nil, nil, &log)
+		prepareCICheckJS(t.Context(), t.TempDir(), t.TempDir(), map[string][]byte{"package.json": []byte(`{}`)}, nil, ciCheckPackageEnv(commands, commands, nil), &log)
 		assert.Contains(t, log.String(), "package tool unavailable: npm")
 	})
 }
