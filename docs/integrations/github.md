@@ -866,9 +866,9 @@ Missing or duplicate verdicts keep the finding. The job log records the
 verdicts. If every finding drops, the stored review says "No issues found." A
 checker failure or timeout posts the original review unchanged.
 
-For test-removal findings, unique coverage requires a plausible mistake in the
-project's code that ships a bug a user or caller would notice and fails that
-test alone.
+The checker posts a recommendation to remove a test as redundant or as testing
+external code only when no plausible mistake in the project's code ships a bug a
+user or caller would notice and fails that test alone.
 
 ## Rewriting checked findings
 
