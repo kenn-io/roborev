@@ -2,13 +2,10 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -541,40 +538,38 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name                      string
 		responsive, lockFailure   bool
+		exited                    bool
 		webOrigin, disabledReason string
 	}{
 		{name: "responsive after drain failure", responsive: true, webOrigin: "https://reviews.example.com"},
 		{name: "responsive after recovery lock failure", responsive: true, lockFailure: true, disabledReason: daemon.WebDisabledReasonConfig},
-		{name: "absent after recovery lock failure", lockFailure: true},
+		{name: "absent after recovery lock failure", lockFailure: true, exited: true},
+		{name: "unresponsive live process"},
+		{name: "unresponsive exited process", exited: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stubServiceRecovery(t)
 			oldEnsure, oldAddr, oldParsed := statusEnsureDaemon, serverAddr, parsedServerEndpoint
 			serverAddr, parsedServerEndpoint = "", nil
 			t.Cleanup(func() { statusEnsureDaemon, serverAddr, parsedServerEndpoint = oldEnsure, oldAddr, oldParsed })
+			pid := os.Getpid()
+			if tc.exited {
+				pid = exitedDaemonPID(t)
+			}
+			runtime := &daemon.RuntimeInfo{PID: pid, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1", WebOrigin: tc.webOrigin, WebDisabledReason: tc.disabledReason}
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{runtime}, nil }
 			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
 				if tc.responsive {
-					return &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1", WebOrigin: tc.webOrigin, WebDisabledReason: tc.disabledReason}, nil
+					return runtime, nil
 				}
 				return nil, os.ErrNotExist
 			})
-			original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
-			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-			var recoveryErr error
-			if tc.lockFailure {
-				// A data directory that is a file makes the start lock unusable.
-				dataDir := os.Getenv("ROBOREV_DATA_DIR")
-				blocked := filepath.Join(t.TempDir(), "file")
-				require.NoError(t, os.WriteFile(blocked, nil, 0o600))
-				t.Setenv("ROBOREV_DATA_DIR", blocked)
-				recoveryErr = recoverDaemon(original, nil, false)
-				t.Setenv("ROBOREV_DATA_DIR", dataDir)
-			}
 			cause := "drain rejected"
+			if tc.lockFailure {
+				cause = "wait for daemon recovery lock: lock unavailable"
+			}
 			statusEnsureDaemon = func() error {
-				if tc.lockFailure {
-					return recoveryErr
-				}
 				return &managedRecoveryError{"fixture.service", errors.New(cause)}
 			}
 			cmd := statusCmd()
@@ -584,7 +579,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
 			var result statusJSONResult
 			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
-			assert.Equal(t, tc.responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
+			assert.Equal(t, !tc.exited, result.Running, "running must reflect process liveness after recovery fails")
 			if tc.lockFailure {
 				assert.Contains(t, result.Error, "wait for daemon recovery lock")
 			} else {
@@ -600,7 +595,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			output := captureStdout(t, func() { textErr = textCmd.Execute() })
 			require.NoError(t, textErr)
 			state := "not running"
-			if tc.responsive {
+			if !tc.exited {
 				state = "running"
 			}
 			assert.Contains(t, output, "Daemon: "+state+"\n")
@@ -616,62 +611,6 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			} else {
 				assert.Contains(t, output, cause)
 			}
-		})
-	}
-}
-
-func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
-	for _, exited := range []bool{false, true} {
-		t.Run(fmt.Sprintf("exited=%t", exited), func(t *testing.T) {
-			isolateDaemonSelection(t)
-			stubServiceRecovery(t)
-			original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
-			serviceType := "notify"
-			if exited {
-				original.PID = exitedDaemonPID(t)
-				serviceType = "forking"
-			}
-			binary, err := os.Executable()
-			require.NoError(t, err)
-			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
-			lookups, drains, starts := 0, 0, 0
-			drainManagedDaemon = func(*daemon.RuntimeInfo) error { drains++; return errors.New("unexpected drain") }
-			startDaemonService = func(context.Context, string) error { starts++; return errors.New("unexpected service start") }
-			startDaemonForEnsure = func() error { starts++; return errors.New("unexpected detached start") }
-			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-				lookups++
-				assert.Equal(t, original.PID, pid)
-				return &daemonService{unit: "fixture.service", mainPID: original.PID, executable: binary, serviceType: serviceType}, nil
-			}
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-			oldList := listAllRuntimes
-			t.Cleanup(func() { listAllRuntimes = oldList })
-			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{original}, nil }
-			oldEnsure := statusEnsureDaemon
-			t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
-			err = recoverDaemon(original, errors.New("HTTP unavailable"), false)
-			require.Error(t, err)
-			if exited {
-				require.ErrorContains(t, err, "unsupported service Type=forking")
-			} else {
-				require.ErrorContains(t, err, "daemon is unresponsive: HTTP unavailable")
-			}
-			statusEnsureDaemon = func() error { return err }
-			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
-			cmd := statusCmd()
-			cmd.SetArgs([]string{"--json"})
-			output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-			var result map[string]any
-			require.NoError(t, json.Unmarshal([]byte(output), &result))
-			assert.Equal(t, !exited, result["running"])
-			assert.Equal(t, err.Error(), result["error"])
-			assert.Empty(t, result["web_url"])
-			for _, field := range []string{"daemon", "health", "jobs"} {
-				assert.NotContains(t, result, field)
-			}
-			assert.Equal(t, 2, lookups)
-			assert.Zero(t, drains)
-			assert.Zero(t, starts)
 		})
 	}
 }

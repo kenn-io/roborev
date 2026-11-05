@@ -108,9 +108,11 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		pauseNotFound      bool
 		failDiscovery      bool
 		recheckCurrent     bool
+		skipVersionCheck   bool
 		live, reprobeFails bool
 	}{
 		{outcome: "replacement current"},
+		{outcome: "skip version check", skipVersionCheck: true},
 		{outcome: "live current after probe failure", probeErr: probeErr, recheckCurrent: true},
 		{outcome: "live failed rediscovery", live: true, probeErr: probeErr, failDiscovery: true, wantError: "daemon is unresponsive: probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "live failed repeat probe", live: true, probeErr: probeErr, reprobeFails: true, queueCommand: true, paused: true, wantError: "daemon is unresponsive: repeat probe failed; run systemctl --user restart fixture.service"},
@@ -146,6 +148,10 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			if tc.probeErr != nil && !tc.queueCommand && !tc.recheckCurrent && !tc.live {
 				// Failed discovery must describe an exited process before recovery may replace it.
 				original.PID = exitedDaemonPID(t)
+			}
+			if tc.skipVersionCheck {
+				t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
+				original.Version = "v-old"
 			}
 			var events []string
 			if tc.queueCommand {

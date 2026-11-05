@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,45 +61,6 @@ func stubServiceRecovery(t *testing.T) {
 		pendingStartPause = oldPause
 		restartThroughService, serviceRestartCommand, cliExecutableInfo = oldRestart, oldCommand, oldIdentity
 	})
-}
-
-func TestEnsureDaemonRecoverySkipsVersionCheck(t *testing.T) {
-	isolateDaemonSelection(t)
-	stubServiceRecovery(t)
-	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
-	oldList := listAllRuntimes
-	t.Cleanup(func() { listAllRuntimes = oldList })
-	owner := ownedDaemonService(t)
-	original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{original}, nil }
-	findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-		service := *owner
-		service.mainPID = pid
-		return &service, nil
-	}
-	rediscoveries := 0
-	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-		rediscoveries++
-		assertRecoveryLock(t, false)
-		return original, nil
-	}
-	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-		return &daemon.PingInfo{Version: "v-old"}, nil
-	}
-	drains, starts := 0, 0
-	drainManagedDaemon = func(*daemon.RuntimeInfo) error {
-		drains++
-		return errors.New("responsive daemon must be reused")
-	}
-	startDaemonService = func(context.Context, string) error { starts++; return nil }
-	startDaemonForEnsure = func() error { starts++; return nil }
-
-	require.NoError(t, ensureDaemon())
-	assert.Equal(t, 1, rediscoveries)
-	assert.Zero(t, drains)
-	assert.Zero(t, starts)
-	assertRecoveryLock(t, true)
 }
 
 func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {

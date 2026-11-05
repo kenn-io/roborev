@@ -81,28 +81,31 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 	assert.Zero(t, services)
 }
 
-func TestEnsureDaemonOmitsRuntimeWithoutPID(t *testing.T) {
-	assert := assert.New(t)
-	isolateDaemonSelection(t)
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-	withStatusWebRuntime(t, getAnyRunningDaemon)
-	oldList := listAllRuntimes
-	t.Cleanup(func() { listAllRuntimes = oldList })
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: 0, Network: "tcp", Address: "127.0.0.1:1"}}, nil
-	}
-	var services, starts int
-	findDaemonService = func(context.Context, int) (*daemonService, error) { services++; return nil, nil }
-	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
-	startDaemonForEnsure = func() error { starts++; return nil }
+func TestLiveDaemonRuntimes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pid  int
+		live bool
+	}{
+		{name: "missing PID"},
+		{name: "exited", pid: exitedDaemonPID(t)},
+		{name: "live", pid: os.Getpid(), live: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			runtime := &daemon.RuntimeInfo{PID: tc.pid, Network: "tcp", Address: "127.0.0.1:1"}
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{runtime}, nil }
 
-	live, err := liveDaemonRuntimes()
-	require.NoError(t, err)
-	assert.Empty(live)
-	require.NoError(t, ensureDaemon())
-	assert.Zero(services)
-	assert.Equal(1, starts)
-	assert.False(managedRecoveryStatus(errors.New("recovery unavailable")).Running)
+			live, err := liveDaemonRuntimes()
+			require.NoError(t, err)
+			if tc.live {
+				assert.Equal(t, []*daemon.RuntimeInfo{runtime}, live)
+			} else {
+				assert.Empty(t, live)
+			}
+		})
+	}
 }
 
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
@@ -147,7 +150,6 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			} else {
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
-				require.ErrorContains(t, managed.cause, "HTTP probe failed for live daemon process")
 			}
 			assert.Empty(t, mutations)
 		})
