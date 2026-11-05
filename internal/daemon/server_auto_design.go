@@ -111,15 +111,26 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 func (s *Server) startAutoDesignRepoScan() {
 	s.autoDesignScanMu.Lock()
 	defer s.autoDesignScanMu.Unlock()
-	if !s.autoDesignScanRunning && (s.autoDesignScanAt.IsZero() || time.Since(s.autoDesignScanAt) >= autoDesignRepoScanTTL) {
+	if !s.autoDesignScanStopped && !s.autoDesignScanRunning && (s.autoDesignScanAt.IsZero() || time.Since(s.autoDesignScanAt) >= autoDesignRepoScanTTL) {
 		s.autoDesignScanRunning = true
-		// Repo config can stall in git, so Stop must not wait for this scan.
+		s.autoDesignScanDBWG.Add(1)
 		go s.refreshAutoDesignRepoScan()
 	}
 }
 
+func (s *Server) stopAutoDesignRepoScan() {
+	s.autoDesignScanMu.Lock()
+	s.autoDesignScanStopped = true
+	s.autoDesignScanMu.Unlock()
+	// Join database access before its owner closes SQLite. Repo config can
+	// stall in git, so the remaining filesystem scan stays detached.
+	s.autoDesignScanDBWG.Wait()
+}
+
 func (s *Server) refreshAutoDesignRepoScan() {
-	enabled, err := s.anyRepoEnablesAutoDesign()
+	repos, err := s.db.ListRepos()
+	s.autoDesignScanDBWG.Done()
+	enabled := err == nil && anyRepoEnablesAutoDesign(repos)
 	s.autoDesignScanMu.Lock()
 	defer s.autoDesignScanMu.Unlock()
 	s.autoDesignScanRunning = false
@@ -129,19 +140,15 @@ func (s *Server) refreshAutoDesignRepoScan() {
 	}
 }
 
-func (s *Server) anyRepoEnablesAutoDesign() (bool, error) {
-	repos, err := s.db.ListRepos()
-	if err != nil {
-		return false, err
-	}
+func anyRepoEnablesAutoDesign(repos []storage.Repo) bool {
 	for _, r := range repos {
 		repoCfg, _ := config.LoadRepoConfig(r.RootPath)
 		if config.AutoDesignEnabledFromConfig(repoCfg, nil) ||
 			config.AutoDesignHookEnabledFromConfig(repoCfg, nil) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // ResetAutoDesignMetricsForTest zeroes the global counters. Tests only.

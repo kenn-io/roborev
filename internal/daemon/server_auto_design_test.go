@@ -429,6 +429,8 @@ exit 1
 	}, 5*time.Second, time.Millisecond)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.NotContains(t, w.Body.String(), `"auto_design"`)
+	// Shutdown must finish while the external git process remains blocked.
+	require.NoError(t, srv.Stop())
 }
 
 func TestAutoDesignStatusForResponse_StaleRequestsShareRefresh(t *testing.T) {
@@ -460,6 +462,54 @@ func TestAutoDesignStatusForResponse_StaleRequestsShareRefresh(t *testing.T) {
 	})
 }
 
+func TestAutoDesignRepoScanShutdownWaitsForDatabase(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, db, _ := newTestServer(t)
+		db.SetMaxOpenConns(1)
+		conn, err := db.Conn(t.Context())
+		require.NoError(t, err)
+		defer conn.Close()
+		waits := db.Stats().WaitCount
+
+		srv.startAutoDesignRepoScan()
+		synctest.Wait()
+		require.Equal(t, waits+1, db.Stats().WaitCount)
+		done := make(chan struct{})
+		go func() {
+			srv.stopAutoDesignRepoScan()
+			close(done)
+		}()
+		synctest.Wait()
+		var stopped bool
+		select {
+		case <-done:
+			stopped = true
+		default:
+		}
+		assert.False(t, stopped, "scan shutdown must wait for its database query")
+
+		require.NoError(t, conn.Close())
+		<-done
+	})
+}
+
+func TestAutoDesignStatusAfterStopDoesNotStartRepoScan(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, db, _ := newTestServer(t)
+		require.NoError(t, srv.Stop())
+		db.SetMaxOpenConns(1)
+		conn, err := db.Conn(t.Context())
+		require.NoError(t, err)
+		defer conn.Close()
+		waits := db.Stats().WaitCount
+
+		assert.Nil(t, srv.autoDesignStatusForResponse())
+		synctest.Wait()
+		assert.Equal(t, waits, db.Stats().WaitCount,
+			"a stopped server must not start another database query")
+	})
+}
+
 func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	repo := testutil.NewTestRepoWithCommit(t)
@@ -484,7 +534,9 @@ func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *
 	assert.True(t, got.Enabled)
 
 	require.NoError(t, os.Remove(filepath.Join(repo.Path(), ".roborev.toml")))
-	srv.refreshAutoDesignRepoScan()
+	srv.autoDesignScanAt = time.Now().Add(-autoDesignRepoScanTTL - time.Second)
+	srv.startAutoDesignRepoScan()
+	waitForAutoDesignRepoScan(t, srv)
 	assert.Nil(t, srv.autoDesignStatusForResponse())
 }
 
