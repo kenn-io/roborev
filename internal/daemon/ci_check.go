@@ -369,7 +369,7 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string,
 	}
 	if err := json.Unmarshal(results[2], &doctor); err != nil {
 		fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
-		return nil, nil, ""
+		doctor.Dirs.Data = ""
 	}
 	roots = append(roots, mise)
 	for _, versions := range inventory {
