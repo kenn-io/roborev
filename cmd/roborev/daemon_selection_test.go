@@ -99,15 +99,14 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			oldList := listAllRuntimes
 			t.Cleanup(func() { listAllRuntimes = oldList })
 			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{info}, nil }
-			binary, err := os.Executable()
-			require.NoError(t, err)
-			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
+			service := ownedDaemonService(t)
 			getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
 			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
 				if ownership == "unmanaged" {
 					return nil, nil
 				}
-				return &daemonService{unit: "fixture.service", mainPID: pid, executable: binary, serviceType: "simple"}, nil
+				service.mainPID = pid
+				return service, nil
 			}
 			var mutations []string
 			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { mutations = append(mutations, "cleanup"); return 0 }
