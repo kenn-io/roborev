@@ -136,9 +136,9 @@ func ciCheckNpmSources(lock map[string]any) []string {
 		packages, _ := lock[field].(map[string]any)
 		for _, value := range packages {
 			if pkg, ok := value.(map[string]any); ok {
-				// npm's source policies skip link records, which install directories
-				// regardless of the resolved path's spelling; it enforces every other source.
-				if pkg["link"] == true {
+				// npm's source policies skip links, including truthy malformed values.
+				// Reject these before npm can install host directories.
+				if link, present := pkg["link"]; present && link != false {
 					sources = append(sources, "file:.")
 				}
 				sources = append(sources, ciCheckNpmSources(pkg)...)

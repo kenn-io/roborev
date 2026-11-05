@@ -193,6 +193,10 @@ https.request = options => http.request({...options, protocol: 'http:', hostname
 		{"file manifest", "file", "host-fixture", "file:" + hostArchive, ""},
 		{"file directory", "directory", "host-fixture", "file:" + hostDirectory, ""},
 		{"file locked link", "link", "host-fixture", "1.0.0", ""},
+		{"file locked string link", "link string", "host-fixture", "1.0.0", ""},
+		{"file locked number link", "link number", "host-fixture", "1.0.0", ""},
+		{"file shrinkwrap string link", "link string", "host-fixture", "1.0.0", ""},
+		{"file shrinkwrap number link", "link number", "host-fixture", "1.0.0", ""},
 		{"file transitive", "file", "remote-fixture", remote.URL + "/file.tgz", ""},
 		{"git direct", "git", "git-fixture", gitSource, ""},
 		{"git transitive", "git", "remote-fixture", remote.URL + "/git.tgz", ""},
@@ -206,10 +210,15 @@ https.request = options => http.request({...options, protocol: 'http:', hostname
 				require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
 			}
 			metadata := map[string][]byte{"package.json": []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{%q:%q}}`, tc.dependency, tc.source))}
-			if tc.kind == "link" {
+			if strings.HasPrefix(tc.kind, "link") {
 				relative, err := filepath.Rel(stage, hostDirectory)
 				require.NoError(t, err)
-				metadata["package-lock.json"] = []byte(fmt.Sprintf(`{"lockfileVersion":3,"packages":{"":{"dependencies":{"host-fixture":"1.0.0"}},"node_modules/host-fixture":{"resolved":%q,"link":true},%q:{"name":"host-fixture","version":"1.0.0"}}}`, relative, relative))
+				link := map[string]string{"link": "true", "link string": `"true"`, "link number": "1"}[tc.kind]
+				lockName := "package-lock.json"
+				if strings.Contains(tc.name, "shrinkwrap") {
+					lockName = "npm-shrinkwrap.json"
+				}
+				metadata[lockName] = []byte(fmt.Sprintf(`{"lockfileVersion":3,"packages":{"":{"dependencies":{"host-fixture":"1.0.0"}},"node_modules/host-fixture":{"resolved":%q,"link":%s},%q:{"name":"host-fixture","version":"1.0.0"}}}`, relative, link, relative))
 			}
 			env := append(ciCheckPackageEnv(private, os.Getenv("PATH"), nil), "GIT_SSL_CAINFO="+certificate)
 			if tc.nodeOptions != "" {
@@ -221,7 +230,7 @@ https.request = options => http.request({...options, protocol: 'http:', hostname
 			if tc.kind == "git" {
 				assert.NoFileExists(t, marker, log.String())
 				assert.Contains(t, log.String(), "package preparation failed")
-			} else if tc.kind == "link" {
+			} else if strings.HasPrefix(tc.kind, "link") {
 				assert.Contains(t, log.String(), "local dependencies")
 			} else {
 				assert.Contains(t, log.String(), "package preparation failed")
