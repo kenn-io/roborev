@@ -53,7 +53,7 @@ func migrateQueueListPositionIndexes(ctx context.Context, db *DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch_position
 		ON review_jobs(branch, `+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC)`); err != nil {
 		return err
