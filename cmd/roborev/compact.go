@@ -8,8 +8,6 @@ import (
 	"log"
 	"maps"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func compactCmd() *cobra.Command {
@@ -51,8 +50,8 @@ and creates a new consolidated review job.
 
 By default, compact runs in the background. Use --wait to block until complete.
 
-When consolidation finishes successfully, original jobs are automatically
-closed. Check progress with 'roborev status' or 'roborev tui'.
+Original jobs close only when every original finding has an accounted decision
+and none is unresolved. The consolidated review preserves a historical audit. Check progress with 'roborev status' or 'roborev tui'.
 
 This adds a quality layer between 'review' and 'fix' to reduce false positives
 and consolidate findings from multiple reviews.
@@ -106,16 +105,17 @@ Examples:
 }
 
 type compactOptions struct {
-	agentName   string
-	model       string
-	reasoning   string
-	quiet       bool
-	allBranches bool
-	branch      string
-	dryRun      bool
-	limit       int
-	wait        bool
-	timeout     time.Duration
+	worktreePath string
+	agentName    string
+	model        string
+	reasoning    string
+	quiet        bool
+	allBranches  bool
+	branch       string
+	dryRun       bool
+	limit        int
+	wait         bool
+	timeout      time.Duration
 }
 
 type jobReview struct {
@@ -211,6 +211,10 @@ func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithR
 // enqueueConsolidation creates and enqueues a consolidation job.
 // Returns the job ID for tracking.
 func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot string, jobReviews []jobReview, branchFilter string, opts compactOptions) (int64, error) {
+	contextRepoPath := repoRoot
+	if opts.worktreePath != "" {
+		contextRepoPath = opts.worktreePath
+	}
 	// Resolve agent/model/reasoning using "fix" workflow so compact
 	// uses the same config as `roborev fix`.  Pass the resolved values
 	// to the daemon so it doesn't re-resolve under the "review" workflow.
@@ -218,31 +222,38 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	if err != nil {
 		return 0, fmt.Errorf("load config: %w", err)
 	}
-	reasoning, err := config.ResolveFixReasoning(opts.reasoning, repoRoot, cfg)
+	reasoning, err := config.ResolveFixReasoning(opts.reasoning, contextRepoPath, cfg)
 	if err != nil {
 		return 0, fmt.Errorf("resolve reasoning: %w", err)
 	}
-	if err := config.ValidateRepoConfig(repoRoot); err != nil {
+	if err := config.ValidateRepoConfig(contextRepoPath); err != nil {
 		return 0, fmt.Errorf("resolve agent/model: %w", err)
 	}
 	agentName := config.ResolveAgentForWorkflow(
-		opts.agentName, repoRoot, cfg, "fix", reasoning,
+		opts.agentName, contextRepoPath, cfg, "fix", reasoning,
 	)
-	// Build verification prompt after agent resolution so compact can reuse
-	// the selected agent's regular review output contract.
-	compactPrompt := buildCompactPrompt(ctx, jobReviews, branchFilter, repoRoot, agentName)
+	// Build the dedicated compact decision prompt with the caller checkout
+	// configuration and captured repository history.
+	manifest, err := buildCompactManifest(jobReviews)
+	if err != nil {
+		return 0, err
+	}
+	compactPrompt, err := buildCompactPrompt(ctx, jobReviews, branchFilter, contextRepoPath, agentName)
+	if err != nil {
+		return 0, err
+	}
 	// Resolve model locally for display; the daemon re-resolves with
 	// its own canonical-agent comparison to skip generic default_model
 	// when the agent was overridden on CLI.
-	configAgent := config.ResolveAgentForWorkflow("", repoRoot, cfg, "fix", reasoning)
+	configAgent := config.ResolveAgentForWorkflow("", contextRepoPath, cfg, "fix", reasoning)
 	cliAgentChanged := opts.agentName != "" &&
 		agent.CanonicalName(opts.agentName) != agent.CanonicalName(configAgent)
 	var model string
 	if cliAgentChanged && opts.model == "" {
-		model = config.ResolveWorkflowModel(repoRoot, cfg, "fix", reasoning)
+		model = config.ResolveWorkflowModel(contextRepoPath, cfg, "fix", reasoning)
 	} else {
 		model = config.ResolveModelForWorkflow(
-			opts.model, repoRoot, cfg, "fix", reasoning,
+			opts.model, contextRepoPath, cfg, "fix", reasoning,
 		)
 	}
 
@@ -269,6 +280,12 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
 
+	if err := daemon.WriteCompactMetadata(job.ID, daemon.CompactMetadata{SourceJobIDs: extractJobIDs(jobReviews), Manifest: &manifest}); err != nil {
+		if cancelErr := cancelJob(getDaemonEndpoint().BaseURL(), job.ID); cancelErr != nil {
+			log.Printf("Failed to cancel compact after metadata write failure: %v", cancelErr)
+		}
+		return 0, fmt.Errorf("write compact manifest: %w", err)
+	}
 	return job.ID, nil
 }
 
@@ -397,26 +414,18 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		cmd.Println("Fetching review outputs:")
 	}
 
-	jobReviews, successfulJobIDs, err := fetchJobReviews(ctx, jobIDs, opts.quiet, cmd)
+	jobReviews, _, err := fetchJobReviews(ctx, jobIDs, opts.quiet, cmd)
 	if err != nil {
 		return err
 	}
 
+	// The server derives checkout binding from RepoPath and canonicalizes the
+	// repository identity. Preserve the caller checkout for config and evidence.
+	opts.worktreePath = roots.worktreeRoot
 	// Enqueue consolidation job
 	consolidatedJobID, err := enqueueConsolidation(ctx, cmd, roots.mainRepoRoot, jobReviews, branchFilter, opts)
 	if err != nil {
 		return err
-	}
-
-	// Store source job IDs for automatic marking when job completes
-	// CRITICAL: This must succeed or source jobs will never be closed
-	if err := writeCompactMetadata(consolidatedJobID, successfulJobIDs); err != nil {
-		// Try to cancel the job we just created
-		if cancelErr := cancelJob(getDaemonEndpoint().BaseURL(), consolidatedJobID); cancelErr != nil {
-			// Best effort - log but don't mask the original error
-			log.Printf("Failed to cancel job %d after metadata write failure: %v", consolidatedJobID, cancelErr)
-		}
-		return fmt.Errorf("failed to write compact metadata: %w", err)
 	}
 
 	if !opts.quiet {
@@ -461,58 +470,53 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	return nil
 }
 
-func buildCompactPrompt(ctx context.Context, jobReviews []jobReview, branch, repoRoot, agentName string) string {
-	var sb strings.Builder
-
-	if reviewPrompt := strings.TrimSpace(prompt.GetSystemPrompt(agentName, "review")); reviewPrompt != "" {
-		sb.WriteString(reviewPrompt)
-		sb.WriteString("\n\n")
-	}
-
-	sb.WriteString("# Verification and Consolidation Request\n\n")
-	sb.WriteString("You are a code reviewer tasked with verifying and consolidating previous review findings.\n\n")
-
-	// Include project review guidelines so the compact agent
-	// respects the same rules as regular reviews.
-	globalCfg, _ := loadClientConfig()
-	guidelines := prompt.LoadGuidelinesWithConfig(ctx, repoRoot, globalCfg)
-	if guidelines != "" {
-		sb.WriteString("## Project Guidelines\n\n")
-		sb.WriteString(strings.TrimSpace(guidelines))
-		sb.WriteString("\n\n")
-	}
-
-	sb.WriteString(review.VerifyDedupePreamble())
-
-	sb.WriteString("## Open Review Findings\n\n")
-	reviewWord := "review"
-	if len(jobReviews) != 1 {
-		reviewWord = "reviews"
-	}
-	fmt.Fprintf(&sb, "Below are %d open %s", len(jobReviews), reviewWord)
-	if branch != "" {
-		fmt.Fprintf(&sb, " from branch %s", branch)
-	}
-	sb.WriteString(":\n\n")
-
-	for i, jr := range jobReviews {
-		fmt.Fprintf(&sb, "--- Review %d (Job %d", i+1, jr.jobID)
-		if jr.job.GitRef != "" {
-			fmt.Fprintf(&sb, " — %s", gitrepo.ShortSHA(jr.job.GitRef))
+func buildCompactManifest(jobReviews []jobReview) (review.CompactManifest, error) {
+	manifest := review.CompactManifest{Version: 1}
+	for _, jr := range jobReviews {
+		if jr.review == nil || jr.review.UUID == nil || jr.job == nil {
+			return manifest, fmt.Errorf("source job %d has no review identity; handle it manually", jr.jobID)
 		}
-		sb.WriteString(") ---\n")
-		sb.WriteString(jr.review.Output)
-		sb.WriteString("\n\n")
+		var document structuredreview.Document
+		var err error
+		if len(jr.review.StructuredOutput) > 0 {
+			raw, encodeErr := json.Marshal(jr.review.StructuredOutput)
+			if encodeErr != nil {
+				return manifest, encodeErr
+			}
+			document, err = structuredreview.Decode(raw)
+			if err == nil && document.Legacy != nil {
+				document, err = structuredreview.ParseMarkdown(document.Legacy.Markdown, structuredreview.ParseMarkdownOptions{})
+			}
+		} else {
+			document, err = structuredreview.ParseMarkdown(jr.review.Output, structuredreview.ParseMarkdownOptions{})
+		}
+		if err != nil {
+			return manifest, fmt.Errorf("source job %d cannot be completely parsed; handle it manually: %w", jr.jobID, err)
+		}
+		manifest.Sources = append(manifest.Sources, review.CompactSource{
+			JobID: jr.jobID, ReviewUUID: *jr.review.UUID, GitRef: jr.job.GitRef,
+			SourceLabels: document.SourceLabels, Findings: document.Findings,
+		})
 	}
+	return manifest, nil
+}
 
-	sb.WriteString("## Expected Output\n\n")
-	sb.WriteString("Provide a consolidated review output containing only verified findings.\n")
-	sb.WriteString("Use the same general structure as regular reviews so verdict parsing and downstream fix flows continue to work.\n")
-	sb.WriteString("Do not include false positives or already-fixed issues as findings.\n")
-	sb.WriteString("If any verified findings remain, repeat each remaining finding in the final review output; do not output only counts, totals, or a summary.\n")
-	sb.WriteString("If NO findings remain after verification, use the no-issues form from the regular review format.\n")
-
-	return sb.String()
+func buildCompactPrompt(ctx context.Context, jobReviews []jobReview, branch, repoRoot, agentName string) (string, error) {
+	manifest, err := buildCompactManifest(jobReviews)
+	if err != nil {
+		return "", err
+	}
+	globalCfg, err := loadClientConfig()
+	if err != nil {
+		return "", fmt.Errorf("load config: %w", err)
+	}
+	guidelines := prompt.LoadGuidelinesWithConfig(ctx, repoRoot, globalCfg)
+	text, err := review.BuildCompactPrompt(manifest, guidelines, branch)
+	if err != nil {
+		return "", err
+	}
+	excludes := config.ResolveExcludePatterns(ctx, repoRoot, globalCfg, "")
+	return review.AppendCompactHistory(ctx, repoRoot, text, manifest, excludes...)
 }
 
 func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) string {
@@ -522,7 +526,7 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 	if jobCount != 1 {
 		reviewWord = "reviews"
 	}
-	fmt.Fprintf(&sb, "Verified and consolidated %d open %s", jobCount, reviewWord)
+	fmt.Fprintf(&sb, "Accounting for findings from %d open %s", jobCount, reviewWord)
 	if branch != "" {
 		fmt.Fprintf(&sb, " from branch %s", branch)
 	}
@@ -533,6 +537,9 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 }
 
 func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
+	if opts.worktreePath != "" {
+		repoRoot = opts.worktreePath
+	}
 	if branch == "" {
 		branch = gitrepo.CurrentBranch(ctx, repoRoot)
 	}
@@ -546,7 +553,7 @@ func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, labe
 		Reasoning:    opts.reasoning,
 		CustomPrompt: prompt,
 		OutputPrefix: outputPrefix,
-		Agentic:      true,
+		Agentic:      false,
 		JobType:      "compact",
 	})
 	if err != nil {
@@ -641,20 +648,5 @@ func writeCompactMetadata(consolidatedJobID int64, sourceJobIDs []int64) error {
 		SourceJobIDs: sourceJobIDs,
 	}
 
-	data, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("marshal metadata: %w", err)
-	}
-
-	dataDir := config.DataDir()
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return fmt.Errorf("create data directory: %w", err)
-	}
-
-	path := filepath.Join(dataDir, getCompactMetadataFilename(consolidatedJobID))
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write metadata file: %w", err)
-	}
-
-	return nil
+	return daemon.WriteCompactMetadata(consolidatedJobID, daemon.CompactMetadata{SourceJobIDs: metadata.SourceJobIDs})
 }

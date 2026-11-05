@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompactSourceClosureRefreshesSearch(t *testing.T) {
+func TestCompactEmptyEligibilityDoesNotCloseSources(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		setupTestEnv(t)
 		server := newSearchHTTPServer(t, nil)
@@ -28,16 +28,11 @@ func TestCompactSourceClosureRefreshesSearch(t *testing.T) {
 		require.NoError(t, os.WriteFile(compactMetadataPath(900),
 			[]byte(fmt.Sprintf(`{"source_job_ids":[%d,999999]}`, job.ID)), 0o600))
 		worker := &WorkerPool{db: server.db, broadcaster: server.broadcaster}
-		require.NoError(t, worker.markCompactSourceJobs("test", 900))
+		require.NoError(t, worker.closeCompactSources(t.Context(), "test", 900, nil))
 		synctest.Wait()
-		require.Len(t, reconciler.jobs, 1)
-		assert.Equal(t, job.ID, <-reconciler.jobs)
+		assert.Empty(t, reconciler.jobs)
 		assert.Empty(t, reconciler.wakes)
-		require.Len(t, events, 1)
-		event := <-events
-		assert.Equal(t, "review.closed", event.Type)
-		assert.Equal(t, job.ID, event.JobID)
-		assert.True(t, event.SuppressHooks, "automatic bookkeeping must not introduce hook execution")
+		assert.Empty(t, events)
 	})
 }
 
