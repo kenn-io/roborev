@@ -83,7 +83,7 @@ func TestLookupLaunchdService(t *testing.T) {
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
 				if tc.ancestryErr != nil {
-					check.ErrorIs(err, os.ErrNotExist)
+					require.ErrorIs(t, err, os.ErrNotExist)
 					check.Empty(calls)
 				}
 				return

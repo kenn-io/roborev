@@ -49,6 +49,6 @@ func TestLaunchdDiscoveryUnsupportedServiceUnitIsUnknown(t *testing.T) {
 	unit, err := processServiceUnit(os.Getpid())
 	check := assert.New(t)
 	check.Empty(unit)
-	check.ErrorIs(err, errors.ErrUnsupported)
+	require.ErrorIs(t, err, errors.ErrUnsupported)
 	check.False(discoveredOutsideService(os.Getpid()))
 }

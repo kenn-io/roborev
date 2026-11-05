@@ -320,7 +320,7 @@ func assertVanishedSocketPauseRefused(t *testing.T, original *daemon.RuntimeInfo
 	paused := true
 	pendingStartPause = &paused
 	err = recoverDaemon(original, nil, false)
-	assert.ErrorContains(t, err, "run systemctl --user start "+unit+", then retry roborev pause")
+	require.ErrorContains(t, err, "run systemctl --user start "+unit+", then retry roborev pause")
 	assert.Zero(t, serviceMainPIDForTest(t, unit), "failed pause must leave the activation socket untouched")
 	job, err := db.GetJobByID(queued.ID)
 	require.NoError(t, err)
