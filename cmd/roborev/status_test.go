@@ -576,6 +576,48 @@ func TestStatusLockFailureKeepsLiveness(t *testing.T) {
 	assert.Empty(result.Jobs)
 }
 
+func TestStatusLockFailureReportsCheckedLiveness(t *testing.T) {
+	isolateDaemonSelection(t)
+	stubServiceRecovery(t)
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnPing: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			assert.NoError(t, json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: "v-old", PID: os.Getpid()}))
+			return true
+		},
+	})
+	defer md.Close()
+	serverAddr, parsedServerEndpoint = "", nil
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	findDaemonService = func(context.Context, int) (*daemonService, error) {
+		// HTTP disappears after discovery while the recorded process stays alive.
+		md.Close()
+		return nil, nil
+	}
+	lockPath, err := daemon.RuntimeStore().LockPath()
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(lockPath, 0o700))
+	oldEnsure := statusEnsureDaemon
+	t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
+	statusEnsureDaemon = func() error {
+		err := ensureDaemon()
+		require.ErrorIs(t, err, errRecoveryLock)
+		return err
+	}
+
+	cmd := statusCmd()
+	cmd.SetArgs([]string{"--json"})
+	output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+	var result statusJSONResult
+	require.NoError(t, json.Unmarshal([]byte(output), &result))
+	assert := assert.New(t)
+	assert.True(result.Running)
+	assert.Contains(result.Error, "wait for daemon recovery lock")
+	assert.Nil(result.Daemon)
+	assert.Nil(result.Health)
+	assert.Empty(result.Jobs)
+}
+
 func TestStatusManagedRecoveryFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name                      string

@@ -374,7 +374,7 @@ func ensureDaemon() (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
 	for _, info := range runtimes {
-		if !liveDaemon(info) {
+		if info.Stale() {
 			continue
 		}
 		owner, err := findDaemonService(ctx, info.PID)

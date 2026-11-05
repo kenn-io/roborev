@@ -42,7 +42,7 @@ func managedRecoveryStatus(err error) statusJSONResult {
 	web := discoverWebUI(func() (*daemon.RuntimeInfo, error) { return info, discoverErr })
 	running := discoverErr == nil
 	if retained, ok := errors.AsType[*kitdaemon.UnreachableError](err); !running && ok {
-		running = liveDaemon(daemon.RuntimeInfoFromRecord(retained.Record))
+		running = !daemon.RuntimeInfoFromRecord(retained.Record).Stale()
 	}
 	return unavailableStatus(err, running, web)
 }

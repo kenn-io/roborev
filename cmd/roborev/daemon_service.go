@@ -148,7 +148,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 	}
 	release, err := acquireRecoveryLock()
 	if err != nil {
-		return fmt.Errorf("%w: %w", errRecoveryLock, err)
+		return info.UnreachableError(fmt.Errorf("%w: %w", errRecoveryLock, err))
 	}
 	defer func() {
 		if release != nil {
@@ -246,7 +246,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		if err := owner.supported(); err != nil {
 			return fail(err)
 		}
-		if probeFailed && liveDaemon(current) {
+		if probeFailed && !current.Stale() {
 			return current.UnreachableError(managedUnresponsiveError(owner, probeErr))
 		}
 	}
