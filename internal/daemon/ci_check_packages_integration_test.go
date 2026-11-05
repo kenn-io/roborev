@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && !windows
 
 package daemon
 
@@ -7,6 +7,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -271,6 +272,50 @@ dependencies = ['colorama; python_version < "0"', 'numpy=>1', 'fixture @ https:/
 	assert.NotContains(t, log.String(), "https://")
 }
 
+func TestCICheckPackagesGitPreparationIntegration(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	server := httptest.NewTLSServer(http.FileServer(http.Dir(repo.Root)))
+	t.Cleanup(server.Close)
+	marker := filepath.Join(t.TempDir(), "git-payload-ran")
+	repo.CommitFile("package.json", fmt.Sprintf(`{"name":"git-fixture","version":"1.0.0","scripts":{"prepare":"node -e ''"},"dependencies":{"child-fixture":%q}}`, "git+"+server.URL+"/.git"), "git package")
+	repo.CommitFile(".npmrc", "git=./git-payload\n", "package settings")
+	repo.CommitFile("git-payload", fmt.Sprintf("#!/bin/sh\nprintf ran > '%s'\nexit 1\n", marker), "controlled git command")
+	require.NoError(t, os.Chmod(filepath.Join(repo.Root, "git-payload"), 0o700))
+	repo.RunGit("add", "git-payload")
+	repo.RunGit("commit", "-m", "executable fixture")
+	repo.RunGit("update-server-info")
+	certificate := filepath.Join(t.TempDir(), "certificate.pem")
+	require.NoError(t, os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600))
+	remoteArchive := ciCheckPackageArchive(t, map[string]string{
+		"package/package.json": fmt.Sprintf(`{"name":"remote-fixture","version":"1.0.0","dependencies":{"git-fixture":%q}}`, "git+"+server.URL+"/.git"),
+	})
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(remoteArchive) }))
+	t.Cleanup(remote.Close)
+	npm, err := resolveCICheckCommand(t.Context(), "/", "npm")
+	require.NoError(t, err)
+	for _, source := range []string{"direct", "transitive"} {
+		t.Run(source, func(t *testing.T) {
+			require.NoError(t, os.RemoveAll(marker))
+			project, stage, private := t.TempDir(), t.TempDir(), t.TempDir()
+			for _, dir := range []string{"home", "tmp"} {
+				require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
+			}
+			env := append(ciCheckPackageEnv(private, os.Getenv("PATH"), nil), "GIT_SSL_CAINFO="+certificate)
+			manifest := fmt.Sprintf(`{"dependencies":{"git-fixture":%q}}`, "git+"+server.URL+"/.git")
+			if source == "transitive" {
+				manifest = fmt.Sprintf(`{"dependencies":{"remote-fixture":%q}}`, remote.URL+"/package.tgz")
+			}
+			var log bytes.Buffer
+			require.NoError(t, os.WriteFile(filepath.Join(stage, "package.json"), []byte(manifest), 0o600))
+			require.True(t, runCICheckInstaller(t.Context(), npm, stage, env, []string{"install", "--package-lock-only", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund"}, &log), log.String())
+			require.NoFileExists(t, marker, "lock-only resolution must not execute the package's Git command: %s", log.String())
+			prepareCICheckJS(t.Context(), project, stage, map[string][]byte{"package.json": []byte(manifest)}, nil, env, &log)
+			assert.NoFileExists(t, marker, log.String())
+			assert.Contains(t, log.String(), "Git sources")
+		})
+	}
+}
+
 func ciCheckPackageArchive(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var archive bytes.Buffer
@@ -313,8 +358,15 @@ func TestCICheckPackagesSourceClassificationIntegration(t *testing.T) {
 		_, err := exec.LookPath(name)
 		require.NoError(t, err)
 	}
+	t.Run("separate global prefix", func(t *testing.T) {
+		stage := t.TempDir()
+		env := append(ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), "npm_config_prefix="+t.TempDir())
+		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"file:../local"}, nil, env)
+		require.NoError(t, err)
+		assert.True(t, local)
+	})
 
-	for _, source := range []string{"file:../local", "../local", "nested/../fixture.tgz", "$pkg/../fixture.tgz", "fixture.tar.gz", "link:../local", "workspace:*"} {
+	for _, source := range []string{"file:../local", "../local", "nested/../fixture.tgz", "$pkg/../fixture.tgz", "fixture.tar.gz", "link:../local", "workspace:*", "git+https://example.com/package.git"} {
 		t.Run(source, func(t *testing.T) {
 			stage := t.TempDir()
 			local, err := ciCheckLocalJSSources(t.Context(), stage, []string{source}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))

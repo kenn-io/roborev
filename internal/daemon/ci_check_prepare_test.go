@@ -273,7 +273,6 @@ func TestCICheckPackagesPreparation(t *testing.T) {
 [ -z "$CHECKER_SECRET" ] && [ -z "$NODE_OPTIONS" ] || exit 6
 [ ! -e .npmrc ] && [ ! -e setup.py ] && [ ! -e sitecustomize.py ] || exit 7
 case "$*" in
-'root --global') printf '/trusted/npm-root\n';;
 *--eval*) /bin/cat;;
 *pip._vendor.packaging.requirements*)
  shift 3
