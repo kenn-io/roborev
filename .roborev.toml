@@ -103,6 +103,11 @@ Do flag a change that silently drops a review restriction, for example by
 letting user config overrides or launch arguments replace roborev's read-only
 settings.
 
+Checker dependency downloads run on the host, follow PR-declared remote
+sources, and use CI's existing Git authentication. They can reach
+host-accessible network destinations. The checker sandbox's network rules
+govern agent and PR-code execution.
+
 ## Config loading and filesystem fallback
 
 Config loading (loadRepoGuidelines, loadCIRepoConfig) reads .roborev.toml from

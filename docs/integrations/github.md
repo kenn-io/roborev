@@ -849,9 +849,45 @@ installation directories and mise's default managed installs directory. This
 supports Node, Bun, OpenTofu, Terraform, Python, and other installed mise tools.
 It can also run `mise exec` when the mise executable links outside those
 directories. It reads the repository's mise config without loading host or
-parent checkout config. Provision the required versions on the host. Installing
-project dependencies and starting providers or other services remain separate
-requirements. The checker logs failed mise queries and keeps its existing tools.
+parent checkout config. Provision the required versions on the host. Starting
+providers or other services remains a separate requirement. The checker logs
+failed mise queries and keeps its existing tools.
+
+Before starting the sandbox, the checker prepares committed JavaScript and
+Python package declarations, including nested projects such as `web/`.
+JavaScript uses installed npm or Bun to install packages and installed Node and
+npm to classify sources and workspace membership. It honors supported lockfiles,
+includes development dependencies, and disables lifecycle scripts. Projects
+without a supported npm or Bun lockfile use `package.json` through npm,
+including projects with other lockfile formats. JavaScript workspace roots,
+their declared members, and local dependencies are skipped, as are npm projects
+with Git sources. npm must support its native `allow-file`, `allow-directory`,
+and `allow-git` fetch policies; older installations skip npm preparation. Only
+the selected installer's active lockfile is used, with npm shrinkwrap taking
+precedence over package-lock. Preparation rejects committed directory-link
+records before installation, then npm applies its native source policies during
+dependency resolution and installation while preserving valid lock pins.
+
+Python uses installed `python3` with venv and pip. Downloads use PyPI and ignore
+pip configuration files. It reads static dependencies and optional dependencies
+from `[project]`, plus string entries in `[dependency-groups]` in
+`pyproject.toml`. It preserves version constraints and markers, downloads wheels
+only, and skips requirements whose dependencies need source builds or conflict
+with accepted requirements. Required dependencies come first, followed by
+optional groups and dependency groups in sorted name order. Requirements files,
+editable installs, direct URLs, and local packages are unsupported. References
+to the project's own distribution name are excluded. These declarations do not
+apply Python lockfile pins. The root `.venv/bin` leads the sandbox's `PATH`;
+nested projects can use their own `.venv/bin/python`. An existing committed
+`.venv` is left alone.
+
+Installers run from private copies of dependency metadata, with private caches
+and without repository package-manager settings. Downloads run on the host and
+follow PR-declared remote URLs. Bun receives CI's existing Git authentication.
+They can reach host-accessible network destinations; the sandbox's network rules
+govern agent and PR-code execution. Prepared packages live in the disposable
+checker clone. Missing tools and failed downloads are logged; tests that still
+need unavailable packages keep the existing checker failure behavior.
 
 The checker works in its own clone of the PR checkout. The clone borrows the
 host clone's object store and none of its Git config, so the checker can't read

@@ -233,6 +233,7 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 		return
 	}
 	readPaths = append(readPaths, goPaths...)
+	pythonBin := prepareCICheckPackages(ctx, run.Repo, root, toolPath, gitEnv, out)
 	if err = validateCICheckReadPaths(readPaths); err != nil {
 		return
 	}
@@ -257,6 +258,9 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if len(goPaths) == 2 {
 		env[0] = "PATH=" + filepath.Join(goPaths[0], "bin") + string(os.PathListSeparator) + toolPath
 		env = append(env, "GOMODCACHE="+goPaths[1])
+	}
+	if pythonBin != "" {
+		env[0] = "PATH=" + pythonBin + string(os.PathListSeparator) + strings.TrimPrefix(env[0], "PATH=")
 	}
 	// nono protects HOME/.nono, so HOME sits outside its writable grant.
 	for _, dir := range []string{filepath.Join(root, "home"), filepath.Join(run.Job.WorkDir, "tmp"), filepath.Join(run.Job.WorkDir, "gocache")} {
