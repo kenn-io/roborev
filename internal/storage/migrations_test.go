@@ -237,6 +237,9 @@ func TestQueueListPositionMigrationBackfill(t *testing.T) {
 	db := openUnmigratedDB(t)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
 	_, jobs := seedJobs(t, db, "/tmp/migration-closed", 3)
+	for _, job := range jobs {
+		setStatus(t, db, job.ID, JobStatusDone)
+	}
 	_, err := db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1), (?, 'test', '', 0)`, jobs[0].ID, jobs[1].ID)
 	require.NoError(t, err)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
@@ -253,6 +256,7 @@ func TestQueueListPositionMigrationRollback(t *testing.T) {
 	db := openUnmigratedDB(t)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
 	_, jobs := seedJobs(t, db, "/tmp/migration-rollback", 1)
+	setStatus(t, db, jobs[0].ID, JobStatusDone)
 	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1);
 		CREATE TRIGGER fail_backfill BEFORE UPDATE ON review_jobs BEGIN

@@ -96,6 +96,7 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "after-upgrade", Agent: "test"})
 	require.NoError(t, err)
 	assert.Greater(t, job.ID, orphan.jobID)
+	setStatus(t, db, job.ID, JobStatusDone)
 	_, err = db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1)`, job.ID)
 	require.NoError(t, err)
 	closed, err = db.ListJobs("", repo.RootPath, 50, 0, WithClosed(true))
