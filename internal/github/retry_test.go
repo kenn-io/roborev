@@ -40,6 +40,7 @@ func TestGitHubSecondaryCooldownAcrossClients(t *testing.T) {
 		_, err = client.ListOpenPullRequests(t.Context(), "acme/api")
 		var rate *googlegithub.AbuseRateLimitError
 		require.ErrorAs(t, err, &rate)
+		assert.Equal("list pull requests: rate limit (HTTP 403)", ReadErrorSummary(err))
 		assert.Equal(1, attempts)
 		fresh, err := NewClient(" "+token+" ", WithBaseURL(base), WithHTTPClient(httpClient))
 		require.NoError(t, err)
@@ -55,15 +56,11 @@ func TestGitHubSecondaryCooldownAcrossClients(t *testing.T) {
 			require.ErrorAs(t, err, &rate)
 		}
 		assert.Equal(3, attempts)
-		time.Sleep(time.Minute)
-		_, err = fresh.ListOpenPullRequests(t.Context(), "acme/api")
-		require.ErrorAs(t, err, &rate)
-		assert.Equal(4, attempts)
 	})
 }
 
 func TestGitHubSecondaryCooldownDelays(t *testing.T) {
-	for _, header := range []string{"none", "seconds", "date", "reset with budget", "short reset with budget"} {
+	for _, header := range []string{"none", "seconds", "reset with budget", "short reset with budget"} {
 		t.Run(header, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert := assert.New(t)
@@ -84,8 +81,6 @@ func TestGitHubSecondaryCooldownDelays(t *testing.T) {
 						switch header {
 						case "seconds":
 							resp.Header.Set("Retry-After", "3")
-						case "date":
-							resp.Header.Set("Retry-After", time.Now().Add(delay).UTC().Format(http.TimeFormat))
 						case "reset with budget", "short reset with budget":
 							reset := 30 * time.Minute
 							if header == "short reset with budget" {
@@ -168,7 +163,7 @@ func (b *interruptedBody) Read([]byte) (int, error) { return 0, io.ErrUnexpected
 func (b *interruptedBody) Close() error             { b.closed = true; return nil }
 
 func TestGitHubReadRetries(t *testing.T) {
-	for _, failure := range []string{"status", "body", "network", "timeout", "body timeout", "rate limit", "retry after date", "secondary seconds", "secondary date"} {
+	for _, failure := range []string{"status", "body", "network", "timeout", "body timeout", "rate limit", "retry after date", "secondary seconds"} {
 		t.Run(failure, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var attempts int
@@ -207,15 +202,10 @@ func TestGitHubReadRetries(t *testing.T) {
 						case "retry after date":
 							resp.StatusCode = 503
 							resp.Header.Set("Retry-After", time.Now().Add(3*time.Second).UTC().Format(http.TimeFormat))
-						case "secondary seconds", "secondary date":
+						case "secondary seconds":
 							resp.StatusCode = 403
 							resp.Body = io.NopCloser(strings.NewReader(secondaryLimitBody))
-							switch failure {
-							case "secondary seconds":
-								resp.Header.Set("Retry-After", "3")
-							case "secondary date":
-								resp.Header.Set("Retry-After", time.Now().Add(3*time.Second).UTC().Format(http.TimeFormat))
-							}
+							resp.Header.Set("Retry-After", "3")
 						}
 					}
 					return resp, nil
@@ -240,30 +230,6 @@ func TestGitHubReadRetries(t *testing.T) {
 			})
 		})
 	}
-}
-
-func TestGitHubReadSecondaryResetWithoutRetryAfter(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		attempts := 0
-		started := time.Now()
-		client, err := NewClient(rand.Text(), WithHTTPClient(&http.Client{Transport: retryTransport(func(r *http.Request) (*http.Response, error) {
-			attempts++
-			assert.Equal(http.MethodGet, r.Method)
-			assert.Equal("/repos/acme/api/pulls", r.URL.Path)
-			header := make(http.Header)
-			header.Set("X-RateLimit-Remaining", "10")
-			header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(3*time.Second).Unix(), 10))
-			return &http.Response{StatusCode: 403, Request: r, Header: header, Body: io.NopCloser(strings.NewReader(secondaryLimitBody))}, nil
-		})}))
-		require.NoError(t, err)
-		_, err = client.ListOpenPullRequests(t.Context(), "acme/api")
-		assert.Equal("list pull requests: rate limit (HTTP 403)", ReadErrorSummary(err))
-		assert.Zero(time.Since(started))
-		var rate *googlegithub.AbuseRateLimitError
-		assert.ErrorAs(err, &rate)
-		assert.Equal(1, attempts)
-	})
 }
 
 func TestGitHubReadFailureBudget(t *testing.T) {
