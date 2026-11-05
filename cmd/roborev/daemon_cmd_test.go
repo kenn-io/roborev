@@ -82,6 +82,7 @@ func TestDaemonStartShowsWebUIURL(t *testing.T) {
 }
 
 func TestDaemonRestartShowsPublicWebUIURL(t *testing.T) {
+	stubDaemonRestartOutput(t)
 	withDaemonCommandDependencies(t,
 		func() error { return nil },
 		func() error { return nil },
@@ -100,6 +101,7 @@ func TestDaemonRestartShowsPublicWebUIURL(t *testing.T) {
 }
 
 func TestDaemonRestartShowsPrefixedWebUIURL(t *testing.T) {
+	stubDaemonRestartOutput(t)
 	withDaemonCommandDependencies(t,
 		func() error { return nil },
 		func() error { return nil },
@@ -121,6 +123,7 @@ func TestDaemonRestartShowsPrefixedWebUIURL(t *testing.T) {
 }
 
 func TestDaemonRestartShowsUnavailableWhenBrowserIsDisabled(t *testing.T) {
+	stubDaemonRestartOutput(t)
 	withDaemonCommandDependencies(t,
 		func() error { return nil },
 		func() error { return nil },
@@ -139,6 +142,7 @@ func TestDaemonRestartShowsUnavailableWhenBrowserIsDisabled(t *testing.T) {
 }
 
 func TestDaemonRestartExplainsWebDisabledReason(t *testing.T) {
+	stubDaemonRestartOutput(t)
 	cases := []struct {
 		reason  string
 		display string
@@ -169,6 +173,19 @@ func TestDaemonRestartExplainsWebDisabledReason(t *testing.T) {
 
 		assert.Equal(t, "Daemon restarted\nWeb UI: "+testCase.display+"\n", output)
 	}
+}
+
+func stubDaemonRestartOutput(t *testing.T) {
+	t.Helper()
+	stubServiceRecovery(t)
+	restartThroughService = true
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: os.Getpid()}}, nil
+	}
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	drainManagedDaemon = func(*daemon.RuntimeInfo) error { return nil }
 }
 
 func withDaemonCommandDependencies(

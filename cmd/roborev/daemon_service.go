@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -337,9 +336,6 @@ func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo,
 		}
 		if reason := candidate.keepReason(info.PID); reason != "" {
 			hint := fmt.Sprintf("run %s %s", serviceRestartCommand, candidate.unit)
-			if strings.Contains(reason, hint) {
-				return nil, nil, release, errors.New(reason)
-			}
 			return nil, nil, release, fmt.Errorf("%s; %s", reason, hint)
 		}
 		if !seen[candidate.unit] {
