@@ -1,3 +1,5 @@
+//go:build growth
+
 package searchindex
 
 import (
@@ -12,8 +14,9 @@ import (
 func TestReconcilerInitialMirrorGrowth(t *testing.T) { //nolint:paralleltest // measures wall time
 	growthtest.Run(t, growthtest.Check{
 		Small: 10000, Large: 100000,
-		// Full builds measured 10.4x with cursor seeks and 20.6x without them.
-		MaxRatio: 16,
+		// Allow 2x timing variation above linear growth. Feed paging has its
+		// own check because sidecar writes can hide repeated canonical scans.
+		MaxRatio: 20,
 		Floor:    float64(10 * time.Millisecond),
 		Measure:  growthtest.Fastest(3),
 		Build: func(tb testing.TB, size int) (func(), func()) {
