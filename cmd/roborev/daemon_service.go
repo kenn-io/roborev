@@ -184,6 +184,9 @@ func recoverDaemonWithSnapshot(info *daemon.RuntimeInfo, probeErr error, snapsho
 		}
 	}
 	responsive := current != nil
+	if responsive && os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1" {
+		return nil
+	}
 	if responsive && current.PID == info.PID && probeErr != nil {
 		// Discovery retains the runtime record's version. Confirm the live
 		// version before reusing a daemon whose earlier probe failed.

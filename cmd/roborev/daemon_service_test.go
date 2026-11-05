@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -18,6 +20,29 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
 )
+
+type recoveryOutput struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *recoveryOutput) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *recoveryOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *recoveryOutput) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
 
 func exitedDaemonPID(t *testing.T) int {
 	t.Helper()
@@ -66,6 +91,53 @@ func stubServiceRecovery(t *testing.T) {
 	})
 }
 
+func TestEnsureDaemonRecoverySkipsVersionCheck(t *testing.T) {
+	for _, replacement := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replacement=%t", replacement), func(t *testing.T) {
+			isolateDaemonSelection(t)
+			stubServiceRecovery(t)
+			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			owner := ownedDaemonService(t)
+			original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+			current := *original
+			if replacement {
+				current.PID++
+			}
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{original}, nil }
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+				service := *owner
+				service.mainPID = pid
+				return &service, nil
+			}
+			rediscoveries := 0
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				rediscoveries++
+				assertRecoveryLock(t, false)
+				return &current, nil
+			}
+			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+				return &daemon.PingInfo{Version: "v-old"}, nil
+			}
+			drains, starts := 0, 0
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error {
+				drains++
+				return errors.New("responsive daemon must be reused")
+			}
+			startDaemonService = func(context.Context, string) error { starts++; return nil }
+			startDaemonForEnsure = func() error { starts++; return nil }
+
+			require.NoError(t, ensureDaemon())
+			assert.Equal(t, 1, rediscoveries)
+			assert.Zero(t, drains)
+			assert.Zero(t, starts)
+			assertRecoveryLock(t, true)
+		})
+	}
+}
+
 func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		isolateDaemonSelection(t)
@@ -75,7 +147,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		binary, err := os.Executable()
 		require.NoError(t, err)
 		cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
-		var progress bytes.Buffer
+		var progress recoveryOutput
 		lifecycleOut = &progress
 		old := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
 		var current atomic.Pointer[daemon.RuntimeInfo]
