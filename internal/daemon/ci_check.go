@@ -372,6 +372,14 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string,
 		doctor.Dirs.Data = ""
 	}
 	roots = append(roots, mise)
+	if doctor.Dirs.Data != "" {
+		installs, err := sandbox.ResolvePath(filepath.Join(doctor.Dirs.Data, "installs"))
+		if err != nil {
+			fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
+		} else {
+			roots = append(roots, installs)
+		}
+	}
 	for _, versions := range inventory {
 		for _, version := range versions {
 			root, err := sandbox.ResolvePath(version.InstallPath)
@@ -380,12 +388,6 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string,
 				continue
 			}
 			roots = append(roots, root)
-			parent, err := sandbox.ResolvePath(filepath.Dir(version.InstallPath))
-			if err != nil {
-				fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
-				continue
-			}
-			roots = append(roots, parent)
 		}
 	}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(results[1])), "\n") {
