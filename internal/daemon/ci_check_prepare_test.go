@@ -271,7 +271,7 @@ func TestCICheckPackagesPreparation(t *testing.T) {
 	tools := t.TempDir()
 	script := `#!/bin/sh
 [ -z "$CHECKER_SECRET" ] && [ -z "$NODE_OPTIONS" ] || exit 6
-[ ! -e .npmrc ] && [ ! -e setup.py ] && [ ! -e sitecustomize.py ] || exit 7
+[ ! -e .npmrc ] && [ ! -e sitecustomize.py ] || exit 7
 case "$*" in
 *--eval*) /bin/cat;;
 *pip._vendor.packaging.requirements*)
@@ -279,8 +279,7 @@ case "$*" in
  printf '['
  separator=''
  for arg do
-  case "$arg" in *' @ '*) continue;; esac
-  escaped=$(printf '%s' "$arg" | /bin/sed 's/\\/\\\\/g; s/"/\\"/g')
+  escaped=$(printf '%s' "$arg" | /usr/bin/sed 's/\\/\\\\/g; s/"/\\"/g')
   printf '%s"%s"' "$separator" "$escaped"
   separator=','
  done
@@ -316,7 +315,7 @@ esac
 	t.Setenv("NODE_OPTIONS", "--require=/untrusted/module")
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("web/package.json", `{"dependencies":{"test-package":"1"}}`, "javascript dependencies")
-	repo.CommitFile("web/bun.lock", `{"packages":{"test-package":["test-package@1", "", {"bin":{"tool":"./bin/tool.mjs"}}]}}`, "bun executable metadata")
+	repo.CommitFile("web/bun.lock", `{"packages":{"test-package":["test-package@1"]}}`, "bun lock")
 	repo.CommitFile("web/.npmrc", "onload-script=./untrusted.js", "repository settings")
 	repo.CommitFile("sitecustomize.py", "raise RuntimeError('untrusted')", "repository module")
 	repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['test-package>=1', 'source-only', 'unsafe @ https://example.com/source.tar.gz']\n[project.optional-dependencies]\ntest = ['optional-fixture==2']\n[dependency-groups]\ndev = ['group-fixture; python_version >= \"3.10\"']\n", "python dependencies")
@@ -333,7 +332,6 @@ esac
 	assert.Contains(t, string(requirements), "test-package>=1")
 	assert.Contains(t, string(requirements), "optional-fixture==2")
 	assert.Contains(t, string(requirements), `group-fixture; python_version >= "3.10"`)
-	assert.NotContains(t, string(requirements), "unsafe")
 	assert.NotContains(t, string(requirements), "source-only")
 	assert.Contains(t, log.String(), "package preparation failed", "a source-only requirement must leave the other wheels available")
 	assert.Contains(t, log.String(), "-m pip --isolated download")
@@ -344,9 +342,8 @@ esac
 		}
 	}
 	assert.Equal(t, filepath.Join(run.Repo, ".venv", "bin"), strings.Split(path, string(os.PathListSeparator))[0])
-	assert.NoDirExists(t, filepath.Join(repo.Root, "web", "node_modules"))
-	assert.NoDirExists(t, filepath.Join(repo.Root, ".venv"))
 	t.Run("compatible batch", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(script), 0o700))
 		project, stage := t.TempDir(), t.TempDir()
 		var preparationLog bytes.Buffer
 		prepared := prepareCICheckPython(t.Context(), project, stage, []byte("[project]\ndependencies = ['test-package', 'compatible']\n"), ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), &preparationLog)

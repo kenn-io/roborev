@@ -126,7 +126,7 @@ func ciCheckNpmSources(lock map[string]any) []string {
 }
 
 // Use npm's own source and workspace semantics from its trusted installation.
-func ciCheckLocalJSSources(ctx context.Context, stage string, sources []string, ancestors map[string]any, env []string) (bool, error) {
+func ciCheckLocalJSSources(ctx context.Context, stage string, sources, rejected []string, ancestors map[string]any, env []string) (bool, error) {
 	npm, err := resolveCICheckCommand(ctx, "/", "npm")
 	if err != nil {
 		return false, err
@@ -135,20 +135,20 @@ func ciCheckLocalJSSources(ctx context.Context, stage string, sources []string, 
 	if err != nil {
 		return false, err
 	}
-	input, err := json.Marshal(map[string]any{"sources": sources, "workspaces": ancestors})
+	input, err := json.Marshal(map[string]any{"sources": sources, "rejected": rejected, "workspaces": ancestors})
 	if err != nil {
 		return false, err
 	}
 	const script = `const fs = require('node:fs'), path = require('node:path');
 const npm = fs.realpathSync(process.argv[1]);
-const entry = [path.resolve(path.dirname(npm), '../lib/node_modules/npm/package.json'), path.resolve(path.dirname(npm), 'node_modules/npm/package.json'), npm].find(fs.existsSync);
+const entry = [path.resolve(path.dirname(npm), '../lib/node_modules/npm/package.json'), npm].find(fs.existsSync);
 const npmRequire = require('node:module').createRequire(entry);
 const npa = npmRequire('npm-package-arg');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const member = Object.entries(input.workspaces).some(([relative, workspaces]) =>
  npmRequire('@npmcli/map-workspaces').virtual({cwd: '/', lockfile: {packages: {'': {workspaces}, [relative]: {name: 'candidate'}}}}).size > 0);
 const local = input.sources.some(spec => {
- try { return ['file', 'directory', 'git'].includes(npa.resolve('checker', spec).type); }
+ try { return input.rejected.includes(npa.resolve('checker', spec).type); }
  catch { return true; }
 });
 process.stdout.write(JSON.stringify(member || local));`
@@ -242,13 +242,13 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 			}
 		}
 	}
-	local, err := ciCheckLocalJSSources(ctx, stage, sources, ancestors, env)
+	local, err := ciCheckLocalJSSources(ctx, stage, sources, []string{"file", "directory"}, ancestors, env)
 	if err != nil {
 		fmt.Fprintf(out, "CI checker source classification failed: %v\n", err)
 		return
 	}
 	if local {
-		fmt.Fprintln(out, "CI checker skips JavaScript local dependencies, Git sources, or workspace members")
+		fmt.Fprintln(out, "CI checker skips JavaScript local dependencies or workspace members")
 		return
 	}
 	if manager == "npm" {
@@ -259,7 +259,7 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 		generated, _ := os.ReadFile(ciCheckNpmLock(stage, metadata))
 		var lock map[string]any
 		if err = json.Unmarshal(generated, &lock); err == nil {
-			local, err = ciCheckLocalJSSources(ctx, stage, ciCheckNpmSources(lock), nil, env)
+			local, err = ciCheckLocalJSSources(ctx, stage, ciCheckNpmSources(lock), []string{"file", "directory", "git"}, nil, env)
 		}
 		if err != nil {
 			fmt.Fprintf(out, "CI checker resolved npm graph failed: %v\n", err)

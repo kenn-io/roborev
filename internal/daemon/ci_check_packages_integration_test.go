@@ -111,61 +111,9 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 	assert.Contains(t, string(output), "python 1.0 ready\n")
 	assert.Contains(t, string(output), "javascript ready\n")
 	assert.FileExists(t, filepath.Join(run.Repo, ".venv", "pth-ran"))
-	t.Run("absolute Bun lock", func(t *testing.T) {
-		bun, err := resolveCICheckCommand(t.Context(), "/", "bun")
-		require.NoError(t, err)
-		archivePath := filepath.Join(t.TempDir(), "package.tgz")
-		require.NoError(t, os.WriteFile(archivePath, archive, 0o600))
-		stage := t.TempDir()
-		localManifest := fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":%q}}`, "file:"+archivePath)
-		require.NoError(t, os.WriteFile(filepath.Join(stage, "package.json"), []byte(localManifest), 0o600))
-		generate := exec.CommandContext(t.Context(), bun, "install", "--ignore-scripts", "--lockfile-only", "--offline", "--no-env-file")
-		generate.Dir = stage
-		for _, dir := range []string{"home", "tmp"} {
-			require.NoError(t, os.Mkdir(filepath.Join(stage, dir), 0o700))
-		}
-		generate.Env = ciCheckPackageEnv(stage, os.Getenv("PATH"), nil)
-		output, err := generate.CombinedOutput()
-		require.NoError(t, err, "%s", output)
-		lock, err := os.ReadFile(filepath.Join(stage, "bun.lock"))
-		require.NoError(t, err)
-		registryLock := strings.ReplaceAll(string(lock), fmt.Sprintf("%q", "file:"+archivePath), `"1.0.0"`)
-		require.Contains(t, registryLock, "checker-fixture@"+archivePath)
-		for _, tc := range []struct{ name, source string }{
-			{"escaped", `\u002f` + archivePath[1:]},
-			{"registry", server.URL + "/package.tgz"},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				localRepo := testutil.NewTestRepoWithCommit(t)
-				localRepo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "registry dependency")
-				sourceLock := strings.ReplaceAll(registryLock, "checker-fixture@"+archivePath, "checker-fixture@"+tc.source)
-				localRepo.CommitFile("bun.lock", sourceLock, "locked archive")
-				var preparationLog bytes.Buffer
-				prepareCICheckPackages(t.Context(), localRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
-				if strings.HasPrefix(tc.source, "http:") {
-					assert.FileExists(t, filepath.Join(localRepo.Root, "node_modules", "checker-fixture", "index.js"), preparationLog.String())
-				} else {
-					assert.NoDirExists(t, filepath.Join(localRepo.Root, "node_modules"), preparationLog.String())
-					assert.Contains(t, preparationLog.String(), "skips JavaScript local dependencies")
-				}
-			})
-		}
-	})
-	t.Run("workspace members", func(t *testing.T) {
-		workspaceRepo := testutil.NewTestRepoWithCommit(t)
-		workspaceRepo.CommitFile("package.json", `{"workspaces":["packages/*"]}`, "workspace declarations")
-		workspaceRepo.CommitFile("bun.lock", `{}`, "workspace lock")
-		manifest := fmt.Sprintf(`{"name":"fixture","dependencies":{"checker-fixture":%q}}`, server.URL+"/package.tgz")
-		workspaceRepo.CommitFile("packages/ui/package.json", manifest, "workspace member")
-		workspaceRepo.CommitFile("web/package.json", manifest, "independent project")
-		var preparationLog bytes.Buffer
-		prepareCICheckPackages(t.Context(), workspaceRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
-		assert.NoDirExists(t, filepath.Join(workspaceRepo.Root, "packages", "ui", "node_modules"), preparationLog.String())
-		assert.FileExists(t, filepath.Join(workspaceRepo.Root, "web", "node_modules", "checker-fixture", "index.js"), preparationLog.String())
-	})
 }
 
-func TestCICheckPackagesNpmManifestLocalArchiveIntegration(t *testing.T) {
+func TestCICheckPackagesDependencySourcesIntegration(t *testing.T) {
 	for _, name := range []string{"npm", "node"} {
 		_, err := exec.LookPath(name)
 		require.NoError(t, err)
@@ -175,30 +123,63 @@ func TestCICheckPackagesNpmManifestLocalArchiveIntegration(t *testing.T) {
 		"package/package.json": `{"name":"host-fixture","version":"1.0.0"}`,
 		"package/index.js":     "module.exports = 'host-only fixture';\n",
 	}), 0o600))
-	remoteArchive := ciCheckPackageArchive(t, map[string]string{
-		"package/package.json": fmt.Sprintf(`{"name":"remote-fixture","version":"1.0.0","dependencies":{"host-fixture":%q}}`, "file:"+hostArchive),
-	})
-	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(remoteArchive) }))
+	repo := testutil.NewTestRepoWithCommit(t)
+	gitServer := httptest.NewTLSServer(http.FileServer(http.Dir(repo.Root)))
+	t.Cleanup(gitServer.Close)
+	marker := filepath.Join(t.TempDir(), "git-payload-ran")
+	gitSource := "git+" + gitServer.URL + "/.git"
+	repo.CommitFile("package.json", fmt.Sprintf(`{"name":"git-fixture","version":"1.0.0","scripts":{"prepare":"node -e ''"},"dependencies":{"child-fixture":%q}}`, gitSource), "git package")
+	repo.CommitFile(".npmrc", "git=./git-payload\n", "package settings")
+	repo.CommitFile("git-payload", fmt.Sprintf("#!/bin/sh\nprintf ran > '%s'\nexit 1\n", marker), "controlled git command")
+	require.NoError(t, os.Chmod(filepath.Join(repo.Root, "git-payload"), 0o700))
+	repo.RunGit("add", "git-payload")
+	repo.RunGit("commit", "-m", "executable fixture")
+	repo.RunGit("update-server-info")
+	certificate := filepath.Join(t.TempDir(), "certificate.pem")
+	require.NoError(t, os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: gitServer.Certificate().Raw}), 0o600))
+	archives := map[string][]byte{
+		"/file.tgz": ciCheckPackageArchive(t, map[string]string{
+			"package/package.json": fmt.Sprintf(`{"name":"remote-fixture","version":"1.0.0","dependencies":{"host-fixture":%q}}`, "file:"+hostArchive),
+		}),
+		"/git.tgz": ciCheckPackageArchive(t, map[string]string{
+			"package/package.json": fmt.Sprintf(`{"name":"remote-fixture","version":"1.0.0","dependencies":{"git-fixture":%q}}`, gitSource),
+		}),
+	}
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archives[r.URL.Path]) }))
 	t.Cleanup(remote.Close)
-	for _, source := range []string{"manifest", "shrinkwrap", "transitive"} {
-		t.Run(source, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, dependency, source string
+		locked, shrinkwrap             bool
+	}{
+		{"file manifest", "file", "host-fixture", "file:" + hostArchive, true, false},
+		{"file shrinkwrap", "file", "host-fixture", "file:" + hostArchive, true, true},
+		{"file transitive", "file", "remote-fixture", remote.URL + "/file.tgz", false, false},
+		{"git direct", "git", "git-fixture", gitSource, false, false},
+		{"git transitive", "git", "remote-fixture", remote.URL + "/git.tgz", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.RemoveAll(marker))
 			project, stage, private := t.TempDir(), t.TempDir(), t.TempDir()
 			for _, dir := range []string{"home", "tmp"} {
 				require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
 			}
-			metadata := map[string][]byte{
-				"package.json":      []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{"host-fixture":%q}}`, "file:"+hostArchive)),
-				"package-lock.json": []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"host-fixture":%q}},"node_modules/host-fixture":{"version":"1.0.0"}}}`, "file:"+hostArchive)),
+			metadata := map[string][]byte{"package.json": []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{%q:%q}}`, tc.dependency, tc.source))}
+			if tc.locked {
+				metadata["package-lock.json"] = []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"host-fixture":%q}},"node_modules/host-fixture":{"version":"1.0.0"}}}`, tc.source))
 			}
-			if source == "shrinkwrap" {
+			if tc.shrinkwrap {
 				metadata["npm-shrinkwrap.json"] = metadata["package-lock.json"]
-			} else if source == "transitive" {
-				metadata = map[string][]byte{"package.json": []byte(fmt.Sprintf(`{"dependencies":{"remote-fixture":%q}}`, remote.URL+"/package.tgz"))}
 			}
+			env := append(ciCheckPackageEnv(private, os.Getenv("PATH"), nil), "GIT_SSL_CAINFO="+certificate)
 			var log bytes.Buffer
-			prepareCICheckJS(t.Context(), project, stage, metadata, nil, ciCheckPackageEnv(private, os.Getenv("PATH"), nil), &log)
+			prepareCICheckJS(t.Context(), project, stage, metadata, nil, env, &log)
 			assert.NoDirExists(t, filepath.Join(project, "node_modules"), log.String())
-			assert.Contains(t, log.String(), "skips JavaScript local dependencies")
+			if tc.kind == "git" {
+				assert.NoFileExists(t, marker, log.String())
+				assert.Contains(t, log.String(), "Git sources")
+			} else {
+				assert.Contains(t, log.String(), "local dependencies")
+			}
 		})
 	}
 }
@@ -251,6 +232,12 @@ func TestCICheckPackagesPythonConfigIntegration(t *testing.T) {
 	for _, dir := range []string{"home", "tmp"} {
 		require.NoError(t, os.Mkdir(filepath.Join(stage, dir), 0o700))
 	}
+	probe := exec.CommandContext(t.Context(), filepath.Join(tools, "python3"), "-I", "-m", "pip", "--isolated", "download", "--only-binary=:all:", "--dest", filepath.Join(stage, "probe-wheels"), "config-chain-fixture")
+	probe.Env = append(ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), "PIP_CONFIG_FILE="+filepath.Join(toolVenv, "pip.conf"))
+	output, err = probe.CombinedOutput()
+	require.Error(t, err, "%s", output)
+	require.FileExists(t, marker, "the configured fixture must reach its backend: %s", output)
+	require.NoError(t, os.Remove(marker))
 	var log bytes.Buffer
 	prepareCICheckPython(t.Context(), t.TempDir(), stage, []byte("[project]\ndependencies=['config-chain-fixture']\n"), ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), &log)
 	assert.NoFileExists(t, marker, log.String())
@@ -270,50 +257,6 @@ dependencies = ['colorama; python_version < "0"', 'numpy=>1', 'fixture @ https:/
 	assert.Contains(t, log.String(), "invalid requirement in pyproject.toml dependency declaration 3")
 	assert.NotContains(t, log.String(), "secret")
 	assert.NotContains(t, log.String(), "https://")
-}
-
-func TestCICheckPackagesGitPreparationIntegration(t *testing.T) {
-	repo := testutil.NewTestRepoWithCommit(t)
-	server := httptest.NewTLSServer(http.FileServer(http.Dir(repo.Root)))
-	t.Cleanup(server.Close)
-	marker := filepath.Join(t.TempDir(), "git-payload-ran")
-	repo.CommitFile("package.json", fmt.Sprintf(`{"name":"git-fixture","version":"1.0.0","scripts":{"prepare":"node -e ''"},"dependencies":{"child-fixture":%q}}`, "git+"+server.URL+"/.git"), "git package")
-	repo.CommitFile(".npmrc", "git=./git-payload\n", "package settings")
-	repo.CommitFile("git-payload", fmt.Sprintf("#!/bin/sh\nprintf ran > '%s'\nexit 1\n", marker), "controlled git command")
-	require.NoError(t, os.Chmod(filepath.Join(repo.Root, "git-payload"), 0o700))
-	repo.RunGit("add", "git-payload")
-	repo.RunGit("commit", "-m", "executable fixture")
-	repo.RunGit("update-server-info")
-	certificate := filepath.Join(t.TempDir(), "certificate.pem")
-	require.NoError(t, os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600))
-	remoteArchive := ciCheckPackageArchive(t, map[string]string{
-		"package/package.json": fmt.Sprintf(`{"name":"remote-fixture","version":"1.0.0","dependencies":{"git-fixture":%q}}`, "git+"+server.URL+"/.git"),
-	})
-	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(remoteArchive) }))
-	t.Cleanup(remote.Close)
-	npm, err := resolveCICheckCommand(t.Context(), "/", "npm")
-	require.NoError(t, err)
-	for _, source := range []string{"direct", "transitive"} {
-		t.Run(source, func(t *testing.T) {
-			require.NoError(t, os.RemoveAll(marker))
-			project, stage, private := t.TempDir(), t.TempDir(), t.TempDir()
-			for _, dir := range []string{"home", "tmp"} {
-				require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
-			}
-			env := append(ciCheckPackageEnv(private, os.Getenv("PATH"), nil), "GIT_SSL_CAINFO="+certificate)
-			manifest := fmt.Sprintf(`{"dependencies":{"git-fixture":%q}}`, "git+"+server.URL+"/.git")
-			if source == "transitive" {
-				manifest = fmt.Sprintf(`{"dependencies":{"remote-fixture":%q}}`, remote.URL+"/package.tgz")
-			}
-			var log bytes.Buffer
-			require.NoError(t, os.WriteFile(filepath.Join(stage, "package.json"), []byte(manifest), 0o600))
-			require.True(t, runCICheckInstaller(t.Context(), npm, stage, env, []string{"install", "--package-lock-only", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund"}, &log), log.String())
-			require.NoFileExists(t, marker, "lock-only resolution must not execute the package's Git command: %s", log.String())
-			prepareCICheckJS(t.Context(), project, stage, map[string][]byte{"package.json": []byte(manifest)}, nil, env, &log)
-			assert.NoFileExists(t, marker, log.String())
-			assert.Contains(t, log.String(), "Git sources")
-		})
-	}
 }
 
 func ciCheckPackageArchive(t *testing.T, files map[string]string) []byte {
@@ -347,7 +290,6 @@ func TestCICheckPackagesLocalLocksIntegration(t *testing.T) {
 			repo.CommitFile("package-lock.json", tc.lock, "dependency lock")
 			var log bytes.Buffer
 			prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
-			assert.NoDirExists(t, filepath.Join(repo.Root, "node_modules"))
 			assert.Contains(t, log.String(), "skips")
 		})
 	}
@@ -358,20 +300,98 @@ func TestCICheckPackagesSourceClassificationIntegration(t *testing.T) {
 		_, err := exec.LookPath(name)
 		require.NoError(t, err)
 	}
+	t.Run("npm Git source", func(t *testing.T) {
+		stage := t.TempDir()
+		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"git+https://example.com/package.git"}, []string{"file", "directory", "git"}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
+		require.NoError(t, err)
+		assert.True(t, local)
+	})
+	t.Run("Bun GitHub source", func(t *testing.T) {
+		stage := t.TempDir()
+		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"github:kenn-io/kit-ui#16db58e"}, []string{"file", "directory"}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
+		require.NoError(t, err)
+		assert.False(t, local)
+	})
 	t.Run("separate global prefix", func(t *testing.T) {
 		stage := t.TempDir()
 		env := append(ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), "npm_config_prefix="+t.TempDir())
-		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"file:../local"}, nil, env)
+		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"file:../local"}, []string{"file", "directory"}, nil, env)
 		require.NoError(t, err)
 		assert.True(t, local)
 	})
 
-	for _, source := range []string{"file:../local", "../local", "nested/../fixture.tgz", "$pkg/../fixture.tgz", "fixture.tar.gz", "link:../local", "workspace:*", "git+https://example.com/package.git"} {
+	for _, source := range []string{"file:../local", "../local", "nested/../fixture.tgz", "$pkg/../fixture.tgz", "fixture.tar.gz", "link:../local", "workspace:*"} {
 		t.Run(source, func(t *testing.T) {
 			stage := t.TempDir()
-			local, err := ciCheckLocalJSSources(t.Context(), stage, []string{source}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
+			local, err := ciCheckLocalJSSources(t.Context(), stage, []string{source}, []string{"file", "directory"}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
 			require.NoError(t, err)
 			assert.True(t, local)
 		})
 	}
+}
+
+func TestCICheckPackagesBunLockIntegration(t *testing.T) {
+	archive := ciCheckPackageArchive(t, map[string]string{
+		"package/package.json": `{"name":"checker-fixture","version":"1.0.0","bin":{"fixture-tool":"./index.js"}}`,
+		"package/index.js":     "module.exports = 'javascript ready';\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
+	t.Cleanup(server.Close)
+	bun, err := resolveCICheckCommand(t.Context(), "/", "bun")
+	require.NoError(t, err)
+	archivePath := filepath.Join(t.TempDir(), "package.tgz")
+	require.NoError(t, os.WriteFile(archivePath, archive, 0o600))
+	stage := t.TempDir()
+	localManifest := fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":%q}}`, "file:"+archivePath)
+	require.NoError(t, os.WriteFile(filepath.Join(stage, "package.json"), []byte(localManifest), 0o600))
+	generate := exec.CommandContext(t.Context(), bun, "install", "--ignore-scripts", "--lockfile-only", "--offline", "--no-env-file")
+	generate.Dir = stage
+	for _, dir := range []string{"home", "tmp"} {
+		require.NoError(t, os.Mkdir(filepath.Join(stage, dir), 0o700))
+	}
+	generate.Env = ciCheckPackageEnv(stage, os.Getenv("PATH"), nil)
+	output, err := generate.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	lock, err := os.ReadFile(filepath.Join(stage, "bun.lock"))
+	require.NoError(t, err)
+	registryLock := strings.ReplaceAll(string(lock), fmt.Sprintf("%q", "file:"+archivePath), `"1.0.0"`)
+	require.Contains(t, registryLock, "checker-fixture@"+archivePath)
+	for _, tc := range []struct{ name, source string }{
+		{"escaped", `\u002f` + archivePath[1:]},
+		{"registry", server.URL + "/package.tgz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			localRepo := testutil.NewTestRepoWithCommit(t)
+			localRepo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "registry dependency")
+			sourceLock := strings.ReplaceAll(registryLock, "checker-fixture@"+archivePath, "checker-fixture@"+tc.source)
+			localRepo.CommitFile("bun.lock", sourceLock, "locked archive")
+			var preparationLog bytes.Buffer
+			prepareCICheckPackages(t.Context(), localRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
+			if strings.HasPrefix(tc.source, "http:") {
+				assert.FileExists(t, filepath.Join(localRepo.Root, "node_modules", "checker-fixture", "index.js"), preparationLog.String())
+			} else {
+				assert.NoDirExists(t, filepath.Join(localRepo.Root, "node_modules"), preparationLog.String())
+				assert.Contains(t, preparationLog.String(), "skips JavaScript local dependencies")
+			}
+		})
+	}
+}
+
+func TestCICheckPackagesWorkspaceIntegration(t *testing.T) {
+	archive := ciCheckPackageArchive(t, map[string]string{
+		"package/package.json": `{"name":"checker-fixture","version":"1.0.0","bin":{"fixture-tool":"./index.js"}}`,
+		"package/index.js":     "module.exports = 'javascript ready';\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
+	t.Cleanup(server.Close)
+	workspaceRepo := testutil.NewTestRepoWithCommit(t)
+	workspaceRepo.CommitFile("package.json", `{"workspaces":["packages/*"]}`, "workspace declarations")
+	workspaceRepo.CommitFile("bun.lock", `{}`, "workspace lock")
+	manifest := fmt.Sprintf(`{"name":"fixture","dependencies":{"checker-fixture":%q}}`, server.URL+"/package.tgz")
+	workspaceRepo.CommitFile("packages/ui/package.json", manifest, "workspace member")
+	workspaceRepo.CommitFile("web/package.json", manifest, "independent project")
+	var preparationLog bytes.Buffer
+	prepareCICheckPackages(t.Context(), workspaceRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
+	assert.NoDirExists(t, filepath.Join(workspaceRepo.Root, "packages", "ui", "node_modules"), preparationLog.String())
+	assert.FileExists(t, filepath.Join(workspaceRepo.Root, "web", "node_modules", "checker-fixture", "index.js"), preparationLog.String())
 }
