@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json/jsontext"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -35,6 +36,7 @@ func TestPiStructuredReviewCreatesAndResumesSession(t *testing.T) {
 	script := `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
 session=""
+session_dir=""
 mode=""
 no_session=""
 output=""
@@ -42,6 +44,7 @@ prev=""
 for arg in "$@"; do
  case "$prev" in
  --session) session="$arg" ;;
+ --session-dir) session_dir="$arg" ;;
  --mode) mode="$arg" ;;
  --json-output) output="$arg" ;;
  esac
@@ -52,7 +55,11 @@ if [ -n "$session" ]; then
  test -f "$session" || exit 2
  result='{"review":"resumed"}'
 else
- session="$PI_CODING_AGENT_DIR/sessions/--repo--/review_46109439-3160-40f0-81e7-7dfa4f3647b3.jsonl"
+ if [ -n "$session_dir" ]; then
+  session="$session_dir/review_46109439-3160-40f0-81e7-7dfa4f3647b3.jsonl"
+ else
+  session="$PI_CODING_AGENT_DIR/sessions/--repo--/review_46109439-3160-40f0-81e7-7dfa4f3647b3.jsonl"
+ fi
  result='{"review":"fresh"}'
 fi
 if [ -z "$no_session" ]; then
@@ -71,8 +78,10 @@ printf '%s\n' "$result" > "$output"
 	require.NoError(t, err)
 	assert.JSONEq(`{"review":"fresh"}`, string(result))
 	assert.Equal(sessionID, capture.SessionID())
-	sessionPath := filepath.Join(dataDir, "sessions", "--repo--", "review_"+sessionID+".jsonl")
+	sessionPath := filepath.Join(piReviewSessionDir(), "review_"+sessionID+".jsonl")
+	t.Cleanup(func() { _ = os.Remove(sessionPath) })
 	require.FileExists(t, sessionPath)
+	assert.NoDirExists(filepath.Join(dataDir, "sessions"))
 	resumed := a.WithSessionID(capture.SessionID()).(*PiAgent)
 	resumeCapture := NewSessionCaptureWriter(&bytes.Buffer{}, nil)
 	result, err = resumed.ReviewWithSchema(t.Context(), repoDir, "HEAD", "focused follow-up", jsontext.Value(`{}`), resumeCapture)

@@ -128,6 +128,7 @@ func (a *PiAgent) buildArgs(sessionPath string, agenticMode bool) []string {
 	if sessionPath != "" {
 		args = append(args, "--session", sessionPath)
 	}
+	args = append(args, a.sessionDirArgs()...)
 	if a.Provider != "" {
 		args = append(args, "--provider", a.Provider)
 	}
@@ -156,6 +157,7 @@ func (a *PiAgent) structuredReviewArgs(
 	if sessionPath != "" {
 		args = append(args, "--session", sessionPath)
 	}
+	args = append(args, a.sessionDirArgs()...)
 	if !schemaInstalled {
 		args = append(args, "--extension", a.jsonSchemaExtension())
 	}
@@ -316,7 +318,7 @@ func (a *PiAgent) ReviewWithSchema(
 		return nil, fmt.Errorf("write structured review prompt: %w", err)
 	}
 	outputPath := filepath.Join(tmpDir, "result.json")
-	sessionPath := resolvePiSessionPath(a.SessionID)
+	sessionPath := a.resolveSessionPath(a.SessionID)
 	if a.SessionID != "" && sessionPath == "" {
 		return nil, fmt.Errorf("pi session not found; cannot resume requested session")
 	}
@@ -396,7 +398,7 @@ func (a *PiAgent) Review(
 	}
 	defer cleanup()
 
-	sessionPath := resolvePiSessionPath(a.SessionID)
+	sessionPath := a.resolveSessionPath(a.SessionID)
 	if a.SessionID != "" && sessionPath == "" {
 		return "", fmt.Errorf("pi session not found; cannot resume requested session")
 	}
@@ -536,15 +538,55 @@ func piDataDir() string {
 	return filepath.Join(home, ".pi", "agent")
 }
 
-func resolvePiSessionPath(sessionID string) string {
+// piReviewSessionDir is the roborev-owned directory for Pi review sessions.
+// Without it Pi files each session under the directory of its working
+// directory, which is the worktree under review, so the developer's own
+// pi --continue there would open a review.
+func piReviewSessionDir() string {
+	return filepath.Join(config.DataDir(), "pi-sessions")
+}
+
+// launchSessionDir returns the --session-dir value from the launch
+// arguments, or "" when they do not set one.
+func (a *PiAgent) launchSessionDir() string {
+	for i, arg := range a.LaunchArgs {
+		if arg == "--session-dir" && i+1 < len(a.LaunchArgs) {
+			return a.LaunchArgs[i+1]
+		}
+	}
+	return ""
+}
+
+// sessionDirArgs points Pi at the review session directory unless the
+// launch arguments already choose where sessions go, or turn them off.
+func (a *PiAgent) sessionDirArgs() []string {
+	if a.launchSessionDir() != "" || slices.Contains(a.LaunchArgs, "--no-session") {
+		return nil
+	}
+	return []string{"--session-dir", piReviewSessionDir()}
+}
+
+// resolveSessionPath finds the session file for sessionID. Sessions sit
+// directly in the session directory; sessions captured before reviews had
+// their own directory sit in Pi's per-directory buckets.
+func (a *PiAgent) resolveSessionPath(sessionID string) string {
 	if sessionID == "" {
 		return ""
 	}
-	matches, err := filepath.Glob(filepath.Join(piDataDir(), "sessions", "*", "*_"+sessionID+".jsonl"))
-	if err != nil || len(matches) == 0 {
-		return ""
+	dir := a.launchSessionDir()
+	if dir == "" {
+		dir = piReviewSessionDir()
 	}
-	return matches[0]
+	name := "*_" + sessionID + ".jsonl"
+	for _, pattern := range []string{
+		filepath.Join(dir, name),
+		filepath.Join(piDataDir(), "sessions", "*", name),
+	} {
+		if matches, err := filepath.Glob(pattern); err == nil && len(matches) > 0 {
+			return matches[0]
+		}
+	}
+	return ""
 }
 
 func parsePiJSON(r io.Reader) (string, error) {

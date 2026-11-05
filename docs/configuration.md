@@ -2609,6 +2609,13 @@ jobs retain `--no-extensions`, but Pi still loads extensions named explicitly
 with `--extension`. The same launch arguments are also passed to normal reviews
 and agentic Pi runs.
 
+Pi review sessions are stored in `~/.roborev/pi-sessions` (under
+`ROBOREV_DATA_DIR` when it is set), not in Pi's session folder for the reviewed
+worktree. That way `pi --continue` and `pi --resume` in a worktree open your own
+sessions, not roborev reviews. To store review sessions elsewhere, set
+`--session-dir <dir>` in `launch_args`. Sessions recorded in Pi's per-worktree
+folders by earlier roborev versions can still be resumed.
+
 `launch_args` is an advanced raw-argument escape hatch, not a validation or
 security boundary. Parser-control tokens such as standalone `--`, early-exit
 flags, and options missing required values are unsupported and may prevent Pi

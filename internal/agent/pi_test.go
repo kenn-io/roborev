@@ -44,7 +44,55 @@ func TestResolvePiSessionPath(t *testing.T) {
 	sessionPath := filepath.Join(dataDir, "sessions", "--repo--", "2026-03-08T18-44-39-718Z_"+sessionID+".jsonl")
 	require.NoError(t, os.MkdirAll(filepath.Dir(sessionPath), 0o755))
 	require.NoError(t, os.WriteFile(sessionPath, []byte("{}\n"), 0o644))
-	assert.Equal(t, sessionPath, resolvePiSessionPath(sessionID))
+	assert.Equal(t, sessionPath, NewPiAgent("pi").resolveSessionPath(sessionID))
+}
+
+func TestPiResolveSessionPathLooksInSessionDir(t *testing.T) {
+	const sessionID = "46109439-3160-40f0-81e7-7dfa4f3647b3"
+	launchDir := t.TempDir()
+	tests := []struct {
+		name       string
+		launchArgs []string
+		dir        string
+	}{
+		{name: "review session dir", dir: piReviewSessionDir()},
+		{name: "launch session dir", launchArgs: []string{"--session-dir", launchDir}, dir: launchDir},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+			sessionPath := filepath.Join(tt.dir, "2026-03-08T18-44-39-718Z_"+sessionID+".jsonl")
+			require.NoError(t, os.MkdirAll(tt.dir, 0o700))
+			require.NoError(t, os.WriteFile(sessionPath, []byte("{}\n"), 0o600))
+			t.Cleanup(func() { _ = os.Remove(sessionPath) })
+
+			a := NewPiAgent("pi")
+			a.LaunchArgs = tt.launchArgs
+			assert.Equal(t, sessionPath, a.resolveSessionPath(sessionID))
+		})
+	}
+}
+
+func TestPiLaunchArgsChooseSessionLocation(t *testing.T) {
+	t.Parallel()
+
+	schema := jsonRaw(`{"type":"object"}`)
+	for _, launchArgs := range [][]string{
+		{"--session-dir", "/srv/pi-sessions"},
+		{"--no-session"},
+	} {
+		t.Run(launchArgs[0], func(t *testing.T) {
+			t.Parallel()
+			a := NewPiAgent("pi")
+			a.LaunchArgs = launchArgs
+			for _, args := range [][]string{
+				a.buildArgs("", false),
+				a.structuredReviewArgs("prompt.md", "result.json", schema, false, "", false),
+			} {
+				assert.NotContains(t, args, piReviewSessionDir())
+			}
+		})
+	}
 }
 
 func TestPiCloneOwnsLaunchArgs(t *testing.T) {
@@ -101,7 +149,7 @@ func TestPiCommandLineOmitsResolvedSessionPath(t *testing.T) {
 	a := NewPiAgent("pi").WithSessionID(sessionID).(*PiAgent)
 	cmdLine := a.CommandLine()
 
-	assert.NotContains(t, cmdLine, "--session")
+	assert.NotContains(t, strings.Fields(cmdLine), "--session")
 	assert.NotContains(t, cmdLine, sessionPath)
 	assert.Contains(t, cmdLine, "-p --mode json")
 }
@@ -118,6 +166,7 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 	configured.LaunchArgs = slices.Clone(wantPrefix)
 	schema := jsonRaw(`{"type":"object"}`)
 	classifyInstruction := "Classify according to the attached instructions and write the result with the structured JSON output tool."
+	sessionDir := piReviewSessionDir()
 
 	tests := []struct {
 		name          string
@@ -129,20 +178,20 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 			name:          "review",
 			withoutLaunch: base.buildArgs("", false),
 			withLaunch:    configured.buildArgs("", false),
-			managed:       []string{"-p", "--mode", "json", "--tools", piReadOnlyTools, "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
+			managed:       []string{"-p", "--mode", "json", "--tools", piReadOnlyTools, "--session-dir", sessionDir, "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
 		},
 		{
 			name:          "resumed review",
 			withoutLaunch: base.buildArgs("/tmp/pi-session.jsonl", false),
 			withLaunch:    configured.buildArgs("/tmp/pi-session.jsonl", false),
-			managed:       []string{"-p", "--mode", "json", "--tools", piReadOnlyTools, "--session", "/tmp/pi-session.jsonl", "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
+			managed:       []string{"-p", "--mode", "json", "--tools", piReadOnlyTools, "--session", "/tmp/pi-session.jsonl", "--session-dir", sessionDir, "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
 		},
 		{
 			name:          "structured review",
 			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false, "", false),
 			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false, "", false),
 			managed: []string{
-				"--mode", "json", "--extension", config.DefaultPiJSONSchemaExtension,
+				"--mode", "json", "--session-dir", sessionDir, "--extension", config.DefaultPiJSONSchemaExtension,
 				"--json-schema", string(schema), "--json-output", "result.json",
 				"--json-fallback", "none", "-p", "--tools",
 				piStructuredReviewReadOnlyTools, "--provider", "cpa",
@@ -155,7 +204,7 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false, "/tmp/pi-session.jsonl", false),
 			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false, "/tmp/pi-session.jsonl", false),
 			managed: []string{
-				"--mode", "json", "--session", "/tmp/pi-session.jsonl", "--extension", config.DefaultPiJSONSchemaExtension,
+				"--mode", "json", "--session", "/tmp/pi-session.jsonl", "--session-dir", sessionDir, "--extension", config.DefaultPiJSONSchemaExtension,
 				"--json-schema", string(schema), "--json-output", "result.json",
 				"--json-fallback", "none", "-p", "--tools",
 				piStructuredReviewReadOnlyTools, "--provider", "cpa",
