@@ -196,6 +196,185 @@ before printing its marker, so redirected or indirect execution remains
 detectable without contacting the roborev daemon. The evaluation never reads or
 writes the normal daemon database or review state.
 
+### Paired review quality evaluation
+
+The opt-in Go harness in `internal/review/quality_eval*_test.go` exercises
+`prompt.Builder`, `RunAgentReview`, and `RunSynthesisAgent`. It uses two
+synthetic Go mechanisms: cross-tenant invoice access and an exclusive cursor
+that repeats its boundary record. Each has vulnerable, fixed, and safe
+implementations. Offline behavior checks execute those exact fixture bytes,
+including unchanged and harmless-comment controls. Compact controls are measured
+separately; a missing finding is not proof of a compact disposition.
+
+Ordinary tests make no model calls. Run the offline fixture, scoring, and
+transport checks with:
+
+```bash
+GOMAXPROCS=2 GOFLAGS=-p=2 go test -tags=qualityeval ./internal/review \
+  -run Quality -count=1
+```
+
+Model-visible checkouts use opaque temporary identifiers beneath a neutral
+top-level root. Expected condition labels remain in host artifacts; neither
+checkout paths nor the real review/synthesis prompt receive case IDs.
+
+Before observing model output, freeze the harness commit and
+`internal/review/testdata/quality/rubric.json`. The live entrypoint loads all
+six fixture sources and the rubric from that exact commit, rejects changed or
+missing checkout bytes, and prepares cases from the committed in-memory
+snapshot. Later worktree changes cannot alter model inputs or recorded hashes.
+Its mechanism descriptions, admissible matches, exclusions, and ambiguity rules
+define scoring. Location alone never earns credit. Each externally adjudicated
+finding can match at most one mechanism; subsequent reports count as duplicates.
+Unmatched or ambiguous findings remain unjudged. Record the adjudicator and
+method honestly, including when an external agent reviewed the source. The
+harness never starts a semantic judge.
+
+A live arm runs six reviews and two synthesis controls per repeat: true
+duplicates and two distinct bugs. Three repeats plan 24 invocations per arm, 48
+for a baseline/candidate comparison. This incurs model usage. The initial
+adapter is Pi with `zai/glm-5.3-flash` and native `max` reasoning. Select an
+installed schema-extension entrypoint and a Pi `auth.json` explicitly. Only its
+`zai` entry is copied into a disposable home. The consuming child excludes
+inherited `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, unrelated
+credentials, skills, context files, and discovered extensions. It enables the
+explicit schema extension and the adapter's read-only tools. No normal daemon
+state is used.
+
+For a single committed source tree, set these variables and preflight before
+spending:
+
+```bash
+export ROBOREV_QUALITY_HARNESS_DIR="$PWD"
+export ROBOREV_QUALITY_HARNESS_HEAD="$(git rev-parse HEAD)"
+export ROBOREV_QUALITY_PRODUCT_HEAD="$(git rev-parse HEAD)"
+export ROBOREV_QUALITY_OUT=/tmp/quality-plan
+GOMAXPROCS=2 GOFLAGS=-p=2 ROBOREV_QUALITY_PLAN_ONLY=1 \
+  make test-review-quality-eval
+
+export ROBOREV_QUALITY_PI_AUTH=/path/to/selected/pi/auth.json
+export ROBOREV_QUALITY_PI_EXTENSION=/path/to/pi-json-schema/index.ts
+export ROBOREV_QUALITY_OUT=/tmp/quality-live
+GOMAXPROCS=2 GOFLAGS=-p=2 make test-review-quality-eval
+```
+
+Source preflight uses Go's selected dependency graph, including linked local and
+module dependencies, resolved embedded inputs, and selected module metadata.
+Linked local inputs must be committed; unrelated packages and Hegel/cache files
+are allowed. Dependency versions and complete input hashes are recorded. The
+launcher captures the selected source, embed, and module metadata bytes, then
+compiles from a temporary snapshot of local inputs and the selected module-cache
+files. It embeds that source inventory hash in the child and rejects a declared
+harness directory with different bytes. Overlay use must also set
+`ROBOREV_QUALITY_OVERLAY` and `ROBOREV_QUALITY_MODFILE` to the exact compiler
+inputs shown below; only virtual quality-test replacements are allowed.
+
+The entrypoint accepts exactly the `qualityeval` compiler tag and rejects extra
+tags, compiler/assembly overrides, race/sanitizer/coverage instrumentation, and
+nondefault cgo/experiment settings. It builds one temporary evaluation child
+with the captured overlay, module file, and module-cache inputs. The binary
+records both the selection fingerprint and selected-source inventory hash. The
+child compares those bindings with its runtime inputs before invoking a model.
+It uses the compiler's recorded platform and cgo selection for dependency
+enumeration. Setting the child environment marker alone cannot bypass the
+controlled build. The artifact records the selection fingerprint and compiled
+build settings.
+
+Every run requires a new output directory. The parent verifies that its child
+wrote a manifest for the intended source heads and invocation count. `run.json`
+records product and harness heads separately, source/fixture/rubric and
+effective prompt hashes, model settings, planned/completed/failed/pending and
+unjudged counts, per-repeat target sets and explicit
+judged/unjudged/failed/planned states, timing, and observed usage. Raw streams,
+complete prompts, and settled documents are saved alongside it. There are no
+harness retries. Missing provider usage or cost remains unknown.
+
+For a comparison, run the **same frozen test files** against two independent
+product trees. Do not run one binary twice with different labels. Go's overlay
+can add the test files without changing either tree. For each target, create an
+overlay with explicit absolute paths:
+
+```bash
+export QUALITY_HARNESS=/path/to/frozen/harness
+export QUALITY_SOURCE=/path/to/baseline-or-candidate
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+harness = Path(os.environ["QUALITY_HARNESS"])
+source = Path(os.environ["QUALITY_SOURCE"])
+files = (harness / "internal/review").glob("quality_eval*_test.go")
+mapping = {str(source / p.relative_to(harness)): str(p) for p in files}
+Path("/tmp/quality-overlay.json").write_text(json.dumps({"Replace": mapping}))
+PY
+
+cd "$QUALITY_SOURCE"
+export ROBOREV_QUALITY_HARNESS_DIR="$QUALITY_HARNESS"
+export ROBOREV_QUALITY_HARNESS_HEAD="$(git -C "$QUALITY_HARNESS" rev-parse HEAD)"
+export ROBOREV_QUALITY_PRODUCT_HEAD="$(git rev-parse HEAD)"
+export ROBOREV_QUALITY_OVERLAY=/tmp/quality-overlay.json
+export ROBOREV_QUALITY_MODFILE="$QUALITY_HARNESS/go.mod"
+export ROBOREV_QUALITY_OUT=/tmp/quality-baseline-plan
+GOMAXPROCS=2 GOFLAGS=-p=2 ROBOREV_RUN_QUALITY_EVAL=1 \
+  ROBOREV_QUALITY_PLAN_ONLY=1 go test \
+  -modfile="$QUALITY_HARNESS/go.mod" -overlay=/tmp/quality-overlay.json \
+  -tags=qualityeval ./internal/review -run '^TestReviewQualityEvaluation$' \
+  -count=1 -v -timeout=0
+```
+
+Use a harness whose module file differs only by the intended test dependency
+update. `-modfile` keeps that dependency identical while production code is
+linked from the selected source tree. Inspect both plan manifests before
+removing `ROBOREV_QUALITY_PLAN_ONLY=1` for live arms; use distinct output paths.
+Require different intended product heads and identical harness, rubric,
+fixtures, model, reasoning, repeats, and invocation plans. Declare the candidate
+change and inspect prompt hashes; prompt changes should be visible there. Retain
+negative results and operational failures.
+
+Adjudication is offline. Supply JSON with `Actor`, `Method`, and `Entries` keyed
+by invocation ID. Each entry needs the exact saved `OutputHash` and `Judgments`
+referring to 1-based settled finding positions:
+
+```json
+{
+  "Actor": "independent-reviewer",
+  "Method": "external source adjudication under the frozen rubric",
+  "Entries": {
+    "invoice-vulnerable-1": {
+      "OutputHash": "copy the hash from run.json",
+      "Judgments": [
+        {
+          "Finding": 1,
+          "Mechanisms": ["invoice"],
+          "Reason": "The finding identifies the unchecked cross-tenant read."
+        }
+      ]
+    }
+  }
+}
+```
+
+Alternatively use `Category` with `legitimate_extra`, `other_false_positive`, or
+`unjudged` and a source-grounded `Reason`. `Mechanisms` and `Category` are
+mutually exclusive. More than one proposed mechanism remains ambiguous and earns
+no credit. Optional `Clarity` notes can record trigger, actual, expected,
+preservation, and unsupported execution claims without affecting correctness.
+
+```bash
+ROBOREV_QUALITY_RESULTS=/tmp/quality-live/run.json \
+  ROBOREV_QUALITY_JUDGMENTS=/tmp/quality-judgments.json \
+  GOMAXPROCS=2 GOFLAGS=-p=2 go test -tags=qualityeval ./internal/review \
+  -run '^TestReviewQualityAdjudication$' -count=1 -v
+```
+
+`adjudicated-v2.json` reports missed bugs, fixed and safe mechanism false
+positives separately, duplicates, distinct synthesis loss, legitimate extras,
+other false positives, and unjudged counts. Failed and pending runs stay in
+planned denominators. Unknowns widen point bounds and 95% Wilson intervals.
+These intervals describe variability conditional on two synthetic mechanisms;
+repeats may be correlated. This small suite does not establish universal review
+precision or prove an unexecuted reproduction.
+
 ## Building
 
 ```bash
