@@ -847,9 +847,30 @@ The checker discovers the host's globally selected, installed mise tools outside
 the PR checkout. It runs them directly, ahead of mise shims on `PATH`, and can
 read their installation directories, including runtime support files. This
 supports Node, Bun, OpenTofu, Terraform, Python, and other installed mise tools.
-Provision the required versions on the host. Installing project dependencies and
-starting providers or other services remain separate requirements. The checker
-logs failed mise queries and keeps its existing tools.
+Provision the required versions on the host. Starting providers or other
+services remains a separate requirement. The checker logs failed mise queries
+and keeps its existing tools.
+
+Before starting the sandbox, the checker prepares committed JavaScript and
+Python package declarations, including nested projects such as `web/`.
+JavaScript uses installed npm or Bun, honors their supported lockfiles, includes
+development dependencies, and disables lifecycle scripts. Projects without a
+lockfile use `package.json`. JavaScript workspaces, local dependencies, and
+unsupported package managers are skipped.
+
+Python uses installed `python3` with venv and pip. It reads static dependencies
+and optional dependencies from `[project]`, plus string entries in
+`[dependency-groups]` in `pyproject.toml`. It preserves version constraints and
+markers, downloads wheels only, and skips requirements whose dependencies need
+source builds. Requirements files, editable installs, direct URLs, and local
+packages are unsupported. These declarations do not apply Python lockfile pins.
+The root `.venv/bin` leads the sandbox's `PATH`; nested projects can use their
+own `.venv/bin/python`. An existing committed `.venv` is left alone.
+
+Installers run from private copies of dependency metadata, with private caches
+and without repository package-manager settings. Prepared packages live in the
+disposable checker clone. Missing tools and failed downloads are logged; tests
+that still need unavailable packages keep the existing checker failure behavior.
 
 The checker works in its own clone of the PR checkout. The clone borrows the
 host clone's object store and none of its Git config, so the checker can't read
