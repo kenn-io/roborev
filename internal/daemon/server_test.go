@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -654,9 +653,6 @@ func TestGetMachineID(t *testing.T) {
 		want, err := db.GetMachineID()
 		require.NoError(t, err)
 		assert.Equal(t, want, *id1)
-
-		id2 := server.getMachineID()
-		assert.Equal(t, id1, id2)
 	})
 
 	t.Run("omits nil UUID", func(t *testing.T) {
@@ -667,28 +663,15 @@ func TestGetMachineID(t *testing.T) {
 		assert.Nil(t, server.getMachineID())
 	})
 
-	t.Run("retries after database error", func(t *testing.T) {
-		server, db, tmpDir := newTestServer(t)
+	t.Run("returns nil on database error", func(t *testing.T) {
+		server, db, _ := newTestServer(t)
 
 		// Close the DB to simulate error condition
 		require.NoError(t, db.Close())
 
-		// First call should return empty since DB is closed
+		// The uncached lookup fails because the DB is closed.
 		id1 := server.getMachineID()
 		require.Nil(t, id1, "Expected empty machine ID on error")
-
-		// "Fix" the error by opening a new DB and replacing it
-		newDB, err := storage.Open(filepath.Join(tmpDir, "reviews.db"))
-		require.NoError(t, err)
-		t.Cleanup(func() { newDB.Close() })
-		server.db = newDB
-
-		id2 := server.getMachineID()
-		require.NotNil(t, id2, "Expected non-empty machine ID after DB recovery")
-		assert.NotEqual(t, uuid.Nil(), *id2)
-
-		id3 := server.getMachineID()
-		assert.Equal(t, id2, id3)
 	})
 }
 

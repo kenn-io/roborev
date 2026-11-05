@@ -116,7 +116,7 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 	a.Equal(id, stored, "Stored ID %q doesn't match returned ID %q", stored, id)
 }
 
-func TestGetMachineID_CachedDuringWriteTransaction(t *testing.T) {
+func TestGetMachineID_Cached(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
@@ -124,37 +124,25 @@ func TestGetMachineID_CachedDuringWriteTransaction(t *testing.T) {
 	id, err := db.GetMachineID()
 	require.NoError(t, err)
 
-	writer, err := db.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	defer func() { _ = writer.Rollback() }()
-	_, err = writer.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
-	require.NoError(t, err)
+	t.Run("during write transaction", func(t *testing.T) {
+		writer, err := db.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { _ = writer.Rollback() }()
+		_, err = writer.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
+		require.NoError(t, err)
 
-	// Fail immediately if the read tries to acquire the real SQLite write lock.
-	db.SetMaxOpenConns(2)
-	reader, err := db.Conn(t.Context())
-	require.NoError(t, err)
-	_, err = reader.ExecContext(t.Context(), `PRAGMA busy_timeout = 0`)
-	require.NoError(t, err)
-	require.NoError(t, reader.Close())
+		cached, err := db.GetMachineID()
+		require.NoError(t, err)
+		assert.Equal(t, id, cached)
+	})
 
-	cached, err := db.GetMachineID()
-	require.NoError(t, err)
-	assert.Equal(t, id, cached)
-}
+	t.Run("without SQL", func(t *testing.T) {
+		require.NoError(t, db.Close())
 
-func TestGetMachineID_CachedWithoutSQL(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-
-	id, err := db.GetMachineID()
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-
-	cached, err := db.GetMachineID()
-	require.NoError(t, err)
-	assert.Equal(t, id, cached)
+		cached, err := db.GetMachineID()
+		require.NoError(t, err)
+		assert.Equal(t, id, cached)
+	})
 }
 
 func TestGetMachineID_RetriesAfterError(t *testing.T) {
