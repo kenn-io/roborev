@@ -23,10 +23,10 @@ func (db *DB) migrateJobIDs() error {
 		return err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON`); err != nil {
 		return err
 	}
-	defer func() { _, _ = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`) }()
+	defer func() { _, _ = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON; PRAGMA legacy_alter_table = OFF`) }()
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
