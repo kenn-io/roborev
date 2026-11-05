@@ -22,6 +22,18 @@ type diagnosticTransport func(*http.Request) (*http.Response, error)
 
 func (f diagnosticTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func discoveryHTTP503Error(t *testing.T) error {
+	t.Helper()
+	client, err := ghpkg.NewClient("", ghpkg.WithHTTPClient(&http.Client{Transport: diagnosticTransport(func(r *http.Request) (*http.Response, error) {
+		assert.Equal(t, "/orgs/acme/repos", r.URL.Path)
+		return &http.Response{StatusCode: 503, Request: r, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"sensitive-provider-text"}`))}, nil
+	})}))
+	require.NoError(t, err)
+	_, readErr := client.ListOwnerRepos(t.Context(), "acme", 100)
+	require.Error(t, readErr)
+	return readErr
+}
+
 func TestCIHealthSafeReadDiagnosticsAndRecovery(t *testing.T) {
 	for _, category := range []string{"HTTP 503", "timeout", "network interruption", "rate limit (HTTP 429)"} {
 		t.Run(category, func(t *testing.T) {
@@ -78,15 +90,8 @@ func TestCIHealthSafeReadDiagnosticsAndRecovery(t *testing.T) {
 }
 
 func TestCIHealthSafeDiscoveryDiagnosticsAndRecovery(t *testing.T) {
-	var readErr error
 	synctest.Test(t, func(t *testing.T) {
-		client, err := ghpkg.NewClient("", ghpkg.WithHTTPClient(&http.Client{Transport: diagnosticTransport(func(r *http.Request) (*http.Response, error) {
-			assert.Equal(t, "/orgs/acme/repos", r.URL.Path)
-			return &http.Response{StatusCode: 503, Request: r, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"sensitive-provider-text"}`))}, nil
-		})}))
-		require.NoError(t, err)
-		_, readErr = client.ListOwnerRepos(t.Context(), "acme", 100)
-		require.Error(t, readErr)
+		readErr := discoveryHTTP503Error(t)
 		h, server := newCIHealthHarness(t)
 		h.Cfg.CI.Repos = []string{"acme/*"}
 		h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return nil, readErr }

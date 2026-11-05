@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -500,13 +498,7 @@ func TestRepoResolver_EmptyResultsCached(t *testing.T) {
 
 func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		client, err := ghpkg.NewClient("", ghpkg.WithHTTPClient(&http.Client{Transport: diagnosticTransport(func(r *http.Request) (*http.Response, error) {
-			assert.Equal(t, "/orgs/acme/repos", r.URL.Path)
-			return &http.Response{StatusCode: 503, Request: r, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"sensitive-provider-text"}`))}, nil
-		})}))
-		require.NoError(t, err)
-		_, readErr := client.ListOwnerRepos(t.Context(), "acme", 100)
-		require.Error(t, readErr)
+		readErr := discoveryHTTP503Error(t)
 		calls := make(map[string]int)
 		r := &RepoResolver{listReposFn: func(_ context.Context, owner, _ string) ([]string, error) {
 			calls[owner]++
