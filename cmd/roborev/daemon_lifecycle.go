@@ -311,7 +311,13 @@ func ensureDaemon() (err error) {
 		if serverAddr != "" {
 			hint = "check the --server address and that daemon's availability, or omit --server to use the local daemon"
 		} else if managed, ok := errors.AsType[*managedRecoveryError](err); ok {
-			hint = fmt.Sprintf("run %s %s, or run 'roborev doctor' to diagnose setup", serviceRestartCommand, managed.unit)
+			hint = "run 'roborev doctor' to diagnose setup"
+			if managed.unit != "" && managed.unit != "unknown" {
+				restart := serviceRestartCommand + " " + managed.unit
+				if !strings.Contains(err.Error(), restart) {
+					hint = fmt.Sprintf("run %s, or %s", restart, hint)
+				}
+			}
 		}
 		if exit, ok := errors.AsType[*exitError](err); ok && exit.hint != "" {
 			hint = exit.hint
