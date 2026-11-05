@@ -859,11 +859,12 @@ includes development dependencies, and disables lifecycle scripts. Projects
 without a supported npm or Bun lockfile use `package.json` through npm,
 including projects with other lockfile formats. JavaScript workspace roots,
 their declared members, and local dependencies are skipped, as are npm projects
-with Git sources. npm must support its native `allow-git` fetch policy; older
-installations skip npm preparation. Only the selected installer's active
-lockfile is used, with npm shrinkwrap taking precedence over package-lock. For
-npm projects, preparation refreshes the staged dependency graph while preserving
-valid lock pins, then checks every resolved source before installing packages.
+with Git sources. npm must support its native `allow-file`, `allow-directory`,
+and `allow-git` fetch policies; older installations skip npm preparation. Only
+the selected installer's active lockfile is used, with npm shrinkwrap taking
+precedence over package-lock. npm checks committed lock sources before
+installation, then applies its native source policies during dependency
+resolution and installation while preserving valid lock pins.
 
 Python uses installed `python3` with venv and pip. Downloads use PyPI and ignore
 pip configuration files. It reads static dependencies and optional dependencies

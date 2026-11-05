@@ -145,8 +145,8 @@ const entry = [path.resolve(path.dirname(npm), '../lib/node_modules/npm/package.
 const npmRequire = require('node:module').createRequire(entry);
 const npa = npmRequire('npm-package-arg');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
-if (input.rejected.includes('git') && !npmRequire('@npmcli/config/lib/definitions').definitions['allow-git'])
- throw new Error('npm lacks the required Git fetch policy');
+if (input.rejected.includes('git') && !['allow-file', 'allow-directory', 'allow-git'].every(name => npmRequire('@npmcli/config/lib/definitions').definitions[name]))
+ throw new Error('npm lacks the required source fetch policies');
 const member = Object.entries(input.workspaces).some(([relative, workspaces]) =>
  npmRequire('@npmcli/map-workspaces').virtual({cwd: '/', lockfile: {packages: {'': {workspaces}, [relative]: {name: 'candidate'}}}}).size > 0);
 const local = input.sources.some(spec => {
@@ -163,14 +163,6 @@ process.stdout.write(JSON.stringify(member || local));`
 	var local bool
 	err = json.Unmarshal(output, &local)
 	return local, err
-}
-
-// npm reads and rewrites a shrinkwrap in preference to package-lock.json.
-func ciCheckNpmLock(stage string, metadata map[string][]byte) string {
-	if metadata["npm-shrinkwrap.json"] != nil {
-		return filepath.Join(stage, "npm-shrinkwrap.json")
-	}
-	return filepath.Join(stage, "package-lock.json")
 }
 
 func ciCheckBunSources(ctx context.Context, command, stage string, data []byte, env []string) ([]string, error) {
@@ -210,9 +202,12 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 		return
 	}
 	sources := []string{}
-	manager, lockName := "npm", filepath.Base(ciCheckNpmLock(stage, metadata))
+	manager, lockName := "npm", "package-lock.json"
+	if metadata["npm-shrinkwrap.json"] != nil {
+		lockName = "npm-shrinkwrap.json"
+	}
 	rejected := []string{"file", "directory", "git"}
-	args := []string{"ci", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund", "--allow-git=none"}
+	args := []string{"install", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund", "--allow-file=none", "--allow-directory=none", "--allow-git=none"}
 	if metadata["bun.lock"] != nil {
 		manager, lockName = "bun", "bun.lock"
 		rejected = rejected[:2]
@@ -254,25 +249,6 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 	if local {
 		fmt.Fprintln(out, "CI checker skips JavaScript local dependencies, Git sources, or workspace members")
 		return
-	}
-	if manager == "npm" {
-		// Resolve into private metadata first; npm re-resolves lock records its manifests contradict.
-		if !runCICheckInstaller(ctx, command, stage, env, append([]string{"install", "--package-lock-only"}, args[1:]...), out) {
-			return
-		}
-		generated, _ := os.ReadFile(ciCheckNpmLock(stage, metadata))
-		var lock map[string]any
-		if err = json.Unmarshal(generated, &lock); err == nil {
-			local, err = ciCheckLocalJSSources(ctx, stage, ciCheckNpmSources(lock), []string{"file", "directory", "git"}, nil, env)
-		}
-		if err != nil {
-			fmt.Fprintf(out, "CI checker resolved npm graph failed: %v\n", err)
-			return
-		}
-		if local {
-			fmt.Fprintln(out, "CI checker skips JavaScript local dependencies or Git sources")
-			return
-		}
 	}
 	if !runCICheckInstaller(ctx, command, stage, env, args, out) {
 		return

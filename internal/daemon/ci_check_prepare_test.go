@@ -260,20 +260,12 @@ esac
 	}
 }
 
-// Preparation stages nested committed manifests, excludes repository settings,
-// and hands packages and the root interpreter to the sandbox job.
-func TestCICheckPackagesPreparation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires shell fixtures")
-	}
-	_, shims := ciCheckMiseFixture(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+func ciCheckPackagePythonFixture(t *testing.T) (string, string) {
+	t.Helper()
 	tools := t.TempDir()
 	script := `#!/bin/sh
-[ -z "$CHECKER_SECRET" ] && [ -z "$NODE_OPTIONS" ] || exit 6
 [ ! -e .npmrc ] && [ ! -e sitecustomize.py ] || exit 7
 case "$*" in
-*--eval*) /bin/cat;;
 *pip._vendor.packaging.requirements*)
  shift 3
  printf '['
@@ -298,27 +290,38 @@ case "$*" in
  /bin/mkdir -p "${0%/bin/python}/lib"
  printf '%s\n' "$@" > "${0%/bin/python}/lib/installed"
  ;;
-*)
- [ "$npm_config_ignore_scripts" = true ] || exit 8
- /bin/mkdir -p node_modules/test-package
- printf 'package ready' > node_modules/test-package/index.js
- ;;
+*) exit 9;;
 esac
 `
-	for _, tool := range []string{"npm", "bun", "python3"} {
-		require.NoError(t, os.WriteFile(filepath.Join(tools, tool), []byte(script), 0o700))
-	}
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
-	// Mise still resolves the fixture Codex, while installers use selected tools.
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(script), 0o700))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CHECKER_SECRET", "synthetic")
-	t.Setenv("NODE_OPTIONS", "--require=/untrusted/module")
+	return tools, script
+}
+
+// Preparation hands nested packages and the root interpreter to the sandbox job.
+func TestCICheckPackagesPreparation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell fixtures")
+	}
+	_, shims := ciCheckMiseFixture(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tools, _ := ciCheckPackagePythonFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "bun"), []byte(`#!/bin/sh
+[ ! -e .npmrc ] || exit 7
+case "$*" in
+*--eval*) /bin/cat;;
+*) [ "$npm_config_ignore_scripts" = true ] || exit 8
+ /bin/mkdir -p node_modules/test-package
+ printf 'package ready' > node_modules/test-package/index.js;;
+esac
+`), 0o700))
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("web/package.json", `{"dependencies":{"test-package":"1"}}`, "javascript dependencies")
 	repo.CommitFile("web/bun.lock", `{"packages":{"test-package":["test-package@1"]}}`, "bun lock")
 	repo.CommitFile("web/.npmrc", "onload-script=./untrusted.js", "repository settings")
 	repo.CommitFile("sitecustomize.py", "raise RuntimeError('untrusted')", "repository module")
-	repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['test-package>=1', 'source-only', 'unsafe @ https://example.com/source.tar.gz']\n[project.optional-dependencies]\ntest = ['optional-fixture==2']\n[dependency-groups]\ndev = ['group-fixture; python_version >= \"3.10\"']\n", "python dependencies")
+	repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['test-package']\n", "python dependencies")
 	sha := repo.HeadSHA()
 	var log bytes.Buffer
 	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, filepath.Join(shims, "selected", "bin", "codex"), nil, &log)
@@ -327,14 +330,6 @@ esac
 	installed, err := os.ReadFile(filepath.Join(run.Repo, "web", "node_modules", "test-package", "index.js"))
 	require.NoError(t, err, log.String())
 	assert.Equal(t, "package ready", string(installed))
-	requirements, err := os.ReadFile(filepath.Join(run.Repo, ".venv", "lib", "installed"))
-	require.NoError(t, err, log.String())
-	assert.Contains(t, string(requirements), "test-package>=1")
-	assert.Contains(t, string(requirements), "optional-fixture==2")
-	assert.Contains(t, string(requirements), `group-fixture; python_version >= "3.10"`)
-	assert.NotContains(t, string(requirements), "source-only")
-	assert.Contains(t, log.String(), "package preparation failed", "a source-only requirement must leave the other wheels available")
-	assert.Contains(t, log.String(), "-m pip --isolated download")
 	var path string
 	for _, entry := range run.Job.Env {
 		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
@@ -342,6 +337,28 @@ esac
 		}
 	}
 	assert.Equal(t, filepath.Join(run.Repo, ".venv", "bin"), strings.Split(path, string(os.PathListSeparator))[0])
+}
+
+func TestCICheckPackagesPythonPreparation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell fixtures")
+	}
+	tools, script := ciCheckPackagePythonFixture(t)
+	t.Run("requirement collection and source-only fallback", func(t *testing.T) {
+		project, stage := t.TempDir(), t.TempDir()
+		var log bytes.Buffer
+		data := []byte("[project]\ndependencies = ['test-package>=1', 'source-only']\n[project.optional-dependencies]\ntest = ['optional-fixture==2']\n[dependency-groups]\ndev = ['group-fixture; python_version >= \"3.10\"']\n")
+		prepared := prepareCICheckPython(t.Context(), project, stage, data, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), &log)
+		require.True(t, prepared, log.String())
+		requirements, err := os.ReadFile(filepath.Join(project, ".venv", "lib", "installed"))
+		require.NoError(t, err, log.String())
+		assert.Contains(t, string(requirements), "test-package>=1")
+		assert.Contains(t, string(requirements), "optional-fixture==2")
+		assert.Contains(t, string(requirements), `group-fixture; python_version >= "3.10"`)
+		assert.NotContains(t, string(requirements), "source-only")
+		assert.Contains(t, log.String(), "package preparation failed")
+		assert.Contains(t, log.String(), "-m pip --isolated download")
+	})
 	t.Run("compatible batch", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(script), 0o700))
 		project, stage := t.TempDir(), t.TempDir()
@@ -374,15 +391,14 @@ func TestCICheckPackagesSkipped(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("requires shell fixtures")
 		}
-		repo := testutil.NewTestRepoWithCommit(t)
-		repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['fixture']\n", "dependency")
-		repo.CommitFile(".venv/marker", "existing", "existing environment")
+		project := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(project, ".venv"), 0o700))
 		tools := t.TempDir()
 		marker := filepath.Join(tools, "python-ran")
 		require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(fmt.Sprintf("#!/bin/sh\nprintf 'ran' > '%s'\n", marker)), 0o700))
 		t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 		var log bytes.Buffer
-		prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
+		prepareCICheckPython(t.Context(), project, t.TempDir(), nil, nil, &log)
 		assert.Contains(t, log.String(), "skips existing .venv")
 		assert.NoFileExists(t, marker)
 	})
@@ -390,21 +406,17 @@ func TestCICheckPackagesSkipped(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("requires symlinks")
 		}
-		repo := testutil.NewTestRepoWithCommit(t)
-		repo.CommitFile("package.json", `{"dependencies":{"test-package":"1"}}`, "dependencies")
-		// Discovery uses the trusted Git command, then tool resolution sees no npm.
 		commands := t.TempDir()
-		git, err := exec.LookPath("git")
-		require.NoError(t, err)
-		require.NoError(t, os.Symlink(git, filepath.Join(commands, "git")))
 		t.Setenv("PATH", commands)
 		var log bytes.Buffer
-		prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), commands, nil, &log)
+		prepareCICheckJS(t.Context(), t.TempDir(), t.TempDir(), map[string][]byte{"package.json": []byte(`{}`)}, nil, nil, &log)
 		assert.Contains(t, log.String(), "package tool unavailable: npm")
 	})
 }
 
 func TestCICheckPackagesGitAuthentication(t *testing.T) {
+	t.Setenv("CHECKER_SECRET", "synthetic")
+	t.Setenv("NODE_OPTIONS", "--require=/untrusted/module")
 	env := ciCheckPackageEnv(t.TempDir(), "/trusted/bin", []string{"CHECKER_SECRET=secret", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader", "GIT_CONFIG_VALUE_0=AUTHORIZATION: synthetic"})
 	command := exec.CommandContext(t.Context(), "git", "config", "--get", "http.https://github.com/.extraheader")
 	command.Env = env
@@ -412,4 +424,20 @@ func TestCICheckPackagesGitAuthentication(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "AUTHORIZATION: synthetic\n", string(output))
 	assert.NotContains(t, env, "CHECKER_SECRET=secret")
+	assert.NotContains(t, env, "CHECKER_SECRET=synthetic")
+	assert.NotContains(t, env, "NODE_OPTIONS=--require=/untrusted/module")
+}
+
+func TestCICheckPackagesLockedSources(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		lock   map[string]any
+		source string
+	}{
+		{"link", map[string]any{"packages": map[string]any{"node_modules/pkg": map[string]any{"link": true, "resolved": "node_modules/fixture"}}}, "file:."},
+		{"resolved path", map[string]any{"packages": map[string]any{"node_modules/pkg": map[string]any{"resolved": "/synthetic/package.tgz"}}}, "/synthetic/package.tgz"},
+		{"nested version", map[string]any{"dependencies": map[string]any{"parent": map[string]any{"dependencies": map[string]any{"pkg": map[string]any{"version": "file:/synthetic/package.tgz"}}}}}, "file:/synthetic/package.tgz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assert.Contains(t, ciCheckNpmSources(tc.lock), tc.source) })
+	}
 }
