@@ -25,7 +25,8 @@ func TestCICheckPreparation(t *testing.T) {
 	}
 	miseTools, miseShims, miseData := ciCheckMiseFixture(t)
 	pythonTools, pythonScript := ciCheckPackagePythonFixture(t)
-	pythonRoot := t.TempDir()
+	pythonRoot, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	require.NoError(t, os.Mkdir(filepath.Join(pythonRoot, "bin"), 0o700))
 	interpreter := filepath.Join(pythonRoot, "bin", "python")
 	require.NoError(t, os.WriteFile(interpreter, []byte(pythonScript), 0o700))

@@ -37,7 +37,22 @@ func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
 	require.NoError(t, err)
 	runtime := t.TempDir()
-	copyRuntime := exec.CommandContext(t.Context(), "/bin/cp", "-a", filepath.Dir(filepath.Dir(python))+"/.", runtime)
+	copyRuntime := exec.CommandContext(t.Context(), python, "-I", "-c", `import pathlib, shutil, sys, sysconfig, pip
+root = pathlib.Path(sys.argv[1])
+(root / 'bin').mkdir()
+shutil.copy2(pathlib.Path(sys.executable).resolve(), root / 'bin' / 'python3')
+lib = root / sys.platlibdir
+stdlib = lib / pathlib.Path(sysconfig.get_path('stdlib')).name
+ignore = shutil.ignore_patterns('site-packages', '__pycache__')
+shutil.copytree(sysconfig.get_path('stdlib'), stdlib, ignore=ignore)
+shutil.copytree(pathlib.Path(pip.__file__).parent, stdlib / 'site-packages' / 'pip', ignore=ignore)
+for key in ('LDLIBRARY', 'INSTSONAME'):
+    name = sysconfig.get_config_var(key)
+    if name:
+        library = pathlib.Path(sysconfig.get_config_var('LIBDIR')) / name
+        if library.is_file():
+            shutil.copy2(library, lib / name)
+`, runtime)
 	output, err := copyRuntime.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	python = filepath.Join(runtime, "bin", "python3")
