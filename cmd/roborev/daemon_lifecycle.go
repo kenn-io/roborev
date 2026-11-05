@@ -314,6 +314,9 @@ func ensureDaemon() (err error) {
 		if exit, ok := errors.AsType[*exitError](err); ok && exit.hint != "" {
 			hint = exit.hint
 		}
+		if _, ok := errors.AsType[*managedRecoveryError](err); ok {
+			hint = ""
+		}
 		err = &exitError{code: 1, cause: err, kind: "daemon_unreachable", hint: hint}
 	}()
 	// An explicit endpoint is caller-managed. The command reports its request

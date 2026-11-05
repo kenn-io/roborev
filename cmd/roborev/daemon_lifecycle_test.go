@@ -92,9 +92,11 @@ func TestEnsureDaemonHandlesVersionProbe(t *testing.T) {
 		name         string
 		probeErr     error
 		accessDenied bool
+		managed      bool
 	}{
 		{name: "live version mismatch"},
 		{name: "probe access denied", probeErr: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EPERM}, accessDenied: true},
+		{name: "live unresponsive managed daemon", probeErr: errors.New("probe timed out"), managed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateDaemonSelection(t)
@@ -116,8 +118,28 @@ func TestEnsureDaemonHandlesVersionProbe(t *testing.T) {
 				return nil, nil
 			}
 			startDaemonForEnsure = func() error { starts++; return nil }
+			if tc.managed {
+				stubServiceRecovery(t)
+				current.PID = os.Getpid()
+				service := ownedDaemonService(t)
+				findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+					assert.Equal(t, current.PID, pid)
+					return service, nil
+				}
+			}
 			err := ensureDaemon()
-			if tc.accessDenied {
+			if tc.managed {
+				var managed *managedRecoveryError
+				require.ErrorAs(t, err, &managed)
+				require.ErrorContains(t, err, "daemon is unresponsive")
+				assert.Contains(t, err.Error(), "run "+serviceRestartCommand+" "+managed.unit)
+				var exit *exitError
+				require.ErrorAs(t, err, &exit)
+				assert.Empty(t, exit.hint)
+				assert.Equal(t, 1, exit.code)
+				assert.Equal(t, "daemon_unreachable", exit.kind)
+				assert.Zero(t, starts)
+			} else if tc.accessDenied {
 				require.True(t, daemon.IsDaemonAccessError(err))
 				assert.Zero(t, starts)
 			} else {
