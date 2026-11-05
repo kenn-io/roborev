@@ -318,7 +318,7 @@ func (a *PiAgent) ReviewWithSchema(
 		return nil, fmt.Errorf("write structured review prompt: %w", err)
 	}
 	outputPath := filepath.Join(tmpDir, "result.json")
-	sessionPath := a.resolveSessionPath(a.SessionID)
+	sessionPath := a.resolveSessionPath(repoPath, a.SessionID)
 	if a.SessionID != "" && sessionPath == "" {
 		return nil, fmt.Errorf("pi session not found; cannot resume requested session")
 	}
@@ -398,7 +398,7 @@ func (a *PiAgent) Review(
 	}
 	defer cleanup()
 
-	sessionPath := a.resolveSessionPath(a.SessionID)
+	sessionPath := a.resolveSessionPath(repoPath, a.SessionID)
 	if a.SessionID != "" && sessionPath == "" {
 		return "", fmt.Errorf("pi session not found; cannot resume requested session")
 	}
@@ -568,22 +568,41 @@ func (a *PiAgent) sessionDirArgs() []string {
 
 // resolveSessionPath finds the session file for sessionID. Sessions sit
 // directly in the session directory; sessions captured before reviews had
-// their own directory sit in Pi's per-directory buckets.
-func (a *PiAgent) resolveSessionPath(sessionID string) string {
+// their own directory sit in Pi's per-directory buckets. Pi runs in
+// repoPath, so a relative --session-dir is relative to it.
+func (a *PiAgent) resolveSessionPath(repoPath, sessionID string) string {
 	if sessionID == "" {
 		return ""
 	}
 	dir := a.launchSessionDir()
 	if dir == "" {
 		dir = piReviewSessionDir()
+	} else if !filepath.IsAbs(dir) {
+		dir = filepath.Join(repoPath, dir)
 	}
-	name := "*_" + sessionID + ".jsonl"
-	for _, pattern := range []string{
-		filepath.Join(dir, name),
-		filepath.Join(piDataDir(), "sessions", "*", name),
-	} {
-		if matches, err := filepath.Glob(pattern); err == nil && len(matches) > 0 {
-			return matches[0]
+	if path := findPiSession(dir, sessionID); path != "" {
+		return path
+	}
+	buckets, _ := os.ReadDir(filepath.Join(piDataDir(), "sessions"))
+	for _, bucket := range buckets {
+		if !bucket.IsDir() {
+			continue
+		}
+		path := findPiSession(filepath.Join(piDataDir(), "sessions", bucket.Name()), sessionID)
+		if path != "" {
+			return path
+		}
+	}
+	return ""
+}
+
+// findPiSession returns the file in dir that holds sessionID. It compares
+// names literally, because a directory name may contain glob characters.
+func findPiSession(dir, sessionID string) string {
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), "_"+sessionID+".jsonl") {
+			return filepath.Join(dir, entry.Name())
 		}
 	}
 	return ""

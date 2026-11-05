@@ -44,19 +44,21 @@ func TestResolvePiSessionPath(t *testing.T) {
 	sessionPath := filepath.Join(dataDir, "sessions", "--repo--", "2026-03-08T18-44-39-718Z_"+sessionID+".jsonl")
 	require.NoError(t, os.MkdirAll(filepath.Dir(sessionPath), 0o755))
 	require.NoError(t, os.WriteFile(sessionPath, []byte("{}\n"), 0o644))
-	assert.Equal(t, sessionPath, NewPiAgent("pi").resolveSessionPath(sessionID))
+	assert.Equal(t, sessionPath, NewPiAgent("pi").resolveSessionPath(t.TempDir(), sessionID))
 }
 
 func TestPiResolveSessionPathLooksInSessionDir(t *testing.T) {
 	const sessionID = "46109439-3160-40f0-81e7-7dfa4f3647b3"
-	launchDir := t.TempDir()
+	repoPath := t.TempDir()
+	launchDir := filepath.Join(t.TempDir(), "sessions[1]")
 	tests := []struct {
 		name       string
 		launchArgs []string
 		dir        string
 	}{
 		{name: "review session dir", dir: piReviewSessionDir()},
-		{name: "launch session dir", launchArgs: []string{"--session-dir", launchDir}, dir: launchDir},
+		{name: "launch session dir with glob characters", launchArgs: []string{"--session-dir", launchDir}, dir: launchDir},
+		{name: "relative launch session dir", launchArgs: []string{"--session-dir", "pi-sessions"}, dir: filepath.Join(repoPath, "pi-sessions")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,7 +70,7 @@ func TestPiResolveSessionPathLooksInSessionDir(t *testing.T) {
 
 			a := NewPiAgent("pi")
 			a.LaunchArgs = tt.launchArgs
-			assert.Equal(t, sessionPath, a.resolveSessionPath(sessionID))
+			assert.Equal(t, sessionPath, a.resolveSessionPath(repoPath, sessionID))
 		})
 	}
 }
