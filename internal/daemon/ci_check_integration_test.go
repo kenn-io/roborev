@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -371,4 +372,44 @@ func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	assert.Equal(t, "runtime ready\n", string(output))
+}
+
+func TestCICheckLinkedMiseSandboxIntegration(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	mise, err := exec.LookPath("mise")
+	require.NoError(t, err, "install mise and select an installed Go version globally")
+	versionCmd := exec.CommandContext(t.Context(), mise, "exec", "--", "go", "env", "GOVERSION")
+	versionCmd.Dir = "/"
+	version, err := versionCmd.Output()
+	require.NoError(t, err)
+	// The executable target sits outside the PATH directory and installed tool roots.
+	binary, err := os.ReadFile(mise)
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "mise")
+	require.NoError(t, os.WriteFile(target, binary, 0o700))
+	commands := t.TempDir()
+	require.NoError(t, os.Symlink(target, filepath.Join(commands, "mise")))
+	t.Setenv("PATH", commands+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.CommitFile("mise.toml", fmt.Sprintf("[tools]\ngo = %q\n[env]\nCHECKER_MISE = 'trusted config'\n", strings.TrimPrefix(strings.TrimSpace(string(version)), "go")), "mise fixture")
+	sha := repo.HeadSHA()
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	var preparation bytes.Buffer
+	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, &preparation)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	require.Empty(t, preparation.String())
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	run.Job.Route = sandbox.Route{Name: "test", Upstream: server.URL, Path: "/responses", EnvVar: "TEST_TOKEN", Capture: []string{"/bin/echo", "synthetic-proxy-token"}}
+	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", `cd "$1"; mise exec -- go version`, "mise-probe", run.Repo})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	assert.Contains(t, string(output), "go version "+strings.TrimSpace(string(version)))
 }

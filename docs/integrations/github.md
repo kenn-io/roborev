@@ -847,6 +847,10 @@ The checker discovers the host's globally selected, installed mise tools outside
 the PR checkout. It runs them directly, ahead of mise shims on `PATH`, and can
 read their installation directories, including runtime support files. This
 supports Node, Bun, OpenTofu, Terraform, Python, and other installed mise tools.
+It can also run `mise exec` when the mise executable links outside those
+directories. Mise uses the host's installed tools and saves trust state in the
+disposable checker directory. It reads the repository's mise config without
+loading host or parent checkout config.
 Provision the required versions on the host. Installing project dependencies and
 starting providers or other services remain separate requirements. The checker
 logs failed mise queries and keeps its existing tools.

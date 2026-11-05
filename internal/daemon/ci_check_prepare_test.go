@@ -68,6 +68,10 @@ func TestCICheckPreparation(t *testing.T) {
 	assert.Contains(t, run.Job.ReadPaths, tools)
 	assert.Contains(t, run.Job.ReadPaths, moduleCache)
 	assert.Contains(t, run.Job.ReadPaths, miseTools)
+	mise, err := filepath.EvalSymlinks(filepath.Join(miseShims, "mise"))
+	require.NoError(t, err)
+	assert.Contains(t, run.Job.ReadPaths, mise)
+	assert.Contains(t, run.Job.Env, "MISE_DATA_DIR="+miseTools)
 	assert.Contains(t, run.Job.Env, "PATH="+filepath.Join(tools, "bin")+string(os.PathListSeparator)+filepath.Join(miseTools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	module, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
 	require.NoError(t, err)
@@ -205,8 +209,10 @@ func ciCheckMiseFixture(t *testing.T) (string, string) {
 	selected := filepath.Join(shims, "selected")
 	require.NoError(t, os.Symlink(tools, selected))
 	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
-	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'which codex') [ \"$(pwd -P)\" = '/' ] || exit 4; printf '%%s\\n' '%s';;\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n*) exit 3;;\nesac\n", filepath.Join(bin, "codex"), inventory, filepath.Join(selected, "bin"))
-	require.NoError(t, os.WriteFile(filepath.Join(shims, "mise"), []byte(script), 0o700))
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'which codex') [ \"$(pwd -P)\" = '/' ] || exit 4; printf '%%s\\n' '%s';;\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n'doctor --json') printf '%%s' '{\"dirs\":{\"data\":%q}}';;\n*) exit 3;;\nesac\n", filepath.Join(bin, "codex"), inventory, filepath.Join(selected, "bin"), tools)
+	mise := filepath.Join(t.TempDir(), "mise")
+	require.NoError(t, os.WriteFile(mise, []byte(script), 0o700))
+	require.NoError(t, os.Symlink(mise, filepath.Join(shims, "mise")))
 	t.Setenv("PATH", shims+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return tools, shims
 }
@@ -227,6 +233,7 @@ func TestCICheckMiseDiscovery(t *testing.T) {
 case "$*" in
 'ls --current --installed --json') printf '%%s' '%s';;
 'bin-paths') printf '%%s\n' '%s' '%s'; /bin/rmdir '%s';;
+'doctor --json') printf '%%s' '{"dirs":{"data":"/synthetic/mise"}}'; exit 1;;
 *) exit 3;;
 esac
 `, mixedInventory, removedBin, filepath.Join(selected, "bin"), removedBin)
@@ -247,7 +254,11 @@ esac
 			}
 			t.Setenv("PATH", commands)
 			var log bytes.Buffer
-			roots, bins := ciCheckMisePaths(t.Context(), &log)
+			roots, bins, dataDir := ciCheckMisePaths(t.Context(), &log)
+			if tc.roots != nil {
+				tc.roots = append([]string{filepath.Join(commands, "mise")}, tc.roots...)
+				assert.Equal(t, "/synthetic/mise", dataDir)
+			}
 			assert.Equal(t, tc.roots, roots, log.String())
 			assert.Equal(t, tc.bins, bins, log.String())
 			if tc.message == "" {
