@@ -117,10 +117,6 @@ type Server struct {
 	goalWatchDone           chan struct{}
 	postCommitScheduler     *postCommitScheduler
 	goalGate                *goalGate
-
-	// Cached machine ID to avoid INSERT on every status request
-	machineIDMu sync.Mutex
-	machineID   uuid.UUID
 }
 
 const dailyTelemetryInterval = 24 * time.Hour
@@ -1390,23 +1386,13 @@ func reusableSessionTarget(gitRef string) string {
 	return strings.TrimSpace(gitRef)
 }
 
-// getMachineID returns the cached machine ID, fetching it on first successful call.
-// Retries on each call until successful to handle transient DB errors.
+// getMachineID returns the machine ID, or nil when it is unavailable.
 func (s *Server) getMachineID() *uuid.UUID {
-	s.machineIDMu.Lock()
-	defer s.machineIDMu.Unlock()
-
-	if s.machineID != uuid.Nil() {
-		return &s.machineID
-	}
-
-	if id, err := s.db.GetMachineID(); err == nil && id != uuid.Nil() {
-		s.machineID = id
-	}
-	if s.machineID == uuid.Nil() {
+	id, err := s.db.GetMachineID()
+	if err != nil || id == uuid.Nil() {
 		return nil
 	}
-	return &s.machineID
+	return &id
 }
 
 func jobLogSafeEnd(f *os.File, fileSize int64, jsonl bool) int64 {

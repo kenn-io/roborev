@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -644,73 +643,35 @@ func setJobBranch(t *testing.T, db *storage.DB, jobID int64, branch string) {
 	}
 }
 
-func TestGetMachineID_CachingBehavior(t *testing.T) {
-	t.Run("caches valid machine ID", func(t *testing.T) {
-		server, _, _ := newTestServer(t)
+func TestGetMachineID(t *testing.T) {
+	t.Run("returns database machine ID", func(t *testing.T) {
+		server, db, _ := newTestServer(t)
 
-		// First call should fetch from DB and cache
 		id1 := server.getMachineID()
 		require.NotNil(t, id1, "Expected non-empty machine ID on first call")
-
-		// Second call should return cached value
-		id2 := server.getMachineID()
-		assert.Equal(t, id1, id2)
-
-		// Verify internal state is cached
-		server.machineIDMu.Lock()
-		cachedID := server.machineID
-		server.machineIDMu.Unlock()
-		assert.Equal(t, *id1, cachedID)
+		assert.NotEqual(t, uuid.Nil(), *id1)
+		want, err := db.GetMachineID()
+		require.NoError(t, err)
+		assert.Equal(t, want, *id1)
 	})
 
-	t.Run("error then success caches on success", func(t *testing.T) {
-		// This tests the error→success retry path:
-		// 1. First call fails (DB closed) → returns empty, not cached
-		// 2. DB replaced with working one
-		// 3. Second call succeeds → returns valid ID and caches it
+	t.Run("omits nil UUID", func(t *testing.T) {
+		server, db, _ := newTestServer(t)
+		_, err := db.ExecContext(t.Context(), "UPDATE sync_state SET value = ? WHERE key = ?", uuid.Nil(), storage.SyncStateMachineID)
+		require.NoError(t, err)
 
-		server, db, tmpDir := newTestServer(t)
+		assert.Nil(t, server.getMachineID())
+	})
+
+	t.Run("returns nil on database error", func(t *testing.T) {
+		server, db, _ := newTestServer(t)
 
 		// Close the DB to simulate error condition
-		db.Close()
+		require.NoError(t, db.Close())
 
-		// First call should return empty since DB is closed
+		// The uncached lookup fails because the DB is closed.
 		id1 := server.getMachineID()
 		require.Nil(t, id1, "Expected empty machine ID on error")
-
-		// Verify nothing was cached
-		server.machineIDMu.Lock()
-		if server.machineID != uuid.Nil() {
-			server.machineIDMu.Unlock()
-			require.Condition(t, func() bool {
-				return false
-			}, "Should not cache on error")
-		}
-		server.machineIDMu.Unlock()
-
-		// "Fix" the error by opening a new DB and replacing it
-		newDB, err := storage.Open(filepath.Join(tmpDir, "reviews.db"))
-		if err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "Failed to reopen DB: %v", err)
-		}
-		t.Cleanup(func() { newDB.Close() })
-		server.db = newDB
-
-		// Second call should succeed and cache
-		id2 := server.getMachineID()
-		require.NotNil(t, id2, "Expected non-empty machine ID after DB recovery")
-
-		// Verify it's now cached
-		server.machineIDMu.Lock()
-		cachedID := server.machineID
-		server.machineIDMu.Unlock()
-		assert.Equal(t, *id2, cachedID)
-
-		// Third call should return cached value
-		id3 := server.getMachineID()
-		assert.Equal(t, id2, id3)
 	})
 }
 
