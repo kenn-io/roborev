@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
@@ -574,6 +575,9 @@ func TestStatusLockFailureKeepsLiveness(t *testing.T) {
 			statusEnsureDaemon = func() error {
 				err := ensureDaemon()
 				require.ErrorIs(t, err, errRecoveryLock)
+				var retained *kitdaemon.UnreachableError
+				require.ErrorAs(t, err, &retained)
+				assert.Equal(t, os.Getpid(), retained.Record.PID)
 				return err
 			}
 
@@ -594,15 +598,20 @@ func TestStatusLockFailureKeepsLiveness(t *testing.T) {
 
 func TestStatusRediscoverManagedRecoveryFailure(t *testing.T) {
 	stubServiceRecovery(t)
+	original := &daemon.RuntimeInfo{PID: exitedDaemonPID(t)}
+	cause := errors.New("service lookup failed")
 	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-		return nil, &managedRecoveryError{"fixture.service", errors.New("service lookup failed")}
+		return nil, &managedRecoveryError{"fixture.service", cause}
 	}
 	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
 	oldEnsure := statusEnsureDaemon
 	t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
 	statusEnsureDaemon = func() error {
-		return recoverDaemon(&daemon.RuntimeInfo{PID: os.Getpid()}, nil, false)
+		err := recoverDaemon(original, nil, false)
+		require.ErrorIs(t, err, cause)
+		require.ErrorContains(t, err, "rediscover daemon: ")
+		return err
 	}
 	for _, jsonOutput := range []bool{false, true} {
 		cmd := statusCmd()
@@ -722,6 +731,7 @@ func TestStatusRecoveryErrorClassification(t *testing.T) {
 			stubServiceRecovery(t)
 			original := &daemon.RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: "127.0.0.1:1", Version: "v-old"}
 			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+			probes, starts := 0, 0
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
 				if errors.Is(tc.err, daemon.ErrClientConfig) {
 					return nil, tc.err
@@ -732,16 +742,21 @@ func TestStatusRecoveryErrorClassification(t *testing.T) {
 				return original, nil
 			}
 			probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+				probes++
 				assert.Equal(t, original.Endpoint(), ep)
 				return nil, tc.err
 			}
 			oldList := listAllRuntimes
 			t.Cleanup(func() { listAllRuntimes = oldList })
 			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return nil, nil }
-			startDaemonForEnsure = func() error { return tc.err }
+			startDaemonForEnsure = func() error { starts++; return tc.err }
 			oldEnsure := statusEnsureDaemon
 			t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
-			statusEnsureDaemon = func() error { return recoverDaemon(original, errors.New("initial probe failed"), true) }
+			statusEnsureDaemon = func() error {
+				err := recoverDaemon(original, errors.New("initial probe failed"), true)
+				require.ErrorIs(t, err, tc.err)
+				return err
+			}
 			for _, jsonOutput := range []bool{false, true} {
 				cmd := statusCmd()
 				if jsonOutput {
@@ -769,6 +784,17 @@ func TestStatusRecoveryErrorClassification(t *testing.T) {
 					assert.Contains(t, output, "allow loopback or Unix socket access and retry")
 				}
 			}
+			switch {
+			case errors.Is(tc.err, daemon.ErrClientConfig):
+				assert.Zero(t, probes)
+				assert.Zero(t, starts)
+			case tc.detached:
+				assert.Zero(t, probes)
+				assert.Equal(t, 2, starts)
+			default:
+				assert.Equal(t, 2, probes)
+				assert.Zero(t, starts)
+			}
 		})
 	}
 }
@@ -780,6 +806,7 @@ func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
 				isolateDaemonSelection(t)
 				stubServiceRecovery(t)
 				original := &daemon.RuntimeInfo{PID: os.Getpid()}
+				ownershipErr := errors.New("ownership unavailable")
 				serviceType := "notify"
 				if exited {
 					original.PID = exitedDaemonPID(t)
@@ -789,7 +816,7 @@ func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
 				require.NoError(t, err)
 				findDaemonService = func(context.Context, int) (*daemonService, error) {
 					if ownershipFailure {
-						return nil, errors.New("ownership unavailable")
+						return nil, ownershipErr
 					}
 					return &daemonService{unit: "fixture.service", mainPID: original.PID, executable: binary, serviceType: serviceType}, nil
 				}
@@ -798,6 +825,13 @@ func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
 				t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
 				err = recoverDaemon(original, errors.New("HTTP unavailable"), false)
 				require.Error(t, err)
+				if ownershipFailure {
+					require.ErrorIs(t, err, ownershipErr)
+				} else if exited {
+					require.ErrorContains(t, err, "unsupported service Type=forking")
+				} else {
+					require.ErrorContains(t, err, "daemon is unresponsive: HTTP unavailable")
+				}
 				statusEnsureDaemon = func() error { return err }
 				withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
 				cmd := statusCmd()

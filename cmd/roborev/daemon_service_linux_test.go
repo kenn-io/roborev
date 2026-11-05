@@ -61,7 +61,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "unreadable"},
 		{outcome: "uncertain failed", probeErr: probeErr, wantError: "properties unavailable"},
 		{outcome: "start failure", wantError: "start rejected", stops: 1, starts: 1},
-		{outcome: "drain failure", live: true, failDiscovery: true, wantError: "drain rejected; run systemctl --user restart fixture.service", stops: 1},
+		{outcome: "drain failure", wantError: "drain rejected; run systemctl --user restart fixture.service", stops: 1},
 		{outcome: "wrong PID", wantError: "replacement is outside service", stops: 1, starts: 1},
 		{outcome: "readiness failure", wantError: "replacement readiness", stops: 1, starts: 1},
 	} {
@@ -69,14 +69,10 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			stubServiceRecovery(t)
 			var progress bytes.Buffer
 			lifecycleOut, verbose = &progress, false
-			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
-			if tc.live {
-				original.PID = os.Getpid()
-			} else {
+			original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
+			if tc.probeErr != nil && !tc.queueCommand && !tc.recheckCurrent && !tc.live {
+				// Failed discovery must describe an exited process before recovery may replace it.
 				original.PID = exitedDaemonPID(t)
-			}
-			if tc.outcome == "drain failure" {
-				original.Version = "v-old"
 			}
 			var events []string
 			if tc.queueCommand {
@@ -215,7 +211,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			if tc.queueCommand {
 				var want []string
-				if tc.paused && !tc.live {
+				if tc.paused && !tc.reprobeFails {
 					want = append(want, "/api/queue/pause")
 				}
 				if tc.stops != 0 {

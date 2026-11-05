@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 )
@@ -26,7 +27,14 @@ func assertSuspendedManagedDaemon(t *testing.T, original *daemon.RuntimeInfo, un
 	detached := 0
 	startDaemonForEnsure = func() error { detached++; return nil }
 	require.ErrorContains(t, ensureDaemon(), "daemon is unresponsive")
-	statusEnsureDaemon = ensureDaemon
+	statusEnsureDaemon = func() error {
+		err := ensureDaemon()
+		require.ErrorContains(t, err, "daemon is unresponsive")
+		var retained *kitdaemon.UnreachableError
+		require.ErrorAs(t, err, &retained)
+		assert.Equal(t, original.PID, retained.Record.PID)
+		return err
+	}
 	cmd := statusCmd()
 	cmd.SetArgs([]string{"--json"})
 	output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
