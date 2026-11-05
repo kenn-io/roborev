@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -95,6 +96,59 @@ func TestClaimSetupFinishedRequiresReadableReview(t *testing.T) {
 	}
 }
 
+func TestClaimSetupFinishedQueuedWriter(t *testing.T) {
+	t.Parallel()
+	for _, canceled := range []bool{false, true} {
+		name := "budget"
+		if canceled {
+			name = "cancellation"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				db := openTestDB(t)
+				defer db.Close()
+				repoID, commitID := seedSearchFeedBase(t, db)
+				seedSearchFeedReview(t, db, repoID, commitID, 1, searchFeedFixture{jobType: JobTypeReview, status: JobStatusDone, output: "Review"})
+				writer, err := db.BeginTx(t.Context(), nil)
+				require.NoError(t, err)
+				defer func() { _ = writer.Rollback() }()
+				_, err = writer.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
+				require.NoError(t, err)
+
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				start := time.Now()
+				go func() {
+					claim, err := db.ClaimSetupFinished(ctx)
+					assert.Equal(t, SetupFinishedIneligible, claim)
+					done <- err
+				}()
+				synctest.Wait()
+				if canceled {
+					cancel()
+				}
+				err = <-done
+				if canceled {
+					require.ErrorIs(t, err, context.Canceled)
+					assert.Equal(t, time.Duration(0), time.Since(start))
+				} else {
+					require.Error(t, err)
+					assert.True(t, IsSQLiteBusy(err), "claim contention must be retryable: %v", err)
+					assert.Equal(t, 50*time.Millisecond, time.Since(start))
+				}
+				marker, err := db.GetSyncState(SyncStateSetupFinished)
+				require.NoError(t, err)
+				assert.Empty(t, marker)
+				require.NoError(t, writer.Rollback())
+				claim, err := db.ClaimSetupFinished(t.Context())
+				require.NoError(t, err)
+				assert.Equal(t, SetupFinishedNewClaim, claim)
+			})
+		})
+	}
+}
+
 type cancelSetupClaimConnector struct {
 	driver driver.Driver
 	dsn    string
@@ -118,7 +172,7 @@ type cancelSetupClaimConn struct {
 
 func (c *cancelSetupClaimConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	result, err := c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
-	if err == nil && len(args) == 1 && args[0].Value == SyncStateSetupFinished {
+	if err == nil && query == "COMMIT" {
 		// Cancel after SQLite commits, before the driver reports its result.
 		c.cancel()
 		if ctx.Err() != nil {
