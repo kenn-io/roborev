@@ -641,6 +641,10 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		// Propagate other errors (permission, IO, etc.)
 		return fmt.Errorf("failed to list daemon runtimes: %w", err)
 	}
+	return stopDaemonSnapshot(runtimes, drain, out)
+}
+
+func stopDaemonSnapshot(runtimes []*daemon.RuntimeInfo, drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
 	if len(runtimes) == 0 {
 		return ErrDaemonNotRunning
 	}

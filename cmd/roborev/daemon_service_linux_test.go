@@ -245,10 +245,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				assert.Contains(t, progress.String(), "systemctl --user restart fixture.service")
 			}
 			assert.Zero(t, detached)
-			release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-			require.NoError(t, err)
-			require.True(t, acquired, "recovery must release the start lock on every outcome")
-			release()
+			assertRecoveryLock(t, true)
 		})
 	}
 }
@@ -466,4 +463,34 @@ func TestUserServiceCommandsNeverRestart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5678, mainPID)
 	assert.Equal(t, [][]string{{"start", "--", "fixture.service"}, {"show", "--property=MainPID", "--", "fixture.service"}}, *calls)
+}
+
+func TestSystemdRestartKeepsDetachedWorkflow(t *testing.T) {
+	stubServiceRecovery(t)
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: os.Getpid()}}, nil
+	}
+	lookups, starts := 0, 0
+	findDaemonService = func(context.Context, int) (*daemonService, error) {
+		lookups++
+		return &daemonService{unit: "fixture.service", serviceType: "exec", mainPID: os.Getpid()}, nil
+	}
+	startDaemonService = func(context.Context, string) error {
+		starts++
+		return nil
+	}
+	var calls []string
+	withDaemonCommandDependencies(t,
+		func() error { calls = append(calls, "ensure"); return nil },
+		func() error { calls = append(calls, "stop"); return nil },
+		func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+	)
+	cmd := daemonCmd()
+	cmd.SetArgs([]string{"restart"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	assert.Equal(t, []string{"stop", "ensure"}, calls)
+	assert.Zero(t, lookups)
+	assert.Zero(t, starts)
 }

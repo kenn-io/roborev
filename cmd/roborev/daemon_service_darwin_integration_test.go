@@ -64,12 +64,21 @@ func TestLaunchctlCLIRecoveryIntegration(t *testing.T) {
 			require.NoError(t, os.WriteFile(plistPath, []byte(plist), 0o600))
 			t.Cleanup(func() {
 				ctx := context.WithoutCancel(t.Context())
-				_, err := runLaunchctl(ctx, "bootout", unit)
+				runtimes, err := daemon.ListAllRuntimes()
 				check.NoError(err)
-				// A wrapper child can outlive bootout; stop only our isolated daemon.
-				if info, err := daemon.GetAnyRunningDaemonContext(ctx); err == nil {
-					check.NoError(daemon.KillDaemon(info))
-				}
+				_, err = runLaunchctl(ctx, "bootout", unit)
+				check.NoError(err)
+				// launchd stops the job's process group, including wrapper children.
+				// Wait for those subprocesses without probing their closing HTTP servers.
+				// Allow launchd's default 20-second ExitTimeOut plus time to reap them.
+				check.Eventually(func() bool {
+					for _, info := range runtimes {
+						if daemon.ProcessExists(info.PID) {
+							return false
+						}
+					}
+					return true
+				}, 30*time.Second, 50*time.Millisecond, "launchd did not stop its test daemons")
 			})
 			_, err := runLaunchctl(t.Context(), "bootstrap", domain, plistPath)
 			require.NoError(t, err)
@@ -122,6 +131,33 @@ func TestLaunchctlCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, err)
 				check.Len(runtimes, 1)
 			}
+			previousPID := replacement.PID
+			withDaemonCommandDependencies(t,
+				func() error { detached++; return nil }, daemonStop,
+				func() (*daemon.RuntimeInfo, error) { return daemon.GetAnyRunningDaemonContext(t.Context()) },
+			)
+			cmd := daemonCmd()
+			cmd.SetArgs([]string{"restart"})
+			err = cmd.ExecuteContext(t.Context())
+			if wrapper {
+				require.ErrorContains(t, err, "child process")
+			} else {
+				require.NoError(t, err)
+			}
+			replacement, err = daemon.GetAnyRunningDaemonContext(t.Context())
+			require.NoError(t, err)
+			if wrapper {
+				check.Equal(previousPID, replacement.PID)
+			} else {
+				check.NotEqual(previousPID, replacement.PID)
+				pid, err := userServiceMainPID(t.Context(), unit)
+				require.NoError(t, err)
+				check.Equal(replacement.PID, pid)
+				runtimes, err := daemon.ListJudgedRuntimes()
+				require.NoError(t, err)
+				check.Len(runtimes, 1)
+			}
+			check.Zero(detached)
 		})
 	}
 }

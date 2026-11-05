@@ -1405,7 +1405,8 @@ pausing the whole queue.
 
 Daemon shutdown also stops workers from claiming new jobs. If work is active,
 restart reports that it is waiting, lets running jobs and worker finalization
-finish without a timeout, and only then starts the replacement daemon.
+finish without a timeout, and only then starts the replacement daemon. On macOS,
+`daemon restart` restarts an owned daemon through its LaunchAgent.
 
 !!! tip "Broken post-commit hook?"
 
@@ -1661,6 +1662,13 @@ The updater coordinates daemon replacement with the review queue:
     `--yes` defaults to `wait`.
 - `--no-restart` skips daemon preparation, restart, hook repair, and skill
     updates.
+
+On macOS, `update` restarts an owned daemon through its LaunchAgent. When the
+daemon is running at the start, an ownership failure stops the update before
+installation; use `--no-restart` to install without restarting it. A daemon that
+appears during installation is checked afterward. If that ownership check fails,
+the update reports that the binary is installed and instructs you to restart the
+daemon through its job.
 
 When an interactive update finds active reviews, it asks once:
 

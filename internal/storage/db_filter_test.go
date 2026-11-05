@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -377,6 +378,12 @@ func TestListJobsWithRepoPaths(t *testing.T) {
 	outOfScope, err := db.CountJobStats("", "", WithRepoPaths([]string{repo3.RootPath}))
 	require.NoError(t, err)
 	assert.Equal(0, outOfScope.Done, "repo1's done job excluded when only repo3 is in scope")
+
+	// An explicitly empty ID set must exclude even a matching closed review.
+	require.NoError(t, db.MarkReviewClosedByJobID(claimed.ID, true))
+	jobs, err = db.ListJobs("", "", 2, 0, WithClosed(true), WithoutPrompt(), WithRepoIDs(nil))
+	require.NoError(t, err)
+	assert.Empty(jobs)
 }
 
 func TestListJobsWithGitRefFilter(t *testing.T) {
@@ -1351,6 +1358,8 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 				extra  []ListJobsOption
 			}{
 				{"first page", "idx_review_jobs_enqueued_position", "", nil},
+				{"TUI branch filter", "idx_review_jobs_branch_position", "", []ListJobsOption{WithBranch("main"), WithExcludeJobType("fix"), WithFindingCounts()}},
+				{"closed filter", "idx_review_jobs_closed_position", "", []ListJobsOption{WithClosed(true)}},
 				{"done first page", "idx_review_jobs_enqueued_position", "done", nil},
 				{"done ascending", "idx_review_jobs_enqueued_position", "done", []ListJobsOption{WithSort(JobSort{Column: JobSortEnqueuedAt, Ascending: true})}},
 				{"failed first page", "idx_review_jobs_status", "failed", nil},
@@ -1372,6 +1381,102 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 						assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestListJobsSparseClosedIDPages(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	seedJobs(t, db, "/synthetic/repo", 1000)
+	_, err := db.ExecContext(t.Context(), `
+		UPDATE review_jobs SET status = 'done';
+		INSERT INTO reviews (job_id, agent, output, closed)
+		SELECT id, 'test', '', id <= 3 FROM review_jobs
+	`)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name      string
+		ascending bool
+		first     []int64
+		resumed   []int64
+	}{
+		{"descending", false, []int64{3, 2}, []int64{1}},
+		{"ascending", true, []int64{1, 2}, []int64{3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			opts := []ListJobsOption{WithClosed(true), WithSort(JobSort{Column: JobSortID, Ascending: tc.ascending})}
+			for _, want := range [][]int64{tc.first, tc.resumed} {
+				query, args, _, err := listJobsQuery("", "", 2, 0, collectListJobsOptions(opts...))
+				require.NoError(t, err)
+				plan := queryPlan(t, db, query, args...)
+				assert.Contains(plan, "SEARCH rv USING INDEX idx_reviews_closed (closed=?)")
+				assert.Contains(plan, "SEARCH j USING INTEGER PRIMARY KEY (rowid=?)")
+
+				page, err := db.ListJobs("", "", 2, 0, opts...)
+				require.NoError(t, err)
+				assert.Equal(want, jobIDs(page))
+				require.NotEmpty(t, page)
+				cursor := page[len(page)-1]
+				opts = append(opts, WithSortAfter(JobSortPosition{Keys: cursor.SortKey, JobID: cursor.ID}))
+			}
+		})
+	}
+}
+
+func TestListJobsClosedPages(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo, _ := seedJobs(t, db, "/tmp/closed-page/repo", 76)
+	seedJobs(t, db, "/tmp/other-closed-page-repo", 4)
+	seedJobs(t, db, "/tmp/excluded-closed-page-repo", 4)
+	_, err := db.ExecContext(t.Context(), `
+		UPDATE review_jobs SET status = 'done', branch = CASE WHEN id >= 77 THEN '' ELSE 'main' END,
+			enqueued_at = datetime('2026-01-01', '+' || id || ' minutes');
+		INSERT INTO reviews (job_id, agent, output, structured_output, closed, verdict_bool)
+		SELECT id, 'test', '', CASE WHEN id >= 77 THEN ? ELSE ? END, 0, id >= 77 FROM review_jobs
+	`, string(reviewFixtureJSON("PASS")), string(reviewFixtureJSON("- Medium: synthetic defect")))
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name    string
+		limit   int
+		closed  string
+		repo    string
+		first   []int64
+		resumed []int64
+		opts    []ListJobsOption
+	}{
+		{"empty", 2, "0", "", []int64{}, []int64{}, nil},
+		{"sparse newest", 2, "job_id BETWEEN 78 AND 80", "", []int64{80, 79}, []int64{78}, nil},
+		{"oldest", 2, "job_id <= 40", "", []int64{40, 39}, []int64{38, 37}, nil},
+		{"repo filtered mix", 2, "job_id <= 41 OR job_id >= 77", repo.RootPath, []int64{41, 40}, []int64{39, 38}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			_, err := db.ExecContext(t.Context(), `UPDATE reviews SET closed = (`+test.closed+`)`)
+			require.NoError(t, err)
+
+			opts := append([]ListJobsOption{WithClosed(true), WithoutPrompt()}, test.opts...)
+			page, err := db.ListJobs("", test.repo, test.limit, 0, opts...)
+			require.NoError(t, err)
+			assert.Equal(test.first, jobIDs(page))
+			if len(page) == 0 {
+				return
+			}
+			cursor := page[len(page)-1]
+			for _, resume := range []ListJobsOption{
+				WithBeforeCursor(cursor.ID),
+				WithSortAfter(JobSortPosition{Keys: cursor.SortKey, JobID: cursor.ID}),
+			} {
+				page, err = db.ListJobs("", test.repo, test.limit, 0, append(opts, resume)...)
+				require.NoError(t, err)
+				assert.Equal(test.resumed, jobIDs(page))
 			}
 		})
 	}
@@ -1490,4 +1595,110 @@ func TestListJobsDoesNotParseMarkdownWhenVerdictBoolNull(t *testing.T) {
 
 	require.Len(t, jobs, 1)
 	assert.Nil(t, jobs[0].Verdict)
+}
+
+func TestListJobsClosedFlagUpkeep(t *testing.T) {
+	t.Parallel()
+	for _, schema := range []struct {
+		name string
+		open func(*testing.T) *DB
+	}{
+		{"fresh schema", func(t *testing.T) *DB {
+			db := openTestDB(t)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			return db
+		}},
+		{"migrated legacy schema", func(t *testing.T) *DB {
+			return prepareMigratedDB(t, "closed-upkeep-legacy.db", legacyReviewJobSchema, legacyReviewJobSeed)
+		}},
+	} {
+		t.Run(schema.name, func(t *testing.T) {
+			db := schema.open(t)
+			_, jobs := seedJobs(t, db, "/tmp/closed-upkeep", 1)
+			job := jobs[0]
+			setStatus(t, db, job.ID, JobStatusDone)
+			for _, operation := range []struct {
+				name  string
+				apply func() error
+				want  int
+			}{
+				{"sync closed review", func() error {
+					return db.UpsertPulledReview(PulledReview{
+						UUID: uuid.New(), JobUUID: *job.UUID, Agent: "test", Closed: true, StructuredOutput: reviewFixtureJSON("PASS"),
+						JobEnqueuedAt: storedJobEnqueuedAt(t, db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, db, job.ID),
+						CreatedAt: time.Now(), UpdatedAt: time.Now(), UpdatedByMachineID: uuid.New(),
+					})
+				}, 1},
+				{"reopen", func() error { return db.MarkReviewClosedByJobID(job.ID, false) }, 0},
+				{"close", func() error { return db.MarkReviewClosedByJobID(job.ID, true) }, 1},
+				{"rerun", func() error { return db.ReenqueueJob(job.ID, ReenqueueOpts{}) }, 0},
+			} {
+				t.Run(operation.name, func(t *testing.T) {
+					require.NoError(t, operation.apply())
+					var flag int
+					require.NoError(t, db.QueryRowContext(t.Context(), `SELECT review_closed FROM review_jobs WHERE id = ?`, job.ID).Scan(&flag))
+					assert.Equal(t, operation.want, flag)
+				})
+			}
+		})
+	}
+}
+
+func TestListJobsClosedPagePlans(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, _ := seedJobs(t, db, "/synthetic/repo", 2)
+	otherRepo, _ := seedJobs(t, db, "/synthetic/rare", 2)
+	panelRun := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	_, err := db.ExecContext(t.Context(), `
+		UPDATE review_jobs SET status = 'done', git_ref = 'selected',
+			finished_at = '2026-02-01 00:00:00', panel_run_uuid = ? WHERE id = 1;
+		INSERT INTO reviews(job_id, agent, output, structured_output, closed, verdict_bool)
+		VALUES (1, 'test', '', ?, 1, 0);
+	`, panelRun, string(reviewFixtureJSON("- Medium: synthetic defect")))
+	require.NoError(t, err)
+	for _, filter := range []struct {
+		name, status, repo, index string
+		opts                      []ListJobsOption
+		allowSort                 bool
+	}{
+		{name: "done closed", status: "done", index: "idx_review_jobs_closed_position"},
+		{name: "queued closed", status: "queued", index: "idx_review_jobs_status", allowSort: true},
+		{name: "repo prefix closed", opts: []ListJobsOption{WithRepoPrefix("/synthetic")}, index: "idx_review_jobs_closed_position"},
+		{name: "unset branch closed", opts: []ListJobsOption{WithEmptyBranch()}, index: "idx_review_jobs_closed_position"},
+		{name: "branch including empty closed", opts: []ListJobsOption{WithBranchOrEmpty("main")}, index: "idx_review_jobs_closed_position"},
+		{name: "repo closed", repo: "/synthetic/rare", index: "idx_review_jobs_repo_enqueued"},
+		{name: "branch closed", opts: []ListJobsOption{WithBranch("rare")}, index: "idx_review_jobs_branch_position"},
+		{name: "repo branch closed", repo: "/synthetic/rare", opts: []ListJobsOption{WithBranch("rare")}, index: "idx_review_jobs_repo_enqueued"},
+		{name: "multiple repo paths", opts: []ListJobsOption{WithRepoPaths([]string{repo.RootPath, otherRepo.RootPath})}, index: "idx_review_jobs_closed_position"},
+		{name: "multiple repo IDs", opts: []ListJobsOption{WithRepoIDs([]int64{repo.ID, otherRepo.ID})}, index: "idx_review_jobs_closed_position"},
+		{name: "single repo path", opts: []ListJobsOption{WithRepoPaths([]string{repo.RootPath})}, index: "idx_review_jobs_repo_enqueued"},
+		{name: "single repo ID", opts: []ListJobsOption{WithRepoIDs([]int64{repo.ID})}, index: "idx_review_jobs_repo_enqueued"},
+		{name: "ref", index: "idx_review_jobs_git_ref", opts: []ListJobsOption{WithGitRef("selected")}, allowSort: true},
+		{name: "panel", index: "idx_review_jobs_panel", opts: []ListJobsOption{WithPanelRun(panelRun)}, allowSort: true},
+	} {
+		t.Run(filter.name, func(t *testing.T) {
+			opts := append([]ListJobsOption{WithClosed(true), WithoutPrompt()}, filter.opts...)
+			for _, position := range []*JobSortPosition{
+				nil,
+				{Keys: []any{"2026-01-01 00:00:00"}, JobID: 3},
+			} {
+				pageOpts := opts
+				if position != nil {
+					pageOpts = append(pageOpts, WithSortAfter(*position))
+				}
+				query, args, _, err := listJobsQuery(filter.status, filter.repo, 2, 0, collectListJobsOptions(pageOpts...))
+				require.NoError(t, err)
+				plan := queryPlan(t, db, query, args...)
+				assert.Contains(t, plan, "USING INDEX "+filter.index)
+				if filter.index != "idx_review_jobs_closed_position" {
+					assert.Contains(t, plan, "SEARCH j USING INDEX")
+				}
+				if !filter.allowSort {
+					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+				}
+			}
+		})
+	}
 }

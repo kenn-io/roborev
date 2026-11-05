@@ -1961,6 +1961,16 @@ type listJobsOptions struct {
 	failedReviewsSince *time.Time
 }
 
+// selective reports whether a filter can seek jobs through its own index
+// instead of walking every closed job in enqueue order.
+func (o listJobsOptions) selective(statusFilter, repoFilter string) bool {
+	// Repository sets, prefixes, and branch disjunctions cannot read one index
+	// range in enqueue order, so closed pages need the closed-position index.
+	// Done status does not narrow closed reviews, which belong to done jobs.
+	return (statusFilter != "" && statusFilter != string(JobStatusDone)) || repoFilter != "" || len(o.repoPaths) == 1 || len(o.repoIDs) == 1 ||
+		(o.branch != "" && !o.branchEmpty && !o.branchIncludeEmpty) || o.gitRef != "" || o.panelRun != uuid.Nil()
+}
+
 // WithFailedReviewsSince selects completed review, range, dirty, or synthesis
 // jobs with a failed verdict, finished at or after since at millisecond resolution.
 // Done jobs without a finish time are excluded.
@@ -2308,8 +2318,16 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	for i, expr := range sortKeys {
 		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
 	}
+	enqueueOrder := options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt
+	queryFilters, filterArgs := buildJobFilterClause(statusFilter, repoFilter, options, enqueueOrder)
 	jobsTable := "review_jobs j"
-	if options.openFailedReviews {
+	if options.closed != nil && *options.closed && (options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt) &&
+		!options.selective(statusFilter, repoFilter) {
+		// Closed-position pages skip open history. Selectively filtered pages keep
+		// their own repo, branch, ref, panel, status, or finished-time index.
+		jobsTable += " INDEXED BY idx_review_jobs_closed_position"
+		queryFilters += " AND j.review_closed = 1"
+	} else if options.openFailedReviews {
 		// Without statistics, SQLite otherwise scans the repo's job index.
 		// NOT INDEXED keeps rowid lookups driven by the failed-review IN list.
 		jobsTable += " NOT INDEXED"
@@ -2331,8 +2349,6 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 		LEFT JOIN job_content jc ON jc.job_id = j.id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	enqueueOrder := options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt
-	queryFilters, filterArgs := buildJobFilterClause(statusFilter, repoFilter, options, enqueueOrder)
 	args := append(slices.Clone(sortKeyArgs), filterArgs...)
 	query += queryFilters
 

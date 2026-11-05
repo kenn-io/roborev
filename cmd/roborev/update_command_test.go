@@ -230,7 +230,7 @@ func TestUpdateCommandReportsRunningReviewWait(t *testing.T) {
 		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		context.Context, string, string, *daemon.RuntimeInfo,
+		context.Context, string, string, *daemon.RuntimeInfo, *daemonService,
 	) error {
 		return nil
 	}
@@ -259,7 +259,7 @@ func TestUpdateCommandCoordinatesDaemonThatAppearsBeforeInstall(t *testing.T) {
 		return runtimeInfo, nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo,
+		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo, _ *daemonService,
 	) error {
 		restartCalls.Add(1)
 		assert.Same(t, runtimeInfo, previous)
@@ -277,6 +277,8 @@ func TestUpdateCommandCoordinatesDaemonThatAppearsBeforeInstall(t *testing.T) {
 
 func TestUpdateCommandCoordinatesDaemonThatAppearsAfterInstall(t *testing.T) {
 	stubUpdateCommand(t)
+	stubServiceRecovery(t)
+	restartThroughService = false
 	var discoveries atomic.Int32
 	var prepareCalls atomic.Int32
 	var restartCalls atomic.Int32
@@ -289,10 +291,11 @@ func TestUpdateCommandCoordinatesDaemonThatAppearsAfterInstall(t *testing.T) {
 		return runtimeInfo, nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo,
+		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo, owner *daemonService,
 	) error {
 		restartCalls.Add(1)
 		assert.Same(t, runtimeInfo, previous)
+		assert.Nil(t, owner)
 		return nil
 	}
 	cmd := updateCmd()
@@ -300,7 +303,7 @@ func TestUpdateCommandCoordinatesDaemonThatAppearsAfterInstall(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"--yes"})
 
-	require.NoError(t, cmd.Execute())
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
 	assert.Equal(t, int32(1), prepareCalls.Load())
 	assert.Equal(t, int32(1), restartCalls.Load())
 }
@@ -396,7 +399,7 @@ func TestUpdateCommandCancelAfterShutdownReportsFinishingState(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	restartUpdatedDaemonForCommand = func(
-		context.Context, string, string, *daemon.RuntimeInfo,
+		context.Context, string, string, *daemon.RuntimeInfo, *daemonService,
 	) error {
 		cancel()
 		return context.Canceled
@@ -424,7 +427,7 @@ func TestUpdateCommandRestartVerificationFailureSuppressesSuccess(t *testing.T) 
 		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		context.Context, string, string, *daemon.RuntimeInfo,
+		context.Context, string, string, *daemon.RuntimeInfo, *daemonService,
 	) error {
 		return errors.New("daemon version mismatch")
 	}
@@ -466,7 +469,7 @@ func TestUpdateCommandLegacyWaitStillVerifiesReplacement(t *testing.T) {
 		return nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		_ context.Context, _ string, version string, previous *daemon.RuntimeInfo,
+		_ context.Context, _ string, version string, previous *daemon.RuntimeInfo, _ *daemonService,
 	) error {
 		restartCalls.Add(1)
 		assert.Equal(t, info.LatestVersion, version)
@@ -666,4 +669,166 @@ func updateDaemonHandler(
 func readRequestBody(r *http.Request) string {
 	body, _ := io.ReadAll(r.Body)
 	return string(body)
+}
+
+func TestUpdateCommandThroughLaunchdJob(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		refused, appeared bool
+	}{
+		{name: "owned"},
+		{name: "ownership error", refused: true},
+		{name: "appeared after install", appeared: true},
+		{name: "ownership error after install", appeared: true, refused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubServiceRecovery(t)
+			stubUpdateCommand(t)
+			restartThroughService = true
+			owner := ownedDaemonService(t)
+			binDir := t.TempDir()
+			binary := updatedRoborevBinary(binDir)
+			require.NoError(t, os.WriteFile(binary, nil, 0o600))
+			var prepareCalls atomic.Int32
+			endpoint := updateTestEndpoint(t, updateDaemonHandler(0, &prepareCalls, nil, nil))
+			repairHooksForUpdateCommand = func(context.Context, string, repairHookRunner) error {
+				assertRecoveryLock(t, true)
+				return nil
+			}
+			installed, restarted := false, false
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				if tc.appeared && !installed {
+					return nil, os.ErrNotExist
+				}
+				return &daemon.RuntimeInfo{PID: os.Getpid(), Network: endpoint.Network, Address: endpoint.Address}, nil
+			}
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+				assertRecoveryLock(t, false)
+				assert.Equal(t, os.Getpid(), pid)
+				if tc.refused {
+					return nil, errors.New("job unreadable")
+				}
+				return owner, nil
+			}
+			performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+				installed = true
+				if tc.appeared {
+					owner.executable = binary
+				}
+				return nil
+			}
+			restartUpdatedDaemonForCommand = func(_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo, got *daemonService) error {
+				assert.Equal(t, os.Getpid(), previous.PID)
+				assertRecoveryLock(t, false)
+				assert.Same(t, owner, got)
+				restarted = true
+				return nil
+			}
+			var out bytes.Buffer
+			err := runControlledUpdate(t.Context(), strings.NewReader(""), &out, &update.UpdateInfo{LatestVersion: "v1.1.0"}, binDir, policyWait, true, false)
+			assertRecoveryLock(t, true)
+			if tc.refused {
+				if tc.appeared {
+					require.ErrorContains(t, err, "binary installed")
+					assert.NotContains(t, err.Error(), "before install")
+				} else {
+					require.ErrorContains(t, err, "update stopped before install")
+					assert.Contains(t, err.Error(), "--no-restart")
+				}
+				assert.Zero(t, prepareCalls.Load())
+				assert.Equal(t, tc.appeared, installed)
+				assert.False(t, restarted)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, int32(1), prepareCalls.Load())
+				assert.True(t, restarted)
+			}
+		})
+	}
+}
+
+func TestUpdateRediscoverAfterConfirmation(t *testing.T) {
+	stubServiceRecovery(t)
+	info := stubUpdateCommand(t)
+	restartThroughService = true
+	owner := ownedDaemonService(t)
+	var shutdowns atomic.Int32
+	endpoint := updateTestEndpoint(t, updateDaemonHandler(0, nil, nil, &shutdowns))
+	previous := &daemon.RuntimeInfo{PID: 1 << 30, Network: endpoint.Network, Address: endpoint.Address}
+	current := &daemon.RuntimeInfo{PID: os.Getpid(), Network: endpoint.Network, Address: endpoint.Address}
+	discoveries := 0
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		discoveries++
+		if discoveries == 1 {
+			return previous, nil
+		}
+		return current, nil
+	}
+	lookups := 0
+	findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+		assert.Equal(t, current.PID, pid)
+		lookups++
+		return owner, nil
+	}
+	restarts := 0
+	restartUpdatedDaemonForCommand = func(_ context.Context, _, _ string, got *daemon.RuntimeInfo, service *daemonService) error {
+		assert.Same(t, current, got)
+		assert.Same(t, owner, service)
+		restarts++
+		return nil
+	}
+	var out bytes.Buffer
+	err := runControlledUpdate(t.Context(), strings.NewReader("y\n"), &out, info, t.TempDir(), policyWait, false, false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, lookups)
+	assert.Equal(t, 1, restarts)
+	assert.Equal(t, int32(1), shutdowns.Load())
+}
+
+func TestUpdateCancellationWhileWaitingForRecovery(t *testing.T) {
+	stubServiceRecovery(t)
+	info := stubUpdateCommand(t)
+	restartThroughService = true
+	endpoint := updateTestEndpoint(t, updateDaemonHandler(0, nil, nil, nil))
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{PID: os.Getpid(), Network: endpoint.Network, Address: endpoint.Address}, nil
+	}
+	release, err := daemon.RuntimeStore().AcquireStartLock(t.Context())
+	require.NoError(t, err)
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	lifecycleOut = streamOutputFunc(func(p []byte) (int, error) {
+		if bytes.Contains(p, []byte("Waiting for daemon recovery lock")) {
+			cancel()
+		}
+		return len(p), nil
+	})
+	installs := 0
+	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+		installs++
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- runControlledUpdate(ctx, strings.NewReader(""), io.Discard, info, "", policyWait, true, false)
+	}()
+	// The file lock waits outside synctest's scheduler. Release it on failure
+	// and join the command so the test leaves no goroutine behind.
+	interrupted := false
+	select {
+	case err = <-done:
+		interrupted = true
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		release()
+		release = nil
+		<-done
+	}
+	assert.True(t, interrupted, "update must return on cancellation while the recovery lock is held")
+	assert.Zero(t, installs)
 }

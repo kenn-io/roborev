@@ -40,6 +40,11 @@ func TestJobStatsQueryReadsMetadataIndexes(t *testing.T) {
 					assert.Contains(t, plan, "rv USING COVERING INDEX", "queue counts must skip review payloads")
 					if tc.status != "" {
 						assert.Contains(t, plan, "SEARCH j USING COVERING INDEX idx_review_jobs_queue_stats (status=?)")
+						// Closed counts must also avoid fetching review_closed from job rows.
+						query, args = jobStatsQuery(tc.status, "", append(tc.opts, WithClosed(true))...)
+						plan = queryPlan(t, db, query, args...)
+						assert.Contains(t, plan, "j USING COVERING INDEX", "closed counts must skip job payloads")
+						assert.Contains(t, plan, "rv USING COVERING INDEX", "closed counts must skip review payloads")
 					}
 				})
 			}
