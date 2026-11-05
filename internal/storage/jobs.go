@@ -1964,10 +1964,10 @@ type listJobsOptions struct {
 // selective reports whether a filter can seek jobs through its own index
 // instead of walking every closed job in enqueue order.
 func (o listJobsOptions) selective(statusFilter, repoFilter string) bool {
-	// Prefixes and branch disjunctions cannot read a single index range in
-	// enqueue order, so closed pages still need the closed-position index.
+	// Repository sets, prefixes, and branch disjunctions cannot read one index
+	// range in enqueue order, so closed pages need the closed-position index.
 	// Done status does not narrow closed reviews, which belong to done jobs.
-	return (statusFilter != "" && statusFilter != string(JobStatusDone)) || repoFilter != "" || len(o.repoPaths) > 0 || o.repoIDsSet ||
+	return (statusFilter != "" && statusFilter != string(JobStatusDone)) || repoFilter != "" || len(o.repoPaths) == 1 || len(o.repoIDs) == 1 ||
 		(o.branch != "" && !o.branchEmpty && !o.branchIncludeEmpty) || o.gitRef != "" || o.panelRun != uuid.Nil() ||
 		o.openFailedReviews || o.failedReviewsSince != nil
 }

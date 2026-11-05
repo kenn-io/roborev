@@ -1701,6 +1701,51 @@ func TestListJobsClosedPagePlans(t *testing.T) {
 	}
 }
 
+func TestListJobsClosedMultiRepoPages(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	firstRepo, _ := seedJobs(t, db, "/synthetic/first", 4)
+	secondRepo, _ := seedJobs(t, db, "/synthetic/second", 4)
+	seedJobs(t, db, "/synthetic/excluded", 4)
+	_, err := db.ExecContext(t.Context(), `
+		UPDATE review_jobs SET status = 'done', enqueued_at = datetime('2026-01-01', '+' || id || ' minutes');
+		INSERT INTO reviews (job_id, agent, output, closed, verdict_bool)
+		SELECT id, 'test', '', 1, 1 FROM review_jobs;
+	`)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name string
+		opt  ListJobsOption
+	}{
+		{"repo paths", WithRepoPaths([]string{firstRepo.RootPath, secondRepo.RootPath})},
+		{"repo IDs", WithRepoIDs([]int64{firstRepo.ID, secondRepo.ID})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			opts := []ListJobsOption{WithClosed(true), WithoutPrompt(), tc.opt}
+			page, err := db.ListJobs("", "", 3, 0, opts...)
+			require.NoError(t, err)
+			require.Equal(t, []int64{8, 7, 6}, jobIDs(page))
+			cursor := page[len(page)-1]
+			for _, resume := range []ListJobsOption{
+				WithBeforeCursor(cursor.ID),
+				WithSortAfter(JobSortPosition{Keys: cursor.SortKey, JobID: cursor.ID}),
+			} {
+				pageOpts := append(opts, resume)
+				page, err = db.ListJobs("", "", 3, 0, pageOpts...)
+				require.NoError(t, err)
+				assert.Equal([]int64{5, 4, 3}, jobIDs(page))
+				query, args, _, err := listJobsQuery("", "", 3, 0, collectListJobsOptions(pageOpts...))
+				require.NoError(t, err)
+				plan := queryPlan(t, db, query, args...)
+				assert.Contains(plan, "USING INDEX idx_review_jobs_closed_position")
+				assert.NotContains(plan, "USE TEMP B-TREE FOR ORDER BY")
+			}
+		})
+	}
+}
+
 func TestListJobsClosedSelectiveFilterPlans(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
