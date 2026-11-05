@@ -4,14 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"time"
 	"unicode"
 
 	"go.kenn.io/kit/search/lexical"
-	"go.kenn.io/kit/search/sqlitefts"
+	"go.kenn.io/kit/search/rrf"
 	"go.kenn.io/kit/search/sqlquery"
 	"go.kenn.io/kit/vector"
 	"go.kenn.io/kit/vector/sqlitevec"
@@ -64,10 +63,9 @@ func (member legMember) MatchedIn() []string {
 }
 
 // legGroup is one panel group and the members a leg found for it.
-type legGroup struct {
-	Key     string
-	Members []legMember
-}
+type legGroup = rrf.Group[string, legMember]
+
+const lexicalWindowFactor = 4
 
 func candidateTarget(limit int) int {
 	return min(max(limit*3, 50), 200)
@@ -131,108 +129,101 @@ func filterPredicate(filters SearchFilters) sqlquery.Predicate {
 	return sqlquery.Predicate{SQL: strings.Join(clauses, " AND "), Args: args}
 }
 
-var reviewFTS = func() sqlitefts.Helper {
-	helper, err := sqlitefts.New(
-		sqlitefts.WithIndexTable("review_fts"), sqlitefts.WithIndexKey("doc_key"),
-		sqlitefts.WithSourceTable("review_mirror"), sqlitefts.WithSourceKey("doc_key"),
-	)
-	if err != nil {
-		panic(err)
-	}
-	return helper
-}()
-
-// lexicalLeg returns every member of the best groupLimit panel groups that
-// match query. Exact identifiers and full or short commit SHAs rank before
-// FTS matches, which rank by BM25. Filters run before the group limit.
-func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit int) (sqlquery.Query, error) {
-	predicate := filterPredicate(filters)
-	var args []any
-
-	// Every FTS match: the outer query limits panel groups, not rows.
-	fts := `SELECT NULL AS doc_key, NULL AS score WHERE 0`
-	match := literalFTSQuery(query)
-	if match != "" {
-		built, err := reviewFTS.Build(sqlitefts.Request{
-			Match: match, SourcePredicate: predicate, CandidateLimit: math.MaxInt,
-		})
-		if err != nil {
-			return sqlquery.Query{}, fmt.Errorf("build review text query: %w", err)
-		}
-		fts = built.SQL
-		args = append(args, built.Args...)
-	}
-
-	identifier := `instr(char(10) || lower(d.identifiers) || char(10), char(10) || lower(?) || char(10)) > 0`
-	args = append(args, query)
+func identifierFTSQuery(query string) string {
 	if isSHAPrefix(query) {
-		identifier += ` OR lower(COALESCE(d.commit_sha, '')) LIKE lower(?) || '%'`
-		args = append(args, query)
+		return "{identifiers} : " + strings.ToLower(query) + "*"
 	}
-	args = append(args, predicate.Args...)
+	prepared, err := lexical.Literal().PreparePhrase(query)
+	if err != nil {
+		return ""
+	}
+	return "{identifiers} : " + prepared.Match
+}
 
-	order := `identifier DESC, score DESC, finished_key DESC, job_id DESC, doc_key ASC`
-	excerpts := `SELECT NULL AS doc_key, NULL AS excerpt WHERE 0`
-	if match != "" {
-		excerpts = `SELECT review_fts.doc_key,
-		       snippet(review_fts, 1, char(57344), char(57345), ' … ', 32) AS excerpt
-		  FROM review_fts
-		 WHERE review_fts MATCH ?
-		   AND review_fts.doc_key IN (SELECT doc_key FROM members WHERE lexical AND NOT identifier)`
+// lexicalLeg bounds rows kept and ranked after FTS scoring, which still scores
+// every hit. It then loads every matching member of the selected groups.
+func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit, window int) sqlquery.Query {
+	match := literalFTSQuery(query)
+	if match == "" {
+		return sqlquery.Query{SQL: `SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL WHERE 0`}
 	}
+	predicate := filterPredicate(filters)
+	exact := `instr(char(10) || lower(d.identifiers) || char(10), char(10) || lower(?) || char(10)) > 0`
+	exactArgs := []any{query}
+	if isSHAPrefix(query) {
+		exact += ` OR lower(COALESCE(d.commit_sha, '')) LIKE lower(?) || '%'`
+		exactArgs = append(exactArgs, query)
+	}
+	finished := finishedTime("d.finished_at")
+	lexOrder := `score DESC, finished_key DESC, job_id DESC, doc_key ASC`
+	order := `identifier DESC, ` + lexOrder
+	hit := `SELECT d.doc_key, d.group_key, d.job_id, ` + finished + ` AS finished_key,
+	               -bm25(review_fts) AS score
+	          FROM review_fts JOIN review_mirror AS d ON d.rowid = review_fts.rowid
+	         WHERE review_fts MATCH ? AND (` + predicate.SQL + `)
+	         ORDER BY score DESC, finished_key DESC, d.job_id DESC, d.doc_key ASC`
+	var args []any
 	statement := `
-		WITH fts AS MATERIALIZED (` + fts + `),
-		ident AS MATERIALIZED (
-			SELECT d.doc_key FROM review_mirror AS d
-			 WHERE (` + identifier + `) AND (` + predicate.SQL + `)
-		),
-		keys AS (SELECT doc_key FROM fts UNION SELECT doc_key FROM ident),
-		matches AS MATERIALIZED (
-			SELECT d.doc_key, d.group_key, d.job_id,
-			       ` + finishedTime("d.finished_at") + ` AS finished_key,
-			       ident.doc_key IS NOT NULL AS identifier,
-			       fts.doc_key IS NOT NULL AS lexical,
-			       CASE WHEN ident.doc_key IS NOT NULL THEN 1.0 ELSE fts.score END AS score,
-			       CASE WHEN ident.doc_key IS NOT NULL THEN d.content END AS identifier_excerpt
-			  FROM keys
-			  JOIN review_mirror AS d ON d.doc_key = keys.doc_key
-			  LEFT JOIN fts ON fts.doc_key = keys.doc_key
-			  LEFT JOIN ident ON ident.doc_key = keys.doc_key
-		),
-		ranked AS MATERIALIZED (
-			SELECT matches.*, row_number() OVER (PARTITION BY group_key ORDER BY ` + order + `) AS member_rank
-			  FROM matches
-		),
-		top_groups AS MATERIALIZED (
-			SELECT group_key, row_number() OVER (ORDER BY ` + order + `) AS group_rank
-			  FROM ranked WHERE member_rank = 1
-			 ORDER BY group_rank LIMIT ?
-		),
-		members AS MATERIALIZED (
-			SELECT ranked.*, top_groups.group_rank
-			  FROM ranked JOIN top_groups ON top_groups.group_key = ranked.group_key
-		),
-		excerpts AS MATERIALIZED (` + excerpts + `)
-		SELECT members.group_key, members.doc_key, members.score, members.identifier, members.lexical,
-		       COALESCE(members.identifier_excerpt, excerpts.excerpt, ''), members.finished_key, members.job_id
-		  FROM members LEFT JOIN excerpts ON excerpts.doc_key = members.doc_key
-		 ORDER BY members.group_rank, members.member_rank`
-	args = append(args, groupLimit)
-	if match != "" {
-		args = append(args, match)
-	}
-	return sqlquery.Query{SQL: statement, Args: args}, nil
+	WITH ident AS MATERIALIZED (
+		SELECT d.doc_key, d.group_key, d.job_id, ` + finished + ` AS finished_key
+		  FROM review_fts JOIN review_mirror AS d ON d.rowid = review_fts.rowid
+		 WHERE review_fts MATCH ? AND (` + exact + `) AND (` + predicate.SQL + `)
+		 ORDER BY finished_key DESC, d.job_id DESC, d.doc_key ASC LIMIT ?
+	),
+	win AS MATERIALIZED (` + hit + ` LIMIT ?),
+	short AS MATERIALIZED (
+		SELECT ((SELECT count(*) FROM ident) = ? AND (SELECT count(DISTINCT group_key) FROM ident) < ?)
+		    OR ((SELECT count(*) FROM win) = ? AND (SELECT count(*) FROM (
+			SELECT group_key FROM win UNION SELECT group_key FROM ident)) < ?) AS wide
+	),
+	heads AS (
+		SELECT group_key, 0 AS identifier, score, finished_key, job_id, doc_key
+		  FROM win
+		UNION ALL SELECT group_key, 1, 1.0, finished_key, job_id, doc_key FROM ident
+	),
+	top_groups AS MATERIALIZED (
+		SELECT group_key, row_number() OVER (ORDER BY ` + order + `) AS group_rank
+		  FROM (SELECT heads.*, row_number() OVER (PARTITION BY group_key ORDER BY ` + order + `) AS member_rank FROM heads)
+		 WHERE member_rank = 1 ORDER BY group_rank LIMIT ?
+	),
+	mates AS MATERIALIZED (
+		SELECT d.rowid AS rid, d.doc_key, d.group_key, d.job_id, ` + finished + ` AS finished_key, d.content,
+		       top_groups.group_rank, (` + exact + `) AS identifier
+		  FROM top_groups JOIN review_mirror AS d ON d.group_key = top_groups.group_key
+		 WHERE (` + predicate.SQL + `)
+	),
+	hits AS MATERIALIZED (
+		SELECT review_fts.rowid AS rid,
+		       CASE WHEN NOT mates.identifier THEN -bm25(review_fts) END AS score,
+		       CASE WHEN NOT mates.identifier THEN snippet(review_fts, 1, char(57344), char(57345), ' … ', 32) END AS excerpt
+		  FROM review_fts JOIN mates ON mates.rid = review_fts.rowid
+		 WHERE review_fts MATCH ?
+	),
+	members AS MATERIALIZED (
+		SELECT mates.group_key, mates.doc_key, mates.job_id, mates.finished_key, mates.group_rank,
+		       mates.identifier, hits.rid IS NOT NULL AS lexical,
+		       CASE WHEN mates.identifier THEN 1.0 ELSE hits.score END AS score,
+		       CASE WHEN mates.identifier THEN mates.content ELSE hits.excerpt END AS excerpt
+		  FROM mates LEFT JOIN hits ON hits.rid = mates.rid
+		 WHERE hits.rid IS NOT NULL OR mates.identifier
+	)
+	SELECT group_key, doc_key, score, identifier, lexical, COALESCE(excerpt, ''), finished_key, job_id, (SELECT wide FROM short)
+	  FROM (SELECT members.*, row_number() OVER (PARTITION BY group_key ORDER BY ` + order + `) AS member_rank FROM members)
+	 ORDER BY group_rank, member_rank`
+	args = append(args, identifierFTSQuery(query))
+	args = append(args, exactArgs...)
+	args = append(args, predicate.Args...)
+	args = append(args, window)
+	args = append(args, match)
+	args = append(args, predicate.Args...)
+	args = append(args, window, window, groupLimit, window, groupLimit, groupLimit)
+	args = append(args, exactArgs...)
+	args = append(args, predicate.Args...)
+	args = append(args, match)
+	return sqlquery.Query{SQL: statement, Args: args}
 }
 
-func scanLexicalRow(rows *sql.Rows) (string, legMember, error) {
-	var group string
-	var member legMember
-	err := rows.Scan(&group, &member.DocKey, &member.Score, &member.Identifier, &member.Lexical,
-		&member.Excerpt, &member.FinishedKey, &member.JobID)
-	return group, member, err
-}
-
-// SearchLexical runs the lexical leg alone and returns its panel groups.
+// SearchLexical widens full candidate windows until they contain enough groups.
 func (index *Index) SearchLexical(
 	ctx context.Context, query string, filters SearchFilters, groupLimit int,
 ) ([]legGroup, error) {
@@ -240,15 +231,23 @@ func (index *Index) SearchLexical(
 	if query == "" || groupLimit <= 0 {
 		return nil, nil
 	}
-	statement, err := index.lexicalLeg(query, filters, groupLimit)
-	if err != nil {
-		return nil, err
+	for window := groupLimit * lexicalWindowFactor; ; window *= lexicalWindowFactor {
+		statement := index.lexicalLeg(query, filters, groupLimit, window)
+		short := false
+		groups, err := runLeg(ctx, index.db, statement, func(rows *sql.Rows) (string, legMember, error) {
+			var group string
+			var member legMember
+			err := rows.Scan(&group, &member.DocKey, &member.Score, &member.Identifier, &member.Lexical,
+				&member.Excerpt, &member.FinishedKey, &member.JobID, &short)
+			return group, member, err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("search review text: %w", err)
+		}
+		if !short {
+			return groups, nil
+		}
 	}
-	groups, err := runLeg(ctx, index.db, statement, scanLexicalRow)
-	if err != nil {
-		return nil, fmt.Errorf("search review text: %w", err)
-	}
-	return groups, nil
 }
 
 // semanticLeg ranks reviews by their closest current chunk in generation key.

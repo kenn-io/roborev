@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"testing"
 	"uuid"
 
@@ -67,9 +68,14 @@ func TestGetMachineID(t *testing.T) {
 		a := assert.New(t)
 		r := require.New(t)
 
+		_, err := db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = ?`, SyncStateMachineID)
+		r.NoError(err)
 		id, err := db.GetMachineID()
 		r.NoError(err, "GetMachineID failed: %v", err)
 		a.Regexp(uuidPattern, id, "Machine ID %q is not a valid UUID", id)
+		var stored uuid.UUID
+		r.NoError(db.QueryRowContext(t.Context(), `SELECT value FROM sync_state WHERE key = ?`, SyncStateMachineID).Scan(&stored))
+		a.Equal(id, stored)
 	})
 
 	t.Run("returns same ID on subsequent calls", func(t *testing.T) {
@@ -108,6 +114,73 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 	err = db.QueryRowContext(t.Context(), `SELECT value FROM sync_state WHERE key = ?`, SyncStateMachineID).Scan(&stored)
 	r.NoError(err, "Failed to query stored ID: %v", err)
 	a.Equal(id, stored, "Stored ID %q doesn't match returned ID %q", stored, id)
+}
+
+func TestGetMachineID_Cached(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+
+	id, err := db.GetMachineID()
+	require.NoError(t, err)
+
+	t.Run("during write transaction", func(t *testing.T) {
+		writer, err := db.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { _ = writer.Rollback() }()
+		_, err = writer.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
+		require.NoError(t, err)
+
+		cached, err := db.GetMachineID()
+		require.NoError(t, err)
+		assert.Equal(t, id, cached)
+	})
+
+	t.Run("without SQL", func(t *testing.T) {
+		require.NoError(t, db.Close())
+
+		cached, err := db.GetMachineID()
+		require.NoError(t, err)
+		assert.Equal(t, id, cached)
+	})
+}
+
+func TestGetMachineID_RetriesAfterError(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+
+	require.NoError(t, db.SetSyncState(SyncStateMachineID, "invalid"))
+	_, err := db.GetMachineID()
+	require.ErrorContains(t, err, "parse machine ID")
+
+	id := testUUID("machine")
+	require.NoError(t, db.SetSyncState(SyncStateMachineID, id.String())) //nolint:forbidigo // sync_state TEXT value boundary.
+	cached, err := db.GetMachineID()
+	require.NoError(t, err)
+	assert.Equal(t, id, cached)
+}
+
+func TestGetMachineID_ConcurrentReads(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+
+	id := testUUID("machine")
+	require.NoError(t, db.SetSyncState(SyncStateMachineID, id.String())) //nolint:forbidigo // sync_state TEXT value boundary.
+	var wg sync.WaitGroup
+	ids := make([]uuid.UUID, 8)
+	errs := make([]error, len(ids))
+	for i := range ids {
+		wg.Go(func() {
+			ids[i], errs[i] = db.GetMachineID()
+		})
+	}
+	wg.Wait()
+	for i, got := range ids {
+		require.NoError(t, errs[i])
+		assert.Equal(t, id, got)
+	}
 }
 
 func TestGetDatabaseIDStableAcrossRestartAndChangesAfterRecreation(t *testing.T) {

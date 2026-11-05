@@ -116,6 +116,24 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	assert.Empty(t, pending)
 }
 
+func TestSidecarV3OpenAddsGroupIndex(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "reviews.search.db")
+	index, err := Open(ctx, path)
+	require.NoError(t, err)
+	_, err = index.db.ExecContext(ctx, `DROP INDEX review_mirror_group_key`)
+	require.NoError(t, err)
+	require.NoError(t, index.Close())
+
+	index, err = Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, index.Close()) })
+	var name string
+	err = index.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'review_mirror_group_key' AND tbl_name = 'review_mirror'`).Scan(&name)
+	require.NoError(t, err)
+	assert.Equal(t, "review_mirror_group_key", name)
+}
+
 func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {
 	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))

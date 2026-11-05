@@ -206,8 +206,9 @@ func TestIndexMigrations(t *testing.T) {
 		{"search changes", 8, "idx_review_jobs_commit_id", "ON review_jobs(commit_id)"},
 		{"cost aggregate", 9, "idx_review_jobs_cost", "ON review_jobs(repo_id, branch, CASE WHEN"},
 		{"open failed reviews", 10, "idx_reviews_open_failed", "ON reviews(job_id) WHERE closed = 0 AND verdict_bool = 0"},
-		{"branch list position", 11, "idx_review_jobs_branch_position", "branch, " + sqliteNormalizedTimestampExpr("enqueued_at") + " DESC, id DESC"},
-		{"closed list position", 11, "idx_review_jobs_closed_position", "DESC, id DESC) WHERE review_closed = 1"},
+		{"CI panel run", 11, "idx_ci_panels_panel_run", "ON ci_pr_panels(panel_run_uuid)"},
+		{"branch list position", 12, "idx_review_jobs_branch_position", "branch, " + sqliteNormalizedTimestampExpr("enqueued_at") + " DESC, id DESC"},
+		{"closed list position", 12, "idx_review_jobs_closed_position", "DESC, id DESC) WHERE review_closed = 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := openUnmigratedDB(t)
@@ -235,7 +236,7 @@ func TestIndexMigrations(t *testing.T) {
 func TestQueueListPositionMigrationBackfill(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:11]))
 	_, jobs := seedJobs(t, db, "/tmp/migration-closed", 3)
 	for _, job := range jobs {
 		setStatus(t, db, job.ID, JobStatusDone)
@@ -254,7 +255,7 @@ func TestQueueListPositionMigrationBackfill(t *testing.T) {
 func TestQueueListPositionMigrationRollback(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:11]))
 	_, jobs := seedJobs(t, db, "/tmp/migration-rollback", 1)
 	setStatus(t, db, jobs[0].ID, JobStatusDone)
 	_, err := db.ExecContext(t.Context(), `
@@ -270,10 +271,10 @@ func TestQueueListPositionMigrationRollback(t *testing.T) {
 	assert.False(t, exists)
 	var version int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT MAX(version) FROM schema_migrations`).Scan(&version))
-	assert.Equal(t, 10, version)
+	assert.Equal(t, 11, version)
 	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_backfill`)
 	require.NoError(t, err)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT MAX(version) FROM schema_migrations`).Scan(&version))
-	assert.Equal(t, 11, version)
+	assert.Equal(t, 12, version)
 }
