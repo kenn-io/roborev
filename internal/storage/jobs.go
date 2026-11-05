@@ -2225,9 +2225,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	}
 	if o.closed != nil {
 		if *o.closed {
-			// Keep both predicates so enqueue ordering can use the closed job
-			// index and other sorts can seek through idx_reviews_closed.
-			conditions = append(conditions, "j.review_closed = 1", "rv.closed = 1")
+			conditions = append(conditions, "rv.closed = 1")
 		} else {
 			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
 			// Failed and canceled jobs never produce a review to resolve, so
@@ -2314,12 +2312,14 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	for i, expr := range sortKeys {
 		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
 	}
+	queryFilters, filterArgs := buildJobFilterClause(statusFilter, repoFilter, options)
 	jobsTable := "review_jobs j"
 	if options.closed != nil && *options.closed && (options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt) &&
 		!options.selective(statusFilter, repoFilter) {
 		// Closed-position pages skip open history. Selectively filtered pages keep
 		// their own repo, branch, ref, panel, status, or finished-time index.
 		jobsTable += " INDEXED BY idx_review_jobs_closed_position"
+		queryFilters += " AND j.review_closed = 1"
 	} else if options.openFailedReviews {
 		// Without statistics, SQLite otherwise scans the repo's job index.
 		// NOT INDEXED keeps rowid lookups driven by the failed-review IN list.
@@ -2342,7 +2342,6 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 		LEFT JOIN job_content jc ON jc.job_id = j.id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	queryFilters, filterArgs := buildJobFilterClause(statusFilter, repoFilter, options)
 	args := append(slices.Clone(sortKeyArgs), filterArgs...)
 	query += queryFilters
 

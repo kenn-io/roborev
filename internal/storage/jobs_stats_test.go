@@ -31,6 +31,7 @@ func TestJobStatsQueryReadsMetadataIndexes(t *testing.T) {
 				{name: "all", opts: []ListJobsOption{WithExcludePanelRole(PanelRoleMember)}},
 				{name: "browser", opts: []ListJobsOption{WithExcludePanelRole(PanelRoleMember), WithHideClassifyJobs()}},
 				{name: "open", opts: []ListJobsOption{WithExcludePanelRole(PanelRoleMember), WithHideClassifyJobs(), WithClosed(false)}},
+				{name: "status closed", status: "done", opts: []ListJobsOption{WithExcludePanelRole(PanelRoleMember), WithHideClassifyJobs(), WithClosed(true)}},
 				{name: "status", status: "done", opts: []ListJobsOption{WithExcludePanelRole(PanelRoleMember), WithHideClassifyJobs()}},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
