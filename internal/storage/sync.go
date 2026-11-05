@@ -73,7 +73,7 @@ const (
 )
 
 // ClaimSetupFinished claims the install's first readable review before
-// best-effort telemetry delivery. Eligibility reads honor caller cancellation.
+// best-effort telemetry delivery. Reads and write admission honor cancellation.
 func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -101,9 +101,7 @@ func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error
 	if !eligible {
 		return SetupFinishedIneligible, nil
 	}
-	// Only the marker write ignores cancellation, so a committed claim always
-	// reaches its caller. Cancellation cannot interrupt that busy wait, so keep
-	// it short: daemon shutdown waits for this write, and the caller retries
+	// Bound queue admission and SQLite contention together. The caller retries
 	// busy errors with backoff, so a short wait loses no claim.
 	writeCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
@@ -112,10 +110,22 @@ func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error
 		return SetupFinishedIneligible, err
 	}
 	defer restore()
-	if err := ctx.Err(); err != nil {
-		return SetupFinishedIneligible, err
+	if err := beginImmediate(writeCtx, conn); err != nil {
+		if errors.Is(writeCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			err = errors.Join(errSQLiteBusyAttemptTimeout, err)
+		}
+		return SetupFinishedIneligible, fmt.Errorf("claim setup finished: %w", err)
 	}
-	result, err := conn.ExecContext(context.WithoutCancel(ctx), `
+	committed := false
+	defer func() {
+		if !committed {
+			_ = rollbackConn(conn)
+		}
+	}()
+	// Once admitted, finish the marker write and commit despite cancellation
+	// so a committed claim always reaches its caller.
+	commitCtx := context.WithoutCancel(ctx)
+	result, err := conn.ExecContext(commitCtx, `
 		INSERT INTO sync_state (key, value)
 		VALUES (?, '1')
 		ON CONFLICT(key) DO NOTHING
@@ -127,6 +137,10 @@ func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error
 	if err != nil {
 		return SetupFinishedIneligible, fmt.Errorf("claim setup finished: %w", err)
 	}
+	if _, err := conn.ExecContext(commitCtx, "COMMIT"); err != nil {
+		return SetupFinishedIneligible, fmt.Errorf("claim setup finished: %w", err)
+	}
+	committed = true
 	if rows == 1 {
 		return SetupFinishedNewClaim, nil
 	}

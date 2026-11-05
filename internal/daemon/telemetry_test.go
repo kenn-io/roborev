@@ -290,7 +290,7 @@ func (c *setupQueryConn) QueryContext(ctx context.Context, query string, args []
 
 func (c *setupQueryConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	result, err := c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
-	if c.connector.busy != nil && storage.IsSQLiteBusy(err) {
+	if c.connector.busy != nil && (storage.IsSQLiteBusy(err) || errors.Is(err, context.DeadlineExceeded)) {
 		select {
 		case c.connector.busy <- struct{}{}:
 		default:
