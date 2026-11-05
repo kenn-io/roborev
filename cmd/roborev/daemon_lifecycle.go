@@ -388,7 +388,7 @@ func ensureDaemon() (err error) {
 		if err == nil && owner == nil {
 			continue
 		}
-		return recoverDaemonWithSnapshot(info, errors.New("no reply to discovery"), owner, err)
+		return recoverDaemonWithSnapshot(info, errDaemonUnresponsive, owner, err)
 	}
 
 	// Start daemon in background

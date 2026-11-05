@@ -124,6 +124,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			assert.Equal(t, []string{"cleanup"}, mutations)
 			var managed *managedRecoveryError
 			require.ErrorAs(t, err, &managed)
+			require.EqualError(t, err, fmt.Sprintf("%s %s: daemon is unresponsive; run %s %s", serviceDescription, service.unit, serviceRestartCommand, service.unit))
 		})
 	}
 }
