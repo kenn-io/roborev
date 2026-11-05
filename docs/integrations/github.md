@@ -872,7 +872,8 @@ behavior the test asserts. It keeps the test if any such mistake fails that test
 alone. A mistake counts when it breaks something a user, caller, or the
 project's docs rely on. Cosmetic changes to strings or colors, test-only
 helpers, and inputs no code or outside system produces don't count. One mistake
-that other tests also catch doesn't establish redundancy.
+that other tests also catch doesn't establish redundancy. This check applies
+only to findings that ask to remove a test.
 
 ## Rewriting checked findings
 
