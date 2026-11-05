@@ -349,7 +349,7 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string,
 		data, err := cmd.Output()
 		// doctor still reports directories when its diagnostic checks fail.
 		var exitErr *exec.ExitError
-		if err != nil && !(args[0] == "doctor" && errors.As(err, &exitErr)) {
+		if err != nil && (args[0] != "doctor" || !errors.As(err, &exitErr)) {
 			fmt.Fprintf(out, "CI checker mise discovery failed: %v: %s\n", err, stderr.String())
 			return nil, nil, ""
 		}
