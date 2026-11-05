@@ -37,16 +37,19 @@ func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
 	require.NoError(t, err)
 	wheels := t.TempDir()
-	for _, version := range []string{"1.0", "2.0"} {
-		wheel, err := os.Create(filepath.Join(wheels, "checker_fixture-"+version+"-py3-none-any.whl"))
+	for _, pkg := range []struct{ name, version string }{
+		{"checker_fixture", "1.0"}, {"driver_fixture", "1.0"}, {"driver_fixture", "2.0"},
+	} {
+		name, version := pkg.name, pkg.version
+		wheel, err := os.Create(filepath.Join(wheels, name+"-"+version+"-py3-none-any.whl"))
 		require.NoError(t, err)
 		zw := zip.NewWriter(wheel)
 		for name, data := range map[string]string{
-			"checker_fixture.py":  fmt.Sprintf("value = 'python %s ready'\n", version),
-			"checker_fixture.pth": "import sys,pathlib; pathlib.Path(sys.prefix, 'pth-ran').write_text('started')\n",
-			"checker_fixture-" + version + ".dist-info/METADATA": "Metadata-Version: 2.1\nName: checker-fixture\nVersion: " + version + "\nProvides-Extra: test\n",
-			"checker_fixture-" + version + ".dist-info/WHEEL":    "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-			"checker_fixture-" + version + ".dist-info/RECORD":   "",
+			name + ".py":  fmt.Sprintf("value = 'python %s ready'\n", version),
+			name + ".pth": "import sys,pathlib; pathlib.Path(sys.prefix, 'pth-ran').write_text('started')\n",
+			name + "-" + version + ".dist-info/METADATA": "Metadata-Version: 2.1\nName: " + strings.ReplaceAll(name, "_", "-") + "\nVersion: " + version + "\nProvides-Extra: test\n",
+			name + "-" + version + ".dist-info/WHEEL":    "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+			name + "-" + version + ".dist-info/RECORD":   "",
 		} {
 			w, err := zw.Create(name)
 			require.NoError(t, err)
@@ -67,24 +70,15 @@ esac
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(wrapper), 0o700))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	marker := filepath.Join(t.TempDir(), "lifecycle-ran")
-	var archive bytes.Buffer
-	gz := gzip.NewWriter(&archive)
-	tw := tar.NewWriter(gz)
 	manifest := fmt.Sprintf(`{"name":"checker-fixture","version":"1.0.0","main":"index.js","bin":{"fixture-tool":"./index.js"},"scripts":{"install":"node -e \"require('fs').writeFileSync('%s','ran')\""}}`, marker)
-	for name, data := range map[string]string{"package/package.json": manifest, "package/index.js": "module.exports = 'javascript ready';\n"} {
-		require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(data))}))
-		_, err := io.WriteString(tw, data)
-		require.NoError(t, err)
-	}
-	require.NoError(t, tw.Close())
-	require.NoError(t, gz.Close())
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive.Bytes()) }))
+	archive := ciCheckPackageArchive(t, map[string]string{"package/package.json": manifest, "package/index.js": "module.exports = 'javascript ready';\n"})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
 	t.Cleanup(server.Close)
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("setup.py", fmt.Sprintf("from pathlib import Path\nPath(%q).write_text('build ran')\n", marker), "source build sentinel")
-	repo.CommitFile("pyproject.toml", fmt.Sprintf("[project]\ndependencies = ['checker-fixture[test]>=1; python_version >= \"3\"', 'source-fixture @ file://%s', 'missing-source-only']\n[project.optional-dependencies]\na = ['checker-fixture==1.0']\nb = ['checker-fixture==2.0']\n", repo.Root), "python dependencies")
+	repo.CommitFile("pyproject.toml", fmt.Sprintf("[project]\ndependencies = ['checker-fixture [test] >=1; python_version >= \"3\"', 'source-fixture @ file://%s', 'missing-source-only']\n[project.optional-dependencies]\na = ['driver-fixture==1.0']\nb = ['driver-fixture==2.0']\n", repo.Root), "python dependencies")
 	repo.CommitFile("project_module.py", "value = 'project ready'\n", "project import")
-	repo.CommitFile("web/package.json", `{"name":"fixture","version":"1.0.0","main":"./index.js","exports":"./index.js","dependencies":{"checker-fixture":"1.0.0"}}`, "javascript dependencies")
+	repo.CommitFile("web/package.json", `{"name":"fixture","version":"1.0.0","main":"./index.js","exports":"./index.js","overrides":{"checker-fixture":"$checker-fixture"},"dependencies":{"checker-fixture":"1.0.0"}}`, "javascript dependencies")
 	repo.CommitFile("web/package-lock.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q,"hasInstallScript":true,"bin":{"fixture-tool":"./index.js"}}}}`, server.URL+"/package.tgz"), "javascript lock")
 	sha := repo.HeadSHA()
 	command := filepath.Join(t.TempDir(), "codex")
@@ -100,7 +94,7 @@ esac
 	run.Job.Route = sandbox.Route{Name: "fixture", Upstream: server.URL, Path: "/responses", EnvVar: "FIXTURE_TOKEN", Capture: []string{"/bin/echo", "fixture-token"}}
 	probe := fmt.Sprintf(`set -e
 cd '%s'
-PYTHONPATH=. python -c 'import checker_fixture,project_module; print(checker_fixture.value); print(project_module.value)'
+PYTHONPATH=. python -c 'import checker_fixture,driver_fixture,project_module; assert driver_fixture.value == "python 1.0 ready"; print(checker_fixture.value); print(project_module.value)'
 node -e "console.log(require('./web/node_modules/checker-fixture'))"
 `, run.Repo)
 	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", probe})
@@ -118,7 +112,7 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 		bun, err := resolveCICheckCommand(t.Context(), "/", "bun")
 		require.NoError(t, err)
 		archivePath := filepath.Join(t.TempDir(), "package.tgz")
-		require.NoError(t, os.WriteFile(archivePath, archive.Bytes(), 0o600))
+		require.NoError(t, os.WriteFile(archivePath, archive, 0o600))
 		stage := t.TempDir()
 		localManifest := fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":%q}}`, "file:"+archivePath)
 		require.NoError(t, os.WriteFile(filepath.Join(stage, "package.json"), []byte(localManifest), 0o600))
@@ -166,4 +160,51 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 		assert.NoDirExists(t, filepath.Join(workspaceRepo.Root, "packages", "ui", "node_modules"), preparationLog.String())
 		assert.FileExists(t, filepath.Join(workspaceRepo.Root, "web", "node_modules", "checker-fixture", "index.js"), preparationLog.String())
 	})
+	t.Run("transitive local archive", func(t *testing.T) {
+		hostArchive := filepath.Join(t.TempDir(), "host-fixture.tgz")
+		require.NoError(t, os.WriteFile(hostArchive, ciCheckPackageArchive(t, map[string]string{
+			"package/package.json": `{"name":"host-fixture","version":"1.0.0"}`,
+			"package/index.js":     "module.exports = 'host-only fixture';\n",
+		}), 0o600))
+		remoteArchive := ciCheckPackageArchive(t, map[string]string{
+			"package/package.json": fmt.Sprintf(`{"name":"remote-fixture","version":"1.0.0","dependencies":{"host-fixture":%q}}`, "file:"+hostArchive),
+		})
+		remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(remoteArchive) }))
+		t.Cleanup(remote.Close)
+		project, stage, private := filepath.Join(run.Repo, "transitive"), t.TempDir(), t.TempDir()
+		require.NoError(t, os.Mkdir(project, 0o700))
+		for _, dir := range []string{"home", "tmp"} {
+			require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
+		}
+		metadata := map[string][]byte{"package.json": []byte(fmt.Sprintf(`{"dependencies":{"remote-fixture":%q}}`, remote.URL+"/package.tgz"))}
+		var preparationLog bytes.Buffer
+		prepareCICheckJS(t.Context(), project, stage, metadata, nil, ciCheckPackageEnv(private, os.Getenv("PATH"), nil), &preparationLog)
+		assert.NoDirExists(t, filepath.Join(project, "node_modules"), preparationLog.String())
+		const probe = `if cat "$1" >/dev/null 2>&1; then echo host-readable; else echo host-denied; fi
+node -e 'try { console.log(require(process.argv[1])); } catch { console.log("host-copy-blocked"); }' "$2"`
+		argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", probe, "archive-probe", hostArchive, filepath.Join(project, "node_modules", "host-fixture")})
+		require.NoError(t, err)
+		t.Cleanup(cleanup)
+		command := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+		command.Env = env
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		assert.Contains(t, string(output), "host-denied\n")
+		assert.Contains(t, string(output), "host-copy-blocked\n")
+	})
+}
+
+func ciCheckPackageArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	for name, data := range files {
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(data))}))
+		_, err := io.WriteString(tw, data)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tw.Close())
+	require.NoError(t, gz.Close())
+	return archive.Bytes()
 }

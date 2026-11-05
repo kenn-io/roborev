@@ -275,6 +275,12 @@ func TestCICheckPackagesPreparation(t *testing.T) {
 case "$*" in
 'root --global') printf '/trusted/npm-root\n';;
 *--eval*) /bin/cat;;
+*pip._vendor.packaging.requirements*)
+ case "$(/bin/cat)" in
+ '["test-package"]') printf '%s' '["test-package"]';;
+ *) printf '%s' '["test-package>=1","source-only","optional-fixture==2","group-fixture; python_version >= \"3.10\""]';;
+ esac
+ ;;
 *download*source-only*) exit 2;;
 *download*) exit 0;;
 *venv*)
@@ -352,13 +358,7 @@ esac
 
 func TestCICheckPackagesSkipped(t *testing.T) {
 	for _, tc := range []struct{ name, manifest, lock string }{
-		{"local", `{"dependencies":{"local":"file:../local"}}`, ""},
-		{"relative", `{"devDependencies":{"local":"../local"}}`, ""},
-		{"bare archive declaration", `{"dependencies":{"local":"nested/../fixture.tgz"}}`, ""},
-		{"dollar archive", `{"dependencies":{"local":"$pkg/../fixture.tgz"}}`, ""},
 		{"bare archive lock", `{}`, `{"packages":{"node_modules/pkg":{"resolved":"fixture.tar.gz"}}}`},
-		{"override", `{"overrides":{"pkg":{"nested":"link:../local"}}}`, ""},
-		{"resolution", `{"resolutions":{"pkg/nested":"workspace:*"}}`, ""},
 		{"npm link", `{}`, `{"packages":{"node_modules/pkg":{"link":true,"resolved":"node_modules/fixture"}}}`},
 		{"npm escaped path", `{}`, `{"packages":{"node_modules/pkg":{"resolved":"\u002fsynthetic/package.tgz"}}}`},
 		{"npm nested dependency", `{}`, `{"dependencies":{"parent":{"dependencies":{"pkg":{"version":"file:/synthetic/package.tgz"}}}}}`},
@@ -419,9 +419,13 @@ func TestCICheckPackagesGitAuthentication(t *testing.T) {
 	assert.NotContains(t, env, "CHECKER_SECRET=secret")
 }
 
-func TestCICheckPackagesOverrideReference(t *testing.T) {
-	stage := t.TempDir()
-	local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"^1.0.0", "$pkg"}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
-	require.NoError(t, err)
-	assert.False(t, local)
+func TestCICheckPackagesSourceClassification(t *testing.T) {
+	for _, source := range []string{"file:../local", "../local", "nested/../fixture.tgz", "$pkg/../fixture.tgz", "fixture.tar.gz", "link:../local", "workspace:*"} {
+		t.Run(source, func(t *testing.T) {
+			stage := t.TempDir()
+			local, err := ciCheckLocalJSSources(t.Context(), stage, []string{source}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
+			require.NoError(t, err)
+			assert.True(t, local)
+		})
+	}
 }
