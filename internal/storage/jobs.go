@@ -2303,7 +2303,10 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
 	}
 	jobsTable := "review_jobs j"
-	if options.openFailedReviews {
+	if options.closed != nil && *options.closed && (options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt) {
+		// Repo and branch indexes walk open history when closed reviews are sparse.
+		jobsTable += " INDEXED BY idx_review_jobs_closed_position"
+	} else if options.openFailedReviews {
 		// Without statistics, SQLite otherwise scans the repo's job index.
 		// NOT INDEXED keeps rowid lookups driven by the failed-review IN list.
 		jobsTable += " NOT INDEXED"

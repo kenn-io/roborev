@@ -2,10 +2,7 @@ package storage
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -1393,7 +1390,7 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 				query, args, _, err := listJobsQuery("", "/synthetic/repo", 51, 0, collectListJobsOptions(WithClosed(true)))
 				require.NoError(t, err)
 				plan := queryPlan(t, db, query, args...)
-				assert.Contains(t, plan, "USING INDEX idx_review_jobs_repo_enqueued")
+				assert.Contains(t, plan, "USING INDEX idx_review_jobs_closed_position")
 				assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 			})
 		})
@@ -1606,62 +1603,67 @@ func TestListJobsClosedFlagUpkeep(t *testing.T) {
 	}
 }
 
-func TestListJobsClosedPageWorkBound(t *testing.T) {
+func TestListJobsClosedPagePlans(t *testing.T) {
 	t.Parallel()
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 is required to count SQLite VM steps")
-	}
-	// Python's SQLite progress callback counts executed instructions. The
-	// fixture has no compressed content, so its decompressor accepts only NULL.
-	const measure = `
-import sqlite3, sys
-conn = sqlite3.connect(sys.argv[1])
-def decompress(value):
-    assert value is None
-    return None
-conn.create_function("zstd_decompress", 1, decompress)
-steps = 0
-def progress():
-    global steps
-    steps += 1
-    return 0
-conn.set_progress_handler(progress, 1)
-rows = conn.execute(sys.argv[2], (50,)).fetchall()
-print(steps)
-`
-	work := map[string]int{}
 	for _, size := range []int{1000, 100000} {
-		db := openTestDB(t)
-		t.Cleanup(func() { db.Close() })
-		var path string
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
-		_, err := db.ExecContext(t.Context(), `
-			INSERT INTO repos(id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
-			WITH RECURSIVE ids(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM ids WHERE id < ?)
-			INSERT INTO review_jobs(id, repo_id, git_ref, agent, status, enqueued_at)
-			SELECT id, 1, 'main', 'test', 'done', datetime('2026-01-01', '+' || id || ' seconds') FROM ids;
-			INSERT INTO reviews(job_id, agent, output, closed) SELECT id, 'test', '', 0 FROM review_jobs;
-		`, size)
-		require.NoError(t, err)
-		for _, shape := range []struct{ name, closed string }{
-			{"all", "1"}, {"oldest 1%", fmt.Sprintf("job_id <= %d", size/100)}, {"none", "0"},
-		} {
-			_, err := db.ExecContext(t.Context(), `UPDATE reviews SET closed = (`+shape.closed+`)`)
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			db := openTestDB(t)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			_, err := db.ExecContext(t.Context(), `
+				INSERT INTO repos(id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
+				WITH RECURSIVE ids(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM ids WHERE id < ?)
+				INSERT INTO review_jobs(id, repo_id, git_ref, agent, status, branch, enqueued_at)
+				SELECT id, 1, 'main', 'test', 'done', 'main', datetime('2026-01-01', '+' || id || ' seconds') FROM ids;
+				INSERT INTO reviews(job_id, agent, output, closed) SELECT id, 'test', '', 0 FROM review_jobs;
+			`, size)
 			require.NoError(t, err)
-			query, args, _, err := listJobsQuery("", "", 50, 0, collectListJobsOptions(WithClosed(true), WithoutPrompt()))
-			require.NoError(t, err)
-			require.Equal(t, []any{50}, args)
-			out, err := exec.CommandContext(t.Context(), python, "-c", measure, path, query).CombinedOutput()
-			require.NoError(t, err, "%s", out)
-			steps, err := strconv.Atoi(strings.TrimSpace(string(out)))
-			require.NoError(t, err)
-			t.Logf("%d jobs, %s closed: %d VM steps", size, shape.name, steps)
-			if size == 1000 {
-				work[shape.name] = steps
-			} else {
-				assert.LessOrEqual(t, steps, 5*work[shape.name], shape.name)
+			for _, shape := range []struct{ name, closed string }{
+				{"all", "1"}, {"oldest 1%", fmt.Sprintf("job_id <= %d", size/100)}, {"none", "0"},
+			} {
+				t.Run(shape.name, func(t *testing.T) {
+					_, err := db.ExecContext(t.Context(), `UPDATE reviews SET closed = (`+shape.closed+`)`)
+					require.NoError(t, err)
+					for _, filter := range []struct {
+						name, repo string
+						opts       []ListJobsOption
+					}{
+						{name: "closed"},
+						{name: "repo closed", repo: "/synthetic/repo"},
+						{name: "branch closed", opts: []ListJobsOption{WithBranch("main")}},
+						{name: "repo branch closed", repo: "/synthetic/repo", opts: []ListJobsOption{WithBranch("main")}},
+					} {
+						t.Run(filter.name, func(t *testing.T) {
+							opts := append([]ListJobsOption{WithClosed(true), WithoutPrompt()}, filter.opts...)
+							var want []int64
+							switch shape.name {
+							case "all":
+								want = []int64{int64(size), int64(size - 1)}
+							case "oldest 1%":
+								want = []int64{int64(size / 100), int64(size/100 - 1)}
+							}
+							for range 2 {
+								query, args, _, err := listJobsQuery("", filter.repo, 2, 0, collectListJobsOptions(opts...))
+								require.NoError(t, err)
+								plan := queryPlan(t, db, query, args...)
+								assert.Contains(t, plan, "USING INDEX idx_review_jobs_closed_position")
+								assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+								page, err := db.ListJobs("", filter.repo, 2, 0, opts...)
+								require.NoError(t, err)
+								var ids []int64
+								for _, job := range page {
+									ids = append(ids, job.ID)
+								}
+								require.Equal(t, want, ids)
+								if len(page) > 0 {
+									last := page[len(page)-1]
+									opts = append(opts, WithSortAfter(JobSortPosition{Keys: last.SortKey, JobID: last.ID}))
+									want = []int64{last.ID - 1, last.ID - 2}
+								}
+							}
+						})
+					}
+				})
 			}
-		}
+		})
 	}
 }
