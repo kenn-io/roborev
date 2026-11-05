@@ -185,6 +185,26 @@ exit "$failed"
 	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
 }
 
+func TestSandboxCgroupLimits(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	job := routeJob(t, t.TempDir())
+	script := shellChecks + `
+while IFS=: read -r hierarchy controllers path; do
+  [ "$hierarchy" = 0 ] && [ -z "$controllers" ] || continue
+  scope=/sys/fs/cgroup$path
+done < /proc/self/cgroup
+check cpu-limit allow cat "$scope/cpu.max"
+check memory-limit allow cat "$scope/memory.max"
+check memory-usage deny cat "$scope/memory.current"
+check parent-limit deny cat "${scope%/*}/memory.max"
+check root-processes deny cat /sys/fs/cgroup/cgroup.procs
+cat "$scope/memory.max"
+exit "$failed"
+`
+	out := runInJob(t, job, "bash", "-c", script)
+	assert.Contains(t, out, "\n1073741824\n")
+}
+
 func TestSandboxUnixSockets(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	base := t.TempDir()
