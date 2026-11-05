@@ -173,6 +173,9 @@ the daemon log. The next successful poll clears the current failure and
 preserves error history; discovery continues to use previously known
 repositories when available.
 
+A failed lookup retries after 15 minutes, then 30, then hourly, so a token or
+access fix appears on the first poll after that window.
+
 Check the operation and category before changing configuration. For HTTP 401 or
 403, check the CI credential and its repository permissions. For rate limits,
 allow the server's reset interval to pass. For timeouts, interrupted reads, or
