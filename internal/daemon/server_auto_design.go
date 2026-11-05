@@ -108,9 +108,8 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 				s.shutdownDrainMu.Lock()
 				if !s.shutdownDraining {
 					s.autoDesignScanRunning = true
-					// Share the status-check wait group that Stop already drains.
-					// The shutdown lock prevents enrollment after draining begins.
-					s.agentHealth.wg.Go(s.refreshAutoDesignRepoScan)
+					// Repo config can stall in git, so Stop must not wait for this scan.
+					go s.refreshAutoDesignRepoScan()
 				}
 				s.shutdownDrainMu.Unlock()
 			}
