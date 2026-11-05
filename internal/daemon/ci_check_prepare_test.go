@@ -258,7 +258,8 @@ esac
 		{name: "without doctor JSON", script: fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n'doctor --json') echo 'unexpected argument --json' >&2; exit 2;;\n*) exit 3;;\nesac\n", inventory, filepath.Join(selected, "bin")), message: "mise discovery failed", roots: []string{tools}, bins: []string{filepath.Join(tools, "bin")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			commands := t.TempDir()
+			commands, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
 			if tc.script != "" {
 				require.NoError(t, os.WriteFile(filepath.Join(commands, "mise"), []byte(tc.script), 0o700))
 			}
