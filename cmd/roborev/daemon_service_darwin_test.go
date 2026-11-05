@@ -46,7 +46,7 @@ func TestRecoverLaunchdDaemonKickstartsAfterDrainThenPrints(t *testing.T) {
 }
 
 func TestLaunchdDiscoveryUnsupportedServiceUnitIsUnknown(t *testing.T) {
-	unit, err := processServiceUnit(os.Getpid())
+	unit, err := serviceCgroup(os.Getpid())
 	check := assert.New(t)
 	check.Empty(unit)
 	require.ErrorIs(t, err, errors.ErrUnsupported)

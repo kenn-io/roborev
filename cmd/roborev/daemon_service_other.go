@@ -9,7 +9,7 @@ import (
 
 func lookupDaemonService(context.Context, int) (*daemonService, error) { return nil, nil }
 
-func processServiceUnit(int) (string, error) { return "", nil }
+func serviceCgroup(int) (string, error) { return "", nil }
 
 func userManagerAvailable(context.Context) bool { return false }
 

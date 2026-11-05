@@ -92,13 +92,6 @@ func TestLaunchctlCLIRecoveryIntegration(t *testing.T) {
 			// The test executable represents the new CLI installation at this seam.
 			findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
 				owner, err := lookupDaemonService(ctx, pid)
-				if owner == nil {
-					for _, prefix := range []string{"gui/", "user/"} {
-						raw, printErr := runLaunchctl(ctx, "print", prefix+strconv.Itoa(os.Getuid()))
-						t.Logf("launchctl domain print: %v\n%s", printErr, raw)
-					}
-					t.Logf("launchctl job print:\n%s", raw)
-				}
 				if owner != nil {
 					path, pathErr := os.Executable()
 					require.NoError(t, pathErr)

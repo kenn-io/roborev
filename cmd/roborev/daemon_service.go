@@ -42,7 +42,7 @@ var (
 	errRecoveryLock = errors.New("wait for daemon recovery lock")
 
 	findDaemonService  = lookupDaemonService
-	daemonServiceUnit  = processServiceUnit
+	daemonCgroupUnit   = serviceCgroup
 	serviceMainPID     = userServiceMainPID
 	startDaemonService = startUserService
 	drainManagedDaemon = daemon.KillDaemon
@@ -130,7 +130,7 @@ func snapshotDaemonService(ctx context.Context, pid int, outsideService bool) (*
 // outside every user service. Callers read it before slow probes, while the
 // PID is known to be alive.
 func discoveredOutsideService(pid int) bool {
-	unit, err := daemonServiceUnit(pid)
+	unit, err := daemonCgroupUnit(pid)
 	return err == nil && unit == ""
 }
 

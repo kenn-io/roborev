@@ -51,7 +51,7 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 	return lookupLaunchdService(ctx, pid, launchdDeps{ancestors: processAncestry, run: runLaunchctl, uid: os.Getuid()})
 }
 
-func processServiceUnit(int) (string, error) { return "", errors.ErrUnsupported }
+func serviceCgroup(int) (string, error) { return "", errors.ErrUnsupported }
 
 func runUserLaunchctl(ctx context.Context, args ...string) ([]byte, error) {
 	output, err := exec.CommandContext(ctx, "launchctl", args...).Output()
