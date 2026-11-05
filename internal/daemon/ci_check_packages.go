@@ -20,7 +20,7 @@ import (
 
 // Package installers see only committed metadata and private writable state.
 // Their populated environments are first executed by the sandbox.
-func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gitEnv []string, out io.Writer) (pythonBin string, pythonRoots []string) {
+func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gitEnv []string, out io.Writer) (pythonBin string) {
 	files, err := gitcmd.New().Command(ctx, repo, "ls-files", "-z").Output()
 	if err != nil {
 		fmt.Fprintf(out, "CI checker package discovery failed: %v\n", err)
@@ -80,12 +80,8 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 		}
 		if data := metadata["pyproject.toml"]; data != nil {
 			if prepareCICheckPython(ctx, project, stage, data, env, out) {
-				bin := filepath.Join(project, ".venv", "bin")
-				if runtime, err := filepath.EvalSymlinks(filepath.Join(bin, "python")); err == nil {
-					pythonRoots = append(pythonRoots, filepath.Dir(filepath.Dir(runtime)))
-				}
 				if dir == "." {
-					pythonBin = bin
+					pythonBin = filepath.Join(project, ".venv", "bin")
 				}
 			}
 		}

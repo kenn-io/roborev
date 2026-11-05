@@ -36,26 +36,6 @@ func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
 	require.NoError(t, err)
-	runtime := t.TempDir()
-	copyRuntime := exec.CommandContext(t.Context(), python, "-I", "-c", `import pathlib, shutil, sys, sysconfig, pip
-root = pathlib.Path(sys.argv[1])
-(root / 'bin').mkdir()
-shutil.copy2(pathlib.Path(sys.executable).resolve(), root / 'bin' / 'python3')
-lib = root / sys.platlibdir
-stdlib = lib / pathlib.Path(sysconfig.get_path('stdlib')).name
-ignore = shutil.ignore_patterns('site-packages', '__pycache__')
-shutil.copytree(sysconfig.get_path('stdlib'), stdlib, ignore=ignore)
-shutil.copytree(pathlib.Path(pip.__file__).parent, stdlib / 'site-packages' / 'pip', ignore=ignore)
-for key in ('LDLIBRARY', 'INSTSONAME'):
-    name = sysconfig.get_config_var(key)
-    if name:
-        library = pathlib.Path(sysconfig.get_config_var('LIBDIR')) / name
-        if library.is_file():
-            shutil.copy2(library, lib / name)
-`, runtime)
-	output, err := copyRuntime.CombinedOutput()
-	require.NoError(t, err, "%s", output)
-	python = filepath.Join(runtime, "bin", "python3")
 	wheels := t.TempDir()
 	ciCheckPackageWheel(t, wheels, "checker_fixture", "1.0", "")
 	tools := t.TempDir()
@@ -67,12 +47,11 @@ case "$*" in
 esac
 `, python, wheels, python)
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(wrapper), 0o700))
-	// Exercise a trusted Python installation that isn't included in mise's read grants.
 	node, err := resolveCICheckCommand(t.Context(), "/", "node")
 	require.NoError(t, err)
 	node, err = filepath.EvalSymlinks(node)
 	require.NoError(t, err)
-	mise := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in 'ls --current --installed --json') printf '%%s' '{\"node\":[{\"install_path\":%q}]}';; 'bin-paths') printf '%%s\\n' '%s' '%s';; *) exit 1;; esac\n", filepath.Dir(filepath.Dir(node)), tools, filepath.Dir(node))
+	mise := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in 'ls --current --installed --json') printf '%%s' '{\"node\":[{\"install_path\":%q}],\"python\":[{\"install_path\":%q}]}';; 'bin-paths') printf '%%s\\n' '%s' '%s';; *) exit 1;; esac\n", filepath.Dir(filepath.Dir(node)), filepath.Dir(filepath.Dir(python)), tools, filepath.Dir(node))
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(mise), 0o700))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	manifest := `{"name":"checker-fixture","version":"1.0.0","main":"index.js","bin":{"fixture-tool":"./index.js"}}`
@@ -102,7 +81,7 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 	t.Cleanup(cleanup)
 	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
 	cmd.Env = env
-	output, err = cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s\n%s", output, log.String())
 	assert.Contains(t, string(output), "python 1.0 ready\n")
 	assert.Contains(t, string(output), "javascript ready\n")

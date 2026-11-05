@@ -233,8 +233,7 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 		return
 	}
 	readPaths = append(readPaths, goPaths...)
-	pythonBin, pythonRoots := prepareCICheckPackages(ctx, run.Repo, root, toolPath, gitEnv, out)
-	readPaths = append(readPaths, pythonRoots...)
+	pythonBin := prepareCICheckPackages(ctx, run.Repo, root, toolPath, gitEnv, out)
 	if err = validateCICheckReadPaths(readPaths); err != nil {
 		return
 	}
