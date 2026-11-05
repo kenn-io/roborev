@@ -785,17 +785,6 @@ func TestUpdateRediscoverAfterConfirmation(t *testing.T) {
 	assert.Equal(t, int32(1), shutdowns.Load())
 }
 
-type recoveryWaitWriter struct {
-	cancel context.CancelFunc
-}
-
-func (w recoveryWaitWriter) Write(p []byte) (int, error) {
-	if bytes.Contains(p, []byte("Waiting for daemon recovery lock")) {
-		w.cancel()
-	}
-	return len(p), nil
-}
-
 func TestUpdateCancellationWhileWaitingForRecovery(t *testing.T) {
 	stubServiceRecovery(t)
 	info := stubUpdateCommand(t)
@@ -813,7 +802,12 @@ func TestUpdateCancellationWhileWaitingForRecovery(t *testing.T) {
 	}()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	lifecycleOut = recoveryWaitWriter{cancel: cancel}
+	lifecycleOut = streamOutputFunc(func(p []byte) (int, error) {
+		if bytes.Contains(p, []byte("Waiting for daemon recovery lock")) {
+			cancel()
+		}
+		return len(p), nil
+	})
 	installs := 0
 	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
 		installs++
