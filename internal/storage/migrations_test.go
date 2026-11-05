@@ -256,3 +256,30 @@ func TestQueueListPositionMigrationBackfill(t *testing.T) {
 		})
 	}
 }
+
+func TestQueueListPositionMigrationRollback(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
+	_, jobs := seedJobs(t, db, "/tmp/migration-rollback", 1)
+	_, err := db.ExecContext(t.Context(), `
+		INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1);
+		CREATE TRIGGER fail_backfill BEFORE UPDATE ON review_jobs BEGIN
+			SELECT RAISE(ABORT, 'backfill failed');
+		END;
+	`, jobs[0].ID)
+	require.NoError(t, err)
+	require.Error(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	exists, err := hasColumn(t.Context(), db, "review_jobs", "review_closed")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	var version int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT MAX(version) FROM schema_migrations`).Scan(&version))
+	assert.Equal(t, 10, version)
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_backfill`)
+	require.NoError(t, err)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	var closed int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT review_closed FROM review_jobs WHERE id = ?`, jobs[0].ID).Scan(&closed))
+	assert.Equal(t, 1, closed)
+}
