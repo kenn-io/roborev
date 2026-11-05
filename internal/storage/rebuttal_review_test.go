@@ -11,6 +11,7 @@ import (
 func TestRebuttalReviewVersionRoundTrip(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
+	defer db.Close()
 	repo := createRepo(t, db, t.TempDir())
 	version := &ReviewVersion{ID: 42, UUID: uuid.New()}
 
