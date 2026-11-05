@@ -661,6 +661,50 @@ func TestServiceHybridBreaksEqualFusedScoresByRecencyAndLoadsThePageOnce(t *test
 	assert.Equal(t, 1, store.lookups, "one canonical query loads the whole page")
 }
 
+func TestServiceHybridWidensLexicalWithoutRepeatingSemanticQuery(t *testing.T) {
+	index := openQueryTestIndex(t)
+	var docs []searchdoc.Document
+	vectors := make(map[string][]vector.ChunkVector)
+	for i := range 13 {
+		group := "panel"
+		if i == 0 {
+			group = "older"
+		}
+		doc := queryTestDocument(int64(i+1), group, "needle", queryDocOptions{})
+		docs = append(docs, doc)
+		vectors[doc.DocKey] = []vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}
+	}
+	_, err := index.RefreshMirrorPage(t.Context(), docs, nil)
+	require.NoError(t, err)
+	model := testSpace("widening", 2)
+	seedActiveGeneration(t, index, model, vectors)
+	serving, ok, err := index.ServingGeneration(t.Context(), model)
+	require.NoError(t, err)
+	require.True(t, ok)
+	var sequence int
+	var name, path string
+	require.NoError(t, index.db.QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &path))
+	connector := &cursorConnector{base: index.db.Driver(), path: path}
+	db := sql.OpenDB(connector)
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	service := NewService(nil, &Index{db: db, vectors: index.vectors}, nil, nil)
+	_, _, err = service.fuse(t.Context(), "needle",
+		semanticQuery{key: serving.Key, vector: vector.Vector{1, 0}}, SearchFilters{}, 2, 20)
+	require.NoError(t, err)
+	var lexicalQueries, semanticQueries int
+	for _, query := range connector.queries {
+		if strings.Contains(query, "WITH ident AS MATERIALIZED") {
+			lexicalQueries++
+		}
+		if strings.Contains(query, "WITH chunks AS MATERIALIZED") {
+			semanticQueries++
+		}
+	}
+	assert.Equal(t, 2, lexicalQueries, "the panel fills the first lexical window")
+	assert.Equal(t, 1, semanticQueries, "lexical widening leaves semantic inputs unchanged")
+}
+
 func TestServiceSinceFilterIsExactWithinOneSecondOnBothLegs(t *testing.T) {
 	ctx := t.Context()
 	index := openQueryTestIndex(t)

@@ -111,6 +111,22 @@ func TestSearchLexicalRanksIdentifiersAndSHAPrefixesBeforeBM25(t *testing.T) {
 	require.Len(t, ambiguous, 2)
 	assert.Equal(t, []string{docs[2].DocKey, docs[1].DocKey}, []string{ambiguous[0].DocKey, ambiguous[1].DocKey})
 	assert.ElementsMatch(t, []string{MatchIdentifier}, ambiguous[0].MatchedIn())
+
+	// The exact repo name must rank ahead of a full window of stronger prose matches.
+	for i := range 30 {
+		docs = append(docs, queryTestDocument(int64(i+10), fmt.Sprintf("prose-%d", i), strings.Repeat("project ", 8), queryDocOptions{}))
+	}
+	exactRepo := queryTestDocument(100, "exact-repo", "project "+strings.Repeat("filler ", 100), queryDocOptions{repoName: "project"})
+	docs = append(docs, exactRepo)
+	_, err = index.RefreshMirrorPage(ctx, docs, nil)
+	require.NoError(t, err)
+	repoHits, err := flatten(index.SearchLexical(ctx, "project", SearchFilters{}, 1))
+	require.NoError(t, err)
+	require.Len(t, repoHits, 1)
+	assert.Equal(t, exactRepo.DocKey, repoHits[0].DocKey)
+	assert.ElementsMatch(t, []string{MatchIdentifier, MatchLexical}, repoHits[0].MatchedIn())
+	assert.InDelta(t, 1.0, repoHits[0].Score, 1e-15)
+	assert.Equal(t, exactRepo.Content, repoHits[0].Excerpt)
 }
 
 func TestSearchLexicalAppliesEveryMirrorFilterBeforeLimit(t *testing.T) {
@@ -317,4 +333,112 @@ func flatten(groups []legGroup, err error) ([]legMember, error) {
 		members = append(members, group.Members...)
 	}
 	return members, err
+}
+
+func TestSearchLexicalReadsNoMirrorRowOutsideItsMatches(t *testing.T) {
+	index := openQueryTestIndex(t)
+	statement := index.lexicalLeg("zzqxv", SearchFilters{}, 3, 12)
+	rows, err := index.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+statement.SQL, statement.Args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		assert.NotRegexp(t, `\bSCAN (d|review_mirror)\b`, detail)
+	}
+	require.NoError(t, rows.Err())
+}
+
+func TestSearchLexicalReturnsEveryGroupMemberPastTheWindow(t *testing.T) {
+	index := openQueryTestIndex(t)
+	docs := []searchdoc.Document{
+		queryTestDocument(1, "panel", strings.Repeat("needle ", 8), queryDocOptions{}),
+		queryTestDocument(2, "panel", "weak needle "+strings.Repeat("filler words ", 80), queryDocOptions{}),
+	}
+	for i := range 30 {
+		docs = append(docs, queryTestDocument(int64(i+3), fmt.Sprintf("other-%d", i), "needle ordinary text", queryDocOptions{}))
+	}
+	_, err := index.RefreshMirrorPage(t.Context(), docs, nil)
+	require.NoError(t, err)
+	groups, err := index.SearchLexical(t.Context(), "needle", SearchFilters{}, 1)
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	require.Len(t, groups[0].Members, 2)
+	assert.Equal(t, docs[0].DocKey, groups[0].Members[0].DocKey)
+	assert.Equal(t, docs[1].DocKey, groups[0].Members[1].DocKey)
+	assert.Contains(t, groups[0].Members[1].Excerpt, "\ue000needle\ue001")
+}
+
+func TestSearchLexicalWidensWhenOnePanelFillsTheWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		panels, members, limit int
+	}{
+		{"large panel", 1, 12, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			index := openQueryTestIndex(t)
+			var docs []searchdoc.Document
+			for panel := range tc.panels {
+				for range tc.members {
+					docs = append(docs, queryTestDocument(int64(len(docs)+1), fmt.Sprintf("panel-%d", panel), "needle needle needle", queryDocOptions{}))
+				}
+			}
+			lone := queryTestDocument(int64(len(docs)+1), "lone", "needle "+strings.Repeat("filler ", 30), queryDocOptions{})
+			docs = append(docs, lone)
+			_, err := index.RefreshMirrorPage(t.Context(), docs, nil)
+			require.NoError(t, err)
+			groups, err := index.SearchLexical(t.Context(), "needle", SearchFilters{}, tc.limit)
+			require.NoError(t, err)
+			require.Len(t, groups, tc.limit)
+			require.Len(t, groups[0].Members, 12)
+			assert.Equal(t, lone.DocKey, groups[1].Members[0].DocKey)
+		})
+	}
+}
+
+func TestSearchLexicalBreaksEqualScoresByRecencyPastTheWindow(t *testing.T) {
+	index := openQueryTestIndex(t)
+	docs := make([]searchdoc.Document, 20)
+	base := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	for i := range docs {
+		// Later keys are newer, so a doc_key window would choose the wrong groups.
+		docs[i] = queryTestDocument(int64(i+1), fmt.Sprintf("group-%d", i), "needle same text", queryDocOptions{finished: base.Add(time.Duration(i) * time.Hour)})
+	}
+	_, err := index.RefreshMirrorPage(t.Context(), docs, nil)
+	require.NoError(t, err)
+	hits, err := flatten(index.SearchLexical(t.Context(), "needle", SearchFilters{}, 3))
+	require.NoError(t, err)
+	require.Len(t, hits, 3)
+	assert.Equal(t, []string{docs[19].DocKey, docs[18].DocKey, docs[17].DocKey}, []string{hits[0].DocKey, hits[1].DocKey, hits[2].DocKey})
+}
+
+func TestSearchLexicalBoundsIdentifiersAndKeepsMembersPastTheWindow(t *testing.T) {
+	index := openQueryTestIndex(t)
+	older := queryTestDocument(1, "older", "brief review", queryDocOptions{})
+	docs := []searchdoc.Document{older}
+	for i := range 12 {
+		docs = append(docs, queryTestDocument(int64(i+2), "panel", strings.Repeat("filler ", 80), queryDocOptions{}))
+	}
+	_, err := index.RefreshMirrorPage(t.Context(), docs, nil)
+	require.NoError(t, err)
+	for _, limit := range []int{1, 2} {
+		t.Run(fmt.Sprintf("groups=%d", limit), func(t *testing.T) {
+			groups, err := index.SearchLexical(t.Context(), "main", SearchFilters{}, limit)
+			require.NoError(t, err)
+			require.Len(t, groups, limit)
+			require.Len(t, groups[0].Members, 12)
+			for i, member := range groups[0].Members {
+				assert.Equal(t, docs[12-i].DocKey, member.DocKey)
+				assert.True(t, member.Identifier)
+				assert.InDelta(t, 1.0, member.Score, 1e-15)
+				assert.Equal(t, docs[12-i].Content, member.Excerpt)
+			}
+			if limit == 2 {
+				require.Len(t, groups[1].Members, 1)
+				assert.Equal(t, older.DocKey, groups[1].Members[0].DocKey)
+			}
+		})
+	}
 }

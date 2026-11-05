@@ -16,11 +16,12 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-// cursorConnector records bound cursors while executing the real SQLite queries.
+// cursorConnector records queries and bound cursors while executing real SQLite queries.
 type cursorConnector struct {
-	base  driver.Driver
-	path  string
-	after []string
+	base    driver.Driver
+	path    string
+	queries []string
+	after   []string
 }
 
 func (c *cursorConnector) Connect(context.Context) (driver.Conn, error) {
@@ -43,6 +44,7 @@ func (c *cursorConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
 }
 
 func (c *cursorConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.recorder.queries = append(c.recorder.queries, query)
 	if strings.Contains(query, "FROM review_mirror d") && strings.Contains(query, "WHERE NOT") {
 		after := ""
 		if len(args) == 3 {
