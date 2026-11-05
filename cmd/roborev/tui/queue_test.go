@@ -3371,6 +3371,7 @@ func TestFetchPanelMembersFiltersAndSorts(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/jobs", r.URL.Path)
 		assert.Equal(testUUID("R").String(), r.URL.Query().Get("panel_run")) //nolint:forbidigo // HTTP query text boundary.
+		assert.Equal("true", r.URL.Query().Get("omit_stats"))
 		jobs := []storage.ReviewJob{
 			makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 2})),
 			makeJob(12, withPanelMember("R", "security", 1)),

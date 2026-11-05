@@ -2266,7 +2266,7 @@ func hasJobForSHA(serverAddr, sha string) (bool, error) {
 }
 
 func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
-	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &sha, Limit: new(int64(1))}})
 	if err != nil {
 		return false, err
 	}
@@ -2289,7 +2289,7 @@ func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, err
 }
 
 func verifyJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
-	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &sha, Limit: new(int64(1))}})
 	if err != nil {
 		return false, err
 	}

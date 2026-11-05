@@ -1067,6 +1067,7 @@ func (m model) fetchPanelMembers(runUUID uuid.UUID) tea.Cmd {
 		resp, err := api.ListJobsRaw(m.apiContext(), &daemonclient.ListJobsRequestOptions{Query: &daemonclient.ListJobsQuery{
 			PanelRun: new(runUUID), Limit: new(int64(0)),
 			OmitPrompt:      new(daemonclient.ListJobsQueryOmitPromptTrue),
+			OmitStats:       new(daemonclient.ListJobsQueryOmitStatsTrue),
 			IncludeFindings: new(daemonclient.ListJobsQueryIncludeFindingsTrue),
 		}})
 		if err != nil {

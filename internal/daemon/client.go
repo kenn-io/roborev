@@ -262,7 +262,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	}
 
 	// Query by git_ref and repo to avoid matching jobs from different repos
-	resp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(1))}})
+	resp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(1))}})
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +286,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	// Fallback: if repo filter yielded no results, try git_ref only.
 	// This handles worktrees where daemon stores the main repo root path
 	// but the caller uses the worktree path.
-	fallbackResp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(100))}})
+	fallbackResp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &sha, Limit: new(int64(100))}})
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
 	}
@@ -338,7 +338,7 @@ func (c *HTTPClient) FindPendingJobForRef(ctx context.Context, repoPath, gitRef 
 	// Use server-side status filtering to find pending jobs.
 	// Query for queued first, then running - this avoids pagination issues.
 	for _, status := range []string{"queued", "running"} {
-		resp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &gitRef, Repo: []string{normalizedRepo}, Status: &status, Limit: new(int64(1))}})
+		resp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &gitRef, Repo: []string{normalizedRepo}, Status: &status, Limit: new(int64(1))}})
 		if err != nil {
 			return nil, err
 		}

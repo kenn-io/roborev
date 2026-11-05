@@ -1893,7 +1893,12 @@ describe("createJobsStore panel expansion", () => {
     });
     expect(store.getPanelMembers("run-10")?.map((j) => j.id)).toEqual([11, 12]);
     expect(api.listJobs).toHaveBeenCalledWith(
-      { panel_run: "run-10", limit: 0, omit_prompt: "true" },
+      {
+        panel_run: "run-10",
+        limit: 0,
+        omit_prompt: "true",
+        omit_stats: "true",
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 

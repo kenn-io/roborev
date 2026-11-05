@@ -816,7 +816,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
         }),
         read: executeRoborevRequest("load Roborev panel members", (signal) =>
           api.listJobs(
-            { panel_run: runUuid, limit: 0, omit_prompt: "true" },
+            {
+              panel_run: runUuid,
+              limit: 0,
+              omit_prompt: "true",
+              omit_stats: "true",
+            },
             { signal },
           ),
         ).pipe(
