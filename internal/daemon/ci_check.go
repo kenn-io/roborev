@@ -233,10 +233,11 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 		return
 	}
 	readPaths = append(readPaths, goPaths...)
+	pythonBin, pythonRoots := prepareCICheckPackages(ctx, run.Repo, root, toolPath, gitEnv, out)
+	readPaths = append(readPaths, pythonRoots...)
 	if err = validateCICheckReadPaths(readPaths); err != nil {
 		return
 	}
-	pythonBin := prepareCICheckPackages(ctx, run.Repo, root, toolPath, gitEnv, out)
 	// Keep plugin socket names within Linux's 107-byte pathname capacity.
 	// /tmp stays short independently of host TMPDIR; recovery owns the linked contents.
 	tmpAlias, err := os.MkdirTemp("/tmp", "roborev-ci-tmp-*")

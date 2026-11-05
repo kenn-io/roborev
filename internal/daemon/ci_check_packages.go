@@ -20,17 +20,17 @@ import (
 
 // Package installers see only committed metadata and private writable state.
 // Their populated environments are first executed by the sandbox.
-func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gitEnv []string, out io.Writer) string {
+func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gitEnv []string, out io.Writer) (pythonBin string, pythonRoots []string) {
 	files, err := gitcmd.New().Command(ctx, repo, "ls-files", "-z").Output()
 	if err != nil {
 		fmt.Fprintf(out, "CI checker package discovery failed: %v\n", err)
-		return ""
+		return
 	}
 	private := filepath.Join(root, "packages")
 	for _, name := range []string{"home", "tmp"} {
 		if err := os.MkdirAll(filepath.Join(private, name), 0o700); err != nil {
 			fmt.Fprintf(out, "CI checker package staging failed: %v\n", err)
-			return ""
+			return
 		}
 	}
 	env := ciCheckPackageEnv(private, toolPath, nil)
@@ -55,7 +55,6 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 		}
 		projects[dir][base] = data
 	}
-	var pythonBin string
 	for dir, metadata := range projects {
 		stage, err := os.MkdirTemp(private, "project-*")
 		if err != nil {
@@ -80,12 +79,18 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 			prepareCICheckJS(ctx, project, stage, metadata, ancestors, jsEnv, out)
 		}
 		if data := metadata["pyproject.toml"]; data != nil {
-			if prepareCICheckPython(ctx, project, stage, data, env, out) && dir == "." {
-				pythonBin = filepath.Join(project, ".venv", "bin")
+			if prepareCICheckPython(ctx, project, stage, data, env, out) {
+				bin := filepath.Join(project, ".venv", "bin")
+				if runtime, err := filepath.EvalSymlinks(filepath.Join(bin, "python")); err == nil {
+					pythonRoots = append(pythonRoots, filepath.Dir(filepath.Dir(runtime)))
+				}
+				if dir == "." {
+					pythonBin = bin
+				}
 			}
 		}
 	}
-	return pythonBin
+	return
 }
 
 func ciCheckPackageEnv(private, toolPath string, gitEnv []string) []string {

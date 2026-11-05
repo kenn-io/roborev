@@ -37,6 +37,11 @@ func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
 	require.NoError(t, err)
+	runtime := t.TempDir()
+	copyRuntime := exec.CommandContext(t.Context(), "/bin/cp", "-a", filepath.Dir(filepath.Dir(python))+"/.", runtime)
+	output, err := copyRuntime.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	python = filepath.Join(runtime, "bin", "python3")
 	wheels := t.TempDir()
 	for _, pkg := range []struct{ name, version string }{
 		{"checker_fixture", "1.0"}, {"driver_fixture", "1.0"}, {"driver_fixture", "2.0"}, {"project_self", "1.0"},
@@ -69,11 +74,13 @@ case "$*" in
 esac
 `, python, wheels, python)
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(wrapper), 0o700))
-	if mise, err := exec.LookPath("mise"); err == nil {
-		// The controlled download tool must also lead mise's selected runtime paths.
-		wrapper := fmt.Sprintf("#!/bin/sh\n[ \"$1\" != bin-paths ] || printf '%%s\\n' '%s'\nexec '%s' \"$@\"\n", tools, mise)
-		require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(wrapper), 0o700))
-	}
+	// Exercise a trusted Python installation that isn't included in mise's read grants.
+	node, err := resolveCICheckCommand(t.Context(), "/", "node")
+	require.NoError(t, err)
+	node, err = filepath.EvalSymlinks(node)
+	require.NoError(t, err)
+	mise := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in 'ls --current --installed --json') printf '%%s' '{\"node\":[{\"install_path\":%q}]}';; 'bin-paths') printf '%%s\\n' '%s';; *) exit 1;; esac\n", filepath.Dir(filepath.Dir(node)), filepath.Dir(node))
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(mise), 0o700))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	marker := filepath.Join(t.TempDir(), "lifecycle-ran")
 	require.NoError(t, os.WriteFile(filepath.Join(wheels, "missing_source_only-1.0.tar.gz"), ciCheckPackageArchive(t, map[string]string{
@@ -113,7 +120,7 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 	t.Cleanup(cleanup)
 	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
 	cmd.Env = env
-	output, err := cmd.CombinedOutput()
+	output, err = cmd.CombinedOutput()
 	require.NoError(t, err, "%s\n%s", output, log.String())
 	assert.Contains(t, string(output), "python 1.0 ready\n")
 	assert.Contains(t, string(output), "javascript ready\n")
