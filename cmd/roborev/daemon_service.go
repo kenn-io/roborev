@@ -263,7 +263,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 	if !vanished {
 		fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
 		if err := drainManagedDaemon(current); err != nil {
-			return fail(err)
+			return fail(fmt.Errorf("%w; run %s %s", err, serviceRestartCommand, owner.unit))
 		}
 	}
 	// Reviews may take longer than startup. Give the replacement a fresh budget.
