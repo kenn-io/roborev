@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -13,6 +14,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+//nolint:paralleltest // Keep this test serial because it changes GOMAXPROCS and measures heap use.
+func TestContentEncoderMemoryBounded(t *testing.T) {
+	previous := runtime.GOMAXPROCS(64)
+	defer runtime.GOMAXPROCS(previous)
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	enc, err := newContentEncoder()
+	require.NoError(t, err)
+	defer enc.Close()
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(enc)
+
+	// Four workers retain about 5 MiB; the default 64 retain about 80 MiB.
+	// Allow headroom for allocator variation while catching per-core growth.
+	assert.Less(t, int64(after.HeapAlloc)-int64(before.HeapAlloc), int64(16<<20))
+}
 
 func TestJobContentIsStoredCompressed(t *testing.T) {
 	t.Parallel()
