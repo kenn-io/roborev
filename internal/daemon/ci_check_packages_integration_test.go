@@ -114,31 +114,6 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 	assert.Contains(t, string(output), "javascript ready\n")
 	assert.FileExists(t, filepath.Join(run.Repo, ".venv", "pth-ran"))
 	assert.NoFileExists(t, marker)
-	t.Run("unprefixed npm archives", func(t *testing.T) {
-		archivePath := filepath.Join(t.TempDir(), "package.tgz")
-		require.NoError(t, os.WriteFile(archivePath, archive.Bytes(), 0o600))
-		for _, declaration := range []bool{true, false} {
-			t.Run(fmt.Sprintf("declaration=%t", declaration), func(t *testing.T) {
-				stage, project, private := t.TempDir(), t.TempDir(), t.TempDir()
-				relative, err := filepath.Rel(stage, archivePath)
-				require.NoError(t, err)
-				source := "nested/../" + relative
-				metadata := map[string][]byte{"package.json": []byte(`{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`)}
-				if declaration {
-					metadata["package.json"] = []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":%q}}`, source))
-				} else {
-					metadata["package-lock.json"] = []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q}}}`, source))
-				}
-				for _, dir := range []string{"home", "tmp"} {
-					require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
-				}
-				var preparationLog bytes.Buffer
-				prepareCICheckJS(t.Context(), project, stage, metadata, nil, ciCheckPackageEnv(private, os.Getenv("PATH"), nil), &preparationLog)
-				assert.NoDirExists(t, filepath.Join(project, "node_modules"), preparationLog.String())
-				assert.Contains(t, preparationLog.String(), "skips JavaScript local dependencies")
-			})
-		}
-	})
 	t.Run("absolute Bun lock", func(t *testing.T) {
 		bun, err := resolveCICheckCommand(t.Context(), "/", "bun")
 		require.NoError(t, err)

@@ -57,8 +57,7 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 		projects[dir][base] = data
 	}
 	var pythonBin string
-	for _, dir := range slices.Sorted(maps.Keys(projects)) {
-		metadata := projects[dir]
+	for dir, metadata := range projects {
 		stage, err := os.MkdirTemp(private, "project-*")
 		if err != nil {
 			fmt.Fprintf(out, "CI checker package staging failed: %v\n", err)
@@ -67,14 +66,12 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 		project := filepath.Join(repo, dir)
 		if data := metadata["package.json"]; data != nil {
 			ancestors := map[string]any{}
-			for parent := filepath.Dir(dir); parent != dir; parent = filepath.Dir(parent) {
+			for parent := dir; parent != "."; {
+				parent = filepath.Dir(parent)
 				var manifest map[string]any
 				if json.Unmarshal(projects[parent]["package.json"], &manifest) == nil && manifest["workspaces"] != nil {
 					relative, _ := filepath.Rel(parent, dir)
 					ancestors[filepath.ToSlash(relative)] = manifest["workspaces"]
-				}
-				if parent == "." {
-					break
 				}
 			}
 			prepareCICheckJS(ctx, project, stage, metadata, ancestors, env, out)
@@ -168,7 +165,10 @@ const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const member = Object.entries(input.workspaces || {}).some(([relative, workspaces]) =>
  npmRequire('@npmcli/map-workspaces').virtual({cwd: '/', lockfile: {packages: {'': {workspaces}, [relative]: {name: 'candidate'}}}}).size > 0);
 const local = input.sources.some(spec => {
- try { return ['file', 'directory'].includes(npa.resolve('checker', spec).type); }
+ try {
+  if (spec.startsWith('$') && npa(spec.slice(1)).name === spec.slice(1)) return false;
+  return ['file', 'directory'].includes(npa.resolve('checker', spec).type);
+ }
  catch { return true; }
 });
 process.stdout.write(JSON.stringify(member || local));`
@@ -333,10 +333,15 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 		return false
 	}
 	if !runCICheckInstaller(ctx, python, stage, env, []string{"-I", "-m", "venv", venv}, out) {
+		_ = os.RemoveAll(venv)
 		return false
 	}
 	// This is the only host startup of the empty venv. Installed .pth files and
 	// sitecustomize must never run on the host after pip populates it.
 	args := append([]string{"-I", "-m", "pip", "--isolated", "install", "--only-binary=:all:", "--no-index", "--no-compile", "--find-links", wheels}, accepted...)
-	return runCICheckInstaller(ctx, filepath.Join(venv, "bin", "python"), stage, env, args, out)
+	if !runCICheckInstaller(ctx, filepath.Join(venv, "bin", "python"), stage, env, args, out) {
+		_ = os.RemoveAll(venv)
+		return false
+	}
+	return true
 }

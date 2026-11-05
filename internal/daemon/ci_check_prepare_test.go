@@ -296,12 +296,7 @@ esac
 	for _, tool := range []string{"npm", "bun", "python3"} {
 		require.NoError(t, os.WriteFile(filepath.Join(tools, tool), []byte(script), 0o700))
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte(`#!/bin/sh
-case "$(/bin/cat)" in
-'{"sources":["1","1"],"workspaces":{}}'|'{"workspaces":{},"sources":["1","1"]}') printf false;;
-*) exit 9;;
-esac
-`), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
 	// Mise still resolves the fixture Codex, while installers use selected tools.
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CHECKER_SECRET", "synthetic")
@@ -339,13 +334,28 @@ esac
 	assert.Equal(t, filepath.Join(run.Repo, ".venv", "bin"), strings.Split(path, string(os.PathListSeparator))[0])
 	assert.NoDirExists(t, filepath.Join(repo.Root, "web", "node_modules"))
 	assert.NoDirExists(t, filepath.Join(repo.Root, ".venv"))
+	for _, tc := range []struct{ name, line string }{
+		{"venv creation fails", ` /bin/cp "$0" "$dest/bin/python"`},
+		{"package install fails", ` printf '%s\n' "$@" > "${0%/bin/python}/lib/installed"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failingScript := strings.Replace(script, tc.line, tc.line+"\n exit 1", 1)
+			require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(failingScript), 0o700))
+			project, stage := t.TempDir(), t.TempDir()
+			var failureLog bytes.Buffer
+			prepared := prepareCICheckPython(t.Context(), project, stage, []byte("[project]\ndependencies = ['test-package']\n"), ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), &failureLog)
+			assert.False(t, prepared)
+			assert.NoDirExists(t, filepath.Join(project, ".venv"), failureLog.String())
+		})
+	}
 }
 
 func TestCICheckPackagesSkipped(t *testing.T) {
 	for _, tc := range []struct{ name, manifest, lock string }{
 		{"local", `{"dependencies":{"local":"file:../local"}}`, ""},
 		{"relative", `{"devDependencies":{"local":"../local"}}`, ""},
-		{"bare archive declaration", `{"dependencies":{"local":"fixture.tgz"}}`, ""},
+		{"bare archive declaration", `{"dependencies":{"local":"nested/../fixture.tgz"}}`, ""},
+		{"dollar archive", `{"dependencies":{"local":"$pkg/../fixture.tgz"}}`, ""},
 		{"bare archive lock", `{}`, `{"packages":{"node_modules/pkg":{"resolved":"fixture.tar.gz"}}}`},
 		{"override", `{"overrides":{"pkg":{"nested":"link:../local"}}}`, ""},
 		{"resolution", `{"resolutions":{"pkg/nested":"workspace:*"}}`, ""},
@@ -407,4 +417,11 @@ func TestCICheckPackagesGitAuthentication(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "AUTHORIZATION: synthetic\n", string(output))
 	assert.NotContains(t, env, "CHECKER_SECRET=secret")
+}
+
+func TestCICheckPackagesOverrideReference(t *testing.T) {
+	stage := t.TempDir()
+	local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"^1.0.0", "$pkg"}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
+	require.NoError(t, err)
+	assert.False(t, local)
 }

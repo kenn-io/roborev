@@ -858,8 +858,7 @@ npm to classify sources and workspace membership. It honors supported lockfiles,
 includes development dependencies, and disables lifecycle scripts. Projects
 without a supported npm or Bun lockfile use `package.json` through npm,
 including projects with other lockfile formats. JavaScript workspace roots,
-their declared members, and local dependencies are skipped. Independent nested
-projects remain supported.
+their declared members, and local dependencies are skipped.
 
 Python uses installed `python3` with venv and pip. It reads static dependencies
 and optional dependencies from `[project]`, plus string entries in
