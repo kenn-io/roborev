@@ -185,6 +185,35 @@ exit "$failed"
 	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
 }
 
+func TestSandboxCgroupLimits(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	job := routeJob(t, t.TempDir())
+	script := shellChecks + `
+while IFS=: read -r hierarchy controllers path; do
+  [ "$hierarchy" = 0 ] && [ -z "$controllers" ] || continue
+  scope=/sys/fs/cgroup$path
+done < /proc/self/cgroup
+# Without CPU controller delegation, cpu.max is absent and this probe is skipped.
+if [ -f "$scope/cpu.max" ]; then
+  check cpu-limit allow cat "$scope/cpu.max"
+else
+  echo "SKIP cpu-limit: CPU controller is not delegated"
+fi
+check memory-usage deny cat "$scope/memory.current"
+parent=$(dirname "$scope")
+check parent-limit-exists allow test -f "$parent/memory.max"
+check parent-limit deny cat "$parent/memory.max"
+cat "$scope/memory.max"
+exit "$failed"
+`
+	out := runInJob(t, job, "bash", "-c", script)
+	t.Log(out)
+	assert.Contains(t, out, "\n1073741824\n")
+	if strings.Contains(out, "SKIP cpu-limit:") {
+		t.Skip("CPU controller is not delegated")
+	}
+}
+
 func TestSandboxUnixSockets(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	base := t.TempDir()

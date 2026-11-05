@@ -152,7 +152,16 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		cleanup()
 		return nil, nil, nil, fmt.Errorf("write sandbox profile: %w", err)
 	}
-	cmd = []string{"/usr/bin/systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "-p", "TimeoutStopSec=5", "--", nono, "run", "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow-unix-socket-subtree-bind", j.WorkDir}
+	// Discover limits inside the scope; the self-check and agent have separate cgroups.
+	const scopeLimits = `
+nono=$1; shift
+while IFS=: read -r hierarchy controllers path; do
+  [ "$hierarchy" = 0 ] && [ -z "$controllers" ] || continue
+  set -- --read-file "/sys/fs/cgroup$path/cpu.max" --read-file "/sys/fs/cgroup$path/memory.max" "$@"
+done < /proc/self/cgroup
+exec "$nono" run "$@"
+`
+	cmd = []string{"/usr/bin/systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "-p", "TimeoutStopSec=5", "--", "/bin/sh", "-c", scopeLimits, "sandbox", nono, "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow-unix-socket-subtree-bind", j.WorkDir}
 	// CLI grants are literal paths; profile paths undergo template expansion.
 	for _, path := range j.ReadPaths {
 		info, err := os.Stat(path)
