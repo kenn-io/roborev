@@ -12,13 +12,18 @@ import (
 )
 
 func TestReconcilerInitialMirrorGrowth(t *testing.T) { //nolint:paralleltest // measures wall time
+	var verifyMirror func()
 	growthtest.Run(t, growthtest.Check{
 		Small: 10000, Large: 100000,
 		// Allow 2x timing variation above linear growth. Feed paging has its
 		// own check because sidecar writes can hide repeated canonical scans.
 		MaxRatio: 20,
 		Floor:    float64(10 * time.Millisecond),
-		Measure:  growthtest.Fastest(3),
+		Measure: func(run, reset func()) float64 {
+			cost := growthtest.Fastest(3)(run, reset)
+			verifyMirror()
+			return cost
+		},
 		Build: func(tb testing.TB, size int) (func(), func()) {
 			db := seedCanonicalReconcilerHistory(tb, size, 0)
 			// A fresh install has no planner statistics.
@@ -27,6 +32,14 @@ func TestReconcilerInitialMirrorGrowth(t *testing.T) { //nolint:paralleltest // 
 			require.Zero(tb, statsTables)
 			var index *Index
 			var r *Reconciler
+			verifyMirror = func() {
+				health := r.Health()
+				require.True(tb, health.MirrorComplete)
+				require.EqualValues(tb, size, health.Indexed)
+				var indexed int
+				require.NoError(tb, index.db.QueryRowContext(tb.Context(), `SELECT count(*) FROM review_fts`).Scan(&indexed))
+				require.Equal(tb, size, indexed)
+			}
 			tb.Cleanup(func() {
 				if index != nil {
 					require.NoError(tb, index.Close())
@@ -38,14 +51,9 @@ func TestReconcilerInitialMirrorGrowth(t *testing.T) { //nolint:paralleltest // 
 						more, err = r.reconcileTurn(tb.Context())
 						require.NoError(tb, err)
 					}
-					health := r.Health()
-					require.True(tb, health.MirrorComplete)
-					require.EqualValues(tb, size, health.Indexed)
-					var indexed int
-					require.NoError(tb, index.db.QueryRowContext(tb.Context(), `SELECT count(*) FROM review_fts`).Scan(&indexed))
-					require.Equal(tb, size, indexed)
 				}, func() {
 					if index != nil {
+						verifyMirror()
 						require.NoError(tb, index.Close())
 					}
 					var err error

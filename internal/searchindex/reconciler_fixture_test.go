@@ -19,12 +19,13 @@ func seedCanonicalReconcilerHistory(tb testing.TB, reviews, promptSize int) *sto
 		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
 		VALUES (1, 1, 'abcdef1234567890', 'author', 'subject', CURRENT_TIMESTAMP);
 		WITH RECURSIVE ids(id) AS (VALUES(1) UNION ALL SELECT id + 1 FROM ids WHERE id < :reviews)
-		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, job_type)
-		SELECT id, 1, 1, 'abcdef1234567890', 'test', 'done', 'review' FROM ids;
+		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, job_type, uuid)
+		SELECT id, 1, 1, 'abcdef1234567890', 'test', 'done', 'review',
+		       printf('00000000-0000-4000-8000-%012d', id) FROM ids;
 		INSERT INTO job_content (job_id, prompt)
 		SELECT id, zstd_compress(printf('%*s', :prompt_size, 'prompt')) FROM review_jobs WHERE :prompt_size > 0;
-		INSERT INTO reviews (id, job_id, agent, output)
-		SELECT id, id, 'test', 'synthetic review output' FROM review_jobs;
+		INSERT INTO reviews (id, job_id, agent, output, uuid)
+		SELECT id, id, 'test', 'synthetic review output', uuid FROM review_jobs;
 		INSERT INTO responses (job_id, responder, response)
 		SELECT id, 'author', 'synthetic comment' FROM review_jobs WHERE id % 2 = 0;
 		COMMIT;`, sql.Named("reviews", reviews), sql.Named("prompt_size", promptSize))
