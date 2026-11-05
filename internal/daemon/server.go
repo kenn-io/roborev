@@ -414,6 +414,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
 	s.startSearch(ctx)
+	s.startAutoDesignRepoScan()
 
 	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh, s.startupAuth())
 	if err != nil {

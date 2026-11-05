@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -341,6 +343,8 @@ func TestAutoDesignStatusForResponse_DisabledOmitted(t *testing.T) {
 	ResetAutoDesignMetricsForTest()
 	srv, _ := newAutoDesignTestServer(t)
 	// No repo enables auto_design_review.
+	srv.autoDesignStatusForResponse()
+	waitForAutoDesignRepoScan(t, srv)
 	got := srv.autoDesignStatusForResponse()
 	assert.Nil(t, got)
 }
@@ -356,6 +360,8 @@ func TestAutoDesignStatusForResponse_DisabledRegularRepoDoesNotSpawnGit(t *testi
 	t.Cleanup(func() { _ = srv.Close() })
 	marker := mockAutoDesignGitWithMarker(t)
 
+	srv.autoDesignStatusForResponse()
+	waitForAutoDesignRepoScan(t, srv)
 	got := srv.autoDesignStatusForResponse()
 	assert.Nil(t, got)
 	_, err = os.Stat(marker)
@@ -384,6 +390,53 @@ func waitForAutoDesignRepoScan(t *testing.T, srv *Server) {
 		defer srv.autoDesignScanMu.Unlock()
 		return !srv.autoDesignScanRunning
 	}, 5*time.Second, time.Millisecond)
+}
+
+func TestAutoDesignStatus_FirstRequestReturnsWhileGitStalls(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake git uses a shell script")
+	}
+	srv, db, _ := newTestServer(t)
+	_, err := db.GetOrCreateRepo(t.TempDir())
+	require.NoError(t, err)
+	marker := filepath.Join(t.TempDir(), "git-invoked")
+	release := filepath.Join(t.TempDir(), "release-git")
+	t.Setenv("ROBOREV_GIT_MARKER", marker)
+	t.Setenv("ROBOREV_GIT_RELEASE", release)
+	restore := testutil.MockBinaryInPath(t, "git", `#!/bin/sh
+: > "$ROBOREV_GIT_MARKER"
+while [ ! -f "$ROBOREV_GIT_RELEASE" ]; do sleep 0.01; done
+exit 1
+`)
+	t.Cleanup(restore)
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		assert.NoError(t, os.WriteFile(release, nil, 0o600))
+		<-done
+		waitForAutoDesignRepoScan(t, srv)
+	})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil)
+	go func() {
+		srv.httpServer.Handler.ServeHTTP(w, r)
+		close(done)
+	}()
+	// Wait for the external fake git process to stall before checking the response.
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	}, 5*time.Second, time.Millisecond)
+	// HTTP status must finish while the external git process remains blocked.
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, time.Millisecond)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotContains(t, w.Body.String(), `"auto_design"`)
 }
 
 func TestAutoDesignStatusForResponse_StalledRefreshDoesNotBlockStop(t *testing.T) {
@@ -443,38 +496,12 @@ func TestAutoDesignRepoScan_ClosedDBKeepsCachedAnswer(t *testing.T) {
 	assert.Equal(t, scannedAt, srv.autoDesignScanAt)
 }
 
-func TestAutoDesignStatusForResponse_StaleWorktreeScanRunsInBackground(t *testing.T) {
-	srv, db, _ := newTestServer(t)
-	repo := testutil.NewTestRepoWithCommit(t)
-	worktree := filepath.Join(t.TempDir(), "worktree")
-	repo.Run("worktree", "add", "--detach", worktree, "HEAD")
-	_, err := db.GetOrCreateRepo(worktree)
-	require.NoError(t, err)
-	_, err = db.GetOrCreateRepo(filepath.Join(t.TempDir(), "deleted"))
-	require.NoError(t, err)
-	srv.refreshAutoDesignRepoScan()
-	marker := mockAutoDesignGitWithMarker(t)
-
-	db.SetMaxOpenConns(1)
-	conn, err := db.Conn(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-	srv.autoDesignScanAt = time.Now().Add(-10 * autoDesignRepoScanTTL)
-	for range 5 {
-		assert.Nil(t, srv.autoDesignStatusForResponse())
-	}
-	assert.NoFileExists(t, marker, "stale requests return before the blocked scan can run git")
-	require.NoError(t, conn.Close())
-	waitForAutoDesignRepoScan(t, srv)
-	assert.FileExists(t, marker, "the background refresh scans the registered worktree and deleted checkout")
-	assert.Nil(t, srv.autoDesignStatusForResponse())
-}
-
 func TestAutoDesignStatusForResponse_StaleRequestsShareRefresh(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		srv, db, _ := newTestServer(t)
 		db.SetMaxOpenConns(1)
 		require.Nil(t, srv.autoDesignStatusForResponse())
+		waitForAutoDesignRepoScan(t, srv)
 		time.Sleep(autoDesignRepoScanTTL + time.Second)
 		// A newly registered repo must also appear after a refresh.
 		repoPath := t.TempDir()
@@ -522,6 +549,7 @@ func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *
 	srv := NewServer(db, config.DefaultConfig(), "")
 	t.Cleanup(func() { _ = srv.Close() })
 	require.Nil(t, srv.autoDesignStatusForResponse())
+	waitForAutoDesignRepoScan(t, srv)
 
 	enableAutoDesignReviewForRepo(t, repo.Path())
 	assert.Nil(t, srv.autoDesignStatusForResponse())
@@ -540,6 +568,7 @@ func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *
 func TestAutoDesignStatusForResponse_GlobalEnableBypassesCache(t *testing.T) {
 	srv, _ := newAutoDesignTestServer(t)
 	require.Nil(t, srv.autoDesignStatusForResponse())
+	waitForAutoDesignRepoScan(t, srv)
 
 	srv.configWatcher.Config().AutoDesignReview.Enabled = true
 	got := srv.autoDesignStatusForResponse()
@@ -552,6 +581,8 @@ func TestAutoDesignStatusForResponse_EnabledRepoSurfaces(t *testing.T) {
 	srv, repo := newAutoDesignTestServer(t)
 	enableAutoDesignReviewForRepo(t, repo.RootPath)
 
+	srv.autoDesignStatusForResponse()
+	waitForAutoDesignRepoScan(t, srv)
 	got := srv.autoDesignStatusForResponse()
 	require.NotNil(t, got)
 	assert.True(t, got.Enabled)
@@ -562,6 +593,8 @@ func TestAutoDesignStatusForResponse_HookEnabledRepoSurfaces(t *testing.T) {
 	srv, repo := newAutoDesignTestServer(t)
 	enableHookAutoDesignReviewForRepo(t, repo.RootPath)
 
+	srv.autoDesignStatusForResponse()
+	waitForAutoDesignRepoScan(t, srv)
 	got := srv.autoDesignStatusForResponse()
 	require.NotNil(t, got)
 	assert.True(t, got.Enabled)

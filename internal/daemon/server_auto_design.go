@@ -94,22 +94,9 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 	enabled := cfg != nil && (cfg.AutoDesignReview.Enabled || cfg.AutoDesignReview.HookEnabled)
 
 	if !enabled {
+		s.startAutoDesignRepoScan()
 		s.autoDesignScanMu.Lock()
-		if s.autoDesignScanAt.IsZero() {
-			var err error
-			enabled, err = s.anyRepoEnablesAutoDesign()
-			if err == nil {
-				s.autoDesignScanEnabled = enabled
-				s.autoDesignScanAt = time.Now()
-			}
-		} else {
-			enabled = s.autoDesignScanEnabled
-			if time.Since(s.autoDesignScanAt) >= autoDesignRepoScanTTL && !s.autoDesignScanRunning {
-				s.autoDesignScanRunning = true
-				// Repo config can stall in git, so Stop must not wait for this scan.
-				go s.refreshAutoDesignRepoScan()
-			}
-		}
+		enabled = s.autoDesignScanEnabled
 		s.autoDesignScanMu.Unlock()
 	}
 
@@ -119,6 +106,16 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 	snap := autoDesignMetrics.Snapshot()
 	snap.Enabled = true
 	return &snap
+}
+
+func (s *Server) startAutoDesignRepoScan() {
+	s.autoDesignScanMu.Lock()
+	defer s.autoDesignScanMu.Unlock()
+	if !s.autoDesignScanRunning && (s.autoDesignScanAt.IsZero() || time.Since(s.autoDesignScanAt) >= autoDesignRepoScanTTL) {
+		s.autoDesignScanRunning = true
+		// Repo config can stall in git, so Stop must not wait for this scan.
+		go s.refreshAutoDesignRepoScan()
+	}
 }
 
 func (s *Server) refreshAutoDesignRepoScan() {
