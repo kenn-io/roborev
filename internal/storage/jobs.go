@@ -2215,7 +2215,8 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	}
 	if o.closed != nil {
 		if *o.closed {
-			conditions = append(conditions, "rv.closed = 1")
+			// The closed flag has two values, so let the queue's position index drive the scan.
+			conditions = append(conditions, "+rv.closed = 1")
 		} else {
 			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
 			// Failed and canceled jobs never produce a review to resolve, so

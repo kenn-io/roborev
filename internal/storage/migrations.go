@@ -44,6 +44,13 @@ var schemaMigrations = []schemaMigration{
 	{8, "search change log", migrateSearchChanges},
 	{9, "cost aggregate index", migrateCostAggregateIndex},
 	{10, "open failed reviews index", migrateOpenFailedReviewsIndex},
+	{11, "branch list position index", migrateBranchListPositionIndex},
+}
+
+func migrateBranchListPositionIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch_position
+		ON review_jobs(branch, `+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC)`)
+	return err
 }
 
 func migrateCostAggregateIndex(ctx context.Context, db *DB) error {

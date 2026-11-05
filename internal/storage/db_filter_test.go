@@ -1350,6 +1350,9 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 				extra []ListJobsOption
 			}{
 				{"first page", "idx_review_jobs_enqueued_position", nil},
+				{"branch filter", "idx_review_jobs_branch_position", []ListJobsOption{WithBranch("main")}},
+				{"TUI branch filter", "idx_review_jobs_branch_position", []ListJobsOption{WithBranch("main"), WithExcludeJobType("fix"), WithFindingCounts()}},
+				{"closed filter", "idx_review_jobs_enqueued_position", []ListJobsOption{WithClosed(true)}},
 				{"cursor page", "idx_review_jobs_enqueued_position", []ListJobsOption{WithSortAfter(JobSortPosition{
 					Keys: []any{"2026-01-01 00:00:00"}, JobID: 10,
 				})}},
