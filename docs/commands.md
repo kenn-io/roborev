@@ -1372,6 +1372,9 @@ roborev hook install --force     # Overwrite existing hook with a fresh one
 roborev hook uninstall           # Remove hook
 ```
 
+On macOS, `daemon restart` and `update` restart an owned daemon through its
+LaunchAgent.
+
 | Flag | Description |
 |------|-------------|
 | `--json` | Emit daemon, web UI, and queue status as JSON. Includes the canonical browser origin as `web_url` (with `web_disabled_reason` set to `config` or `missing-web-assets` when the browser listener is not running), active snoozes under `daemon.active_snoozes`, and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
@@ -1661,6 +1664,9 @@ The updater coordinates daemon replacement with the review queue:
     `--yes` defaults to `wait`.
 - `--no-restart` skips daemon preparation, restart, hook repair, and skill
     updates.
+
+If daemon ownership checks fail, the update stops before installation and
+suggests `--no-restart`.
 
 When an interactive update finds active reviews, it asks once:
 

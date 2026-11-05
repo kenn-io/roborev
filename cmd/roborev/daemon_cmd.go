@@ -174,13 +174,13 @@ func daemonCmd() *cobra.Command {
 		Use:   "restart",
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var owners []*daemonService
+			var owner *daemonService
 			var runtimes []*daemon.RuntimeInfo
 			stop := daemonStop
 			var release func()
 			if restartThroughService {
 				var err error
-				owners, runtimes, release, err = restartService(cmd.Context(), listAllRuntimes)
+				owner, runtimes, release, err = restartService(cmd.Context(), listAllRuntimes)
 				if err != nil {
 					return err
 				}
@@ -195,11 +195,9 @@ func daemonCmd() *cobra.Command {
 			} else if err != nil {
 				return err
 			}
-			if len(owners) > 0 {
-				for _, owner := range owners {
-					if _, err := startServiceReplacement(cmd.Context(), owner); err != nil {
-						return err
-					}
+			if owner != nil {
+				if _, err := startServiceReplacement(cmd.Context(), owner); err != nil {
+					return err
 				}
 			} else if err := daemonEnsure(); err != nil {
 				return err

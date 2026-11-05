@@ -304,13 +304,13 @@ func awaitServiceReplacement(ctx context.Context, unit string) (*daemon.RuntimeI
 }
 
 // restartService checks ownership before an explicit restart shuts down a daemon.
-func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo, error)) (owners []*daemonService, runtimes []*daemon.RuntimeInfo, release func(), err error) {
+func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo, error)) (owner *daemonService, runtimes []*daemon.RuntimeInfo, release func(), err error) {
 	release, err = acquireRecoveryLock(ctx)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("%w: %w", errRecoveryLock, err)
 	}
 	defer func() {
-		if err != nil || len(owners) == 0 {
+		if err != nil || owner == nil {
 			release()
 			release = nil
 		}
@@ -319,14 +319,15 @@ func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo,
 	if err != nil {
 		return nil, nil, release, err
 	}
-	seen := make(map[string]bool)
+	liveCount := 0
 	for _, info := range runtimes {
 		if info.PID <= 0 || info.Stale() {
 			continue
 		}
+		liveCount++
 		candidate, err := findDaemonService(ctx, info.PID)
 		if errors.Is(err, os.ErrNotExist) {
-			continue
+			return nil, nil, release, fmt.Errorf("daemon exited during restart; run it again: %w", err)
 		}
 		if err != nil {
 			return nil, nil, release, err
@@ -338,10 +339,10 @@ func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo,
 			hint := fmt.Sprintf("run %s %s", serviceRestartCommand, candidate.unit)
 			return nil, nil, release, fmt.Errorf("%s; %s", reason, hint)
 		}
-		if !seen[candidate.unit] {
-			owners = append(owners, candidate)
-			seen[candidate.unit] = true
-		}
+		owner = candidate
 	}
-	return owners, runtimes, release, nil
+	if liveCount > 1 && owner != nil {
+		return nil, nil, release, fmt.Errorf("found %d live daemons including a service-owned daemon; stop the others or restart through each job", liveCount)
+	}
+	return owner, runtimes, release, nil
 }
