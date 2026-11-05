@@ -1683,6 +1683,45 @@ func TestListJobsClosedPagePlans(t *testing.T) {
 	}
 }
 
+func TestListJobsClosedSelectiveFilterPlans(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	panelRun := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	_, err := db.ExecContext(t.Context(), `
+		INSERT INTO repos(id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
+		WITH RECURSIVE ids(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM ids WHERE id < 100000)
+		INSERT INTO review_jobs(id, repo_id, git_ref, agent, status, job_type, enqueued_at, finished_at)
+		SELECT id, 1, 'main', 'test', 'done', 'review',
+			datetime('2026-01-01', '+' || id || ' seconds'), '2026-01-01 00:00:00' FROM ids;
+		UPDATE review_jobs SET git_ref = 'selected', panel_run_uuid = ?, status = 'applied',
+			finished_at = '2026-02-01 00:00:00' WHERE id = 1;
+		INSERT INTO reviews(job_id, agent, output, closed, verdict_bool)
+		SELECT id, 'test', '', 1, 0 FROM review_jobs;
+	`, panelRun)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, status, index string
+		opts                []ListJobsOption
+	}{
+		{name: "ref", index: "idx_review_jobs_git_ref", opts: []ListJobsOption{WithGitRef("selected")}},
+		{name: "panel", index: "idx_review_jobs_panel", opts: []ListJobsOption{WithPanelRun(panelRun)}},
+		{name: "status", status: "applied", index: "idx_review_jobs_status"},
+		{name: "finished window", index: "idx_review_jobs_analytics", opts: []ListJobsOption{WithFailedReviewsSince(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC))}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := append([]ListJobsOption{WithClosed(true), WithoutPrompt()}, tc.opts...)
+			query, args, _, err := listJobsQuery(tc.status, "", 50, 0, collectListJobsOptions(opts...))
+			require.NoError(t, err)
+			assert.Contains(t, queryPlan(t, db, query, args...), "SEARCH j USING INDEX "+tc.index)
+			jobs, err := db.ListJobs(tc.status, "", 50, 0, opts...)
+			require.NoError(t, err)
+			require.Len(t, jobs, 1)
+			assert.Equal(t, int64(1), jobs[0].ID)
+		})
+	}
+}
+
 func TestListJobsClosedFilterCombinations(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
