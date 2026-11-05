@@ -1664,10 +1664,11 @@ func TestListJobsClosedPagePlans(t *testing.T) {
 	seedJobs(t, db, "/synthetic/repo", 2)
 	seedJobs(t, db, "/synthetic/rare", 2)
 	for _, filter := range []struct {
-		name, repo, index string
-		opts              []ListJobsOption
+		name, status, repo, index string
+		opts                      []ListJobsOption
 	}{
 		{name: "closed", index: "idx_review_jobs_closed_position"},
+		{name: "done closed", status: "done", index: "idx_review_jobs_closed_position"},
 		{name: "repo prefix closed", opts: []ListJobsOption{WithRepoPrefix("/synthetic")}, index: "idx_review_jobs_closed_position"},
 		{name: "unset branch closed", opts: []ListJobsOption{WithEmptyBranch()}, index: "idx_review_jobs_closed_position"},
 		{name: "branch including empty closed", opts: []ListJobsOption{WithBranchOrEmpty("main")}, index: "idx_review_jobs_closed_position"},
@@ -1687,7 +1688,7 @@ func TestListJobsClosedPagePlans(t *testing.T) {
 				if position != nil {
 					pageOpts = append(pageOpts, WithSortAfter(*position))
 				}
-				query, args, _, err := listJobsQuery("", filter.repo, 2, 0, collectListJobsOptions(pageOpts...))
+				query, args, _, err := listJobsQuery(filter.status, filter.repo, 2, 0, collectListJobsOptions(pageOpts...))
 				require.NoError(t, err)
 				plan := queryPlan(t, db, query, args...)
 				assert.Contains(t, plan, "USING INDEX "+filter.index)
@@ -1715,20 +1716,19 @@ func TestListJobsClosedSelectiveFilterPlans(t *testing.T) {
 	`, panelRun, string(reviewFixtureJSON("- Medium: synthetic defect")))
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name, status, index string
-		opts                []ListJobsOption
+		name, index string
+		opts        []ListJobsOption
 	}{
 		{name: "ref", index: "idx_review_jobs_git_ref", opts: []ListJobsOption{WithGitRef("selected")}},
 		{name: "panel", index: "idx_review_jobs_panel", opts: []ListJobsOption{WithPanelRun(panelRun)}},
-		{name: "status", status: "done", index: "idx_review_jobs_status"},
 		{name: "finished window", index: "idx_review_jobs_analytics", opts: []ListJobsOption{WithFailedReviewsSince(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC))}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := append([]ListJobsOption{WithClosed(true), WithoutPrompt()}, tc.opts...)
-			query, args, _, err := listJobsQuery(tc.status, "", 50, 0, collectListJobsOptions(opts...))
+			query, args, _, err := listJobsQuery("", "", 50, 0, collectListJobsOptions(opts...))
 			require.NoError(t, err)
 			assert.Contains(t, queryPlan(t, db, query, args...), "SEARCH j USING INDEX "+tc.index)
-			jobs, err := db.ListJobs(tc.status, "", 50, 0, opts...)
+			jobs, err := db.ListJobs("", "", 50, 0, opts...)
 			require.NoError(t, err)
 			require.Len(t, jobs, 1)
 			assert.Equal(t, int64(1), jobs[0].ID)
