@@ -310,6 +310,7 @@ jobs:
       - name: Test (macOS)
         if: matrix.os == 'macos-latest'
         env:
+          ROBOREV_TEST_LAUNCHD: '1'
           SUITE: ${{ matrix.shard || matrix.os }}
         run: |
           # Go's race detector can intermittently hang/crash while spawning child

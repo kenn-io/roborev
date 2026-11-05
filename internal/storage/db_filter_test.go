@@ -1352,27 +1352,34 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 			// The web table's first page, a page resumed from a cursor, and a
 			// status sort, which reads idx_review_jobs_status in order.
 			for _, page := range []struct {
-				name  string
-				index string
-				extra []ListJobsOption
+				name   string
+				index  string
+				status string
+				extra  []ListJobsOption
 			}{
-				{"first page", "idx_review_jobs_enqueued_position", nil},
-				{"TUI branch filter", "idx_review_jobs_branch_position", []ListJobsOption{WithBranch("main"), WithExcludeJobType("fix"), WithFindingCounts()}},
-				{"closed filter", "idx_review_jobs_closed_position", []ListJobsOption{WithClosed(true)}},
-				{"cursor page", "idx_review_jobs_enqueued_position", []ListJobsOption{WithSortAfter(JobSortPosition{
+				{"first page", "idx_review_jobs_enqueued_position", "", nil},
+				{"TUI branch filter", "idx_review_jobs_branch_position", "", []ListJobsOption{WithBranch("main"), WithExcludeJobType("fix"), WithFindingCounts()}},
+				{"closed filter", "idx_review_jobs_closed_position", "", []ListJobsOption{WithClosed(true)}},
+				{"done first page", "idx_review_jobs_enqueued_position", "done", nil},
+				{"done ascending", "idx_review_jobs_enqueued_position", "done", []ListJobsOption{WithSort(JobSort{Column: JobSortEnqueuedAt, Ascending: true})}},
+				{"failed first page", "idx_review_jobs_status", "failed", nil},
+				{"cursor page", "idx_review_jobs_enqueued_position", "", []ListJobsOption{WithSortAfter(JobSortPosition{
 					Keys: []any{"2026-01-01 00:00:00"}, JobID: 10,
 				})}},
-				{"status sort", "idx_review_jobs_status", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
+				{"status sort", "idx_review_jobs_status", "", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
+				{"done status sort", "idx_review_jobs_status (status=?)", "done", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
 			} {
 				t.Run(page.name, func(t *testing.T) {
 					opts := append([]ListJobsOption{
 						WithoutPrompt(), WithHideClassifyJobs(), WithExcludePanelRole(PanelRoleMember),
 					}, page.extra...)
-					query, args, _, err := listJobsQuery("", "", 51, 0, collectListJobsOptions(opts...))
+					query, args, _, err := listJobsQuery(page.status, "", 51, 0, collectListJobsOptions(opts...))
 					require.NoError(t, err)
 					plan := queryPlan(t, db, query, args...)
 					assert.Contains(t, plan, "USING INDEX "+page.index)
-					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+					if page.status != "failed" {
+						assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+					}
 				})
 			}
 		})

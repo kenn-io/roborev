@@ -2134,7 +2134,7 @@ func findingCountsDiffContentExpr(includeFindings bool) string {
 			THEN ` + jobDiffExpr + ` ELSE NULL END`
 }
 
-func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (string, []any) {
+func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, enqueueOrder bool) (string, []any) {
 	var args []any
 	var conditions []string
 	if o.openFailedReviews {
@@ -2144,7 +2144,13 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	}
 
 	if statusFilter != "" {
-		conditions = append(conditions, "j.status = ?")
+		statusColumn := "j.status"
+		if statusFilter == string(JobStatusDone) && enqueueOrder {
+			// Done usually matches most jobs. Disqualify the status index so
+			// SQLite can walk enqueue positions and stop when the page is full.
+			statusColumn = "+j.status"
+		}
+		conditions = append(conditions, statusColumn+" = ?")
 		args = append(args, statusFilter)
 	}
 	if o.failedReviewsSince != nil {
@@ -2312,7 +2318,8 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	for i, expr := range sortKeys {
 		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
 	}
-	queryFilters, filterArgs := buildJobFilterClause(statusFilter, repoFilter, options)
+	enqueueOrder := options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt
+	queryFilters, filterArgs := buildJobFilterClause(statusFilter, repoFilter, options, enqueueOrder)
 	jobsTable := "review_jobs j"
 	if options.closed != nil && *options.closed && (options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt) &&
 		!options.selective(statusFilter, repoFilter) {
@@ -2468,7 +2475,7 @@ func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (str
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv INDEXED BY idx_reviews_job_verdict ON rv.job_id = j.id
 	`
-	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
+	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...), false)
 	return query + queryFilters, args
 }
 

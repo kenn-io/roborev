@@ -1,0 +1,55 @@
+gui/501/com.example.roborev-test-3546-1793874887906414000 = {
+	active count = 1
+	path = /private/var/folders/n6/hn37q6pj7sj_9dmqqc2113800000gn/T/TestLaunchctlCLIRecoveryIntegrationwrapper=true4260031637/002/daemon.plist
+	type = LaunchAgent
+	state = running
+
+	program = /bin/sh
+	arguments = {
+		/bin/sh
+		-c
+		"$1" daemon run & wait; sleep 1
+		sh
+		/var/folders/n6/hn37q6pj7sj_9dmqqc2113800000gn/T/TestLaunchctlCLIRecoveryIntegrationwrapper=true4260031637/002/roborev
+	}
+
+	stdout path = /var/folders/n6/hn37q6pj7sj_9dmqqc2113800000gn/T/TestLaunchctlCLIRecoveryIntegrationwrapper=true4260031637/002/daemon.log
+	stderr path = /var/folders/n6/hn37q6pj7sj_9dmqqc2113800000gn/T/TestLaunchctlCLIRecoveryIntegrationwrapper=true4260031637/002/daemon.log
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.0iYDCkrLUb/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		PATH => /Users/runner/hostedtoolcache/go/1.27.3/arm64/bin:/Users/runner/hostedtoolcache/go/1.27.3/arm64/bin:/Users/runner/.local/share/mise/installs/github-jdx-jactionlint/2.3.0:/Users/runner/.local/share/mise/installs/uv/0.13.4/uv-aarch64-apple-darwin:/Users/runner/.local/share/mise/shims:/Users/runner/.local/share/mise/bin:/Users/runner/go/bin:/Users/runner/hostedtoolcache/go/1.27.3/arm64/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/lib/ruby/gems/3.4.0/bin:/opt/homebrew/opt/ruby@3.4/bin:/Users/runner/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/runner/.cargo/bin:/usr/local/opt/curl/bin:/usr/local/bin:/usr/local/sbin:/Users/runner/bin:/Users/runner/.yarn/bin:/Users/runner/Library/Android/sdk/tools:/Users/runner/Library/Android/sdk/platform-tools:/Library/Frameworks/Python.framework/Versions/Current/bin:/Library/Frameworks/Mono.framework/Versions/Current/Commands:/usr/bin:/bin:/usr/sbin:/sbin:/Users/runner/.dotnet/tools
+		GIT_CONFIG_GLOBAL => 
+		GIT_CONFIG_NOSYSTEM => 1
+		ROBOREV_DATA_DIR => /var/folders/n6/hn37q6pj7sj_9dmqqc2113800000gn/T/TestLaunchctlCLIRecoveryIntegrationwrapper=true4260031637/002
+		XPC_SERVICE_NAME => com.example.roborev-test-3546-1793874887906414000
+	}
+
+	domain = gui/501 [100002]
+	asid = 100002
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	pid = 16118
+	immediate reason = speculative
+	forks = 1
+	execs = 2
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	checked allocations = 0 (queried = 1)
+	checked allocations reason = no host
+	checked allocations flags = 0x0
+	last exit code = (never exited)
+
+	resource coalition = {
+		ID = 1603
+		type = resource
