@@ -163,7 +163,16 @@ func RuntimeStore() kitdaemon.RuntimeStore {
 	return runtimeStore()
 }
 
-func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
+// UnreachableError retains the process identity, endpoint, and failure for status.
+func (r RuntimeInfo) UnreachableError(cause error) *kitdaemon.UnreachableError {
+	rec := r.processRecord()
+	rec.Network, rec.Address = r.Network, r.Address
+	rec.Service, rec.Version, rec.SourcePath = r.Service, r.Version, r.SourcePath
+	return &kitdaemon.UnreachableError{Record: rec, Endpoint: rec.Endpoint(), Err: cause}
+}
+
+// RuntimeInfoFromRecord converts a kit runtime without losing process identity.
+func RuntimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 	ep := daemonEndpointFromKit(rec.Endpoint())
 	info := &RuntimeInfo{
 		PID:               rec.PID,
@@ -287,7 +296,7 @@ func ReadRuntimeForPID(pid int) (*RuntimeInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return runtimeInfoFromRecord(rec), nil
+	return RuntimeInfoFromRecord(rec), nil
 }
 
 // RemoveRuntime removes the runtime info file for the current process
@@ -315,7 +324,7 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	runtimes := make([]*RuntimeInfo, 0, len(records))
 	seen := make(map[int]struct{}, len(records))
 	for _, rec := range records {
-		runtimes = append(runtimes, runtimeInfoFromRecord(rec))
+		runtimes = append(runtimes, RuntimeInfoFromRecord(rec))
 		seen[rec.PID] = struct{}{}
 	}
 	for _, info := range listLegacyRuntimes() {
@@ -447,7 +456,7 @@ func discoverRuntimeRecords(
 	}
 	var deniedErr error
 	for _, rec := range records {
-		info := runtimeInfoFromRecord(rec)
+		info := RuntimeInfoFromRecord(rec)
 		if info.unjudged() || info.hasStaleProcess() {
 			continue
 		}

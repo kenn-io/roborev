@@ -134,12 +134,7 @@ func discoveredOutsideService(pid int) bool {
 	return err == nil && unit == ""
 }
 
-func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool) (result error) {
-	defer func() {
-		if result != nil {
-			result = &unresponsiveDaemonError{info, result}
-		}
-	}()
+func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool) error {
 	probeFailed := probeErr != nil
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	snapshot, snapshotErr := snapshotDaemonService(ctx, info.PID, outsideService)
@@ -180,7 +175,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return candidate, nil
 		}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)), backoff.WithMaxElapsedTime(0))
 		if err != nil {
-			return &managedRecoveryError{"unknown", fmt.Errorf("daemon ownership uncertain after PID %d disappeared: %w", info.PID, err)}
+			return info.UnreachableError(&managedRecoveryError{"unknown", fmt.Errorf("daemon ownership uncertain after PID %d disappeared: %w", info.PID, err)})
 		}
 	}
 	responsive := current != nil
@@ -210,7 +205,6 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			probeErr = os.ErrNotExist
 		}
 	}
-	info = current
 	owner, err := findDaemonService(ctx, current.PID)
 	vanished := !responsive && errors.Is(err, os.ErrNotExist)
 	if vanished {
@@ -222,7 +216,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
 			return nil
 		}
-		return err
+		return current.UnreachableError(err)
 	}
 	if owner == nil {
 		if err := stopDaemonRuntimes(listAllRuntimes, drainManagedDaemon, lifecycleOut); err != nil && !errors.Is(err, ErrDaemonNotRunning) {
@@ -232,7 +226,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		release = nil
 		return startDaemonForEnsure()
 	}
-	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
+	fail := func(err error) error { return current.UnreachableError(&managedRecoveryError{owner.unit, err}) }
 	if responsive {
 		if reason := owner.keepReason(current.PID); reason != "" {
 			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %s\n", reason)
@@ -253,7 +247,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return fail(err)
 		}
 		if probeFailed && liveDaemon(current) {
-			return managedUnresponsiveError(owner, probeErr)
+			return current.UnreachableError(managedUnresponsiveError(owner, probeErr))
 		}
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	kitdaemon "go.kenn.io/kit/daemon"
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/daemon"
@@ -40,8 +41,8 @@ func managedRecoveryStatus(err error) statusJSONResult {
 	info, discoverErr := statusDiscover()
 	web := discoverWebUI(func() (*daemon.RuntimeInfo, error) { return info, discoverErr })
 	running := discoverErr == nil
-	if retained, ok := errors.AsType[*unresponsiveDaemonError](err); !running && ok {
-		running = liveDaemon(retained.info)
+	if retained, ok := errors.AsType[*kitdaemon.UnreachableError](err); !running && ok {
+		running = liveDaemon(daemon.RuntimeInfoFromRecord(retained.Record))
 	}
 	return unavailableStatus(err, running, web)
 }
@@ -83,7 +84,7 @@ func statusCmd() *cobra.Command {
 
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := statusEnsureDaemon(); err != nil {
-				if _, retained := errors.AsType[*unresponsiveDaemonError](err); retained {
+				if _, retained := errors.AsType[*kitdaemon.UnreachableError](err); retained {
 					return writeStatusUnavailable(managedRecoveryStatus(err))
 				}
 				if errors.Is(err, daemon.ErrClientConfig) {

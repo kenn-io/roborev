@@ -575,7 +575,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 				if tc.lockFailure {
 					return recoveryErr
 				}
-				return &unresponsiveDaemonError{original, &managedRecoveryError{"fixture.service", errors.New(cause)}}
+				return original.UnreachableError(&managedRecoveryError{"fixture.service", errors.New(cause)})
 			}
 			cmd := statusCmd()
 			cmd.SetArgs([]string{"--json"})
@@ -584,13 +584,18 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
 			var result statusJSONResult
 			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
-			assert.Equal(t, tc.responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
 			if tc.lockFailure {
-				assert.Contains(t, result.Error, "wait for daemon recovery lock")
-			} else {
-				assert.Contains(t, result.Error, "fixture.service")
-				assert.Contains(t, result.Error, cause)
+				assert.False(t, result.Running)
+				assert.Empty(t, result.Error)
+				assert.Empty(t, result.WebURL)
+				output := captureStdout(t, func() { require.NoError(t, statusCmd().Execute()) })
+				assert.Contains(t, output, "Daemon: not running\n")
+				assert.NotContains(t, output, "Status: unavailable:")
+				return
 			}
+			assert.Equal(t, tc.responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
+			assert.Contains(t, result.Error, "fixture.service")
+			assert.Contains(t, result.Error, cause)
 			assert.Equal(t, tc.webOrigin, result.WebURL)
 			assert.Equal(t, tc.disabledReason, result.WebDisabledReason)
 			assert.Nil(t, result.Daemon)
@@ -611,10 +616,72 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			if tc.disabledReason != "" {
 				assert.Contains(t, output, "Web UI: disabled ([web] enabled = false)\n")
 			}
-			if tc.lockFailure {
-				assert.Contains(t, output, "wait for daemon recovery lock")
-			} else {
-				assert.Contains(t, output, cause)
+			assert.Contains(t, output, cause)
+		})
+	}
+}
+
+func TestStatusRecoveryErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		detached bool
+	}{
+		{name: "access denied", err: daemon.ErrDaemonAccessDenied},
+		{name: "client configuration", err: daemon.ErrClientConfig},
+		{name: "detached start failed", err: errors.New("detached start failed"), detached: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateDaemonSelection(t)
+			stubServiceRecovery(t)
+			original := &daemon.RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: "127.0.0.1:1", Version: "v-old"}
+			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				if errors.Is(tc.err, daemon.ErrClientConfig) {
+					return nil, tc.err
+				}
+				if tc.detached {
+					return nil, os.ErrNotExist
+				}
+				return original, nil
+			}
+			probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+				assert.Equal(t, original.Endpoint(), ep)
+				return nil, tc.err
+			}
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return nil, nil }
+			startDaemonForEnsure = func() error { return tc.err }
+			oldEnsure := statusEnsureDaemon
+			t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
+			statusEnsureDaemon = func() error { return recoverDaemon(original, errors.New("initial probe failed"), true) }
+			for _, jsonOutput := range []bool{false, true} {
+				cmd := statusCmd()
+				if jsonOutput {
+					cmd.SetArgs([]string{"--json"})
+				}
+				cmd.SetErr(&bytes.Buffer{})
+				var executeErr error
+				output := captureStdout(t, func() { executeErr = cmd.Execute() })
+				if errors.Is(tc.err, daemon.ErrClientConfig) {
+					require.ErrorIs(t, executeErr, daemon.ErrClientConfig)
+					continue
+				}
+				require.NoError(t, executeErr)
+				if jsonOutput {
+					var result statusJSONResult
+					require.NoError(t, json.Unmarshal([]byte(output), &result))
+					assert.Equal(t, !tc.detached, result.Running)
+				}
+				if tc.detached {
+					assert.NotContains(t, output, "Status: unavailable")
+					if !jsonOutput {
+						assert.Contains(t, output, "Daemon: not running\n")
+					}
+				} else {
+					assert.Contains(t, output, "allow loopback or Unix socket access and retry")
+				}
 			}
 		})
 	}

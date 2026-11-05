@@ -379,10 +379,10 @@ func ensureDaemon() (err error) {
 		}
 		owner, err := findDaemonService(ctx, runtime.PID)
 		if err != nil {
-			return &unresponsiveDaemonError{runtime, err}
+			return runtime.UnreachableError(err)
 		}
 		if owner != nil {
-			return &unresponsiveDaemonError{runtime, managedUnresponsiveError(owner, nil)}
+			return runtime.UnreachableError(managedUnresponsiveError(owner, nil))
 		}
 	}
 

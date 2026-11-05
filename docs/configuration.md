@@ -1923,6 +1923,9 @@ other unsupported service types, a responsive daemon stays usable and the
 command prints a manual restart command. If that daemon stops responding,
 commands report the service failure and restart guidance; `status` reports its
 current liveness and the failure.
+See [troubleshooting](guides/troubleshooting.md#check-the-daemon-is-running)
+for the same checked-liveness behavior when a live launchd or systemd daemon
+stops answering HTTP.
 
 These daemons stay in use while they respond and report an error otherwise:
 
