@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
+// Adding UUIDs starts a new measurement series for the shared benchmarks.
 func seedCanonicalReconcilerHistory(tb testing.TB, reviews, promptSize int) *storage.DB {
 	tb.Helper()
 	db := testutil.OpenTestDB(tb)
