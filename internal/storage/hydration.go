@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"strings"
 	"uuid"
 
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -295,6 +296,12 @@ func applyReviewScan(review *Review, fields reviewScanFields) error {
 		coverage.Excluded = &value
 	}
 	review.FileCoverage = NormalizeReviewFileCoverage(&coverage)
+	// Some review getters have no joined job. Carry the existing minimal job
+	// metadata for marked compacts so protocol provenance survives API transport.
+	// GetReviewByJobID replaces it with the complete joined job below.
+	if fields.JobType == JobTypeCompact && strings.HasPrefix(review.Prompt, CompactPromptPrefix) {
+		review.Job = &ReviewJob{ID: review.JobID, JobType: fields.JobType}
+	}
 	applyReviewVerdict(review, fields.VerdictBool)
 	return nil
 }

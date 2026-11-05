@@ -1165,7 +1165,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	if err := ensureBaseAgent(repoRoot, opts, tracker); err != nil {
 		return err
 	}
-	implementationPrompt := buildGenericFixPromptWithMetadataForRef(review.Output, minSev, comments, metadata, fixCfg.FixGuidelines, reviewedRefForFix(job))
+	implementationPrompt := buildGenericFixPromptWithMetadataForRef(storage.FixReviewContext(review), minSev, comments, metadata, fixCfg.FixGuidelines, reviewedRefForFix(job))
 	if opts.plan || opts.planOnly {
 		review.Job = job
 		builder := prompt.NewBuilderWithConfig(nil, fixCfg).ForRepo(repoRoot, 0)
@@ -1704,7 +1704,7 @@ func buildBatchPromptFooter(metadata config.FixCommitMetadata, fixGuidelines str
 // The index parameter is the 1-based position in the batch.
 func batchEntrySize(index int, e batchEntry) int {
 	toolAttempts, userComments, plans := prompt.SplitResponses(e.comments)
-	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, gitrepo.ShortSHA(e.job.GitRef), e.review.Output))
+	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, gitrepo.ShortSHA(e.job.GitRef), storage.FixReviewContext(e.review)))
 	size += len(autofix.FormatReviewedRef(reviewedRefForFix(e.job)))
 	size += len(prompt.FormatPlans(plans))
 	size += len(prompt.FormatToolAttempts(toolAttempts))
@@ -1786,7 +1786,7 @@ func buildBatchFixPromptWithMetadata(
 		toolAttempts, userComments, plans := prompt.SplitResponses(e.comments)
 		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, gitrepo.ShortSHA(e.job.GitRef))
 		sb.WriteString(autofix.FormatReviewedRef(reviewedRefForFix(e.job)))
-		sb.WriteString(e.review.Output)
+		sb.WriteString(storage.FixReviewContext(e.review))
 		sb.WriteString("\n\n")
 		sb.WriteString(prompt.FormatPlans(plans))
 		sb.WriteString(prompt.FormatToolAttempts(toolAttempts))

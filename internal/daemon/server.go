@@ -2758,6 +2758,9 @@ func (s *Server) humaRerunJob(
 		input.Body.JobID, rerunOpts, requestID,
 	)
 	if err != nil {
+		if errors.Is(err, storage.ErrAccountableCompactRerun) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
 				"job not found or not rerunnable",
@@ -3798,7 +3801,7 @@ func (s *Server) humaFixJob(
 			reviewedRef = parentJob.GitRef
 		}
 		fixPrompt = buildFixPromptWithInstructions(
-			review.Output, req.Prompt, fixMinSev, comments, reviewedRef,
+			storage.FixReviewContext(review), req.Prompt, fixMinSev, comments, reviewedRef,
 		)
 		planReview, planComments = review, comments
 	}
