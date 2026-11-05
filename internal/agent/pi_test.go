@@ -47,6 +47,13 @@ func TestResolvePiSessionPath(t *testing.T) {
 	assert.Equal(t, sessionPath, NewPiAgent("pi").resolveSessionPath(t.TempDir(), sessionID))
 }
 
+func TestPiReviewSessionDirIsAbsoluteForRelativeDataDir(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", "relative-data")
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(cwd, "relative-data", "pi-sessions"), piReviewSessionDir())
+}
+
 func TestPiResolveSessionPathFollowsSymlinkedBucket(t *testing.T) {
 	skipIfWindows(t)
 	dataDir := t.TempDir()

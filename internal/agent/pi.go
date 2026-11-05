@@ -541,9 +541,14 @@ func piDataDir() string {
 // piReviewSessionDir is the roborev-owned directory for Pi review sessions.
 // Without it Pi files each session under the directory of its working
 // directory, which is the worktree under review, so the developer's own
-// pi --continue there would open a review.
+// pi --continue there would open a review. The path is absolute because Pi
+// runs in the worktree, and a relative data directory would resolve there.
 func piReviewSessionDir() string {
-	return filepath.Join(config.DataDir(), "pi-sessions")
+	dir := filepath.Join(config.DataDir(), "pi-sessions")
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
 }
 
 // launchSessionDir returns the --session-dir value from the launch
