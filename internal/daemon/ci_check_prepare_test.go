@@ -273,6 +273,7 @@ func TestCICheckPackagesPreparation(t *testing.T) {
 [ -z "$CHECKER_SECRET" ] && [ -z "$NODE_OPTIONS" ] || exit 6
 [ ! -e .npmrc ] && [ ! -e setup.py ] && [ ! -e sitecustomize.py ] || exit 7
 case "$*" in
+'root --global') printf '/trusted/npm-root\n';;
 *--eval*) /bin/cat;;
 *download*source-only*) exit 2;;
 *download*) exit 0;;
@@ -295,6 +296,12 @@ esac
 	for _, tool := range []string{"npm", "bun", "python3"} {
 		require.NoError(t, os.WriteFile(filepath.Join(tools, tool), []byte(script), 0o700))
 	}
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte(`#!/bin/sh
+case "$(/bin/cat)" in
+'{"sources":["1","1"],"workspaces":{}}'|'{"workspaces":{},"sources":["1","1"]}') printf false;;
+*) exit 9;;
+esac
+`), 0o700))
 	// Mise still resolves the fixture Codex, while installers use selected tools.
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CHECKER_SECRET", "synthetic")
@@ -338,6 +345,8 @@ func TestCICheckPackagesSkipped(t *testing.T) {
 	for _, tc := range []struct{ name, manifest, lock string }{
 		{"local", `{"dependencies":{"local":"file:../local"}}`, ""},
 		{"relative", `{"devDependencies":{"local":"../local"}}`, ""},
+		{"bare archive declaration", `{"dependencies":{"local":"fixture.tgz"}}`, ""},
+		{"bare archive lock", `{}`, `{"packages":{"node_modules/pkg":{"resolved":"fixture.tar.gz"}}}`},
 		{"override", `{"overrides":{"pkg":{"nested":"link:../local"}}}`, ""},
 		{"resolution", `{"resolutions":{"pkg/nested":"workspace:*"}}`, ""},
 		{"npm link", `{}`, `{"packages":{"node_modules/pkg":{"link":true,"resolved":"node_modules/fixture"}}}`},

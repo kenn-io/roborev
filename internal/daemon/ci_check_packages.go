@@ -57,7 +57,8 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 		projects[dir][base] = data
 	}
 	var pythonBin string
-	for dir, metadata := range projects {
+	for _, dir := range slices.Sorted(maps.Keys(projects)) {
+		metadata := projects[dir]
 		stage, err := os.MkdirTemp(private, "project-*")
 		if err != nil {
 			fmt.Fprintf(out, "CI checker package staging failed: %v\n", err)
@@ -65,7 +66,18 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 		}
 		project := filepath.Join(repo, dir)
 		if data := metadata["package.json"]; data != nil {
-			prepareCICheckJS(ctx, project, stage, metadata, env, out)
+			ancestors := map[string]any{}
+			for parent := filepath.Dir(dir); parent != dir; parent = filepath.Dir(parent) {
+				var manifest map[string]any
+				if json.Unmarshal(projects[parent]["package.json"], &manifest) == nil && manifest["workspaces"] != nil {
+					relative, _ := filepath.Rel(parent, dir)
+					ancestors[filepath.ToSlash(relative)] = manifest["workspaces"]
+				}
+				if parent == "." {
+					break
+				}
+			}
+			prepareCICheckJS(ctx, project, stage, metadata, ancestors, env, out)
 		}
 		if data := metadata["pyproject.toml"]; data != nil {
 			if prepareCICheckPython(ctx, project, stage, data, env, out) && dir == "." {
@@ -97,63 +109,107 @@ func runCICheckInstaller(ctx context.Context, command, dir string, env, args []s
 	return true
 }
 
-var ciCheckLocalJS = regexp.MustCompile(`(?i)^(file:|link:|workspace:|\.?\.?/|~/|[A-Z]:[\\/])`)
-
-func ciCheckLocalJSDependency(value any) bool {
+func ciCheckJSSources(value any) []string {
+	var sources []string
 	switch value := value.(type) {
 	case string:
-		return ciCheckLocalJS.MatchString(value)
+		sources = append(sources, value)
 	case map[string]any:
 		for _, dependency := range value {
-			if ciCheckLocalJSDependency(dependency) {
-				return true
-			}
+			sources = append(sources, ciCheckJSSources(dependency)...)
 		}
 	}
-	return false
+	return sources
 }
 
-func ciCheckLocalNpmLock(lock map[string]any) bool {
+func ciCheckNpmSources(lock map[string]any) []string {
+	var sources []string
 	for _, field := range []string{"packages", "dependencies"} {
 		packages, _ := lock[field].(map[string]any)
 		for _, value := range packages {
-			pkg, ok := value.(map[string]any)
-			if ok && (pkg["link"] == true || ciCheckLocalJSDependency(pkg["resolved"]) || ciCheckLocalJSDependency(pkg["version"]) || ciCheckLocalNpmLock(pkg)) {
-				return true
+			if pkg, ok := value.(map[string]any); ok {
+				// Link records install directories regardless of the resolved path's spelling.
+				if pkg["link"] == true {
+					sources = append(sources, "file:.")
+				}
+				sources = append(sources, ciCheckJSSources(pkg["resolved"])...)
+				sources = append(sources, ciCheckJSSources(pkg["version"])...)
+				sources = append(sources, ciCheckNpmSources(pkg)...)
 			}
 		}
 	}
-	return false
+	return sources
 }
 
-func ciCheckLocalBunLock(ctx context.Context, command, stage string, data []byte, env []string) (bool, error) {
+// Use npm's own source and workspace semantics from its trusted installation.
+func ciCheckLocalJSSources(ctx context.Context, stage string, sources []string, ancestors map[string]any, env []string) (bool, error) {
+	npm, err := resolveCICheckCommand(ctx, "/", "npm")
+	if err != nil {
+		return false, err
+	}
+	root := exec.CommandContext(ctx, npm, "root", "--global")
+	root.Dir, root.Env = "/", env
+	modules, err := root.Output()
+	if err != nil {
+		return false, err
+	}
+	node, err := resolveCICheckCommand(ctx, "/", "node")
+	if err != nil {
+		return false, err
+	}
+	input, err := json.Marshal(map[string]any{"sources": sources, "workspaces": ancestors})
+	if err != nil {
+		return false, err
+	}
+	const script = `const fs = require('node:fs');
+const npmRequire = require('node:module').createRequire(fs.realpathSync(process.argv[1]));
+const npa = npmRequire('npm-package-arg');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const member = Object.entries(input.workspaces || {}).some(([relative, workspaces]) =>
+ npmRequire('@npmcli/map-workspaces').virtual({cwd: '/', lockfile: {packages: {'': {workspaces}, [relative]: {name: 'candidate'}}}}).size > 0);
+const local = input.sources.some(spec => {
+ try { return ['file', 'directory'].includes(npa.resolve('checker', spec).type); }
+ catch { return true; }
+});
+process.stdout.write(JSON.stringify(member || local));`
+	parse := exec.CommandContext(ctx, node, "--input-type=commonjs", "--eval", script, filepath.Join(strings.TrimSpace(string(modules)), "npm", "package.json"))
+	parse.Dir, parse.Env, parse.Stdin = stage, env, bytes.NewReader(input)
+	output, err := parse.Output()
+	if err != nil {
+		return false, err
+	}
+	var local bool
+	err = json.Unmarshal(output, &local)
+	return local, err
+}
+
+func ciCheckBunSources(ctx context.Context, command, stage string, data []byte, env []string) ([]string, error) {
 	// Bun's JSONC parser handles comments, trailing commas, and escaped source paths.
 	parse := exec.CommandContext(ctx, command, "--no-env-file", "--eval", `process.stdout.write(JSON.stringify(Bun.JSONC.parse(await Bun.stdin.text())))`)
 	parse.Dir, parse.Env, parse.Stdin = stage, env, bytes.NewReader(data)
 	decoded, err := parse.Output()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	var lock struct {
 		Packages map[string][]any `json:"packages"`
 	}
 	if err := json.Unmarshal(decoded, &lock); err != nil {
-		return false, err
+		return nil, err
 	}
+	var sources []string
 	for _, tuple := range lock.Packages {
 		if len(tuple) == 0 {
 			continue
 		}
 		source, _ := tuple[0].(string)
 		_, spec, _ := strings.Cut(strings.TrimPrefix(source, "@"), "@")
-		if ciCheckLocalJSDependency(spec) {
-			return true, nil
-		}
+		sources = append(sources, spec)
 	}
-	return false, nil
+	return sources, nil
 }
 
-func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[string][]byte, env []string, out io.Writer) {
+func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[string][]byte, ancestors map[string]any, env []string, out io.Writer) {
 	var manifest map[string]any
 	if err := json.Unmarshal(metadata["package.json"], &manifest); err != nil {
 		fmt.Fprintf(out, "CI checker invalid package.json: %v\n", err)
@@ -163,11 +219,9 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 		fmt.Fprintln(out, "CI checker skips JavaScript workspaces requiring local packages")
 		return
 	}
+	sources := []string{}
 	for _, field := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "overrides", "resolutions"} {
-		if ciCheckLocalJSDependency(manifest[field]) {
-			fmt.Fprintln(out, "CI checker skips JavaScript local dependencies")
-			return
-		}
+		sources = append(sources, ciCheckJSSources(manifest[field])...)
 	}
 	manager := "npm"
 	args := []string{"install", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund"}
@@ -185,31 +239,34 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 
 	for _, name := range []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", "bun.lock"} {
 		if data := metadata[name]; data != nil {
-			var local bool
-			if name == "bun.lock" {
-				local, err = ciCheckLocalBunLock(ctx, command, stage, data, env)
-				if err != nil {
-					fmt.Fprintf(out, "CI checker invalid Bun lockfile: %v\n", err)
-					return
-				}
-			}
-			if name == "package-lock.json" || name == "npm-shrinkwrap.json" {
+			var locked []string
+			switch name {
+			case "bun.lock":
+				locked, err = ciCheckBunSources(ctx, command, stage, data, env)
+			case "package-lock.json", "npm-shrinkwrap.json":
 				var lock map[string]any
-				if err := json.Unmarshal(data, &lock); err != nil {
-					fmt.Fprintf(out, "CI checker invalid npm lockfile: %v\n", err)
-					return
-				}
-				local = ciCheckLocalNpmLock(lock)
+				err = json.Unmarshal(data, &lock)
+				locked = ciCheckNpmSources(lock)
 			}
-			if local {
-				fmt.Fprintln(out, "CI checker skips JavaScript local dependencies")
+			if err != nil {
+				fmt.Fprintf(out, "CI checker invalid %s: %v\n", name, err)
 				return
 			}
+			sources = append(sources, locked...)
 			if err := os.WriteFile(filepath.Join(stage, name), data, 0o600); err != nil {
 				fmt.Fprintf(out, "CI checker package staging failed: %v\n", err)
 				return
 			}
 		}
+	}
+	local, err := ciCheckLocalJSSources(ctx, stage, sources, ancestors, env)
+	if err != nil {
+		fmt.Fprintf(out, "CI checker source classification failed: %v\n", err)
+		return
+	}
+	if local {
+		fmt.Fprintln(out, "CI checker skips JavaScript local dependencies or workspace members")
+		return
 	}
 	if !runCICheckInstaller(ctx, command, stage, env, args, out) {
 		return

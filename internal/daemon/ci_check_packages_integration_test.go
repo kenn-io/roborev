@@ -114,16 +114,30 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 	assert.Contains(t, string(output), "javascript ready\n")
 	assert.FileExists(t, filepath.Join(run.Repo, ".venv", "pth-ran"))
 	assert.NoFileExists(t, marker)
-	t.Run("absolute npm lock", func(t *testing.T) {
+	t.Run("unprefixed npm archives", func(t *testing.T) {
 		archivePath := filepath.Join(t.TempDir(), "package.tgz")
 		require.NoError(t, os.WriteFile(archivePath, archive.Bytes(), 0o600))
-		localRepo := testutil.NewTestRepoWithCommit(t)
-		localRepo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "registry dependency")
-		localRepo.CommitFile("package-lock.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q}}}`, archivePath), "local resolved archive")
-		var preparationLog bytes.Buffer
-		prepareCICheckPackages(t.Context(), localRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
-		assert.NoDirExists(t, filepath.Join(localRepo.Root, "node_modules"), preparationLog.String())
-		assert.Contains(t, preparationLog.String(), "skips JavaScript local dependencies")
+		for _, declaration := range []bool{true, false} {
+			t.Run(fmt.Sprintf("declaration=%t", declaration), func(t *testing.T) {
+				stage, project, private := t.TempDir(), t.TempDir(), t.TempDir()
+				relative, err := filepath.Rel(stage, archivePath)
+				require.NoError(t, err)
+				source := "nested/../" + relative
+				metadata := map[string][]byte{"package.json": []byte(`{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`)}
+				if declaration {
+					metadata["package.json"] = []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":%q}}`, source))
+				} else {
+					metadata["package-lock.json"] = []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q}}}`, source))
+				}
+				for _, dir := range []string{"home", "tmp"} {
+					require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
+				}
+				var preparationLog bytes.Buffer
+				prepareCICheckJS(t.Context(), project, stage, metadata, nil, ciCheckPackageEnv(private, os.Getenv("PATH"), nil), &preparationLog)
+				assert.NoDirExists(t, filepath.Join(project, "node_modules"), preparationLog.String())
+				assert.Contains(t, preparationLog.String(), "skips JavaScript local dependencies")
+			})
+		}
 	})
 	t.Run("absolute Bun lock", func(t *testing.T) {
 		bun, err := resolveCICheckCommand(t.Context(), "/", "bun")
@@ -146,7 +160,6 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 		registryLock := strings.ReplaceAll(string(lock), fmt.Sprintf("%q", "file:"+archivePath), `"1.0.0"`)
 		require.Contains(t, registryLock, "checker-fixture@"+archivePath)
 		for _, tc := range []struct{ name, source string }{
-			{"absolute", archivePath},
 			{"escaped", `\u002f` + archivePath[1:]},
 			{"registry", server.URL + "/package.tgz"},
 		} {
@@ -165,5 +178,17 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 				}
 			})
 		}
+	})
+	t.Run("workspace members", func(t *testing.T) {
+		workspaceRepo := testutil.NewTestRepoWithCommit(t)
+		workspaceRepo.CommitFile("package.json", `{"workspaces":["packages/*"]}`, "workspace declarations")
+		workspaceRepo.CommitFile("bun.lock", `{}`, "workspace lock")
+		manifest := fmt.Sprintf(`{"name":"fixture","dependencies":{"checker-fixture":%q}}`, server.URL+"/package.tgz")
+		workspaceRepo.CommitFile("packages/ui/package.json", manifest, "workspace member")
+		workspaceRepo.CommitFile("web/package.json", manifest, "independent project")
+		var preparationLog bytes.Buffer
+		prepareCICheckPackages(t.Context(), workspaceRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
+		assert.NoDirExists(t, filepath.Join(workspaceRepo.Root, "packages", "ui", "node_modules"), preparationLog.String())
+		assert.FileExists(t, filepath.Join(workspaceRepo.Root, "web", "node_modules", "checker-fixture", "index.js"), preparationLog.String())
 	})
 }
