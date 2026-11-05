@@ -23,6 +23,9 @@ func TestWorkerPoolResizesWhileRunning(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		db := testutil.OpenTestDB(t)
+		// Keep concurrent workers out of SQLite's busy-handler sleeps, which
+		// share synctest's clock on macOS and can stall machine-ID initialization.
+		db.SetMaxOpenConns(1)
 		cfg := config.DefaultConfig()
 		cfg.MaxWorkers = 1
 		server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
