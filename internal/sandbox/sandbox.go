@@ -157,10 +157,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 nono=$1; shift
 while IFS=: read -r hierarchy controllers path; do
   [ "$hierarchy" = 0 ] && [ -z "$controllers" ] || continue
-  for limit in cpu.max memory.max; do
-    file=/sys/fs/cgroup$path/$limit
-    [ ! -f "$file" ] || set -- --read-file "$file" "$@"
-  done
+  set -- --read-file "/sys/fs/cgroup$path/cpu.max" --read-file "/sys/fs/cgroup$path/memory.max" "$@"
 done < /proc/self/cgroup
 exec "$nono" run "$@"
 `
