@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -548,6 +550,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 		{name: "unresponsive exited process", exited: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			stubServiceRecovery(t)
 			oldEnsure, oldAddr, oldParsed := statusEnsureDaemon, serverAddr, parsedServerEndpoint
 			serverAddr, parsedServerEndpoint = "", nil
 			t.Cleanup(func() { statusEnsureDaemon, serverAddr, parsedServerEndpoint = oldEnsure, oldAddr, oldParsed })
@@ -565,11 +568,23 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 				}
 				return nil, os.ErrNotExist
 			})
-			cause := "drain rejected"
+			original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+			var recoveryErr error
 			if tc.lockFailure {
-				cause = "wait for daemon recovery lock: lock unavailable"
+				// A data directory that is a file makes the start lock unusable.
+				dataDir := os.Getenv("ROBOREV_DATA_DIR")
+				blocked := filepath.Join(t.TempDir(), "file")
+				require.NoError(t, os.WriteFile(blocked, nil, 0o600))
+				t.Setenv("ROBOREV_DATA_DIR", blocked)
+				recoveryErr = recoverDaemon(original, nil, false)
+				t.Setenv("ROBOREV_DATA_DIR", dataDir)
 			}
+			cause := "drain rejected"
 			statusEnsureDaemon = func() error {
+				if tc.lockFailure {
+					return recoveryErr
+				}
 				return &managedRecoveryError{"fixture.service", errors.New(cause)}
 			}
 			cmd := statusCmd()

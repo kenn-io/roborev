@@ -367,6 +367,12 @@ func ensureDaemon() (err error) {
 		return nil
 	}
 
+	// Legacy pre-kit daemons are invisible to kit discovery because they do
+	// not serve /api/ping, but they can still hold the default port and DB.
+	// Cleanup uses only this data directory's runtime records. Never adopt
+	// an unpublished daemon by probing the shared default loopback port.
+	cleanupZombieDaemons(fallbackDaemonEndpoint())
+
 	runtimes, err := liveDaemonRuntimes()
 	if err != nil {
 		return err
@@ -378,14 +384,8 @@ func ensureDaemon() (err error) {
 		if errors.Is(err, os.ErrNotExist) || err == nil && owner == nil {
 			continue
 		}
-		return recoverDaemonWithSnapshot(info, errors.New("HTTP probe failed for live daemon process"), owner, err)
+		return recoverDaemonWithSnapshot(info, errors.New("no reply to discovery"), owner, err)
 	}
-
-	// Legacy pre-kit daemons are invisible to kit discovery because they do
-	// not serve /api/ping, but they can still hold the default port and DB.
-	// Cleanup uses only this data directory's runtime records. Never adopt
-	// an unpublished daemon by probing the shared default loopback port.
-	cleanupZombieDaemons(fallbackDaemonEndpoint())
 
 	// Start daemon in background
 	return startDaemonForEnsure()

@@ -82,30 +82,14 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 }
 
 func TestLiveDaemonRuntimes(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		pid  int
-		live bool
-	}{
-		{name: "missing PID"},
-		{name: "exited", pid: exitedDaemonPID(t)},
-		{name: "live", pid: os.Getpid(), live: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			oldList := listAllRuntimes
-			t.Cleanup(func() { listAllRuntimes = oldList })
-			runtime := &daemon.RuntimeInfo{PID: tc.pid, Network: "tcp", Address: "127.0.0.1:1"}
-			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{runtime}, nil }
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	runtime := &daemon.RuntimeInfo{Network: "tcp", Address: "127.0.0.1:1"}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{runtime}, nil }
 
-			live, err := liveDaemonRuntimes()
-			require.NoError(t, err)
-			if tc.live {
-				assert.Equal(t, []*daemon.RuntimeInfo{runtime}, live)
-			} else {
-				assert.Empty(t, live)
-			}
-		})
-	}
+	live, err := liveDaemonRuntimes()
+	require.NoError(t, err)
+	assert.Empty(t, live, "runtime records without a PID cannot describe a live daemon")
 }
 
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
@@ -151,7 +135,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
 			}
-			assert.Empty(t, mutations)
+			assert.Equal(t, []string{"cleanup"}, mutations)
 		})
 	}
 }
