@@ -1941,7 +1941,6 @@ type listJobsOptions struct {
 	branchEmpty        bool
 	branchIncludeEmpty bool
 	closed             *bool
-	closedJobColumn    bool
 	openFailedReviews  bool
 	jobType            string
 	excludeJobType     string
@@ -2232,17 +2231,9 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 	}
 	if o.closed != nil {
 		if *o.closed {
-			if o.closedJobColumn {
-				conditions = append(conditions, "j.review_closed = 1")
-			} else {
-				conditions = append(conditions, "rv.closed = 1")
-			}
+			conditions = append(conditions, "j.review_closed = 1")
 		} else {
-			if o.closedJobColumn {
-				conditions = append(conditions, "j.review_closed = 0")
-			} else {
-				conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
-			}
+			conditions = append(conditions, "j.review_closed = 0")
 			// Failed and canceled jobs never produce a review to resolve, so
 			// they are not open. An explicit status filter wins: asking for
 			// failed jobs with the open filter on must still list them.
@@ -2469,7 +2460,6 @@ func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOpt
 
 func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (string, []any) {
 	o := collectListJobsOptions(opts...)
-	o.closedJobColumn = true
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
