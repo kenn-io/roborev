@@ -170,7 +170,8 @@ repositories when available.
 
 Failed discovery lookups retry on the first poll after 15 minutes, then 30
 minutes, and then hourly, so token or access fixes can take until that poll to
-appear.
+appear. Config edits, including GitHub App installations, force fresh discovery
+on the next poll.
 
 Check the operation and category before changing configuration. For HTTP 401 or
 403, check the CI credential and its repository permissions. For rate limits,

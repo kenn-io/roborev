@@ -25,7 +25,6 @@ const repoRetryInterval = 15 * time.Minute
 
 type lookupUnit struct {
 	val      []string
-	ok       bool
 	err      error
 	at       time.Time
 	failures int
@@ -38,8 +37,9 @@ var errRepoDiscoveryIncomplete = errors.New("repository discovery incomplete")
 // are cached for the refresh interval and automatically invalidated when
 // the config changes.
 type RepoResolver struct {
-	mu    sync.Mutex
-	units map[string]*lookupUnit
+	mu       sync.Mutex
+	units    map[string]*lookupUnit
+	cacheKey string
 
 	// baseURL is the raw GitHub API base URL for Enterprise support.
 	// Empty means public GitHub. Used when building the API client
@@ -70,25 +70,10 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if r.units == nil {
+	key := r.buildCacheKey(ci)
+	if r.units == nil || r.cacheKey != key {
 		r.units = make(map[string]*lookupUnit)
-	}
-	active := make(map[string]bool)
-	for _, entry := range ci.Repos {
-		owner, pattern, ok := strings.Cut(entry, "/")
-		if !ok || owner == "" {
-			continue
-		}
-		kind, name := "exact", entry
-		if isGlobPattern(pattern) {
-			kind, name = "owner", owner
-		}
-		active[repoLookupKey(ci, kind, name, owner)] = true
-	}
-	for key := range r.units {
-		if !active[key] {
-			delete(r.units, key)
-		}
+		r.cacheKey = key
 	}
 	repos, degraded, err := r.expand(ctx, ci, tokenFn)
 	if degraded {
@@ -97,8 +82,20 @@ func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn
 	return repos, err
 }
 
-func repoLookupKey(ci *config.CIConfig, kind, name, owner string) string {
-	return fmt.Sprintf("%s:%s:%d", kind, strings.ToLower(name), ci.InstallationIDForOwner(owner))
+// buildCacheKey invalidates all lookups when discovery config changes.
+func (r *RepoResolver) buildCacheKey(ci *config.CIConfig) string {
+	var installations strings.Builder
+	for _, entry := range ci.Repos {
+		owner, _, _ := strings.Cut(entry, "/")
+		fmt.Fprintf(&installations, "%d\x00", ci.InstallationIDForOwner(owner))
+	}
+	return strings.Join(ci.Repos, "\x00") + "\x01" +
+		strings.Join(ci.ExcludeRepos, "\x00") + "\x02" +
+		fmt.Sprintf("%d", ci.ResolvedMaxRepos()) + "\x03" + installations.String()
+}
+
+func repoLookupKey(kind, name string) string {
+	return kind + ":" + strings.ToLower(name)
 }
 
 // lookup keeps the last successful value available while a refresh fails.
@@ -128,12 +125,9 @@ func (r *RepoResolver) lookup(ctx context.Context, key, owner string, tokenFn gi
 	}
 	unit.at, unit.err = time.Now(), err
 	if err == nil {
-		unit.val, unit.ok, unit.failures = val, true, 0
+		unit.val, unit.failures = val, 0
 	} else {
 		unit.failures++
-	}
-	if !unit.ok {
-		return nil, err
 	}
 	return unit.val, err
 }
@@ -174,29 +168,29 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 		if repoMatchesExclusionPatterns(e, exclusionPatterns) {
 			continue
 		}
-		owner, _, _ := strings.Cut(e, "/")
-		exactTokenFn := tokenFn
-		if r.canonicalRepoFn == nil {
-			exactTokenFn = nil
-		}
-		values, canonicalErr := r.lookup(ctx, repoLookupKey(ci, "exact", e, owner), owner, exactTokenFn, func(ctx context.Context, token string) ([]string, error) {
-			canonical, err := r.canonicalizeExactRepo(ctx, e, token)
-			if err != nil {
-				return nil, err
-			}
-			return []string{canonical}, nil
-		})
 		canonical := e
-		if len(values) > 0 {
-			canonical = values[0]
-		}
-		if canonicalErr != nil {
-			if ctx.Err() != nil {
-				return nil, false, ctx.Err()
+		if r.canonicalRepoFn != nil {
+			owner, _, _ := strings.Cut(e, "/")
+			values, canonicalErr := r.lookup(ctx, repoLookupKey("exact", e), owner, tokenFn, func(ctx context.Context, token string) ([]string, error) {
+				canonical, err := r.canonicalizeExactRepo(ctx, e, token)
+				if err != nil {
+					if ctx.Err() == nil {
+						log.Printf("CI repo resolver: failed to canonicalize repo %q: %v (using last known or configured name)", e, err)
+					}
+					return nil, err
+				}
+				return []string{canonical}, nil
+			})
+			if len(values) > 0 {
+				canonical = values[0]
 			}
-			log.Printf("CI repo resolver: failed to canonicalize repo %q: %v (using last known or configured name)", e, canonicalErr)
-			degraded = true
-			discoveryErrors = append(discoveryErrors, canonicalErr)
+			if canonicalErr != nil {
+				if ctx.Err() != nil {
+					return nil, false, ctx.Err()
+				}
+				degraded = true
+				discoveryErrors = append(discoveryErrors, canonicalErr)
+			}
 		}
 		lower := strings.ToLower(canonical)
 		if !seen[lower] {
@@ -212,14 +206,17 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 			return nil, false, ctx.Err()
 		}
 
-		repos, err := r.lookup(ctx, repoLookupKey(ci, "owner", owner, owner), owner, tokenFn, func(ctx context.Context, token string) ([]string, error) {
-			return r.callListRepos(ctx, owner, token)
+		repos, err := r.lookup(ctx, repoLookupKey("owner", owner), owner, tokenFn, func(ctx context.Context, token string) ([]string, error) {
+			repos, err := r.callListRepos(ctx, owner, token)
+			if err != nil && ctx.Err() == nil {
+				log.Printf("CI repo resolver: failed to list repos for %q: %v (using last known repos)", owner, err)
+			}
+			return repos, err
 		})
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, false, ctx.Err()
 			}
-			log.Printf("CI repo resolver: failed to list repos for %q: %v (using last known repos)", owner, err)
 			degraded = true
 			discoveryErrors = append(discoveryErrors, err)
 		}
@@ -288,9 +285,6 @@ func (r *RepoResolver) callListRepos(ctx context.Context, owner, token string) (
 }
 
 func (r *RepoResolver) canonicalizeExactRepo(ctx context.Context, ghRepo, token string) (string, error) {
-	if r.canonicalRepoFn == nil {
-		return ghRepo, nil
-	}
 	canonical, err := r.canonicalRepoFn(ctx, ghRepo, token)
 	if err != nil {
 		return "", err
