@@ -1002,6 +1002,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 		}
 
 		if len(skippedCommits) > 0 {
+			stall.reset()
 			fmt.Println(refineSkipNote)
 			for _, sha := range skippedCommits {
 				skippedFixes[sha] = true
@@ -1416,7 +1417,7 @@ func findPendingJobForBranch(ctx context.Context, client daemon.Client, repoPath
 // replace the pending fix's stall chain. The SHA lookup catches completed
 // results; the job lookup covers queued, running, and completed reviews.
 func resolvePendingReviewRef(ctx context.Context, client daemon.Client, repoPath, gitRef string) (*storage.Review, *storage.ReviewJob, error) {
-	review, err := client.GetReviewBySHA(gitRef)
+	review, err := client.GetReviewBySHA(ctx, gitRef)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1434,17 +1435,17 @@ func resolvePendingReviewRef(ctx context.Context, client daemon.Client, repoPath
 
 	switch job.Status {
 	case storage.JobStatusQueued, storage.JobStatusRunning:
-		review, err = client.WaitForReview(job.ID)
+		review, err = client.WaitForReview(ctx, job.ID)
 	case storage.JobStatusDone:
-		review, err = client.GetReviewByJobID(job.ID)
+		review, err = client.GetReviewByJobID(ctx, job.ID)
 		if err == nil && review == nil {
 			// The job can become visible before its decoded review is stored.
-			review, err = client.WaitForReview(job.ID)
+			review, err = client.WaitForReview(ctx, job.ID)
 		}
 	default:
 		// Failed, canceled, skipped, and superseded jobs cannot produce a
 		// pending review result. Preserve a stored result if one exists.
-		review, err = client.GetReviewByJobID(job.ID)
+		review, err = client.GetReviewByJobID(ctx, job.ID)
 	}
 	return review, job, err
 }

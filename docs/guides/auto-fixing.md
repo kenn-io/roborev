@@ -107,6 +107,7 @@ This report format does not change refine's no-change handling. If the agent
 makes no changes without returning the severity-filter marker, refine skips the
 review and records a generic comment; it does not retain the report or close the
 review.
+
 ## Repeated finding files
 
 Refine prints and saves an advisory when either of two independent streaks

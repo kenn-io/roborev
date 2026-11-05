@@ -189,7 +189,7 @@ func TestRefineStallLoop(t *testing.T) {
 			t.Cleanup(func() { agent.SetAllowUnsafeAgents(unsafe) })
 			opts := refineOptions{since: base, agentName: fake.Name(), maxIterations: tc.rounds, quiet: true, unsafeFlagChanged: true}
 			run := func() error {
-				return runRefine(t.Context(), RunContext{ WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond}, opts)
+				return runRefine(t.Context(), RunContext{WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond}, opts)
 			}
 			if tc.stop {
 				chdir(t, repo.Dir)
