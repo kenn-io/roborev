@@ -848,8 +848,9 @@ Requires confirmation before making changes (use --yes to skip).
 Dev builds are not replaced by default. Use --force to install the latest
 official release over a dev build.
 
-Use --no-restart when daemon lifecycle is managed externally (for example,
-launchd or systemd).`,
+On macOS, a LaunchAgent daemon restarts through its job. Use --no-restart to
+install when the daemon is a wrapper child, belongs to another installation,
+or its job is unreadable.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			policy, err := parseRunningReviewPolicy(runningPolicy)
 			if err != nil {
@@ -918,7 +919,7 @@ launchd or systemd).`,
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "only check for updates, don't install")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "replace dev build with latest official release")
-	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "skip daemon restart after update (for launchd/systemd-managed daemons)")
+	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "skip daemon restart, allowing install for a wrapper child, another installation, or an unreadable job")
 	cmd.Flags().StringVar(&runningPolicy, "running", "", "when reviews are running: wait, interrupt, or abort")
 
 	return cmd

@@ -684,13 +684,10 @@ func TestUpdateCommandThroughLaunchdJob(t *testing.T) {
 			stubServiceRecovery(t)
 			stubUpdateCommand(t)
 			restartThroughService = true
-			path, err := os.Executable()
-			require.NoError(t, err)
-			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
+			owner := ownedDaemonService(t)
 			binDir := t.TempDir()
 			binary := updatedRoborevBinary(binDir)
 			require.NoError(t, os.WriteFile(binary, nil, 0o600))
-			owner := &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
 			var prepareCalls atomic.Int32
 			endpoint := updateTestEndpoint(t, updateDaemonHandler(0, &prepareCalls, nil, nil))
 			repairHooksForUpdateCommand = func(context.Context, string, repairHookRunner) error {
@@ -727,7 +724,7 @@ func TestUpdateCommandThroughLaunchdJob(t *testing.T) {
 				return nil
 			}
 			var out bytes.Buffer
-			err = runControlledUpdate(t.Context(), strings.NewReader(""), &out, &update.UpdateInfo{LatestVersion: "v1.1.0"}, binDir, policyWait, true, false)
+			err := runControlledUpdate(t.Context(), strings.NewReader(""), &out, &update.UpdateInfo{LatestVersion: "v1.1.0"}, binDir, policyWait, true, false)
 			assertRecoveryLock(t, true)
 			if tc.refused {
 				if tc.appeared {
@@ -753,10 +750,7 @@ func TestUpdateRediscoverAfterConfirmation(t *testing.T) {
 	stubServiceRecovery(t)
 	info := stubUpdateCommand(t)
 	restartThroughService = true
-	path, err := os.Executable()
-	require.NoError(t, err)
-	cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
-	owner := &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+	owner := ownedDaemonService(t)
 	var shutdowns atomic.Int32
 	endpoint := updateTestEndpoint(t, updateDaemonHandler(0, nil, nil, &shutdowns))
 	previous := &daemon.RuntimeInfo{PID: 1 << 30, Network: endpoint.Network, Address: endpoint.Address}
@@ -783,7 +777,7 @@ func TestUpdateRediscoverAfterConfirmation(t *testing.T) {
 		return nil
 	}
 	var out bytes.Buffer
-	err = runControlledUpdate(t.Context(), strings.NewReader("y\n"), &out, info, t.TempDir(), policyWait, false, false)
+	err := runControlledUpdate(t.Context(), strings.NewReader("y\n"), &out, info, t.TempDir(), policyWait, false, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, lookups)
 	assert.Equal(t, 1, restarts)

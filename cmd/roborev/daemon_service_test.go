@@ -15,6 +15,14 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
+func ownedDaemonService(t *testing.T) *daemonService {
+	t.Helper()
+	path, err := os.Executable()
+	require.NoError(t, err)
+	cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
+	return &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+}
+
 func assertRecoveryLock(t *testing.T, wantAcquired bool) {
 	t.Helper()
 	release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())

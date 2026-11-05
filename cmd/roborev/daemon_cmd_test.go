@@ -225,10 +225,7 @@ func TestDaemonRestartThroughLaunchdJob(t *testing.T) {
 			stubServiceRecovery(t)
 			restartThroughService = true
 			serviceRestartCommand = "launchctl kickstart -k"
-			path, err := os.Executable()
-			require.NoError(t, err)
-			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
-			owner := &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+			owner := ownedDaemonService(t)
 			if tc.child {
 				owner.mainPID++
 			}
@@ -314,10 +311,7 @@ func TestDaemonRestartChecksEveryRuntime(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			stubServiceRecovery(t)
 			restartThroughService = true
-			path, err := os.Executable()
-			require.NoError(t, err)
-			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
-			owner := &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+			owner := ownedDaemonService(t)
 			second := *owner
 			second.mainPID = os.Getppid()
 			switch reason {
@@ -353,7 +347,7 @@ func TestDaemonRestartChecksEveryRuntime(t *testing.T) {
 			)
 			cmd := daemonCmd()
 			cmd.SetArgs([]string{"restart"})
-			err = cmd.ExecuteContext(t.Context())
+			err := cmd.ExecuteContext(t.Context())
 			require.ErrorContains(t, err, reason)
 			assert.Zero(t, stops)
 			assert.Zero(t, starts)
@@ -364,10 +358,7 @@ func TestDaemonRestartChecksEveryRuntime(t *testing.T) {
 func TestDaemonRestartOnlyStopsValidatedRuntimes(t *testing.T) {
 	stubServiceRecovery(t)
 	restartThroughService = true
-	path, err := os.Executable()
-	require.NoError(t, err)
-	cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
-	owner := &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+	owner := ownedDaemonService(t)
 	validated := &daemon.RuntimeInfo{PID: os.Getpid()}
 	late := &daemon.RuntimeInfo{PID: os.Getppid()}
 	oldList := listAllRuntimes
@@ -408,11 +399,11 @@ func TestDaemonRestartOnlyStopsValidatedRuntimes(t *testing.T) {
 func TestDaemonRestartRestartsEveryDistinctOwner(t *testing.T) {
 	stubServiceRecovery(t)
 	restartThroughService = true
-	path, err := os.Executable()
-	require.NoError(t, err)
-	cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
-	first := &daemonService{unit: "gui/501/com.example.first", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
-	second := &daemonService{unit: "gui/501/com.example.second", mainPID: os.Getppid(), executable: path, serviceType: "exec"}
+	first := ownedDaemonService(t)
+	first.unit = "gui/501/com.example.first"
+	second := ownedDaemonService(t)
+	second.unit = "gui/501/com.example.second"
+	second.mainPID = os.Getppid()
 	runtimes := []*daemon.RuntimeInfo{{PID: first.mainPID}, {PID: second.mainPID}, {PID: first.mainPID}}
 	oldList := listAllRuntimes
 	t.Cleanup(func() { listAllRuntimes = oldList })
