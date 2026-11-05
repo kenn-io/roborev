@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "source_inspiration": "Behavior only: Sandchest 468ed0c28f32b0096aa9018b5fcb0057713eea22 evals/src/pairs.ts, fpcheck.ts, fixeval.ts, gate.ts, score.ts, coverage.ts. Independently authored synthetic fixtures.",
+  "mechanisms": [
+    {
+      "id": "invoice",
+      "trigger": "Tenant B requests an existing invoice owned by tenant A.",
+      "actual": "ReadInvoice returns the other tenant invoice amount without checking ownership.",
+      "expected": "Reject cross-tenant and missing invoices while retaining own-tenant reads.",
+      "admissible": [
+        "Missing invoice ownership/tenant check permits reading another tenant invoice.",
+        "Invoice lookup is keyed only by ID so another tenant can obtain its amount."
+      ],
+      "exclude": [
+        "Timing or enumeration claims without the cross-tenant read mechanism.",
+        "A request for additional tests alone.",
+        "A generic authorization recommendation without the wrong observable behavior."
+      ]
+    },
+    {
+      "id": "cursor",
+      "trigger": "The exclusive cursor equals an existing sorted value.",
+      "actual": "After includes values equal to the cursor, repeating the boundary record.",
+      "expected": "Return only greater values; preserve greater records, empty input and exhausted cursors.",
+      "admissible": [
+        "The >= comparison repeats the item at the cursor.",
+        "The pagination cursor is treated as inclusive, repeating records between pages."
+      ],
+      "exclude": [
+        "Sorting requirements already documented as caller preconditions.",
+        "A request for additional tests alone.",
+        "Generic pagination advice without the equality/boundary mechanism."
+      ]
+    }
+  ],
+  "adjudication": [
+    "Read complete problem and fix with fixture source and contract; location alone never earns credit.",
+    "Each settled output finding receives at most one mechanism. A combined or ambiguous finding remains unjudged until an external adjudicator selects one; it cannot earn two bugs.",
+    "An exact mechanism on vulnerable code is detection; on fixed or safe code it is a repaired/safe-mechanism false positive. Subsequent reports of that mechanism are duplicates and cannot raise recall.",
+    "An external adjudicator may label a grounded unrelated issue legitimate_extra or a disproved unrelated claim other_false_positive. Retain unmatched, ambiguous and unjudged findings; never assume all extras are false.",
+    "No automatic LLM judge. Every accepted external judgment with actor attribution requires a nonempty source-grounded reason.",
+    "For synthesis, true_duplicate repeats invoice twice; two_distinct contains invoice and cursor. Count missing expected mechanisms as distinct loss only after complete adjudication; otherwise report loss bounds.",
+    "Harmless control adds a comment to vulnerable bytes; unchanged control retains the same bytes. Neither repairs behavior. Actual compact controls are owned by the compact slice.",
+    "Clarity is separately externally assessed with actor attribution: trigger, actual, expected, preservation and unsupported execution claims. Clarity never earns mechanism credit.",
+    "Errors and unjudged outputs remain in planned denominators, reported as unknown with lower/upper bounds. Wilson intervals are conditional on these fixtures; they do not establish general precision."
+  ]
+}
