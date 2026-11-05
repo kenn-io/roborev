@@ -27,8 +27,8 @@ func seedCanonicalReconcilerHistory(tb testing.TB, reviews, promptSize int) *sto
 		SELECT id, zstd_compress(printf('%*s', :prompt_size, 'prompt')) FROM review_jobs WHERE :prompt_size > 0;
 		INSERT INTO reviews (id, job_id, agent, output, uuid)
 		SELECT id, id, 'test', 'synthetic review output', uuid FROM review_jobs;
-		INSERT INTO responses (job_id, responder, response)
-		SELECT id, 'author', 'synthetic comment' FROM review_jobs WHERE id % 2 = 0;
+		INSERT INTO responses (job_id, responder, response, source, uuid)
+		SELECT id, 'author', 'synthetic comment', 'local', uuid FROM review_jobs WHERE id % 2 = 0;
 		COMMIT;`, sql.Named("reviews", reviews), sql.Named("prompt_size", promptSize))
 	require.NoError(tb, err)
 	return db
