@@ -1964,8 +1964,10 @@ type listJobsOptions struct {
 // selective reports whether a filter can seek jobs through its own index
 // instead of walking every closed job in enqueue order.
 func (o listJobsOptions) selective(statusFilter, repoFilter string) bool {
-	return statusFilter != "" || repoFilter != "" || len(o.repoPaths) > 0 || o.repoPrefix != "" || o.repoIDsSet ||
-		o.branch != "" || o.branchEmpty || o.gitRef != "" || o.panelRun != uuid.Nil() ||
+	// Prefixes and branch disjunctions cannot read a single index range in
+	// enqueue order, so closed pages still need the closed-position index.
+	return statusFilter != "" || repoFilter != "" || len(o.repoPaths) > 0 || o.repoIDsSet ||
+		(o.branch != "" && !o.branchEmpty && !o.branchIncludeEmpty) || o.gitRef != "" || o.panelRun != uuid.Nil() ||
 		o.openFailedReviews || o.failedReviewsSince != nil
 }
 
@@ -2315,7 +2317,7 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	jobsTable := "review_jobs j"
 	if options.closed != nil && *options.closed && (options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt) &&
 		!options.selective(statusFilter, repoFilter) {
-		// Unscoped pages skip open history. Selectively filtered pages keep
+		// Closed-position pages skip open history. Selectively filtered pages keep
 		// their own repo, branch, ref, panel, status, or finished-time index.
 		jobsTable += " INDEXED BY idx_review_jobs_closed_position"
 	} else if options.openFailedReviews {

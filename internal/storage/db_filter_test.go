@@ -1485,11 +1485,7 @@ func TestListJobsClosedPages(t *testing.T) {
 			opts := append([]ListJobsOption{WithClosed(true), WithoutPrompt()}, test.opts...)
 			page, err := db.ListJobs("", test.repo, 2, 0, opts...)
 			require.NoError(t, err)
-			ids := make([]int64, 0, len(page))
-			for _, job := range page {
-				ids = append(ids, job.ID)
-			}
-			assert.Equal(test.first, ids)
+			assert.Equal(test.first, jobIDs(page))
 			if len(page) == 0 {
 				return
 			}
@@ -1500,11 +1496,7 @@ func TestListJobsClosedPages(t *testing.T) {
 			} {
 				page, err = db.ListJobs("", test.repo, 2, 0, append(opts, resume)...)
 				require.NoError(t, err)
-				ids = ids[:0]
-				for _, job := range page {
-					ids = append(ids, job.ID)
-				}
-				assert.Equal(test.resumed, ids)
+				assert.Equal(test.resumed, jobIDs(page))
 			}
 		})
 	}
@@ -1676,6 +1668,9 @@ func TestListJobsClosedPagePlans(t *testing.T) {
 		opts              []ListJobsOption
 	}{
 		{name: "closed", index: "idx_review_jobs_closed_position"},
+		{name: "repo prefix closed", opts: []ListJobsOption{WithRepoPrefix("/synthetic")}, index: "idx_review_jobs_closed_position"},
+		{name: "unset branch closed", opts: []ListJobsOption{WithEmptyBranch()}, index: "idx_review_jobs_closed_position"},
+		{name: "branch including empty closed", opts: []ListJobsOption{WithBranchOrEmpty("main")}, index: "idx_review_jobs_closed_position"},
 		{name: "repo closed", repo: "/synthetic/rare", index: "idx_review_jobs_repo_enqueued"},
 		{name: "branch closed", opts: []ListJobsOption{WithBranch("rare")}, index: "idx_review_jobs_branch_position"},
 		{name: "repo branch closed", repo: "/synthetic/rare", opts: []ListJobsOption{WithBranch("rare")}, index: "idx_review_jobs_repo_enqueued"},
@@ -1696,7 +1691,7 @@ func TestListJobsClosedPagePlans(t *testing.T) {
 				require.NoError(t, err)
 				plan := queryPlan(t, db, query, args...)
 				assert.Contains(t, plan, "USING INDEX "+filter.index)
-				if filter.name != "closed" {
+				if filter.index != "idx_review_jobs_closed_position" {
 					assert.Contains(t, plan, "SEARCH j USING INDEX")
 				}
 				assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
