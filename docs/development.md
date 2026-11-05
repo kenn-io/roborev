@@ -128,6 +128,9 @@ go test ./...              # Run all tests
 go test ./internal/agent/  # Test specific package
 ```
 
+Run `make test-search-mirror-growth` for the `growth`-tagged mirror and feed
+checks, which use the release SQLite driver without race instrumentation.
+
 Ordinary unit tests are deterministic and offline. They do not authenticate to
 Codex, contact a model, or run the live skill conformance evaluation.
 

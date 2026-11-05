@@ -307,6 +307,11 @@ jobs:
             --packages "$packages" \
             -- -timeout 15m -race -shuffle=on -tags integration
 
+      - name: Search mirror growth (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 12
+        run: make test-search-mirror-growth
+
       - name: Test (macOS)
         if: matrix.os == 'macos-latest'
         env:
