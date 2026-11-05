@@ -81,6 +81,30 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 	assert.Zero(t, services)
 }
 
+func TestEnsureDaemonOmitsRuntimeWithoutPID(t *testing.T) {
+	assert := assert.New(t)
+	isolateDaemonSelection(t)
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	withStatusWebRuntime(t, getAnyRunningDaemon)
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: 0, Network: "tcp", Address: "127.0.0.1:1"}}, nil
+	}
+	var services, starts int
+	findDaemonService = func(context.Context, int) (*daemonService, error) { services++; return nil, nil }
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
+	startDaemonForEnsure = func() error { starts++; return nil }
+
+	live, err := liveDaemonRuntimes()
+	require.NoError(t, err)
+	assert.Empty(live)
+	require.NoError(t, ensureDaemon())
+	assert.Zero(services)
+	assert.Equal(1, starts)
+	assert.False(managedRecoveryStatus(errors.New("recovery unavailable")).Running)
+}
+
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 	for _, ownership := range []string{"managed", "unmanaged", "unknown owner", "vanished"} {
 		t.Run(ownership, func(t *testing.T) {

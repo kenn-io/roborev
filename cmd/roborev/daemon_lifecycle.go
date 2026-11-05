@@ -398,9 +398,10 @@ func liveDaemonRuntimes() ([]*daemon.RuntimeInfo, error) {
 	}
 	var live []*daemon.RuntimeInfo
 	for _, info := range runtimes {
-		if !info.Stale() {
-			live = append(live, info)
+		if info.PID <= 0 || info.Stale() {
+			continue
 		}
+		live = append(live, info)
 	}
 	return live, nil
 }
