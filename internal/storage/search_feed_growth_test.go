@@ -18,7 +18,7 @@ func TestSearchFeedPagingGrowth(t *testing.T) { //nolint:paralleltest // measure
 		Measure:  growthtest.Fastest(3),
 		Build: func(tb testing.TB, size int) (func(), func()) {
 			db := openTestDB(t)
-			tb.Cleanup(func() { require.NoError(tb, db.Close()) })
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			repo, err := db.GetOrCreateRepo(tb.TempDir())
 			require.NoError(tb, err)
 			seedRangeReviews(tb.Context(), tb, db, repo.ID, size, "No issues found.")
