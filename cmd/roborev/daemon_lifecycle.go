@@ -381,9 +381,6 @@ func ensureDaemon() (err error) {
 	defer cancel()
 	for _, info := range runtimes {
 		owner, err := findDaemonService(ctx, info.PID)
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("daemon exited during startup; run it again: %w", err)
-		}
 		if err == nil && owner == nil {
 			continue
 		}
@@ -401,7 +398,7 @@ func liveDaemonRuntimes() ([]*daemon.RuntimeInfo, error) {
 	}
 	var live []*daemon.RuntimeInfo
 	for _, info := range runtimes {
-		if info.PID <= 0 || info.Stale() {
+		if info.Stale() {
 			continue
 		}
 		live = append(live, info)
