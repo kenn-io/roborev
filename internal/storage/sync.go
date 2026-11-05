@@ -211,9 +211,14 @@ func (db *DB) GetOrCreateSyncStateValueWith(key string, create func() (string, e
 }
 
 // GetMachineID returns this machine's unique identifier, creating one if it doesn't exist.
-// Uses INSERT OR IGNORE + SELECT to ensure concurrency-safe behavior.
-// Treats empty values as missing and regenerates.
+// Caches the first successful read and regenerates empty stored values.
 func (db *DB) GetMachineID() (uuid.UUID, error) {
+	db.machineIDMu.Lock()
+	defer db.machineIDMu.Unlock()
+	if db.machineID != uuid.Nil() {
+		return db.machineID, nil
+	}
+
 	// Try to insert a new ID, ignoring if one already exists
 	newID := uuid.New()
 	_, err := db.Exec(`
@@ -236,13 +241,15 @@ func (db *DB) GetMachineID() (uuid.UUID, error) {
 		if err != nil {
 			return uuid.Nil(), fmt.Errorf("update empty machine ID: %w", err)
 		}
-		return newID, nil
+		db.machineID = newID
+		return db.machineID, nil
 	}
 	parsed, err := uuid.Parse(id) //nolint:forbidigo // sync_state TEXT value boundary.
 	if err != nil {
 		return uuid.Nil(), fmt.Errorf("parse machine ID: %w", err)
 	}
-	return parsed, nil
+	db.machineID = parsed
+	return db.machineID, nil
 }
 
 // GetDatabaseID returns this local database's unique identifier, creating one
