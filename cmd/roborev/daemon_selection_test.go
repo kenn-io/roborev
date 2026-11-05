@@ -127,9 +127,10 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				return
 			}
 			require.Error(t, err)
-			if ownership == "lookup failure" {
+			switch ownership {
+			case "lookup failure":
 				require.ErrorContains(t, err, "ownership unavailable")
-			} else if ownership == "unknown owner" || ownership == "launchd lookup failure" {
+			case "unknown owner", "launchd lookup failure":
 				if ownership == "unknown owner" {
 					require.ErrorContains(t, err, "cannot read process cgroup")
 				} else {
@@ -139,7 +140,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				require.True(t, ok)
 				assert.Equal(t, "run 'roborev doctor' to diagnose setup", exit.hint)
 				assert.NotContains(t, err.Error()+exit.hint, serviceRestartCommand)
-			} else {
+			default:
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
 				assert.Equal(t, "fixture.service", managed.unit)
