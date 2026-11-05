@@ -105,7 +105,7 @@ func (s *daemonService) sameInstallation() (bool, error) {
 // acquireRecoveryLock lets waiting commands share the active review drain.
 // The holder drains without a deadline, so waiters wait as long as it does
 // and then reuse its replacement instead of failing mid-drain.
-var acquireRecoveryLock = func() (func(), error) {
+func acquireRecoveryLock() (func(), error) {
 	store := daemon.RuntimeStore()
 	release, acquired, err := store.TryAcquireStartLock(context.Background())
 	if err != nil || acquired {
@@ -148,7 +148,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 	}
 	release, err := acquireRecoveryLock()
 	if err != nil {
-		return info.UnreachableError(fmt.Errorf("%w: %w", errRecoveryLock, err))
+		return fmt.Errorf("%w: %w", errRecoveryLock, err)
 	}
 	defer func() {
 		if release != nil {
@@ -175,7 +175,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return candidate, nil
 		}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)), backoff.WithMaxElapsedTime(0))
 		if err != nil {
-			return info.UnreachableError(&managedRecoveryError{"unknown", fmt.Errorf("daemon ownership uncertain after PID %d disappeared: %w", info.PID, err)})
+			return &managedRecoveryError{"unknown", fmt.Errorf("daemon ownership uncertain after PID %d disappeared: %w", info.PID, err)}
 		}
 	}
 	responsive := current != nil
@@ -216,7 +216,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
 			return nil
 		}
-		return current.UnreachableError(err)
+		return err
 	}
 	if owner == nil {
 		if err := stopDaemonRuntimes(listAllRuntimes, drainManagedDaemon, lifecycleOut); err != nil && !errors.Is(err, ErrDaemonNotRunning) {
@@ -226,7 +226,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		release = nil
 		return startDaemonForEnsure()
 	}
-	fail := func(err error) error { return current.UnreachableError(&managedRecoveryError{owner.unit, err}) }
+	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
 	if responsive {
 		if reason := owner.keepReason(current.PID); reason != "" {
 			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %s\n", reason)
@@ -247,7 +247,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return fail(err)
 		}
 		if probeFailed && !current.Stale() {
-			return current.UnreachableError(managedUnresponsiveError(owner, probeErr))
+			return managedUnresponsiveError(owner, probeErr)
 		}
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.
@@ -263,7 +263,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 	if !vanished {
 		fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
 		if err := drainManagedDaemon(current); err != nil {
-			return fail(fmt.Errorf("%w; run %s %s", err, serviceRestartCommand, owner.unit))
+			return fail(err)
 		}
 	}
 	// Reviews may take longer than startup. Give the replacement a fresh budget.

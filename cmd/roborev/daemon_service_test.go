@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,14 +38,14 @@ func stubServiceRecovery(t *testing.T) {
 	oldCgroup := daemonCgroupUnit
 	oldDiscovery, oldEnsure, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
 	oldPause := pendingStartPause
-	oldExecutable, oldLock := cliExecutableInfo, acquireRecoveryLock
+	oldExecutable := cliExecutableInfo
 	t.Cleanup(func() {
 		lifecycleOut, verbose = oldOut, oldVerbose
 		findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon = oldFind, oldMainPID, oldStart, oldDrain
 		daemonCgroupUnit = oldCgroup
 		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldEnsure, oldDetached
 		pendingStartPause = oldPause
-		cliExecutableInfo, acquireRecoveryLock = oldExecutable, oldLock
+		cliExecutableInfo = oldExecutable
 	})
 }
 
@@ -79,11 +80,7 @@ func TestEnsureDaemonWaitsForManagedRecovery(t *testing.T) {
 		findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
 			return &daemonService{unit: "fixture.service", mainPID: pid, executable: binary, serviceType: "simple"}, nil
 		}
-		lock := make(chan struct{}, 1)
-		acquireRecoveryLock = func() (func(), error) {
-			lock <- struct{}{}
-			return func() { <-lock }, nil
-		}
+		lifecycleOut = io.Discard
 		draining, finishDrain := make(chan struct{}), make(chan struct{})
 		drainManagedDaemon = func(*daemon.RuntimeInfo) error {
 			current.Store(nil) // HTTP has closed, but the live runtime remains published.
@@ -112,61 +109,11 @@ func TestEnsureDaemonWaitsForManagedRecovery(t *testing.T) {
 		require.NoError(t, <-ensure, "reuse the responsive replacement after recovery releases its lock")
 		assert.Equal(t, 1, starts)
 		assert.Zero(t, detached)
-		assert.Empty(t, lock, "ensureDaemon must release the recovery lock")
+		release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
+		require.NoError(t, err)
+		require.True(t, acquired, "ensureDaemon must release the recovery lock")
+		release()
 	})
-}
-
-func TestEnsureDaemonManagedColdRecoveryFailures(t *testing.T) {
-	for _, name := range []string{"lock failure", "discovery failure", "still unresponsive"} {
-		t.Run(name, func(t *testing.T) {
-			isolateDaemonSelection(t)
-			stubServiceRecovery(t)
-			oldList := listAllRuntimes
-			t.Cleanup(func() { listAllRuntimes = oldList })
-			original := &daemon.RuntimeInfo{PID: os.Getpid()}
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{original}, nil }
-			findDaemonService = func(context.Context, int) (*daemonService, error) {
-				return &daemonService{unit: "fixture.service", mainPID: original.PID}, nil
-			}
-			cause := errors.New("fixture failure")
-			locks, releases, discoveries, starts := 0, 0, 0, 0
-			acquireRecoveryLock = func() (func(), error) {
-				locks++
-				if name == "lock failure" {
-					return nil, cause
-				}
-				return func() { releases++ }, nil
-			}
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				discoveries++
-				if name == "discovery failure" {
-					return nil, cause
-				}
-				return nil, os.ErrNotExist
-			}
-			startDaemonForEnsure = func() error { starts++; return errors.New("unexpected detached start") }
-			err := ensureDaemon()
-			require.Error(t, err)
-			assert := assert.New(t)
-			assert.Equal(1, locks)
-			assert.Zero(starts)
-			if name == "lock failure" {
-				require.ErrorIs(t, err, errRecoveryLock)
-				require.ErrorIs(t, err, cause)
-				assert.Zero(releases)
-				assert.Zero(discoveries)
-			} else {
-				assert.Equal(1, releases)
-				assert.Equal(1, discoveries)
-				if name == "discovery failure" {
-					require.ErrorIs(t, err, cause)
-				} else {
-					require.ErrorContains(t, err, "daemon is unresponsive; run "+serviceRestartCommand+" fixture.service")
-				}
-			}
-		})
-	}
 }
 
 func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {

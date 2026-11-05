@@ -329,7 +329,7 @@ func TestRuntimeInfoIgnoresDisabledReasonAlongsideOrigin(t *testing.T) {
 		runtimeWebOriginKey:         "http://127.0.0.1:7400",
 		runtimeWebDisabledReasonKey: WebDisabledReasonMissingAssets,
 	}
-	info := RuntimeInfoFromRecord(rec)
+	info := runtimeInfoFromRecord(rec)
 	assert.Equal(t, "http://127.0.0.1:7400", info.WebOrigin)
 	assert.Empty(t, info.WebDisabledReason)
 }

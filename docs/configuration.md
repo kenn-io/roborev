@@ -1922,8 +1922,7 @@ also retain their identity. For `RemainAfterExit=yes`, transient units, and
 other unsupported service types, a responsive daemon stays usable and the
 command prints a manual restart command. If that daemon stops responding,
 commands report the service failure and restart guidance; `status` reports its
-current liveness and the failure, as described in
-[troubleshooting](guides/troubleshooting.md#check-the-daemon-is-running).
+current liveness and the failure.
 
 These daemons stay in use while they respond and report an error otherwise:
 

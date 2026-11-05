@@ -88,6 +88,10 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			stubServiceRecovery(t)
 			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
 			require.NoError(t, daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, version.Version, nil))
+			binary, err := os.Executable()
+			require.NoError(t, err)
+			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
+			getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
 			lookups := 0
 			findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
 				lookups++
@@ -103,7 +107,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				if ownership == "unmanaged" {
 					return nil, nil
 				}
-				return &daemonService{unit: "fixture.service"}, nil
+				return &daemonService{unit: "fixture.service", mainPID: pid, executable: binary, serviceType: "simple"}, nil
 			}
 			var mutations []string
 			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { mutations = append(mutations, "cleanup"); return 0 }
@@ -112,7 +116,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			startDaemonService = func(context.Context, string) error { mutations = append(mutations, "service start"); return nil }
 			paused := true
 			pendingStartPause = &paused
-			err := ensureDaemon()
+			err = ensureDaemon()
 			if ownership == "unmanaged" || ownership == "vanished" {
 				require.NoError(t, err)
 				assert.Equal(t, []string{"cleanup", "detached start"}, mutations)
@@ -124,10 +128,10 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				require.ErrorContains(t, err, "ownership unavailable")
 			} else {
 				require.ErrorContains(t, err, "fixture.service")
-				require.ErrorContains(t, err, "daemon is unresponsive; run "+serviceRestartCommand+" fixture.service")
-				require.NotErrorIs(t, err, os.ErrNotExist)
+				require.ErrorContains(t, err, "daemon is unresponsive")
+				require.ErrorContains(t, err, "run "+serviceRestartCommand+" fixture.service")
 			}
-			assert.Equal(t, 1, lookups)
+			assert.Equal(t, 3, lookups)
 			assert.Empty(t, mutations)
 		})
 	}

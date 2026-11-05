@@ -378,35 +378,10 @@ func ensureDaemon() (err error) {
 			continue
 		}
 		owner, err := findDaemonService(ctx, info.PID)
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || err == nil && owner == nil {
 			continue
 		}
-		if err != nil {
-			return info.UnreachableError(err)
-		}
-		if owner != nil {
-			// HTTP closes before final hooks and sync finish. Wait for any
-			// recovery holding the lock to publish its replacement first.
-			release, err := acquireRecoveryLock()
-			if err != nil {
-				return info.UnreachableError(fmt.Errorf("%w: %w", errRecoveryLock, err))
-			}
-			defer func() {
-				if release != nil {
-					release()
-				}
-			}()
-			recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), daemonStartTimeout)
-			defer recoveryCancel()
-			current, err := findDaemonForStart(recoveryCtx)
-			if err != nil {
-				return fmt.Errorf("rediscover daemon: %w", err)
-			}
-			if current != nil {
-				return nil
-			}
-			return info.UnreachableError(managedUnresponsiveError(owner, nil))
-		}
+		return recoverDaemon(info, discoveryErr, false)
 	}
 
 	// Legacy pre-kit daemons are invisible to kit discovery because they do

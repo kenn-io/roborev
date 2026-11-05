@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 )
@@ -26,15 +25,11 @@ func assertSuspendedManagedDaemon(t *testing.T, original *daemon.RuntimeInfo, un
 	defer func() { startDaemonForEnsure, statusEnsureDaemon = oldEnsure, oldStatusEnsure }()
 	detached := 0
 	startDaemonForEnsure = func() error { detached++; return nil }
-	require.ErrorContains(t, ensureDaemon(), "daemon is unresponsive")
-	statusEnsureDaemon = func() error {
-		err := ensureDaemon()
-		require.ErrorContains(t, err, "daemon is unresponsive")
-		var retained *kitdaemon.UnreachableError
-		require.ErrorAs(t, err, &retained)
-		assert.Equal(t, original.PID, retained.Record.PID)
-		return err
-	}
+	err = ensureDaemon()
+	var managed *managedRecoveryError
+	require.ErrorAs(t, err, &managed)
+	require.ErrorContains(t, err, "run "+serviceRestartCommand+" "+unit)
+	statusEnsureDaemon = ensureDaemon
 	cmd := statusCmd()
 	cmd.SetArgs([]string{"--json"})
 	output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
@@ -42,6 +37,7 @@ func assertSuspendedManagedDaemon(t *testing.T, original *daemon.RuntimeInfo, un
 	require.NoError(t, json.Unmarshal([]byte(output), &result))
 	assert.True(t, result.Running)
 	assert.Contains(t, result.Error, unit)
+	assert.Contains(t, result.Error, "run "+serviceRestartCommand+" "+unit)
 	assert.Nil(t, result.Daemon)
 	assert.Nil(t, result.Health)
 	assert.Empty(t, result.Jobs)
