@@ -132,6 +132,7 @@ User explanation: %q
 		Model: parent.Model, Provider: parent.Provider, Reasoning: parent.Reasoning,
 		SessionID: parent.SessionID, Prompt: focused, JobType: storage.JobTypeTask,
 		Source: storage.JobSourceRebuttal, ParentJobID: parent.ID, WorktreePath: parent.WorktreePath,
+		RebuttalReview: &storage.ReviewVersion{ID: review.ID, UUID: *review.UUID},
 	})
 	if err != nil {
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("explanation saved but enqueue failed: %v", err))

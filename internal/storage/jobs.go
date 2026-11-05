@@ -99,8 +99,10 @@ type EnqueueOpts struct {
 	JobType             string   // Explicit job type (review/range/dirty/task/compact/fix); inferred if empty
 	Source              string   // Automation source (empty = explicit/user row)
 	ParentJobID         int64    // Parent job being fixed (for fix jobs)
-	WorktreePath        string   // Worktree checkout path (empty = use main repo root)
-	MinSeverity         string   // Minimum severity filter (canonical: critical/high/medium/low or empty)
+	// RebuttalReview is the version of the parent review a rebuttal re-checks.
+	RebuttalReview *ReviewVersion
+	WorktreePath   string // Worktree checkout path (empty = use main repo root)
+	MinSeverity    string // Minimum severity filter (canonical: critical/high/medium/low or empty)
 	// Job-level failover override (F7): preferred over the workflow-resolved
 	// backup agent/model when the worker fails this job over to a backup.
 	BackupAgent string
@@ -334,6 +336,13 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 	}
 
 	id, _ := result.LastInsertId()
+	if v := opts.RebuttalReview; v != nil {
+		if _, err := exec.ExecContext(ctx,
+			`UPDATE review_jobs SET rebuttal_review_id = ?, rebuttal_review_uuid = ? WHERE id = ?`,
+			v.ID, v.UUID, id); err != nil {
+			return nil, fmt.Errorf("store job %d rebuttal review: %w", id, err)
+		}
+	}
 	if opts.Prompt != "" || opts.DiffContent != "" {
 		if _, err := exec.ExecContext(ctx,
 			`INSERT INTO job_content (job_id, prompt, diff_content) VALUES (?, zstd_compress(?), zstd_compress(?))`,

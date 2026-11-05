@@ -44,6 +44,7 @@ var schemaMigrations = []schemaMigration{
 	{8, "search change log", migrateSearchChanges},
 	{9, "cost aggregate index", migrateCostAggregateIndex},
 	{10, "open failed reviews index", migrateOpenFailedReviewsIndex},
+	{11, "rebuttal review version", migrateRebuttalReviewVersion},
 }
 
 func migrateCostAggregateIndex(ctx context.Context, db *DB) error {
@@ -199,4 +200,29 @@ func migrateSearchChanges(ctx context.Context, db *DB) error {
 	END;
 	`)
 	return err
+}
+
+// migrateRebuttalReviewVersion records which version of a review a rebuttal
+// re-checks. A rerun replaces the review under the same job ID, so the job ID
+// alone cannot tell a re-check of the current review from one of an earlier
+// run. The columns stay local: rows synced from other machines leave them
+// NULL.
+func migrateRebuttalReviewVersion(ctx context.Context, db *DB) error {
+	for _, column := range []struct{ name, kind string }{
+		{"rebuttal_review_id", "INTEGER"},
+		{"rebuttal_review_uuid", "TEXT"},
+	} {
+		exists, err := hasColumn(ctx, db, "review_jobs", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := db.ExecContext(ctx,
+			`ALTER TABLE review_jobs ADD COLUMN `+column.name+` `+column.kind); err != nil {
+			return fmt.Errorf("add review_jobs.%s: %w", column.name, err)
+		}
+	}
+	return nil
 }

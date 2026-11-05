@@ -873,3 +873,27 @@ func MergeResponses(primary, extra []Response) []Response {
 	})
 	return primary
 }
+
+// ReviewVersion identifies one stored version of a job's review. A rerun
+// writes a new review row with a new ID and UUID under the same job.
+type ReviewVersion struct {
+	ID   int64
+	UUID uuid.UUID
+}
+
+// RebuttalReviewVersion returns the review version a rebuttal job re-checks,
+// or nil when the job recorded none: it predates the record or was synced
+// from another machine.
+func (db *DB) RebuttalReviewVersion(ctx context.Context, jobID int64) (*ReviewVersion, error) {
+	var id sql.NullInt64
+	var reviewUUID sql.Null[uuid.UUID]
+	if err := db.QueryRowContext(ctx,
+		`SELECT rebuttal_review_id, rebuttal_review_uuid FROM review_jobs WHERE id = ?`, jobID,
+	).Scan(&id, &reviewUUID); err != nil {
+		return nil, err
+	}
+	if !id.Valid || !reviewUUID.Valid {
+		return nil, nil
+	}
+	return &ReviewVersion{ID: id.Int64, UUID: reviewUUID.V}, nil
+}
