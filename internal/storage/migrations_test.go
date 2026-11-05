@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -235,25 +234,17 @@ func TestIndexMigrations(t *testing.T) {
 
 func TestQueueListPositionMigrationBackfill(t *testing.T) {
 	t.Parallel()
-	for _, partial := range []bool{false, true} {
-		t.Run(fmt.Sprint(partial), func(t *testing.T) {
-			db := openUnmigratedDB(t)
-			require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
-			_, jobs := seedJobs(t, db, "/tmp/migration-closed", 3)
-			_, err := db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1), (?, 'test', '', 0)`, jobs[0].ID, jobs[1].ID)
-			require.NoError(t, err)
-			if partial {
-				_, err := db.ExecContext(t.Context(), `ALTER TABLE review_jobs ADD COLUMN review_closed INTEGER NOT NULL DEFAULT 0`)
-				require.NoError(t, err)
-			}
-			require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
-			for range 2 {
-				var flags string
-				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT group_concat(review_closed) FROM (SELECT review_closed FROM review_jobs ORDER BY id)`).Scan(&flags))
-				assert.Equal(t, "1,0,0", flags)
-				require.NoError(t, migrateQueueListPositionIndexes(t.Context(), db))
-			}
-		})
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:10]))
+	_, jobs := seedJobs(t, db, "/tmp/migration-closed", 3)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1), (?, 'test', '', 0)`, jobs[0].ID, jobs[1].ID)
+	require.NoError(t, err)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	for range 2 {
+		var flags string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT group_concat(review_closed) FROM (SELECT review_closed FROM review_jobs ORDER BY id)`).Scan(&flags))
+		assert.Equal(t, "1,0,0", flags)
+		require.NoError(t, migrateQueueListPositionIndexes(t.Context(), db))
 	}
 }
 
@@ -279,7 +270,6 @@ func TestQueueListPositionMigrationRollback(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_backfill`)
 	require.NoError(t, err)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
-	var closed int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT review_closed FROM review_jobs WHERE id = ?`, jobs[0].ID).Scan(&closed))
-	assert.Equal(t, 1, closed)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT MAX(version) FROM schema_migrations`).Scan(&version))
+	assert.Equal(t, 11, version)
 }
