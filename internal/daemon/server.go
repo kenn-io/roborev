@@ -58,6 +58,10 @@ type Server struct {
 	search                  reviewSearcher
 	searchReconciler        searchReconciler
 	searchNow               func() time.Time
+	autoDesignScanMu        sync.Mutex
+	autoDesignScanAt        time.Time
+	autoDesignScanEnabled   bool
+	autoDesignScanNow       func() time.Time
 	searchMu                sync.Mutex
 	searchCancel            context.CancelFunc
 	searchSubscriberID      int
@@ -225,6 +229,7 @@ func newServerWithLogs(
 		releaseNotesClient: releaseNotesClient,
 		releaseNotesNow:    time.Now,
 		searchNow:          time.Now,
+		autoDesignScanNow:  time.Now,
 		telemetryStop:      make(chan struct{}),
 		setupFinishedWake:  make(chan struct{}, 1),
 		agentActivityGate:  make(chan struct{}, 1),

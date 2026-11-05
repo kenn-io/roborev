@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -28,6 +29,9 @@ type AutoDesignMetrics struct {
 
 // autoDesignMetrics is the process-global instance.
 var autoDesignMetrics = &AutoDesignMetrics{}
+
+// Repo config has no watcher, and scanning worktrees can spawn git per repo.
+const autoDesignRepoScanTTL = 30 * time.Second
 
 const (
 	autoDesignHookSource           = "post_commit"
@@ -90,17 +94,19 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 	enabled := cfg != nil && (cfg.AutoDesignReview.Enabled || cfg.AutoDesignReview.HookEnabled)
 
 	if !enabled {
-		repos, err := s.db.ListRepos()
-		if err == nil {
-			for _, r := range repos {
-				repoCfg, _ := config.LoadRepoConfig(r.RootPath)
-				if config.AutoDesignEnabledFromConfig(repoCfg, cfg) ||
-					config.AutoDesignHookEnabledFromConfig(repoCfg, cfg) {
-					enabled = true
-					break
-				}
+		s.autoDesignScanMu.Lock()
+		now := s.autoDesignScanNow()
+		if !s.autoDesignScanAt.IsZero() && now.Sub(s.autoDesignScanAt) < autoDesignRepoScanTTL {
+			enabled = s.autoDesignScanEnabled
+		} else {
+			var err error
+			enabled, err = s.anyRepoEnablesAutoDesign(cfg)
+			if err == nil {
+				s.autoDesignScanEnabled = enabled
+				s.autoDesignScanAt = now
 			}
 		}
+		s.autoDesignScanMu.Unlock()
 	}
 
 	if !enabled {
@@ -109,6 +115,21 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 	snap := autoDesignMetrics.Snapshot()
 	snap.Enabled = true
 	return &snap
+}
+
+func (s *Server) anyRepoEnablesAutoDesign(cfg *config.Config) (bool, error) {
+	repos, err := s.db.ListRepos()
+	if err != nil {
+		return false, err
+	}
+	for _, r := range repos {
+		repoCfg, _ := config.LoadRepoConfig(r.RootPath)
+		if config.AutoDesignEnabledFromConfig(repoCfg, cfg) ||
+			config.AutoDesignHookEnabledFromConfig(repoCfg, cfg) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ResetAutoDesignMetricsForTest zeroes the global counters. Tests only.

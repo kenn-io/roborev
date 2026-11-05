@@ -367,6 +367,64 @@ func TestAutoDesignStatusForResponse_DisabledRegularRepoDoesNotSpawnGit(t *testi
 	assert.True(t, os.IsNotExist(err), "disabled status path must not shell out to git for regular repos without config")
 }
 
+func TestAutoDesignStatusForResponse_DisabledWorktreeScanIsCached(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repo := testutil.NewTestRepoWithCommit(t)
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	repo.Run("worktree", "add", "--detach", worktree, "HEAD")
+	_, err := db.GetOrCreateRepo(worktree)
+	require.NoError(t, err)
+
+	srv := NewServer(db, config.DefaultConfig(), "")
+	require.Nil(t, srv.autoDesignStatusForResponse())
+
+	marker := filepath.Join(t.TempDir(), "git-invoked")
+	t.Setenv("ROBOREV_GIT_MARKER", marker)
+	fakeGit := "#!/bin/sh\n: > \"$ROBOREV_GIT_MARKER\"\nexit 1\n"
+	if runtime.GOOS == "windows" {
+		fakeGit = "@echo git > \"%ROBOREV_GIT_MARKER%\"\r\n@exit /b 1\r\n"
+	}
+	restore := testutil.MockBinaryInPath(t, "git", fakeGit)
+	defer restore()
+
+	assert.Nil(t, srv.autoDesignStatusForResponse())
+	assert.NoFileExists(t, marker, "cached status must not shell out to git for worktrees")
+}
+
+func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.WriteFile(".gitignore", ".roborev.toml\n")
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	repo.Run("worktree", "add", "--detach", worktree, "HEAD")
+	_, err := db.GetOrCreateRepo(worktree)
+	require.NoError(t, err)
+
+	srv := NewServer(db, config.DefaultConfig(), "")
+	now := time.Now()
+	srv.autoDesignScanNow = func() time.Time { return now }
+	require.Nil(t, srv.autoDesignStatusForResponse())
+
+	enableAutoDesignReviewForRepo(t, repo.Path())
+	assert.Nil(t, srv.autoDesignStatusForResponse())
+	now = now.Add(autoDesignRepoScanTTL + time.Second)
+	got := srv.autoDesignStatusForResponse()
+	require.NotNil(t, got)
+	assert.True(t, got.Enabled)
+}
+
+func TestAutoDesignStatusForResponse_GlobalEnableBypassesCache(t *testing.T) {
+	srv, _ := newAutoDesignTestServer(t)
+	now := time.Now()
+	srv.autoDesignScanNow = func() time.Time { return now }
+	require.Nil(t, srv.autoDesignStatusForResponse())
+
+	srv.configWatcher.Config().AutoDesignReview.Enabled = true
+	got := srv.autoDesignStatusForResponse()
+	require.NotNil(t, got)
+	assert.True(t, got.Enabled)
+}
+
 func TestAutoDesignStatusForResponse_EnabledRepoSurfaces(t *testing.T) {
 	ResetAutoDesignMetricsForTest()
 	srv, repo := newAutoDesignTestServer(t)
