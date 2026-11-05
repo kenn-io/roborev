@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -375,22 +376,71 @@ func mockAutoDesignGitWithMarker(t *testing.T) string {
 	return marker
 }
 
-func TestAutoDesignStatusForResponse_DisabledWorktreeScanIsCached(t *testing.T) {
-	db := testutil.OpenTestDB(t)
+func TestAutoDesignStatusForResponse_StaleWorktreeScanRunsInBackground(t *testing.T) {
+	srv, db, _ := newTestServer(t)
 	repo := testutil.NewTestRepoWithCommit(t)
 	worktree := filepath.Join(t.TempDir(), "worktree")
 	repo.Run("worktree", "add", "--detach", worktree, "HEAD")
 	_, err := db.GetOrCreateRepo(worktree)
 	require.NoError(t, err)
-
-	srv := NewServer(db, config.DefaultConfig(), "")
-	t.Cleanup(func() { _ = srv.Close() })
-	require.Nil(t, srv.autoDesignStatusForResponse())
-
+	_, err = db.GetOrCreateRepo(filepath.Join(t.TempDir(), "deleted"))
+	require.NoError(t, err)
+	srv.refreshAutoDesignRepoScan()
 	marker := mockAutoDesignGitWithMarker(t)
 
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	srv.autoDesignScanAt = time.Now().Add(-10 * autoDesignRepoScanTTL)
+	for range 5 {
+		assert.Nil(t, srv.autoDesignStatusForResponse())
+	}
+	assert.NoFileExists(t, marker, "stale requests return before the blocked scan can run git")
+	require.NoError(t, conn.Close())
+	srv.agentHealth.wait()
+	assert.FileExists(t, marker, "the background refresh scans the registered worktree and deleted checkout")
 	assert.Nil(t, srv.autoDesignStatusForResponse())
-	assert.NoFileExists(t, marker, "cached status must not shell out to git for worktrees")
+}
+
+func TestAutoDesignStatusForResponse_StaleRequestsShareRefresh(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, db, _ := newTestServer(t)
+		db.SetMaxOpenConns(1)
+		require.Nil(t, srv.autoDesignStatusForResponse())
+		time.Sleep(autoDesignRepoScanTTL + time.Second)
+		// A newly registered repo must also appear after a refresh.
+		repoPath := t.TempDir()
+		enableAutoDesignReviewForRepo(t, repoPath)
+		_, err := db.GetOrCreateRepo(repoPath)
+		require.NoError(t, err)
+		conn, err := db.Conn(t.Context())
+		require.NoError(t, err)
+		defer conn.Close()
+		waits := db.Stats().WaitCount
+
+		assert.Nil(t, srv.autoDesignStatusForResponse())
+		assert.Nil(t, srv.autoDesignStatusForResponse())
+		synctest.Wait()
+		assert.Equal(t, waits+1, db.Stats().WaitCount, "both requests share one blocked scan")
+		require.NoError(t, conn.Close())
+		srv.agentHealth.wait()
+		got := srv.autoDesignStatusForResponse()
+		require.NotNil(t, got)
+		assert.True(t, got.Enabled)
+	})
+}
+
+func TestAutoDesignStatusForResponse_IdleDoesNotRefresh(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, db, _ := newTestServer(t)
+		_, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "deleted"))
+		require.NoError(t, err)
+		srv.refreshAutoDesignRepoScan()
+		marker := mockAutoDesignGitWithMarker(t)
+		time.Sleep(2 * autoDesignRepoScanTTL)
+		assert.NoFileExists(t, marker)
+	})
 }
 
 func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *testing.T) {
@@ -408,10 +458,14 @@ func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *
 
 	enableAutoDesignReviewForRepo(t, repo.Path())
 	assert.Nil(t, srv.autoDesignStatusForResponse())
-	srv.autoDesignScanAt = time.Now().Add(-autoDesignRepoScanTTL - time.Second)
+	srv.refreshAutoDesignRepoScan()
 	got := srv.autoDesignStatusForResponse()
 	require.NotNil(t, got)
 	assert.True(t, got.Enabled)
+
+	require.NoError(t, os.Remove(filepath.Join(repo.Path(), ".roborev.toml")))
+	srv.refreshAutoDesignRepoScan()
+	assert.Nil(t, srv.autoDesignStatusForResponse())
 }
 
 func TestAutoDesignStatusForResponse_GlobalEnableBypassesCache(t *testing.T) {

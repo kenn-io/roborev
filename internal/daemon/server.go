@@ -61,6 +61,7 @@ type Server struct {
 	autoDesignScanMu        sync.Mutex
 	autoDesignScanAt        time.Time
 	autoDesignScanEnabled   bool
+	autoDesignScanRunning   bool
 	searchMu                sync.Mutex
 	searchCancel            context.CancelFunc
 	searchSubscriberID      int

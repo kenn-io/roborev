@@ -31,7 +31,7 @@ type AutoDesignMetrics struct {
 var autoDesignMetrics = &AutoDesignMetrics{}
 
 // Repo config has no watcher, and scanning worktrees can spawn git per repo.
-const autoDesignRepoScanTTL = 45 * time.Second
+const autoDesignRepoScanTTL = 30 * time.Second
 
 const (
 	autoDesignHookSource           = "post_commit"
@@ -95,15 +95,24 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 
 	if !enabled {
 		s.autoDesignScanMu.Lock()
-		now := time.Now()
-		if !s.autoDesignScanAt.IsZero() && now.Sub(s.autoDesignScanAt) < autoDesignRepoScanTTL {
-			enabled = s.autoDesignScanEnabled
-		} else {
+		if s.autoDesignScanAt.IsZero() {
 			var err error
-			enabled, err = s.anyRepoEnablesAutoDesign(cfg)
+			enabled, err = s.anyRepoEnablesAutoDesign()
 			if err == nil {
 				s.autoDesignScanEnabled = enabled
-				s.autoDesignScanAt = now
+				s.autoDesignScanAt = time.Now()
+			}
+		} else {
+			enabled = s.autoDesignScanEnabled
+			if time.Since(s.autoDesignScanAt) >= autoDesignRepoScanTTL && !s.autoDesignScanRunning {
+				s.shutdownDrainMu.Lock()
+				if !s.shutdownDraining {
+					s.autoDesignScanRunning = true
+					// Share the status-check wait group that Stop already drains.
+					// The shutdown lock prevents enrollment after draining begins.
+					s.agentHealth.wg.Go(s.refreshAutoDesignRepoScan)
+				}
+				s.shutdownDrainMu.Unlock()
 			}
 		}
 		s.autoDesignScanMu.Unlock()
@@ -117,15 +126,26 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 	return &snap
 }
 
-func (s *Server) anyRepoEnablesAutoDesign(cfg *config.Config) (bool, error) {
+func (s *Server) refreshAutoDesignRepoScan() {
+	enabled, err := s.anyRepoEnablesAutoDesign()
+	s.autoDesignScanMu.Lock()
+	defer s.autoDesignScanMu.Unlock()
+	s.autoDesignScanRunning = false
+	if err == nil {
+		s.autoDesignScanEnabled = enabled
+		s.autoDesignScanAt = time.Now()
+	}
+}
+
+func (s *Server) anyRepoEnablesAutoDesign() (bool, error) {
 	repos, err := s.db.ListRepos()
 	if err != nil {
 		return false, err
 	}
 	for _, r := range repos {
 		repoCfg, _ := config.LoadRepoConfig(r.RootPath)
-		if config.AutoDesignEnabledFromConfig(repoCfg, cfg) ||
-			config.AutoDesignHookEnabledFromConfig(repoCfg, cfg) {
+		if config.AutoDesignEnabledFromConfig(repoCfg, nil) ||
+			config.AutoDesignHookEnabledFromConfig(repoCfg, nil) {
 			return true, nil
 		}
 	}
