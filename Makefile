@@ -174,9 +174,9 @@ test:
 	go test ./...
 
 .PHONY: test-search-mirror-growth
-# Full initial builds and feed paging run serially, outside race instrumentation.
+# The growth tag keeps full builds and feed paging out of ordinary/race tests.
 test-search-mirror-growth:
-	CGO_ENABLED=0 go test -p 1 -tags=growth ./internal/searchindex ./internal/storage -run '^Test(ReconcilerInitialMirrorGrowth|SearchFeedPagingGrowth)$$' -count=1 -v
+	CGO_ENABLED=0 go test -p 1 -tags=growth ./internal/searchindex ./internal/storage -run '^Test(ReconcilerInitialMirrorGrowth|SearchFeedPagingGrowth)$$' -timeout=10m -count=1 -v
 
 test-git-isolation:
 	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .
