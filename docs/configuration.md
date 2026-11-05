@@ -2824,7 +2824,7 @@ an `auto_design` subobject with five per-outcome counters (`triggered`,
 `skipped_heuristic`, `triggered_classifier`, `skipped_classifier`, `errored`)
 when the feature is enabled anywhere. The subobject is omitted from the JSON
 when the feature is disabled across all repos.
-Per-repo changes to auto-design settings appear in status within 30 seconds.
+Per-repo changes to auto-design settings appear in status within 45 seconds.
 
 ## Reasoning Levels
 

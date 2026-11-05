@@ -23,6 +23,7 @@ func newAutoDesignTestServer(t *testing.T) (*Server, *storage.Repo) {
 
 	cfg := config.DefaultConfig()
 	srv := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = srv.Close() })
 
 	repo, err := db.GetOrCreateRepo(repoPath)
 	require.NoError(t, err)
@@ -351,6 +352,17 @@ func TestAutoDesignStatusForResponse_DisabledRegularRepoDoesNotSpawnGit(t *testi
 	require.NoError(t, err)
 
 	srv := NewServer(db, config.DefaultConfig(), "")
+	t.Cleanup(func() { _ = srv.Close() })
+	marker := mockAutoDesignGitWithMarker(t)
+
+	got := srv.autoDesignStatusForResponse()
+	assert.Nil(t, got)
+	_, err = os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "disabled status path must not shell out to git for regular repos without config")
+}
+
+func mockAutoDesignGitWithMarker(t *testing.T) string {
+	t.Helper()
 	marker := filepath.Join(t.TempDir(), "git-invoked")
 	t.Setenv("ROBOREV_GIT_MARKER", marker)
 
@@ -359,12 +371,8 @@ func TestAutoDesignStatusForResponse_DisabledRegularRepoDoesNotSpawnGit(t *testi
 		fakeGit = "@echo git > \"%ROBOREV_GIT_MARKER%\"\r\n@exit /b 1\r\n"
 	}
 	restore := testutil.MockBinaryInPath(t, "git", fakeGit)
-	defer restore()
-
-	got := srv.autoDesignStatusForResponse()
-	assert.Nil(t, got)
-	_, err = os.Stat(marker)
-	assert.True(t, os.IsNotExist(err), "disabled status path must not shell out to git for regular repos without config")
+	t.Cleanup(restore)
+	return marker
 }
 
 func TestAutoDesignStatusForResponse_DisabledWorktreeScanIsCached(t *testing.T) {
@@ -376,16 +384,10 @@ func TestAutoDesignStatusForResponse_DisabledWorktreeScanIsCached(t *testing.T) 
 	require.NoError(t, err)
 
 	srv := NewServer(db, config.DefaultConfig(), "")
+	t.Cleanup(func() { _ = srv.Close() })
 	require.Nil(t, srv.autoDesignStatusForResponse())
 
-	marker := filepath.Join(t.TempDir(), "git-invoked")
-	t.Setenv("ROBOREV_GIT_MARKER", marker)
-	fakeGit := "#!/bin/sh\n: > \"$ROBOREV_GIT_MARKER\"\nexit 1\n"
-	if runtime.GOOS == "windows" {
-		fakeGit = "@echo git > \"%ROBOREV_GIT_MARKER%\"\r\n@exit /b 1\r\n"
-	}
-	restore := testutil.MockBinaryInPath(t, "git", fakeGit)
-	defer restore()
+	marker := mockAutoDesignGitWithMarker(t)
 
 	assert.Nil(t, srv.autoDesignStatusForResponse())
 	assert.NoFileExists(t, marker, "cached status must not shell out to git for worktrees")
@@ -401,13 +403,12 @@ func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *
 	require.NoError(t, err)
 
 	srv := NewServer(db, config.DefaultConfig(), "")
-	now := time.Now()
-	srv.autoDesignScanNow = func() time.Time { return now }
+	t.Cleanup(func() { _ = srv.Close() })
 	require.Nil(t, srv.autoDesignStatusForResponse())
 
 	enableAutoDesignReviewForRepo(t, repo.Path())
 	assert.Nil(t, srv.autoDesignStatusForResponse())
-	now = now.Add(autoDesignRepoScanTTL + time.Second)
+	srv.autoDesignScanAt = time.Now().Add(-autoDesignRepoScanTTL - time.Second)
 	got := srv.autoDesignStatusForResponse()
 	require.NotNil(t, got)
 	assert.True(t, got.Enabled)
@@ -415,8 +416,6 @@ func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *
 
 func TestAutoDesignStatusForResponse_GlobalEnableBypassesCache(t *testing.T) {
 	srv, _ := newAutoDesignTestServer(t)
-	now := time.Now()
-	srv.autoDesignScanNow = func() time.Time { return now }
 	require.Nil(t, srv.autoDesignStatusForResponse())
 
 	srv.configWatcher.Config().AutoDesignReview.Enabled = true

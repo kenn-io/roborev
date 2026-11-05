@@ -31,7 +31,7 @@ type AutoDesignMetrics struct {
 var autoDesignMetrics = &AutoDesignMetrics{}
 
 // Repo config has no watcher, and scanning worktrees can spawn git per repo.
-const autoDesignRepoScanTTL = 30 * time.Second
+const autoDesignRepoScanTTL = 45 * time.Second
 
 const (
 	autoDesignHookSource           = "post_commit"
@@ -95,7 +95,7 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 
 	if !enabled {
 		s.autoDesignScanMu.Lock()
-		now := s.autoDesignScanNow()
+		now := time.Now()
 		if !s.autoDesignScanAt.IsZero() && now.Sub(s.autoDesignScanAt) < autoDesignRepoScanTTL {
 			enabled = s.autoDesignScanEnabled
 		} else {
