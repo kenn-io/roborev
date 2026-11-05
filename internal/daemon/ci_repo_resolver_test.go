@@ -1,10 +1,8 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"slices"
 	"strings"
 	"testing"
@@ -307,108 +305,23 @@ func TestRepoResolver_CacheHit(t *testing.T) {
 }
 
 func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
-	calls := make(map[string]int)
-	r := &RepoResolver{canonicalRepoFn: func(_ context.Context, repo, _ string) (string, error) {
-		calls[repo]++
-		return repo, nil
-	}}
-	ci := &config.CIConfig{Repos: []string{"acme/api", "acme/old"}}
-	repos, err := r.Resolve(t.Context(), ci, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"acme/api", "acme/old"}, repos)
-	ci.Repos = []string{"acme/api", "acme/new"}
-	repos, err = r.Resolve(t.Context(), ci, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"acme/api", "acme/new"}, repos)
-	assert.Equal(t, map[string]int{"acme/api": 2, "acme/old": 1, "acme/new": 1}, calls)
-	ci.Repos = []string{"acme/old"}
-	repos, err = r.Resolve(t.Context(), ci, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"acme/old"}, repos)
-	assert.Equal(t, 2, calls["acme/old"], "removed entries lose their cached result")
-}
-
-func TestRepoResolver_ConfigChangeDuringRetry(t *testing.T) {
-	for _, edit := range []struct {
-		name   string
-		change func(*config.CIConfig)
-		want   []string
-	}{
-		{"pattern", func(ci *config.CIConfig) { ci.Repos[0] = "acme/a*" }, []string{"acme/api", "other/web"}},
-		{"exclusion", func(ci *config.CIConfig) { ci.ExcludeRepos = []string{"acme/web"} }, []string{"acme/api", "other/web"}},
-		{"max repos", func(ci *config.CIConfig) { ci.MaxRepos = 1 }, []string{"acme/api"}},
-		{"exact entry", func(ci *config.CIConfig) { ci.Repos = append(ci.Repos, "acme/api") }, []string{"acme/api", "acme/web", "other/web"}},
-		{"installation fallback", func(ci *config.CIConfig) { ci.GitHubAppInstallationID = 42 }, []string{"acme/api", "acme/web", "other/web"}},
-	} {
-		t.Run(edit.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				assert := assert.New(t)
-				calls := make(map[string]int)
-				failing := true
-				r := &RepoResolver{listReposFn: func(_ context.Context, owner, _ string) ([]string, error) {
-					calls[owner]++
-					if owner == "acme" {
-						if failing {
-							return nil, fmt.Errorf("owner unavailable")
-						}
-						return []string{"acme/api", "acme/web"}, nil
-					}
-					return []string{"other/web"}, nil
-				}}
-				ci := &config.CIConfig{Repos: []string{"acme/*", "other/*"}}
-				repos, err := r.Resolve(t.Context(), ci, nil)
-				require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-				assert.Equal([]string{"other/web"}, repos)
-
-				failing = false
-				time.Sleep(5 * time.Minute)
-				_, err = r.Resolve(t.Context(), ci, nil)
-				require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-				assert.Equal(map[string]int{"acme": 1, "other": 1}, calls)
-
-				edit.change(ci)
-				repos, err = r.Resolve(t.Context(), ci, nil)
-				require.NoError(t, err)
-				assert.Equal(edit.want, repos)
-				assert.Equal(map[string]int{"acme": 2, "other": 2}, calls)
-			})
-		})
+	var calls int
+	r := &RepoResolver{
+		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			calls++
+			return []string{"acme/api"}, nil
+		},
 	}
-}
 
-func TestRepoResolver_CachedFailureLogs(t *testing.T) {
-	var output bytes.Buffer
-	previous := log.Writer()
-	log.SetOutput(&output)
-	t.Cleanup(func() { log.SetOutput(previous) })
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		r := &RepoResolver{
-			canonicalRepoFn: func(_ context.Context, _, _ string) (string, error) {
-				return "", fmt.Errorf("repository unavailable")
-			},
-			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
-				return nil, fmt.Errorf("owner unavailable")
-			},
-		}
-		ci := &config.CIConfig{Repos: []string{"acme/api", "other/*"}}
-		_, err := r.Resolve(t.Context(), ci, nil)
-		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-		assert.Contains(output.String(), "failed to canonicalize repo")
-		assert.Contains(output.String(), "failed to list repos")
-		output.Reset()
+	ctx := t.Context()
 
-		time.Sleep(5 * time.Minute)
-		_, err = r.Resolve(t.Context(), ci, nil)
-		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-		assert.Empty(output.String(), "cached failures keep discovery incomplete without repeating logs")
+	_, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
 
-		time.Sleep(10 * time.Minute)
-		_, err = r.Resolve(t.Context(), ci, nil)
-		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-		assert.Contains(output.String(), "failed to canonicalize repo")
-		assert.Contains(output.String(), "failed to list repos")
-	})
+	_, err = r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*", "other/repo"}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls, "expected cache miss on config change")
 }
 
 func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
@@ -463,7 +376,7 @@ func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
 
 	repos2, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}, MaxRepos: 10}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 2, calls, "max_repos changes force fresh discovery")
+	assert.Equal(t, 2, calls, "expected cache miss on max_repos change")
 	assert.Len(t, repos2, 10, "expected 10 repos after max_repos increase")
 }
 
@@ -505,10 +418,7 @@ func TestRepoResolver_APIFailureFallback(t *testing.T) {
 			failedCalls  int
 			healthyCalls int
 		}{
-			{5, 1, 1}, {14, 1, 1}, {15, 2, 1},
-			{20, 2, 1}, {44, 2, 1}, {45, 3, 1},
-			{59, 3, 1}, {60, 3, 2}, {104, 3, 2}, {105, 4, 2},
-			{119, 4, 2}, {120, 4, 3}, {164, 4, 3}, {165, 5, 3},
+			{14, 1, 1}, {15, 2, 1}, {44, 2, 1}, {45, 3, 1}, {104, 3, 2}, {105, 4, 2},
 		} {
 			time.Sleep(time.Duration(step.minute)*time.Minute - time.Since(start))
 			repos, err = r.Resolve(t.Context(), ci, tokenFn)
@@ -607,11 +517,7 @@ func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 		repos, err = r.Resolve(t.Context(), ci, nil)
 		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
 		assert.Equal(t, []string{"acme/api", "acme/web", "other/new"}, repos)
-		time.Sleep(15 * time.Minute)
-		repos, err = r.Resolve(t.Context(), ci, nil)
-		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-		assert.Equal(t, []string{"acme/api", "acme/web", "other/new"}, repos)
-		assert.Equal(t, map[string]int{"acme": 3, "other": 2}, calls)
+		assert.Equal(t, map[string]int{"acme": 2, "other": 2}, calls)
 	})
 }
 

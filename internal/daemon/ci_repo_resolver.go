@@ -39,7 +39,7 @@ var errRepoDiscoveryIncomplete = errors.New("repository discovery incomplete")
 type RepoResolver struct {
 	mu       sync.Mutex
 	units    map[string]*lookupUnit
-	cacheKey string
+	cacheKey string // derived from pattern+exclusion lists+max_repos+installations for invalidation
 
 	// baseURL is the raw GitHub API base URL for Enterprise support.
 	// Empty means public GitHub. Used when building the API client
@@ -67,9 +67,6 @@ type githubTokenFn func(owner string) string
 func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn githubTokenFn) ([]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	key := r.buildCacheKey(ci)
 	if r.units == nil || r.cacheKey != key {
 		r.units = make(map[string]*lookupUnit)
@@ -92,10 +89,6 @@ func (r *RepoResolver) buildCacheKey(ci *config.CIConfig) string {
 	return strings.Join(ci.Repos, "\x00") + "\x01" +
 		strings.Join(ci.ExcludeRepos, "\x00") + "\x02" +
 		fmt.Sprintf("%d", ci.ResolvedMaxRepos()) + "\x03" + installations.String()
-}
-
-func repoLookupKey(kind, name string) string {
-	return kind + ":" + strings.ToLower(name)
 }
 
 // lookup keeps the last successful value available while a refresh fails.
@@ -171,7 +164,7 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 		canonical := e
 		if r.canonicalRepoFn != nil {
 			owner, _, _ := strings.Cut(e, "/")
-			values, canonicalErr := r.lookup(ctx, repoLookupKey("exact", e), owner, tokenFn, func(ctx context.Context, token string) ([]string, error) {
+			values, canonicalErr := r.lookup(ctx, "exact:"+strings.ToLower(e), owner, tokenFn, func(ctx context.Context, token string) ([]string, error) {
 				canonical, err := r.canonicalizeExactRepo(ctx, e, token)
 				if err != nil {
 					if ctx.Err() == nil {
@@ -206,7 +199,7 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 			return nil, false, ctx.Err()
 		}
 
-		repos, err := r.lookup(ctx, repoLookupKey("owner", owner), owner, tokenFn, func(ctx context.Context, token string) ([]string, error) {
+		repos, err := r.lookup(ctx, "owner:"+strings.ToLower(owner), owner, tokenFn, func(ctx context.Context, token string) ([]string, error) {
 			repos, err := r.callListRepos(ctx, owner, token)
 			if err != nil && ctx.Err() == nil {
 				log.Printf("CI repo resolver: failed to list repos for %q: %v (using last known repos)", owner, err)

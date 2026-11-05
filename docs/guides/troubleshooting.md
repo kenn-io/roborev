@@ -168,10 +168,8 @@ the daemon log. The next successful poll clears the current failure and
 preserves error history; discovery continues to use previously known
 repositories when available.
 
-Failed discovery lookups retry on the first poll after 15 minutes, then 30
-minutes, and then hourly, so token or access fixes can take until that poll to
-appear. Config edits, including GitHub App installations, force fresh discovery
-on the next poll.
+A failed lookup retries after 15 minutes, then 30, then hourly, so a token or
+access fix appears on the first poll after that window.
 
 Check the operation and category before changing configuration. For HTTP 401 or
 403, check the CI credential and its repository permissions. For rate limits,

@@ -80,9 +80,8 @@ func TestCIHealthSafeReadDiagnosticsAndRecovery(t *testing.T) {
 }
 
 func TestCIHealthSafeDiscoveryDiagnosticsAndRecovery(t *testing.T) {
+	var readErr error
 	synctest.Test(t, func(t *testing.T) {
-		var readErr error
-
 		client, err := ghpkg.NewClient("", ghpkg.WithHTTPClient(&http.Client{Transport: diagnosticTransport(func(r *http.Request) (*http.Response, error) {
 			assert.Equal(t, "/orgs/acme/repos", r.URL.Path)
 			return &http.Response{StatusCode: 503, Request: r, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"sensitive-provider-text"}`))}, nil
