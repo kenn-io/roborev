@@ -385,6 +385,26 @@ func ensureDaemon() (err error) {
 			return info.UnreachableError(err)
 		}
 		if owner != nil {
+			// HTTP closes before final hooks and sync finish. Wait for any
+			// recovery holding the lock to publish its replacement first.
+			release, err := acquireRecoveryLock()
+			if err != nil {
+				return info.UnreachableError(fmt.Errorf("%w: %w", errRecoveryLock, err))
+			}
+			defer func() {
+				if release != nil {
+					release()
+				}
+			}()
+			recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+			defer recoveryCancel()
+			current, err := findDaemonForStart(recoveryCtx)
+			if err != nil {
+				return fmt.Errorf("rediscover daemon: %w", err)
+			}
+			if current != nil {
+				return nil
+			}
 			return info.UnreachableError(managedUnresponsiveError(owner, nil))
 		}
 	}

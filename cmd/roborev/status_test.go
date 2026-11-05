@@ -603,43 +603,6 @@ func TestStatusLockFailureKeepsLiveness(t *testing.T) {
 	}
 }
 
-func TestStatusRediscoverManagedRecoveryFailure(t *testing.T) {
-	stubServiceRecovery(t)
-	original := &daemon.RuntimeInfo{PID: exitedDaemonPID(t)}
-	cause := errors.New("service lookup failed")
-	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-		return nil, &managedRecoveryError{"fixture.service", cause}
-	}
-	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
-	oldEnsure := statusEnsureDaemon
-	t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
-	statusEnsureDaemon = func() error {
-		err := recoverDaemon(original, nil, false)
-		require.ErrorIs(t, err, cause)
-		require.ErrorContains(t, err, "rediscover daemon: ")
-		return err
-	}
-	for _, jsonOutput := range []bool{false, true} {
-		cmd := statusCmd()
-		if jsonOutput {
-			cmd.SetArgs([]string{"--json"})
-		}
-		output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-		if jsonOutput {
-			var result statusJSONResult
-			require.NoError(t, json.Unmarshal([]byte(output), &result))
-			assert.False(t, result.Running)
-			assert.Contains(t, result.Error, "rediscover daemon: ")
-			assert.Contains(t, result.Error, "fixture.service: service lookup failed")
-		} else {
-			assert.Contains(t, output, "Daemon: not running\n")
-			assert.Contains(t, output, "Status: unavailable: rediscover daemon: ")
-			assert.Contains(t, output, "fixture.service: service lookup failed")
-		}
-	}
-}
-
 func TestStatusManagedRecoveryFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name                      string

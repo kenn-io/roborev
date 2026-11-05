@@ -7,7 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +46,127 @@ func stubServiceRecovery(t *testing.T) {
 		pendingStartPause = oldPause
 		cliExecutableInfo, acquireRecoveryLock = oldExecutable, oldLock
 	})
+}
+
+func TestEnsureDaemonWaitsForManagedRecovery(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		isolateDaemonSelection(t)
+		stubServiceRecovery(t)
+		oldList := listAllRuntimes
+		t.Cleanup(func() { listAllRuntimes = oldList })
+		binary, err := os.Executable()
+		require.NoError(t, err)
+		cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
+		original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old"}
+		replacement := &daemon.RuntimeInfo{PID: 5678, Version: version.Version}
+		var current atomic.Pointer[daemon.RuntimeInfo]
+		current.Store(original)
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+			if info := current.Load(); info != nil {
+				return info, nil
+			}
+			return nil, os.ErrNotExist
+		}
+		getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return getAnyRunningDaemon()
+		}
+		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+			return []*daemon.RuntimeInfo{original}, nil
+		}
+		findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+			return &daemonService{unit: "fixture.service", mainPID: pid, executable: binary, serviceType: "simple"}, nil
+		}
+		lock := make(chan struct{}, 1)
+		acquireRecoveryLock = func() (func(), error) {
+			lock <- struct{}{}
+			return func() { <-lock }, nil
+		}
+		draining, finishDrain := make(chan struct{}), make(chan struct{})
+		drainManagedDaemon = func(*daemon.RuntimeInfo) error {
+			current.Store(nil) // HTTP has closed, but the live runtime remains published.
+			close(draining)
+			<-finishDrain
+			return nil
+		}
+		starts, detached := 0, 0
+		startDaemonService = func(context.Context, string) error {
+			starts++
+			current.Store(replacement)
+			return nil
+		}
+		serviceMainPID = func(context.Context, string) (int, error) { return replacement.PID, nil }
+		startDaemonForEnsure = func() error { detached++; return errors.New("unexpected detached start") }
+		recovery, ensure := make(chan error, 1), make(chan error, 1)
+		go func() { recovery <- recoverDaemon(original, nil, false) }()
+		<-draining
+		go func() { ensure <- ensureDaemon() }()
+		synctest.Wait()
+		assert.Empty(t, ensure, "commands must wait while recovery finalizes shutdown")
+		time.Sleep(daemonStartTimeout + time.Minute)
+		assert.Empty(t, ensure, "the recovery lock wait must outlive the startup budget")
+		close(finishDrain)
+		require.NoError(t, <-recovery)
+		require.NoError(t, <-ensure, "reuse the responsive replacement after recovery releases its lock")
+		assert.Equal(t, 1, starts)
+		assert.Zero(t, detached)
+		assert.Empty(t, lock, "ensureDaemon must release the recovery lock")
+	})
+}
+
+func TestEnsureDaemonManagedColdRecoveryFailures(t *testing.T) {
+	for _, name := range []string{"lock failure", "discovery failure", "still unresponsive"} {
+		t.Run(name, func(t *testing.T) {
+			isolateDaemonSelection(t)
+			stubServiceRecovery(t)
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			original := &daemon.RuntimeInfo{PID: os.Getpid()}
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{original}, nil }
+			findDaemonService = func(context.Context, int) (*daemonService, error) {
+				return &daemonService{unit: "fixture.service", mainPID: original.PID}, nil
+			}
+			cause := errors.New("fixture failure")
+			locks, releases, discoveries, starts := 0, 0, 0, 0
+			acquireRecoveryLock = func() (func(), error) {
+				locks++
+				if name == "lock failure" {
+					return nil, cause
+				}
+				return func() { releases++ }, nil
+			}
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				discoveries++
+				if name == "discovery failure" {
+					return nil, cause
+				}
+				return nil, os.ErrNotExist
+			}
+			startDaemonForEnsure = func() error { starts++; return errors.New("unexpected detached start") }
+			err := ensureDaemon()
+			require.Error(t, err)
+			assert := assert.New(t)
+			assert.Equal(1, locks)
+			assert.Zero(starts)
+			if name == "lock failure" {
+				require.ErrorIs(t, err, errRecoveryLock)
+				require.ErrorIs(t, err, cause)
+				assert.Zero(releases)
+				assert.Zero(discoveries)
+			} else {
+				assert.Equal(1, releases)
+				assert.Equal(1, discoveries)
+				if name == "discovery failure" {
+					require.ErrorIs(t, err, cause)
+				} else {
+					require.ErrorContains(t, err, "daemon is unresponsive; run "+serviceRestartCommand+" fixture.service")
+				}
+			}
+		})
+	}
 }
 
 func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
