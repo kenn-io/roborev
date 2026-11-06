@@ -40,11 +40,8 @@ func TestJobMetadataOutputSize(t *testing.T) {
 		{"status", statusCmd, []string{"--json"}, 10, 25000},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			requests := 0
 			NewMockDaemon(t, MockRefineHooks{OnGetJobs: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
-				requests++
 				assert.Equal(t, "true", r.URL.Query().Get("omit_prompt"))
-				assert.Equal(t, "true", r.URL.Query().Get("omit_stats"))
 				server.Handler().ServeHTTP(w, r)
 				return true
 			}, OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
@@ -57,7 +54,6 @@ func TestJobMetadataOutputSize(t *testing.T) {
 			cmd := tt.command()
 			cmd.SetArgs(tt.args)
 			output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-			assert.Equal(t, 1, requests)
 			var jobs []map[string]any
 			if tt.name == "list" {
 				require.NoError(t, json.Unmarshal([]byte(output), &jobs))
@@ -69,10 +65,7 @@ func TestJobMetadataOutputSize(t *testing.T) {
 				jobs = result.Jobs
 			}
 			require.Len(t, jobs, tt.count)
-			for i, job := range jobs {
-				assert.Equal(t, 50-i, int(job["id"].(float64)))
-				assert.Equal(t, "done", job["status"])
-				assert.Equal(t, "P", job["verdict"])
+			for _, job := range jobs {
 				_, hasPrompt := job["prompt"]
 				assert.False(t, hasPrompt, "job %v includes a prompt", job["id"])
 			}

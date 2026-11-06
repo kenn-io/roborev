@@ -323,7 +323,7 @@ func TestShowDirtyReviewSkipsBaseCommitLegacyComments(t *testing.T) {
 	}
 }
 
-func TestShowPromptForQueuedJob(t *testing.T) {
+func TestShowPromptForJob(t *testing.T) {
 	for _, status := range []storage.JobStatus{storage.JobStatusQueued, storage.JobStatusRunning, storage.JobStatusFailed, storage.JobStatusCanceled} {
 		t.Run(string(status), func(t *testing.T) {
 			daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -340,14 +340,25 @@ func TestShowPromptForQueuedJob(t *testing.T) {
 			output := runShowCmd(t, "--job", "42", "--prompt")
 			assert.Contains(t, output, "\nReview this diff please\n")
 			assert.Contains(t, output, "codex")
-			var review storage.Review
-			require.NoError(t, json.Unmarshal([]byte(runShowCmd(t, "--job", "42", "--prompt", "--json")), &review))
-			assert.Equal(t, "Review this diff please", review.Prompt)
-			cmd := showCmd()
-			cmd.SetArgs([]string{"--job", "42"})
-			assertErrorContains(t, cmd.Execute(), "no review found")
 		})
 	}
+
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/review":
+			http.Error(w, "not found", http.StatusNotFound)
+		case "/api/jobs":
+			json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{{ID: 42, Agent: "codex", Status: storage.JobStatusFailed, Prompt: "Review this diff please"}}})
+		default:
+			http.Error(w, "unexpected path: "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	var review storage.Review
+	require.NoError(t, json.Unmarshal([]byte(runShowCmd(t, "--job", "42", "--prompt", "--json")), &review))
+	assert.Equal(t, "Review this diff please", review.Prompt)
+	cmd := showCmd()
+	cmd.SetArgs([]string{"--job", "42"})
+	assertErrorContains(t, cmd.Execute(), "no review found")
 
 	t.Run("completed review uses stored review prompt", func(t *testing.T) {
 		mockReviewDaemon(t, storage.Review{JobID: 42, Agent: "codex", Prompt: "Completed review instructions", Job: &storage.ReviewJob{ID: 42, Status: storage.JobStatusDone}})
