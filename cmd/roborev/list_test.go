@@ -14,10 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 type repoSetupResult struct {
@@ -480,8 +484,10 @@ func TestListEmptyHints(t *testing.T) {
 					if tc.workspace {
 						assert.Empty(t, q.Get("repo_prefix"))
 						assert.Empty(t, q.Get("omit_stats"))
+						assert.Equal(t, "true", q.Get("include_totals"))
 					} else {
 						assert.NotEmpty(t, q.Get("repo"))
+						assert.Empty(t, q.Get("include_totals"))
 						assert.Empty(t, q.Get("branch"))
 						assert.Empty(t, q.Get("branch_include_empty"))
 					}
@@ -515,5 +521,53 @@ func TestListEmptyHints(t *testing.T) {
 			}
 			runListTest(t, lt)
 		})
+	}
+}
+
+func TestOutsideRepoHintListsCompletedFixJobs(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	server := daemon.NewServer(db, config.DefaultConfig(), "")
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+	daemonFromHandler(t, server.Handler())
+	var seeds []storage.ReviewJob
+	for range 2 {
+		repo, err := db.GetOrCreateRepo(t.TempDir())
+		require.NoError(t, err)
+		job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "main", Agent: "test", JobType: storage.JobTypeFix})
+		require.NoError(t, err)
+		_, err = db.ClaimJob("worker")
+		require.NoError(t, err)
+		require.NoError(t, db.CompleteFixJob(job.ID, "test", "fix output", "patch"))
+		job.RepoPath = repo.RootPath
+		seeds = append(seeds, *job)
+	}
+	outside := t.TempDir()
+	for _, mode := range []string{"fix", "compact"} {
+		var stderr bytes.Buffer
+		out, err := runWithOutput(t, outside, func(cmd *cobra.Command) error {
+			cmd.SetErr(&stderr)
+			if mode == "fix" {
+				return runFixList(cmd, "", true, false, false)
+			}
+			return runCompact(cmd, compactOptions{allBranches: true})
+		})
+		require.NoError(t, err)
+		assert.Contains(t, out, "No open jobs found.")
+		assert.Contains(t, stderr.String(), "completed, unclosed jobs in 2 repos; see roborev repo list, then roborev job list --repo <path> --all-branches")
+	}
+	for _, seed := range seeds {
+		var err error
+		out := captureStdout(t, func() {
+			cmd := listCmd()
+			cmd.SetArgs([]string{"--repo", seed.RepoPath, "--all-branches", "--json"})
+			err = cmd.Execute()
+		})
+		require.NoError(t, err)
+		var jobs []storage.ReviewJob
+		require.NoError(t, json.Unmarshal([]byte(out), &jobs))
+		require.Len(t, jobs, 1)
+		assert.Equal(t, seed.ID, jobs[0].ID)
+		assert.Equal(t, storage.JobTypeFix, jobs[0].JobType)
+		assert.Equal(t, storage.JobStatusDone, jobs[0].Status)
 	}
 }

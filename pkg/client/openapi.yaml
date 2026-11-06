@@ -6121,6 +6121,17 @@ paths:
               - "false"
               - ""
             type: string
+        - description: Include total jobs and distinct repository counts in stats
+          explode: false
+          in: query
+          name: include_totals
+          schema:
+            description: Include total jobs and distinct repository counts in stats
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
         - description: Skip the queue counts (stats and filtered_stats) for callers that only read jobs
           explode: false
           in: query

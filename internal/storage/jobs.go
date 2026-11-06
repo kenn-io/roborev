@@ -1942,6 +1942,7 @@ type listJobsOptions struct {
 	branchIncludeEmpty bool
 	closed             *bool
 	closedJobColumn    bool
+	includeTotals      bool
 	openFailedReviews  bool
 	jobType            string
 	excludeJobType     string
@@ -2035,6 +2036,11 @@ func WithOpenFailedReviews() ListJobsOption {
 // the TUI prompt view renders it straight from list rows.
 func WithoutPrompt() ListJobsOption {
 	return func(o *listJobsOptions) { o.omitPrompt = true }
+}
+
+// WithJobTotals includes total jobs and distinct repositories in aggregate stats.
+func WithJobTotals() ListJobsOption {
+	return func(o *listJobsOptions) { o.includeTotals = true }
 }
 
 // WithFindingCounts requests the nullable finding-count projection for listed jobs.
@@ -2475,10 +2481,12 @@ func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOpt
 func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (string, []any) {
 	o := collectListJobsOptions(opts...)
 	o.closedJobColumn = true
+	totals := "0, 0,"
+	if o.includeTotals {
+		totals = "COUNT(*), COUNT(DISTINCT j.repo_id),"
+	}
 	query := `
-		SELECT
-			COUNT(*),
-			COUNT(DISTINCT j.repo_id),
+		SELECT ` + totals + `
 			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),

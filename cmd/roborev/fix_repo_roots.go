@@ -59,9 +59,10 @@ func printOutsideRepoHint(ctx context.Context, cmd *cobra.Command, roots current
 		return
 	}
 	_, stats := queryHintJobs(ctx, generated.ListJobsQuery{
-		Status: new("done"), Closed: new(generated.ListJobsQueryClosedFalse),
+		IncludeTotals: new(generated.ListJobsQueryIncludeTotalsTrue),
+		Status:        new("done"), Closed: new(generated.ListJobsQueryClosedFalse),
 	})
 	if stats.RepoCount > 0 {
-		fmt.Fprintf(cmd.ErrOrStderr(), "hint: no open jobs for repository path %s; the daemon has completed, unclosed review jobs in %d repos; see roborev repo list, then rerun this command from a listed repo\n", roots.mainRepoRoot, stats.RepoCount)
+		fmt.Fprintf(cmd.ErrOrStderr(), "hint: no open jobs for repository path %s; the daemon has completed, unclosed jobs in %d repos; see roborev repo list, then roborev job list --repo <path> --all-branches\n", roots.mainRepoRoot, stats.RepoCount)
 	}
 }

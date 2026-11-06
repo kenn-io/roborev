@@ -76,7 +76,7 @@ func TestJobStatsTotalAndRepos(t *testing.T) {
 		{status: "applied", total: 2, repos: 2},
 		{opts: []ListJobsOption{WithClosed(false)}, total: 3, repos: 1},
 	} {
-		stats, err := db.CountJobStats(tc.status, tc.repo, tc.opts...)
+		stats, err := db.CountJobStats(tc.status, tc.repo, append(tc.opts, WithJobTotals())...)
 		require.NoError(t, err)
 		assert.Equal(t, tc.total, stats.Total)
 		assert.Equal(t, tc.repos, stats.RepoCount)

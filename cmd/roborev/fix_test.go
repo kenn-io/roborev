@@ -4973,6 +4973,7 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 					assert.Equal(t, "1", q.Get("limit"))
 					assert.Empty(t, q.Get("repo"))
 					assert.Empty(t, q.Get("omit_stats"))
+					assert.Equal(t, "true", q.Get("include_totals"))
 					filtered := storage.JobStats{RepoCount: 3}
 					if tc.state == "empty" {
 						filtered = storage.JobStats{}
@@ -5000,7 +5001,7 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 			want, wantCalls := "", int32(2)
 			switch tc.state {
 			case "outside":
-				want = "hint: no open jobs for repository path " + dir + "; the daemon has completed, unclosed review jobs in 3 repos; see roborev repo list, then rerun this command from a listed repo\n"
+				want = "hint: no open jobs for repository path " + dir + "; the daemon has completed, unclosed jobs in 3 repos; see roborev repo list, then roborev job list --repo <path> --all-branches\n"
 			case "quiet":
 				assert.Empty(t, out)
 				wantCalls = 1
