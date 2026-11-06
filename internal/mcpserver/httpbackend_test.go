@@ -197,7 +197,7 @@ func TestHTTPBackendSearchSerializesEveryFilterAndPreservesResponse(t *testing.T
 		"coverage":{"mirror_complete":false,"mirror_backlog":3,
 			"embeddings_configured":true,"vector_state":"replacing",
 			"embedding_backlog":4,"skipped":2},
-		"hints":[{"code":"every_word_required","message":"search again with fewer words","next":"roborev search --lexical pointer"}],"hits":[{"job_id":11,"job_uuid":"job-uuid","review_id":12,
+		"hits":[{"job_id":11,"job_uuid":"job-uuid","review_id":12,
 			"review_uuid":"review-uuid","repo_name":"repo","repo_path":"/src/repo",
 			"git_ref":"abc123","commit_sha":"abc123","commit_subject":"fix search",
 			"branch":"Feature/Search","review_type":"security","panel_role":"member",
@@ -225,7 +225,6 @@ func TestHTTPBackendSearchSerializesEveryFilterAndPreservesResponse(t *testing.T
 			MirrorComplete: false, MirrorBacklog: &backlog, EmbeddingsConfigured: true,
 			VectorState: "replacing", EmbeddingBacklog: 4, Skipped: 2,
 		},
-		Hints: []storage.SearchHint{{Code: "every_word_required", Message: "search again with fewer words", Next: "roborev search --lexical pointer"}},
 		Hits: []storage.SearchHit{{
 			JobID: 11, JobUUID: "job-uuid", ReviewID: 12, ReviewUUID: "review-uuid",
 			RepoName: "repo", RepoPath: "/src/repo", GitRef: "abc123", CommitSHA: "abc123",

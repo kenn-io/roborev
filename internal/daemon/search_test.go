@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -641,20 +640,13 @@ func TestSearchEveryWordHintGuardsAndProbeBound(t *testing.T) {
 func TestSearchRetryCommandThroughHTTPBackend(t *testing.T) {
 	const word = "point'er"
 	input := &SearchInput{Branch: "sam's-fix", State: "open"}
-	searcher := &recordingReviewSearcher{result: searchindex.SearchResult{
-		Hits: []searchindex.SearchHit{{JobID: 1}},
-	}}
-	server := newSearchHTTPServer(t, searcher)
-	response := server.searchResponse(t.Context(), searchindex.SearchResult{
-		Query: word + " absent", Mode: searchindex.ModeLexical,
-	}, searchindex.SearchParams{}, input)
-	require.Len(t, response.Hints, 1)
-	native := response.Hints[0].Next
-	for _, platform := range []string{runtime.GOOS, "windows"} {
+	for _, platform := range []string{"linux", "windows"} {
 		t.Run(platform, func(t *testing.T) {
-			response.Hints[0].Next = native
-			if platform != runtime.GOOS {
-				response.Hints[0].Next = searchRetryCommand(input, word, platform)
+			response := storage.SearchResponse{
+				Query: word + " absent", Mode: "lexical",
+				Hints: []storage.SearchHint{{
+					Code: "every_word_required", Next: searchRetryCommand(input, word, platform),
+				}},
 			}
 			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				assert.NoError(t, json.NewEncoder(w).Encode(response))

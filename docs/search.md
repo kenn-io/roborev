@@ -393,14 +393,14 @@ including a measured retry command when available. JSON includes `hints` with
 `code`, `message`, and a `next` command when one of the first ten query words
 finds a review under the same filters. Single-word misses, incomplete coverage,
 and semantic or hybrid searches omit the hint. Retry commands use PowerShell on
-Windows daemons and POSIX shell syntax elsewhere.
+Windows daemons and POSIX shell syntax elsewhere. MCP returns `retry_with` query
+and mode arguments in place of `next`.
 
 The MCP tool `roborev_search_reviews` accepts the same inputs and returns the
-same response fields, with `retry_with` query and mode arguments in place of
-`next`. Use `auto` for ordinary discovery, `lexical` for exact paths,
-identifiers, or quoted errors, and `semantic` when wording-independent retrieval
-is specifically needed. Then call `roborev_get_review` with the returned
-`job_id` and fetch responses only when needed.
+same response fields. Use `auto` for ordinary discovery, `lexical` for exact
+paths, identifiers, or quoted errors, and `semantic` when wording-independent
+retrieval is specifically needed. Then call `roborev_get_review` with the
+returned `job_id` and fetch responses only when needed.
 
 Missing or rejected embedding credentials produce an `unavailable` MCP error
 with `no embedding API key` or `embedding authentication rejected (401/403)`.
