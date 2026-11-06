@@ -283,7 +283,6 @@ func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
 			MatchedIn: append([]string(nil), hit.MatchedIn...), Excerpt: hit.Excerpt,
 		})
 	}
-
 	return SearchResponse{
 		Query: result.Query, Mode: string(result.Mode), Degraded: result.Degraded,
 		DegradedReason: result.DegradedReason, Bounded: result.Bounded,
