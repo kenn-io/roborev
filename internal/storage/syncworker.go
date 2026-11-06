@@ -25,9 +25,11 @@ type SyncWorker struct {
 	db              *DB
 	cfg             config.SyncConfig
 	pgPool          *PgPool
+	pgReachable     bool
+	healthCancel    context.CancelFunc
 	stopCh          chan struct{}
 	doneCh          chan struct{}
-	mu              sync.Mutex          // protects running, pgPool, and callbacks
+	mu              sync.Mutex          // protects running, pgPool, pgReachable, healthCancel, and callbacks
 	syncMu          *semaphore.Weighted // queues sync operations in arrival order
 	connectMu       sync.Mutex          // serializes connect operations
 	running         bool
@@ -310,10 +312,7 @@ func (w *SyncWorker) Stop() {
 	defer w.syncMu.Release(1)
 
 	w.mu.Lock()
-	if w.pgPool != nil {
-		w.pgPool.Close()
-		w.pgPool = nil
-	}
+	w.closePool()
 	w.mu.Unlock()
 }
 
@@ -417,10 +416,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 		w.mu.Lock()
 		if !w.running {
 			// Worker was stopped during connect - close pool and abort
-			if w.pgPool != nil {
-				w.pgPool.Close()
-				w.pgPool = nil
-			}
+			w.closePool()
 			w.mu.Unlock()
 			return nil, fmt.Errorf("sync worker stopped during connect")
 		}
@@ -575,10 +571,7 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 
 		// If we get here, we disconnected - try to reconnect
 		w.mu.Lock()
-		if w.pgPool != nil {
-			w.pgPool.Close()
-			w.pgPool = nil
-		}
+		w.closePool()
 		w.mu.Unlock()
 	}
 }
@@ -682,9 +675,54 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 
 	w.mu.Lock()
 	w.pgPool = pool
+	w.pgReachable = true
+	// The pool outlives this connection attempt and owns its health watcher.
+	healthCtx, healthCancel := context.WithCancel(context.Background())
+	w.healthCancel = healthCancel
+	go w.watchHealth(healthCtx, pool)
 	w.mu.Unlock()
 
 	return true, nil
+}
+
+// closePool requires w.mu to be held.
+func (w *SyncWorker) closePool() {
+	if w.healthCancel != nil {
+		w.healthCancel()
+		w.healthCancel = nil
+	}
+	if w.pgPool != nil {
+		w.pgPool.Close()
+		w.pgPool = nil
+	}
+}
+
+// A 10-second interval plus the 5-second ping timeout detects a stalled
+// connection within about 15 seconds without delaying health requests.
+const syncHealthInterval = 10 * time.Second
+
+func (w *SyncWorker) watchHealth(ctx context.Context, pool *PgPool) {
+	ticker := time.NewTicker(syncHealthInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.checkHealth(ctx, pool)
+		}
+	}
+}
+
+func (w *SyncWorker) checkHealth(ctx context.Context, pool *PgPool) {
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err := pool.Ping(pingCtx)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if ctx.Err() == nil && w.pgPool == pool {
+		w.pgReachable = err == nil
+	}
 }
 
 // syncLoop runs the periodic sync until stop or disconnection
@@ -1316,6 +1354,7 @@ func (w *SyncWorker) HealthCheck() (healthy bool, message string) {
 	w.mu.Lock()
 	running := w.running
 	pool := w.pgPool
+	reachable := w.pgReachable
 	w.mu.Unlock()
 
 	if !running {
@@ -1326,11 +1365,7 @@ func (w *SyncWorker) HealthCheck() (healthy bool, message string) {
 		return false, "not connected"
 	}
 
-	// Check if we can ping PostgreSQL
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := pool.Ping(ctx); err != nil {
+	if !reachable {
 		return false, "connection lost"
 	}
 

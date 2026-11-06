@@ -70,6 +70,8 @@ If the daemon is pushing a backlog, `roborev sync now` takes over after the
 current batch, pushes up to 500 items and pulls, then background sync pushes the
 rest.
 
+`sync status` reports a background connection check up to about 15 seconds old.
+
 ## What Gets Synced
 
 - Completed jobs (done, failed, canceled)

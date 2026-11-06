@@ -12,11 +12,78 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
 )
+
+func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
+	t.Parallel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	release := make(chan struct{})
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		conn, err := listener.Accept()
+		if err == nil {
+			defer conn.Close()
+			<-release
+		}
+	}()
+	t.Cleanup(func() {
+		close(release)
+		_ = listener.Close()
+		<-serverDone
+	})
+	pool, err := pgxpool.New(t.Context(), "postgres://test:test@"+listener.Addr().String()+"/test?sslmode=disable")
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	worker := &SyncWorker{running: true, pgPool: &PgPool{pool: pool}, pgReachable: true}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		healthy, message := worker.HealthCheck()
+		assert.True(t, healthy)
+		assert.Equal(t, "connected", message)
+	}()
+	t.Cleanup(func() { <-done })
+	// A regressed live ping waits on the stalled TCP server outside synctest.
+	completed := false
+	select {
+	case <-done:
+		completed = true
+	case <-time.After(time.Second):
+	}
+	assert.True(t, completed, "HealthCheck waited for PostgreSQL instead of returning cached health")
+}
+
+func TestSyncCheckHealthRecordsFailureAndIgnoresCancellation(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	pool, err := pgxpool.New(t.Context(), "postgres://test:test@"+address+"/test?sslmode=disable")
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	worker := &SyncWorker{running: true, pgPool: &PgPool{pool: pool}, pgReachable: true}
+	worker.checkHealth(t.Context(), worker.pgPool)
+	healthy, message := worker.HealthCheck()
+	assert.False(healthy)
+	assert.Equal("connection lost", message)
+
+	worker.pgReachable = true
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	worker.checkHealth(ctx, worker.pgPool)
+	healthy, message = worker.HealthCheck()
+	assert.True(healthy)
+	assert.Equal("connected", message)
+}
 
 func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
 	t.Parallel()
