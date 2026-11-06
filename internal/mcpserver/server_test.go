@@ -195,8 +195,8 @@ func TestToolCatalogBudgetBoundary(t *testing.T) {
 			require.NoError(err)
 		} else {
 			require.Error(err)
-			assert.Contains(err.Error(), "22001 bytes exceeds budget of 22000 bytes")
-			assert.Contains(err.Error(), "budget_fixture: ")
+			assert.Contains(err.Error(), fmt.Sprintf("%d bytes exceeds budget of %d bytes", toolCatalogBudget+extra, toolCatalogBudget))
+			assert.Contains(err.Error(), fmt.Sprintf("budget_fixture: %d bytes", toolCatalogJSONSize(t, tool)))
 		}
 	}
 }
