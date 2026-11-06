@@ -180,6 +180,10 @@ The JSON form is an array, empty when no daemon has `[mcp]` enabled.
 
 ## Tools
 
+The complete tool catalog, including write tools and schemas, is 19,684 bytes
+of JSON. `TestToolCatalogBudget` enforces a 22,000-byte budget. Budget increases
+require an explicit reviewed edit.
+
 | Tool | Purpose |
 |------|---------|
 | `roborev_add_comment` | Add a comment with `job_id`, `commenter`, and `comment` |

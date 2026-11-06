@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -144,6 +145,71 @@ func decodeText(t *testing.T, result *mcp.CallToolResult, out any) {
 	text, ok := result.Content[0].(*mcp.TextContent)
 	require.True(t, ok, "expected text content, got %T", result.Content[0])
 	require.NoError(t, json.Unmarshal([]byte(text.Text), out))
+}
+
+// Base catalog: 19,684 bytes, plus 10% rounded up to the next 1,000 bytes.
+const toolCatalogBudget = 22_000
+
+func checkToolCatalogBudget(t *testing.T, result *mcp.ListToolsResult) error {
+	t.Helper()
+	require.Empty(t, result.NextCursor, "budget must cover the complete catalog")
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+	if len(data) <= toolCatalogBudget {
+		return nil
+	}
+	var breakdown strings.Builder
+	for _, tool := range result.Tools {
+		data, err := json.Marshal(tool)
+		require.NoError(t, err)
+		fmt.Fprintf(&breakdown, "\n%s: %d bytes", tool.Name, len(data))
+	}
+	return fmt.Errorf("tool catalog: %d bytes exceeds budget of %d bytes%s", len(data), toolCatalogBudget, breakdown.String())
+}
+
+func TestToolCatalogBudget(t *testing.T) {
+	session := connectSession(t, &fakeBackend{})
+	result, err := session.ListTools(t.Context(), nil)
+	require.NoError(t, err)
+	require.NoError(t, checkToolCatalogBudget(t, result))
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+	t.Logf("tool catalog: %d bytes", len(data))
+}
+
+func TestToolCatalogBudgetBoundary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := New(&fakeBackend{}, "test", nil)
+	tool := &mcp.Tool{Name: "budget_fixture", InputSchema: map[string]any{"type": "object"}}
+	server.mcp.AddTool(tool, nil)
+	session := connectServer(t, server)
+	result, err := session.ListTools(t.Context(), nil)
+	require.NoError(err)
+	data, err := json.Marshal(result)
+	require.NoError(err)
+	require.Less(len(data), toolCatalogBudget)
+	// A nonempty description also adds its JSON key, quotes, and comma.
+	tool.Description = strings.Repeat("x", toolCatalogBudget-len(data)-len(`,"description":""`))
+	for _, extra := range []int{0, 1} {
+		tool.Description += strings.Repeat("x", extra)
+		server.mcp.AddTool(tool, nil)
+		result, err = session.ListTools(t.Context(), nil)
+		require.NoError(err)
+		data, err = json.Marshal(result)
+		require.NoError(err)
+		require.Len(data, toolCatalogBudget+extra)
+		err = checkToolCatalogBudget(t, result)
+		if extra == 0 {
+			require.NoError(err)
+		} else {
+			require.Error(err)
+			assert.Contains(err.Error(), "22001 bytes exceeds budget of 22000 bytes")
+			for _, tool := range result.Tools {
+				assert.Contains(err.Error(), tool.Name+": ")
+			}
+		}
+	}
 }
 
 func TestRegisteredToolsAndGuidance(t *testing.T) {
