@@ -281,6 +281,11 @@ func (w *SyncWorker) Start() error {
 	return nil
 }
 
+func (w *SyncWorker) lockSync() {
+	// Acquire cannot fail with a background context.
+	_ = w.syncMu.Acquire(context.Background(), 1)
+}
+
 // Stop gracefully stops the sync worker
 func (w *SyncWorker) Stop() {
 	w.mu.Lock()
@@ -301,7 +306,7 @@ func (w *SyncWorker) Stop() {
 
 	// Acquire syncMu to wait for any in-flight SyncNow or FinalPush to complete
 	// before closing the pool
-	_ = w.syncMu.Acquire(context.Background(), 1) // Wait for in-flight sync operations before closing the pool.
+	w.lockSync()
 	defer w.syncMu.Release(1)
 
 	w.mu.Lock()
@@ -335,8 +340,7 @@ func (w *SyncWorker) FinalPush() error {
 		return nil // Not connected, nothing to push
 	}
 
-	// Serialize with other sync operations
-	_ = w.syncMu.Acquire(context.Background(), 1) // Final push waits for its turn even during shutdown.
+	w.lockSync()
 	defer w.syncMu.Release(1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -428,8 +432,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 		log.Printf("Sync: connected to PostgreSQL (triggered by sync now)")
 	}
 
-	// Serialize with other sync operations
-	_ = w.syncMu.Acquire(context.Background(), 1) // Preserve the unbounded wait for an explicit sync.
+	w.lockSync()
 	w.pullWrote = false
 	defer w.finishSync()
 
@@ -733,7 +736,7 @@ func (w *SyncWorker) doSync() error {
 		return fmt.Errorf("not connected")
 	}
 
-	_ = w.syncMu.Acquire(context.Background(), 1) // Start the pass timeout after its first turn is admitted.
+	w.lockSync()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -758,11 +761,11 @@ func (w *SyncWorker) doSync() error {
 		totalResponses += stats.Responses
 		log.Printf("Sync: pushed %d jobs, %d reviews, %d responses (total: %d/%d/%d)",
 			stats.Jobs, stats.Reviews, stats.Responses, totalJobs, totalReviews, totalResponses)
-		_ = w.syncMu.Acquire(context.Background(), 1) // Queue each batch so sync now can take the next turn.
+		w.lockSync()
 	}
 
 	// Pull remote changes from PostgreSQL
-	_ = w.syncMu.Acquire(context.Background(), 1) // Keep the pull in one turn after the push batches.
+	w.lockSync()
 	w.pullWrote = false
 	w.passError = nil
 	defer w.finishSync()
