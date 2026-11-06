@@ -2463,10 +2463,9 @@ type JobStats struct {
 func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOption) (JobStats, error) {
 	query, args := jobStatsQuery(statusFilter, repoFilter, opts...)
 	var stats JobStats
-	var total, repoCount int
 	err := db.QueryRow(query, args...).Scan(
-		&total,
-		&repoCount,
+		&stats.Total,
+		&stats.RepoCount,
 		&stats.Queued,
 		&stats.Running,
 		&stats.Done,
@@ -2476,16 +2475,13 @@ func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOpt
 		&stats.Closed,
 		&stats.Open,
 	)
-	if collectListJobsOptions(opts...).includeTotals {
-		stats.Total, stats.RepoCount = &total, &repoCount
-	}
 	return stats, err
 }
 
 func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (string, []any) {
 	o := collectListJobsOptions(opts...)
 	o.closedJobColumn = true
-	totals := "0, 0,"
+	totals := "NULL, NULL,"
 	if o.includeTotals {
 		totals = "COUNT(*), COUNT(DISTINCT j.repo_id),"
 	}

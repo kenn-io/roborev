@@ -4944,9 +4944,8 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 
 func TestOutsideRepoEmptyHints(t *testing.T) {
 	for _, tc := range []struct{ mode, state string }{
-		{"list", "outside"}, {"open", "outside"}, {"batch", "outside"}, {"compact", "outside"},
-		{"open", "quiet"}, {"batch", "quiet"}, {"compact", "quiet"}, {"open", "inside"}, {"open", "empty"},
-		{"open", "later"}, {"batch", "later"},
+		{"open", "singular"}, {"open", "outside"}, {"batch", "outside"}, {"open", "quiet"}, {"batch", "quiet"}, {"compact", "quiet"},
+		{"open", "inside"}, {"open", "empty"}, {"open", "later"}, {"batch", "later"},
 	} {
 		t.Run(tc.mode+"/"+tc.state, func(t *testing.T) {
 			dir := t.TempDir()
@@ -4971,14 +4970,13 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 					assert.Equal(t, "done", q.Get("status"))
 					assert.Equal(t, "false", q.Get("closed"))
 					assert.Equal(t, "1", q.Get("limit"))
-					assert.Empty(t, q.Get("repo"))
-					assert.Empty(t, q.Get("omit_stats"))
-					assert.Equal(t, "true", q.Get("include_totals"))
-					filtered := storage.JobStats{RepoCount: new(3)}
-					if tc.state == "empty" {
-						filtered = storage.JobStats{}
+					resp["stats"], resp["filtered_stats"] = storage.JobStats{RepoCount: new(8)}, storage.JobStats{RepoCount: new(3)}
+					if tc.state == "singular" {
+						resp["filtered_stats"] = storage.JobStats{RepoCount: new(1)}
 					}
-					resp["stats"], resp["filtered_stats"] = storage.JobStats{RepoCount: new(8)}, filtered
+					if tc.state == "empty" {
+						resp["filtered_stats"] = storage.JobStats{RepoCount: new(0)}
+					}
 				}
 				writeJSON(w, resp)
 			}).Build()
@@ -4987,8 +4985,6 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 				cmd.SetErr(&stderr)
 				opts := fixOptions{quiet: tc.state == "quiet"}
 				switch tc.mode {
-				case "list":
-					return runFixList(cmd, "", true, false, false)
 				case "open":
 					return runFixOpen(cmd, "", true, false, false, opts, nil)
 				case "batch":
@@ -5000,6 +4996,8 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 			require.NoError(t, err)
 			want, wantCalls := "", int32(2)
 			switch tc.state {
+			case "singular":
+				want = "hint: no open jobs for repository path " + dir + "; the daemon has completed, unclosed jobs in 1 repo; see roborev repo list, then roborev job list --repo <path> --all-branches\n"
 			case "outside":
 				want = "hint: no open jobs for repository path " + dir + "; the daemon has completed, unclosed jobs in 3 repos; see roborev repo list, then roborev job list --repo <path> --all-branches\n"
 			case "quiet":

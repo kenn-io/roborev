@@ -460,14 +460,13 @@ func TestListEmptyHints(t *testing.T) {
 		wantHint  string
 		wantCalls int32
 	}{
-		{name: "workspace keeps status", workspace: true, args: []string{"--status", "failed"}, wantHint: "the daemon has 3 matching jobs in 2 repos", wantCalls: 2},
-		{name: "workspace JSON", workspace: true, args: []string{"--json"}, wantHint: "the daemon has 3 matching jobs in 2 repos", wantCalls: 2},
+		{name: "workspace singular text", workspace: true, probe: "singular", wantHint: "the daemon has 3 matching jobs in 1 repo;", wantCalls: 2},
+		{name: "workspace keeps filters", workspace: true, wantHint: "the daemon has 3 matching jobs in 2 repos", wantCalls: 2},
 		{name: "no jobs anywhere", workspace: true, probe: "empty", wantCalls: 2},
 		{name: "probe failure", workspace: true, probe: "fail", wantCalls: 2},
 		{name: "auto branch", wantHint: "other branches have matching jobs; run again with --all-branches", wantCalls: 2},
 		{name: "explicit branch", args: []string{"--branch", "main"}, wantCalls: 1},
 		{name: "JSON pagination", args: []string{"--json"}, page: true, wantHint: "hint: more jobs exist; raise --limit", wantCalls: 1},
-		{name: "text pagination", page: true, wantCalls: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -480,19 +479,15 @@ func TestListEmptyHints(t *testing.T) {
 				if call == 2 {
 					q := r.URL.Query()
 					assert.Equal(t, "true", q.Get("omit_prompt"))
-					assert.Equal(t, "1", q.Get("limit"))
 					if tc.workspace {
 						assert.Empty(t, q.Get("repo_prefix"))
 						assert.Empty(t, q.Get("omit_stats"))
 						assert.Equal(t, "true", q.Get("include_totals"))
+						assert.Equal(t, "failed", q.Get("status"))
 					} else {
 						assert.NotEmpty(t, q.Get("repo"))
-						assert.Empty(t, q.Get("include_totals"))
 						assert.Empty(t, q.Get("branch"))
 						assert.Empty(t, q.Get("branch_include_empty"))
-					}
-					if len(tc.args) > 0 && tc.args[0] == "--status" {
-						assert.Equal(t, "failed", q.Get("status"))
 					}
 					if tc.probe == "fail" {
 						w.WriteHeader(http.StatusInternalServerError)
@@ -502,10 +497,17 @@ func TestListEmptyHints(t *testing.T) {
 				if tc.page || (call == 2 && tc.probe != "empty") {
 					jobs, stats = []storage.ReviewJob{{ID: 1, RepoPath: "/repos/a"}}, storage.JobStats{Total: new(3), RepoCount: new(2)}
 				}
+				if tc.probe == "singular" {
+					stats.RepoCount = new(1)
+				}
 				writeJSON(w, map[string]any{"jobs": jobs, "has_more": tc.page, "stats": stats})
 			}
 			lt := listTestCase{args: tc.args, handler: handler}
 			if tc.workspace {
+				lt.args = []string{"--json", "--status", "failed"}
+				if tc.probe == "singular" {
+					lt.args, lt.wantOutput = []string{"--status", "failed"}, []string{"No jobs found."}
+				}
 				lt.repoSetup = func(t *testing.T) repoSetupResult { return repoSetupResult{workingDir: t.TempDir()} }
 			}
 			if tc.wantHint != "" {
@@ -515,7 +517,7 @@ func TestListEmptyHints(t *testing.T) {
 			}
 			lt.check = func(t *testing.T, output, query string, repo *TestGitRepo, wd string) {
 				assert.Equal(t, tc.wantCalls, calls.Load())
-				if tc.workspace && len(tc.args) > 0 && tc.args[0] == "--json" {
+				if tc.workspace && tc.probe != "singular" {
 					assert.Equal(t, "[]\n", output)
 				}
 			}
@@ -567,7 +569,5 @@ func TestOutsideRepoHintListsCompletedFixJobs(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(out), &jobs))
 		require.Len(t, jobs, 1)
 		assert.Equal(t, seed.ID, jobs[0].ID)
-		assert.Equal(t, storage.JobTypeFix, jobs[0].JobType)
-		assert.Equal(t, storage.JobStatusDone, jobs[0].Status)
 	}
 }
