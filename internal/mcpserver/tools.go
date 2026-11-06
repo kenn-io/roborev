@@ -203,9 +203,20 @@ func (s *Server) registerTools() {
 	s.registerSearchTool()
 }
 
+type searchToolHint struct {
+	Code      string       `json:"code"`
+	Message   string       `json:"message"`
+	RetryWith *searchInput `json:"retry_with,omitempty"`
+}
+
+type searchToolOutput struct {
+	storage.SearchResponse
+	Hints []searchToolHint `json:"hints,omitempty"`
+}
+
 func (s *Server) registerSearchTool() {
 	readOnly := false
-	outputSchema, err := jsonschema.For[storage.SearchResponse](&jsonschema.ForOptions{})
+	outputSchema, err := jsonschema.For[searchToolOutput](&jsonschema.ForOptions{})
 	if err != nil {
 		panic(fmt.Errorf("build review search output schema: %w", err))
 	}
@@ -266,8 +277,25 @@ func (s *Server) callSearchTool(ctx context.Context, req *mcp.CallToolRequest) (
 	if err != nil {
 		return toolErrorResult(err)
 	}
+	toolOutput := searchToolOutput{SearchResponse: output}
+	for _, hint := range output.Hints {
+		toolHint := searchToolHint{Code: hint.Code, Message: hint.Message}
+		if hint.Code == "every_word_required" && hint.Next != "" {
+			query, _ := normalizeSearchInput(input)
+			query.Mode, query.Limit = "lexical", 1
+			for word := range strings.FieldsSeq(output.Query) {
+				query.Query = word
+				retry, err := s.backend.Search(ctx, query)
+				if err == nil && len(retry.Hits) > 0 {
+					toolHint.RetryWith = &searchInput{Query: word, Mode: "lexical"}
+					break
+				}
+			}
+		}
+		toolOutput.Hints = append(toolOutput.Hints, toolHint)
+	}
 	// Review text can hold invalid UTF-8; replace it rather than fail.
-	content, err := json.Marshal(output, jsontext.AllowInvalidUTF8(true))
+	content, err := json.Marshal(toolOutput, jsontext.AllowInvalidUTF8(true))
 	if err != nil {
 		return nil, fmt.Errorf("marshal MCP search output: %w", err)
 	}

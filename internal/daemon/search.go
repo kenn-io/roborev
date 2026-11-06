@@ -159,7 +159,7 @@ func (s *Server) humaSearchReviews(
 		return nil, huma.Error500InternalServerError("search failed")
 	}
 
-	response := searchResponseFromResult(result)
+	response := s.searchResponse(ctx, result, params, input)
 	if response.Hits == nil {
 		response.Hits = []SearchHit{}
 	}
@@ -256,6 +256,39 @@ func (s *Server) resolveSearchRepo(identifier string) (int64, error) {
 		return 0, errSearchRepoNotFound
 	}
 	return repo.ID, nil
+}
+
+func (s *Server) searchResponse(ctx context.Context, result searchindex.SearchResult, params searchindex.SearchParams, input *SearchInput) SearchResponse {
+	response := searchResponseFromResult(result)
+	words := strings.Fields(result.Query)
+	if result.Mode != searchindex.ModeLexical || len(result.Hits) != 0 || len(words) < 2 {
+		return response
+	}
+	hint := storage.SearchHint{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}
+	params.Mode = searchindex.ModeLexical
+	params.Limit = 1
+	for _, word := range words {
+		params.Query = word
+		retry, err := s.search.Search(ctx, params)
+		if err != nil || len(retry.Hits) == 0 {
+			continue
+		}
+		command := []string{"roborev", "search", "--lexical"}
+		for _, filter := range []struct{ name, value string }{
+			{"repo", input.Repo}, {"branch", input.Branch}, {"since", input.Since}, {"verdict", input.Verdict},
+		} {
+			if filter.value != "" {
+				command = append(command, "--"+filter.name, shellQuoteForPrompt(filter.value))
+			}
+		}
+		if input.State == "open" || input.State == "closed" {
+			command = append(command, "--"+input.State)
+		}
+		hint.Next = strings.Join(append(command, "--", shellQuoteForPrompt(word)), " ")
+		break
+	}
+	response.Hints = []storage.SearchHint{hint}
+	return response
 }
 
 func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {

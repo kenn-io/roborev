@@ -591,3 +591,13 @@ func TestSearchRejectsAmbiguousRepoName(t *testing.T) {
 	}
 	assert.Empty(t, searcher.params)
 }
+
+func TestSearchEveryWordHintSkipsNonLexicalModes(t *testing.T) {
+	searcher := &recordingReviewSearcher{}
+	server := newSearchHTTPServer(t, searcher)
+	for _, mode := range []searchindex.SearchMode{searchindex.ModeHybrid, searchindex.ModeSemantic} {
+		response := server.searchResponse(t.Context(), searchindex.SearchResult{Query: "nil pointer", Mode: mode}, searchindex.SearchParams{}, &SearchInput{})
+		assert.Empty(t, response.Hints)
+	}
+	assert.Empty(t, searcher.params)
+}

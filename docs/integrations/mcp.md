@@ -206,10 +206,12 @@ retrieval is specifically needed. Panel reviews are grouped into one result; the
 returned `job_id` identifies the member whose content matched.
 
 Search responses include `degraded`, `partial`, and `bounded` state plus mirror
-and vector coverage. Fetch a matched review with `roborev_get_review`, then use
-`roborev_list_comments` only when its responses are needed. See
-[Review History Search](/docs/search/) for exact mode, freshness, privacy, and
-coverage semantics.
+and vector coverage. Empty multi-word lexical results include an
+`every_word_required` hint. When a query word finds a review, `retry_with`
+contains its `query` and `mode`; apply these over the original filters. Fetch a
+matched review with `roborev_get_review`, then use `roborev_list_comments` only
+when its responses are needed. See [Review History Search](/docs/search/) for
+exact mode, freshness, privacy, and coverage semantics.
 
 Errors are returned as tool errors with a stable `code` of `not_found`,
 `invalid_argument`, `unavailable`, or `internal`.

@@ -4263,6 +4263,19 @@ components:
         - embedding_backlog
         - vector_state
       type: object
+    SearchHint:
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        next:
+          type: string
+      required:
+        - code
+        - message
+      type: object
     SearchHit:
       additionalProperties: false
       properties:
@@ -4344,6 +4357,10 @@ components:
           type: boolean
         degraded_reason:
           type: string
+        hints:
+          items:
+            $ref: "#/components/schemas/SearchHint"
+          type: array
         hits:
           items:
             $ref: "#/components/schemas/SearchHit"

@@ -230,6 +230,9 @@ func TestRegisteredToolsAndGuidance(t *testing.T) {
 	require.True(ok)
 	assert.Contains(outputProperties, "coverage")
 	assert.Contains(outputProperties, "hits")
+	hints := outputProperties["hints"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	assert.Contains(hints, "retry_with")
+	assert.NotContains(hints, "next")
 
 	resources, err := session.ListResources(t.Context(), nil)
 	require.NoError(err)
@@ -654,4 +657,34 @@ func TestGetJobOutputReportsAvailableLines(t *testing.T) {
 	assert.Equal(t, maxOutputLines+5, out.AvailableLines)
 	assert.Len(t, out.Lines, maxOutputLines)
 	assert.True(t, out.Truncated)
+}
+
+func TestMCPSearchEveryWordHint(t *testing.T) {
+	backend := &fakeBackend{searchFn: func(_ context.Context, query SearchQuery) (storage.SearchResponse, error) {
+		assert.Equal(t, "main", query.Branch)
+		assert.Equal(t, "open", query.State)
+		if query.Query == "absentword pointer" {
+			return storage.SearchResponse{Query: query.Query, Mode: "lexical", Hints: []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words", Next: "roborev search --lexical -- 'pointer'"}}}, nil
+		}
+		assert.Equal(t, "lexical", query.Mode)
+		assert.Equal(t, 1, query.Limit)
+		response := storage.SearchResponse{Query: query.Query, Mode: "lexical"}
+		if query.Query == "pointer" {
+			response.Hits = []storage.SearchHit{{JobID: 42}}
+		}
+		return response, nil
+	}}
+	result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "absentword pointer", "branch": "main", "state": "open"})
+	require.False(t, result.IsError)
+	var out map[string]any
+	decodeText(t, result, &out)
+	structured, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	var structuredOut map[string]any
+	require.NoError(t, json.Unmarshal(structured, &structuredOut))
+	assert.Equal(t, out, structuredOut)
+	hint := out["hints"].([]any)[0].(map[string]any)
+	assert.Equal(t, "every_word_required", hint["code"])
+	assert.Equal(t, map[string]any{"query": "pointer", "mode": "lexical"}, hint["retry_with"])
+	assert.NotContains(t, hint, "next")
 }

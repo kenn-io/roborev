@@ -387,11 +387,17 @@ hits with canonical job and review IDs, repository/ref metadata, score, matching
 legs, and a bounded excerpt. Interpret `score` together with `mode`; lexical,
 semantic, and hybrid modes use different ranking scales.
 
+An empty multi-word lexical search includes an `every_word_required` hint. Human
+and agent output write `Hint:` to stderr; JSON includes `hints` with `code`,
+`message`, and a `next` command when a query word finds a review under the same
+filters. Single-word misses and semantic or hybrid searches omit it.
+
 The MCP tool `roborev_search_reviews` accepts the same inputs and returns the
-same response fields. Use `auto` for ordinary discovery, `lexical` for exact
-paths, identifiers, or quoted errors, and `semantic` when wording-independent
-retrieval is specifically needed. Then call `roborev_get_review` with the
-returned `job_id` and fetch responses only when needed.
+same response fields, with `retry_with` query and mode arguments in place of
+`next`. Use `auto` for ordinary discovery, `lexical` for exact paths,
+identifiers, or quoted errors, and `semantic` when wording-independent retrieval
+is specifically needed. Then call `roborev_get_review` with the returned
+`job_id` and fetch responses only when needed.
 
 Missing or rejected embedding credentials produce an `unavailable` MCP error
 with `no embedding API key` or `embedding authentication rejected (401/403)`.

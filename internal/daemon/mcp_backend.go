@@ -177,7 +177,7 @@ func (b mcpBackend) Search(
 		return storage.SearchResponse{}, mcpserver.NewError(
 			mcpserver.ErrorCodeInternal, "review search failed")
 	}
-	response := searchResponseFromResult(result)
+	response := b.server.searchResponse(ctx, result, params, input)
 	if response.Hits == nil {
 		response.Hits = []storage.SearchHit{}
 	}
