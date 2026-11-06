@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-11-05
 title: Agent Skills
 description: Install slash commands that let AI agents request reviews and fix findings
 ---
@@ -20,6 +21,13 @@ connection with `roborev mcp install`. Updates preserve the selected mode;
 `--mcp=false` selects CLI instructions again. Review creation still uses the
 CLI. See [MCP setup](../integrations/mcp.md) for both transports and combined
 hook installation.
+
+An MCP client can also read these bundled guides without installing skills. Call
+`roborev.skills {}` for the catalog, then
+`roborev.skills {"name":"roborev-fix"}` for a named guide, or select `workflow`
+for navigation and CLI-to-tool differences. Reading guidance does not invoke a
+skill or authorize its workflow. See
+[MCP guides](../integrations/mcp.md#read-bundled-skills).
 
 To install into a custom final skills directory, use `--path`. This is useful
 for agents such as Pi that load skills from a directory roborev does not
