@@ -36,6 +36,26 @@ type integrationEnv struct {
 	pgURL  string
 }
 
+func (e *integrationEnv) rejectJobWrites(condition string) {
+	e.T.Helper()
+	_, err := e.Pool.pool.Exec(e.T.Context(), fmt.Sprintf(`
+		CREATE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF %s THEN
+				RAISE EXCEPTION 'job writes denied' USING ERRCODE = '42501';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER reject_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
+		FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`, condition))
+	require.NoError(e.T, err)
+	e.T.Cleanup(func() {
+		_, _ = e.Pool.pool.Exec(context.WithoutCancel(e.T.Context()), `
+			DROP TRIGGER IF EXISTS reject_job_write ON roborev.review_jobs;
+			DROP FUNCTION IF EXISTS roborev.reject_job_write()`)
+	})
+}
+
 // newIntegrationEnv creates a test environment: connects to Postgres, wipes and recreates the schema,
 // and provides a temp directory for SQLite databases.
 func newIntegrationEnv(t *testing.T) *integrationEnv {
@@ -478,18 +498,11 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 			require.NoError(t, err)
 			require.NoError(t, db.CancelJob(job.ID))
+			env.rejectJobWrites("TRUE")
 			_, err = env.Pool.pool.Exec(env.T.Context(), `
-				CREATE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
-				BEGIN RAISE EXCEPTION 'invalid job row' USING ERRCODE = '23514'; END $$;
-				CREATE TRIGGER reject_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
-				FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`)
+				CREATE OR REPLACE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN RAISE EXCEPTION 'invalid job row' USING ERRCODE = '23514'; END $$`)
 			require.NoError(t, err)
-			t.Cleanup(func() {
-				// t.Context is already canceled when cleanups run.
-				_, _ = env.Pool.pool.Exec(context.WithoutCancel(t.Context()), `
-					DROP TRIGGER IF EXISTS reject_job_write ON roborev.review_jobs;
-					DROP FUNCTION IF EXISTS roborev.reject_job_write()`)
-			})
 			for range 2 {
 				require.NoError(t, pass(), "row errors remain swallowed")
 				assert.Empty(t, reasons, "a constraint violation is not an outage")
@@ -1791,22 +1804,7 @@ func testSyncNowDuringBackgroundPush(t *testing.T, rejectWrite bool) {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "rejected", Agent: "test"})
 		require.NoError(t, err)
 		require.NoError(t, db.CancelJob(job.ID))
-		_, err = env.Pool.pool.Exec(t.Context(), `
-			CREATE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
-			BEGIN
-				IF NEW.git_ref = 'rejected' THEN
-					RAISE EXCEPTION 'job writes denied' USING ERRCODE = '42501';
-				END IF;
-				RETURN NEW;
-			END $$;
-			CREATE TRIGGER reject_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
-			FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			_, _ = env.Pool.pool.Exec(context.WithoutCancel(t.Context()), `
-				DROP TRIGGER IF EXISTS reject_job_write ON roborev.review_jobs;
-				DROP FUNCTION IF EXISTS roborev.reject_job_write()`)
-		})
+		env.rejectJobWrites("NEW.git_ref = 'rejected'")
 	}
 	createBatchReviews(t, db, repo.ID, 200, "takeover", "Test", "Review")
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -1828,15 +1826,22 @@ func testSyncNowDuringBackgroundPush(t *testing.T, rejectWrite bool) {
 		<-background
 	})
 	<-entered
-	started, done := make(chan struct{}), make(chan struct{})
+	done := make(chan struct{})
 	var stats *SyncStats
 	var syncErr error
 	go func() {
 		defer close(done)
-		close(started)
 		stats, syncErr = worker.SyncNowWithProgress(func(SyncProgress) bool { return false })
 	}()
-	<-started
+	t.Cleanup(func() {
+		unblock.Do(func() { close(release) })
+		<-done
+	})
+	// PostgreSQL work runs outside virtual time. A zero-weight acquire only
+	// fails when a caller is queued, even while the background pass holds the gate.
+	waitCondition(t, 5*time.Second, "sync now queued behind the background push", func() (bool, error) {
+		return !worker.syncMu.TryAcquire(0), nil
+	})
 	unblock.Do(func() { close(release) })
 	<-done
 	<-background
