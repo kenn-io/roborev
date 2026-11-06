@@ -317,6 +317,11 @@ Test conventions:
 CI uses GitHub-hosted runners. See [Development](docs/development.md#ci-runners)
 for runner selection, caching, and workflow validation.
 
+The `CI gate` job runs on a Namespace profile that uses Namespace's
+[Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
+which disables workload access to Namespace features and APIs. GitHub fork
+approvals, token permissions, and secrets are separate controls.
+
 - For multi-step tasks (for example: implement + commit + PR), complete the full requested sequence without stopping partway.
 - Commit after completing each piece of work; do not wait to be asked.
 - When committing, stage ALL modified files related to the work (including formatting-only and ancillary updates).
