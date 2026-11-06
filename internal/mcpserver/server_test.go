@@ -159,6 +159,7 @@ func TestRegisteredToolsAndGuidance(t *testing.T) {
 	}
 	slices.Sort(names)
 	assert.Equal([]string{
+		"roborev.skills",
 		"roborev_add_comment",
 		"roborev_close_review",
 		"roborev_complete_fix",

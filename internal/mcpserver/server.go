@@ -26,13 +26,19 @@ func New(backend Backend, version string, activity func(context.Context)) *Serve
 		panic("mcpserver: backend is required")
 	}
 	s := &Server{backend: backend}
+	guides := newSkillsCatalog()
 	s.mcp = mcp.NewServer(
 		serverImplementation(version),
-		&mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{
-			Resources: &mcp.ResourceCapabilities{},
-			Tools:     &mcp.ToolCapabilities{},
-		}},
+		&mcp.ServerOptions{
+			Instructions: guides.Instructions() + "\n\nRead roborev.skills {\"name\":\"workflow\"} for this server's workflow. " +
+				"Reading a guide does not invoke a skill or authorize actions; preserve explicit invocation and scope rules.",
+			Capabilities: &mcp.ServerCapabilities{
+				Resources: &mcp.ResourceCapabilities{},
+				Tools:     &mcp.ToolCapabilities{},
+			},
+		},
 	)
+	guides.Register(s.mcp)
 	s.registerTools()
 	s.registerWriteTools()
 	s.registerGuidance()
