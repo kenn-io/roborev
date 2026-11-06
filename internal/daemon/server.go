@@ -3000,6 +3000,12 @@ func (s *Server) humaEnqueue(
 	ctx context.Context, input *EnqueueInput,
 ) (*RawJSONOutput, error) {
 	req := input.Body
+	if req.ReviewPrompt != "" {
+		if err := validateReviewPromptRequest(req); err != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		}
+		req.Source = storage.JobSourceReviewPrompt
+	}
 	if req.ReviewType == config.ReviewTypeGoal {
 		return s.enqueueGoalReview(ctx, req)
 	}
@@ -3465,7 +3471,7 @@ func (s *Server) finishSingleEnqueue(
 	ctx context.Context, job *storage.ReviewJob,
 	agentName string, in singleAgentInputs,
 ) {
-	if job.JobType == storage.JobTypeReview &&
+	if in.req.ReviewPrompt == "" && job.JobType == storage.JobTypeReview &&
 		config.IsGeneralReviewType(in.req.ReviewType) {
 		if err := s.maybeDispatchAutoDesign(ctx, job); err != nil {
 			log.Printf("auto-design dispatch failed: %v", err)

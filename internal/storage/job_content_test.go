@@ -143,21 +143,22 @@ func TestPruneJobPromptsKeepsRecentAndUnrebuildableJobs(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
 	type fixture struct {
-		jobType, status, finishedAt string
-		pruned                      bool
+		jobType, status, finishedAt, source string
+		pruned                              bool
 	}
 	jobs := map[string]fixture{
-		"old range":         {JobTypeRange, "done", "2026-08-01T00:00:00Z", true},
-		"old failed review": {JobTypeReview, "failed", "2026-08-01T00:00:00-05:00", true},
-		"recent range":      {JobTypeRange, "done", "2026-10-08T00:00:00Z", false},
-		"old task":          {JobTypeTask, "done", "2026-08-01T00:00:00Z", false},
-		"old fix":           {JobTypeFix, "done", "2026-08-01T00:00:00Z", false},
-		"old dirty":         {JobTypeDirty, "done", "2026-08-01T00:00:00Z", false},
+		"supplied review":   {JobTypeReview, "done", "2026-08-01T00:00:00Z", JobSourceReviewPrompt, false},
+		"old range":         {JobTypeRange, "done", "2026-08-01T00:00:00Z", "", true},
+		"old failed review": {JobTypeReview, "failed", "2026-08-01T00:00:00-05:00", "", true},
+		"recent range":      {JobTypeRange, "done", "2026-10-08T00:00:00Z", "", false},
+		"old task":          {JobTypeTask, "done", "2026-08-01T00:00:00Z", "", false},
+		"old fix":           {JobTypeFix, "done", "2026-08-01T00:00:00Z", "", false},
+		"old dirty":         {JobTypeDirty, "done", "2026-08-01T00:00:00Z", "", false},
 	}
 	ids := map[string]int64{}
 	for name, f := range jobs {
-		result, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, finished_at)
-			VALUES (?, 'a..b', 'codex', ?, ?, ?)`, repo.ID, f.status, f.jobType, f.finishedAt)
+		result, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, finished_at, source)
+			VALUES (?, 'a..b', 'codex', ?, ?, ?, ?)`, repo.ID, f.status, f.jobType, f.finishedAt, f.source)
 		require.NoError(t, err)
 		ids[name], err = result.LastInsertId()
 		require.NoError(t, err)

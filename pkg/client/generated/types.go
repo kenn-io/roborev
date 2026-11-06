@@ -1338,6 +1338,7 @@ type EnqueueRequest struct {
 	Provider          *string  `json:"provider,omitempty"`
 	Reasoning         *string  `json:"reasoning,omitempty"`
 	RepoPath          string   `json:"repo_path" validate:"required"`
+	ReviewPrompt      *string  `json:"review_prompt,omitempty"`
 	ReviewType        *string  `json:"review_type,omitempty"`
 	Since             *string  `json:"since,omitempty"`
 	Source            *string  `json:"source,omitempty"`

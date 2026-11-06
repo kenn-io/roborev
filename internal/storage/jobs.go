@@ -1654,7 +1654,8 @@ func (db *DB) ReenqueueJobWithRequest(
 
 	// Reset job status and replace effective execution settings with the
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
-	// only for review jobs so they rebuild from current git/config state.
+	// for ordinary review jobs so they rebuild from current git/config state.
+	// A caller-supplied review prompt cannot be regenerated from the checkout.
 	// Stored-prompt jobs (task, compact, fix, insights, goal_review) keep their prompt
 	// since the worker needs it and cannot regenerate it from git.
 	//
@@ -1679,7 +1680,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		    backup_agent = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_backup_agent ELSE backup_agent END,
 		    backup_model = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_backup_model ELSE backup_model END,
 		    budget_original_agent = '', budget_original_backup_agent = '', budget_original_backup_model = '',
-		    prompt_prebuilt = 0,
+		    prompt_prebuilt = CASE WHEN source = ? THEN prompt_prebuilt ELSE 0 END,
 		    skip_reason = NULL,
 		    updated_at = ?
 		WHERE id = ?
@@ -1695,6 +1696,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		opts.RestorePlan, normalizeMinSeverityForWrite(opts.MinSeverity),
 		opts.RestorePlan, opts.BackupAgent,
 		opts.RestorePlan, opts.BackupModel,
+		JobSourceReviewPrompt,
 		updatedAt, jobID)
 	if err != nil {
 		return 0, false, err
@@ -1711,8 +1713,9 @@ func (db *DB) ReenqueueJobWithRequest(
 		SET patch = NULL,
 		    prompt = CASE WHEN (SELECT job_type FROM review_jobs WHERE id = job_content.job_id)
 		                  IN ('task', 'compact', 'fix', 'insights', 'goal_review')
+		                  OR (SELECT source FROM review_jobs WHERE id = job_content.job_id) = ?
 		             THEN prompt ELSE NULL END
-		WHERE job_id = ?`, jobID); err != nil {
+		WHERE job_id = ?`, JobSourceReviewPrompt, jobID); err != nil {
 		return 0, false, fmt.Errorf("reset job %d content: %w", jobID, err)
 	}
 	if requestID != uuid.Nil() {
