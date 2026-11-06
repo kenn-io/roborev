@@ -24,7 +24,6 @@ type legacyReviewScanState struct {
 }
 
 type legacyReviewScanRun struct {
-	Since *time.Time
 	Start time.Time
 	After *uuid.UUID
 }
@@ -42,18 +41,19 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 	}
 	if err == nil {
 		if err := json.Unmarshal([]byte(stored), &state); err != nil {
+			log.Printf("Historical mirror review migration: unreadable scan state; restarting full scan: %v", err)
 			state = legacyReviewScanState{}
 		}
 	}
 	if state.Run == nil {
-		state.Run = &legacyReviewScanRun{Since: state.Done}
+		state.Run = &legacyReviewScanRun{}
 		if err := p.pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&state.Run.Start); err != nil {
 			return fmt.Errorf("start historical mirror scan: %w", err)
 		}
 	}
 	total := 0
 	for {
-		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, state.Run.After, state.Run.Since)
+		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, state.Run.After, state.Done)
 		if err != nil {
 			return fmt.Errorf("archive historical mirror reviews: %w", err)
 		}
