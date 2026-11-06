@@ -733,6 +733,7 @@ func (w *SyncWorker) doSync() error {
 		return fmt.Errorf("not connected")
 	}
 
+	_ = w.syncMu.Acquire(context.Background(), 1) // Start the pass timeout after its first turn is admitted.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -741,7 +742,6 @@ func (w *SyncWorker) doSync() error {
 	cur := pushCursor{}
 	failed := false
 	for {
-		_ = w.syncMu.Acquire(context.Background(), 1) // Queue each batch so sync now can take the next turn.
 		w.passError = nil
 		stats, err := w.pushChangesWithStats(ctx, pool, &cur)
 		w.observeFailure(err)
@@ -758,6 +758,7 @@ func (w *SyncWorker) doSync() error {
 		totalResponses += stats.Responses
 		log.Printf("Sync: pushed %d jobs, %d reviews, %d responses (total: %d/%d/%d)",
 			stats.Jobs, stats.Reviews, stats.Responses, totalJobs, totalReviews, totalResponses)
+		_ = w.syncMu.Acquire(context.Background(), 1) // Queue each batch so sync now can take the next turn.
 	}
 
 	// Pull remote changes from PostgreSQL
@@ -770,9 +771,7 @@ func (w *SyncWorker) doSync() error {
 		return fmt.Errorf("pull: %w", err)
 	}
 
-	if failed {
-		w.observeFailure(nil)
-	} else {
+	if !failed {
 		w.observePass()
 	}
 	return nil
