@@ -136,7 +136,8 @@ func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
 		defer worker.mu.Unlock()
 		return !worker.healthPinging
 	}, 5*time.Second, time.Millisecond)
-	assert.Equal(int64(1), accepted.Load(), "concurrent reads must share one ping")
+	// pgx opens a separate cancellation socket when the stalled connection fails.
+	assert.Equal(int64(1), pool.Pool().Stat().NewConnsCount(), "concurrent reads must share one ping")
 	healthy, message := worker.HealthCheck()
 	assert.False(healthy)
 	assert.Equal("connection lost", message)
@@ -156,7 +157,7 @@ func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
 	healthy, message = worker.HealthCheck()
 	assert.True(healthy)
 	assert.Equal("connected", message)
-	assert.Equal(int64(2), accepted.Load())
+	assert.Equal(int64(2), pool.Pool().Stat().NewConnsCount())
 }
 
 func TestSyncHealthRecordsSyncLoopPingAfterFailedProbe(t *testing.T) {
