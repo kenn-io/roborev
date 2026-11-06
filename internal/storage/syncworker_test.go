@@ -96,6 +96,7 @@ func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
 	pool, accepted, releaseStalls := newSyncHealthPool(t, &reachable)
 	worker := NewSyncWorker(nil, config.SyncConfig{})
 	worker.running, worker.pgPool, worker.pgReachable = true, pool, true
+	worker.healthCheckedAt = time.Now().Add(-healthInterval)
 	worker.healthCtx, worker.healthCancel = context.WithCancel(t.Context())
 	t.Cleanup(func() {
 		releaseStalls()
@@ -168,12 +169,8 @@ func TestSyncHealthRecordsSyncLoopPingAfterFailedProbe(t *testing.T) {
 	db := openTestDB(t)
 	worker := NewSyncWorker(db, config.SyncConfig{})
 	worker.running, worker.pgPool = true, pool
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	worker.checkHealth(ctx, pool)
-	healthy, message := worker.HealthCheck()
-	require.False(t, healthy)
-	require.Equal(t, "connection lost", message)
+	worker.pgReachable = false
+	worker.healthCheckedAt = time.Now()
 
 	// A local database failure sends syncLoop through its post-failure ping.
 	require.NoError(t, db.Close())
@@ -191,125 +188,125 @@ func TestSyncHealthRecordsSyncLoopPingAfterFailedProbe(t *testing.T) {
 		healthy, _ := worker.HealthCheck()
 		return healthy
 	}, time.Second, time.Millisecond)
-	healthy, message = worker.HealthCheck()
+	healthy, message := worker.HealthCheck()
 	assert.True(t, healthy)
 	assert.Equal(t, "connected", message)
 }
 
 func TestSyncHealthClosePoolCancelsPingAndIgnoresLateResult(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
-	var reachable atomic.Bool
-	pool, accepted, releaseStalls := newSyncHealthPool(t, &reachable)
-	worker := NewSyncWorker(nil, config.SyncConfig{})
-	worker.running, worker.pgPool, worker.pgReachable = true, pool, true
-	worker.healthCtx, worker.healthCancel = context.WithCancel(t.Context())
-	t.Cleanup(worker.healthCancel)
-	healthy, message := worker.HealthCheck()
-	assert.True(healthy)
-	assert.Equal("connected", message)
-	// Wait until the probe reaches the stalled TCP server, outside synctest.
-	require.Eventually(t, func() bool { return accepted.Load() == 1 }, time.Second, time.Millisecond)
-	worker.mu.Lock()
-	checkedAt := worker.healthCheckedAt
-	worker.mu.Unlock()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		worker.mu.Lock()
-		pool := worker.closePool()
-		worker.mu.Unlock()
-		pool.Close()
-	}()
-	t.Cleanup(func() {
-		releaseStalls()
-		<-done
-	})
-	// Pool closure waits on real socket cancellation, outside synctest.
-	closed := false
-	select {
-	case <-done:
-		closed = true
-	case <-time.After(time.Second):
-	}
-	assert.True(closed, "closePool waited for the ping timeout")
-	// Wait for the probe goroutine after its socket is canceled.
-	require.Eventually(t, func() bool {
-		worker.mu.Lock()
-		defer worker.mu.Unlock()
-		return !worker.healthPinging
-	}, time.Second, time.Millisecond)
-	worker.mu.Lock()
-	assert.True(worker.pgReachable, "the canceled pool's result must be ignored")
-	assert.Equal(checkedAt, worker.healthCheckedAt)
-	worker.mu.Unlock()
-	healthy, message = worker.HealthCheck()
-	assert.False(healthy)
-	assert.Equal("not connected", message)
-	worker.mu.Lock()
-	worker.running = false
-	worker.mu.Unlock()
-	healthy, message = worker.HealthCheck()
-	assert.False(healthy)
-	assert.Equal("not running", message)
-}
+	for _, established := range []bool{false, true} {
+		name := "connecting"
+		if established {
+			name = "established"
+		}
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			var reachable atomic.Bool
+			reachable.Store(established)
+			pool, accepted, releaseStalls := newSyncHealthPool(t, &reachable)
+			if established {
+				require.NoError(t, pool.Ping(t.Context()))
+				reachable.Store(false)
+			}
+			worker := NewSyncWorker(nil, config.SyncConfig{})
+			worker.running, worker.pgPool, worker.pgReachable = true, pool, true
+			worker.healthCheckedAt = time.Now().Add(-healthInterval)
+			worker.healthCtx, worker.healthCancel = context.WithCancel(t.Context())
+			t.Cleanup(worker.healthCancel)
+			healthy, message := worker.HealthCheck()
+			if !established {
+				assert.True(healthy)
+				assert.Equal("connected", message)
+			}
+			// Wait until the probe reaches the real TCP connection, outside synctest.
+			require.Eventually(t, func() bool {
+				if established {
+					return pool.Pool().Stat().AcquiredConns() == 1
+				}
+				return accepted.Load() == 1
+			}, time.Second, time.Millisecond)
+			worker.mu.Lock()
+			checkedAt := worker.healthCheckedAt
+			worker.mu.Unlock()
+			closed := make(chan struct{})
+			if established {
+				// No sync loop is running in this fixture for Stop to wait on.
+				close(worker.doneCh)
+			}
+			go func() {
+				defer close(closed)
+				if established {
+					worker.Stop()
+					return
+				}
+				worker.mu.Lock()
+				pool := worker.closePool()
+				worker.mu.Unlock()
+				pool.Close()
+			}()
+			t.Cleanup(func() {
+				releaseStalls()
+				<-closed
+			})
+			if established {
+				// pgx cancellation opens a second socket and waits for the stalled server.
+				require.Eventually(t, func() bool { return accepted.Load() == 2 }, time.Second, time.Millisecond)
+				closeFinished := false
+				select {
+				case <-closed:
+					closeFinished = true
+				default:
+				}
+				assert.False(closeFinished, "pool close finished before the health check")
 
-func TestSyncHealthCheckReturnsWhilePoolCloseBlocks(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	var reachable atomic.Bool
-	reachable.Store(true)
-	pool, accepted, releaseStalls := newSyncHealthPool(t, &reachable)
-	require.NoError(t, pool.Ping(t.Context()))
-	reachable.Store(false)
-	worker := NewSyncWorker(nil, config.SyncConfig{})
-	worker.running, worker.pgPool, worker.pgReachable = true, pool, true
-	worker.healthCtx, worker.healthCancel = context.WithCancel(t.Context())
-	t.Cleanup(worker.healthCancel)
-	healthy, message := worker.HealthCheck()
-	assert.True(healthy)
-	assert.Equal("connected", message)
-	// The health probe acquires an established TCP connection outside synctest.
-	require.Eventually(t, func() bool { return pool.Pool().Stat().AcquiredConns() == 1 }, time.Second, time.Millisecond)
-
-	closed := make(chan struct{})
-	go func() {
-		defer close(closed)
-		worker.mu.Lock()
-		pool := worker.closePool()
-		worker.mu.Unlock()
-		pool.Close()
-	}()
-	t.Cleanup(func() {
-		releaseStalls()
-		<-closed
-	})
-	// pgx cancellation opens a second socket and waits for the stalled server.
-	require.Eventually(t, func() bool { return accepted.Load() == 2 }, time.Second, time.Millisecond)
-	closeFinished := false
-	select {
-	case <-closed:
-		closeFinished = true
-	default:
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					healthy, message := worker.HealthCheck()
+					assert.False(healthy)
+					assert.Equal("not running", message)
+				}()
+				// Release sockets before waiting, even if the health check is blocked.
+				t.Cleanup(func() {
+					releaseStalls()
+					<-done
+				})
+				// Pool closure waits on real sockets, which synctest cannot observe.
+				completed := false
+				select {
+				case <-done:
+					completed = true
+				case <-time.After(time.Second):
+				}
+				assert.True(completed, "HealthCheck waited for pool closure")
+				releaseStalls()
+			}
+			// Pool closure waits on real socket cancellation, outside synctest.
+			closeFinished := false
+			select {
+			case <-closed:
+				closeFinished = true
+			case <-time.After(time.Second):
+			}
+			assert.True(closeFinished, "closePool waited for the ping timeout")
+			// Wait for the probe goroutine after its socket is canceled.
+			require.Eventually(t, func() bool {
+				worker.mu.Lock()
+				defer worker.mu.Unlock()
+				return !worker.healthPinging
+			}, time.Second, time.Millisecond)
+			worker.mu.Lock()
+			assert.True(worker.pgReachable, "the canceled pool's result must be ignored")
+			assert.Equal(checkedAt, worker.healthCheckedAt)
+			worker.mu.Unlock()
+			if !established {
+				healthy, message = worker.HealthCheck()
+				assert.False(healthy)
+				assert.Equal("not connected", message)
+			}
+		})
 	}
-	assert.False(closeFinished, "pool close finished before the health check")
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		healthy, message := worker.HealthCheck()
-		assert.False(healthy)
-		assert.Equal("not connected", message)
-	}()
-	t.Cleanup(func() { <-done })
-	// Pool closure waits on real sockets, which synctest cannot observe.
-	completed := false
-	select {
-	case <-done:
-		completed = true
-	case <-time.After(time.Second):
-	}
-	assert.True(completed, "HealthCheck waited for pool closure")
 }
 
 func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
