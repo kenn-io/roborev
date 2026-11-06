@@ -36,18 +36,18 @@ type integrationEnv struct {
 	pgURL  string
 }
 
-func (e *integrationEnv) rejectJobWrites(condition string) {
+func (e *integrationEnv) rejectJobWrites(condition, errorCode, message string) {
 	e.T.Helper()
 	_, err := e.Pool.pool.Exec(e.T.Context(), fmt.Sprintf(`
 		CREATE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
 			IF %s THEN
-				RAISE EXCEPTION 'job writes denied' USING ERRCODE = '42501';
+				RAISE EXCEPTION '%s' USING ERRCODE = '%s';
 			END IF;
 			RETURN NEW;
 		END $$;
 		CREATE TRIGGER reject_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
-		FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`, condition))
+		FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`, condition, message, errorCode))
 	require.NoError(e.T, err)
 	e.T.Cleanup(func() {
 		_, _ = e.Pool.pool.Exec(context.WithoutCancel(e.T.Context()), `
@@ -498,11 +498,7 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 			require.NoError(t, err)
 			require.NoError(t, db.CancelJob(job.ID))
-			env.rejectJobWrites("TRUE")
-			_, err = env.Pool.pool.Exec(env.T.Context(), `
-				CREATE OR REPLACE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
-				BEGIN RAISE EXCEPTION 'invalid job row' USING ERRCODE = '23514'; END $$`)
-			require.NoError(t, err)
+			env.rejectJobWrites("TRUE", "23514", "invalid job row")
 			for range 2 {
 				require.NoError(t, pass(), "row errors remain swallowed")
 				assert.Empty(t, reasons, "a constraint violation is not an outage")
@@ -1782,87 +1778,88 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) { //nolint:parall
 }
 
 func TestIntegration_SyncNowTakesOverFromBackgroundPush(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
-	testSyncNowDuringBackgroundPush(t, false)
-}
-
-func TestIntegration_SyncNowAfterSwallowedWriteFailure(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
-	testSyncNowDuringBackgroundPush(t, true)
-}
-
-func testSyncNowDuringBackgroundPush(t *testing.T, rejectWrite bool) {
-	t.Helper()
-	assert := assert.New(t)
-	env := newIntegrationEnv(t)
-	db := env.openDB("takeover.db")
-	worker := startSyncWorkerNoSync(t, db, env.pgURL, "takeover-test", "1h")
-	require.NoError(t, worker.doSync())
-	repo, err := db.GetOrCreateRepo(env.TmpDir, "https://example.com/repo.git")
-	require.NoError(t, err)
-	var reasons []string
-	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
-	if rejectWrite {
-		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "rejected", Agent: "test"})
-		require.NoError(t, err)
-		require.NoError(t, db.CancelJob(job.ID))
-		env.rejectJobWrites("NEW.git_ref = 'rejected'")
-	}
-	createBatchReviews(t, db, repo.ID, 200, "takeover", "Test", "Review")
-	entered, release := make(chan struct{}), make(chan struct{})
-	var firstBatch, unblock sync.Once
-	worker.SetAfterReviewPush(func([]string) {
-		firstBatch.Do(func() {
-			close(entered)
-			<-release
+	for _, tc := range []struct {
+		name        string
+		rejectWrite bool
+	}{
+		{name: "takeover"},
+		{name: "rejected write", rejectWrite: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			env := newIntegrationEnv(t)
+			db := env.openDB("takeover.db")
+			worker := startSyncWorkerNoSync(t, db, env.pgURL, "takeover-test", "1h")
+			require.NoError(t, worker.doSync())
+			repo, err := db.GetOrCreateRepo(env.TmpDir, "https://example.com/repo.git")
+			require.NoError(t, err)
+			if tc.rejectWrite {
+				var reasons []string
+				worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+				t.Cleanup(func() { assert.Equal([]string{"auth"}, reasons) })
+				job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "rejected", Agent: "test"})
+				require.NoError(t, err)
+				require.NoError(t, db.CancelJob(job.ID))
+				env.rejectJobWrites("NEW.git_ref = 'rejected'", "42501", "job writes denied")
+			}
+			createBatchReviews(t, db, repo.ID, 200, "takeover", "Test", "Review")
+			entered, release := make(chan struct{}), make(chan struct{})
+			var firstBatch, unblock sync.Once
+			worker.SetAfterReviewPush(func([]string) {
+				firstBatch.Do(func() {
+					close(entered)
+					<-release
+				})
+			})
+			background := make(chan struct{})
+			var backgroundErr error
+			go func() {
+				defer close(background)
+				backgroundErr = worker.doSync()
+			}()
+			t.Cleanup(func() {
+				unblock.Do(func() { close(release) })
+				<-background
+			})
+			<-entered
+			done := make(chan struct{})
+			var stats *SyncStats
+			var syncErr error
+			go func() {
+				defer close(done)
+				stats, syncErr = worker.SyncNowWithProgress(func(SyncProgress) bool { return false })
+			}()
+			t.Cleanup(func() {
+				unblock.Do(func() { close(release) })
+				<-done
+			})
+			// PostgreSQL work runs outside virtual time. A zero-weight acquire only
+			// fails when a caller is queued, even while the background pass holds the gate.
+			waitCondition(t, 5*time.Second, "sync now queued behind the background push", func() (bool, error) {
+				return !worker.syncMu.TryAcquire(0), nil
+			})
+			unblock.Do(func() { close(release) })
+			<-done
+			<-background
+			require.NoError(t, syncErr)
+			require.NoError(t, backgroundErr)
+			require.NotNil(t, stats)
+			assert.Positive(stats.PushedJobs)
+			assert.Positive(stats.PushedReviews)
+			machineID, err := db.GetMachineID()
+			require.NoError(t, err)
+			jobs, err := db.GetJobsToSync(machineID, 1000)
+			require.NoError(t, err)
+			if tc.rejectWrite {
+				assert.Len(jobs, 1)
+				assert.False(worker.working, "later batches must preserve the background pass failure")
+			} else {
+				assert.Empty(jobs)
+			}
+			env.assertPgCount("review_jobs", 200)
+			env.assertPgCount("reviews", 200)
 		})
-	})
-	background := make(chan struct{})
-	var backgroundErr error
-	go func() {
-		defer close(background)
-		backgroundErr = worker.doSync()
-	}()
-	t.Cleanup(func() {
-		unblock.Do(func() { close(release) })
-		<-background
-	})
-	<-entered
-	done := make(chan struct{})
-	var stats *SyncStats
-	var syncErr error
-	go func() {
-		defer close(done)
-		stats, syncErr = worker.SyncNowWithProgress(func(SyncProgress) bool { return false })
-	}()
-	t.Cleanup(func() {
-		unblock.Do(func() { close(release) })
-		<-done
-	})
-	// PostgreSQL work runs outside virtual time. A zero-weight acquire only
-	// fails when a caller is queued, even while the background pass holds the gate.
-	waitCondition(t, 5*time.Second, "sync now queued behind the background push", func() (bool, error) {
-		return !worker.syncMu.TryAcquire(0), nil
-	})
-	unblock.Do(func() { close(release) })
-	<-done
-	<-background
-	require.NoError(t, syncErr)
-	require.NoError(t, backgroundErr)
-	require.NotNil(t, stats)
-	assert.Positive(stats.PushedJobs)
-	assert.Positive(stats.PushedReviews)
-	machineID, err := db.GetMachineID()
-	require.NoError(t, err)
-	jobs, err := db.GetJobsToSync(machineID, 1000)
-	require.NoError(t, err)
-	if rejectWrite {
-		assert.Len(jobs, 1)
-		assert.Equal([]string{"auth"}, reasons)
-		assert.False(worker.working, "a later turn must preserve the background pass failure")
-	} else {
-		assert.Empty(jobs)
 	}
-	env.assertPgCount("review_jobs", 200)
-	env.assertPgCount("reviews", 200)
 }
 
 func TestIntegration_SyncNowPushesAllBatches(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
