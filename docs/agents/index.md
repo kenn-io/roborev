@@ -328,6 +328,13 @@ launch_args = ["--extension", "npm:@example/pi-provider"]
 See [Pi Classifier Options](/docs/configuration/#pi-classifier-options) for
 argument ordering and tokenization details.
 
+Pi exits successfully even when the model provider rejects a request. roborev
+reads Pi's event stream and reports the provider's error message as the job
+error. Some providers reject image input for text-only models; Pi sends an image
+when the reviewer reads an image file. Amazon Bedrock reports this as
+`This model doesn't support the image field`. roborev treats that error as
+permanent: the job goes to the backup agent, or fails, without retries.
+
 ## Agentic Support
 
 Different agents have different levels of support for agentic mode (file edits

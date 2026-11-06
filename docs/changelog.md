@@ -7,6 +7,9 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- Report the provider error when a Pi review or classification fails, instead of
+    a missing `result.json`. When Amazon Bedrock rejects image input for a
+    text-only model, the job goes to the backup agent without retries.
 - Explain unfiltered, empty multi-word lexical searches with complete coverage
     and a hint to try fewer words. CLI output writes the hint to stderr; JSON
     and MCP return its code and message.

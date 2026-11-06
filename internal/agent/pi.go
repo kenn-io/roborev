@@ -291,7 +291,7 @@ func (a *PiAgent) ClassifyWithSchema(
 
 	result, err := os.ReadFile(outputPath)
 	if err != nil {
-		return nil, fmt.Errorf("read pi classifier output: %w", err)
+		return nil, piMissingOutputError(stdoutBuf.Bytes(), "classifier", err)
 	}
 	result = bytes.TrimSpace(result)
 	if !jsontext.Value(result).IsValid() {
@@ -362,7 +362,7 @@ func (a *PiAgent) ReviewWithSchema(
 	}
 	result, err := os.ReadFile(outputPath)
 	if err != nil {
-		return nil, fmt.Errorf("read pi structured review output: %w", err)
+		return nil, piMissingOutputError(stdoutBuf.Bytes(), "structured review", err)
 	}
 	result = bytes.TrimSpace(result)
 	if !jsontext.Value(result).IsValid() || len(result) == 0 || result[0] != '{' {
@@ -452,10 +452,14 @@ func (a *PiAgent) Review(
 		return "No review output generated", nil
 	}
 
-	parsed, parseErr := parsePiJSON(strings.NewReader(result))
+	stream, parseErr := parsePiJSON(strings.NewReader(result))
 	if parseErr != nil {
 		return "", parseErr
 	}
+	if err := stream.err(); err != nil {
+		return "", fmt.Errorf("pi failed: %w", err)
+	}
+	parsed := stream.Text
 	if parsed == "" {
 		if stderrBuf.Len() > 0 {
 			return stderrBuf.String(), nil
@@ -547,8 +551,24 @@ func resolvePiSessionPath(sessionID string) string {
 	return matches[0]
 }
 
-func parsePiJSON(r io.Reader) (string, error) {
-	var latest string
+// piStream is what a Pi --mode json event stream reports.
+type piStream struct {
+	Text string // latest assistant text
+	// Error is the provider error on the final assistant message. Pi exits 0
+	// after a provider rejects a request, so this is the only failure signal.
+	Error string
+}
+
+// err returns the provider error that ended the stream, if any.
+func (s piStream) err() error {
+	if s.Error == "" {
+		return nil
+	}
+	return fmt.Errorf("pi provider error: %s", s.Error)
+}
+
+func parsePiJSON(r io.Reader) (piStream, error) {
+	var stream piStream
 	err := scanStreamJSONLines(r, nil, func(line string) error {
 		var ev struct {
 			Type    string `json:"type"`
@@ -558,6 +578,8 @@ func parsePiJSON(r io.Reader) (string, error) {
 					Type string `json:"type"`
 					Text string `json:"text,omitempty"`
 				} `json:"content"`
+				StopReason   string `json:"stopReason"`
+				ErrorMessage string `json:"errorMessage"`
 			} `json:"message"`
 		}
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
@@ -566,6 +588,16 @@ func parsePiJSON(r io.Reader) (string, error) {
 		if ev.Message.Role != "assistant" {
 			return nil
 		}
+		if ev.Type == "message_end" {
+			// A later message, such as a successful retry, clears the error.
+			stream.Error = ""
+			if ev.Message.StopReason == "error" {
+				stream.Error = strings.TrimSpace(ev.Message.ErrorMessage)
+				if stream.Error == "" {
+					stream.Error = "request failed without an error message"
+				}
+			}
+		}
 		var parts []string
 		for _, item := range ev.Message.Content {
 			if item.Type == "text" && item.Text != "" {
@@ -573,14 +605,23 @@ func parsePiJSON(r io.Reader) (string, error) {
 			}
 		}
 		if len(parts) > 0 {
-			latest = strings.Join(parts, "\n")
+			stream.Text = strings.Join(parts, "\n")
 		}
 		return nil
 	})
 	if err != nil {
-		return latest, fmt.Errorf("read pi stream: %w", err)
+		return stream, fmt.Errorf("read pi stream: %w", err)
 	}
-	return latest, nil
+	return stream, nil
+}
+
+// piMissingOutputError explains why a Pi run that exited 0 wrote no
+// structured output. A provider error in the event stream is the usual cause.
+func piMissingOutputError(stdout []byte, label string, readErr error) error {
+	if stream, _ := parsePiJSON(bytes.NewReader(stdout)); stream.err() != nil {
+		return fmt.Errorf("pi %s failed: %w", label, stream.err())
+	}
+	return fmt.Errorf("read pi %s output: %w", label, readErr)
 }
 
 func init() {

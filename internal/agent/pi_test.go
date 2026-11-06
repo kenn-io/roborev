@@ -24,7 +24,75 @@ func TestParsePiJSON(t *testing.T) {
 
 	result, err := parsePiJSON(strings.NewReader(input))
 	require.NoError(t, err)
-	assert.Equal(t, "Hello\nWorld", result)
+	assert.Equal(t, "Hello\nWorld", result.Text)
+	assert.Empty(t, result.Error)
+}
+
+// piBedrockImageError is the final assistant event Pi printed when Amazon
+// Bedrock rejected an image read by a text-only model.
+const piBedrockImageError = `{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Validation error: This model doesn't support the image field for user messages. Remove image and try again."}}`
+
+func TestParsePiJSONProviderError(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{
+			name:  "final message failed",
+			lines: []string{`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reading files"}],"stopReason":"toolUse"}}`, piBedrockImageError},
+			want:  "Validation error: This model doesn't support the image field for user messages. Remove image and try again.",
+		},
+		{
+			name:  "failed without a message",
+			lines: []string{`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error"}}`},
+			want:  "request failed without an error message",
+		},
+		{
+			name:  "later message succeeded",
+			lines: []string{piBedrockImageError, `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop"}}`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parsePiJSON(strings.NewReader(strings.Join(tt.lines, "\n") + "\n"))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, result.Error)
+		})
+	}
+}
+
+// TestPiProviderErrorFailsOverWithoutRetry runs each Pi invocation against a
+// CLI that reports a provider rejection and exits 0 without output, as Pi does.
+func TestPiProviderErrorFailsOverWithoutRetry(t *testing.T) {
+	skipIfWindows(t)
+
+	cli := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\ncat <<'EOF'\n"+piBedrockImageError+"\nEOF\n")
+	pi := NewPiAgent(cli)
+	schema := jsonRaw(`{"type":"object"}`)
+	runs := map[string]func() error{
+		"review": func() error {
+			_, err := pi.Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+			return err
+		},
+		"structured review": func() error {
+			_, err := pi.ReviewWithSchema(t.Context(), t.TempDir(), "HEAD", "review", schema, nil)
+			return err
+		},
+		"classifier": func() error {
+			_, err := pi.ClassifyWithSchema(t.Context(), t.TempDir(), "HEAD", "classify", schema, nil)
+			return err
+		},
+	}
+	for name, run := range runs {
+		t.Run(name, func(t *testing.T) {
+			err := run()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "This model doesn't support the image field")
+			assert.NotContains(t, err.Error(), "result.json")
+			assert.Equal(t, LimitKindPermanent, ClassifyLimit("pi", err.Error()).Kind)
+		})
+	}
 }
 
 func TestParsePiJSONLargeMessage(t *testing.T) {
@@ -33,7 +101,7 @@ func TestParsePiJSONLargeMessage(t *testing.T) {
 
 	result, err := parsePiJSON(strings.NewReader(input))
 	require.NoError(t, err)
-	assert.Equal(t, bigText, result)
+	assert.Equal(t, bigText, result.Text)
 }
 
 func TestResolvePiSessionPath(t *testing.T) {
