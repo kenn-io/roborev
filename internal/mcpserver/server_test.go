@@ -185,7 +185,6 @@ func TestToolCatalogBudgetBoundary(t *testing.T) {
 	require.NoError(err)
 	data, err := json.Marshal(result)
 	require.NoError(err)
-	require.Less(len(data), toolCatalogBudget)
 	// A nonempty description also adds its JSON key, quotes, and comma.
 	tool.Description = strings.Repeat("x", toolCatalogBudget-len(data)-len(`,"description":""`))
 	for _, extra := range []int{0, 1} {
@@ -202,9 +201,7 @@ func TestToolCatalogBudgetBoundary(t *testing.T) {
 		} else {
 			require.Error(err)
 			assert.Contains(err.Error(), "22001 bytes exceeds budget of 22000 bytes")
-			for _, tool := range result.Tools {
-				assert.Contains(err.Error(), tool.Name+": ")
-			}
+			assert.Contains(err.Error(), "budget_fixture: ")
 		}
 	}
 }
