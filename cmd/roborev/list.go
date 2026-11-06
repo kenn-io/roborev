@@ -42,6 +42,7 @@ func listCmd() *cobra.Command {
 
 By default, lists jobs for the current repo and branch.
 Outside a git repository, lists jobs for repos under the current directory.
+Read a job's stored prompt with roborev job show --prompt --job <id>.
 
 Examples:
   roborev list                        # Jobs for current repo/branch
@@ -102,7 +103,7 @@ Examples:
 			}
 
 			// Build query URL
-			params := generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue)}
+			params := generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue)}
 			if repoPrefix != "" {
 				params.RepoPrefix = new(repoPrefix)
 			} else if repoPath != "" {

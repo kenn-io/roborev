@@ -149,7 +149,7 @@ func statusCmd() *cobra.Command {
 
 			// Get recent jobs
 			var jobs []storage.ReviewJob
-			resp, err = client.ListJobsRaw(cmd.Context(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{Limit: new(int64(10)), OmitStats: new(generated.ListJobsQueryOmitStatsTrue)}})
+			resp, err = client.ListJobsRaw(cmd.Context(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{Limit: new(int64(10)), OmitStats: new(generated.ListJobsQueryOmitStatsTrue), OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue)}})
 			if err == nil {
 				defer resp.Body.Close()
 

@@ -113,11 +113,15 @@ roborev --server https://reviews.example.com show --job 42
 ### Output, errors and exit codes
 
 Output flags belong to commands. There is no global `--json` or `--agent`. For
-example, `list --json` includes job status and verdict, while `show --json`
-returns the review record with its stored document. `search --agent` prints
-concise text; the `--agent` flags on review, fix and setup commands select an AI
-provider or integration profile. Export commands emit JSON through their own
-`--format` option.
+example, `job list --json` includes job status and verdict, while
+`job show --json` returns the review record with its stored document.
+`search --agent` prints concise text; the `--agent` flags on review, fix and
+setup commands select an AI provider or integration profile. Export commands
+emit JSON through their own `--format` option.
+
+`job list --json` and `daemon status --json` omit stored prompts from finished
+jobs. Queued and running jobs keep their prompts. Read a stored prompt with
+`roborev job show --prompt --job <id>`, including failed and canceled jobs.
 
 Errors go to stderr and include an actionable recovery hint. Commands supporting
 `--json` emit a JSON error envelope with `error.code`, `error.message`,
