@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,70 +20,185 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
-func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
-	t.Parallel()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+// newSyncHealthPool stalls connections accepted while reachable is false.
+func newSyncHealthPool(t *testing.T, reachable *atomic.Bool) (*PgPool, *atomic.Int64) {
+	t.Helper()
+	var lc net.ListenConfig
+	listener, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	release := make(chan struct{})
-	serverDone := make(chan struct{})
-	go func() {
-		defer close(serverDone)
-		conn, err := listener.Accept()
-		if err == nil {
-			defer conn.Close()
-			<-release
+	var accepted atomic.Int64
+	var server sync.WaitGroup
+	server.Go(func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			server.Go(func() {
+				defer conn.Close()
+				if !reachable.Load() {
+					<-release
+					return
+				}
+				backend := pgproto3.NewBackend(conn, conn)
+				if _, err := backend.ReceiveStartupMessage(); err != nil {
+					return
+				}
+				backend.Send(&pgproto3.AuthenticationOk{})
+				backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+				if backend.Flush() != nil {
+					return
+				}
+				for {
+					message, err := backend.Receive()
+					if err != nil {
+						return
+					}
+					switch message.(type) {
+					case *pgproto3.Query:
+						backend.Send(&pgproto3.EmptyQueryResponse{})
+						backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+						if backend.Flush() != nil {
+							return
+						}
+					case *pgproto3.Terminate:
+						return
+					}
+				}
+			})
 		}
-	}()
+	})
 	t.Cleanup(func() {
 		close(release)
 		_ = listener.Close()
-		<-serverDone
+		server.Wait()
 	})
 	pool, err := pgxpool.New(t.Context(), "postgres://test:test@"+listener.Addr().String()+"/test?sslmode=disable")
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
-	worker := &SyncWorker{running: true, pgPool: &PgPool{pool: pool}, pgReachable: true}
+	return &PgPool{pool: pool}, &accepted
+}
+
+func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	var reachable atomic.Bool
+	pool, accepted := newSyncHealthPool(t, &reachable)
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	worker.running, worker.pgPool, worker.pgReachable = true, pool, true
+	worker.healthCtx, worker.healthCancel = context.WithCancel(t.Context())
+	worker.pingTimeout = 500 * time.Millisecond //nolint:kennlint // deadlinetest: the probe waits on a real stalled TCP connection outside synctest
+	t.Cleanup(func() {
+		worker.mu.Lock()
+		defer worker.mu.Unlock()
+		worker.closePool()
+	})
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		healthy, message := worker.HealthCheck()
-		assert.True(t, healthy)
-		assert.Equal(t, "connected", message)
+		var calls sync.WaitGroup
+		for range 20 {
+			calls.Go(func() {
+				healthy, message := worker.HealthCheck()
+				assert.True(healthy)
+				assert.Equal("connected", message)
+			})
+		}
+		calls.Wait()
 	}()
 	t.Cleanup(func() { <-done })
-	// A regressed live ping waits on the stalled TCP server outside synctest.
+	// The stalled TCP connection is external work that synctest cannot observe.
 	completed := false
 	select {
 	case <-done:
 		completed = true
 	case <-time.After(time.Second):
 	}
-	assert.True(t, completed, "HealthCheck waited for PostgreSQL instead of returning cached health")
-}
-
-func TestSyncCheckHealthRecordsFailureAndIgnoresCancellation(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	address := listener.Addr().String()
-	require.NoError(t, listener.Close())
-	pool, err := pgxpool.New(t.Context(), "postgres://test:test@"+address+"/test?sslmode=disable")
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	worker := &SyncWorker{running: true, pgPool: &PgPool{pool: pool}, pgReachable: true}
-	worker.checkHealth(t.Context(), worker.pgPool)
+	assert.True(completed, "HealthCheck waited for PostgreSQL instead of returning cached health")
+	// Wait for the actual socket connection and its timeout, outside synctest.
+	require.Eventually(t, func() bool {
+		worker.mu.Lock()
+		defer worker.mu.Unlock()
+		return !worker.healthPinging
+	}, 5*time.Second, time.Millisecond)
+	assert.Equal(int64(1), accepted.Load(), "concurrent reads must share one ping")
 	healthy, message := worker.HealthCheck()
 	assert.False(healthy)
 	assert.Equal("connection lost", message)
 
-	worker.pgReachable = true
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	worker.checkHealth(ctx, worker.pgPool)
+	reachable.Store(true)
+	worker.mu.Lock()
+	worker.healthCheckedAt = time.Now().Add(-worker.healthInterval)
+	worker.mu.Unlock()
+	healthy, message = worker.HealthCheck()
+	assert.False(healthy)
+	assert.Equal("connection lost", message)
+	// The recovery ping uses the real TCP socket, outside synctest.
+	require.Eventually(t, func() bool {
+		healthy, _ := worker.HealthCheck()
+		return healthy
+	}, 5*time.Second, time.Millisecond)
 	healthy, message = worker.HealthCheck()
 	assert.True(healthy)
 	assert.Equal("connected", message)
+	assert.Equal(int64(2), accepted.Load())
+}
+
+func TestSyncHealthClosePoolCancelsPingAndIgnoresLateResult(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	var reachable atomic.Bool
+	pool, accepted := newSyncHealthPool(t, &reachable)
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	worker.running, worker.pgPool, worker.pgReachable = true, pool, true
+	worker.healthCtx, worker.healthCancel = context.WithCancel(t.Context())
+	t.Cleanup(worker.healthCancel)
+	healthy, message := worker.HealthCheck()
+	assert.True(healthy)
+	assert.Equal("connected", message)
+	// Wait until the probe reaches the stalled TCP server, outside synctest.
+	require.Eventually(t, func() bool { return accepted.Load() == 1 }, time.Second, time.Millisecond)
+	worker.mu.Lock()
+	checkedAt := worker.healthCheckedAt
+	worker.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		worker.mu.Lock()
+		defer worker.mu.Unlock()
+		worker.closePool()
+	}()
+	t.Cleanup(func() { <-done })
+	// Pool closure waits on real socket cancellation, outside synctest.
+	closed := false
+	select {
+	case <-done:
+		closed = true
+	case <-time.After(time.Second):
+	}
+	assert.True(closed, "closePool waited for the ping timeout")
+	// Wait for the probe goroutine after its socket is canceled.
+	require.Eventually(t, func() bool {
+		worker.mu.Lock()
+		defer worker.mu.Unlock()
+		return !worker.healthPinging
+	}, time.Second, time.Millisecond)
+	worker.mu.Lock()
+	assert.True(worker.pgReachable, "the canceled pool's result must be ignored")
+	assert.Equal(checkedAt, worker.healthCheckedAt)
+	worker.mu.Unlock()
+	healthy, message = worker.HealthCheck()
+	assert.False(healthy)
+	assert.Equal("not connected", message)
+	worker.mu.Lock()
+	worker.running = false
+	worker.mu.Unlock()
+	healthy, message = worker.HealthCheck()
+	assert.False(healthy)
+	assert.Equal("not running", message)
 }
 
 func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {

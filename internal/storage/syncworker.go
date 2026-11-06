@@ -26,10 +26,15 @@ type SyncWorker struct {
 	cfg             config.SyncConfig
 	pgPool          *PgPool
 	pgReachable     bool
+	healthCheckedAt time.Time
+	healthPinging   bool
+	healthCtx       context.Context //nolint:containedctx // owns probes for the current pool's lifetime
 	healthCancel    context.CancelFunc
+	healthInterval  time.Duration
+	pingTimeout     time.Duration
 	stopCh          chan struct{}
 	doneCh          chan struct{}
-	mu              sync.Mutex          // protects running, pgPool, pgReachable, healthCancel, and callbacks
+	mu              sync.Mutex          // protects running, pgPool, health state, and callbacks
 	syncMu          *semaphore.Weighted // queues sync operations in arrival order
 	connectMu       sync.Mutex          // serializes connect operations
 	running         bool
@@ -220,11 +225,13 @@ func (w *SyncWorker) PublishSearchVectors(
 // NewSyncWorker creates a new sync worker
 func NewSyncWorker(db *DB, cfg config.SyncConfig) *SyncWorker {
 	return &SyncWorker{
-		db:     db,
-		cfg:    cfg,
-		stopCh: make(chan struct{}),
-		doneCh: make(chan struct{}),
-		syncMu: semaphore.NewWeighted(1),
+		db:             db,
+		cfg:            cfg,
+		stopCh:         make(chan struct{}),
+		doneCh:         make(chan struct{}),
+		syncMu:         semaphore.NewWeighted(1),
+		healthInterval: 10 * time.Second,
+		pingTimeout:    5 * time.Second,
 	}
 }
 
@@ -676,10 +683,9 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 	w.mu.Lock()
 	w.pgPool = pool
 	w.pgReachable = true
-	// The pool outlives this connection attempt and owns its health watcher.
-	healthCtx, healthCancel := context.WithCancel(context.Background())
-	w.healthCancel = healthCancel
-	go w.watchHealth(healthCtx, pool)
+	w.healthCheckedAt = time.Now()
+	// The pool outlives this connection attempt and owns its health probes.
+	w.healthCtx, w.healthCancel = context.WithCancel(context.Background())
 	w.mu.Unlock()
 
 	return true, nil
@@ -697,31 +703,20 @@ func (w *SyncWorker) closePool() {
 	}
 }
 
-// A 10-second interval plus the 5-second ping timeout detects a stalled
-// connection within about 15 seconds without delaying health requests.
-const syncHealthInterval = 10 * time.Second
-
-func (w *SyncWorker) watchHealth(ctx context.Context, pool *PgPool) {
-	ticker := time.NewTicker(syncHealthInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			w.checkHealth(ctx, pool)
-		}
-	}
+func (w *SyncWorker) pingPool(ctx context.Context, pool *PgPool) error {
+	pingCtx, cancel := context.WithTimeout(ctx, w.pingTimeout)
+	defer cancel()
+	return pool.Ping(pingCtx)
 }
 
 func (w *SyncWorker) checkHealth(ctx context.Context, pool *PgPool) {
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	err := pool.Ping(pingCtx)
+	err := w.pingPool(ctx, pool)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if ctx.Err() == nil && w.pgPool == pool {
+	w.healthPinging = false
+	if w.pgPool == pool {
 		w.pgReachable = err == nil
+		w.healthCheckedAt = time.Now()
 	}
 }
 
@@ -751,12 +746,17 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 				pool := w.pgPool
 				w.mu.Unlock()
 				if pool != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					if pool.Ping(ctx) != nil {
-						cancel()
+					// The sync loop owns this probe outside any request lifetime.
+					err := w.pingPool(context.Background(), pool)
+					w.mu.Lock()
+					if w.pgPool == pool {
+						w.pgReachable = err == nil
+						w.healthCheckedAt = time.Now()
+					}
+					w.mu.Unlock()
+					if err != nil {
 						return // Connection lost, exit to reconnect
 					}
-					cancel()
 				}
 			}
 		}
@@ -814,6 +814,12 @@ func (w *SyncWorker) doSync() error {
 
 	if !failed {
 		w.observePass()
+		w.mu.Lock()
+		if w.pgPool == pool {
+			w.pgReachable = true
+			w.healthCheckedAt = time.Now()
+		}
+		w.mu.Unlock()
 	}
 	return nil
 }
@@ -1352,20 +1358,22 @@ func (w *SyncWorker) pullResponse(response PulledResponse) error {
 // HealthCheck returns the health status of the sync worker
 func (w *SyncWorker) HealthCheck() (healthy bool, message string) {
 	w.mu.Lock()
-	running := w.running
-	pool := w.pgPool
-	reachable := w.pgReachable
-	w.mu.Unlock()
+	defer w.mu.Unlock()
 
-	if !running {
+	if !w.running {
 		return false, "not running"
 	}
 
-	if pool == nil {
+	if w.pgPool == nil {
 		return false, "not connected"
 	}
 
-	if !reachable {
+	if !w.healthPinging && time.Since(w.healthCheckedAt) >= w.healthInterval {
+		w.healthPinging = true
+		go w.checkHealth(w.healthCtx, w.pgPool)
+	}
+
+	if !w.pgReachable {
 		return false, "connection lost"
 	}
 
