@@ -133,6 +133,11 @@ stream: stream errors: You've hit your session limit · resets 5:50am (UTC): exi
 			`codex stream reported failure: You've hit your usage limit, last status: 429 Too Many Requests`,
 			LimitKindQuota,
 		},
+		{
+			"bedrock image input rejected", "pi",
+			`pi structured review failed: pi provider error: Validation error: This model doesn't support the image field for user messages. Remove image and try again.`,
+			LimitKindPermanent,
+		},
 		// Genuine/deterministic MUST NOT be transient:
 		{"bare service unavailable not transient", "codex", `agent: codex failed: service unavailable`, LimitKindNone},
 		{
