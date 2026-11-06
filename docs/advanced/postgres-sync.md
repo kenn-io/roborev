@@ -66,6 +66,10 @@ roborev sync status    # Show daemon sync health and pending items
 roborev sync now       # Trigger immediate sync
 ```
 
+If the daemon is pushing a backlog, `roborev sync now` takes over after the
+current batch, pushes up to 500 items and pulls, then background sync pushes the
+rest.
+
 ## What Gets Synced
 
 - Completed jobs (done, failed, canceled)
