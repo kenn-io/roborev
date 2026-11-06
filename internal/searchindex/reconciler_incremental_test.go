@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -159,7 +160,49 @@ func TestReconcilerChangeWakeRefreshesLoggedJobs(t *testing.T) {
 func TestReconcilerPullWriteRefreshesOnlyPulledReview(t *testing.T) {
 	for _, reviews := range []int{1000, 10000} {
 		t.Run(fmt.Sprintf("reviews=%d", reviews), func(t *testing.T) {
-			db, r := seedReconcilerHistory(t, reviews, 0)
+			var db *storage.DB
+			var r *Reconciler
+			if reviews == 1000 {
+				db, r = seedReconcilerHistory(t, reviews, 0)
+			} else {
+				db = seedCanonicalReconcilerHistory(t, reviews, 0)
+				index := openGenerationTestIndex(t)
+				// Odd reviews have no comments; even reviews have one.
+				for _, id := range []int64{1, 2} {
+					source, err := db.GetSearchDocumentForJob(t.Context(), id)
+					require.NoError(t, err)
+					require.NotNil(t, source)
+					_, err = index.RefreshMirrorPage(t.Context(), []searchdoc.Document{searchdoc.Render(*source)}, nil)
+					require.NoError(t, err)
+				}
+				_, err := index.db.ExecContext(t.Context(), `
+					BEGIN;
+					WITH RECURSIVE ids(id) AS (VALUES(3) UNION ALL SELECT id + 1 FROM ids WHERE id < ?),
+					copies AS (SELECT id, printf('00000000-0000-4000-8000-%012d', id) AS uuid FROM ids)
+					INSERT INTO review_mirror
+					SELECT uuid, id, uuid, id, uuid, uuid,
+					       repo_id, repo_name, branch, git_ref, commit_sha, finished_at,
+					       verdict, closed, panel_role, content,
+					       replace(identifiers, doc_key, uuid), content_hash, embed_gen
+					FROM copies JOIN review_mirror ON job_id = 2 - id % 2;
+					INSERT INTO review_fts(rowid, doc_key, content, identifiers)
+					SELECT rowid, doc_key, content, identifiers FROM review_mirror WHERE job_id > 2;
+					COMMIT;`, reviews)
+				require.NoError(t, err)
+				head, err := db.SearchChangesHead(t.Context())
+				require.NoError(t, err)
+				require.NoError(t, db.DeleteSearchChanges(t.Context(), head))
+				r = NewReconciler(db, index, nil, ReconcilerConfig{})
+				r.mirrorRequested = false
+				r.health.MirrorComplete = true
+				r.health.MirrorBacklog = new(int64)
+				r.health.Indexed = int64(reviews)
+			}
+			for _, table := range []string{"review_mirror", "review_fts"} {
+				var count int
+				require.NoError(t, r.index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&count))
+				require.Equal(t, reviews, count, table)
+			}
 			store := &observedSearchStore{DB: db}
 			r.store = store
 			r.config.SweepInterval = time.Hour
@@ -182,6 +225,11 @@ func TestReconcilerPullWriteRefreshesOnlyPulledReview(t *testing.T) {
 			var got int64
 			require.NoError(t, r.index.db.QueryRowContext(t.Context(), `SELECT job_id FROM review_mirror JOIN review_fts USING (doc_key) WHERE review_fts MATCH 'pulleduniqueword'`).Scan(&got))
 			assert.Equal(t, jobID, got)
+			for _, table := range []string{"review_mirror", "review_fts"} {
+				var count int
+				require.NoError(t, r.index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&count))
+				assert.Equal(t, reviews+1, count, table)
+			}
 		})
 	}
 }
