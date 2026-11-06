@@ -5,5 +5,4 @@
 export interface SearchHint {
   code: string;
   message: string;
-  next?: string;
 }

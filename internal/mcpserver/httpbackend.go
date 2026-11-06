@@ -14,8 +14,6 @@ import (
 	"strings"
 	"uuid"
 
-	"go.kenn.io/kit/agenthook"
-
 	"go.kenn.io/roborev/internal/storage"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
@@ -226,36 +224,7 @@ func (b *HTTPBackend) Search(ctx context.Context, q SearchQuery) (storage.Search
 	if result.Hits == nil {
 		result.Hits = []storage.SearchHit{}
 	}
-	for i := range result.Hints {
-		result.Hints[i].RetryQuery = searchRetryQuery(result.Hints[i].Next)
-	}
 	return result, nil
-}
-
-// searchRetryQuery accepts the final argument in the Kit command builder's format.
-func searchRetryQuery(command string) string {
-	powerShell := strings.HasPrefix(command, "& ")
-	separator, escape := " -- ", `'\''`
-	if powerShell {
-		separator, escape = " '--' ", "''"
-	}
-	_, quoted, ok := strings.CutLast(command, separator)
-	if !ok {
-		return ""
-	}
-	word := quoted
-	if inner, ok := strings.CutPrefix(quoted, "'"); ok {
-		word = strings.ReplaceAll(strings.TrimSuffix(inner, "'"), escape, "'")
-	}
-	commands, _ := agenthook.BuildCommand("roborev", word)
-	expected := strings.TrimPrefix(commands.POSIX, "roborev ")
-	if powerShell {
-		expected = strings.TrimPrefix(commands.PowerShell, "& 'roborev' ")
-	}
-	if expected != quoted {
-		return ""
-	}
-	return word
 }
 
 func validSearchResponseJSON(body jsontext.Value) bool {

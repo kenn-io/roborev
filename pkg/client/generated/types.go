@@ -3937,9 +3937,8 @@ func (s SearchHealth) Validate() error {
 }
 
 type SearchHint struct {
-	Code    string  `json:"code" validate:"required"`
-	Message string  `json:"message" validate:"required"`
-	Next    *string `json:"next,omitempty"`
+	Code    string `json:"code" validate:"required"`
+	Message string `json:"message" validate:"required"`
 }
 
 func (s SearchHint) Validate() error {

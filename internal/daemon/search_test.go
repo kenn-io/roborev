@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -594,83 +592,35 @@ func TestSearchRejectsAmbiguousRepoName(t *testing.T) {
 	assert.Empty(t, searcher.params)
 }
 
-func TestSearchEveryWordHintGuardsAndProbeBound(t *testing.T) {
+func TestSearchEveryWordHintEligibility(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		result searchindex.SearchResult
-		probes int
-		hints  int
+		name, query                  string
+		mode                         searchindex.SearchMode
+		partial, degraded, hit, want bool
 	}{
-		{name: "partial", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Partial: true}},
-		{
-			name: "degraded complete", probes: 2, hints: 1,
-			result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Degraded: true},
-		},
-		{name: "single word", result: searchindex.SearchResult{Query: "nil", Mode: searchindex.ModeLexical}},
-		{
-			name: "hit", result: searchindex.SearchResult{
-				Query: "nil pointer", Mode: searchindex.ModeLexical, Hits: []searchindex.SearchHit{{JobID: 1}},
-			},
-		},
-		{name: "hybrid", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeHybrid}},
-		{name: "semantic", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeSemantic}},
-		{
-			name: "many words", probes: 10, hints: 1,
-			result: searchindex.SearchResult{Query: strings.Repeat("x ", 999) + "x", Mode: searchindex.ModeLexical},
-		},
+		{name: "lexical", query: "nil pointer", want: true},
+		{name: "Unicode", query: "界 ٢", want: true},
+		{name: "fallback", query: "nil pointer", degraded: true, want: true},
+		{name: "partial", query: "nil pointer", partial: true},
+		{name: "hit", query: "nil pointer", hit: true},
+		{name: "single word", query: "nil"},
+		{name: "punctuation field", query: "nil ?"},
+		{name: "hybrid", query: "nil pointer", mode: searchindex.ModeHybrid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			searcher := &recordingReviewSearcher{}
-			server := newSearchHTTPServer(t, searcher)
-			response := server.searchResponse(t.Context(), tc.result,
-				searchindex.SearchParams{RepoID: 7, Branch: "main", State: "open"}, &SearchInput{})
-			assert.Len(t, response.Hints, tc.hints)
-			require.Len(t, searcher.params, tc.probes)
-			for _, params := range searcher.params {
-				assert.Equal(t, searchindex.ModeLexical, params.Mode)
-				assert.Equal(t, 1, params.Limit)
-				assert.Equal(t, int64(7), params.RepoID)
-				assert.Equal(t, "main", params.Branch)
-				assert.Equal(t, "open", params.State)
+			result := searchindex.SearchResult{Query: tc.query, Mode: tc.mode, Partial: tc.partial, Degraded: tc.degraded}
+			if result.Mode == "" {
+				result.Mode = searchindex.ModeLexical
 			}
-		})
-	}
-}
-
-func TestSearchRetryCommandThroughHTTPBackend(t *testing.T) {
-	const word = "point'er"
-	input := &SearchInput{Branch: "sam's-fix", State: "open"}
-	for _, platform := range []string{"linux", "windows"} {
-		t.Run(platform, func(t *testing.T) {
-			response := storage.SearchResponse{
-				Query: word + " absent", Mode: "lexical",
-				Hints: []storage.SearchHint{{
-					Code: "every_word_required", Next: searchRetryCommand(input, word, platform),
-				}},
+			if tc.hit {
+				result.Hits = []searchindex.SearchHit{{JobID: 1}}
 			}
-			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				assert.NoError(t, json.NewEncoder(w).Encode(response))
-			}))
-			defer endpoint.Close()
-			backend := mcpserver.NewHTTPBackend(endpoint.URL, endpoint.Client())
-			result, err := backend.Search(t.Context(), mcpserver.SearchQuery{Query: word + " absent"})
-			require.NoError(t, err)
-			require.Len(t, result.Hints, 1)
-			assert.Equal(t, word, result.Hints[0].RetryQuery)
-			if platform != "windows" {
-				return
+			response := searchResponseFromResult(result)
+			if tc.want {
+				assert.Equal(t, []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}}, response.Hints)
+			} else {
+				assert.Empty(t, response.Hints)
 			}
-			shell, err := exec.LookPath("pwsh")
-			if err != nil {
-				t.Skip("PowerShell is unavailable")
-			}
-			script := "function roborev { ConvertTo-Json -InputObject @($args) -Compress }; " + result.Hints[0].Next
-			output, err := exec.CommandContext(t.Context(), shell,
-				"-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
-			require.NoError(t, err, string(output))
-			var args []string
-			require.NoError(t, json.Unmarshal(output, &args))
-			assert.Equal(t, []string{"search", "--lexical", "--branch", "sam's-fix", "--open", "--", word}, args)
 		})
 	}
 }

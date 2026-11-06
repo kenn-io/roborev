@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -18,7 +17,6 @@ import (
 	"go.kenn.io/kit/embedconfig"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/searchdoc"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
@@ -449,54 +447,19 @@ func TestSearchIntegrationEveryWordHint(t *testing.T) {
 	waitForSearch(t, "lexical mirror", func() bool { return reconciler.Health().MirrorComplete })
 	server := newSearchHTTPServer(t, searchindex.NewService(db, index, nil, reconciler))
 	for _, mode := range []string{"lexical", "auto"} {
-		for _, tc := range []struct {
-			query, retry string
-			hints        int
-		}{
-			{query: "nil pointer", retry: "nil", hints: 1},
-			{query: "absentword pointer", retry: "pointer", hints: 1},
-			{query: "absentword missingword", hints: 1},
-			{query: "absentword"},
-		} {
-			t.Run(mode+"/"+tc.query, func(t *testing.T) {
-				recorder := executeSearch(t.Context(), server, url.Values{
-					"q": {tc.query}, "mode": {mode}, "branch": {"main"}, "state": {"open"},
-				})
-				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-				var response storage.SearchResponse
-				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
-				require.Len(t, response.Hints, tc.hints)
-				mcpResponse, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{
-					Query: tc.query, Mode: mode, Branch: "main", State: "open", Limit: 20,
-				})
-				require.NoError(t, err)
-				mcpJSON, err := json.Marshal(mcpResponse)
-				require.NoError(t, err)
-				responseJSON, err := json.Marshal(response)
-				require.NoError(t, err)
-				assert.JSONEq(t, string(responseJSON), string(mcpJSON))
-				assert.NotContains(t, recorder.Body.String(), "retry_query")
-				if tc.hints == 0 {
-					return
-				}
-				assert.Equal(t, "every_word_required", response.Hints[0].Code)
-				assert.Equal(t, "no review contains every word; search again with fewer words", response.Hints[0].Message)
-				assert.Equal(t, tc.retry, mcpResponse.Hints[0].RetryQuery)
-				if tc.retry == "" {
-					assert.Empty(t, response.Hints[0].Next)
-					return
-				}
-				expected := "roborev search --lexical --branch main --open -- " + tc.retry
-				if runtime.GOOS == "windows" {
-					expected = "& 'roborev' 'search' '--lexical' '--branch' 'main' '--open' '--' '" + tc.retry + "'"
-				}
-				assert.Equal(t, expected, response.Hints[0].Next)
-				retry := executeSearch(t.Context(), server, url.Values{
-					"q": {tc.retry}, "mode": {"lexical"}, "branch": {"main"}, "state": {"open"},
-				})
-				require.NoError(t, json.Unmarshal(retry.Body.Bytes(), &response))
-				assert.NotEmpty(t, response.Hits)
-			})
+		for _, query := range []string{"nil pointer", "absentword"} {
+			recorder := executeSearch(t.Context(), server, url.Values{"q": {query}, "mode": {mode}})
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			var response storage.SearchResponse
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.Empty(t, response.Hits)
+			if query == "nil pointer" {
+				assert.Equal(t, []storage.SearchHint{{
+					Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+				}}, response.Hints)
+			} else {
+				assert.Empty(t, response.Hints)
+			}
 		}
 	}
 }

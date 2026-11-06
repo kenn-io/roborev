@@ -6,14 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
@@ -161,7 +159,7 @@ func (s *Server) humaSearchReviews(
 		return nil, huma.Error500InternalServerError("search failed")
 	}
 
-	response := s.searchResponse(ctx, result, params, input)
+	response := searchResponseFromResult(result)
 	if response.Hits == nil {
 		response.Hits = []SearchHit{}
 	}
@@ -260,50 +258,6 @@ func (s *Server) resolveSearchRepo(identifier string) (int64, error) {
 	return repo.ID, nil
 }
 
-func (s *Server) searchResponse(ctx context.Context, result searchindex.SearchResult, params searchindex.SearchParams, input *SearchInput) SearchResponse {
-	response := searchResponseFromResult(result)
-	words := strings.Fields(result.Query)
-	if result.Mode != searchindex.ModeLexical || result.Partial || len(result.Hits) != 0 || len(words) < 2 {
-		return response
-	}
-	hint := storage.SearchHint{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}
-	params.Mode = searchindex.ModeLexical
-	params.Limit = 1
-	// Bound the extra work for queries with many words.
-	for _, word := range words[:min(len(words), 10)] {
-		params.Query = word
-		retry, err := s.search.Search(ctx, params)
-		if err != nil || len(retry.Hits) == 0 {
-			continue
-		}
-		hint.Next = searchRetryCommand(input, word, runtime.GOOS)
-		hint.RetryQuery = word
-		break
-	}
-	response.Hints = []storage.SearchHint{hint}
-	return response
-}
-
-// searchRetryCommand uses the documented shell for the daemon's platform.
-func searchRetryCommand(input *SearchInput, word, goos string) string {
-	args := []string{"search", "--lexical"}
-	for _, filter := range []struct{ name, value string }{
-		{"repo", input.Repo}, {"branch", input.Branch}, {"since", input.Since}, {"verdict", input.Verdict},
-	} {
-		if filter.value != "" {
-			args = append(args, "--"+filter.name, filter.value)
-		}
-	}
-	if input.State == "open" || input.State == "closed" {
-		args = append(args, "--"+input.State)
-	}
-	commands, _ := agenthook.BuildCommand("roborev", append(args, "--", word)...)
-	if goos == "windows" {
-		return commands.PowerShell
-	}
-	return commands.POSIX
-}
-
 func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
 	hits := make([]SearchHit, 0, len(result.Hits))
 	for _, hit := range result.Hits {
@@ -317,6 +271,10 @@ func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
 			MatchedIn: append([]string(nil), hit.MatchedIn...), Excerpt: hit.Excerpt,
 		})
 	}
+	var hints []storage.SearchHint
+	if result.Mode == searchindex.ModeLexical && !result.Partial && len(result.Hits) == 0 && searchindex.LiteralWordCount(result.Query) > 1 {
+		hints = []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}}
+	}
 	return SearchResponse{
 		Query: result.Query, Mode: string(result.Mode), Degraded: result.Degraded,
 		DegradedReason: result.DegradedReason, Bounded: result.Bounded,
@@ -329,7 +287,7 @@ func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
 			EmbeddingBacklog:     result.Coverage.EmbeddingBacklog,
 			Skipped:              result.Coverage.Skipped,
 		},
-		Hits: hits,
+		Hits: hits, Hints: hints,
 	}
 }
 

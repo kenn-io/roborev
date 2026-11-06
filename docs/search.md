@@ -388,13 +388,11 @@ legs, and a bounded excerpt. Interpret `score` together with `mode`; lexical,
 semantic, and hybrid modes use different ranking scales.
 
 An empty multi-word lexical search with complete coverage includes an
-`every_word_required` hint. Human and agent output write `Hint:` to stderr,
-including a measured retry command when available. JSON includes `hints` with
-`code`, `message`, and a `next` command when one of the first ten query words
-finds a review under the same filters. Single-word misses, incomplete coverage,
-and semantic or hybrid searches omit the hint. Retry commands use PowerShell on
-Windows daemons and POSIX shell syntax elsewhere. MCP returns `retry_with` query
-and mode arguments in place of `next`.
+`every_word_required` hint: “no review contains every word; search again with
+fewer words”. Human and agent output write `Hint: <message>` to stderr. JSON and
+MCP include `hints` with `code` and `message`. Punctuation-only fields do not
+count as searchable words. Single-word misses, incomplete coverage, and semantic
+or hybrid searches omit the hint.
 
 The MCP tool `roborev_search_reviews` accepts the same inputs and returns the
 same response fields. Use `auto` for ordinary discovery, `lexical` for exact

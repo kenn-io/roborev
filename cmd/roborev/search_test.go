@@ -710,7 +710,6 @@ func TestSearchCmdEveryWordHint(t *testing.T) {
 	response["hints"] = []map[string]string{{
 		"code":    "every_word_required",
 		"message": "no review contains every word; search again with fewer words",
-		"next":    "roborev search --lexical -- nil",
 	}}
 	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
 		if r.URL.Path != "/api/search" {
@@ -723,8 +722,8 @@ func TestSearchCmdEveryWordHint(t *testing.T) {
 		name, flag, output string
 		json               bool
 	}{
-		{name: "human", flag: "--lexical", output: "No matching reviews."},
-		{name: "agent", flag: "--agent", output: "OK search count=0"},
+		{name: "human", flag: "--lexical", output: "Mode: lexical\nCoverage: mirror complete; vectors disabled\nNo matching reviews.\n"},
+		{name: "agent", flag: "--agent", output: "OK search count=0 query=\"nil pointer\" mode=lexical partial=false bounded=false\n"},
 		{name: "json", flag: "--json", json: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -741,11 +740,8 @@ func TestSearchCmdEveryWordHint(t *testing.T) {
 				require.NoError(t, json.Unmarshal([]byte(output), &decoded))
 				assert.Equal(t, "every_word_required", decoded["hints"].([]any)[0].(map[string]any)["code"])
 			} else {
-				assert.Contains(t, stderr,
-					"Hint: no review contains every word; search again with fewer words; "+
-						"run roborev search --lexical -- nil\n")
-				assert.NotContains(t, output, "Hint:")
-				assert.Contains(t, output, tc.output)
+				assert.Equal(t, "Hint: no review contains every word; search again with fewer words\n", stderr)
+				assert.Equal(t, tc.output, output)
 			}
 		})
 	}

@@ -84,6 +84,17 @@ func literalFTSQuery(query string) string {
 	return prepared.Match
 }
 
+// LiteralWordCount counts whitespace fields that contribute lexical tokens.
+func LiteralWordCount(query string) int {
+	count := 0
+	for word := range strings.FieldsSeq(query) {
+		if containsSearchToken(word) {
+			count++
+		}
+	}
+	return count
+}
+
 func containsSearchToken(value string) bool {
 	return strings.IndexFunc(value, func(r rune) bool {
 		return unicode.IsLetter(r) || unicode.IsNumber(r)

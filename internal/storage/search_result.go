@@ -35,12 +35,10 @@ type SearchHit struct {
 	Excerpt       string    `json:"excerpt"`
 }
 
-// SearchHint explains an empty result and may suggest a measured retry.
+// SearchHint explains an empty result.
 type SearchHint struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	Next       string `json:"next,omitempty"`
-	RetryQuery string `json:"-"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // SearchResponse is the transport-neutral review-search response.

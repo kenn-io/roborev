@@ -212,8 +212,8 @@ and vector coverage. Fetch a matched review with `roborev_get_review`, then use
 coverage semantics.
 
 Empty multi-word lexical results with complete coverage include an
-`every_word_required` hint. When a retry was measured, `retry_with` contains its
-`query` and `mode`; apply these over the original filters.
+`every_word_required` hint with `code` and `message`: “no review contains every
+word; search again with fewer words”.
 
 Errors are returned as tool errors with a stable `code` of `not_found`,
 `invalid_argument`, `unavailable`, or `internal`.

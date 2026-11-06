@@ -4276,8 +4276,6 @@ components:
           type: string
         message:
           type: string
-        next:
-          type: string
       required:
         - code
         - message
