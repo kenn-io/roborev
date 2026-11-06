@@ -106,10 +106,10 @@ func TestListJobsPanelRunScopesStats(t *testing.T) {
 		stats storage.JobStats
 	}{
 		{"queue", "", 2, storage.JobStats{Queued: 2}},
-		{"totals", "?include_totals=true", 2, storage.JobStats{Total: 2, RepoCount: 2, Queued: 2}},
-		{"panel", "?include_totals=true&panel_run=" + runUUID.String(), 4, storage.JobStats{Total: 1, RepoCount: 1, Queued: 1}},                       //nolint:forbidigo // HTTP query text boundary.
-		{"unknown panel", "?include_totals=true&panel_run=" + uuid.New().String(), 0, storage.JobStats{}},                                             //nolint:forbidigo // HTTP query text boundary.
-		{"filtered panel", "?include_totals=true&closed=false&panel_run=" + runUUID.String(), 4, storage.JobStats{Total: 1, RepoCount: 1, Queued: 1}}, //nolint:forbidigo // HTTP query text boundary.
+		{"totals", "?include_totals=true", 2, storage.JobStats{Total: new(2), RepoCount: new(2), Queued: 2}},
+		{"panel", "?include_totals=true&panel_run=" + runUUID.String(), 4, storage.JobStats{Total: new(1), RepoCount: new(1), Queued: 1}},                       //nolint:forbidigo // HTTP query text boundary.
+		{"unknown panel", "?include_totals=true&panel_run=" + uuid.New().String(), 0, storage.JobStats{Total: new(0), RepoCount: new(0)}},                       //nolint:forbidigo // HTTP query text boundary.
+		{"filtered panel", "?include_totals=true&closed=false&panel_run=" + runUUID.String(), 4, storage.JobStats{Total: new(1), RepoCount: new(1), Queued: 1}}, //nolint:forbidigo // HTTP query text boundary.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -119,6 +119,14 @@ func TestListJobsPanelRunScopesStats(t *testing.T) {
 				Jobs          []storage.ReviewJob `json:"jobs"`
 				Stats         *storage.JobStats   `json:"stats"`
 				FilteredStats *storage.JobStats   `json:"filtered_stats"`
+			}
+			if tc.name == "queue" {
+				var raw struct {
+					Stats map[string]any `json:"stats"`
+				}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+				assert.NotContains(t, raw.Stats, "total")
+				assert.NotContains(t, raw.Stats, "repo_count")
 			}
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 			assert.Len(t, body.Jobs, tc.jobs)

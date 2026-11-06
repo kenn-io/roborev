@@ -4974,11 +4974,11 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 					assert.Empty(t, q.Get("repo"))
 					assert.Empty(t, q.Get("omit_stats"))
 					assert.Equal(t, "true", q.Get("include_totals"))
-					filtered := storage.JobStats{RepoCount: 3}
+					filtered := storage.JobStats{RepoCount: new(3)}
 					if tc.state == "empty" {
 						filtered = storage.JobStats{}
 					}
-					resp["stats"], resp["filtered_stats"] = storage.JobStats{RepoCount: 8}, filtered
+					resp["stats"], resp["filtered_stats"] = storage.JobStats{RepoCount: new(8)}, filtered
 				}
 				writeJSON(w, resp)
 			}).Build()

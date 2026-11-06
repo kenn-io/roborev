@@ -114,6 +114,15 @@ func TestRemoteScopesIDListAndReplay(t *testing.T) {
 		out = httptest.NewRecorder()
 		remote.ServeHTTP(out, replay)
 		assert.Equal(t, 401, out.Code)
+		out = httptest.NewRecorder()
+		remote.ServeHTTP(out, remoteRequest(t, key, "/api/jobs?include_totals=true&limit=1"))
+		require.Equal(t, http.StatusOK, out.Code, out.Body.String())
+		var totals struct {
+			Stats storage.JobStats `json:"stats"`
+		}
+		testutil.DecodeJSON(t, out, &totals)
+		assert.Equal(t, new(1), totals.Stats.Total)
+		assert.Equal(t, new(1), totals.Stats.RepoCount)
 		jobs, err := s.db.ListJobs("", denied.RootPath, 1, 0)
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)

@@ -2488,8 +2488,6 @@ components:
           format: int64
           type: integer
       required:
-        - total
-        - repo_count
         - queued
         - running
         - done

@@ -256,8 +256,8 @@ func listEmptyHint(ctx context.Context, cmd *cobra.Command, params generated.Lis
 		prefix := *params.RepoPrefix
 		params.RepoPrefix, params.OmitStats = nil, nil
 		params.IncludeTotals = new(generated.ListJobsQueryIncludeTotalsTrue)
-		if _, stats := queryHintJobs(ctx, params); stats.Total > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "hint: no matching jobs for repos under %s; the daemon has %d matching jobs in %d repos; see roborev repo list, then roborev job list --repo <path> --all-branches\n", prefix, stats.Total, stats.RepoCount)
+		if _, stats := queryHintJobs(ctx, params); stats.Total != nil && stats.RepoCount != nil && *stats.Total > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: no matching jobs for repos under %s; the daemon has %d matching jobs in %d repos; see roborev repo list, then roborev job list --repo <path> --all-branches\n", prefix, *stats.Total, *stats.RepoCount)
 		}
 	case params.Branch != nil && !cmd.Flags().Changed("branch"):
 		branch := *params.Branch

@@ -9,8 +9,8 @@ export interface JobStats {
   failed: number;
   open: number;
   queued: number;
-  repo_count: number;
+  repo_count?: number;
   running: number;
   skipped: number;
-  total: number;
+  total?: number;
 }

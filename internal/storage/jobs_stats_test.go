@@ -78,7 +78,7 @@ func TestJobStatsTotalAndRepos(t *testing.T) {
 	} {
 		stats, err := db.CountJobStats(tc.status, tc.repo, append(tc.opts, WithJobTotals())...)
 		require.NoError(t, err)
-		assert.Equal(t, tc.total, stats.Total)
-		assert.Equal(t, tc.repos, stats.RepoCount)
+		assert.Equal(t, new(tc.total), stats.Total)
+		assert.Equal(t, new(tc.repos), stats.RepoCount)
 	}
 }

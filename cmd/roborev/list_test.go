@@ -500,7 +500,7 @@ func TestListEmptyHints(t *testing.T) {
 					}
 				}
 				if tc.page || (call == 2 && tc.probe != "empty") {
-					jobs, stats = []storage.ReviewJob{{ID: 1, RepoPath: "/repos/a"}}, storage.JobStats{Total: 3, RepoCount: 2}
+					jobs, stats = []storage.ReviewJob{{ID: 1, RepoPath: "/repos/a"}}, storage.JobStats{Total: new(3), RepoCount: new(2)}
 				}
 				writeJSON(w, map[string]any{"jobs": jobs, "has_more": tc.page, "stats": stats})
 			}
