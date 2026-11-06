@@ -26,7 +26,7 @@ func uiCmd() *cobra.Command {
 		Use:   "ui [job-id]",
 		Short: "Open the Roborev browser UI",
 		Args:  validateUIArgs,
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := uiEnsureDaemon(); err != nil {
 				return err
 			}
@@ -41,6 +41,7 @@ func uiCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Opening %s\n", target)
 			if err := openBrowserURL(target); err != nil {
 				return fmt.Errorf("could not open %s: %w; open this URL manually", target, err)
 			}

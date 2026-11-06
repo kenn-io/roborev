@@ -354,7 +354,8 @@ unchanged.
 
 `roborev ui` starts the daemon when needed, reads the browser origin and path
 prefix from the live daemon runtime, and opens `/reviews` below that prefix when
-one is configured. An optional positive numeric job ID opens `/reviews/<job-id>`
+one is configured. It prints `Opening <url>` before launching the browser, so
+you can open the printed URL yourself. An optional positive numeric job ID opens `/reviews/<job-id>`
 below the same prefix. Job IDs are local to that daemon's SQLite database, so a
 numeric deep link is not portable to another machine even when review data is
 synchronized. Authentication tokens are never placed in the launch URL. The
