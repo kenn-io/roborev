@@ -47,7 +47,7 @@ require (
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
-	hegel.dev/go/hegel v0.9.28
+	hegel.dev/go/hegel v0.9.29
 	modernc.org/sqlite v1.61.0
 )
 

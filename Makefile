@@ -17,6 +17,9 @@ ACP_TEST_DISABLE_MODE ?=
 ACP_TEST_MODE ?=
 ACP_TEST_MODEL ?=
 CODEX_SKILL_EVAL_MODELS ?= gpt-5.6-sol
+QUALITY_EVAL_MODEL ?= zai/glm-5.3-flash
+QUALITY_EVAL_REASONING ?= max
+QUALITY_EVAL_REPEATS ?= 3
 
 # Pinned golangci-lint version. Single source of truth is .custom-gcl.yml: CI
 # reads it via `make print-golangci-lint-version` (see .github/workflows/ci.yml),
@@ -46,7 +49,7 @@ override GOFLAGS += -trimpath
 endif
 export GOFLAGS
 
-.PHONY: build homebrew web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-git-isolation test-codex-skill-eval test-integration test-sandbox-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
+.PHONY: build homebrew web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-git-isolation test-codex-skill-eval test-review-quality-eval test-integration test-sandbox-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
 
 build: web-embed
 	@set -e; trap '$(MAKE) web-restore' EXIT; \
@@ -183,6 +186,11 @@ test-git-isolation:
 
 test-codex-skill-eval:
 	ROBOREV_RUN_CODEX_SKILL_EVAL=1 ROBOREV_CODEX_SKILL_EVAL_MODELS="$(CODEX_SKILL_EVAL_MODELS)" go test -tags=codexeval ./internal/skills -run TestCodexSkillExplicitInvocation -count=1 -v
+
+# Explicit source heads, auth and output path are required; see development docs.
+# ROBOREV_QUALITY_PLAN_ONLY=1 prepares the complete plan without model calls.
+test-review-quality-eval:
+	ROBOREV_RUN_QUALITY_EVAL=1 ROBOREV_QUALITY_MODEL="$(QUALITY_EVAL_MODEL)" ROBOREV_QUALITY_REASONING="$(QUALITY_EVAL_REASONING)" ROBOREV_QUALITY_REPEATS="$(QUALITY_EVAL_REPEATS)" go test -tags=qualityeval ./internal/review -run '^TestReviewQualityEvaluation$$' -count=1 -v -timeout=0
 
 # Unit + slow integration tests (no postgres required)
 test-integration:

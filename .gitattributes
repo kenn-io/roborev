@@ -5,6 +5,10 @@ internal/mcpserver/assets/*.png binary
 internal/skills/*/*/SKILL.md text eol=lf
 internal/skills/*/*/agents/openai.yaml text eol=lf
 
+# Runtime quality-eval corpus must match committed bytes.
+internal/review/testdata/quality/*/*/fixture.go text eol=lf
+internal/review/testdata/quality/rubric.json text eol=lf
+
 # Generated files. GitHub collapses them in pull request diffs and leaves them
 # out of language stats.
 
