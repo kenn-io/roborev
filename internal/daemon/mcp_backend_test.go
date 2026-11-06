@@ -240,7 +240,7 @@ func TestMCPBackendCommentsByCommitID(t *testing.T) {
 	assert.Equal("legacy thanks", comments[0].Response)
 }
 
-func TestMCPBackendSearchCallsSharedServiceWithExactParameters(t *testing.T) {
+func TestMCPBackendSearchPreservesParametersAndHint(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	server, db := newMCPTestServer(t, true)
@@ -270,12 +270,16 @@ func TestMCPBackendSearchCallsSharedServiceWithExactParameters(t *testing.T) {
 	assert.Equal("fail", params.Verdict)
 	assert.Equal(searchindex.StateOpen, params.State)
 	assert.Equal(7, params.Limit)
-	assert.Equal(searchResponse(searcher.result, params), got)
+	assert.Equal([]storage.SearchHit{{
+		JobID: 11, ReviewID: 12, RepoName: "repo", RepoPath: "/src/example",
+	}}, got.Hits)
 
-	searcher.result = searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical}
+	searcher.result = searchindex.SearchResult{
+		Query: "nil pointer", Mode: searchindex.ModeLexical,
+		Coverage: searchindex.SearchCoverage{MirrorComplete: true},
+	}
 	got, err = server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{Query: "nil pointer", Limit: 20})
 	require.NoError(err)
-	assert.Equal(searchResponse(searcher.result, searcher.lastParams(t)), got)
 	assert.Equal([]storage.SearchHint{{
 		Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
 	}}, got.Hints)

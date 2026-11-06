@@ -612,7 +612,14 @@ func TestSearchEveryWordHintEligibility(t *testing.T) {
 		{name: "hybrid", query: "nil pointer", mode: searchindex.ModeHybrid, params: searchindex.SearchParams{State: searchindex.StateAll}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result := searchindex.SearchResult{Query: tc.query, Mode: tc.mode, Partial: tc.partial, Degraded: tc.degraded}
+			result := searchindex.SearchResult{
+				Query: tc.query, Mode: tc.mode, Partial: tc.partial, Degraded: tc.degraded,
+				Coverage: searchindex.SearchCoverage{MirrorComplete: !tc.partial},
+			}
+			if tc.degraded {
+				result.DegradedReason = searchindex.ReasonSemanticUnavailable
+				result.Coverage.EmbeddingsConfigured = true
+			}
 			if result.Mode == "" {
 				result.Mode = searchindex.ModeLexical
 			}

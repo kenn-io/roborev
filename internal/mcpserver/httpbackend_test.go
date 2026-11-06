@@ -236,17 +236,21 @@ func TestHTTPBackendSearchSerializesEveryFilterAndPreservesResponse(t *testing.T
 	}, got)
 }
 
-func TestHTTPBackendSearchReturnsNonNilEmptyHits(t *testing.T) {
+func TestHTTPBackendSearchPreservesHintsAndNormalizesEmptyHits(t *testing.T) {
 	d, backend := newFakeDaemon(t)
 	d.routes["/api/search"] = jsonResponse(http.StatusOK,
-		`{"query":"absent","mode":"lexical","degraded":false,"bounded":false,"partial":false,
+		`{"query":"nil pointer","mode":"lexical","degraded":false,"bounded":false,"partial":false,
 			"coverage":{"mirror_complete":true,"embeddings_configured":false,
-				"vector_state":"disabled","embedding_backlog":0,"skipped":0},"hits":null}`)
+				"vector_state":"disabled","embedding_backlog":0,"skipped":0},"hits":null,
+ "hints":[{"code":"every_word_required","message":"no review contains every word; search again with fewer words"}]}`)
 
-	got, err := backend.Search(t.Context(), SearchQuery{Query: "absent"})
+	got, err := backend.Search(t.Context(), SearchQuery{Query: "nil pointer"})
 	require.NoError(t, err)
 	assert.NotNil(t, got.Hits)
 	assert.Empty(t, got.Hits)
+	assert.Equal(t, []storage.SearchHint{{
+		Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+	}}, got.Hints)
 }
 
 func TestHTTPBackendSearchUsesStablePrivateErrors(t *testing.T) {

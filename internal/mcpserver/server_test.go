@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -265,13 +264,19 @@ func TestMCPSearchAppliesDefaultsAndPreservesResponse(t *testing.T) {
 	var got SearchQuery
 	backend := &fakeBackend{searchFn: func(_ context.Context, query SearchQuery) (storage.SearchResponse, error) {
 		got = query
-		return storage.SearchResponse{Query: query.Query, Mode: "lexical", Hits: nil}, nil
+		return storage.SearchResponse{
+			Query: query.Query, Mode: "lexical", Hits: nil,
+			Coverage: storage.SearchCoverage{MirrorComplete: true},
+			Hints: []storage.SearchHint{{
+				Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+			}},
+		}, nil
 	}}
 	session := connectSession(t, backend)
 
-	result := callTool(t, session, "roborev_search_reviews", map[string]any{"query": "  needle  "})
+	result := callTool(t, session, "roborev_search_reviews", map[string]any{"query": "  nil pointer  "})
 	require.False(result.IsError)
-	assert.Equal(SearchQuery{Query: "needle", Mode: "auto", State: "all", Limit: 20}, got)
+	assert.Equal(SearchQuery{Query: "nil pointer", Mode: "auto", State: "all", Limit: 20}, got)
 	var out storage.SearchResponse
 	decodeText(t, result, &out)
 	require.NotNil(result.StructuredContent)
@@ -280,10 +285,13 @@ func TestMCPSearchAppliesDefaultsAndPreservesResponse(t *testing.T) {
 	var structuredOut storage.SearchResponse
 	require.NoError(json.Unmarshal(structuredJSON, &structuredOut))
 	assert.Equal(out, structuredOut)
-	assert.Equal("needle", out.Query)
+	assert.Equal("nil pointer", out.Query)
 	assert.Equal("lexical", out.Mode)
 	assert.NotNil(out.Hits)
 	assert.Empty(out.Hits)
+	assert.Equal([]storage.SearchHint{{
+		Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+	}}, out.Hints)
 }
 
 func TestMCPSearchPreservesExactFilters(t *testing.T) {
@@ -655,20 +663,4 @@ func TestGetJobOutputReportsAvailableLines(t *testing.T) {
 	assert.Equal(t, maxOutputLines+5, out.AvailableLines)
 	assert.Len(t, out.Lines, maxOutputLines)
 	assert.True(t, out.Truncated)
-}
-
-func TestMCPSearchEveryWordHint(t *testing.T) {
-	daemon, backend := newFakeDaemon(t)
-	daemon.routes["/api/search"] = jsonResponse(http.StatusOK, `{
-  "query":"nil pointer","mode":"lexical","degraded":false,"bounded":false,"partial":false,
-  "coverage":{"mirror_complete":true,"embeddings_configured":false,
-   "vector_state":"disabled","embedding_backlog":0,"skipped":0},"hits":[],
-  "hints":[{"code":"every_word_required","message":"no review contains every word; search again with fewer words"}]}`)
-	result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "nil pointer"})
-	require.False(t, result.IsError)
-	var out map[string]any
-	decodeText(t, result, &out)
-	assert.Equal(t, []any{map[string]any{
-		"code": "every_word_required", "message": "no review contains every word; search again with fewer words",
-	}}, out["hints"])
 }

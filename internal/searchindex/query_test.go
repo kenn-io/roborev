@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestLiteralFTSQueryQuotesEveryWhitespaceDelimitedSegment(t *testing.T) {
+func TestLiteralQueryQuotesSegmentsAndCountsSearchableWords(t *testing.T) {
 	tests := map[string]struct {
 		match string
 		words int
