@@ -207,6 +207,41 @@ func TestEnqueueReviewPromptSurvivesCommitRemapping(t *testing.T) {
 	}
 }
 
+func TestEnqueueReviewPromptMissingPromptFailsWithoutExecution(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile(".roborev.toml", "backup_agent = 'test'\n", "backup settings")
+	head := repo.CommitFile("file.txt", "review target\n", "target")
+	calls := 0
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: "missing-prompt-primary",
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			calls++
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	})
+	job := enqueueViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: head, Agent: "missing-prompt-primary", ReviewPrompt: "Review the change.",
+	})
+	// Model lost stored content without changing the supplied-prompt job's identity.
+	require.NoError(t, db.SaveJobPrompt(job.ID, ""))
+	claimed, err := db.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, "test", server.workerPool.resolveBackupAgent(claimed))
+	server.workerPool.processJob(testWorkerID, claimed)
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Zero(calls)
+	assert.Equal(storage.JobStatusFailed, stored.Status)
+	assert.Contains(stored.Error, "supplied review prompt is missing")
+	assert.Zero(stored.RetryCount)
+	assert.Equal("missing-prompt-primary", stored.Agent)
+	assert.Empty(stored.Prompt)
+}
+
 func TestEnqueueReviewPromptRejectsConflictingInputs(t *testing.T) {
 	t.Parallel()
 	server, _, _ := newTestServer(t)

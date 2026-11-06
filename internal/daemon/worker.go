@@ -1143,6 +1143,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	wp.logJobStarted(workerID, job)
 
+	if job.Source == storage.JobSourceReviewPrompt && strings.TrimSpace(storedPromptValue) == "" {
+		// Neither rebuilding local policy nor switching agents can recover caller input.
+		wp.runAttemptTransition(workerID, job, func() {
+			wp.failNonRetryableJobLocked(workerID, job, job.Agent,
+				"supplied review prompt is missing; enqueue a new review with review_prompt")
+		})
+		return
+	}
+
 	// Skip immediately if the agent is in quota cooldown.
 	// Resolve alias so "claude" checks cooldown for "claude-code".
 	canonicalAgent := agent.CanonicalName(job.Agent)
@@ -2182,6 +2191,12 @@ func (wp *WorkerPool) failoverOrFailNonRetryableAgentLocked(
 		}
 	}
 
+	wp.failNonRetryableJobLocked(workerID, job, agentName, errorMsg)
+}
+
+func (wp *WorkerPool) failNonRetryableJobLocked(
+	workerID string, job *storage.ReviewJob, agentName, errorMsg string,
+) {
 	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, errorMsg); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {
