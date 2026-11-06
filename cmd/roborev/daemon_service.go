@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
@@ -139,6 +140,11 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	snapshot, snapshotErr := snapshotDaemonService(ctx, info.PID, outsideService)
 	cancel()
+	return recoverDaemonWithSnapshot(info, probeErr, snapshot, snapshotErr)
+}
+
+func recoverDaemonWithSnapshot(info *daemon.RuntimeInfo, probeErr error, snapshot *daemonService, snapshotErr error) error {
+	probeFailed := probeErr != nil
 	if probeErr == nil && snapshotErr == nil && snapshot != nil {
 		// Keeping a responsive daemon changes nothing, so it needs no lock.
 		if reason := snapshot.keepReason(info.PID); reason != "" {
@@ -155,7 +161,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			release()
 		}
 	}()
-	ctx, cancel = context.WithTimeout(context.Background(), daemonStartTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
 	current, err := findDaemonForStart(ctx)
 	if err != nil {
@@ -179,6 +185,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 	}
 	responsive := current != nil
+	if responsive && os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1" {
+		return nil
+	}
 	if responsive && current.PID == info.PID && probeErr != nil {
 		// Discovery retains the runtime record's version. Confirm the live
 		// version before reusing a daemon whose earlier probe failed.
@@ -188,6 +197,10 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 		if err == nil && probe.Version == version.Version {
 			return nil
+		}
+		if err != nil {
+			responsive = false
+			probeErr = err
 		}
 	}
 	if responsive && current.PID != info.PID && current.Version == version.Version {
@@ -241,6 +254,13 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 		if err := owner.supported(); err != nil {
 			return fail(err)
+		}
+		if probeFailed && !current.Stale() {
+			cause := probeErr
+			if !errors.Is(probeErr, kitdaemon.ErrDaemonUnreachable) {
+				cause = fmt.Errorf("daemon is unresponsive: %w", probeErr)
+			}
+			return fail(fmt.Errorf("%w; run %s %s", cause, serviceRestartCommand, owner.unit))
 		}
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.

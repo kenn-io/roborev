@@ -540,20 +540,35 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name                      string
 		responsive, lockFailure   bool
+		exited                    bool
 		webOrigin, disabledReason string
 	}{
 		{name: "responsive after drain failure", responsive: true, webOrigin: "https://reviews.example.com"},
 		{name: "responsive after recovery lock failure", responsive: true, lockFailure: true, disabledReason: daemon.WebDisabledReasonConfig},
-		{name: "absent after recovery lock failure", lockFailure: true},
+		{name: "absent after recovery lock failure", lockFailure: true, exited: true},
+		{name: "unresponsive live process"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stubServiceRecovery(t)
 			oldEnsure, oldAddr, oldParsed := statusEnsureDaemon, serverAddr, parsedServerEndpoint
 			serverAddr, parsedServerEndpoint = "", nil
 			t.Cleanup(func() { statusEnsureDaemon, serverAddr, parsedServerEndpoint = oldEnsure, oldAddr, oldParsed })
+			pid := os.Getpid()
+			if tc.exited {
+				pid = exitedDaemonPID(t)
+			}
+			runtime := &daemon.RuntimeInfo{PID: pid, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1", WebOrigin: tc.webOrigin, WebDisabledReason: tc.disabledReason}
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+				if tc.responsive {
+					return nil, nil
+				}
+				return []*daemon.RuntimeInfo{runtime}, nil
+			}
 			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
 				if tc.responsive {
-					return &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1", WebOrigin: tc.webOrigin, WebDisabledReason: tc.disabledReason}, nil
+					return runtime, nil
 				}
 				return nil, os.ErrNotExist
 			})
@@ -583,7 +598,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
 			var result statusJSONResult
 			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
-			assert.Equal(t, tc.responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
+			assert.Equal(t, !tc.exited, result.Running, "running must reflect process liveness after recovery fails")
 			if tc.lockFailure {
 				assert.Contains(t, result.Error, "wait for daemon recovery lock")
 			} else {
@@ -599,7 +614,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			output := captureStdout(t, func() { textErr = textCmd.Execute() })
 			require.NoError(t, textErr)
 			state := "not running"
-			if tc.responsive {
+			if !tc.exited {
 				state = "running"
 			}
 			assert.Contains(t, output, "Daemon: "+state+"\n")

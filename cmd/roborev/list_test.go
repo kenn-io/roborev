@@ -3,19 +3,25 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 type repoSetupResult struct {
@@ -52,6 +58,8 @@ type listTestCase struct {
 	wantError     string
 	wantQuery     []string
 	notWantQuery  []string
+	wantStderr    []string
+	notWantStderr []string
 }
 
 func assertListContainsAll(t *testing.T, name, subject string, wants []string) {
@@ -383,7 +391,7 @@ func runListTest(t *testing.T, tc listTestCase) {
 	// Setup mock daemon to capture query and handle request
 	var capturedQuery string
 	wrapperHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
+		if r.URL.Path == "/api/jobs" && capturedQuery == "" {
 			capturedQuery = r.URL.RawQuery
 		}
 		if tc.handler != nil {
@@ -408,8 +416,10 @@ func runListTest(t *testing.T, tc listTestCase) {
 
 	// Execute command
 	var cmdErr error
+	var stderr bytes.Buffer
 	output := captureStdout(t, func() {
 		cmd := listCmd()
+		cmd.SetErr(&stderr)
 		args := append(tc.args, extraArgs...)
 		cmd.SetArgs(args)
 		cmdErr = cmd.Execute()
@@ -427,6 +437,9 @@ func runListTest(t *testing.T, tc listTestCase) {
 	assertListContainsAll(t, "output", output, tc.wantOutput)
 	assertListNotContainsAny(t, "output", output, tc.notWantOutput)
 
+	assertListContainsAll(t, "stderr", stderr.String(), tc.wantStderr)
+	assertListNotContainsAny(t, "stderr", stderr.String(), tc.notWantStderr)
+
 	// Verify query parameters
 	assertListContainsAll(t, "query", capturedQuery, tc.wantQuery)
 	assertListNotContainsAny(t, "query", capturedQuery, tc.notWantQuery)
@@ -434,5 +447,131 @@ func runListTest(t *testing.T, tc listTestCase) {
 	// Custom checks
 	if tc.check != nil {
 		tc.check(t, output, capturedQuery, repo, wd)
+	}
+}
+
+func TestListHints(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		workspace bool
+		probe     string
+		wantHint  string
+		wantCalls int32
+	}{
+		{name: "workspace singular text", workspace: true, probe: "singular", wantHint: "the daemon has 3 matching jobs in 1 repo;", wantCalls: 2},
+		{name: "workspace keeps filters", workspace: true, wantHint: "the daemon has 3 matching jobs in 2 repos", wantCalls: 2},
+		{name: "no jobs anywhere", workspace: true, probe: "empty", wantCalls: 2},
+		{name: "probe failure", workspace: true, probe: "fail", wantCalls: 2},
+		{name: "auto branch", wantHint: "other branches have matching jobs; run again with --all-branches", wantCalls: 2},
+		{name: "explicit branch", args: []string{"--branch", "main"}, wantCalls: 1},
+		{name: "JSON pagination", args: []string{"--json", "--limit", "1"}, wantHint: "hint: more jobs exist; raise --limit", wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			handler := func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/jobs" {
+					return
+				}
+				call := calls.Add(1)
+				jobs, stats := []storage.ReviewJob{}, storage.JobStats{Total: new(0), RepoCount: new(0)}
+				if call == 2 {
+					q := r.URL.Query()
+					assert.Equal(t, "true", q.Get("omit_prompt"))
+					if tc.workspace {
+						assert.Empty(t, q.Get("repo_prefix"))
+						assert.Empty(t, q.Get("omit_stats"))
+						assert.Equal(t, "true", q.Get("include_totals"))
+						assert.Equal(t, "failed", q.Get("status"))
+					} else {
+						assert.NotEmpty(t, q.Get("repo"))
+						assert.Empty(t, q.Get("branch"))
+						assert.Empty(t, q.Get("branch_include_empty"))
+					}
+					if tc.probe == "fail" {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+				}
+				hasMore := r.URL.Query().Get("limit") == "1" && tc.probe != "empty"
+				if hasMore {
+					jobs, stats = []storage.ReviewJob{{ID: 1, RepoPath: "/repos/a"}}, storage.JobStats{Total: new(3), RepoCount: new(2)}
+				}
+				if tc.probe == "singular" {
+					stats.RepoCount = new(1)
+				}
+				response := map[string]any{"jobs": jobs, "has_more": hasMore}
+				if q := r.URL.Query(); q.Get("omit_stats") != "true" && q.Get("include_totals") == "true" {
+					response["stats"] = stats
+				}
+				writeJSON(w, response)
+			}
+			lt := listTestCase{args: tc.args, handler: handler}
+			if tc.workspace {
+				lt.args = []string{"--json", "--status", "failed"}
+				if tc.probe == "singular" {
+					lt.args, lt.wantOutput = []string{"--status", "failed"}, []string{"No jobs found."}
+				}
+				lt.repoSetup = func(t *testing.T) repoSetupResult { return repoSetupResult{workingDir: t.TempDir()} }
+			}
+			if tc.wantHint != "" {
+				lt.wantStderr = []string{tc.wantHint}
+			} else {
+				lt.notWantStderr = []string{"hint:"}
+			}
+			lt.check = func(t *testing.T, output, query string, repo *TestGitRepo, wd string) {
+				assert.Equal(t, tc.wantCalls, calls.Load())
+				if tc.workspace && tc.probe != "singular" {
+					assert.Equal(t, "[]\n", output)
+				}
+			}
+			runListTest(t, lt)
+		})
+	}
+}
+
+func TestOutsideRepoHintListsCompletedFixJobs(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	server := daemon.NewServer(db, config.DefaultConfig(), "")
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+	daemonFromHandler(t, server.Handler())
+	var seeds []storage.ReviewJob
+	for range 2 {
+		repo, err := db.GetOrCreateRepo(t.TempDir())
+		require.NoError(t, err)
+		job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "main", Agent: "test", JobType: storage.JobTypeFix})
+		require.NoError(t, err)
+		_, err = db.ClaimJob("worker")
+		require.NoError(t, err)
+		require.NoError(t, db.CompleteFixJob(job.ID, "test", "fix output", "patch"))
+		job.RepoPath = repo.RootPath
+		seeds = append(seeds, *job)
+	}
+	outside := t.TempDir()
+	for _, mode := range []string{"fix", "compact"} {
+		var stderr bytes.Buffer
+		out, err := runWithOutput(t, outside, func(cmd *cobra.Command) error {
+			cmd.SetErr(&stderr)
+			if mode == "fix" {
+				return runFixList(cmd, "", true, false, false)
+			}
+			return runCompact(cmd, compactOptions{allBranches: true})
+		})
+		require.NoError(t, err)
+		assert.Contains(t, out, "No open jobs found.")
+		assert.Contains(t, stderr.String(), "in 2 repos;")
+	}
+	for _, seed := range seeds {
+		var err error
+		out := captureStdout(t, func() {
+			cmd := listCmd()
+			cmd.SetArgs([]string{"--repo", seed.RepoPath, "--all-branches", "--json"})
+			err = cmd.Execute()
+		})
+		require.NoError(t, err)
+		var jobs []storage.ReviewJob
+		require.NoError(t, json.Unmarshal([]byte(out), &jobs))
+		require.Len(t, jobs, 1)
+		assert.Equal(t, seed.ID, jobs[0].ID)
 	}
 }

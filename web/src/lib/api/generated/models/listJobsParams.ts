@@ -7,6 +7,7 @@ import type { ListJobsClosed } from "./listJobsClosed";
 import type { ListJobsHideClassifyJobs } from "./listJobsHideClassifyJobs";
 import type { ListJobsIncludeFindings } from "./listJobsIncludeFindings";
 import type { ListJobsIncludePanelMembers } from "./listJobsIncludePanelMembers";
+import type { ListJobsIncludeTotals } from "./listJobsIncludeTotals";
 import type { ListJobsOmitPrompt } from "./listJobsOmitPrompt";
 import type { ListJobsOmitStats } from "./listJobsOmitStats";
 
@@ -71,6 +72,10 @@ export type ListJobsParams = {
    * Include individual panel member jobs alongside panel synthesis jobs
    */
   include_panel_members?: ListJobsIncludePanelMembers;
+  /**
+   * Include total jobs and distinct repository counts in stats
+   */
+  include_totals?: ListJobsIncludeTotals;
   /**
    * Skip the queue counts (stats and filtered_stats) for callers that only read jobs
    */

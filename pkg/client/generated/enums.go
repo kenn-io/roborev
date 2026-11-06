@@ -176,6 +176,25 @@ func (l ListJobsQueryIncludePanelMembers) Validate() error {
 	}
 }
 
+// ListJobsQueryIncludeTotals Include total jobs and distinct repository counts in stats
+type ListJobsQueryIncludeTotals string
+
+const (
+	ListJobsQueryIncludeTotalsEmpty ListJobsQueryIncludeTotals = ""
+	ListJobsQueryIncludeTotalsFalse ListJobsQueryIncludeTotals = "false"
+	ListJobsQueryIncludeTotalsTrue  ListJobsQueryIncludeTotals = "true"
+)
+
+// Validate checks if the ListJobsQueryIncludeTotals value is valid
+func (l ListJobsQueryIncludeTotals) Validate() error {
+	switch l {
+	case ListJobsQueryIncludeTotalsEmpty, ListJobsQueryIncludeTotalsFalse, ListJobsQueryIncludeTotalsTrue:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListJobsQueryIncludeTotals value, got: %v", l))
+	}
+}
+
 // ListJobsQueryOmitStats Skip the queue counts (stats and filtered_stats) for callers that only read jobs
 type ListJobsQueryOmitStats string
 

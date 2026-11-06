@@ -131,6 +131,7 @@ export * from "./listJobsClosed";
 export * from "./listJobsHideClassifyJobs";
 export * from "./listJobsIncludeFindings";
 export * from "./listJobsIncludePanelMembers";
+export * from "./listJobsIncludeTotals";
 export * from "./listJobsOmitPrompt";
 export * from "./listJobsOmitStats";
 export * from "./listJobsOutputBody";

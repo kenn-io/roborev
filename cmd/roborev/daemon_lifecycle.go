@@ -314,6 +314,9 @@ func ensureDaemon() (err error) {
 		if exit, ok := errors.AsType[*exitError](err); ok && exit.hint != "" {
 			hint = exit.hint
 		}
+		if _, ok := errors.AsType[*managedRecoveryError](err); ok {
+			hint = ""
+		}
 		err = &exitError{code: 1, cause: err, kind: "daemon_unreachable", hint: hint}
 	}()
 	// An explicit endpoint is caller-managed. The command reports its request
@@ -373,8 +376,38 @@ func ensureDaemon() (err error) {
 	// an unpublished daemon by probing the shared default loopback port.
 	cleanupZombieDaemons(fallbackDaemonEndpoint())
 
+	runtimes, err := liveDaemonRuntimes()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	defer cancel()
+	for _, info := range runtimes {
+		outside := discoveredOutsideService(info.PID)
+		owner, err := snapshotDaemonService(ctx, info.PID, outside)
+		if err == nil && owner == nil {
+			continue
+		}
+		return recoverDaemonWithSnapshot(info, kitdaemon.ErrDaemonUnreachable, owner, err)
+	}
+
 	// Start daemon in background
 	return startDaemonForEnsure()
+}
+
+func liveDaemonRuntimes() ([]*daemon.RuntimeInfo, error) {
+	runtimes, err := listAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	var live []*daemon.RuntimeInfo
+	for _, info := range runtimes {
+		if info.Stale() {
+			continue
+		}
+		live = append(live, info)
+	}
+	return live, nil
 }
 
 func startDaemon() error {

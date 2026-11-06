@@ -44,3 +44,51 @@ func TestJobStatsQueryReadsMetadataIndexes(t *testing.T) {
 		}
 	})
 }
+
+func TestJobStatsTotalAndRepos(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	var firstRepoPath string
+	for i, path := range []string{"/repos/a", "/repos/b"} {
+		repo, err := db.GetOrCreateRepo(path)
+		require.NoError(t, err)
+		if i == 0 {
+			firstRepoPath = repo.RootPath
+		}
+		for _, status := range []JobStatus{JobStatusDone, JobStatusApplied, JobStatusRebased} {
+			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: string(status), Agent: "test", JobType: JobTypeFix})
+			require.NoError(t, err)
+			_, err = db.ClaimJob("worker")
+			require.NoError(t, err)
+			require.NoError(t, db.CompleteFixJob(job.ID, "test", "fix output", "patch"))
+			switch status {
+			case JobStatusApplied:
+				require.NoError(t, db.MarkJobApplied(job.ID))
+			case JobStatusRebased:
+				require.NoError(t, db.MarkJobRebased(job.ID))
+			}
+			require.NoError(t, db.MarkReviewClosedByJobID(job.ID, path == "/repos/b"))
+		}
+	}
+	for _, tc := range []struct {
+		repo, status string
+		opts         []ListJobsOption
+		total, repos int
+	}{
+		{total: 6, repos: 2},
+		{repo: firstRepoPath, total: 3, repos: 1},
+		{status: "applied", total: 2, repos: 2},
+		{opts: []ListJobsOption{WithClosed(false)}, total: 3, repos: 1},
+	} {
+		stats, err := db.CountJobStats(tc.status, tc.repo, append(tc.opts, WithJobTotals())...)
+		require.NoError(t, err)
+		require.NotNil(t, stats.Total)
+		require.NotNil(t, stats.RepoCount)
+		assert.Equal(t, tc.total, *stats.Total)
+		assert.Equal(t, tc.repos, *stats.RepoCount)
+	}
+	stats, err := db.CountJobStats("", "")
+	require.NoError(t, err)
+	assert.Nil(t, stats.Total)
+}

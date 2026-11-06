@@ -114,6 +114,7 @@ type ListJobsInput struct {
 	HideClassifyJobs    string    `query:"hide_classify_jobs" doc:"Hide auto-design-router rows (job_type=classify and status=skipped)" enum:"true,false,"`
 	PanelRun            uuid.UUID `query:"panel_run" doc:"Return all jobs (members + synthesis) of one panel run"`
 	IncludePanelMembers string    `query:"include_panel_members" doc:"Include individual panel member jobs alongside panel synthesis jobs" enum:"true,false,"`
+	IncludeTotals       string    `query:"include_totals" doc:"Include total jobs and distinct repository counts in stats" enum:"true,false,"`
 	OmitStats           string    `query:"omit_stats" doc:"Skip the queue counts (stats and filtered_stats) for callers that only read jobs" enum:"true,false,"`
 	OmitPrompt          string    `query:"omit_prompt" doc:"Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)" enum:"true,false,"`
 	IncludeFindings     string    `query:"include_findings" doc:"Include nullable finding severity counts for eligible completed reviews" enum:"true,false,"`

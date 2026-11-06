@@ -92,16 +92,23 @@ func TestEnsureDaemonHandlesVersionProbe(t *testing.T) {
 		name         string
 		probeErr     error
 		accessDenied bool
+		managed      bool
 	}{
 		{name: "live version mismatch"},
 		{name: "probe access denied", probeErr: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EPERM}, accessDenied: true},
+		{name: "live unresponsive managed daemon", probeErr: errors.New("probe timed out"), managed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+			var service *daemonService
+			if tc.managed {
+				stubServiceRecovery(t)
+				service = ownedDaemonService(t)
+			}
 			oldDiscovery := getAnyRunningDaemonForStart
 			t.Cleanup(func() { getAnyRunningDaemonForStart = oldDiscovery })
-			current := &daemon.RuntimeInfo{PID: 1234, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
+			current := &daemon.RuntimeInfo{PID: os.Getpid(), Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return current, nil }
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return current, nil }
 			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
@@ -112,12 +119,21 @@ func TestEnsureDaemonHandlesVersionProbe(t *testing.T) {
 			}
 			starts := 0
 			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-				assert.Equal(t, 1234, pid)
-				return nil, nil
+				assert.Equal(t, current.PID, pid)
+				return service, nil
 			}
 			startDaemonForEnsure = func() error { starts++; return nil }
 			err := ensureDaemon()
-			if tc.accessDenied {
+			if tc.managed {
+				var managed *managedRecoveryError
+				require.ErrorAs(t, err, &managed)
+				var exit *exitError
+				require.ErrorAs(t, err, &exit)
+				assert.Empty(t, exit.hint)
+				assert.Equal(t, 1, exit.code)
+				assert.Equal(t, "daemon_unreachable", exit.kind)
+				assert.Zero(t, starts)
+			} else if tc.accessDenied {
 				require.True(t, daemon.IsDaemonAccessError(err))
 				assert.Zero(t, starts)
 			} else {
