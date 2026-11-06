@@ -150,21 +150,27 @@ func decodeText(t *testing.T, result *mcp.CallToolResult, out any) {
 // Base catalog: 19,684 bytes, plus 10% rounded up to the next 1,000 bytes.
 const toolCatalogBudget = 22_000
 
+func toolCatalogJSONSize(t *testing.T, value any) int {
+	t.Helper()
+	var data strings.Builder
+	encoder := json.NewEncoder(&data)
+	encoder.SetEscapeHTML(false) // Match the SDK's JSON-RPC encoding.
+	require.NoError(t, encoder.Encode(value))
+	return data.Len() - 1 // Exclude Encoder.Encode's trailing newline.
+}
+
 func checkToolCatalogBudget(t *testing.T, result *mcp.ListToolsResult) error {
 	t.Helper()
 	require.Empty(t, result.NextCursor, "budget must cover the complete catalog")
-	data, err := json.Marshal(result)
-	require.NoError(t, err)
-	if len(data) <= toolCatalogBudget {
+	size := toolCatalogJSONSize(t, result)
+	if size <= toolCatalogBudget {
 		return nil
 	}
 	var breakdown strings.Builder
 	for _, tool := range result.Tools {
-		data, err := json.Marshal(tool)
-		require.NoError(t, err)
-		fmt.Fprintf(&breakdown, "\n%s: %d bytes", tool.Name, len(data))
+		fmt.Fprintf(&breakdown, "\n%s: %d bytes", tool.Name, toolCatalogJSONSize(t, tool))
 	}
-	return fmt.Errorf("tool catalog: %d bytes exceeds budget of %d bytes%s", len(data), toolCatalogBudget, breakdown.String())
+	return fmt.Errorf("tool catalog: %d bytes exceeds budget of %d bytes%s", size, toolCatalogBudget, breakdown.String())
 }
 
 func TestToolCatalogBudgetBoundary(t *testing.T) {
@@ -176,18 +182,14 @@ func TestToolCatalogBudgetBoundary(t *testing.T) {
 	session := connectServer(t, server)
 	result, err := session.ListTools(t.Context(), nil)
 	require.NoError(err)
-	data, err := json.Marshal(result)
-	require.NoError(err)
 	// A nonempty description also adds its JSON key, quotes, and comma.
-	tool.Description = strings.Repeat("x", toolCatalogBudget-len(data)-len(`,"description":""`))
+	tool.Description = "<>&" + strings.Repeat("x", toolCatalogBudget-toolCatalogJSONSize(t, result)-len(`,"description":""`)-3)
 	for _, extra := range []int{0, 1} {
 		tool.Description += strings.Repeat("x", extra)
 		server.mcp.AddTool(tool, nil)
 		result, err = session.ListTools(t.Context(), nil)
 		require.NoError(err)
-		data, err = json.Marshal(result)
-		require.NoError(err)
-		require.Len(data, toolCatalogBudget+extra)
+		require.Equal(toolCatalogBudget+extra, toolCatalogJSONSize(t, result))
 		err = checkToolCatalogBudget(t, result)
 		if extra == 0 {
 			require.NoError(err)
