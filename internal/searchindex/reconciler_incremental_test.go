@@ -194,9 +194,6 @@ func TestReconcilerPullWriteRefreshesOnlyPulledReview(t *testing.T) {
 				require.NoError(t, db.DeleteSearchChanges(t.Context(), head))
 				r = NewReconciler(db, index, nil, ReconcilerConfig{})
 				r.mirrorRequested = false
-				r.health.MirrorComplete = true
-				r.health.MirrorBacklog = new(int64)
-				r.health.Indexed = int64(reviews)
 			}
 			for _, table := range []string{"review_mirror", "review_fts"} {
 				var count int
