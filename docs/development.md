@@ -399,10 +399,13 @@ with `custom_prompt`, dirty input, `agentic`, a named panel, `source`,
 The stored job has source `review_prompt`.
 
 Automatic retries and manual reruns keep the supplied prompt and resolved
-revision. Prompt pruning retains it, as it does other inputs that cannot be
-rebuilt; deleting the job removes it. These requests still use the daemon's
-normal execution configuration, agent permissions, retries, and backup agents.
-They do not freeze those settings or isolate the agent from repository files.
+revision, including reruns of jobs imported through sync. Post-rewrite commit
+remapping leaves these jobs at their original revision, even when a rebase
+preserves the patch. Prompt pruning retains the prompt, as it does other inputs
+that cannot be rebuilt; deleting the job removes it. These requests still use
+the daemon's normal execution configuration, agent permissions, retries, and
+backup agents. They do not freeze those settings or isolate the agent from
+repository files.
 
 ## License
 

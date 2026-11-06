@@ -9,18 +9,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestEnqueueReviewPromptExecutesFrozenRevision(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"commit", "range", "retry", "rerun", "cancel"} {
+	for _, kind := range []string{"commit", "range", "retry", "rerun", "imported rerun", "cancel"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			server, db, _ := newTestServer(t)
@@ -69,11 +71,35 @@ func TestEnqueueReviewPromptExecutesFrozenRevision(t *testing.T) {
 			repo.CommitFile("file.txt", "later checkout\n", "advance checkout")
 			repo.Run("tag", "-f", "review-target", "HEAD")
 			runs := 1
-			if kind == "retry" || kind == "rerun" {
+			if kind == "retry" || kind == "rerun" || kind == "imported rerun" {
 				runs = 2
 			}
 			for run := range runs {
-				if kind == "rerun" && run == 1 {
+				if kind == "imported rerun" && run == 1 {
+					machineID, err := db.GetMachineID()
+					require.NoError(t, err)
+					jobs, err := db.GetJobsToSync(machineID, 10)
+					require.NoError(t, err)
+					require.Len(t, jobs, 1)
+					exported := jobs[0]
+					server, db, _ = newTestServer(t)
+					localRepo, err := db.GetOrCreateRepo(repo.Path())
+					require.NoError(t, err)
+					commit, err := db.GetOrCreateCommit(localRepo.ID, exported.CommitSHA,
+						exported.CommitAuthor, exported.CommitSubject, exported.CommitTimestamp)
+					require.NoError(t, err)
+					// Sync carries the source and prompt, but no prompt_prebuilt field.
+					require.NoError(t, db.UpsertPulledJob(storage.PulledJob{
+						UUID: exported.UUID, GitRef: exported.GitRef, Agent: exported.Agent,
+						Source: exported.Source, Prompt: exported.Prompt, JobType: exported.JobType,
+						Status: exported.Status, EnqueuedAt: exported.EnqueuedAt,
+						FinishedAt: exported.FinishedAt, UpdatedAt: exported.UpdatedAt,
+						SourceMachineID: exported.SourceMachineID,
+					}, localRepo.ID, &commit.ID))
+					require.NoError(t, db.QueryRowContext(t.Context(),
+						`SELECT id FROM review_jobs WHERE uuid = ?`, exported.UUID).Scan(&job.ID))
+				}
+				if (kind == "rerun" || kind == "imported rerun") && run == 1 {
 					_, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: job.ID}})
 					require.NoError(t, err)
 				}
@@ -97,12 +123,86 @@ func TestEnqueueReviewPromptExecutesFrozenRevision(t *testing.T) {
 				require.NoError(t, err)
 				assert.Contains(review.Output, "No issues found.")
 			}
-			if kind == "retry" || kind == "rerun" {
+			if kind == "retry" || kind == "rerun" || kind == "imported rerun" {
 				assert.Equal(prompts[0], prompts[1])
 			}
 			data, err := os.ReadFile(filepath.Join(repo.Path(), "file.txt"))
 			require.NoError(t, err)
 			assert.Equal("later checkout\n", string(data))
+		})
+	}
+}
+
+func TestEnqueueReviewPromptSurvivesCommitRemapping(t *testing.T) {
+	t.Parallel()
+	for _, method := range []string{"api", "git ref"} {
+		t.Run(method, func(t *testing.T) {
+			assert := assert.New(t)
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			repo.CommitFile("base.txt", "original base\n", "base")
+			repo.Run("checkout", "-b", "feature")
+			head := repo.CommitFile("feature.txt", "feature\n", "feature")
+			const supplied = "Review the feature against the original base."
+			called := false
+			name := "remap-supplied-review-" + method
+			agent.RegisterForTest(t, &agent.FakeAgent{
+				NameStr: name,
+				ReviewFn: func(_ context.Context, root, ref, body string, _ io.Writer) (string, error) {
+					called = true
+					assert.Equal(head, ref)
+					assert.Equal(head, strings.TrimSpace(repo.Run("-C", root, "rev-parse", "HEAD")))
+					base, err := os.ReadFile(filepath.Join(root, "base.txt"))
+					require.NoError(t, err)
+					assert.Equal("original base\n", string(base))
+					assert.Contains(body, supplied)
+					return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+				},
+			})
+			frozen := enqueueViaHTTP(t, server, EnqueueRequest{
+				RepoPath: repo.Path(), GitRef: head, Agent: name, ReviewPrompt: supplied,
+			})
+			ordinary := enqueueViaHTTP(t, server, EnqueueRequest{
+				RepoPath: repo.Path(), GitRef: head, Agent: "test",
+			})
+			repo.Run("checkout", "main")
+			repo.CommitFile("base.txt", "changed base\n", "advance base")
+			repo.Run("checkout", "feature")
+			repo.Run("rebase", "main")
+			rebased := repo.HeadSHA()
+			require.NotEqual(t, head, rebased)
+			patchID := gitpkg.GetPatchID(repo.Path(), rebased)
+			require.NotEmpty(t, patchID)
+			require.Equal(t, gitpkg.GetPatchID(repo.Path(), head), patchID)
+			if method == "api" {
+				result, err := server.humaRemap(t.Context(), &RemapInput{Body: RemapRequest{
+					RepoPath: repo.Path(), Mappings: []RemapMapping{{
+						OldSHA: head, NewSHA: rebased, PatchID: patchID,
+						Author: "Author", Subject: "feature", Timestamp: time.Now().Format(time.RFC3339),
+					}},
+				}})
+				require.NoError(t, err)
+				assert.Equal(1, result.Body.Remapped)
+			} else {
+				commit, err := db.GetOrCreateCommit(frozen.RepoID, rebased, "Author", "feature", time.Now())
+				require.NoError(t, err)
+				count, err := db.RemapJobGitRef(frozen.RepoID, head, rebased, patchID, commit.ID)
+				require.NoError(t, err)
+				assert.Equal(1, count)
+			}
+			moved, err := db.GetJobByID(ordinary.ID)
+			require.NoError(t, err)
+			assert.Equal(rebased, moved.GitRef)
+			claimed, err := db.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			require.Equal(t, frozen.ID, claimed.ID)
+			assert.Equal(frozen.CommitID, claimed.CommitID)
+			server.workerPool.processJob(testWorkerID, claimed)
+			assert.True(called)
+			stored, err := db.GetJobByID(frozen.ID)
+			require.NoError(t, err)
+			assert.Equal(storage.JobStatusDone, stored.Status)
 		})
 	}
 }

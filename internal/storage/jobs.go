@@ -1656,6 +1656,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
 	// for ordinary review jobs so they rebuild from current git/config state.
 	// A caller-supplied review prompt cannot be regenerated from the checkout.
+	// Restore its prebuilt flag from source because sync does not carry the flag.
 	// Stored-prompt jobs (task, compact, fix, insights, goal_review) keep their prompt
 	// since the worker needs it and cannot regenerate it from git.
 	//
@@ -1680,7 +1681,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		    backup_agent = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_backup_agent ELSE backup_agent END,
 		    backup_model = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_backup_model ELSE backup_model END,
 		    budget_original_agent = '', budget_original_backup_agent = '', budget_original_backup_model = '',
-		    prompt_prebuilt = CASE WHEN source = ? THEN prompt_prebuilt ELSE 0 END,
+		    prompt_prebuilt = CASE WHEN source = ? THEN 1 ELSE 0 END,
 		    skip_reason = NULL,
 		    updated_at = ?
 		WHERE id = ?
@@ -2604,6 +2605,7 @@ func (db *DB) UpdateJobBranch(jobID int64, branch string) (int64, error) {
 // oldSHA in a repo, used after rebases to preserve review history.
 // If a job has a stored patch_id that differs from the provided one,
 // that job is skipped (the commit's content changed).
+// Supplied-prompt reviews keep their original revision even for identical patches.
 // Returns the number of rows updated.
 func (db *DB) RemapJobGitRef(
 	repoID int64, oldSHA, newSHA, patchID string, newCommitID int64,
@@ -2614,8 +2616,9 @@ func (db *DB) RemapJobGitRef(
 		SET git_ref = ?, commit_id = ?, patch_id = ?, updated_at = ?
 		WHERE git_ref = ? AND repo_id = ?
 		AND status != 'running'
+		AND COALESCE(source, '') != ?
 		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
-	`, newSHA, newCommitID, nullString(patchID), now, oldSHA, repoID, patchID)
+	`, newSHA, newCommitID, nullString(patchID), now, oldSHA, repoID, JobSourceReviewPrompt, patchID)
 	if err != nil {
 		return 0, fmt.Errorf("remap job git_ref: %w", err)
 	}
@@ -2629,6 +2632,7 @@ func (db *DB) RemapJobGitRef(
 // RemapJob atomically checks for matching jobs, creates the commit
 // row, and updates git_ref — all in a single transaction to prevent
 // orphan commit rows or races between concurrent remaps.
+// Supplied-prompt reviews keep their original revision even for identical patches.
 func (db *DB) RemapJob(
 	repoID int64, oldSHA, newSHA, patchID string,
 	author, subject string, timestamp time.Time,
@@ -2644,8 +2648,9 @@ func (db *DB) RemapJob(
 		SELECT COUNT(*) FROM review_jobs
 		WHERE git_ref = ? AND repo_id = ?
 		AND status != 'running'
+		AND COALESCE(source, '') != ?
 		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
-	`, oldSHA, repoID, patchID).Scan(&matchCount)
+	`, oldSHA, repoID, JobSourceReviewPrompt, patchID).Scan(&matchCount)
 	if err != nil {
 		return 0, fmt.Errorf("count matching jobs: %w", err)
 	}
@@ -2679,9 +2684,10 @@ func (db *DB) RemapJob(
 		SET git_ref = ?, commit_id = ?, patch_id = ?, updated_at = ?
 		WHERE git_ref = ? AND repo_id = ?
 		AND status != 'running'
+		AND COALESCE(source, '') != ?
 		AND (patch_id IS NULL OR patch_id = '' OR patch_id = ?)
 	`, newSHA, commitID, nullString(patchID), now,
-		oldSHA, repoID, patchID)
+		oldSHA, repoID, JobSourceReviewPrompt, patchID)
 	if err != nil {
 		return 0, fmt.Errorf("remap job git_ref: %w", err)
 	}
