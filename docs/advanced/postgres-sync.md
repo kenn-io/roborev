@@ -71,8 +71,8 @@ current batch, pushes up to 500 items and pulls, then background sync pushes the
 rest.
 
 `sync status` and `roborev status` show the worker's last finished ping,
-refreshed in the background when read and at most every 10 seconds. The first read
-after a quiet period shows the previous ping.
+refreshed in the background when read and at most every 10 seconds. The first
+read after a quiet period shows the previous ping.
 
 ## What Gets Synced
 
