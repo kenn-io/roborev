@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-11-05
 ---
 
 # Roborev MCP guidance
@@ -8,6 +8,37 @@ These tools read review data, comment on and close existing reviews, snooze
 Agent Hooks, and complete hook fix sessions. Review creation and cancellation
 remain CLI operations. Use the MCP connection for the same daemon that issued
 the review IDs or fix-session UUID.
+
+## Bundled guides
+
+Call `roborev.skills {}` to list the bundled guide names, titles, and summaries.
+Read one with `roborev.skills {"name":"roborev-fix"}`. Each guide reuses the
+shipped skill with its MCP instructions. Reading it does not invoke a skill,
+authorize its commands, or widen the review IDs supplied by an Agent Hook.
+Named guides explain the explicit invocation spellings used by different
+clients. Some workflows still require local CLI, Git, or code-editing access.
+
+## CLI commands and MCP tools
+
+| CLI operation | MCP tool | Difference |
+| --- | --- | --- |
+| `roborev status` | `roborev_status` | Structured daemon and queue status |
+| `roborev repo list` | `roborev_list_repos` | Use the returned `root_path` as `repo_path` |
+| `roborev job list` | `roborev_list_jobs` | Follow `next_cursor`; no prompts or diffs |
+| `roborev job show` | `roborev_get_review` | Pass `job_id` or `sha`; verdict is `pass`, `fail`, or empty |
+| `roborev search` | `roborev_search_reviews` | Pass filters as fields; read coverage flags |
+| `roborev job comment` | `roborev_add_comment` | Pass `job_id`, `commenter`, and `comment` |
+| Comments in `roborev job show` | `roborev_list_comments` | Fetch responses separately when needed |
+| `roborev job close` | `roborev_close_review` | Close one existing review by `job_id` |
+| `roborev job log` | `roborev_get_job_output` | Bounded output snapshot, not a live stream |
+| `roborev agent hook snooze` | `roborev_snooze` | Supply repo, worktree, branch and absolute expiry |
+| `roborev agent hook fix-done` | `roborev_complete_fix` | Use only the exact supplied fix-session UUID |
+| Review creation/cancellation and configuration | No MCP tool | Requires authorized CLI access |
+| Git operations and code edits | No MCP tool | Requires local repository access |
+
+CLI flags such as `--json` and `--from-skill` are not MCP arguments.
+Use only fields in each tool's schema. MCP clients without local capabilities
+must report those workflow limits instead of inventing replacement tools.
 
 ## Suggested flow
 
