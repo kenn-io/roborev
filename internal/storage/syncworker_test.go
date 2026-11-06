@@ -194,9 +194,9 @@ func TestSyncPullWriteCallbackIsRaceSafeNilSafeAndInvokedOutsideLock(t *testing.
 		}()
 		go func() {
 			defer wg.Done()
-			worker.syncMu.Lock()
+			assert.NoError(t, worker.syncMu.Acquire(t.Context(), 1))
 			worker.notifyAfterPullWrite()
-			worker.syncMu.Unlock()
+			worker.syncMu.Release(1)
 		}()
 	}
 	wg.Wait()

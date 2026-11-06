@@ -15,6 +15,7 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 	"github.com/jackc/pgx/v5/pgconn"
+	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -26,9 +27,9 @@ type SyncWorker struct {
 	pgPool          *PgPool
 	stopCh          chan struct{}
 	doneCh          chan struct{}
-	mu              sync.Mutex // protects running, pgPool, and callbacks
-	syncMu          sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
-	connectMu       sync.Mutex // serializes connect operations
+	mu              sync.Mutex          // protects running, pgPool, and callbacks
+	syncMu          *semaphore.Weighted // queues sync operations in arrival order
+	connectMu       sync.Mutex          // serializes connect operations
 	running         bool
 	skipInitialSync bool  // when true, skip the immediate doSync on connect
 	working         bool  // protected by syncMu; requires a completed push and pull
@@ -144,7 +145,7 @@ func (w *SyncWorker) SetAfterPull(fn func()) {
 
 func (w *SyncWorker) finishSync() {
 	wrote := w.pullWrote
-	w.syncMu.Unlock()
+	w.syncMu.Release(1)
 	w.mu.Lock()
 	fn := w.afterPull
 	w.mu.Unlock()
@@ -221,6 +222,7 @@ func NewSyncWorker(db *DB, cfg config.SyncConfig) *SyncWorker {
 		cfg:    cfg,
 		stopCh: make(chan struct{}),
 		doneCh: make(chan struct{}),
+		syncMu: semaphore.NewWeighted(1),
 	}
 }
 
@@ -299,8 +301,8 @@ func (w *SyncWorker) Stop() {
 
 	// Acquire syncMu to wait for any in-flight SyncNow or FinalPush to complete
 	// before closing the pool
-	w.syncMu.Lock()
-	defer w.syncMu.Unlock()
+	_ = w.syncMu.Acquire(context.Background(), 1) // Wait for in-flight sync operations before closing the pool.
+	defer w.syncMu.Release(1)
 
 	w.mu.Lock()
 	if w.pgPool != nil {
@@ -334,8 +336,8 @@ func (w *SyncWorker) FinalPush() error {
 	}
 
 	// Serialize with other sync operations
-	w.syncMu.Lock()
-	defer w.syncMu.Unlock()
+	_ = w.syncMu.Acquire(context.Background(), 1) // Final push waits for its turn even during shutdown.
+	defer w.syncMu.Release(1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -427,7 +429,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	}
 
 	// Serialize with other sync operations
-	w.syncMu.Lock()
+	_ = w.syncMu.Acquire(context.Background(), 1) // Preserve the unbounded wait for an explicit sync.
 	w.pullWrote = false
 	defer w.finishSync()
 
@@ -723,10 +725,6 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 // doSync performs a single sync cycle (push then pull)
 // Loops until all pending items are pushed.
 func (w *SyncWorker) doSync() error {
-	w.syncMu.Lock()
-	w.pullWrote = false
-	defer w.finishSync()
-
 	w.mu.Lock()
 	pool := w.pgPool
 	w.mu.Unlock()
@@ -738,14 +736,18 @@ func (w *SyncWorker) doSync() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	w.passError = nil
 	// Push all local changes to PostgreSQL (loop until no more pending)
 	var totalJobs, totalReviews, totalResponses int
 	cur := pushCursor{}
+	failed := false
 	for {
+		_ = w.syncMu.Acquire(context.Background(), 1) // Queue each batch so sync now can take the next turn.
+		w.passError = nil
 		stats, err := w.pushChangesWithStats(ctx, pool, &cur)
+		w.observeFailure(err)
+		failed = failed || reportableSyncError(w.passError)
+		w.syncMu.Release(1)
 		if err != nil {
-			w.observeFailure(err)
 			return fmt.Errorf("push: %w", err)
 		}
 		if stats.Jobs == 0 && stats.Reviews == 0 && stats.Responses == 0 {
@@ -759,12 +761,20 @@ func (w *SyncWorker) doSync() error {
 	}
 
 	// Pull remote changes from PostgreSQL
+	_ = w.syncMu.Acquire(context.Background(), 1) // Keep the pull in one turn after the push batches.
+	w.pullWrote = false
+	w.passError = nil
+	defer w.finishSync()
 	if err := w.pullChanges(ctx, pool); err != nil {
 		w.observeFailure(err)
 		return fmt.Errorf("pull: %w", err)
 	}
 
-	w.observePass()
+	if failed {
+		w.observeFailure(nil)
+	} else {
+		w.observePass()
+	}
 	return nil
 }
 
