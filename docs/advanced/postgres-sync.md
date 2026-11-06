@@ -70,9 +70,9 @@ If the daemon is pushing a backlog, `roborev sync now` takes over after the
 current batch, pushes up to 500 items and pulls, then background sync pushes the
 rest.
 
-`sync status` and `roborev status` show the last connection check. Reading status
-refreshes it in the background at most every 10 seconds, so the result can be one
-check behind.
+`sync status` and `roborev status` show the last finished connection check,
+refreshed in the background when read and at most every 10 seconds. The first read
+after a quiet period shows the previous check.
 
 ## What Gets Synced
 

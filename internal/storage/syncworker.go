@@ -747,14 +747,7 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 				w.mu.Unlock()
 				if pool != nil {
 					// The sync loop owns this probe outside any request lifetime.
-					err := w.pingPool(context.Background(), pool)
-					w.mu.Lock()
-					if w.pgPool == pool {
-						w.pgReachable = err == nil
-						w.healthCheckedAt = time.Now()
-					}
-					w.mu.Unlock()
-					if err != nil {
+					if err := w.pingPool(context.Background(), pool); err != nil {
 						return // Connection lost, exit to reconnect
 					}
 				}
@@ -814,12 +807,6 @@ func (w *SyncWorker) doSync() error {
 
 	if !failed {
 		w.observePass()
-		w.mu.Lock()
-		if w.pgPool == pool {
-			w.pgReachable = true
-			w.healthCheckedAt = time.Now()
-		}
-		w.mu.Unlock()
 	}
 	return nil
 }
