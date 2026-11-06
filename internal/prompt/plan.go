@@ -91,7 +91,7 @@ func FixPlanReviewContext(ctx context.Context, repoPath string, review *storage.
 	if review.Job != nil && review.Job.GitRef != "" {
 		fmt.Fprintf(&context, "Reviewed reference: %q\n\n", review.Job.GitRef)
 	}
-	context.WriteString(review.Output)
+	context.WriteString(storage.FixReviewContext(review))
 	if review.Job != nil && review.Job.GitRef != "" && review.Job.GitRef != "dirty" {
 		if diff, err := git.GetDiffCtx(ctx, repoPath, review.Job.GitRef); err == nil && len(diff) > 0 {
 			context.WriteString("\n## Original Commit Diff (for context)\n\n```diff\n" + diff + "\n```\n")

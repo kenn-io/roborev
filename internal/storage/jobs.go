@@ -1568,6 +1568,10 @@ type ReenqueueOpts struct {
 	RestorePlan bool
 }
 
+// ErrAccountableCompactRerun protects the sole saved compact result after its
+// sources may have closed and its per-run manifest has been cleaned up.
+var ErrAccountableCompactRerun = errors.New("this completed compact review cannot be rerun; its findings and history are preserved")
+
 // ReenqueueJob resets a completed, failed, or canceled job back to queued status.
 // This allows manual re-running of jobs to get a fresh review.
 // For done jobs, the existing review is deleted to avoid unique constraint violations.
@@ -1625,9 +1629,20 @@ func (db *DB) ReenqueueJobWithRequest(
 	if db.attempts.active[jobID] != nil {
 		return 0, false, sql.ErrNoRows
 	}
-	var previousEnqueuedAt string
-	if err := conn.QueryRowContext(ctx, `SELECT enqueued_at FROM review_jobs WHERE id = ?`, jobID).Scan(&previousEnqueuedAt); err != nil {
+	var previousEnqueuedAt, jobType, storedPrompt string
+	var hasReview bool
+	if err := conn.QueryRowContext(ctx, `SELECT j.enqueued_at, j.job_type,
+		COALESCE(zstd_decompress(jc.prompt), ''),
+		EXISTS(SELECT 1 FROM reviews rv WHERE rv.job_id=j.id)
+		FROM review_jobs j LEFT JOIN job_content jc ON jc.job_id=j.id
+		WHERE j.id=?`, jobID).Scan(&previousEnqueuedAt, &jobType, &storedPrompt, &hasReview); err != nil {
 		return 0, false, err
+	}
+	// Reject under the same transaction lock as deletion/reset, including direct
+	// storage callers. Keeping a manifest alone would still allow a failed rerun
+	// to erase the only actionable result while its originals remain closed.
+	if jobType == JobTypeCompact && strings.HasPrefix(storedPrompt, CompactPromptPrefix) && hasReview {
+		return 0, false, ErrAccountableCompactRerun
 	}
 	// Delete any existing review for this job (for done jobs being rerun)
 	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
