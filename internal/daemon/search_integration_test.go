@@ -454,9 +454,21 @@ func TestSearchIntegrationEveryWordHint(t *testing.T) {
 		require.Len(t, response.Hits, 1)
 		assert.Equal(t, jobID, response.Hits[0].JobID)
 	}
-	recorder := executeSearch(t.Context(), server, url.Values{
-		"q": {"racewindow original"}, "mode": {"lexical"}, "branch": {"nonexistent"},
-	})
+	for _, branch := range []string{"", "nonexistent"} {
+		recorder := executeSearch(t.Context(), server, url.Values{
+			"q": {"racewindow original"}, "mode": {"lexical"}, "branch": {branch},
+		})
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var response storage.SearchResponse
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.Empty(t, response.Hints)
+		if branch == "" {
+			assert.NotEmpty(t, response.Hits)
+		} else {
+			assert.Empty(t, response.Hits)
+		}
+	}
+	recorder := executeSearch(t.Context(), server, url.Values{"q": {"absentword"}, "mode": {"lexical"}})
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var response storage.SearchResponse
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
