@@ -20,6 +20,8 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
+const healthInterval = 10 * time.Second
+
 // SyncWorker handles background synchronization between SQLite and PostgreSQL
 type SyncWorker struct {
 	db              *DB
@@ -30,7 +32,6 @@ type SyncWorker struct {
 	healthPinging   bool
 	healthCtx       context.Context //nolint:containedctx // owns probes for the current pool's lifetime
 	healthCancel    context.CancelFunc
-	healthInterval  time.Duration
 	pingTimeout     time.Duration
 	stopCh          chan struct{}
 	doneCh          chan struct{}
@@ -225,13 +226,12 @@ func (w *SyncWorker) PublishSearchVectors(
 // NewSyncWorker creates a new sync worker
 func NewSyncWorker(db *DB, cfg config.SyncConfig) *SyncWorker {
 	return &SyncWorker{
-		db:             db,
-		cfg:            cfg,
-		stopCh:         make(chan struct{}),
-		doneCh:         make(chan struct{}),
-		syncMu:         semaphore.NewWeighted(1),
-		healthInterval: 10 * time.Second,
-		pingTimeout:    5 * time.Second,
+		db:          db,
+		cfg:         cfg,
+		stopCh:      make(chan struct{}),
+		doneCh:      make(chan struct{}),
+		syncMu:      semaphore.NewWeighted(1),
+		pingTimeout: 5 * time.Second,
 	}
 }
 
@@ -319,8 +319,11 @@ func (w *SyncWorker) Stop() {
 	defer w.syncMu.Release(1)
 
 	w.mu.Lock()
-	w.closePool()
+	pool := w.closePool()
 	w.mu.Unlock()
+	if pool != nil {
+		pool.Close()
+	}
 }
 
 // SyncStats contains statistics from a sync operation
@@ -423,8 +426,11 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 		w.mu.Lock()
 		if !w.running {
 			// Worker was stopped during connect - close pool and abort
-			w.closePool()
+			pool = w.closePool()
 			w.mu.Unlock()
+			if pool != nil {
+				pool.Close()
+			}
 			return nil, fmt.Errorf("sync worker stopped during connect")
 		}
 		pool = w.pgPool
@@ -578,8 +584,11 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 
 		// If we get here, we disconnected - try to reconnect
 		w.mu.Lock()
-		w.closePool()
+		pool := w.closePool()
 		w.mu.Unlock()
+		if pool != nil {
+			pool.Close()
+		}
 	}
 }
 
@@ -691,16 +700,15 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 	return true, nil
 }
 
-// closePool requires w.mu to be held.
-func (w *SyncWorker) closePool() {
+// closePool requires w.mu to be held. Close the returned pool after unlocking.
+func (w *SyncWorker) closePool() *PgPool {
 	if w.healthCancel != nil {
 		w.healthCancel()
 		w.healthCancel = nil
 	}
-	if w.pgPool != nil {
-		w.pgPool.Close()
-		w.pgPool = nil
-	}
+	pool := w.pgPool
+	w.pgPool = nil
+	return pool
 }
 
 func (w *SyncWorker) pingPool(ctx context.Context, pool *PgPool) error {
@@ -1355,7 +1363,7 @@ func (w *SyncWorker) HealthCheck() (healthy bool, message string) {
 		return false, "not connected"
 	}
 
-	if !w.healthPinging && time.Since(w.healthCheckedAt) >= w.healthInterval {
+	if !w.healthPinging && time.Since(w.healthCheckedAt) >= healthInterval {
 		w.healthPinging = true
 		go w.checkHealth(w.healthCtx, w.pgPool)
 	}
