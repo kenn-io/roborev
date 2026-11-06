@@ -2468,6 +2468,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 			}, "Expected non-fix job, got fix")
 		}
 		assert.Equal(t, storage.JobStats{
+			Total: 1, RepoCount: 1,
 			Done:   1,
 			Closed: 0,
 			Open:   1,

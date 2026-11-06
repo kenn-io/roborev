@@ -2436,14 +2436,16 @@ type JobIDRequest struct {
 }
 
 type JobStats struct {
-	Canceled int64 `json:"canceled"`
-	Closed   int64 `json:"closed"`
-	Done     int64 `json:"done"`
-	Failed   int64 `json:"failed"`
-	Open     int64 `json:"open"`
-	Queued   int64 `json:"queued"`
-	Running  int64 `json:"running"`
-	Skipped  int64 `json:"skipped"`
+	Canceled  int64 `json:"canceled"`
+	Closed    int64 `json:"closed"`
+	Done      int64 `json:"done"`
+	Failed    int64 `json:"failed"`
+	Open      int64 `json:"open"`
+	Queued    int64 `json:"queued"`
+	RepoCount int64 `json:"repo_count"`
+	Running   int64 `json:"running"`
+	Skipped   int64 `json:"skipped"`
+	Total     int64 `json:"total"`
 }
 
 type JobStatusOutputBody struct {

@@ -3,12 +3,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,6 +54,8 @@ type listTestCase struct {
 	wantError     string
 	wantQuery     []string
 	notWantQuery  []string
+	wantStderr    []string
+	notWantStderr []string
 }
 
 func assertListContainsAll(t *testing.T, name, subject string, wants []string) {
@@ -383,7 +387,7 @@ func runListTest(t *testing.T, tc listTestCase) {
 	// Setup mock daemon to capture query and handle request
 	var capturedQuery string
 	wrapperHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/jobs" {
+		if r.URL.Path == "/api/jobs" && capturedQuery == "" {
 			capturedQuery = r.URL.RawQuery
 		}
 		if tc.handler != nil {
@@ -408,8 +412,10 @@ func runListTest(t *testing.T, tc listTestCase) {
 
 	// Execute command
 	var cmdErr error
+	var stderr bytes.Buffer
 	output := captureStdout(t, func() {
 		cmd := listCmd()
+		cmd.SetErr(&stderr)
 		args := append(tc.args, extraArgs...)
 		cmd.SetArgs(args)
 		cmdErr = cmd.Execute()
@@ -427,6 +433,9 @@ func runListTest(t *testing.T, tc listTestCase) {
 	assertListContainsAll(t, "output", output, tc.wantOutput)
 	assertListNotContainsAny(t, "output", output, tc.notWantOutput)
 
+	assertListContainsAll(t, "stderr", stderr.String(), tc.wantStderr)
+	assertListNotContainsAny(t, "stderr", stderr.String(), tc.notWantStderr)
+
 	// Verify query parameters
 	assertListContainsAll(t, "query", capturedQuery, tc.wantQuery)
 	assertListNotContainsAny(t, "query", capturedQuery, tc.notWantQuery)
@@ -434,5 +443,77 @@ func runListTest(t *testing.T, tc listTestCase) {
 	// Custom checks
 	if tc.check != nil {
 		tc.check(t, output, capturedQuery, repo, wd)
+	}
+}
+
+func TestListEmptyHints(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		workspace bool
+		probe     string
+		page      bool
+		wantHint  string
+		wantCalls int32
+	}{
+		{name: "workspace keeps status", workspace: true, args: []string{"--status", "failed"}, wantHint: "the daemon has 3 jobs in 2 repos", wantCalls: 2},
+		{name: "workspace JSON", workspace: true, args: []string{"--json"}, wantHint: "the daemon has 3 jobs in 2 repos", wantCalls: 2},
+		{name: "no jobs anywhere", workspace: true, probe: "empty", wantCalls: 2},
+		{name: "probe failure", workspace: true, probe: "fail", wantCalls: 2},
+		{name: "auto branch", wantHint: "other branches have jobs; run again with --all-branches", wantCalls: 2},
+		{name: "explicit branch", args: []string{"--branch", "main"}, wantCalls: 1},
+		{name: "JSON pagination", args: []string{"--json"}, page: true, wantHint: "hint: more jobs exist; raise --limit", wantCalls: 1},
+		{name: "text pagination", page: true, wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			handler := func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/jobs" {
+					return
+				}
+				call := calls.Add(1)
+				jobs, stats := []storage.ReviewJob{}, storage.JobStats{}
+				if call == 2 {
+					q := r.URL.Query()
+					assert.Equal(t, "true", q.Get("omit_prompt"))
+					assert.Equal(t, "1", q.Get("limit"))
+					if tc.workspace {
+						assert.Empty(t, q.Get("repo_prefix"))
+						assert.Empty(t, q.Get("omit_stats"))
+					} else {
+						assert.NotEmpty(t, q.Get("repo"))
+						assert.Empty(t, q.Get("branch"))
+						assert.Empty(t, q.Get("branch_include_empty"))
+					}
+					if len(tc.args) > 0 && tc.args[0] == "--status" {
+						assert.Equal(t, "failed", q.Get("status"))
+					}
+					if tc.probe == "fail" {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+				}
+				if tc.page || (call == 2 && tc.probe != "empty") {
+					jobs, stats = []storage.ReviewJob{{ID: 1, RepoPath: "/repos/a"}}, storage.JobStats{Total: 3, RepoCount: 2}
+				}
+				writeJSON(w, map[string]any{"jobs": jobs, "has_more": tc.page, "stats": stats})
+			}
+			lt := listTestCase{args: tc.args, handler: handler}
+			if tc.workspace {
+				lt.repoSetup = func(t *testing.T) repoSetupResult { return repoSetupResult{workingDir: t.TempDir()} }
+			}
+			if tc.wantHint != "" {
+				lt.wantStderr = []string{tc.wantHint}
+			} else {
+				lt.notWantStderr = []string{"hint:"}
+			}
+			lt.check = func(t *testing.T, output, query string, repo *TestGitRepo, wd string) {
+				assert.Equal(t, tc.wantCalls, calls.Load())
+				if tc.workspace && len(tc.args) > 0 && tc.args[0] == "--json" {
+					assert.Equal(t, "[]\n", output)
+				}
+			}
+			runListTest(t, lt)
+		})
 	}
 }

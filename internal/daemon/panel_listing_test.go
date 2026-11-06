@@ -105,10 +105,10 @@ func TestListJobsPanelRunScopesStats(t *testing.T) {
 		jobs  int
 		stats storage.JobStats
 	}{
-		{"queue", "", 2, storage.JobStats{Queued: 2}},
-		{"panel", "?panel_run=" + runUUID.String(), 4, storage.JobStats{Queued: 1}},                       //nolint:forbidigo // HTTP query text boundary.
-		{"unknown panel", "?panel_run=" + uuid.New().String(), 0, storage.JobStats{}},                     //nolint:forbidigo // HTTP query text boundary.
-		{"filtered panel", "?closed=false&panel_run=" + runUUID.String(), 4, storage.JobStats{Queued: 1}}, //nolint:forbidigo // HTTP query text boundary.
+		{"queue", "", 2, storage.JobStats{Total: 2, RepoCount: 2, Queued: 2}},
+		{"panel", "?panel_run=" + runUUID.String(), 4, storage.JobStats{Total: 1, RepoCount: 1, Queued: 1}},                       //nolint:forbidigo // HTTP query text boundary.
+		{"unknown panel", "?panel_run=" + uuid.New().String(), 0, storage.JobStats{}},                                             //nolint:forbidigo // HTTP query text boundary.
+		{"filtered panel", "?closed=false&panel_run=" + runUUID.String(), 4, storage.JobStats{Total: 1, RepoCount: 1, Queued: 1}}, //nolint:forbidigo // HTTP query text boundary.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()

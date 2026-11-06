@@ -44,3 +44,34 @@ func TestJobStatsQueryReadsMetadataIndexes(t *testing.T) {
 		}
 	})
 }
+
+func TestJobStatsTotalAndRepos(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	for _, path := range []string{"/repos/a", "/repos/b"} {
+		repo, err := db.GetOrCreateRepo(path)
+		require.NoError(t, err)
+		for _, status := range []JobStatus{JobStatusDone, JobStatusApplied, JobStatusRebased} {
+			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: string(status), Agent: "test"})
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET status = ?, review_closed = ? WHERE id = ?", status, path == "/repos/b", job.ID)
+			require.NoError(t, err)
+		}
+	}
+	for _, tc := range []struct {
+		repo, status string
+		opts         []ListJobsOption
+		total, repos int
+	}{
+		{total: 6, repos: 2},
+		{repo: "/repos/a", total: 3, repos: 1},
+		{status: "applied", total: 2, repos: 2},
+		{opts: []ListJobsOption{WithClosed(false)}, total: 3, repos: 1},
+	} {
+		stats, err := db.CountJobStats(tc.status, tc.repo, tc.opts...)
+		require.NoError(t, err)
+		assert.Equal(t, tc.total, stats.Total)
+		assert.Equal(t, tc.repos, stats.RepoCount)
+	}
+}

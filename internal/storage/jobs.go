@@ -2439,6 +2439,9 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 // GetJobByID returns a job by ID with joined fields
 // JobStats holds aggregate counts for the queue status line.
 type JobStats struct {
+	Total     int `json:"total"`
+	RepoCount int `json:"repo_count"`
+
 	Queued   int `json:"queued"`
 	Running  int `json:"running"`
 	Done     int `json:"done"`
@@ -2455,6 +2458,8 @@ func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOpt
 	query, args := jobStatsQuery(statusFilter, repoFilter, opts...)
 	var stats JobStats
 	err := db.QueryRow(query, args...).Scan(
+		&stats.Total,
+		&stats.RepoCount,
 		&stats.Queued,
 		&stats.Running,
 		&stats.Done,
@@ -2472,6 +2477,8 @@ func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (str
 	o.closedJobColumn = true
 	query := `
 		SELECT
+			COUNT(*),
+			COUNT(DISTINCT j.repo_id),
 			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),

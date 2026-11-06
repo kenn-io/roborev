@@ -160,6 +160,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let allResultsLoaded = $state(true);
   let nextCursor: string | undefined;
   let stats = $state<JobStats>({
+    total: 0,
+    repo_count: 0,
     queued: 0,
     running: 0,
     done: 0,
@@ -301,6 +303,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       ),
     );
     const stats = result.stats ?? {
+      total: 0,
+      repo_count: 0,
       queued: 0,
       running: 0,
       done: 0,

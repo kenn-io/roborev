@@ -4941,3 +4941,74 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestOutsideRepoEmptyHints(t *testing.T) {
+	for _, tc := range []struct{ mode, state string }{
+		{"list", "outside"}, {"open", "outside"}, {"batch", "outside"}, {"compact", "outside"},
+		{"open", "quiet"}, {"batch", "quiet"}, {"compact", "quiet"}, {"open", "inside"}, {"open", "empty"},
+		{"open", "later"}, {"batch", "later"},
+	} {
+		t.Run(tc.mode+"/"+tc.state, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.state == "inside" {
+				dir = createTestRepo(t, map[string]string{"f.txt": "x"}).Dir
+			}
+			var calls atomic.Int32
+			newMockDaemonBuilder(t).WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+				q := r.URL.Query()
+				resp := map[string]any{"jobs": []storage.ReviewJob{}}
+				if q.Get("id") != "" {
+					writeJSON(w, resp)
+					return
+				}
+				switch n := calls.Add(1); {
+				case tc.state == "later":
+					// The first pass finds a job, so the later empty pass prints nothing.
+					if n == 1 {
+						resp["jobs"] = []storage.ReviewJob{{ID: 1, JobType: storage.JobTypeReview, Verdict: new("F")}}
+					}
+				case n == 2:
+					assert.Equal(t, "done", q.Get("status"))
+					assert.Equal(t, "false", q.Get("closed"))
+					assert.Equal(t, "1", q.Get("limit"))
+					assert.Empty(t, q.Get("repo"))
+					assert.Empty(t, q.Get("omit_stats"))
+					filtered := storage.JobStats{RepoCount: 3}
+					if tc.state == "empty" {
+						filtered = storage.JobStats{}
+					}
+					resp["stats"], resp["filtered_stats"] = storage.JobStats{RepoCount: 8}, filtered
+				}
+				writeJSON(w, resp)
+			}).Build()
+			var stderr bytes.Buffer
+			out, err := runWithOutput(t, dir, func(cmd *cobra.Command) error {
+				cmd.SetErr(&stderr)
+				opts := fixOptions{quiet: tc.state == "quiet"}
+				switch tc.mode {
+				case "list":
+					return runFixList(cmd, "", true, false, false)
+				case "open":
+					return runFixOpen(cmd, "", true, false, false, opts, nil)
+				case "batch":
+					return runFixBatch(cmd, nil, "", true, false, false, 5, opts, nil)
+				default:
+					return runCompact(cmd, compactOptions{allBranches: true, quiet: opts.quiet})
+				}
+			})
+			require.NoError(t, err)
+			want, wantCalls := "", int32(2)
+			switch tc.state {
+			case "outside":
+				want = "hint: no open jobs for repository path " + dir + "; the daemon has open jobs in 3 repos; see roborev repo list\n"
+			case "quiet":
+				assert.Empty(t, out)
+				wantCalls = 1
+			case "inside":
+				wantCalls = 1
+			}
+			assert.Equal(t, want, stderr.String())
+			assert.Equal(t, wantCalls, calls.Load())
+		})
+	}
+}
