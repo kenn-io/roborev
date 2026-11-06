@@ -4978,12 +4978,14 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 					assert.Equal(t, "done", q.Get("status"))
 					assert.Equal(t, "false", q.Get("closed"))
 					assert.Equal(t, "1", q.Get("limit"))
-					resp["stats"], resp["filtered_stats"] = storage.JobStats{RepoCount: new(8)}, storage.JobStats{RepoCount: new(3)}
+					resp["jobs"] = []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone}}
+					resp["stats"], resp["filtered_stats"] = storage.JobStats{Total: new(8), RepoCount: new(8)}, storage.JobStats{Total: new(3), RepoCount: new(3)}
 					if tc.state == "singular" {
-						resp["filtered_stats"] = storage.JobStats{RepoCount: new(1)}
+						resp["filtered_stats"] = storage.JobStats{Total: new(1), RepoCount: new(1)}
 					}
 					if tc.state == "empty" {
-						resp["filtered_stats"] = storage.JobStats{RepoCount: new(0)}
+						resp["jobs"] = []storage.ReviewJob{}
+						resp["filtered_stats"] = storage.JobStats{Total: new(0), RepoCount: new(0)}
 					}
 				}
 				writeJSON(w, resp)

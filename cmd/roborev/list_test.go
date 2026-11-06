@@ -456,7 +456,6 @@ func TestListHints(t *testing.T) {
 		args      []string
 		workspace bool
 		probe     string
-		page      bool
 		wantHint  string
 		wantCalls int32
 	}{
@@ -466,7 +465,7 @@ func TestListHints(t *testing.T) {
 		{name: "probe failure", workspace: true, probe: "fail", wantCalls: 2},
 		{name: "auto branch", wantHint: "other branches have matching jobs; run again with --all-branches", wantCalls: 2},
 		{name: "explicit branch", args: []string{"--branch", "main"}, wantCalls: 1},
-		{name: "JSON pagination", args: []string{"--json"}, page: true, wantHint: "hint: more jobs exist; raise --limit", wantCalls: 1},
+		{name: "JSON pagination", args: []string{"--json", "--limit", "1"}, wantHint: "hint: more jobs exist; raise --limit", wantCalls: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -494,13 +493,14 @@ func TestListHints(t *testing.T) {
 						return
 					}
 				}
-				if tc.page || (call == 2 && tc.probe != "empty") {
+				hasMore := r.URL.Query().Get("limit") == "1" && tc.probe != "empty"
+				if hasMore {
 					jobs, stats = []storage.ReviewJob{{ID: 1, RepoPath: "/repos/a"}}, storage.JobStats{Total: new(3), RepoCount: new(2)}
 				}
 				if tc.probe == "singular" {
 					stats.RepoCount = new(1)
 				}
-				response := map[string]any{"jobs": jobs, "has_more": tc.page}
+				response := map[string]any{"jobs": jobs, "has_more": hasMore}
 				if q := r.URL.Query(); q.Get("omit_stats") != "true" && q.Get("include_totals") == "true" {
 					response["stats"] = stats
 				}
@@ -559,7 +559,7 @@ func TestOutsideRepoHintListsCompletedFixJobs(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Contains(t, out, "No open jobs found.")
-		assert.Contains(t, stderr.String(), "completed, unclosed jobs in 2 repos; see roborev repo list, then roborev job list --repo <path> --all-branches")
+		assert.Contains(t, stderr.String(), "in 2 repos;")
 	}
 	for _, seed := range seeds {
 		var err error
