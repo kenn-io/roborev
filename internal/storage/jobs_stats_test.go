@@ -53,10 +53,17 @@ func TestJobStatsTotalAndRepos(t *testing.T) {
 		repo, err := db.GetOrCreateRepo(path)
 		require.NoError(t, err)
 		for _, status := range []JobStatus{JobStatusDone, JobStatusApplied, JobStatusRebased} {
-			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: string(status), Agent: "test"})
+			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: string(status), Agent: "test", JobType: JobTypeFix})
 			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET status = ?, review_closed = ? WHERE id = ?", status, path == "/repos/b", job.ID)
+			_, err = db.ClaimJob("worker")
 			require.NoError(t, err)
+			require.NoError(t, db.CompleteFixJob(job.ID, "test", "fix output", "patch"))
+			if status == JobStatusApplied {
+				require.NoError(t, db.MarkJobApplied(job.ID))
+			} else if status == JobStatusRebased {
+				require.NoError(t, db.MarkJobRebased(job.ID))
+			}
+			require.NoError(t, db.MarkReviewClosedByJobID(job.ID, path == "/repos/b"))
 		}
 	}
 	for _, tc := range []struct {

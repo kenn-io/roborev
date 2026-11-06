@@ -256,13 +256,13 @@ func listEmptyHint(ctx context.Context, cmd *cobra.Command, params generated.Lis
 		prefix := *params.RepoPrefix
 		params.RepoPrefix, params.OmitStats = nil, nil
 		if _, stats := queryHintJobs(ctx, params); stats.Total > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "hint: no jobs for repos under %s; the daemon has %d jobs in %d repos; see roborev repo list, then roborev job list --repo <path> --all-branches\n", prefix, stats.Total, stats.RepoCount)
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: no matching jobs for repos under %s; the daemon has %d matching jobs in %d repos; see roborev repo list, then roborev job list --repo <path> --all-branches\n", prefix, stats.Total, stats.RepoCount)
 		}
 	case params.Branch != nil && !cmd.Flags().Changed("branch"):
 		branch := *params.Branch
 		params.Branch, params.BranchIncludeEmpty = nil, nil
 		if jobs, _ := queryHintJobs(ctx, params); jobs > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "hint: no jobs on branch %s; other branches have jobs; run again with --all-branches\n", branch)
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: no matching jobs on branch %s; other branches have matching jobs; run again with --all-branches\n", branch)
 		}
 	}
 }
@@ -272,14 +272,9 @@ func listEmptyHint(ctx context.Context, cmd *cobra.Command, params generated.Lis
 func queryHintJobs(ctx context.Context, params generated.ListJobsQuery) (int, generated.JobStats) {
 	params.Limit = new(int64(1))
 	params.OmitPrompt = new(generated.ListJobsQueryOmitPromptTrue)
-	resp, err := getDaemonEndpoint().APIClient(5*time.Second).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &params})
+	resp, err := getDaemonEndpoint().APIClient(5*time.Second).ListJobs(ctx, &generated.ListJobsRequestOptions{Query: &params})
 	if err != nil {
 		return 0, generated.JobStats{}
 	}
-	defer resp.Body.Close()
-	var result generated.ListJobsOutputBody
-	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &result) != nil {
-		return 0, generated.JobStats{}
-	}
-	return len(result.Jobs), *cmp.Or(result.FilteredStats, result.Stats, &generated.JobStats{})
+	return len(resp.Jobs), *cmp.Or(resp.FilteredStats, resp.Stats, &generated.JobStats{})
 }

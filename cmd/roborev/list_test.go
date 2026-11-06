@@ -456,11 +456,11 @@ func TestListEmptyHints(t *testing.T) {
 		wantHint  string
 		wantCalls int32
 	}{
-		{name: "workspace keeps status", workspace: true, args: []string{"--status", "failed"}, wantHint: "the daemon has 3 jobs in 2 repos", wantCalls: 2},
-		{name: "workspace JSON", workspace: true, args: []string{"--json"}, wantHint: "the daemon has 3 jobs in 2 repos", wantCalls: 2},
+		{name: "workspace keeps status", workspace: true, args: []string{"--status", "failed"}, wantHint: "the daemon has 3 matching jobs in 2 repos", wantCalls: 2},
+		{name: "workspace JSON", workspace: true, args: []string{"--json"}, wantHint: "the daemon has 3 matching jobs in 2 repos", wantCalls: 2},
 		{name: "no jobs anywhere", workspace: true, probe: "empty", wantCalls: 2},
 		{name: "probe failure", workspace: true, probe: "fail", wantCalls: 2},
-		{name: "auto branch", wantHint: "other branches have jobs; run again with --all-branches", wantCalls: 2},
+		{name: "auto branch", wantHint: "other branches have matching jobs; run again with --all-branches", wantCalls: 2},
 		{name: "explicit branch", args: []string{"--branch", "main"}, wantCalls: 1},
 		{name: "JSON pagination", args: []string{"--json"}, page: true, wantHint: "hint: more jobs exist; raise --limit", wantCalls: 1},
 		{name: "text pagination", page: true, wantCalls: 1},
