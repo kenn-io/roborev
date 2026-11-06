@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -458,12 +459,16 @@ func TestSearchIntegrationEveryWordHint(t *testing.T) {
 			{query: "absentword"},
 		} {
 			t.Run(mode+"/"+tc.query, func(t *testing.T) {
-				recorder := executeSearch(t.Context(), server, url.Values{"q": {tc.query}, "mode": {mode}, "branch": {"main"}, "state": {"open"}})
+				recorder := executeSearch(t.Context(), server, url.Values{
+					"q": {tc.query}, "mode": {mode}, "branch": {"main"}, "state": {"open"},
+				})
 				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 				var response storage.SearchResponse
 				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 				require.Len(t, response.Hints, tc.hints)
-				mcpResponse, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{Query: tc.query, Mode: mode, Branch: "main", State: "open", Limit: 20})
+				mcpResponse, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{
+					Query: tc.query, Mode: mode, Branch: "main", State: "open", Limit: 20,
+				})
 				require.NoError(t, err)
 				mcpJSON, err := json.Marshal(mcpResponse)
 				require.NoError(t, err)
@@ -481,8 +486,14 @@ func TestSearchIntegrationEveryWordHint(t *testing.T) {
 					assert.Empty(t, response.Hints[0].Next)
 					return
 				}
-				assert.Equal(t, "roborev search --lexical --branch 'main' --open -- '"+tc.retry+"'", response.Hints[0].Next)
-				retry := executeSearch(t.Context(), server, url.Values{"q": {tc.retry}, "mode": {"lexical"}, "branch": {"main"}, "state": {"open"}})
+				expected := "roborev search --lexical --branch main --open -- " + tc.retry
+				if runtime.GOOS == "windows" {
+					expected = "& 'roborev' 'search' '--lexical' '--branch' 'main' '--open' '--' '" + tc.retry + "'"
+				}
+				assert.Equal(t, expected, response.Hints[0].Next)
+				retry := executeSearch(t.Context(), server, url.Values{
+					"q": {tc.retry}, "mode": {"lexical"}, "branch": {"main"}, "state": {"open"},
+				})
 				require.NoError(t, json.Unmarshal(retry.Body.Bytes(), &response))
 				assert.NotEmpty(t, response.Hits)
 			})

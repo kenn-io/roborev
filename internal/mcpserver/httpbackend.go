@@ -14,6 +14,8 @@ import (
 	"strings"
 	"uuid"
 
+	"go.kenn.io/kit/agenthook"
+
 	"go.kenn.io/roborev/internal/storage"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
@@ -230,13 +232,27 @@ func (b *HTTPBackend) Search(ctx context.Context, q SearchQuery) (storage.Search
 	return result, nil
 }
 
-// searchRetryQuery decodes the final argument emitted by shellQuoteForPrompt.
-// Any other form yields no retry.
+// searchRetryQuery accepts the final argument in the Kit command builder's format.
 func searchRetryQuery(command string) string {
-	_, quoted, _ := strings.CutLast(command, " -- ")
-	word := strings.TrimSuffix(strings.TrimPrefix(quoted, "'"), "'")
-	word = strings.ReplaceAll(word, `'\''`, "'")
-	if "'"+strings.ReplaceAll(word, "'", `'\''`)+"'" != quoted {
+	powerShell := strings.HasPrefix(command, "& ")
+	separator, escape := " -- ", `'\''`
+	if powerShell {
+		separator, escape = " '--' ", "''"
+	}
+	_, quoted, ok := strings.CutLast(command, separator)
+	if !ok {
+		return ""
+	}
+	word := quoted
+	if inner, ok := strings.CutPrefix(quoted, "'"); ok {
+		word = strings.ReplaceAll(strings.TrimSuffix(inner, "'"), escape, "'")
+	}
+	commands, _ := agenthook.BuildCommand("roborev", word)
+	expected := strings.TrimPrefix(commands.POSIX, "roborev ")
+	if powerShell {
+		expected = strings.TrimPrefix(commands.PowerShell, "& 'roborev' ")
+	}
+	if expected != quoted {
 		return ""
 	}
 	return word

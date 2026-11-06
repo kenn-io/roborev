@@ -664,7 +664,13 @@ func TestMCPSearchEveryWordHint(t *testing.T) {
 	for _, transport := range []string{"local", "http"} {
 		t.Run(transport, func(t *testing.T) {
 			calls := 0
-			response := storage.SearchResponse{Query: "absentword pointer", Mode: "lexical", Hits: []storage.SearchHit{}, Hints: []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words", Next: "roborev search --lexical --branch 'main' --open -- 'pointer'", RetryQuery: "pointer"}}}
+			response := storage.SearchResponse{
+				Query: "absentword pointer", Mode: "lexical", Hits: []storage.SearchHit{},
+				Hints: []storage.SearchHint{{
+					Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+					Next: "roborev search --lexical --branch main --open -- pointer", RetryQuery: "pointer",
+				}},
+			}
 			var backend Backend
 			if transport == "local" {
 				backend = &fakeBackend{searchFn: func(_ context.Context, query SearchQuery) (storage.SearchResponse, error) {
@@ -687,7 +693,9 @@ func TestMCPSearchEveryWordHint(t *testing.T) {
 				}
 				backend = remote
 			}
-			result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "absentword pointer", "branch": "main", "state": "open"})
+			result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{
+				"query": "absentword pointer", "branch": "main", "state": "open",
+			})
 			require.False(t, result.IsError)
 			assert.Equal(t, 1, calls, "MCP must reuse the measured retry")
 			var out map[string]any

@@ -392,7 +392,8 @@ An empty multi-word lexical search with complete coverage includes an
 including a measured retry command when available. JSON includes `hints` with
 `code`, `message`, and a `next` command when one of the first ten query words
 finds a review under the same filters. Single-word misses, incomplete coverage,
-and semantic or hybrid searches omit the hint.
+and semantic or hybrid searches omit the hint. Retry commands use PowerShell on
+Windows daemons and POSIX shell syntax elsewhere.
 
 The MCP tool `roborev_search_reviews` accepts the same inputs and returns the
 same response fields, with `retry_with` query and mode arguments in place of

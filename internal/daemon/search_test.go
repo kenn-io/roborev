@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -600,17 +603,28 @@ func TestSearchEveryWordHintGuardsAndProbeBound(t *testing.T) {
 		hints  int
 	}{
 		{name: "partial", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Partial: true}},
-		{name: "degraded complete", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Degraded: true}, probes: 2, hints: 1},
+		{
+			name: "degraded complete", probes: 2, hints: 1,
+			result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Degraded: true},
+		},
 		{name: "single word", result: searchindex.SearchResult{Query: "nil", Mode: searchindex.ModeLexical}},
-		{name: "hit", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Hits: []searchindex.SearchHit{{JobID: 1}}}},
+		{
+			name: "hit", result: searchindex.SearchResult{
+				Query: "nil pointer", Mode: searchindex.ModeLexical, Hits: []searchindex.SearchHit{{JobID: 1}},
+			},
+		},
 		{name: "hybrid", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeHybrid}},
 		{name: "semantic", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeSemantic}},
-		{name: "many words", result: searchindex.SearchResult{Query: strings.Repeat("x ", 999) + "x", Mode: searchindex.ModeLexical}, probes: 10, hints: 1},
+		{
+			name: "many words", probes: 10, hints: 1,
+			result: searchindex.SearchResult{Query: strings.Repeat("x ", 999) + "x", Mode: searchindex.ModeLexical},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			searcher := &recordingReviewSearcher{}
 			server := newSearchHTTPServer(t, searcher)
-			response := server.searchResponse(t.Context(), tc.result, searchindex.SearchParams{RepoID: 7, Branch: "main", State: "open"}, &SearchInput{})
+			response := server.searchResponse(t.Context(), tc.result,
+				searchindex.SearchParams{RepoID: 7, Branch: "main", State: "open"}, &SearchInput{})
 			assert.Len(t, response.Hints, tc.hints)
 			require.Len(t, searcher.params, tc.probes)
 			for _, params := range searcher.params {
@@ -620,6 +634,51 @@ func TestSearchEveryWordHintGuardsAndProbeBound(t *testing.T) {
 				assert.Equal(t, "main", params.Branch)
 				assert.Equal(t, "open", params.State)
 			}
+		})
+	}
+}
+
+func TestSearchRetryCommandThroughHTTPBackend(t *testing.T) {
+	const word = "point'er"
+	input := &SearchInput{Branch: "sam's-fix", State: "open"}
+	searcher := &recordingReviewSearcher{result: searchindex.SearchResult{
+		Hits: []searchindex.SearchHit{{JobID: 1}},
+	}}
+	server := newSearchHTTPServer(t, searcher)
+	response := server.searchResponse(t.Context(), searchindex.SearchResult{
+		Query: word + " absent", Mode: searchindex.ModeLexical,
+	}, searchindex.SearchParams{}, input)
+	require.Len(t, response.Hints, 1)
+	native := response.Hints[0].Next
+	for _, platform := range []string{runtime.GOOS, "windows"} {
+		t.Run(platform, func(t *testing.T) {
+			response.Hints[0].Next = native
+			if platform != runtime.GOOS {
+				response.Hints[0].Next = searchRetryCommand(input, word, platform)
+			}
+			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				assert.NoError(t, json.NewEncoder(w).Encode(response))
+			}))
+			defer endpoint.Close()
+			backend := mcpserver.NewHTTPBackend(endpoint.URL, endpoint.Client())
+			result, err := backend.Search(t.Context(), mcpserver.SearchQuery{Query: word + " absent"})
+			require.NoError(t, err)
+			require.Len(t, result.Hints, 1)
+			assert.Equal(t, word, result.Hints[0].RetryQuery)
+			if platform != "windows" {
+				return
+			}
+			shell, err := exec.LookPath("pwsh")
+			if err != nil {
+				t.Skip("PowerShell is unavailable")
+			}
+			script := "function roborev { ConvertTo-Json -InputObject @($args) -Compress }; " + result.Hints[0].Next
+			output, err := exec.CommandContext(t.Context(), shell,
+				"-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+			require.NoError(t, err, string(output))
+			var args []string
+			require.NoError(t, json.Unmarshal(output, &args))
+			assert.Equal(t, []string{"search", "--lexical", "--branch", "sam's-fix", "--open", "--", word}, args)
 		})
 	}
 }

@@ -707,7 +707,11 @@ func writeSearchResponse(t *testing.T, w http.ResponseWriter, response any) {
 
 func TestSearchCmdEveryWordHint(t *testing.T) {
 	response := emptySearchResponse("nil pointer", "lexical")
-	response["hints"] = []map[string]string{{"code": "every_word_required", "message": "no review contains every word; search again with fewer words", "next": "roborev search --lexical -- 'nil'"}}
+	response["hints"] = []map[string]string{{
+		"code":    "every_word_required",
+		"message": "no review contains every word; search again with fewer words",
+		"next":    "roborev search --lexical -- nil",
+	}}
 	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
 		if r.URL.Path != "/api/search" {
 			return false
@@ -737,7 +741,9 @@ func TestSearchCmdEveryWordHint(t *testing.T) {
 				require.NoError(t, json.Unmarshal([]byte(output), &decoded))
 				assert.Equal(t, "every_word_required", decoded["hints"].([]any)[0].(map[string]any)["code"])
 			} else {
-				assert.Contains(t, stderr, "Hint: no review contains every word; search again with fewer words; run roborev search --lexical -- 'nil'\n")
+				assert.Contains(t, stderr,
+					"Hint: no review contains every word; search again with fewer words; "+
+						"run roborev search --lexical -- nil\n")
 				assert.NotContains(t, output, "Hint:")
 				assert.Contains(t, output, tc.output)
 			}

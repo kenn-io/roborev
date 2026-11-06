@@ -466,16 +466,21 @@ func TestMCPSearchPreservesRepoAmbiguityThroughHTTPBackend(t *testing.T) {
 
 func TestHTTPBackendSearchRecoversRetryQuery(t *testing.T) {
 	for _, tc := range []struct{ name, command, want string }{
-		{name: "word", command: "roborev search --lexical -- 'pointer'", want: "pointer"},
+		{name: "word", command: "roborev search --lexical -- pointer", want: "pointer"},
 		{name: "quote", command: `roborev search --lexical --repo 'repo -- name' -- 'point'\''er'`, want: "point'er"},
 		{name: "backslash", command: `roborev search --lexical -- 'path\file'`, want: `path\file`},
 		{name: "missing"},
-		{name: "unquoted", command: "roborev search --lexical -- pointer"},
+		{name: "unquoted spaces", command: "roborev search --lexical -- pointer word"},
 		{name: "bad quote", command: "roborev search --lexical -- 'point'er'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			daemon, backend := newFakeDaemon(t)
-			response := storage.SearchResponse{Query: "absent pointer", Mode: "lexical", Hits: []storage.SearchHit{}, Hints: []storage.SearchHint{{Code: "every_word_required", Message: "search again with fewer words", Next: tc.command}}}
+			response := storage.SearchResponse{
+				Query: "absent pointer", Mode: "lexical", Hits: []storage.SearchHit{},
+				Hints: []storage.SearchHint{{
+					Code: "every_word_required", Message: "search again with fewer words", Next: tc.command,
+				}},
+			}
 			payload, err := json.Marshal(response)
 			require.NoError(t, err)
 			daemon.routes["/api/search"] = jsonResponse(http.StatusOK, string(payload))

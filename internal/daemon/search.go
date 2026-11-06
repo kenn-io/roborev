@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
@@ -274,23 +276,32 @@ func (s *Server) searchResponse(ctx context.Context, result searchindex.SearchRe
 		if err != nil || len(retry.Hits) == 0 {
 			continue
 		}
-		command := []string{"roborev", "search", "--lexical"}
-		for _, filter := range []struct{ name, value string }{
-			{"repo", input.Repo}, {"branch", input.Branch}, {"since", input.Since}, {"verdict", input.Verdict},
-		} {
-			if filter.value != "" {
-				command = append(command, "--"+filter.name, shellQuoteForPrompt(filter.value))
-			}
-		}
-		if input.State == "open" || input.State == "closed" {
-			command = append(command, "--"+input.State)
-		}
-		hint.Next = strings.Join(append(command, "--", shellQuoteForPrompt(word)), " ")
+		hint.Next = searchRetryCommand(input, word, runtime.GOOS)
 		hint.RetryQuery = word
 		break
 	}
 	response.Hints = []storage.SearchHint{hint}
 	return response
+}
+
+// searchRetryCommand uses the documented shell for the daemon's platform.
+func searchRetryCommand(input *SearchInput, word, goos string) string {
+	args := []string{"search", "--lexical"}
+	for _, filter := range []struct{ name, value string }{
+		{"repo", input.Repo}, {"branch", input.Branch}, {"since", input.Since}, {"verdict", input.Verdict},
+	} {
+		if filter.value != "" {
+			args = append(args, "--"+filter.name, filter.value)
+		}
+	}
+	if input.State == "open" || input.State == "closed" {
+		args = append(args, "--"+input.State)
+	}
+	commands, _ := agenthook.BuildCommand("roborev", append(args, "--", word)...)
+	if goos == "windows" {
+		return commands.PowerShell
+	}
+	return commands.POSIX
 }
 
 func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
