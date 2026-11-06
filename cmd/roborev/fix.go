@@ -665,6 +665,7 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 		if len(newIDs) == 0 {
 			if len(seen) == 0 && !opts.quiet {
 				cmd.Println("No open jobs found.")
+				printOutsideRepoHint(ctx, cmd, roots)
 			}
 			return nil
 		}
@@ -973,6 +974,7 @@ func runFixList(
 
 	if len(jobIDs) == 0 {
 		cmd.Println("No open jobs found.")
+		printOutsideRepoHint(ctx, cmd, roots)
 		return nil
 	}
 
@@ -1365,6 +1367,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		if len(newIDs) == 0 {
 			if len(seen) == 0 && !opts.quiet {
 				cmd.Println("No open jobs found.")
+				printOutsideRepoHint(ctx, cmd, roots)
 			}
 			return nil
 		}

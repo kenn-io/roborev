@@ -2475,10 +2475,16 @@ components:
         queued:
           format: int64
           type: integer
+        repo_count:
+          format: int64
+          type: integer
         running:
           format: int64
           type: integer
         skipped:
+          format: int64
+          type: integer
+        total:
           format: int64
           type: integer
       required:
@@ -6108,6 +6114,17 @@ paths:
           name: include_panel_members
           schema:
             description: Include individual panel member jobs alongside panel synthesis jobs
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
+        - description: Include total jobs and distinct repository counts in stats
+          explode: false
+          in: query
+          name: include_totals
+          schema:
+            description: Include total jobs and distinct repository counts in stats
             enum:
               - "true"
               - "false"

@@ -1621,10 +1621,14 @@ See: [PostgreSQL Sync](/docs/advanced/postgres-sync/),
 
 ## Multi-Repo Workspaces
 
-`roborev job list` looks in immediate child subfolders for repositories, so you
-can run it from a parent directory that contains multiple repos.
-`roborev review` suggests repo-level review commands when run from a workspace
-root, making it easy to review across projects.
+`roborev job list` lists jobs for repos anywhere under the current directory, so
+you can run it from a parent directory that contains multiple repos. When no
+jobs match, a hint points to jobs outside the directory or on other branches.
+Outside a repository, `roborev fix` and `roborev job compact` also point to
+repos with completed, unclosed jobs when no jobs match the current directory.
+Use `roborev repo list`, then `roborev job list --repo <path> --all-branches` to
+inspect those jobs. `roborev review` suggests repo-level review commands when
+run from a workspace root, making it easy to review across projects.
 
 ## Global Flags
 
