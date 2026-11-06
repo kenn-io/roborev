@@ -181,8 +181,8 @@ The JSON form is an array, empty when no daemon has `[mcp]` enabled.
 ## Tools
 
 The complete tool catalog, including write tools and schemas, measured 19,684
-bytes of JSON on November 6, 2026. `TestToolCatalogBudget` enforces a 22,000-byte
-budget. Budget increases require an explicit reviewed edit.
+bytes of JSON on November 6, 2026. `TestRegisteredToolsAndGuidance` enforces a
+22,000-byte budget. Budget increases require an explicit reviewed edit.
 
 | Tool | Purpose |
 |------|---------|

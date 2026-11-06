@@ -167,13 +167,6 @@ func checkToolCatalogBudget(t *testing.T, result *mcp.ListToolsResult) error {
 	return fmt.Errorf("tool catalog: %d bytes exceeds budget of %d bytes%s", len(data), toolCatalogBudget, breakdown.String())
 }
 
-func TestToolCatalogBudget(t *testing.T) {
-	session := connectSession(t, &fakeBackend{})
-	result, err := session.ListTools(t.Context(), nil)
-	require.NoError(t, err)
-	require.NoError(t, checkToolCatalogBudget(t, result))
-}
-
 func TestToolCatalogBudgetBoundary(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -213,6 +206,7 @@ func TestRegisteredToolsAndGuidance(t *testing.T) {
 
 	tools, err := session.ListTools(t.Context(), nil)
 	require.NoError(err)
+	require.NoError(checkToolCatalogBudget(t, tools))
 	var names []string
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
