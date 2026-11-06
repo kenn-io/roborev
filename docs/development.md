@@ -141,6 +141,10 @@ runners. Test jobs restore a daily Go module and build cache saved by main's
 test legs for each OS. Other jobs use the default `actions/setup-go` cache. The
 lint job also restores main's custom golangci-lint binary and analysis cache.
 
+The `CI gate` job in `.github/workflows/ci-pr.yml` only checks the CI run's
+result. It runs on the Namespace profile `namespace-profile-linux-1cpu` so it
+does not wait in the GitHub-hosted queue after CI finishes.
+
 Runner selection lives in `.github/workflows/ci.yml` and
 `.github/workflows/windows-migration.yml`. The PR dispatchers call the workflow
 files from the same commit, so workflow changes run before merging. Run
