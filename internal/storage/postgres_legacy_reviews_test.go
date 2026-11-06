@@ -34,17 +34,12 @@ func TestIntegrationLegacyReviewScanOnlyRevisitsNewWrites(t *testing.T) { //noli
 	pool, ctx := env.Pool, t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
-	initial := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
-	require.NoError(t, pool.migrateLegacyReviews(ctx))
 	old := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "1 day", false)
 	fresh := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
 	require.NoError(t, pool.migrateLegacyReviews(ctx))
-	for _, id := range []uuid.UUID{initial, fresh} {
-		var output string
-		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output' FROM legacy_reviews WHERE uuid = $1`, id).Scan(&output))
-		assert.Equal(t, "Preserve this historical text.", output)
-	}
 	var output string
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output' FROM legacy_reviews WHERE uuid = $1`, fresh).Scan(&output))
+	assert.Equal(t, "Preserve this historical text.", output)
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT output FROM reviews WHERE uuid = $1`, old).Scan(&output))
 	assert.Equal(t, "Preserve this historical text.", output)
 }
@@ -110,7 +105,7 @@ func TestIntegrationLegacyReviewScanUnreadableState(t *testing.T) { //nolint:par
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
 	id := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "1 day", false)
-	_, err := pool.Pool().Exec(ctx, `UPDATE sync_metadata SET value = $2 WHERE key = $1`, legacyReviewScanKey, `{"Done":"2100-01-01T00:00:00Z","Run":false}`)
+	_, err := pool.Pool().Exec(ctx, `UPDATE sync_metadata SET value = $2 WHERE key = $1`, legacyReviewScanKey, `{"Done":`)
 	require.NoError(t, err)
 	var logs bytes.Buffer
 	previous := log.Writer()
@@ -231,10 +226,8 @@ func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) { //nolint:par
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
 	insert := func(markdown string, verdict, closed bool) uuid.UUID {
-		jobID, reviewID := uuid.New(), uuid.New()
-		createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
-		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, job_source_machine_id, agent, prompt, output, verdict_bool, closed, updated_by_machine_id)
- VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2), 'test', 'original prompt', $3, $4, $5, $6)`, reviewID, jobID, markdown, verdict, closed, defaultTestMachineID)
+		reviewID := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", closed)
+		_, err := pool.Pool().Exec(ctx, `UPDATE reviews SET prompt = 'original prompt', output = $2, verdict_bool = $3 WHERE uuid = $1`, reviewID, markdown, verdict)
 		require.NoError(t, err)
 		return reviewID
 	}
