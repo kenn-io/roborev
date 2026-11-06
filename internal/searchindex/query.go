@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -74,7 +73,7 @@ func candidateTarget(limit int) int {
 // literalFTSQuery quotes every word so FTS5 syntax in the query stays literal.
 // A query with no letter or digit has no unicode61 token and returns "".
 func literalFTSQuery(query string) string {
-	if !slices.ContainsFunc(strings.Fields(query), containsSearchToken) {
+	if LiteralWordCount(query) == 0 {
 		return ""
 	}
 	prepared, err := lexical.Literal().PrepareLiteral(query)

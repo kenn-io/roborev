@@ -387,8 +387,8 @@ hits with canonical job and review IDs, repository/ref metadata, score, matching
 legs, and a bounded excerpt. Interpret `score` together with `mode`; lexical,
 semantic, and hybrid modes use different ranking scales.
 
-An empty multi-word lexical search with complete coverage includes an
-`every_word_required` hint: “no review contains every word; search again with
+An unfiltered, empty multi-word lexical search with complete coverage includes
+an `every_word_required` hint: “no review contains every word; search again with
 fewer words”. Human and agent output write `Hint: <message>` to stderr. JSON and
 MCP include `hints` with `code` and `message`. Punctuation-only fields do not
 count as searchable words. Single-word misses, incomplete coverage, and semantic

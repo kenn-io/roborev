@@ -211,7 +211,7 @@ and vector coverage. Fetch a matched review with `roborev_get_review`, then use
 [Review History Search](/docs/search/) for exact mode, freshness, privacy, and
 coverage semantics.
 
-Empty multi-word lexical results with complete coverage include an
+Unfiltered, empty multi-word lexical results with complete coverage include an
 `every_word_required` hint with `code` and `message`: “no review contains every
 word; search again with fewer words”.
 

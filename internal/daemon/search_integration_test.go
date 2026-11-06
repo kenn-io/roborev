@@ -446,6 +446,21 @@ func TestSearchIntegrationEveryWordHint(t *testing.T) {
 	t.Cleanup(func() { cancel(); require.ErrorIs(t, <-done, context.Canceled) })
 	waitForSearch(t, "lexical mirror", func() bool { return reconciler.Health().MirrorComplete })
 	server := newSearchHTTPServer(t, searchindex.NewService(db, index, nil, reconciler))
+	for _, branch := range []string{"", "nonexistent"} {
+		recorder := executeSearch(t.Context(), server, url.Values{
+			"q": {"racewindow original"}, "mode": {"lexical"}, "branch": {branch},
+		})
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var response storage.SearchResponse
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.Empty(t, response.Hints)
+		if branch == "" {
+			assert.NotEmpty(t, response.Hits)
+		} else {
+			assert.Empty(t, response.Hits)
+		}
+	}
+
 	for _, mode := range []string{"lexical", "auto"} {
 		for _, query := range []string{"nil pointer", "absentword"} {
 			recorder := executeSearch(t.Context(), server, url.Values{"q": {query}, "mode": {mode}})

@@ -7,9 +7,9 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
-- Explain empty multi-word lexical searches with complete coverage and a hint to
-    try fewer words. CLI output writes the hint to stderr; JSON and MCP return
-    its code and message.
+- Explain unfiltered, empty multi-word lexical searches with complete coverage
+    and a hint to try fewer words. CLI output writes the hint to stderr; JSON
+    and MCP return its code and message.
 - Find review records under `job`, aggregate reports under `report`, Git hooks
     under `hook`, and provider checks and integrations under `agent`. Queue
     controls live under `daemon`; repair commands live under `storage` and

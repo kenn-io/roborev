@@ -596,6 +596,7 @@ func TestSearchEveryWordHintEligibility(t *testing.T) {
 	for _, tc := range []struct {
 		name, query                  string
 		mode                         searchindex.SearchMode
+		params                       searchindex.SearchParams
 		partial, degraded, hit, want bool
 	}{
 		{name: "lexical", query: "nil pointer", want: true},
@@ -603,8 +604,13 @@ func TestSearchEveryWordHintEligibility(t *testing.T) {
 		{name: "fallback", query: "nil pointer", degraded: true, want: true},
 		{name: "partial", query: "nil pointer", partial: true},
 		{name: "hit", query: "nil pointer", hit: true},
-		{name: "single word", query: "nil"},
 		{name: "punctuation field", query: "nil ?"},
+		{name: "repo", query: "nil pointer", params: searchindex.SearchParams{RepoID: 1}},
+		{name: "branch", query: "nil pointer", params: searchindex.SearchParams{Branch: "other"}},
+		{name: "since", query: "nil pointer", params: searchindex.SearchParams{Since: new(time.Now())}},
+		{name: "verdict", query: "nil pointer", params: searchindex.SearchParams{Verdict: "pass"}},
+		{name: "state", query: "nil pointer", params: searchindex.SearchParams{State: searchindex.StateOpen}},
+		{name: "all states", query: "nil pointer", params: searchindex.SearchParams{State: searchindex.StateAll}, want: true},
 		{name: "hybrid", query: "nil pointer", mode: searchindex.ModeHybrid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -615,7 +621,7 @@ func TestSearchEveryWordHintEligibility(t *testing.T) {
 			if tc.hit {
 				result.Hits = []searchindex.SearchHit{{JobID: 1}}
 			}
-			response := searchResponseFromResult(result)
+			response := searchResponse(result, tc.params)
 			if tc.want {
 				assert.Equal(t, []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}}, response.Hints)
 			} else {

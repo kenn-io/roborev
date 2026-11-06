@@ -159,7 +159,7 @@ func (s *Server) humaSearchReviews(
 		return nil, huma.Error500InternalServerError("search failed")
 	}
 
-	response := searchResponseFromResult(result)
+	response := searchResponse(result, params)
 	if response.Hits == nil {
 		response.Hits = []SearchHit{}
 	}
@@ -258,6 +258,18 @@ func (s *Server) resolveSearchRepo(identifier string) (int64, error) {
 	return repo.ID, nil
 }
 
+func searchResponse(result searchindex.SearchResult, params searchindex.SearchParams) SearchResponse {
+	response := searchResponseFromResult(result)
+	if params.RepoID != 0 || params.Branch != "" || params.Since != nil || params.Verdict != "" ||
+		(params.State != "" && params.State != searchindex.StateAll) {
+		return response
+	}
+	if result.Mode == searchindex.ModeLexical && !result.Partial && len(result.Hits) == 0 && searchindex.LiteralWordCount(result.Query) > 1 {
+		response.Hints = []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}}
+	}
+	return response
+}
+
 func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
 	hits := make([]SearchHit, 0, len(result.Hits))
 	for _, hit := range result.Hits {
@@ -271,10 +283,7 @@ func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
 			MatchedIn: append([]string(nil), hit.MatchedIn...), Excerpt: hit.Excerpt,
 		})
 	}
-	var hints []storage.SearchHint
-	if result.Mode == searchindex.ModeLexical && !result.Partial && len(result.Hits) == 0 && searchindex.LiteralWordCount(result.Query) > 1 {
-		hints = []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}}
-	}
+
 	return SearchResponse{
 		Query: result.Query, Mode: string(result.Mode), Degraded: result.Degraded,
 		DegradedReason: result.DegradedReason, Bounded: result.Bounded,
@@ -287,7 +296,7 @@ func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {
 			EmbeddingBacklog:     result.Coverage.EmbeddingBacklog,
 			Skipped:              result.Coverage.Skipped,
 		},
-		Hits: hits, Hints: hints,
+		Hits: hits,
 	}
 }
 

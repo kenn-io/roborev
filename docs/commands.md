@@ -412,9 +412,9 @@ configured semantic path that is temporarily unavailable falls back to lexical
 with a degradation reason. Quoted and unquoted query words behave the same.
 Human output also reports `partial` coverage, bounded semantic retrieval, and
 mirror/vector progress. A hexadecimal lexical query from 7 through 40 characters
-matches commit SHA prefixes case-insensitively. An empty multi-word lexical
-search with complete coverage writes a fewer-words hint to stderr; `--json`
-carries its `code` and `message` in `hints` instead.
+matches commit SHA prefixes case-insensitively. An unfiltered, empty multi-word
+lexical search with complete coverage writes a fewer-words hint to stderr;
+`--json` carries its `code` and `message` in `hints` instead.
 
 See [Review History Search](/docs/search/) for mode semantics, Voyage setup,
 privacy, freshness, panel grouping, and the HTTP/MCP interfaces.
