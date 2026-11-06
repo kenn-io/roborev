@@ -9,11 +9,11 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/quick"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -21,21 +21,22 @@ import (
 )
 
 func TestUsageErrorPreservesCause(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		message := hegel.Draw(ht, hegel.Text())
+	assert := assert.New(t)
+	property := func(message string) bool {
 		cause := errors.New(message)
 		cmd := &cobra.Command{Use: "list"}
 		err := usageErr(cmd, cause)
 		var exit *exitError
-		require.ErrorAs(ht, err, &exit)
-		assert.Equal(ht, 2, exit.code)
-		require.ErrorIs(ht, err, cause)
-		assert.Equal(ht, message, err.Error())
-		assert.True(ht, cmd.SilenceUsage)
-	})
+		require.ErrorAs(t, err, &exit, "message=%q", message)
+		return assert.Equal(2, exit.code) &&
+			assert.ErrorIs(err, cause) &&
+			assert.Equal(message, err.Error()) &&
+			assert.True(cmd.SilenceUsage)
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
 
-// Empty messages are valid causes too (Hegel's minimal counterexample).
+// Empty messages are valid causes too.
 func TestUsageErrorEmptyMessage(t *testing.T) {
 	cause := errors.New("")
 	err := usageErr(&cobra.Command{Use: "list"}, cause)
@@ -326,24 +327,30 @@ func TestCLIJSONErrorsAcrossCommands(t *testing.T) {
 }
 
 func TestCLIJSONArbitraryBytes(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		message := string(hegel.Draw(ht, hegel.Binary(0, -1)))
-		hint := string(hegel.Draw(ht, hegel.Binary(1, -1)))
+	assert := assert.New(t)
+	property := func(messageBytes, hintBytes []byte) bool {
+		if len(hintBytes) == 0 {
+			hintBytes = []byte{0}
+		}
+		message, hint := string(messageBytes), string(hintBytes)
 		cmd := &cobra.Command{Use: "example"}
 		cmd.Flags().Bool("json", false, "")
 		var out strings.Builder
 		cmd.SetErr(&out)
-		assert.Equal(ht, 1, renderCLIError(cmd, []string{"--json"}, withHint(errors.New(message), hint)))
+		if !assert.Equal(1, renderCLIError(cmd, []string{"--json"}, withHint(errors.New(message), hint))) {
+			return false
+		}
 		var envelope struct {
 			Error struct {
 				Message string `json:"message"`
 				Hint    string `json:"hint"`
 			} `json:"error"`
 		}
-		require.NoError(ht, json.Unmarshal([]byte(out.String()), &envelope))
-		assert.Equal(ht, strings.ToValidUTF8(message, "\uFFFD"), envelope.Error.Message)
-		assert.Equal(ht, strings.ToValidUTF8(hint, "\uFFFD"), envelope.Error.Hint)
-	})
+		require.NoError(t, json.Unmarshal([]byte(out.String()), &envelope), "message=%q hint=%q", message, hint)
+		return assert.Equal(strings.ToValidUTF8(message, "\uFFFD"), envelope.Error.Message) &&
+			assert.Equal(strings.ToValidUTF8(hint, "\uFFFD"), envelope.Error.Hint)
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
 
 func TestCLIJSONInvalidUTF8Hint(t *testing.T) {
@@ -356,21 +363,24 @@ func TestCLIJSONInvalidUTF8Hint(t *testing.T) {
 }
 
 func TestCLIErrorWrapperComposition(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		message := hegel.Draw(ht, hegel.Text())
-		hint := hegel.Draw(ht, hegel.Text().MinSize(1))
-		code := hegel.Draw(ht, hegel.SampledFrom([]int{1, 2, 3, 4}))
+	assert := assert.New(t)
+	property := func(message, hint string, rawCode uint8) bool {
+		if hint == "" {
+			hint = "\x00"
+		}
+		code := int(rawCode%4) + 1
 		cause := errors.New(message)
 		original := &exitError{code: code, cause: cause, hint: hint, kind: "specific"}
 		wrapped := withHint(fmt.Errorf("context: %w", original), "generic")
 		wrapped = usageErr(&cobra.Command{Use: "example"}, wrapped)
 		var exit *exitError
-		require.ErrorAs(ht, wrapped, &exit)
-		assert.Equal(ht, code, exit.code)
-		assert.Equal(ht, hint, exit.hint)
-		require.ErrorIs(ht, wrapped, cause)
-		assert.Equal(ht, "context: "+message, wrapped.Error())
-	})
+		require.ErrorAs(t, wrapped, &exit, "message=%q hint=%q code=%d", message, hint, code)
+		return assert.Equal(code, exit.code) &&
+			assert.Equal(hint, exit.hint) &&
+			assert.ErrorIs(wrapped, cause) &&
+			assert.Equal("context: "+message, wrapped.Error())
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
 
 func TestCLIExecutableParentValidatesServer(t *testing.T) {
@@ -452,12 +462,8 @@ func TestCLIRemoteShowDoesNotRequireLocalCheckout(t *testing.T) {
 }
 
 func TestCLIOutputSelectorsAgreeWithFlagParser(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		value := hegel.Draw(ht, hegel.Text())
-		first := hegel.Draw(ht, hegel.SampledFrom([]bool{false, true}))
-		last := hegel.Draw(ht, hegel.SampledFrom([]bool{false, true}))
-		short := hegel.Draw(ht, hegel.SampledFrom([]bool{false, true}))
-		separator := hegel.Draw(ht, hegel.SampledFrom([]bool{false, true}))
+	assert := assert.New(t)
+	property := func(value string, first, last, short, separator bool) bool {
 		cmd := &cobra.Command{Use: "example"}
 		cmd.Flags().Bool("json", false, "")
 		cmd.Flags().String("agent", "", "")
@@ -472,12 +478,13 @@ func TestCLIOutputSelectorsAgreeWithFlagParser(t *testing.T) {
 		if separator {
 			args = append(args, "--", "--json="+fmt.Sprint(!last))
 		}
-		require.NoError(ht, cmd.ParseFlags(args))
+		require.NoError(t, cmd.ParseFlags(args), "args=%q", args)
 		want, err := cmd.Flags().GetBool("json")
-		require.NoError(ht, err)
-		assert.Equal(ht, want, cliBoolFlag(cmd, args, "json"))
-		assert.False(ht, cliBoolFlag(cmd, args, "agent"))
-	})
+		require.NoError(t, err, "args=%q", args)
+		return assert.Equal(want, cliBoolFlag(cmd, args, "json")) &&
+			assert.False(cliBoolFlag(cmd, args, "agent"))
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
 
 // Production executes one command per process; root integration tests must
