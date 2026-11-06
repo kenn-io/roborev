@@ -599,19 +599,18 @@ func TestSearchEveryWordHintEligibility(t *testing.T) {
 		params                       searchindex.SearchParams
 		partial, degraded, hit, want bool
 	}{
-		{name: "lexical", query: "nil pointer", want: true},
-		{name: "Unicode", query: "界 ٢", want: true},
-		{name: "fallback", query: "nil pointer", degraded: true, want: true},
-		{name: "partial", query: "nil pointer", partial: true},
-		{name: "hit", query: "nil pointer", hit: true},
-		{name: "punctuation field", query: "nil ?"},
-		{name: "repo", query: "nil pointer", params: searchindex.SearchParams{RepoID: 1}},
-		{name: "branch", query: "nil pointer", params: searchindex.SearchParams{Branch: "other"}},
-		{name: "since", query: "nil pointer", params: searchindex.SearchParams{Since: new(time.Now())}},
-		{name: "verdict", query: "nil pointer", params: searchindex.SearchParams{Verdict: "pass"}},
+		{name: "lexical", query: "nil pointer", want: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "Unicode", query: "界 ٢", want: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "fallback", query: "nil pointer", degraded: true, want: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "partial", query: "nil pointer", partial: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "hit", query: "nil pointer", hit: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "punctuation field", query: "nil ?", params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "repo", query: "nil pointer", params: searchindex.SearchParams{RepoID: 1, State: searchindex.StateAll}},
+		{name: "branch", query: "nil pointer", params: searchindex.SearchParams{Branch: "other", State: searchindex.StateAll}},
+		{name: "since", query: "nil pointer", params: searchindex.SearchParams{Since: new(time.Now()), State: searchindex.StateAll}},
+		{name: "verdict", query: "nil pointer", params: searchindex.SearchParams{Verdict: "pass", State: searchindex.StateAll}},
 		{name: "state", query: "nil pointer", params: searchindex.SearchParams{State: searchindex.StateOpen}},
-		{name: "all states", query: "nil pointer", params: searchindex.SearchParams{State: searchindex.StateAll}, want: true},
-		{name: "hybrid", query: "nil pointer", mode: searchindex.ModeHybrid},
+		{name: "hybrid", query: "nil pointer", mode: searchindex.ModeHybrid, params: searchindex.SearchParams{State: searchindex.StateAll}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := searchindex.SearchResult{Query: tc.query, Mode: tc.mode, Partial: tc.partial, Degraded: tc.degraded}
