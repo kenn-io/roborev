@@ -58,9 +58,10 @@ func TestJobStatsTotalAndRepos(t *testing.T) {
 			_, err = db.ClaimJob("worker")
 			require.NoError(t, err)
 			require.NoError(t, db.CompleteFixJob(job.ID, "test", "fix output", "patch"))
-			if status == JobStatusApplied {
+			switch status {
+			case JobStatusApplied:
 				require.NoError(t, db.MarkJobApplied(job.ID))
-			} else if status == JobStatusRebased {
+			case JobStatusRebased:
 				require.NoError(t, db.MarkJobRebased(job.ID))
 			}
 			require.NoError(t, db.MarkReviewClosedByJobID(job.ID, path == "/repos/b"))

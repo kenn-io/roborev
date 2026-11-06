@@ -4944,8 +4944,16 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 
 func TestOutsideRepoEmptyHints(t *testing.T) {
 	for _, tc := range []struct{ mode, state string }{
-		{"open", "singular"}, {"open", "outside"}, {"batch", "outside"}, {"open", "quiet"}, {"batch", "quiet"}, {"compact", "quiet"},
-		{"open", "inside"}, {"open", "empty"}, {"open", "later"}, {"batch", "later"},
+		{"open", "singular"},
+		{"open", "outside"},
+		{"batch", "outside"},
+		{"open", "quiet"},
+		{"batch", "quiet"},
+		{"compact", "quiet"},
+		{"open", "inside"},
+		{"open", "empty"},
+		{"open", "later"},
+		{"batch", "later"},
 	} {
 		t.Run(tc.mode+"/"+tc.state, func(t *testing.T) {
 			dir := t.TempDir()
