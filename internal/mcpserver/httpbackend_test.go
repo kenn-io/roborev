@@ -463,3 +463,30 @@ func TestMCPSearchPreservesRepoAmbiguityThroughHTTPBackend(t *testing.T) {
 	assert.Equal(t, ErrorCodeInvalidArgument, failure.Error.Code)
 	assert.Equal(t, NewError(ErrorCodeInvalidArgument, message).Error(), failure.Error.Message)
 }
+
+func TestHTTPBackendSearchRecoversRetryQuery(t *testing.T) {
+	for _, tc := range []struct{ name, command, want string }{
+		{name: "word", command: "roborev search --lexical -- 'pointer'", want: "pointer"},
+		{name: "quote", command: `roborev search --lexical --repo 'repo -- name' -- 'point'\''er'`, want: "point'er"},
+		{name: "backslash", command: `roborev search --lexical -- 'path\file'`, want: `path\file`},
+		{name: "missing"},
+		{name: "unquoted", command: "roborev search --lexical -- pointer"},
+		{name: "bad quote", command: "roborev search --lexical -- 'point'er'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			daemon, backend := newFakeDaemon(t)
+			response := storage.SearchResponse{Query: "absent pointer", Mode: "lexical", Hits: []storage.SearchHit{}, Hints: []storage.SearchHint{{Code: "every_word_required", Message: "search again with fewer words", Next: tc.command}}}
+			payload, err := json.Marshal(response)
+			require.NoError(t, err)
+			daemon.routes["/api/search"] = jsonResponse(http.StatusOK, string(payload))
+			got, err := backend.Search(t.Context(), SearchQuery{Query: "absent pointer"})
+			require.NoError(t, err)
+			require.Len(t, got.Hints, 1)
+			assert.Equal(t, tc.want, got.Hints[0].RetryQuery)
+			assert.Len(t, daemon.requests, 1)
+			encoded, err := json.Marshal(got)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "retry_query")
+		})
+	}
+}

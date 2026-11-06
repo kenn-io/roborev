@@ -170,7 +170,11 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 		printSearchResults(cmd, *response.JSON200)
 	}
 	for _, hint := range response.JSON200.Hints {
-		cmd.PrintErrln("Hint: " + sanitizeSearchSingleLine(hint.Message))
+		message := hint.Message
+		if hint.Next != nil {
+			message += "; run " + *hint.Next
+		}
+		cmd.PrintErrln("Hint: " + sanitizeSearchSingleLine(message))
 	}
 	return nil
 }

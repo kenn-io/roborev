@@ -224,7 +224,22 @@ func (b *HTTPBackend) Search(ctx context.Context, q SearchQuery) (storage.Search
 	if result.Hits == nil {
 		result.Hits = []storage.SearchHit{}
 	}
+	for i := range result.Hints {
+		result.Hints[i].RetryQuery = searchRetryQuery(result.Hints[i].Next)
+	}
 	return result, nil
+}
+
+// searchRetryQuery decodes the final argument emitted by shellQuoteForPrompt.
+// Any other form yields no retry.
+func searchRetryQuery(command string) string {
+	_, quoted, _ := strings.CutLast(command, " -- ")
+	word := strings.TrimSuffix(strings.TrimPrefix(quoted, "'"), "'")
+	word = strings.ReplaceAll(word, `'\''`, "'")
+	if "'"+strings.ReplaceAll(word, "'", `'\''`)+"'" != quoted {
+		return ""
+	}
+	return word
 }
 
 func validSearchResponseJSON(body jsontext.Value) bool {

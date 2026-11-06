@@ -280,17 +280,8 @@ func (s *Server) callSearchTool(ctx context.Context, req *mcp.CallToolRequest) (
 	toolOutput := searchToolOutput{SearchResponse: output}
 	for _, hint := range output.Hints {
 		toolHint := searchToolHint{Code: hint.Code, Message: hint.Message}
-		if hint.Code == "every_word_required" && hint.Next != "" {
-			query, _ := normalizeSearchInput(input)
-			query.Mode, query.Limit = "lexical", 1
-			for word := range strings.FieldsSeq(output.Query) {
-				query.Query = word
-				retry, err := s.backend.Search(ctx, query)
-				if err == nil && len(retry.Hits) > 0 {
-					toolHint.RetryWith = &searchInput{Query: word, Mode: "lexical"}
-					break
-				}
-			}
+		if hint.RetryQuery != "" {
+			toolHint.RetryWith = &searchInput{Query: hint.RetryQuery, Mode: "lexical"}
 		}
 		toolOutput.Hints = append(toolOutput.Hints, toolHint)
 	}

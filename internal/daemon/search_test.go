@@ -592,12 +592,34 @@ func TestSearchRejectsAmbiguousRepoName(t *testing.T) {
 	assert.Empty(t, searcher.params)
 }
 
-func TestSearchEveryWordHintSkipsNonLexicalModes(t *testing.T) {
-	searcher := &recordingReviewSearcher{}
-	server := newSearchHTTPServer(t, searcher)
-	for _, mode := range []searchindex.SearchMode{searchindex.ModeHybrid, searchindex.ModeSemantic} {
-		response := server.searchResponse(t.Context(), searchindex.SearchResult{Query: "nil pointer", Mode: mode}, searchindex.SearchParams{}, &SearchInput{})
-		assert.Empty(t, response.Hints)
+func TestSearchEveryWordHintGuardsAndProbeBound(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result searchindex.SearchResult
+		probes int
+		hints  int
+	}{
+		{name: "partial", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Partial: true}},
+		{name: "degraded complete", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Degraded: true}, probes: 2, hints: 1},
+		{name: "single word", result: searchindex.SearchResult{Query: "nil", Mode: searchindex.ModeLexical}},
+		{name: "hit", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical, Hits: []searchindex.SearchHit{{JobID: 1}}}},
+		{name: "hybrid", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeHybrid}},
+		{name: "semantic", result: searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeSemantic}},
+		{name: "many words", result: searchindex.SearchResult{Query: strings.Repeat("x ", 999) + "x", Mode: searchindex.ModeLexical}, probes: 10, hints: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			searcher := &recordingReviewSearcher{}
+			server := newSearchHTTPServer(t, searcher)
+			response := server.searchResponse(t.Context(), tc.result, searchindex.SearchParams{RepoID: 7, Branch: "main", State: "open"}, &SearchInput{})
+			assert.Len(t, response.Hints, tc.hints)
+			require.Len(t, searcher.params, tc.probes)
+			for _, params := range searcher.params {
+				assert.Equal(t, searchindex.ModeLexical, params.Mode)
+				assert.Equal(t, 1, params.Limit)
+				assert.Equal(t, int64(7), params.RepoID)
+				assert.Equal(t, "main", params.Branch)
+				assert.Equal(t, "open", params.State)
+			}
+		})
 	}
-	assert.Empty(t, searcher.params)
 }

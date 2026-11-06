@@ -387,10 +387,12 @@ hits with canonical job and review IDs, repository/ref metadata, score, matching
 legs, and a bounded excerpt. Interpret `score` together with `mode`; lexical,
 semantic, and hybrid modes use different ranking scales.
 
-An empty multi-word lexical search includes an `every_word_required` hint. Human
-and agent output write `Hint:` to stderr; JSON includes `hints` with `code`,
-`message`, and a `next` command when a query word finds a review under the same
-filters. Single-word misses and semantic or hybrid searches omit it.
+An empty multi-word lexical search with complete coverage includes an
+`every_word_required` hint. Human and agent output write `Hint:` to stderr,
+including a measured retry command when available. JSON includes `hints` with
+`code`, `message`, and a `next` command when one of the first ten query words
+finds a review under the same filters. Single-word misses, incomplete coverage,
+and semantic or hybrid searches omit the hint.
 
 The MCP tool `roborev_search_reviews` accepts the same inputs and returns the
 same response fields, with `retry_with` query and mode arguments in place of

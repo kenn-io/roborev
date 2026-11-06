@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -660,31 +661,46 @@ func TestGetJobOutputReportsAvailableLines(t *testing.T) {
 }
 
 func TestMCPSearchEveryWordHint(t *testing.T) {
-	backend := &fakeBackend{searchFn: func(_ context.Context, query SearchQuery) (storage.SearchResponse, error) {
-		assert.Equal(t, "main", query.Branch)
-		assert.Equal(t, "open", query.State)
-		if query.Query == "absentword pointer" {
-			return storage.SearchResponse{Query: query.Query, Mode: "lexical", Hints: []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words", Next: "roborev search --lexical -- 'pointer'"}}}, nil
-		}
-		assert.Equal(t, "lexical", query.Mode)
-		assert.Equal(t, 1, query.Limit)
-		response := storage.SearchResponse{Query: query.Query, Mode: "lexical"}
-		if query.Query == "pointer" {
-			response.Hits = []storage.SearchHit{{JobID: 42}}
-		}
-		return response, nil
-	}}
-	result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "absentword pointer", "branch": "main", "state": "open"})
-	require.False(t, result.IsError)
-	var out map[string]any
-	decodeText(t, result, &out)
-	structured, err := json.Marshal(result.StructuredContent)
-	require.NoError(t, err)
-	var structuredOut map[string]any
-	require.NoError(t, json.Unmarshal(structured, &structuredOut))
-	assert.Equal(t, out, structuredOut)
-	hint := out["hints"].([]any)[0].(map[string]any)
-	assert.Equal(t, "every_word_required", hint["code"])
-	assert.Equal(t, map[string]any{"query": "pointer", "mode": "lexical"}, hint["retry_with"])
-	assert.NotContains(t, hint, "next")
+	for _, transport := range []string{"local", "http"} {
+		t.Run(transport, func(t *testing.T) {
+			calls := 0
+			response := storage.SearchResponse{Query: "absentword pointer", Mode: "lexical", Hits: []storage.SearchHit{}, Hints: []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words", Next: "roborev search --lexical --branch 'main' --open -- 'pointer'", RetryQuery: "pointer"}}}
+			var backend Backend
+			if transport == "local" {
+				backend = &fakeBackend{searchFn: func(_ context.Context, query SearchQuery) (storage.SearchResponse, error) {
+					calls++
+					assert.Equal(t, "absentword pointer", query.Query)
+					assert.Equal(t, "main", query.Branch)
+					assert.Equal(t, "open", query.State)
+					return response, nil
+				}}
+			} else {
+				daemon, remote := newFakeDaemon(t)
+				payload, err := json.Marshal(response)
+				require.NoError(t, err)
+				daemon.routes["/api/search"] = func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					assert.Equal(t, "absentword pointer", r.URL.Query().Get("q"))
+					assert.Equal(t, "main", r.URL.Query().Get("branch"))
+					assert.Equal(t, "open", r.URL.Query().Get("state"))
+					jsonResponse(http.StatusOK, string(payload))(w, r)
+				}
+				backend = remote
+			}
+			result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "absentword pointer", "branch": "main", "state": "open"})
+			require.False(t, result.IsError)
+			assert.Equal(t, 1, calls, "MCP must reuse the measured retry")
+			var out map[string]any
+			decodeText(t, result, &out)
+			structured, err := json.Marshal(result.StructuredContent)
+			require.NoError(t, err)
+			var structuredOut map[string]any
+			require.NoError(t, json.Unmarshal(structured, &structuredOut))
+			assert.Equal(t, out, structuredOut)
+			hint := out["hints"].([]any)[0].(map[string]any)
+			assert.Equal(t, "every_word_required", hint["code"])
+			assert.Equal(t, map[string]any{"query": "pointer", "mode": "lexical"}, hint["retry_with"])
+			assert.NotContains(t, hint, "next")
+		})
+	}
 }

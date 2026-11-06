@@ -411,8 +411,9 @@ is ready. Without embeddings configured, it uses ordinary lexical search. A
 configured semantic path that is temporarily unavailable falls back to lexical
 with a degradation reason. Quoted and unquoted query words behave the same.
 Human output also reports `partial` coverage, bounded semantic retrieval, and
-mirror/vector progress. An empty multi-word lexical search adds a stderr hint to
-try fewer words; `--json` includes the `every_word_required` hint instead. A
+mirror/vector progress. With complete coverage, an empty multi-word lexical
+search adds a stderr hint to try fewer words and a measured retry command when
+available; `--json` includes the `every_word_required` hint instead. A
 hexadecimal lexical query from 7 through 40 characters matches commit SHA
 prefixes case-insensitively.
 

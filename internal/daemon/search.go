@@ -261,13 +261,14 @@ func (s *Server) resolveSearchRepo(identifier string) (int64, error) {
 func (s *Server) searchResponse(ctx context.Context, result searchindex.SearchResult, params searchindex.SearchParams, input *SearchInput) SearchResponse {
 	response := searchResponseFromResult(result)
 	words := strings.Fields(result.Query)
-	if result.Mode != searchindex.ModeLexical || len(result.Hits) != 0 || len(words) < 2 {
+	if result.Mode != searchindex.ModeLexical || result.Partial || len(result.Hits) != 0 || len(words) < 2 {
 		return response
 	}
 	hint := storage.SearchHint{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}
 	params.Mode = searchindex.ModeLexical
 	params.Limit = 1
-	for _, word := range words {
+	// Bound the extra work for queries with many words.
+	for _, word := range words[:min(len(words), 10)] {
 		params.Query = word
 		retry, err := s.search.Search(ctx, params)
 		if err != nil || len(retry.Hits) == 0 {
@@ -285,6 +286,7 @@ func (s *Server) searchResponse(ctx context.Context, result searchindex.SearchRe
 			command = append(command, "--"+input.State)
 		}
 		hint.Next = strings.Join(append(command, "--", shellQuoteForPrompt(word)), " ")
+		hint.RetryQuery = word
 		break
 	}
 	response.Hints = []storage.SearchHint{hint}

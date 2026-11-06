@@ -448,33 +448,44 @@ func TestSearchIntegrationEveryWordHint(t *testing.T) {
 	waitForSearch(t, "lexical mirror", func() bool { return reconciler.Health().MirrorComplete })
 	server := newSearchHTTPServer(t, searchindex.NewService(db, index, nil, reconciler))
 	for _, mode := range []string{"lexical", "auto"} {
-		for _, query := range []string{"nil pointer", "absentword pointer", "absentword missingword", "absentword", "nil"} {
-			recorder := executeSearch(t.Context(), server, url.Values{"q": {query}, "mode": {mode}, "branch": {"main"}, "state": {"open"}})
-			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-			var response storage.SearchResponse
-			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
-			if len(strings.Fields(query)) == 1 {
-				assert.Empty(t, response.Hints)
-				continue
-			}
-			require.Len(t, response.Hints, 1)
-			assert.Equal(t, "every_word_required", response.Hints[0].Code)
-			assert.Equal(t, "no review contains every word; search again with fewer words", response.Hints[0].Message)
-			mcpResponse, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{Query: query, Mode: mode, Branch: "main", State: "open", Limit: 20})
-			require.NoError(t, err)
-			assert.Equal(t, response.Hints, mcpResponse.Hints)
-			if query == "absentword missingword" {
-				assert.Empty(t, response.Hints[0].Next)
-				continue
-			}
-			word := "nil"
-			if query == "absentword pointer" {
-				word = "pointer"
-			}
-			assert.Equal(t, "roborev search --lexical --branch 'main' --open -- '"+word+"'", response.Hints[0].Next)
-			retry := executeSearch(t.Context(), server, url.Values{"q": {word}, "mode": {"lexical"}, "branch": {"main"}, "state": {"open"}})
-			require.NoError(t, json.Unmarshal(retry.Body.Bytes(), &response))
-			assert.NotEmpty(t, response.Hits)
+		for _, tc := range []struct {
+			query, retry string
+			hints        int
+		}{
+			{query: "nil pointer", retry: "nil", hints: 1},
+			{query: "absentword pointer", retry: "pointer", hints: 1},
+			{query: "absentword missingword", hints: 1},
+			{query: "absentword"},
+		} {
+			t.Run(mode+"/"+tc.query, func(t *testing.T) {
+				recorder := executeSearch(t.Context(), server, url.Values{"q": {tc.query}, "mode": {mode}, "branch": {"main"}, "state": {"open"}})
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				var response storage.SearchResponse
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+				require.Len(t, response.Hints, tc.hints)
+				mcpResponse, err := server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{Query: tc.query, Mode: mode, Branch: "main", State: "open", Limit: 20})
+				require.NoError(t, err)
+				mcpJSON, err := json.Marshal(mcpResponse)
+				require.NoError(t, err)
+				responseJSON, err := json.Marshal(response)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(responseJSON), string(mcpJSON))
+				assert.NotContains(t, recorder.Body.String(), "retry_query")
+				if tc.hints == 0 {
+					return
+				}
+				assert.Equal(t, "every_word_required", response.Hints[0].Code)
+				assert.Equal(t, "no review contains every word; search again with fewer words", response.Hints[0].Message)
+				assert.Equal(t, tc.retry, mcpResponse.Hints[0].RetryQuery)
+				if tc.retry == "" {
+					assert.Empty(t, response.Hints[0].Next)
+					return
+				}
+				assert.Equal(t, "roborev search --lexical --branch 'main' --open -- '"+tc.retry+"'", response.Hints[0].Next)
+				retry := executeSearch(t.Context(), server, url.Values{"q": {tc.retry}, "mode": {"lexical"}, "branch": {"main"}, "state": {"open"}})
+				require.NoError(t, json.Unmarshal(retry.Body.Bytes(), &response))
+				assert.NotEmpty(t, response.Hits)
+			})
 		}
 	}
 }

@@ -715,27 +715,32 @@ func TestSearchCmdEveryWordHint(t *testing.T) {
 		writeSearchResponse(t, w, response)
 		return true
 	}})
-	for _, flag := range []string{"--lexical", "--agent", "--json"} {
-		var stdout, stderrBuffer bytes.Buffer
-		cmd := searchCmd()
-		cmd.SetOut(&stdout)
-		cmd.SetErr(&stderrBuffer)
-		cmd.SetArgs([]string{"nil pointer", flag})
-		require.NoError(t, cmd.ExecuteContext(t.Context()))
-		output, stderr := stdout.String(), stderrBuffer.String()
-		if flag == "--json" {
-			assert.Empty(t, stderr)
-			var decoded map[string]any
-			require.NoError(t, json.Unmarshal([]byte(output), &decoded))
-			assert.Equal(t, "every_word_required", decoded["hints"].([]any)[0].(map[string]any)["code"])
-		} else {
-			assert.Contains(t, stderr, "Hint: no review contains every word; search again with fewer words\n")
-			assert.NotContains(t, output, "Hint:")
-			if flag == "--agent" {
-				assert.Contains(t, output, "OK search count=0")
+	for _, tc := range []struct {
+		name, flag, output string
+		json               bool
+	}{
+		{name: "human", flag: "--lexical", output: "No matching reviews."},
+		{name: "agent", flag: "--agent", output: "OK search count=0"},
+		{name: "json", flag: "--json", json: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderrBuffer bytes.Buffer
+			cmd := searchCmd()
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderrBuffer)
+			cmd.SetArgs([]string{"nil pointer", tc.flag})
+			require.NoError(t, cmd.ExecuteContext(t.Context()))
+			output, stderr := stdout.String(), stderrBuffer.String()
+			if tc.json {
+				assert.Empty(t, stderr)
+				var decoded map[string]any
+				require.NoError(t, json.Unmarshal([]byte(output), &decoded))
+				assert.Equal(t, "every_word_required", decoded["hints"].([]any)[0].(map[string]any)["code"])
 			} else {
-				assert.Contains(t, output, "No matching reviews.")
+				assert.Contains(t, stderr, "Hint: no review contains every word; search again with fewer words; run roborev search --lexical -- 'nil'\n")
+				assert.NotContains(t, output, "Hint:")
+				assert.Contains(t, output, tc.output)
 			}
-		}
+		})
 	}
 }
