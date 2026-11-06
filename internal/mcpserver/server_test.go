@@ -172,15 +172,12 @@ func TestToolCatalogBudget(t *testing.T) {
 	result, err := session.ListTools(t.Context(), nil)
 	require.NoError(t, err)
 	require.NoError(t, checkToolCatalogBudget(t, result))
-	data, err := json.Marshal(result)
-	require.NoError(t, err)
-	t.Logf("tool catalog: %d bytes", len(data))
 }
 
 func TestToolCatalogBudgetBoundary(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	server := New(&fakeBackend{}, "test", nil)
+	server := &Server{mcp: mcp.NewServer(&mcp.Implementation{Name: "budget-fixture", Version: "test"}, nil)}
 	tool := &mcp.Tool{Name: "budget_fixture", InputSchema: map[string]any{"type": "object"}}
 	server.mcp.AddTool(tool, nil)
 	session := connectServer(t, server)
