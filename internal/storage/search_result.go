@@ -35,6 +35,12 @@ type SearchHit struct {
 	Excerpt       string    `json:"excerpt"`
 }
 
+// SearchHint explains an empty result.
+type SearchHint struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 // SearchResponse is the transport-neutral review-search response.
 type SearchResponse struct {
 	Query          string         `json:"query"`
@@ -45,5 +51,6 @@ type SearchResponse struct {
 	BoundedReason  string         `json:"bounded_reason,omitempty"`
 	Partial        bool           `json:"partial"`
 	Coverage       SearchCoverage `json:"coverage"`
+	Hints          []SearchHint   `json:"hints,omitempty"`
 	Hits           []SearchHit    `json:"hits"`
 }

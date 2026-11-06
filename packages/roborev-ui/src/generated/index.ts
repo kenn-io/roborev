@@ -188,6 +188,7 @@ export * from "./scanTokenUsageReport";
 export * from "./searchCoverage";
 export * from "./searchHealth";
 export * from "./searchHealthCredential";
+export * from "./searchHint";
 export * from "./searchHit";
 export * from "./searchResponse";
 export * from "./searchReviewsMode";

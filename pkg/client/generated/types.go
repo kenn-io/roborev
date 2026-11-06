@@ -3936,6 +3936,15 @@ func (s SearchHealth) Validate() error {
 	return errors
 }
 
+type SearchHint struct {
+	Code    string `json:"code" validate:"required"`
+	Message string `json:"message" validate:"required"`
+}
+
+func (s SearchHint) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type SearchHit struct {
 	Agent         string    `json:"agent" validate:"required"`
 	Branch        *string   `json:"branch,omitempty"`
@@ -3970,6 +3979,7 @@ type SearchResponse struct {
 	Coverage       SearchCoverage `json:"coverage"`
 	Degraded       bool           `json:"degraded"`
 	DegradedReason *string        `json:"degraded_reason,omitempty"`
+	Hints          []SearchHint   `json:"hints,omitempty"`
 	Hits           []SearchHit    `json:"hits" validate:"required"`
 	Mode           string         `json:"mode" validate:"required"`
 	Partial        bool           `json:"partial"`
@@ -3981,6 +3991,13 @@ func (s SearchResponse) Validate() error {
 	if v, ok := any(s.Coverage).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Coverage", err)
+		}
+	}
+	for i, item := range s.Hints {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Hints[%d]", i), err)
+			}
 		}
 	}
 	if err := typesValidator.Var(s.Hits, "required"); err != nil {

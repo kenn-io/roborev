@@ -15,21 +15,26 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestLiteralFTSQueryQuotesEveryWhitespaceDelimitedSegment(t *testing.T) {
-	tests := map[string]string{
-		"foo/bar.go:42":        `"foo/bar.go:42"`,
-		"retry-safe":           `"retry-safe"`,
-		`say "hello"`:          `"say" """hello"""`,
-		"OR NEAR NOT":          `"OR" "NEAR" "NOT"`,
-		"foo ---":              `"foo" "---"`,
-		"  alpha\t beta\n ":    `"alpha" "beta"`,
-		"--- / ::: ":           "",
-		"\t\n ":                "",
-		"界/面.go:42 retry-safe": `"界/面.go:42" "retry-safe"`,
+func TestLiteralQueryQuotesSegmentsAndCountsSearchableWords(t *testing.T) {
+	tests := map[string]struct {
+		match string
+		words int
+	}{
+		"foo/bar.go:42":        {`"foo/bar.go:42"`, 1},
+		"retry-safe":           {`"retry-safe"`, 1},
+		`say "hello"`:          {`"say" """hello"""`, 2},
+		"OR NEAR NOT":          {`"OR" "NEAR" "NOT"`, 3},
+		"foo ---":              {`"foo" "---"`, 1},
+		"  alpha\t beta\n ":    {`"alpha" "beta"`, 2},
+		"--- / ::: ":           {"", 0},
+		"\t\n ":                {"", 0},
+		"界/面.go:42 retry-safe": {`"界/面.go:42" "retry-safe"`, 2},
+		"界 ٢":                  {`"界" "٢"`, 2},
 	}
 	for input, want := range tests {
 		t.Run(fmt.Sprintf("%q", input), func(t *testing.T) {
-			assert.Equal(t, want, literalFTSQuery(input))
+			assert.Equal(t, want.match, literalFTSQuery(input))
+			assert.Equal(t, want.words, LiteralWordCount(input))
 		})
 	}
 }

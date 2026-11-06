@@ -429,3 +429,46 @@ func TestSearchIntegrationProviderRejectionIsSanitized(t *testing.T) {
 	}
 	assert.Contains(t, combined, "authentication")
 }
+
+func TestSearchIntegrationEveryWordHint(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	job, _ := completeSearchIntegrationReview(t, db)
+	_, err := db.AddCommentToJob(job.ID, "human", "nil")
+	require.NoError(t, err)
+	second, _ := completeSearchIntegrationReviewForRepo(t, db, job.RepoID, "bbbbbbbbbbbbbbbb")
+	_, err = db.AddCommentToJob(second.ID, "human", "pointer")
+	require.NoError(t, err)
+	index, err := searchindex.Open(t.Context(), searchindex.PathFor(t.TempDir()+"/reviews.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, index.Close()) })
+	reconciler := searchindex.NewReconciler(db, index, nil, searchindex.ReconcilerConfig{})
+	cancel, done := runSearchReconciler(t, reconciler)
+	t.Cleanup(func() { cancel(); require.ErrorIs(t, <-done, context.Canceled) })
+	waitForSearch(t, "lexical mirror", func() bool { return reconciler.Health().MirrorComplete })
+	server := newSearchHTTPServer(t, searchindex.NewService(db, index, nil, reconciler))
+	for word, jobID := range map[string]int64{"nil": job.ID, "pointer": second.ID} {
+		recorder := executeSearch(t.Context(), server, url.Values{"q": {word}, "mode": {"lexical"}})
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var response storage.SearchResponse
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+		require.Len(t, response.Hits, 1)
+		assert.Equal(t, jobID, response.Hits[0].JobID)
+	}
+	recorder := executeSearch(t.Context(), server, url.Values{
+		"q": {"racewindow original"}, "mode": {"lexical"}, "branch": {"nonexistent"},
+	})
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response storage.SearchResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Empty(t, response.Hints)
+	assert.Empty(t, response.Hits)
+
+	recorder = executeSearch(t.Context(), server, url.Values{"q": {"nil pointer"}, "mode": {"auto"}})
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Empty(t, response.Hits)
+	assert.Equal(t, "lexical", response.Mode)
+	assert.Equal(t, []storage.SearchHint{{
+		Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+	}}, response.Hints)
+}
