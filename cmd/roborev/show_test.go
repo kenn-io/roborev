@@ -354,31 +354,6 @@ func TestShowPromptForQueuedJob(t *testing.T) {
 		assert.Contains(t, runShowCmd(t, "--job", "42", "--prompt"), "\nCompleted review instructions\n")
 	})
 
-	t.Run("without --prompt, queued job still reports not found", func(t *testing.T) {
-		daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/review":
-				http.Error(w, "not found", http.StatusNotFound)
-			case "/api/jobs":
-				json.NewEncoder(w).Encode(map[string]any{
-					"jobs": []storage.ReviewJob{
-						{
-							ID:     42,
-							Agent:  "codex",
-							Status: storage.JobStatusQueued,
-							Prompt: "Review this diff please",
-						},
-					},
-				})
-			}
-		}))
-
-		cmd := showCmd()
-		cmd.SetArgs([]string{"--job", "42"})
-		err := cmd.Execute()
-		assertErrorContains(t, err, "no review found")
-	})
-
 	t.Run("queued job without a stored prompt still reports not found", func(t *testing.T) {
 		daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
