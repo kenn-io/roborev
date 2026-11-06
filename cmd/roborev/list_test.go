@@ -450,7 +450,7 @@ func runListTest(t *testing.T, tc listTestCase) {
 	}
 }
 
-func TestListEmptyHints(t *testing.T) {
+func TestListHints(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		args      []string
@@ -475,7 +475,7 @@ func TestListEmptyHints(t *testing.T) {
 					return
 				}
 				call := calls.Add(1)
-				jobs, stats := []storage.ReviewJob{}, storage.JobStats{}
+				jobs, stats := []storage.ReviewJob{}, storage.JobStats{Total: new(0), RepoCount: new(0)}
 				if call == 2 {
 					q := r.URL.Query()
 					assert.Equal(t, "true", q.Get("omit_prompt"))
@@ -500,7 +500,11 @@ func TestListEmptyHints(t *testing.T) {
 				if tc.probe == "singular" {
 					stats.RepoCount = new(1)
 				}
-				writeJSON(w, map[string]any{"jobs": jobs, "has_more": tc.page, "stats": stats})
+				response := map[string]any{"jobs": jobs, "has_more": tc.page}
+				if q := r.URL.Query(); q.Get("omit_stats") != "true" && q.Get("include_totals") == "true" {
+					response["stats"] = stats
+				}
+				writeJSON(w, response)
 			}
 			lt := listTestCase{args: tc.args, handler: handler}
 			if tc.workspace {
