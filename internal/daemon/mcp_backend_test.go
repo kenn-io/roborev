@@ -270,7 +270,15 @@ func TestMCPBackendSearchCallsSharedServiceWithExactParameters(t *testing.T) {
 	assert.Equal("fail", params.Verdict)
 	assert.Equal(searchindex.StateOpen, params.State)
 	assert.Equal(7, params.Limit)
-	assert.Equal(searchResponseFromResult(searcher.result), got)
+	assert.Equal(searchResponse(searcher.result, params), got)
+
+	searcher.result = searchindex.SearchResult{Query: "nil pointer", Mode: searchindex.ModeLexical}
+	got, err = server.mcpBackend().Search(t.Context(), mcpserver.SearchQuery{Query: "nil pointer", Limit: 20})
+	require.NoError(err)
+	assert.Equal(searchResponse(searcher.result, searcher.lastParams(t)), got)
+	assert.Equal([]storage.SearchHint{{
+		Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+	}}, got.Hints)
 }
 
 func TestMCPBackendSearchClassifiesRepoResolutionErrors(t *testing.T) {

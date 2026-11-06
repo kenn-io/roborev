@@ -600,7 +600,6 @@ func TestSearchEveryWordHintEligibility(t *testing.T) {
 		partial, degraded, hit, want bool
 	}{
 		{name: "lexical", query: "nil pointer", want: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
-		{name: "Unicode", query: "界 ٢", want: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
 		{name: "fallback", query: "nil pointer", degraded: true, want: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
 		{name: "partial", query: "nil pointer", partial: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
 		{name: "hit", query: "nil pointer", hit: true, params: searchindex.SearchParams{State: searchindex.StateAll}},

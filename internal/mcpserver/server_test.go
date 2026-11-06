@@ -658,26 +658,17 @@ func TestGetJobOutputReportsAvailableLines(t *testing.T) {
 }
 
 func TestMCPSearchEveryWordHint(t *testing.T) {
-	for _, remote := range []bool{false, true} {
-		response := storage.SearchResponse{Query: "nil pointer", Mode: "lexical", Hints: []storage.SearchHint{{
-			Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
-		}}}
-		var backend Backend = &fakeBackend{searchFn: func(context.Context, SearchQuery) (storage.SearchResponse, error) {
-			return response, nil
-		}}
-		if remote {
-			daemon, httpBackend := newFakeDaemon(t)
-			payload, err := json.Marshal(response)
-			require.NoError(t, err)
-			daemon.routes["/api/search"] = jsonResponse(http.StatusOK, string(payload))
-			backend = httpBackend
-		}
-		result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "nil pointer"})
-		require.False(t, result.IsError)
-		var out map[string]any
-		decodeText(t, result, &out)
-		assert.Equal(t, []any{map[string]any{
-			"code": "every_word_required", "message": "no review contains every word; search again with fewer words",
-		}}, out["hints"])
-	}
+	daemon, backend := newFakeDaemon(t)
+	daemon.routes["/api/search"] = jsonResponse(http.StatusOK, `{
+  "query":"nil pointer","mode":"lexical","degraded":false,"bounded":false,"partial":false,
+  "coverage":{"mirror_complete":true,"embeddings_configured":false,
+   "vector_state":"disabled","embedding_backlog":0,"skipped":0},"hits":[],
+  "hints":[{"code":"every_word_required","message":"no review contains every word; search again with fewer words"}]}`)
+	result := callTool(t, connectSession(t, backend), "roborev_search_reviews", map[string]any{"query": "nil pointer"})
+	require.False(t, result.IsError)
+	var out map[string]any
+	decodeText(t, result, &out)
+	assert.Equal(t, []any{map[string]any{
+		"code": "every_word_required", "message": "no review contains every word; search again with fewer words",
+	}}, out["hints"])
 }

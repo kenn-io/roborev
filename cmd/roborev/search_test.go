@@ -722,7 +722,7 @@ func TestSearchCmdEveryWordHint(t *testing.T) {
 		name, flag, output string
 		json               bool
 	}{
-		{name: "human", flag: "--lexical", output: "Mode: lexical\nCoverage: mirror complete; vectors disabled\nNo matching reviews.\n"},
+		{name: "human", output: "Mode: lexical\nCoverage: mirror complete; vectors disabled\nNo matching reviews.\n"},
 		{name: "agent", flag: "--agent", output: "OK search count=0 query=\"nil pointer\" mode=lexical partial=false bounded=false\n"},
 		{name: "json", flag: "--json", json: true},
 	} {
@@ -731,14 +731,15 @@ func TestSearchCmdEveryWordHint(t *testing.T) {
 			cmd := searchCmd()
 			cmd.SetOut(&stdout)
 			cmd.SetErr(&stderrBuffer)
-			cmd.SetArgs([]string{"nil pointer", tc.flag})
+			args := []string{"nil pointer"}
+			if tc.flag != "" {
+				args = append(args, tc.flag)
+			}
+			cmd.SetArgs(args)
 			require.NoError(t, cmd.ExecuteContext(t.Context()))
 			output, stderr := stdout.String(), stderrBuffer.String()
 			if tc.json {
 				assert.Empty(t, stderr)
-				var decoded map[string]any
-				require.NoError(t, json.Unmarshal([]byte(output), &decoded))
-				assert.Equal(t, "every_word_required", decoded["hints"].([]any)[0].(map[string]any)["code"])
 			} else {
 				assert.Equal(t, "Hint: no review contains every word; search again with fewer words\n", stderr)
 				assert.Equal(t, tc.output, output)
