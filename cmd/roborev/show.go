@@ -153,7 +153,7 @@ Examples:
 			// jobIDForPromptFallback carries the numeric job ID when the
 			// lookup is keyed by job ID, so a 404 from /api/review (no
 			// review row yet) can fall back to the job's stored prompt for
-			// queued/running jobs. -1 means "not applicable" (SHA lookups).
+			// jobs without reviews. -1 means "not applicable" (SHA lookups).
 			jobIDForPromptFallback := int64(-1)
 
 			if len(args) == 0 {
@@ -217,12 +217,10 @@ Examples:
 
 			var review storage.Review
 			if resp.StatusCode == http.StatusNotFound {
-				// Queued/running jobs don't have a review row yet, but the
-				// prompt was already recorded on the job at enqueue time.
-				// Mirror the TUI's fallback (handlers_review.go) so
-				// `show --prompt` works before the job completes.
+				// Active, failed, and canceled jobs can have stored prompts
+				// without a review row. Use the job for prompt requests.
 				fallback := showPrompt && jobIDForPromptFallback >= 0 &&
-					fetchQueuedJobPromptReview(client, addr, jobIDForPromptFallback, &review)
+					fetchJobPromptReview(client, addr, jobIDForPromptFallback, &review)
 				if !fallback {
 					return fmt.Errorf("no review found for %s", displayRef)
 				}
@@ -324,16 +322,10 @@ Examples:
 	return cmd
 }
 
-// fetchQueuedJobPromptReview looks up a job by ID and, if it is queued or
-// running and has a stored prompt, populates out with a minimal review built
-// from the job (Agent, Prompt, Job) and reports true. It reports false if the
-// job can't be found, isn't queued/running, or has no prompt yet — in which
-// case out is left untouched.
-//
-// This mirrors the TUI's queued-job prompt fallback (handlePromptKey in
-// cmd/roborev/tui/handlers_review.go), which reads Prompt straight off the
-// job object because no review row exists until the job completes.
-func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, out *storage.Review) bool {
+// fetchJobPromptReview populates out from an active, failed, or canceled
+// job's stored prompt when no review exists. It leaves out untouched when
+// the job is missing, has no prompt, or has an unsupported status.
+func fetchJobPromptReview(client *http.Client, addr string, jobID int64, out *storage.Review) bool {
 	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
 	if err != nil {
 		return false
@@ -354,7 +346,8 @@ func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, o
 	if job.Prompt == "" {
 		return false
 	}
-	if job.Status != storage.JobStatusQueued && job.Status != storage.JobStatusRunning {
+	if job.Status != storage.JobStatusQueued && job.Status != storage.JobStatusRunning &&
+		job.Status != storage.JobStatusFailed && job.Status != storage.JobStatusCanceled {
 		return false
 	}
 
