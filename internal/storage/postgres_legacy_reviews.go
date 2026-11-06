@@ -3,35 +3,83 @@ package storage
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log"
+	"time"
 	"uuid"
+
+	"github.com/jackc/pgx/v5"
 
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
+
+// Bump this key whenever the batch checks get stricter to force a full rescan.
+const legacyReviewScanKey = "legacy_review_scan_v1"
+
+type legacyReviewScanState struct {
+	Done *time.Time
+	Run  *legacyReviewScanRun
+}
+
+type legacyReviewScanRun struct {
+	Since *time.Time
+	Start time.Time
+	After *uuid.UUID
+}
 
 func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 	if _, err := p.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS legacy_reviews (
  uuid UUID PRIMARY KEY, record JSONB NOT NULL, migration_error TEXT NOT NULL, resolved_at TIMESTAMPTZ)`); err != nil {
 		return err
 	}
-	var after *uuid.UUID
+	var state legacyReviewScanState
+	var stored string
+	err := p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("read historical mirror scan state: %w", err)
+	}
+	if err == nil {
+		if err := json.Unmarshal([]byte(stored), &state); err != nil {
+			state = legacyReviewScanState{}
+		}
+	}
+	if state.Run == nil {
+		state.Run = &legacyReviewScanRun{Since: state.Done}
+		if err := p.pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&state.Run.Start); err != nil {
+			return fmt.Errorf("start historical mirror scan: %w", err)
+		}
+	}
 	total := 0
 	for {
-		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, after)
+		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, state.Run.After, state.Run.Since)
 		if err != nil {
 			return fmt.Errorf("archive historical mirror reviews: %w", err)
 		}
 		if scanned == 0 {
+			state.Done = new(state.Run.Start.Add(-defaultSyncCursorLookback))
+			state.Run = nil
+		} else {
+			state.Run.After = next
+		}
+		raw, err := json.Marshal(state)
+		if err != nil {
+			return fmt.Errorf("encode historical mirror scan state: %w", err)
+		}
+		if _, err := p.pool.Exec(ctx, `INSERT INTO sync_metadata (key, value) VALUES ($1, $2)
+ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, legacyReviewScanKey, string(raw)); err != nil {
+			return fmt.Errorf("save historical mirror scan state: %w", err)
+		}
+		if scanned == 0 {
 			return nil
 		}
-		after = next
 		total += scanned
 		log.Printf("Historical mirror review migration: scanned %d reviews", total)
 	}
 }
 
-func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID) (*uuid.UUID, int, error) {
+func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID, since *time.Time) (*uuid.UUID, int, error) {
 	scanned := 0
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -42,7 +90,9 @@ func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID
  COALESCE(j.min_severity, ''), r.verdict_bool
  FROM reviews r JOIN review_jobs j ON j.uuid = r.job_uuid
  WHERE j.job_type IN ('review','range','dirty','synthesis','compact')
- AND ($1::uuid IS NULL OR r.uuid > $1) ORDER BY r.uuid LIMIT $2 FOR UPDATE OF r`, after, legacyReviewBatchSize)
+ AND ($1::uuid IS NULL OR r.uuid > $1)
+ AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
+ ORDER BY r.uuid LIMIT $2 FOR UPDATE OF r`, after, legacyReviewBatchSize, since)
 	if err != nil {
 		return after, scanned, err
 	}

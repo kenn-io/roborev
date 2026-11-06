@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"testing"
 	"time"
@@ -13,6 +14,74 @@ import (
 
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
+
+func TestIntegrationLegacyReviewScanOnlyRevisitsNewWrites(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	insert := func(age string) uuid.UUID {
+		jobID, reviewID := uuid.New(), uuid.New()
+		createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
+		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, job_source_machine_id, agent, prompt, output, updated_at, updated_by_machine_id)
+ VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2), 'test', 'prompt', 'Preserve this historical text.', clock_timestamp() - $3::interval, $4)`, reviewID, jobID, age, defaultTestMachineID)
+		require.NoError(t, err)
+		return reviewID
+	}
+	initial := insert("0 seconds")
+	require.NoError(t, pool.migrateLegacyReviews(ctx))
+	old, fresh := insert("1 day"), insert("0 seconds")
+	require.NoError(t, pool.migrateLegacyReviews(ctx))
+	for _, id := range []uuid.UUID{initial, fresh} {
+		var output string
+		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output' FROM legacy_reviews WHERE uuid = $1`, id).Scan(&output))
+		assert.Equal(t, "Preserve this historical text.", output)
+	}
+	var output string
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT output FROM reviews WHERE uuid = $1`, old).Scan(&output))
+	assert.Equal(t, "Preserve this historical text.", output)
+}
+
+func TestIntegrationLegacyReviewScanResumesAfterTimeout(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	insert := func(id uuid.UUID, age string) {
+		jobID := uuid.New()
+		createTestJob(t, pool.Pool(), TestJobOpts{UUID: jobID, RepoID: repoID, CommitID: commitID})
+		_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, job_source_machine_id, agent, prompt, output, updated_at, updated_by_machine_id)
+ VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2), 'test', 'prompt', 'Preserve this historical text.', clock_timestamp() - $3::interval, $4)`, id, jobID, age, defaultTestMachineID)
+		require.NoError(t, err)
+	}
+	for range 205 {
+		insert(uuid.New(), "0 seconds")
+	}
+	// Exercise the first full scan, including resuming with no watermark.
+	_, err := pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
+	require.NoError(t, err)
+	var locked uuid.UUID
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 100 LIMIT 1`).Scan(&locked))
+	tx, err := pool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+	_, err = tx.Exec(ctx, `SELECT uuid FROM reviews WHERE uuid = $1 FOR UPDATE`, locked)
+	require.NoError(t, err)
+	// PostgreSQL row locks are external work that synctest cannot observe.
+	timeout, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	require.ErrorIs(t, pool.migrateLegacyReviews(timeout), context.DeadlineExceeded)
+	require.NoError(t, tx.Rollback(ctx))
+	low := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	insert(low, "1 day")
+	require.NoError(t, pool.migrateLegacyReviews(ctx))
+	var archived int
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM legacy_reviews`).Scan(&archived))
+	assert.Equal(t, 205, archived)
+	var output string
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT output FROM reviews WHERE uuid = $1`, low).Scan(&output))
+	assert.Equal(t, "Preserve this historical text.", output)
+}
 
 func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	pool := openTestPgPool(t)
