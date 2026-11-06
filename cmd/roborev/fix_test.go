@@ -4990,6 +4990,9 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 			}).Build()
 			var stderr bytes.Buffer
 			out, err := runWithOutput(t, dir, func(cmd *cobra.Command) error {
+				cwd, err := os.Getwd()
+				require.NoError(t, err)
+				dir = cwd
 				cmd.SetErr(&stderr)
 				opts := fixOptions{quiet: tc.state == "quiet"}
 				switch tc.mode {

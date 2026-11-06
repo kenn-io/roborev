@@ -49,9 +49,13 @@ func TestJobStatsTotalAndRepos(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	for _, path := range []string{"/repos/a", "/repos/b"} {
+	var firstRepoPath string
+	for i, path := range []string{"/repos/a", "/repos/b"} {
 		repo, err := db.GetOrCreateRepo(path)
 		require.NoError(t, err)
+		if i == 0 {
+			firstRepoPath = repo.RootPath
+		}
 		for _, status := range []JobStatus{JobStatusDone, JobStatusApplied, JobStatusRebased} {
 			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: string(status), Agent: "test", JobType: JobTypeFix})
 			require.NoError(t, err)
@@ -73,14 +77,16 @@ func TestJobStatsTotalAndRepos(t *testing.T) {
 		total, repos int
 	}{
 		{total: 6, repos: 2},
-		{repo: "/repos/a", total: 3, repos: 1},
+		{repo: firstRepoPath, total: 3, repos: 1},
 		{status: "applied", total: 2, repos: 2},
 		{opts: []ListJobsOption{WithClosed(false)}, total: 3, repos: 1},
 	} {
 		stats, err := db.CountJobStats(tc.status, tc.repo, append(tc.opts, WithJobTotals())...)
 		require.NoError(t, err)
-		assert.Equal(t, new(tc.total), stats.Total)
-		assert.Equal(t, new(tc.repos), stats.RepoCount)
+		require.NotNil(t, stats.Total)
+		require.NotNil(t, stats.RepoCount)
+		assert.Equal(t, tc.total, *stats.Total)
+		assert.Equal(t, tc.repos, *stats.RepoCount)
 	}
 	stats, err := db.CountJobStats("", "")
 	require.NoError(t, err)
