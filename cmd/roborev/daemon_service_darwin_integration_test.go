@@ -108,6 +108,7 @@ func TestLaunchctlCLIRecoveryIntegration(t *testing.T) {
 				}
 				return owner, err
 			}
+			assertSuspendedManagedDaemon(t, original, unit, owner.mainPID)
 			detached := 0
 			startDaemonForEnsure = func() error { detached++; return nil }
 			var output bytes.Buffer
