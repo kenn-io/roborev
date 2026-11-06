@@ -5000,7 +5000,7 @@ func TestOutsideRepoEmptyHints(t *testing.T) {
 			want, wantCalls := "", int32(2)
 			switch tc.state {
 			case "outside":
-				want = "hint: no open jobs for repository path " + dir + "; the daemon has open jobs in 3 repos; see roborev repo list\n"
+				want = "hint: no open jobs for repository path " + dir + "; the daemon has completed, unclosed review jobs in 3 repos; see roborev repo list, then rerun this command from a listed repo\n"
 			case "quiet":
 				assert.Empty(t, out)
 				wantCalls = 1
