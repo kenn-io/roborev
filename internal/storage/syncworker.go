@@ -32,7 +32,6 @@ type SyncWorker struct {
 	healthPinging   bool
 	healthCtx       context.Context //nolint:containedctx // owns probes for the current pool's lifetime
 	healthCancel    context.CancelFunc
-	pingTimeout     time.Duration
 	stopCh          chan struct{}
 	doneCh          chan struct{}
 	mu              sync.Mutex          // protects running, pgPool, health state, and callbacks
@@ -226,12 +225,11 @@ func (w *SyncWorker) PublishSearchVectors(
 // NewSyncWorker creates a new sync worker
 func NewSyncWorker(db *DB, cfg config.SyncConfig) *SyncWorker {
 	return &SyncWorker{
-		db:          db,
-		cfg:         cfg,
-		stopCh:      make(chan struct{}),
-		doneCh:      make(chan struct{}),
-		syncMu:      semaphore.NewWeighted(1),
-		pingTimeout: 5 * time.Second,
+		db:     db,
+		cfg:    cfg,
+		stopCh: make(chan struct{}),
+		doneCh: make(chan struct{}),
+		syncMu: semaphore.NewWeighted(1),
 	}
 }
 
@@ -712,20 +710,23 @@ func (w *SyncWorker) closePool() *PgPool {
 }
 
 func (w *SyncWorker) pingPool(ctx context.Context, pool *PgPool) error {
-	pingCtx, cancel := context.WithTimeout(ctx, w.pingTimeout)
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return pool.Ping(pingCtx)
-}
-
-func (w *SyncWorker) checkHealth(ctx context.Context, pool *PgPool) {
-	err := w.pingPool(ctx, pool)
+	err := pool.Ping(pingCtx)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.healthPinging = false
 	if w.pgPool == pool {
 		w.pgReachable = err == nil
 		w.healthCheckedAt = time.Now()
 	}
+	return err
+}
+
+func (w *SyncWorker) checkHealth(ctx context.Context, pool *PgPool) {
+	_ = w.pingPool(ctx, pool)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.healthPinging = false
 }
 
 // syncLoop runs the periodic sync until stop or disconnection

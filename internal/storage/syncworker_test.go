@@ -21,12 +21,13 @@ import (
 )
 
 // newSyncHealthPool stalls connections and queries while reachable is false.
-func newSyncHealthPool(t *testing.T, reachable *atomic.Bool) (*PgPool, *atomic.Int64) {
+func newSyncHealthPool(t *testing.T, reachable *atomic.Bool) (*PgPool, *atomic.Int64, func()) {
 	t.Helper()
 	var lc net.ListenConfig
 	listener, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	release := make(chan struct{})
+	releaseStalls := sync.OnceFunc(func() { close(release) })
 	var accepted atomic.Int64
 	var server sync.WaitGroup
 	server.Go(func() {
@@ -75,26 +76,29 @@ func newSyncHealthPool(t *testing.T, reachable *atomic.Bool) (*PgPool, *atomic.I
 		}
 	})
 	t.Cleanup(func() {
-		close(release)
+		releaseStalls()
 		_ = listener.Close()
 		server.Wait()
 	})
 	pool, err := pgxpool.New(t.Context(), "postgres://test:test@"+listener.Addr().String()+"/test?sslmode=disable")
 	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	return &PgPool{pool: pool}, &accepted
+	t.Cleanup(func() {
+		releaseStalls()
+		pool.Close()
+	})
+	return &PgPool{pool: pool}, &accepted, releaseStalls
 }
 
 func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	var reachable atomic.Bool
-	pool, accepted := newSyncHealthPool(t, &reachable)
+	pool, accepted, releaseStalls := newSyncHealthPool(t, &reachable)
 	worker := NewSyncWorker(nil, config.SyncConfig{})
 	worker.running, worker.pgPool, worker.pgReachable = true, pool, true
 	worker.healthCtx, worker.healthCancel = context.WithCancel(t.Context())
-	worker.pingTimeout = 500 * time.Millisecond //nolint:kennlint // deadlinetest: the probe waits on a real stalled TCP connection outside synctest
 	t.Cleanup(func() {
+		releaseStalls()
 		worker.mu.Lock()
 		pool := worker.closePool()
 		worker.mu.Unlock()
@@ -123,7 +127,10 @@ func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
 	case <-time.After(time.Second):
 	}
 	assert.True(completed, "HealthCheck waited for PostgreSQL instead of returning cached health")
-	// Wait for the actual socket connection and its timeout, outside synctest.
+	// Wait for the actual stalled socket connection, outside synctest.
+	require.Eventually(t, func() bool { return accepted.Load() == 1 }, time.Second, time.Millisecond)
+	releaseStalls()
+	// Wait for the socket failure to reach the probe goroutine, outside synctest.
 	require.Eventually(t, func() bool {
 		worker.mu.Lock()
 		defer worker.mu.Unlock()
@@ -152,11 +159,47 @@ func TestSyncHealthCheckReturnsCachedStateDuringStall(t *testing.T) {
 	assert.Equal(int64(2), accepted.Load())
 }
 
+func TestSyncHealthRecordsSyncLoopPingAfterFailedProbe(t *testing.T) {
+	t.Parallel()
+	var reachable atomic.Bool
+	reachable.Store(true)
+	pool, _, _ := newSyncHealthPool(t, &reachable)
+	db := openTestDB(t)
+	worker := NewSyncWorker(db, config.SyncConfig{})
+	worker.running, worker.pgPool = true, pool
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	worker.checkHealth(ctx, pool)
+	healthy, message := worker.HealthCheck()
+	require.False(t, healthy)
+	require.Equal(t, "connection lost", message)
+
+	// A local database failure sends syncLoop through its post-failure ping.
+	require.NoError(t, db.Close())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		worker.syncLoop(worker.stopCh, time.Millisecond, false)
+	}()
+	t.Cleanup(func() {
+		close(worker.stopCh)
+		<-done
+	})
+	// The sync loop's recovery ping uses a real TCP socket, outside synctest.
+	require.Eventually(t, func() bool {
+		healthy, _ := worker.HealthCheck()
+		return healthy
+	}, time.Second, time.Millisecond)
+	healthy, message = worker.HealthCheck()
+	assert.True(t, healthy)
+	assert.Equal(t, "connected", message)
+}
+
 func TestSyncHealthClosePoolCancelsPingAndIgnoresLateResult(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	var reachable atomic.Bool
-	pool, accepted := newSyncHealthPool(t, &reachable)
+	pool, accepted, releaseStalls := newSyncHealthPool(t, &reachable)
 	worker := NewSyncWorker(nil, config.SyncConfig{})
 	worker.running, worker.pgPool, worker.pgReachable = true, pool, true
 	worker.healthCtx, worker.healthCancel = context.WithCancel(t.Context())
@@ -177,7 +220,10 @@ func TestSyncHealthClosePoolCancelsPingAndIgnoresLateResult(t *testing.T) {
 		worker.mu.Unlock()
 		pool.Close()
 	}()
-	t.Cleanup(func() { <-done })
+	t.Cleanup(func() {
+		releaseStalls()
+		<-done
+	})
 	// Pool closure waits on real socket cancellation, outside synctest.
 	closed := false
 	select {
@@ -212,7 +258,7 @@ func TestSyncHealthCheckReturnsWhilePoolCloseBlocks(t *testing.T) {
 	assert := assert.New(t)
 	var reachable atomic.Bool
 	reachable.Store(true)
-	pool, accepted := newSyncHealthPool(t, &reachable)
+	pool, accepted, releaseStalls := newSyncHealthPool(t, &reachable)
 	require.NoError(t, pool.Ping(t.Context()))
 	reachable.Store(false)
 	worker := NewSyncWorker(nil, config.SyncConfig{})
@@ -233,7 +279,10 @@ func TestSyncHealthCheckReturnsWhilePoolCloseBlocks(t *testing.T) {
 		worker.mu.Unlock()
 		pool.Close()
 	}()
-	t.Cleanup(func() { <-closed })
+	t.Cleanup(func() {
+		releaseStalls()
+		<-closed
+	})
 	// pgx cancellation opens a second socket and waits for the stalled server.
 	require.Eventually(t, func() bool { return accepted.Load() == 2 }, time.Second, time.Millisecond)
 	closeFinished := false
