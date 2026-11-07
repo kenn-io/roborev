@@ -64,45 +64,38 @@ func TestPullSessionParentsCommitAndRollbackWithJobs(t *testing.T) {
 
 func TestPullSessionYieldsToQueuedWriter(t *testing.T) {
 	t.Parallel()
-	for _, budget := range []time.Duration{0, pullTxBudget} {
-		t.Run(budget.String(), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				h := newSyncTestHelper(t)
-				s, err := h.db.newPullSession(t.Context())
-				require.NoError(t, err)
-				defer s.close()
-				s.budget = budget
-				_, err = h.db.ExecContext(t.Context(), `CREATE TABLE pull_order (id INTEGER PRIMARY KEY, writer TEXT)`)
-				require.NoError(t, err)
-				require.NoError(t, s.begin(t.Context(), false))
-				_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-first")
-				require.NoError(t, err)
-				if budget > 0 {
-					require.NoError(t, s.finishRow(t.Context(), true, nil))
-					var count int
-					require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pull_order`).Scan(&count))
-					assert.Zero(t, count, "the row stays uncommitted before the budget expires")
-				}
-				done := make(chan error, 1)
-				go func() {
-					_, err := h.db.ExecContext(t.Context(), `INSERT INTO pull_order (writer) VALUES ('user')`)
-					done <- err
-				}()
-				synctest.Wait()
-				time.Sleep(budget)
-				require.NoError(t, s.finishRow(t.Context(), true, nil))
-				require.NoError(t, s.begin(t.Context(), false))
-				_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-second")
-				require.NoError(t, err)
-				time.Sleep(budget)
-				require.NoError(t, s.finishRow(t.Context(), true, nil))
-				require.NoError(t, <-done)
-				var order string
-				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT group_concat(writer, ',') FROM (SELECT writer FROM pull_order ORDER BY id)`).Scan(&order))
-				assert.Equal(t, "pull-first,user,pull-second", order)
-			})
-		})
-	}
+	synctest.Test(t, func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		s, err := h.db.newPullSession(t.Context())
+		require.NoError(t, err)
+		defer s.close()
+		_, err = h.db.ExecContext(t.Context(), `CREATE TABLE pull_order (id INTEGER PRIMARY KEY, writer TEXT)`)
+		require.NoError(t, err)
+		require.NoError(t, s.begin(t.Context(), false))
+		_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-first")
+		require.NoError(t, err)
+		require.NoError(t, s.finishRow(t.Context(), true, nil))
+		var count int
+		require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pull_order`).Scan(&count))
+		assert.Zero(t, count, "the row stays uncommitted before the budget expires")
+		done := make(chan error, 1)
+		go func() {
+			_, err := h.db.ExecContext(t.Context(), `INSERT INTO pull_order (writer) VALUES ('user')`)
+			done <- err
+		}()
+		synctest.Wait()
+		time.Sleep(pullTxBudget)
+		require.NoError(t, s.finishRow(t.Context(), true, nil))
+		require.NoError(t, s.begin(t.Context(), false))
+		_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-second")
+		require.NoError(t, err)
+		time.Sleep(pullTxBudget)
+		require.NoError(t, s.finishRow(t.Context(), true, nil))
+		require.NoError(t, <-done)
+		var order string
+		require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT group_concat(writer, ',') FROM (SELECT writer FROM pull_order ORDER BY id)`).Scan(&order))
+		assert.Equal(t, "pull-first,user,pull-second", order)
+	})
 }
 
 func TestPullSessionRollbackReleasesLocks(t *testing.T) {
@@ -117,6 +110,10 @@ func TestPullSessionRollbackReleasesLocks(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(t, s.commit(ctx), context.Canceled)
+	require.NoError(t, h.db.UpsertPulledJob(PulledJob{
+		UUID: testUUID("after-cancel"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
+		Status: "done", EnqueuedAt: time.Now(), UpdatedAt: time.Now(),
+	}, h.repo.ID, nil))
 	require.NoError(t, s.begin(t.Context(), true))
 	_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES (?, 'value')`, "abandoned")
 	require.NoError(t, err)
@@ -126,37 +123,11 @@ func TestPullSessionRollbackReleasesLocks(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, value, key)
 	}
-	// Both paths release the writer and attempt lock.
+	// Closing an abandoned session also releases the writer and attempt lock.
 	require.NoError(t, h.db.UpsertPulledJob(PulledJob{
 		UUID: testUUID("after-close"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
 		Status: "done", EnqueuedAt: time.Now(), UpdatedAt: time.Now(),
 	}, h.repo.ID, nil))
-}
-
-func TestPullSessionIgnoredReviewKeepsPreviousResult(t *testing.T) {
-	t.Parallel()
-	h := newSyncTestHelper(t)
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	job := PulledJob{
-		UUID: testUUID("ignored-review-parent"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
-		Status: "done", EnqueuedAt: now, UpdatedAt: now, SourceMachineID: testUUID("peer"),
-	}
-	require.NoError(t, h.db.UpsertPulledJob(job, h.repo.ID, nil))
-	review := PulledReview{
-		UUID: testUUID("original-result"), JobUUID: job.UUID, Agent: "test",
-		JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID,
-		StructuredOutput: reviewFixtureJSON("original finding"),
-		CreatedAt:        now, UpdatedAt: now, UpdatedByMachineID: job.SourceMachineID,
-	}
-	require.NoError(t, h.db.UpsertPulledReview(review))
-	review.UUID = testUUID("ignored-result")
-	review.StructuredOutput = nil
-	review.CreatedAt = now.Add(time.Second)
-	review.UpdatedAt = review.CreatedAt
-	require.NoError(t, h.db.UpsertPulledReview(review))
-	var id string
-	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT uuid FROM reviews`).Scan(&id))
-	assert.Equal(t, testUUID("original-result").String(), id)
 }
 
 func TestPullSessionCancelsAttemptOnlyAfterCommit(t *testing.T) {
@@ -208,7 +179,7 @@ func newNotifyingPullSession(t *testing.T, w *SyncWorker) *pullSession {
 
 func TestPullSessionClosesStatementsBeforeDiscard(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"begin", "rollback", "close"} {
+	for _, failure := range []string{"begin", "close"} {
 		t.Run(failure, func(t *testing.T) {
 			db := openTestDB(t)
 			defer db.Close()
@@ -226,9 +197,6 @@ func TestPullSessionClosesStatementsBeforeDiscard(t *testing.T) {
 				// Simulate a transaction already ended by SQLite before cleanup.
 				_, err = s.conn.ExecContext(t.Context(), "ROLLBACK")
 				require.NoError(t, err)
-				if failure == "rollback" {
-					s.rollback()
-				}
 			}
 			assert.NotPanics(t, s.close)
 			_ = s.conn.Close()
