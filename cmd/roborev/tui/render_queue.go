@@ -574,7 +574,6 @@ func (m model) renderQueueView() string {
 		if !compact {
 			padTarget += 2 // +2 for header lines we skipped
 		}
-		msg = msg[:min(len(msg), max(padTarget, 1))]
 		for _, line := range msg {
 			b.WriteString(line)
 			b.WriteString("\x1b[K\n")

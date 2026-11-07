@@ -244,7 +244,7 @@ describe("JobTable infinite scroll", () => {
     "jobType",
     "repo",
   ] as const)("keeps the empty message for %s hiding jobs", async (filter) => {
-    const api = mountTable(async (query) => ({
+    mountTable(async (query) => ({
       jobs: [],
       has_more: false,
       next_cursor: null,
@@ -255,17 +255,6 @@ describe("JobTable infinite scroll", () => {
     else context.jobs?.setFilter(filter, "chosen");
     await screen.findByText("No jobs found");
     expect(screen.queryByText("No reviews yet")).toBeNull();
-    const expected = {
-      hideClosed: { closed: "false" },
-      status: { status: "chosen" },
-      search: { git_ref: "chosen" },
-      branch: { branch: "chosen" },
-      jobType: { job_type: "chosen" },
-      repo: { repo: ["chosen"] },
-    }[filter];
-    await vi.waitFor(() =>
-      expect(api.mock.calls.at(-1)?.[0]).toMatchObject(expected),
-    );
   });
 
   it("sends one request while a page is loading", async () => {

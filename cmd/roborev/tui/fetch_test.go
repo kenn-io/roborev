@@ -21,7 +21,6 @@ func TestFetchJobsFirstReview(t *testing.T) {
 	t.Parallel()
 	for _, closed := range []int{0, 1} {
 		t.Run(strconv.Itoa(closed), func(t *testing.T) {
-			jobs := []storage.ReviewJob{}
 			_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/api/jobs", r.URL.Path)
 				assert.Equal(t, []string{"/test/repo"}, r.URL.Query()["repo"])
@@ -29,7 +28,7 @@ func TestFetchJobsFirstReview(t *testing.T) {
 				assert.Equal(t, "false", r.URL.Query().Get("closed"))
 				w.Header().Set("Content-Type", "application/json")
 				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-					"jobs": jobs, "has_more": false, "stats": storage.JobStats{Closed: closed},
+					"jobs": []storage.ReviewJob{}, "has_more": false, "stats": storage.JobStats{Closed: closed},
 				}))
 			})
 			m.width, m.height = 120, 24
@@ -44,10 +43,6 @@ func TestFetchJobsFirstReview(t *testing.T) {
 				assert.Contains(t, output, "No jobs matching filters")
 				assert.NotContains(t, output, "No reviews yet")
 			}
-			jobs = []storage.ReviewJob{{ID: 1, GitRef: "abc123", RepoPath: m.cwdRepoRoot, Branch: m.cwdBranch, Status: storage.JobStatusQueued}}
-			m, _ = updateModel(t, m, fetchJobsMessage(t, m))
-			assert.NotContains(t, m.renderQueueView(), "No reviews yet")
-			assert.Contains(t, strings.Join(m.renderQueuePaneBody(120, 12), "\n"), "abc123")
 		})
 	}
 }

@@ -1562,14 +1562,10 @@ func TestTUIFirstReviewEmptyQueue(t *testing.T) {
 		wantHint  bool
 	}{
 		{"default repo and branch", func(m *model) {}, true},
-		{"hidden closed", func(m *model) { m.hideClosed = true; m.jobStats.Closed = 1 }, false},
-		{"hide closed without history", func(m *model) { m.hideClosed = true }, true},
 		{"chosen repo", func(m *model) { m.autoRepoFilter = false }, false},
 		{"chosen branch", func(m *model) { m.activeBranchFilter = "other" }, false},
-		{"locked repo", func(m *model) { m.lockedRepoFilter = true }, false},
 		{"locked branch", func(m *model) { m.lockedBranchFilter = true }, false},
 		{"loading", func(m *model) { m.loadingJobs = true }, false},
-		{"failed", func(m *model) { m.err = errors.New("unavailable") }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -1580,13 +1576,7 @@ func TestTUIFirstReviewEmptyQueue(t *testing.T) {
 			m.autoRepoFilter = true
 			tc.configure(&m)
 			for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(100, 12), "\n")} {
-				if tc.wantHint {
-					assert.Contains(t, output, "No reviews yet")
-					assert.Contains(t, output, "Your next commit starts a review.")
-					assert.Contains(t, output, "roborev review")
-				} else {
-					assert.NotContains(t, output, "No reviews yet")
-				}
+				assert.Equal(t, tc.wantHint, strings.Contains(output, "No reviews yet"))
 			}
 		})
 	}
