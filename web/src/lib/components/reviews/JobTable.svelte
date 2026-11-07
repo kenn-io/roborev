@@ -244,7 +244,7 @@
     <div class="first-review">
       <EmptyState
         title="No reviews yet"
-        description="Your next commit starts a review. To review the current commit now, run:"
+        description={"Your next commit starts a review.\nTo review the current commit now, run:"}
       >
         <span class="first-review-command">
           <code>roborev review</code>
@@ -388,13 +388,13 @@
   }
 
   /* Set the title a step further from the body than its lines sit apart,
-     and balance the body's two lines. */
+     and break the body between its two sentences. */
   .first-review :global(.kit-empty-state__title) {
     margin-bottom: var(--space-3);
   }
 
   .first-review :global(.kit-empty-state__description) {
-    text-wrap: balance;
+    white-space: pre-line;
   }
 
   .first-review-command {

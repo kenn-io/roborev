@@ -61,6 +61,7 @@ func TestFetchJobsFirstReviewRecoversAfterError(t *testing.T) {
 		assert.NoError(t, err)
 	})
 	m.width, m.height = 120, 24
+	m.cwdRepoRoot = "/test/repo"
 	m, _ = updateModel(t, m, fetchJobsMessage(t, m))
 	for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(120, 12), "\n")} {
 		assert.NotContains(t, output, "No reviews yet")

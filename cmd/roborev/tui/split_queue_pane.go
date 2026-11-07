@@ -70,13 +70,10 @@ func (m model) renderQueuePaneBody(innerW, innerH int) []string {
 	rows := m.visibleQueueRows()
 	lines := make([]string, 0, innerH)
 	if len(rows) == 0 {
-		// Inset the message one column from the pane border.
-		msg := []string{statusStyle.Render("No jobs")}
 		if m.showFirstReview() {
-			msg = firstReviewLines(max(innerW-1, 1))
-		}
-		for _, line := range msg {
-			lines = append(lines, " "+line)
+			lines = append(lines, firstReviewLines(innerW)...)
+		} else {
+			lines = append(lines, statusStyle.Render("No jobs"))
 		}
 	} else {
 		hasAnyPanel := anyPanelRow(rows)

@@ -1551,7 +1551,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 
 	assert.GreaterOrEqual(t, len(lines), m.height-3)
 
-	assert.Contains(t, output, "No reviews yet")
+	assert.Contains(t, output, "No jobs in queue")
 }
 
 func TestTUIFirstReviewEmptyQueue(t *testing.T) {
@@ -1562,6 +1562,10 @@ func TestTUIFirstReviewEmptyQueue(t *testing.T) {
 		wantHint  bool
 	}{
 		{"default repo and branch", func(m *model) {}, true},
+		{"outside repo", func(m *model) {
+			m.cwdRepoRoot, m.cwdBranch = "", ""
+			m.activeRepoFilter, m.activeBranchFilter = nil, ""
+		}, false},
 		{"chosen repo", func(m *model) { m.autoRepoFilter = false }, false},
 		{"chosen branch", func(m *model) { m.activeBranchFilter = "other" }, false},
 		{"locked branch", func(m *model) { m.lockedBranchFilter = true }, false},
@@ -1586,6 +1590,7 @@ func TestTUIFirstReviewEmptyQueueWraps(t *testing.T) {
 	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.loadingJobs = false
+	m.cwdRepoRoot = "/test/repo"
 	m.width, m.height = 40, 24
 	lines := m.renderQueuePaneBody(32, 12)
 	assert.Len(t, lines, 12)
