@@ -3,6 +3,7 @@
 package testutil
 
 import (
+	"context"
 	"os/exec"
 	"testing"
 	"time"
@@ -15,11 +16,17 @@ import (
 // function lets it exit and observes the exit without reaping it until cleanup.
 func StartLivenessChild(t *testing.T) (int, func()) {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "sh", "-c", "read -r line || true", "roborev", "daemon", "run")
+	// Keep the command alive through cleanup so Wait can reap it before cancellation.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, "sh", "-c", "read -r line || true", "roborev", "daemon", "run")
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
-	t.Cleanup(func() { require.NoError(t, cmd.Wait()) })
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		require.NoError(t, cmd.Wait())
+	})
 
 	return cmd.Process.Pid, func() {
 		t.Helper()
