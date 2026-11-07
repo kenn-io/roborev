@@ -45,6 +45,8 @@ backup agent. Submit a new request with the intended prompt to recover.
 These requests still use normal execution configuration, agent permissions,
 retries, and backup agents. Repository configuration comes from the caller's
 worktree while it exists, or the main checkout otherwise. It can control file
-exclusions, binary evidence, and tool mode. Supplying a prompt does not freeze
-this configuration source or its settings, or isolate the agent from repository
-files. Use this mode only with execution settings you trust.
+exclusions, binary evidence, and tool mode. A request without `min_severity`
+uses the configured `review_min_severity` to decide which findings fail the
+review. Supplying a prompt does not freeze this configuration source or its
+settings, or isolate the agent from repository files. Use this mode only with
+execution settings you trust.

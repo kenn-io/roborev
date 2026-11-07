@@ -1235,6 +1235,17 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
+		// CI jobs store their threshold at enqueue. A supplied prompt replaces
+		// only the prompt, so its threshold resolves like an ordinary review's.
+		if job.Source == storage.JobSourceReviewPrompt && effectiveMinSeverity == "" {
+			resolved, resErr := config.ResolveReviewMinSeverity("", checkout.resolvedConfigRepoPath(), cfg)
+			if resErr != nil {
+				log.Printf("[%s] Error resolving min-severity: %v", workerID, resErr)
+				wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("resolve min-severity: %v", resErr))
+				return
+			}
+			effectiveMinSeverity = resolved
+		}
 		var cleanup func()
 		excludes := config.ResolveExcludePatterns(
 			ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,

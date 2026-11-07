@@ -207,6 +207,53 @@ func TestEnqueueReviewPromptSurvivesCommitRemapping(t *testing.T) {
 	}
 }
 
+func TestEnqueueReviewPromptAppliesSeverityThreshold(t *testing.T) {
+	t.Parallel()
+	const lowOnly = `{"schema_version":3,"summary":"One minor concern.","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"problem":"A name is unclear.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
+	tests := []struct {
+		name         string
+		minSeverity  string
+		wantVerdict  int
+		wantRecorded string
+	}{
+		{name: "configured threshold passes a low finding", wantVerdict: 1, wantRecorded: "medium"},
+		{name: "explicit threshold overrides configuration", minSeverity: "low", wantVerdict: 0, wantRecorded: "low"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			repo.CommitFile(".roborev.toml", "review_min_severity = 'medium'\n", "severity threshold")
+			head := repo.CommitFile("file.txt", "review target\n", "target")
+			name := "supplied-review-severity-" + tt.minSeverity
+			agent.RegisterForTest(t, &agent.FakeAgent{
+				NameStr: name,
+				ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+					return lowOnly, nil
+				},
+			})
+			job := enqueueViaHTTP(t, server, EnqueueRequest{
+				RepoPath: repo.Path(), GitRef: head, Agent: name,
+				ReviewPrompt: "Review this change.", MinSeverity: tt.minSeverity,
+			})
+			claimed, err := db.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			require.Equal(t, job.ID, claimed.ID)
+			server.workerPool.processJob(testWorkerID, claimed)
+			stored, err := db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			require.Equal(t, storage.JobStatusDone, stored.Status, stored.Error)
+			assert.Equal(tt.wantRecorded, stored.MinSeverity)
+			review, err := db.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			require.NotNil(t, review.VerdictBool)
+			assert.Equal(tt.wantVerdict, *review.VerdictBool)
+		})
+	}
+}
+
 func TestEnqueueReviewPromptMissingPromptFailsWithoutExecution(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
