@@ -1083,7 +1083,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		if err := session.commit(ctx); err != nil {
-			return stats, fmt.Errorf("commit pulled job page: %w", err)
+			return stats, fmt.Errorf("save jobs: %w", err)
 		}
 
 		jobQueryCursor = newCursor
@@ -1164,7 +1164,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		if err := session.commit(ctx); err != nil {
-			return stats, fmt.Errorf("commit pulled review page: %w", err)
+			return stats, fmt.Errorf("save reviews: %w", err)
 		}
 
 		reviewQueryCursor = newCursor
@@ -1213,7 +1213,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		if err := session.commit(ctx); err != nil {
-			return stats, fmt.Errorf("commit pulled response page: %w", err)
+			return stats, fmt.Errorf("save comments: %w", err)
 		}
 
 		responseQueryCursor = newCursor
