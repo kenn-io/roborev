@@ -827,7 +827,7 @@ const reviewsToSyncQuery = `
 // Local edits clear synced_at. Do not compare a pulled PostgreSQL timestamp
 // with a local acknowledgment: the server's clock can be ahead. Parent and
 // review acknowledgments both use the local clock; keep their full precision.
-// job_synced_at mirrors the local parent's acknowledgment on the review.
+// job_synced_at tracks local parent acknowledgments after the review is synced.
 func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
 	return db.reviewsToSync(machineID, 0, math.MaxInt64, limit)
 }

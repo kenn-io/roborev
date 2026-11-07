@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -260,7 +261,9 @@ func TestSyncPendingMigrationBackfill(t *testing.T) {
 	assert := assert.New(t)
 	require.NoError(t, registerContentFunctions())
 	db := openUnmigratedDB(t)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:13]))
+	migrationIndex := slices.IndexFunc(schemaMigrations, func(m schemaMigration) bool { return m.version == 14 })
+	require.NotEqual(t, -1, migrationIndex)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:migrationIndex]))
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 	_, jobs := seedJobs(t, db, t.TempDir(), 4)
@@ -298,8 +301,11 @@ func TestSyncPendingMigrationBackfill(t *testing.T) {
 			WHERE uuid IS NOT NULL AND (synced_at IS NULL OR replace(rtrim(job_synced_at, 'Z'), ' ', 'T') > replace(rtrim(synced_at, 'Z'), ' ', 'T'))
 			AND job_id = ?`, jobs[3].ID).Scan(&remotePending))
 		assert.Zero(remotePending)
+		require.NoError(t, migrateSyncPendingIndexes(t.Context(), db))
+		var unsyncedMirror sql.NullString
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_synced_at FROM reviews WHERE job_id = ?`, jobs[2].ID).Scan(&unsyncedMirror))
+		assert.False(unsyncedMirror.Valid, "backfill must leave unsynced reviews untouched even after their job syncs")
 		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, jobs[2].ID)
 		require.NoError(t, err)
-		require.NoError(t, migrateSyncPendingIndexes(t.Context(), db))
 	}
 }

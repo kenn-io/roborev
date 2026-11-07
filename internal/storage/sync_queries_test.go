@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -758,6 +759,62 @@ func TestGetJobsToSync_IncludesSkipped(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected skipped job to be syncable")
+}
+
+func TestReviewSyncAfterJobAcknowledgment(t *testing.T) {
+	t.Parallel()
+	for _, insertAfterJobSync := range []bool{false, true} {
+		name := "review before job push"
+		if insertAfterJobSync {
+			name = "review after job push"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				h := newSyncTestHelper(t)
+				assert := assert.New(t)
+				job := createSyncJobs(t, h.db, h.repo.ID, 1)[0]
+				setStatus(t, h.db, job.ID, JobStatusDone)
+				insertReview := func() {
+					_, err := h.db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, structured_output, uuid, updated_by_machine_id, updated_at)
+						VALUES (?, 'test', 'output', ?, ?, ?, ?)`, job.ID, reviewFixtureJSON("output"), testUUID("review"), h.machineID, preciseTimestampAt(time.Now()))
+					require.NoError(t, err)
+				}
+				if !insertAfterJobSync {
+					insertReview()
+				}
+				jobs, err := h.db.GetJobsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, jobs, 1)
+				require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(jobs[0])}))
+				if insertAfterJobSync {
+					insertReview()
+				}
+				var mirror sql.NullString
+				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT job_synced_at FROM reviews WHERE job_id = ?`, job.ID).Scan(&mirror))
+				assert.False(mirror.Valid, "first pushes must leave unsynced reviews untouched")
+
+				reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, reviews, 1)
+				assert.Equal(job.ID, reviews[0].JobID)
+				assert.False(reviews[0].MetadataOnly)
+				time.Sleep(time.Millisecond)
+				require.NoError(t, h.db.MarkReviewsSynced(reviews))
+				reviews, err = h.db.GetReviewsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				assert.Empty(reviews)
+
+				time.Sleep(time.Millisecond)
+				require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(jobs[0])}))
+				reviews, err = h.db.GetReviewsToSync(h.machineID, 10)
+				require.NoError(t, err)
+				require.Len(t, reviews, 1)
+				assert.Equal(job.ID, reviews[0].JobID)
+				assert.True(reviews[0].MetadataOnly)
+			})
+		})
+	}
 }
 
 func TestSyncQueriesSeekPastCursor(t *testing.T) {
