@@ -19,6 +19,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Identity tests check classification and arguments, not process startup
+	// speed on loaded CI runners. Timeout tests set their own short deadline.
+	identityProbeTimeout = 30 * time.Second
+
 	dir, err := os.MkdirTemp("", "roborev-agy-settings-*")
 	if err == nil {
 		antigravitySettingsPathForTest = func() string {
