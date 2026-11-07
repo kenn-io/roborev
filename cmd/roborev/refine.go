@@ -689,6 +689,9 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 				}
 
 				if review == nil && jobID == 0 {
+					// Past the limit, refine enqueues nothing new. A hook batch that
+					// has not been enqueued yet, such as one waiting on a quiet-period
+					// timer, leaves the final fix's stall signal unchecked.
 					if iteration > opts.maxIterations {
 						break
 					}

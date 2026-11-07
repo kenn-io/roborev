@@ -134,7 +134,9 @@ clears both baselines. Passing or closed reviews, skipped/no-change fixes,
 errors running or waiting for a re-review, and unrelated chains reset both
 streaks. A hook review that has not appeared yet preserves the pending fix.
 Retries without a new commit do not count; each fix commit counts at most once,
-including when its review is found later.
+including when its review is found later. After the last allowed fix, refine
+starts no new review. If a post-commit batch or quiet-period timer has not
+enqueued that fix's review yet, refine does not check its signals.
 
 The `roborev-refine` skill installed with `--mcp` tracks only the High plus
 Medium signal, because MCP review data has severity counts but no finding
