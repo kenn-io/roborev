@@ -131,8 +131,5 @@ func isProcessAlive(pid int) bool {
 
 // ProcessExists reports whether pid appears to name a live process.
 func ProcessExists(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
 	return isProcessAlive(pid)
 }
