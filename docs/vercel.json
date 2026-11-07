@@ -122,6 +122,16 @@
       "permanent": true
     },
     {
+      "source": "/automation/supplied-review-prompts/",
+      "destination": "/docs/automation/supplied-review-prompts/",
+      "permanent": true
+    },
+    {
+      "source": "/automation/supplied-review-prompts.md",
+      "destination": "/docs/automation/supplied-review-prompts.md",
+      "permanent": true
+    },
+    {
       "source": "/agent-hook/",
       "destination": "/docs/agent-hook/",
       "permanent": true

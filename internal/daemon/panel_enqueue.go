@@ -142,6 +142,13 @@ func (s *Server) buildTargetDescriptor(
 		return targetDescriptor{}, early
 	}
 	desc.source = in.req.Source
+	if in.req.ReviewPrompt != "" {
+		// Choose the code-review type before adding a stored prompt, which
+		// otherwise makes storage infer an ad-hoc task.
+		desc.jobType = storage.JobTypeForEnqueue(desc.baseOpts())
+		desc.prompt = in.req.ReviewPrompt
+		desc.promptPrebuilt = true
+	}
 	return desc, nil
 }
 

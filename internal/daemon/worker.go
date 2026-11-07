@@ -1143,6 +1143,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	wp.logJobStarted(workerID, job)
 
+	if job.Source == storage.JobSourceReviewPrompt && strings.TrimSpace(storedPromptValue) == "" {
+		// Neither rebuilding local policy nor switching agents can recover caller input.
+		wp.runAttemptTransition(workerID, job, func() {
+			wp.failNonRetryableJobLocked(workerID, job, job.Agent,
+				"supplied review prompt is missing; enqueue a new review with review_prompt")
+		})
+		return
+	}
+
 	// Skip immediately if the agent is in quota cooldown.
 	// Resolve alias so "claude" checks cooldown for "claude-code".
 	canonicalAgent := agent.CanonicalName(job.Agent)
@@ -1226,6 +1235,17 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
+		// CI jobs store their threshold at enqueue. A supplied prompt replaces
+		// only the prompt, so its threshold resolves like an ordinary review's.
+		if job.Source == storage.JobSourceReviewPrompt && effectiveMinSeverity == "" {
+			resolved, resErr := config.ResolveReviewMinSeverity("", checkout.resolvedConfigRepoPath(), cfg)
+			if resErr != nil {
+				log.Printf("[%s] Error resolving min-severity: %v", workerID, resErr)
+				wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("resolve min-severity: %v", resErr))
+				return
+			}
+			effectiveMinSeverity = resolved
+		}
 		var cleanup func()
 		excludes := config.ResolveExcludePatterns(
 			ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
@@ -2182,6 +2202,12 @@ func (wp *WorkerPool) failoverOrFailNonRetryableAgentLocked(
 		}
 	}
 
+	wp.failNonRetryableJobLocked(workerID, job, agentName, errorMsg)
+}
+
+func (wp *WorkerPool) failNonRetryableJobLocked(
+	workerID string, job *storage.ReviewJob, agentName, errorMsg string,
+) {
 	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, errorMsg); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {

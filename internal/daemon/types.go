@@ -28,6 +28,7 @@ type EnqueueRequest struct {
 	Reasoning         string   `json:"reasoning,omitempty"`           // Legacy or exact reasoning level
 	ReviewType        string   `json:"review_type,omitempty"`         // Review type (e.g., "security") — changes system prompt
 	CustomPrompt      string   `json:"custom_prompt,omitempty"`       // Custom prompt for ad-hoc agent work
+	ReviewPrompt      string   `json:"review_prompt,omitempty"`       // Supplied review prompt for a committed revision; runs in an exact checkout
 	Agentic           bool     `json:"agentic,omitempty"`             // Enable agentic mode (allow file edits)
 	OutputPrefix      string   `json:"output_prefix,omitempty"`       // Prefix to prepend to review output
 	AnalysisType      string   `json:"analysis_type,omitempty"`       // Recorded analyze type

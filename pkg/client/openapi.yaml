@@ -1555,6 +1555,8 @@ components:
           type: string
         repo_path:
           type: string
+        review_prompt:
+          type: string
         review_type:
           type: string
         since:

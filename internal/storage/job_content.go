@@ -141,8 +141,8 @@ func clearJobContent(ctx context.Context, exec execer, jobID int64, column jobCo
 // finished before cutoff. Their prompts are rebuilt from git if the job is
 // rerun, so only the prompt view of an old job loses content. Reviews,
 // findings, diffs of dirty reviews, patches, and prompts of jobs whose prompt
-// cannot be rebuilt (tasks, fixes, compaction, insights, goal reviews) are
-// kept. With keepUnpushed, a job that sync has yet to push keeps its prompt,
+// cannot be rebuilt (supplied review prompts, tasks, fixes, compaction, insights,
+// goal reviews) are kept. With keepUnpushed, a job that sync has yet to push keeps its prompt,
 // so retention cannot remove a prompt before PostgreSQL has a copy. It returns
 // the number of prompts removed.
 func (db *DB) PruneJobPrompts(ctx context.Context, cutoff time.Time, keepUnpushed bool) (int64, error) {
@@ -156,11 +156,12 @@ func (db *DB) PruneJobPrompts(ctx context.Context, cutoff time.Time, keepUnpushe
 		WHERE prompt IS NOT NULL AND job_id IN (
 			SELECT id FROM review_jobs
 			WHERE job_type IN ('review', 'range')
+			  AND COALESCE(source, '') != ?
 			  AND status NOT IN ('queued', 'running')
 			  AND finished_at IS NOT NULL
 			  AND julianday(finished_at) < julianday(?)
 			  `+pushedFilter+`
-		)`, cutoff.UTC().Format(time.RFC3339))
+		)`, JobSourceReviewPrompt, cutoff.UTC().Format(time.RFC3339))
 	if err != nil {
 		return 0, fmt.Errorf("prune job prompts: %w", err)
 	}

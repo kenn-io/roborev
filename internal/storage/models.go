@@ -65,10 +65,11 @@ const (
 
 // Job source values identify daemon-created automation rows.
 const (
-	JobSourceRebuttal   = "rebuttal"
-	JobSourceAutoDesign = "auto_design"
-	JobSourceCI         = "ci"
-	JobSourcePostCommit = "post_commit"
+	JobSourceRebuttal     = "rebuttal"
+	JobSourceAutoDesign   = "auto_design"
+	JobSourceCI           = "ci"
+	JobSourceReviewPrompt = "review_prompt"
+	JobSourcePostCommit   = "post_commit"
 )
 
 type ReviewJob struct {

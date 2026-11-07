@@ -632,6 +632,9 @@ func synthesisDocumentResult(job *storage.ReviewJob, doc structuredreview.Docume
 // isolate_reviews asks for it, and synthesis instructions may tell the agent
 // to read the code, which must be the code that was reviewed.
 func needsExactCheckout(job *storage.ReviewJob, repoPath string, cfg *config.Config) (bool, error) {
+	if job.Source == storage.JobSourceReviewPrompt {
+		return true, nil
+	}
 	if config.ResolveIsolateReviews(repoPath, cfg) {
 		return true, nil
 	}
