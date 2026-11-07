@@ -102,7 +102,13 @@ interface JobsPage {
   jobs: ReviewJob[];
   has_more: boolean;
   next_cursor: string | null;
-  stats: { done: number; closed: number; open: number };
+  stats: {
+    done: number;
+    closed: number;
+    open: number;
+    failed?: number;
+    canceled?: number;
+  };
 }
 
 // Serves `pageCount` pages of `pageSize` jobs, newest first, linked by cursor.
@@ -132,7 +138,20 @@ let runtime: OwnedAppRuntime;
 function mountTable(
   listJobs: (query: ListJobsParams) => Promise<JobsPage>,
 ): ReturnType<typeof vi.fn> {
-  const api = vi.fn(listJobs);
+  const api = vi.fn(async (query: ListJobsParams) => {
+    const page = await listJobs(query);
+    return {
+      ...page,
+      stats: {
+        queued: 0,
+        running: 0,
+        failed: 0,
+        canceled: 0,
+        skipped: 0,
+        ...page.stats,
+      },
+    };
+  });
   const store = createJobsStore({
     api: { listJobs: api, cancelJob: vi.fn(), rerunJob: vi.fn() } as never,
     runtime,
@@ -235,6 +254,22 @@ describe("JobTable infinite scroll", () => {
     render(JobTable);
     expect(screen.queryByText("No reviews yet")).toBeNull();
   });
+
+  it.each(["failed", "canceled"] as const)(
+    "keeps the empty message when Hide closed conceals a %s job",
+    async (status) => {
+      mountTable(async (query) => ({
+        jobs: query.closed === "false" ? [] : [{ ...makeJob(1), status }],
+        has_more: false,
+        next_cursor: null,
+        stats: { done: 0, closed: 0, open: 0, [status]: 1 },
+      }));
+      await vi.waitFor(() => expect(renderedRows()).toBe(1));
+      context.jobs?.setFilter("hideClosed", true);
+      await screen.findByText("No jobs found");
+      expect(screen.queryByText("No reviews yet")).toBeNull();
+    },
+  );
 
   it.each([
     "hideClosed",

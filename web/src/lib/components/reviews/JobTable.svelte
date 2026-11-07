@@ -60,7 +60,13 @@
       !jobsStore.getFilterStatus() &&
       !jobsStore.getFilterSearch() &&
       !jobsStore.getFilterJobType() &&
-      !(jobsStore.getFilterHideClosed() && jobsStore.getStats().closed > 0),
+      !(
+        jobsStore.getFilterHideClosed() &&
+        jobsStore.getStats().closed +
+          jobsStore.getStats().failed +
+          jobsStore.getStats().canceled >
+          0
+      ),
   );
 
   // A new observer reports the sentinel's position once on observe(). The
@@ -235,16 +241,21 @@
   {/if}
 
   {#if showFirstReview}
-    <EmptyState
-      title="No reviews yet"
-      description="Your next commit starts a review. To review the current commit now, run roborev review."
-    >
-      <CopyButton
-        text="roborev review"
-        ariaLabel="Copy command"
-        title="Copy command"
-      />
-    </EmptyState>
+    <div class="first-review">
+      <EmptyState
+        title="No reviews yet"
+        description="Your next commit starts a review. To review the current commit now, run:"
+      >
+        <span class="first-review-command">
+          <code>roborev review</code>
+          <CopyButton
+            text="roborev review"
+            ariaLabel="Copy command"
+            title="Copy command"
+          />
+        </span>
+      </EmptyState>
+    </div>
   {:else if jobsStore && !jobsStore.isLoading() && jobsStore.getJobs().length === 0}
     <EmptyState title="No jobs found" />
   {/if}
@@ -369,6 +380,37 @@
     position: sticky;
     left: 0;
     height: 1px;
+  }
+
+  /* Contributes no box, so EmptyState still centers in the table host. */
+  .first-review {
+    display: contents;
+  }
+
+  /* Set the title a step further from the body than its lines sit apart,
+     and balance the body's two lines. */
+  .first-review :global(.kit-empty-state__title) {
+    margin-bottom: var(--space-3);
+  }
+
+  .first-review :global(.kit-empty-state__description) {
+    text-wrap: balance;
+  }
+
+  .first-review-command {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-inset);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+  }
+
+  .first-review-command code {
+    font-family: var(--font-mono);
   }
 
   .members-retry,

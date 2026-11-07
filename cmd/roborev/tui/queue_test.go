@@ -1592,7 +1592,7 @@ func TestTUIFirstReviewEmptyQueueWraps(t *testing.T) {
 	for _, line := range lines {
 		assert.LessOrEqual(t, lipgloss.Width(line), 32)
 	}
-	assert.Contains(t, stripANSI(strings.Join(lines, " ")), "current commit")
+	assert.Contains(t, strings.Join(strings.Fields(stripANSI(strings.Join(lines, " "))), " "), "current commit")
 	assert.GreaterOrEqual(t, len(strings.Split(m.renderQueueView(), "\n")), m.height-3)
 }
 

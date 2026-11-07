@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
@@ -19,8 +20,8 @@ import (
 
 func TestFetchJobsFirstReview(t *testing.T) {
 	t.Parallel()
-	for _, closed := range []int{0, 1} {
-		t.Run(strconv.Itoa(closed), func(t *testing.T) {
+	for name, stats := range map[string]storage.JobStats{"empty": {}, "closed": {Closed: 1}, "failed": {Failed: 1}, "canceled": {Canceled: 1}} {
+		t.Run(name, func(t *testing.T) {
 			_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/api/jobs", r.URL.Path)
 				assert.Equal(t, []string{"/test/repo"}, r.URL.Query()["repo"])
@@ -28,7 +29,7 @@ func TestFetchJobsFirstReview(t *testing.T) {
 				assert.Equal(t, "false", r.URL.Query().Get("closed"))
 				w.Header().Set("Content-Type", "application/json")
 				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-					"jobs": []storage.ReviewJob{}, "has_more": false, "stats": storage.JobStats{Closed: closed},
+					"jobs": []storage.ReviewJob{}, "has_more": false, "stats": stats,
 				}))
 			})
 			m.width, m.height = 120, 24
@@ -37,13 +38,40 @@ func TestFetchJobsFirstReview(t *testing.T) {
 			m.autoRepoFilter, m.hideClosed = true, true
 			m, _ = updateModel(t, m, fetchJobsMessage(t, m))
 			output := m.renderQueueView() + strings.Join(m.renderQueuePaneBody(120, 12), "\n")
-			if closed == 0 {
+			if stats == (storage.JobStats{}) {
 				assert.Contains(t, output, "No reviews yet")
 			} else {
 				assert.Contains(t, output, "No jobs matching filters")
 				assert.NotContains(t, output, "No reviews yet")
 			}
 		})
+	}
+}
+
+func TestFetchJobsFirstReviewRecoversAfterError(t *testing.T) {
+	t.Parallel()
+	fail := true
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"jobs":[],"has_more":false,"stats":{}}`))
+		assert.NoError(t, err)
+	})
+	m.width, m.height = 120, 24
+	m, _ = updateModel(t, m, fetchJobsMessage(t, m))
+	for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(120, 12), "\n")} {
+		assert.NotContains(t, output, "No reviews yet")
+	}
+	fail = false
+	unrelated := errors.New("copy failed")
+	m.err = unrelated
+	m, _ = updateModel(t, m, fetchJobsMessage(t, m))
+	assert.ErrorIs(t, m.err, unrelated)
+	for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(120, 12), "\n")} {
+		assert.Contains(t, output, "No reviews yet")
 	}
 }
 

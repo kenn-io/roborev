@@ -508,10 +508,19 @@ func (m model) renderQueueTitle() string {
 }
 
 // firstReviewLines wraps the empty-queue message for a scope that has never
-// been reviewed to width.
+// been reviewed to width: a bold title, a dimmed explanation, and the command
+// indented on its own line.
 func firstReviewLines(width int) []string {
-	const msg = "No reviews yet\nYour next commit starts a review. To review the current commit now, run roborev review."
-	return strings.Split(xansi.Wrap(msg, width, ""), "\n")
+	var lines []string
+	add := func(style lipgloss.Style, text string) {
+		for line := range strings.SplitSeq(xansi.Wrap(text, width, ""), "\n") {
+			lines = append(lines, style.Render(line))
+		}
+	}
+	add(lipgloss.NewStyle().Bold(true), "No reviews yet")
+	add(statusStyle, "Your next commit starts a review. To review the current commit now, run:")
+	add(lipgloss.NewStyle(), "  roborev review")
+	return lines
 }
 
 func (m model) renderQueueView() string {
