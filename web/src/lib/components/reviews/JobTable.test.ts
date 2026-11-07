@@ -242,7 +242,7 @@ describe("JobTable infinite scroll", () => {
     expect(screen.queryByText("No reviews yet")).toBeNull();
   });
 
-  it("waits for a successful list before offering the first review", () => {
+  it("hides first-review guidance before the first load", () => {
     context.jobs = createJobsStore({
       api: {
         listJobs: vi.fn(),
@@ -287,9 +287,15 @@ describe("JobTable infinite scroll", () => {
     },
   );
 
-  it.each(["status", "search", "branch", "jobType", "repo"] as const)(
+  it.each([
+    ["status", "done"],
+    ["search", "chosen"],
+    ["branch", "main"],
+    ["jobType", "review"],
+    ["repo", "/test/repo"],
+  ] as const)(
     "keeps the empty message for %s hiding jobs",
-    async (filter) => {
+    async (filter, value) => {
       mountTable(async () => ({
         jobs: [],
         has_more: false,
@@ -297,7 +303,7 @@ describe("JobTable infinite scroll", () => {
         stats: { done: 0, closed: 0, open: 0 },
       }));
       await screen.findByText("No reviews yet");
-      context.jobs?.setFilter(filter, "chosen");
+      context.jobs?.setFilter(filter, value);
       await screen.findByText("No jobs found");
       expect(screen.queryByText("No reviews yet")).toBeNull();
     },

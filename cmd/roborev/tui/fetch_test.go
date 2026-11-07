@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	neturl "net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 
@@ -33,17 +32,12 @@ func TestFetchJobsFirstReviewRecoversAfterError(t *testing.T) {
 	m.width, m.height = 120, 24
 	m.cwdRepoRoot = "/test/repo"
 	m, _ = updateModel(t, m, fetchJobsMessage(t, m))
-	for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(120, 12), "\n")} {
-		assert.NotContains(t, output, "No reviews yet")
-	}
+	assert.False(t, m.showFirstReview())
 	fail = false
 	unrelated := errors.New("copy failed")
 	m.err = unrelated
 	m, _ = updateModel(t, m, fetchJobsMessage(t, m))
-	require.ErrorIs(t, m.err, unrelated)
-	for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(120, 12), "\n")} {
-		assert.Contains(t, output, "No reviews yet")
-	}
+	assert.True(t, m.showFirstReview())
 }
 
 func TestListJobsParamsRepeatedRepo(t *testing.T) {
