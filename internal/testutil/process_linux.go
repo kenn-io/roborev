@@ -16,10 +16,8 @@ import (
 // function lets it exit and observes the exit without reaping it until cleanup.
 func StartLivenessChild(t *testing.T) (int, func()) {
 	t.Helper()
-	// Keep the command alive through cleanup so Wait can reap it before cancellation.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
-	t.Cleanup(cancel)
-	cmd := exec.CommandContext(ctx, "sh", "-c", "read -r line || true", "roborev", "daemon", "run")
+	// Cleanup closes stdin and waits after the test context is canceled.
+	cmd := exec.CommandContext(context.WithoutCancel(t.Context()), "sh", "-c", "read -r line || true", "roborev", "daemon", "run")
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
