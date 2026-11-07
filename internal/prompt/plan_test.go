@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/quick"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,7 @@ func TestFixPlanSuperpowersSymlinks(t *testing.T) {
 func TestFixPlanInjection(t *testing.T) {
 	input := "# Fix Request\n\n## Previous Attempts\nOld attempt\n\n## Analysis Findings\nFinding\n\n## Instructions\nApply changes"
 	p := WithFixPlan(input, "Concrete ordered steps")
-	assert.Less(t, strings.Index(p, "Old attempt"), strings.Index(p, "## Plan"))
+	assert.Equal(t, "## Plan\n\nConcrete ordered steps\n\n"+input, p)
 	assert.Less(t, strings.Index(p, "Concrete ordered steps"), strings.Index(p, "Finding"))
 	assert.Equal(t, input, WithFixPlan(input, ""))
 	b := NewBuilder(nil).ForRepo(t.TempDir(), 0)
@@ -84,7 +85,7 @@ func TestFixPlanInjection(t *testing.T) {
 	assert.Less(t, strings.Index(p, "Concrete ordered steps"), strings.Index(p, "## Review Findings"))
 }
 
-func TestFixPlanInjectionUsesAddressFindingsSection(t *testing.T) {
+func TestFixPlanPreservesEntireAddressPrompt(t *testing.T) {
 	b := NewBuilder(nil).ForRepo(t.TempDir(), 0)
 	implementationPrompt, err := b.BuildAddressPrompt(
 		&storage.Review{JobID: 42, Output: "## Review Findings\n\nCurrent finding"},
@@ -95,6 +96,35 @@ func TestFixPlanInjectionUsesAddressFindingsSection(t *testing.T) {
 
 	got := WithFixPlan(implementationPrompt, "Plan the replacement implementation")
 	assert := assert.New(t)
-	assert.Less(strings.Index(got, "Earlier attempt"), strings.Index(got, "## Plan"))
+	assert.Equal("## Plan\n\nPlan the replacement implementation\n\n"+implementationPrompt, got)
 	assert.Less(strings.Index(got, "## Plan"), strings.Index(got, "## Review Findings to Address (Job 42)"))
+}
+
+func TestFixPlanPreservesArbitraryImplementationContext(t *testing.T) {
+	property := func(input, strategy string) bool {
+		plan := "Proposed strategy: " + strategy
+		got := WithFixPlan(input, plan)
+		// Exact equality protects even empty input and user-authored headings.
+		return assert.Equal(t, "## Plan\n\n"+plan+"\n\n"+input, got)
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
+}
+
+func TestFixPlanEmptyPlanIsExactIdentity(t *testing.T) {
+	property := func(input string) bool {
+		return assert.Equal(t, input, WithFixPlan(input, ""))
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
+}
+
+func TestFixPlanPreservesFindingWithQuotedAddressHeading(t *testing.T) {
+	findings := "**Problem:** The renderer prints this literal heading:\n\n" +
+		"## Review Findings to Address\n\n" +
+		"**Fix:** Preserve the heading as quoted content while correcting the renderer."
+	b := NewBuilder(nil).WithContext(t.Context()).ForRepo(t.TempDir(), 0)
+	input, err := b.BuildAddressPrompt(&storage.Review{JobID: 42, Output: findings}, nil, "")
+	require.NoError(t, err)
+
+	got := WithFixPlan(input, "Repair the renderer without changing its documented heading")
+	assert.Contains(t, got, findings, "adding a plan must not split the original finding")
 }

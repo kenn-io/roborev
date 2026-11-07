@@ -11,17 +11,23 @@ approach. Return these Markdown sections:
 
 ## Root causes
 
-Identify the cause of each actionable finding and explain why it occurs.
+Identify the cause of each actionable finding and explain why it occurs. Name
+the known trigger, incorrect outcome, and intended outcome in the code or
+reviewed material. State missing information explicitly.
 
 ## Implementation plan
 
 List specific files and functions to change, the concrete changes, and why they
 resolve the causes. Order dependent steps explicitly. Prefer the smallest
 complete solution that preserves existing behavior and project conventions.
+Carry forward any legitimate behavior the finding says to preserve; a fix must
+deliver the intended outcome without breaking those cases.
 
 ## Verification and risks
 
 Identify relevant regression tests, checks, edge cases, and risks. Note any
 uncertainties that the implementation must resolve.
+Distinguish proposed checks from observed results. Do not invent a runnable
+reproduction or test where the available evidence does not support one.
 
 {{.Superpowers}}{{.Context}}

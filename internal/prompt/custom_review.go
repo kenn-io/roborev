@@ -32,7 +32,19 @@ Each finding needs:
   topic, such as a security hole; so can an improvement, such as a missing test.
 - confidence: a number from 0 to 1 for how sure you are that the problem is
   real.
-- problem and fix: what is wrong and how to fix it.
+- problem: for a defect, name the known input, state, or ordering that triggers
+  it and the actual incorrect behavior, explaining the cause where known.
+- fix: describe the correct observable behavior and any known legitimate
+  behavior the change must preserve, as well as a suggested approach. For
+  example, reject reads of another tenant's invoice while still allowing the
+  caller to read their own invoices.
+  For improvements, documentation, design, or custom rubrics, describe the
+  concrete problem and desired outcome in the reviewed material; do not invent
+  runtime behavior to fit this guidance.
+  When known, include an observation or check that distinguishes wrong from
+  correct behavior. Reproduction and regression-test guidance are optional.
+  State uncertainty; distinguish source reasoning and proposed checks from
+  checks actually run. Never invent an exploit, runnable test, or test result.
 - file: the path relative to the repository root, or null when the finding has
   no single file.
 - start_line and end_line: the first and last line of the problem in the file
