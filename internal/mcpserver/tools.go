@@ -164,34 +164,50 @@ type searchInput struct {
 	Limit   *int   `json:"limit,omitempty"`
 }
 
+// readToolAnnotations describes retrieval from the daemon. Search may also
+// send a query to an embedding provider, so it needs an open-world hint.
+func readToolAnnotations(openWorld bool) *mcp.ToolAnnotations {
+	destructive := false
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: true, DestructiveHint: &destructive,
+		IdempotentHint: true, OpenWorldHint: &openWorld,
+	}
+}
+
 func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "roborev_status",
 		Description: "Report roborev daemon version, queue counts, and worker usage. " +
 			"Call this first to confirm the daemon is reachable.",
+		Annotations: readToolAnnotations(false),
 	}, wrapTool(s.status))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "roborev_list_repos",
 		Description: "List repositories tracked by roborev with their review job counts. " +
 			"Use the returned root_path as repo_path in other tools.",
+		Annotations: readToolAnnotations(false),
 	}, wrapTool(s.listRepos))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "roborev_list_branches",
 		Description: "List branches with review job counts for one tracked repository.",
+		Annotations: readToolAnnotations(false),
 	}, wrapTool(s.listBranches))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "roborev_list_jobs",
 		Description: "List review jobs (metadata only, newest first) filtered by repository, " +
 			"branch, status, job type, or closed state. Use next_cursor to page.",
+		Annotations: readToolAnnotations(false),
 	}, wrapTool(s.listJobs))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "roborev_get_review",
 		Description: "Return the full review output, verdict, and finding counts for a job id " +
 			"or the latest review of a commit SHA.",
+		Annotations: readToolAnnotations(false),
 	}, wrapTool(s.getReview))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "roborev_list_comments",
 		Description: "List developer responses attached to a review by job id or commit SHA.",
+		Annotations: readToolAnnotations(false),
 	}, wrapTool(s.listComments))
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "roborev_get_job_output",
@@ -199,12 +215,12 @@ func (s *Server) registerTools() {
 			"available_lines is the size of the daemon's retained snapshot, which is itself bounded, " +
 			"so earlier output of very long jobs may be gone. Useful for running or failed jobs; " +
 			"completed reviews are better read with roborev_get_review.",
+		Annotations: readToolAnnotations(false),
 	}, wrapTool(s.getJobOutput))
 	s.registerSearchTool()
 }
 
 func (s *Server) registerSearchTool() {
-	readOnly := false
 	outputSchema, err := jsonschema.For[storage.SearchResponse](&jsonschema.ForOptions{})
 	if err != nil {
 		panic(fmt.Errorf("build review search output schema: %w", err))
@@ -212,10 +228,9 @@ func (s *Server) registerSearchTool() {
 	s.mcp.AddTool(&mcp.Tool{
 		Name: "roborev_search_reviews",
 		Description: "Search completed review history. Use auto for discovery, lexical for exact paths, " +
-			"identifiers, or quoted errors, and semantic for wording-independent retrieval when specifically needed.",
-		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true, DestructiveHint: &readOnly, IdempotentHint: true, OpenWorldHint: &readOnly,
-		},
+			"identifiers, or quoted errors, and semantic for wording-independent retrieval when specifically needed. " +
+			"Semantic and hybrid modes may send the query to the configured embedding provider.",
+		Annotations: readToolAnnotations(true),
 		InputSchema: searchToolInputSchema(), OutputSchema: outputSchema,
 	}, s.callSearchTool)
 }

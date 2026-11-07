@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-06
 title: MCP Server
 description: Expose roborev review data to AI agents over the Model Context Protocol using stdio or streamable HTTP
 ---
@@ -201,6 +201,15 @@ bytes of JSON on November 6, 2026. `TestRegisteredToolsAndGuidance` enforces a
 
 Job listings omit prompts and diffs. Review results omit the prompt and return
 `verdict` as `pass`, `fail`, or empty when no verdict exists yet.
+
+Every tool declares its read-only, destructive, idempotent, and open-world
+hints. Reads are non-destructive and idempotent. Search is open-world because
+semantic and hybrid modes can send the query to the configured embedding
+provider; the other tools operate on the daemon's data. Adding a comment is
+additive and non-idempotent. Closing reviews and changing snoozes update
+existing state and timestamps, so they are conservatively non-idempotent.
+Completing an exact fix session removes it and is idempotent. These hints help
+clients classify calls; they do not authorize them.
 
 `roborev_search_reviews` accepts `query`, `mode`, `repo`, `branch`, `since`,
 `verdict`, `state`, and `limit`. Search is global when `repo` is omitted. Use
