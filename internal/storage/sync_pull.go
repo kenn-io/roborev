@@ -68,7 +68,10 @@ func (s *pullSession) begin(ctx context.Context, jobs bool) error {
 			return err
 		}
 	}
-	if err := beginImmediate(ctx, s.conn); err != nil {
+	if _, err := s.conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		// Finalize statements while their driver connection is still alive.
+		_ = s.stmts.close()
+		discardConn(s.conn)
 		if jobs {
 			s.db.attempts.mu.Unlock()
 		}
@@ -91,6 +94,8 @@ func (s *pullSession) reset() {
 
 func (s *pullSession) rollback() {
 	if !s.started.IsZero() {
+		// rollbackConn discards the connection if SQLite cannot roll back.
+		_ = s.stmts.close()
 		_ = rollbackConn(s.conn)
 		s.reset()
 	}
@@ -100,7 +105,12 @@ func (s *pullSession) commit(ctx context.Context) error {
 	if s.started.IsZero() {
 		return nil
 	}
-	if _, err := s.conn.ExecContext(ctx, "COMMIT"); err != nil {
+	if err := ctx.Err(); err != nil {
+		s.rollback()
+		return err
+	}
+	// Once COMMIT starts, finish it and its effects despite caller cancellation.
+	if _, err := s.conn.ExecContext(context.WithoutCancel(ctx), "COMMIT"); err != nil {
 		s.rollback()
 		return err
 	}

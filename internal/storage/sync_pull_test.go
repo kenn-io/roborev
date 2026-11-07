@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -63,33 +64,45 @@ func TestPullSessionParentsCommitAndRollbackWithJobs(t *testing.T) {
 
 func TestPullSessionYieldsToQueuedWriter(t *testing.T) {
 	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		h := newSyncTestHelper(t)
-		s, err := h.db.newPullSession(t.Context())
-		require.NoError(t, err)
-		defer s.close()
-		s.budget = 0
-		_, err = h.db.ExecContext(t.Context(), `CREATE TABLE pull_order (id INTEGER PRIMARY KEY, writer TEXT)`)
-		require.NoError(t, err)
-		require.NoError(t, s.begin(t.Context(), false))
-		_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-first")
-		require.NoError(t, err)
-		done := make(chan error, 1)
-		go func() {
-			_, err := h.db.ExecContext(t.Context(), `INSERT INTO pull_order (writer) VALUES ('user')`)
-			done <- err
-		}()
-		synctest.Wait()
-		require.NoError(t, s.finishRow(t.Context(), true, nil))
-		require.NoError(t, s.begin(t.Context(), false))
-		_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-second")
-		require.NoError(t, err)
-		require.NoError(t, s.finishRow(t.Context(), true, nil))
-		require.NoError(t, <-done)
-		var order string
-		require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT group_concat(writer, ',') FROM (SELECT writer FROM pull_order ORDER BY id)`).Scan(&order))
-		assert.Equal(t, "pull-first,user,pull-second", order)
-	})
+	for _, budget := range []time.Duration{0, pullTxBudget} {
+		t.Run(budget.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := newSyncTestHelper(t)
+				s, err := h.db.newPullSession(t.Context())
+				require.NoError(t, err)
+				defer s.close()
+				s.budget = budget
+				_, err = h.db.ExecContext(t.Context(), `CREATE TABLE pull_order (id INTEGER PRIMARY KEY, writer TEXT)`)
+				require.NoError(t, err)
+				require.NoError(t, s.begin(t.Context(), false))
+				_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-first")
+				require.NoError(t, err)
+				if budget > 0 {
+					require.NoError(t, s.finishRow(t.Context(), true, nil))
+					var count int
+					require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pull_order`).Scan(&count))
+					assert.Zero(t, count, "the row stays uncommitted before the budget expires")
+				}
+				done := make(chan error, 1)
+				go func() {
+					_, err := h.db.ExecContext(t.Context(), `INSERT INTO pull_order (writer) VALUES ('user')`)
+					done <- err
+				}()
+				synctest.Wait()
+				time.Sleep(budget)
+				require.NoError(t, s.finishRow(t.Context(), true, nil))
+				require.NoError(t, s.begin(t.Context(), false))
+				_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-second")
+				require.NoError(t, err)
+				time.Sleep(budget)
+				require.NoError(t, s.finishRow(t.Context(), true, nil))
+				require.NoError(t, <-done)
+				var order string
+				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT group_concat(writer, ',') FROM (SELECT writer FROM pull_order ORDER BY id)`).Scan(&order))
+				assert.Equal(t, "pull-first,user,pull-second", order)
+			})
+		})
+	}
 }
 
 func TestPullSessionRollbackReleasesLocks(t *testing.T) {
@@ -191,4 +204,66 @@ func newNotifyingPullSession(t *testing.T, w *SyncWorker) *pullSession {
 	s.budget = 0
 	s.notify = w.notifyAfterPullWrite
 	return s
+}
+
+func TestPullSessionClosesStatementsBeforeDiscard(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"begin", "rollback", "close"} {
+		t.Run(failure, func(t *testing.T) {
+			db := openTestDB(t)
+			defer db.Close()
+			s, err := db.newPullSession(t.Context())
+			require.NoError(t, err)
+			require.NoError(t, s.begin(t.Context(), true))
+			_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('discard', 'value')`)
+			require.NoError(t, err)
+			if failure == "begin" {
+				require.NoError(t, s.commit(t.Context()))
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				require.ErrorIs(t, s.begin(ctx, true), context.Canceled)
+			} else {
+				// Simulate a transaction already ended by SQLite before cleanup.
+				_, err = s.conn.ExecContext(t.Context(), "ROLLBACK")
+				require.NoError(t, err)
+				if failure == "rollback" {
+					s.rollback()
+				}
+			}
+			assert.NotPanics(t, s.close)
+			_ = s.conn.Close()
+		})
+	}
+}
+
+func TestPullSessionKeepsCommitEffectsAfterCancellation(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	var path string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pool := sql.OpenDB(cancelSetupClaimConnector{driver: db.Driver(), dsn: path, cancel: cancel})
+	defer pool.Close()
+	s, err := (&DB{DB: pool}).newPullSession(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NotPanics(t, s.close) })
+	require.NoError(t, s.begin(ctx, true))
+	_, err = s.exec(ctx, `INSERT INTO sync_state (key, value) VALUES ('commit-effects', 'saved')`)
+	require.NoError(t, err)
+	attemptCtx, cancelAttempt := context.WithCancel(t.Context())
+	defer cancelAttempt()
+	s.cancels = append(s.cancels, cancelAttempt)
+	var notified bool
+	s.notify = func() { notified = true }
+	s.changed = true
+	commitErr := s.commit(ctx)
+	value, err := db.GetSyncState("commit-effects")
+	require.NoError(t, err)
+	assert.Equal(t, "saved", value)
+	assert.True(t, notified)
+	require.ErrorIs(t, attemptCtx.Err(), context.Canceled)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.NoError(t, commitErr)
 }

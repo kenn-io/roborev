@@ -50,22 +50,19 @@ func BenchmarkPulledRows(b *testing.B) {
 		worker := NewSyncWorker(db, testSyncConfig())
 		session, err := db.newPullSession(b.Context())
 		require.NoError(b, err)
-		pulled := func(i int, err error) {
-			require.NoError(b, err)
-			if (i+1)%100 == 0 {
-				require.NoError(b, session.commit(b.Context()))
-			}
-		}
 		b.StartTimer()
-		for i, j := range jobs {
-			pulled(i, worker.pullJob(b.Context(), session, j))
+		for _, j := range jobs {
+			require.NoError(b, worker.pullJob(b.Context(), session, j))
 		}
-		for i, r := range reviews {
-			pulled(i, worker.pullReview(b.Context(), session, r))
+		require.NoError(b, session.commit(b.Context()))
+		for _, r := range reviews {
+			require.NoError(b, worker.pullReview(b.Context(), session, r))
 		}
-		for i, r := range responses {
-			pulled(i, worker.pullResponse(b.Context(), session, r))
+		require.NoError(b, session.commit(b.Context()))
+		for _, r := range responses {
+			require.NoError(b, worker.pullResponse(b.Context(), session, r))
 		}
+		require.NoError(b, session.commit(b.Context()))
 		b.StopTimer()
 		session.close()
 		require.NoError(b, db.Close())
