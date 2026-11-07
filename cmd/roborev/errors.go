@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const helpOnlyAnnotation = "roborev.help-only"
+
 func helpHint(cmd *cobra.Command) string {
 	return fmt.Sprintf("run '%s --help' for usage and examples", cmd.CommandPath())
 }
@@ -93,6 +95,12 @@ func configureCLIErrors(root *cobra.Command) {
 			// Cobra otherwise treats a misspelled group child as successful help.
 			if cmd != root && !cmd.Runnable() && cmd.HasSubCommands() {
 				helpGroups[cmd] = true
+				// Command discovery must distinguish these help wrappers from
+				// parents that perform real work as well as having subcommands.
+				if cmd.Annotations == nil {
+					cmd.Annotations = make(map[string]string)
+				}
+				cmd.Annotations[helpOnlyAnnotation] = "true"
 				cmd.Args = func(cmd *cobra.Command, args []string) error {
 					if len(args) != 0 {
 						return fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())
