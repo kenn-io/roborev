@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EmptyState, TableHeaderCell } from "@kenn-io/kit-ui";
+  import { CopyButton, EmptyState, TableHeaderCell } from "@kenn-io/kit-ui";
   import { getReviewStores } from "../../stores/context";
   import type { SortColumn } from "../../stores/roborev/jobs.svelte";
   import { isPanelParent } from "../../utils/roborev-panel";
@@ -44,6 +44,29 @@
     jobsStore !== undefined &&
       !jobsStore.getHasMore() &&
       !jobsStore.areAllJobsLoaded(),
+  );
+
+  // A list emptied by a chosen filter, or by hiding closed reviews that
+  // exist, keeps the filter message; only a scope with no reviews at all
+  // offers the first one.
+  const showFirstReview = $derived(
+    jobsStore !== undefined &&
+      jobsStore.hasLoadedJobs() &&
+      !jobsStore.isLoading() &&
+      jobsStore.getError() === null &&
+      jobsStore.getJobs().length === 0 &&
+      !jobsStore.getFilterRepo() &&
+      !jobsStore.getFilterBranch() &&
+      !jobsStore.getFilterStatus() &&
+      !jobsStore.getFilterSearch() &&
+      !jobsStore.getFilterJobType() &&
+      !(
+        jobsStore.getFilterHideClosed() &&
+        jobsStore.getStats().closed +
+          jobsStore.getStats().failed +
+          jobsStore.getStats().canceled >
+          0
+      ),
   );
 
   // A new observer reports the sentinel's position once on observe(). The
@@ -217,7 +240,23 @@
     </div>
   {/if}
 
-  {#if jobsStore && !jobsStore.isLoading() && jobsStore.getJobs().length === 0}
+  {#if showFirstReview}
+    <div class="first-review">
+      <EmptyState
+        title="No reviews yet"
+        description="Your next commit starts a review.&#10;To review the current commit now, run:"
+      >
+        <span class="first-review-command">
+          <code>roborev review</code>
+          <CopyButton
+            text="roborev review"
+            ariaLabel="Copy command"
+            title="Copy command"
+          />
+        </span>
+      </EmptyState>
+    </div>
+  {:else if jobsStore && !jobsStore.isLoading() && jobsStore.getJobs().length === 0}
     <EmptyState title="No jobs found" />
   {/if}
 
@@ -341,6 +380,37 @@
     position: sticky;
     left: 0;
     height: 1px;
+  }
+
+  /* Contributes no box, so EmptyState still centers in the table host. */
+  .first-review {
+    display: contents;
+  }
+
+  /* Set the title a step further from the body than its lines sit apart,
+     and break the body between its two sentences. */
+  .first-review :global(.kit-empty-state__title) {
+    margin-bottom: var(--space-3);
+  }
+
+  .first-review :global(.kit-empty-state__description) {
+    white-space: pre-line;
+  }
+
+  .first-review-command {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-inset);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+  }
+
+  .first-review-command code {
+    font-family: var(--font-mono);
   }
 
   .members-retry,

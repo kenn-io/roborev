@@ -136,6 +136,7 @@ type model struct {
 	glamourStyle         gansi.StyleConfig // updated when the terminal reports its background
 	jobs                 []storage.ReviewJob
 	jobStats             storage.JobStats       // aggregate done/closed/open from server
+	jobsErr              error                  // latest full jobs-list request failure
 	cost                 *storage.CostAggregate // approx agent spend for the active filter scope; nil = hidden
 	costSeq              int                    // fetchSeq of the stored cost; segment hides until it matches m.fetchSeq
 	status               storage.DaemonStatus

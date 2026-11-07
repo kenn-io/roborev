@@ -185,7 +185,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let loadedLimit = DEFAULT_PAGE_LIMIT;
   let jobsAuthorityGeneration = 0;
   let publishedJobsRevision = 0;
-  let publishedJobsAuthority: JobsAuthority | undefined;
+  let publishedJobsAuthority = $state.raw<JobsAuthority | undefined>(undefined);
   // filterScope() of the rows and cursor in `jobs`. A page loaded for an
   // older filter or sort must not continue or extend the current list.
   let pageScope: string | undefined;
@@ -1136,6 +1136,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
   function isLoading(): boolean {
     return loading;
   }
+  function hasLoadedJobs(): boolean {
+    return publishedJobsAuthority !== undefined;
+  }
   function getHasMore(): boolean {
     return hasMore;
   }
@@ -1220,6 +1223,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     getJobs,
     getVisibleJobs,
     isLoading,
+    hasLoadedJobs,
     getHasMore,
     getStats,
     getFilteredStatusCounts,

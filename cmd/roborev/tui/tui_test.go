@@ -292,6 +292,17 @@ func TestTUIFetchJobsSuccess(t *testing.T) {
 	}
 }
 
+func TestTUIFirstReviewRecoversAfterJobsError(t *testing.T) {
+	t.Parallel()
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.cwdRepoRoot = "/test/repo"
+	m, _ = updateModel(t, m, jobsErrMsg{err: errors.New("list failed")})
+	assert.False(t, m.showFirstReview())
+	m.err = errors.New("copy failed")
+	m, _ = updateModel(t, m, jobsMsg{})
+	assert.True(t, m.showFirstReview())
+}
+
 func TestTUIFetchJobsError(t *testing.T) {
 	t.Parallel()
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
