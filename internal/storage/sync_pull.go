@@ -33,6 +33,26 @@ func (db *DB) newPullSession(ctx context.Context) (*pullSession, error) {
 	return &pullSession{db: db, conn: conn, stmts: make(map[string]*sql.Stmt), budget: pullTxBudget}, nil
 }
 
+// pullOne runs one row in its own transaction for callers outside the sync worker.
+func pullOne[T any](db *DB, jobs bool, row func(context.Context, *pullSession) (T, error)) (T, error) {
+	// This API predates caller contexts; workers pass their context directly.
+	ctx := context.Background()
+	var zero T
+	s, err := db.newPullSession(ctx)
+	if err != nil {
+		return zero, err
+	}
+	defer s.close()
+	if err := s.begin(ctx, jobs); err != nil {
+		return zero, err
+	}
+	v, err := row(ctx, s)
+	if err != nil {
+		return zero, err
+	}
+	return v, s.commit(ctx)
+}
+
 func (s *pullSession) close() {
 	s.rollback()
 	for _, stmt := range s.stmts {
@@ -137,22 +157,10 @@ func (s *pullSession) query(ctx context.Context, query string, args ...any) (*sq
 	return stmt.QueryContext(ctx, args...)
 }
 
-type pullRow struct {
-	row *sql.Row
-	err error
-}
-
-func (s *pullSession) queryRow(ctx context.Context, query string, args ...any) pullRow {
-	stmt, err := s.prepare(ctx, query)
-	if err != nil {
-		return pullRow{err: err}
+func (s *pullSession) queryRow(ctx context.Context, query string, args ...any) *sql.Row {
+	if stmt, err := s.prepare(ctx, query); err == nil {
+		return stmt.QueryRowContext(ctx, args...)
 	}
-	return pullRow{row: stmt.QueryRowContext(ctx, args...)}
-}
-
-func (r pullRow) Scan(dest ...any) error {
-	if r.err != nil {
-		return r.err
-	}
-	return r.row.Scan(dest...)
+	// Unprepared, the same query reports its failure from Scan.
+	return s.conn.QueryRowContext(ctx, query, args...)
 }

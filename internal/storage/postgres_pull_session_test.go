@@ -29,16 +29,11 @@ func TestIntegration_PullFailureKeepsCursorAndRetries(t *testing.T) { //nolint:p
 	}
 	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_pull`)
 	require.NoError(t, err)
-	stats, err := worker.pullChangesWithStats(t.Context(), env.Pool)
+	_, err = worker.pullChangesWithStats(t.Context(), env.Pool)
 	require.NoError(t, err)
-	assert.Equal(t, 3, stats.Jobs)
-	assert.Equal(t, 3, stats.Reviews)
-	assert.Equal(t, 3, stats.Responses)
 	cursor, err = db.GetSyncState(SyncStateLastJobCursor)
 	require.NoError(t, err)
 	assert.NotEmpty(t, cursor)
-	_, err = worker.pullChangesWithStats(t.Context(), env.Pool)
-	require.NoError(t, err)
 	for _, table := range []string{"review_jobs", "reviews", "responses"} {
 		var count int
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&count))

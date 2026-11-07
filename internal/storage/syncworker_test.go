@@ -313,11 +313,7 @@ func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
-	session, err := h.db.newPullSession(t.Context())
-	require.NoError(t, err)
-	defer session.close()
-	session.budget = 0
-	session.notify = worker.notifyAfterPullWrite
+	session := newNotifyingPullSession(t, worker)
 	var notifications atomic.Int64
 	worker.SetAfterPullWrite(func() { notifications.Add(1) })
 
@@ -362,11 +358,7 @@ func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
-	session, err := h.db.newPullSession(t.Context())
-	require.NoError(t, err)
-	defer session.close()
-	session.budget = 0
-	session.notify = worker.notifyAfterPullWrite
+	session := newNotifyingPullSession(t, worker)
 	var notifications atomic.Int64
 	worker.SetAfterPullWrite(func() { notifications.Add(1) })
 
@@ -392,7 +384,7 @@ func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 	}
 	require.NoError(t, worker.pullJob(t.Context(), session, job))
 	before := notifications.Load()
-	err = worker.pullReview(t.Context(), session, PulledReview{
+	err := worker.pullReview(t.Context(), session, PulledReview{
 		JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID,
 		UUID: testUUID("invalid-review"), JobUUID: job.UUID, Agent: "test",
 		StructuredOutput:   []byte(`{"schema_version":`),
@@ -417,11 +409,7 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
-	session, err := h.db.newPullSession(t.Context())
-	require.NoError(t, err)
-	defer session.close()
-	session.budget = 0
-	session.notify = worker.notifyAfterPullWrite
+	session := newNotifyingPullSession(t, worker)
 	var notifications atomic.Int64
 	worker.SetAfterPullWrite(func() { notifications.Add(1) })
 
@@ -438,7 +426,7 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	var jobID int64
 	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&jobID))
 	reviewUUID := testUUID("rollback-review")
-	_, err = h.db.ExecContext(t.Context(), `
+	_, err := h.db.ExecContext(t.Context(), `
 		INSERT INTO legacy_reviews (
 			job_id, agent, output, created_at, closed, uuid, migration_error
 		) VALUES (?, 'test', 'legacy', ?, 0, ?, 'pending conversion')

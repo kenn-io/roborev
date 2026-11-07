@@ -1324,9 +1324,7 @@ func (w *SyncWorker) pullJob(ctx context.Context, s *pullSession, j PulledJob) e
 	if err != nil {
 		return s.finishRow(ctx, false, fmt.Errorf("get or create repo: %w", err))
 	}
-	if repoChanged {
-		s.changed = true
-	}
+	s.changed = s.changed || repoChanged
 
 	// Get or create commit if we have one
 	var commitID *int64
@@ -1336,9 +1334,7 @@ func (w *SyncWorker) pullJob(ctx context.Context, s *pullSession, j PulledJob) e
 			return s.finishRow(ctx, false, fmt.Errorf("get or create commit: %w", err))
 		}
 		commitID = &id
-		if changed {
-			s.changed = true
-		}
+		s.changed = s.changed || changed
 	}
 
 	changed, err := s.upsertPulledJob(ctx, j, repoID, commitID)

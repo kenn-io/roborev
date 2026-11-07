@@ -1007,21 +1007,9 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 // use this to avoid waking derived-data reconcilers for cursor lookback
 // replays and rejected stale records while preserving the public API above.
 func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool, error) {
-	// This API predates caller contexts; workers pass their context directly.
-	ctx := context.Background()
-	s, err := db.newPullSession(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer s.close()
-	if err := s.begin(ctx, true); err != nil {
-		return false, err
-	}
-	changed, err := s.upsertPulledJob(ctx, j, repoID, commitID)
-	if err != nil {
-		return false, err
-	}
-	return changed, s.commit(ctx)
+	return pullOne(db, true, func(ctx context.Context, s *pullSession) (bool, error) {
+		return s.upsertPulledJob(ctx, j, repoID, commitID)
+	})
 }
 
 func (s *pullSession) upsertPulledJob(ctx context.Context, j PulledJob, repoID int64, commitID *int64) (bool, error) {
@@ -1206,21 +1194,9 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 // upsertPulledReview reports whether the canonical review row committed a
 // change. A skipped orphan or stale timestamp is a successful no-op.
 func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
-	// This API predates caller contexts; workers pass their context directly.
-	ctx := context.Background()
-	s, err := db.newPullSession(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer s.close()
-	if err := s.begin(ctx, false); err != nil {
-		return false, err
-	}
-	changed, err := s.upsertPulledReview(ctx, r)
-	if err != nil {
-		return false, err
-	}
-	return changed, s.commit(ctx)
+	return pullOne(db, false, func(ctx context.Context, s *pullSession) (bool, error) {
+		return s.upsertPulledReview(ctx, r)
+	})
 }
 
 func (s *pullSession) upsertPulledReview(ctx context.Context, r PulledReview) (bool, error) {
@@ -1407,21 +1383,9 @@ func (db *DB) UpsertPulledResponse(r PulledResponse) error {
 
 // upsertPulledResponse reports whether the append-only response was inserted.
 func (db *DB) upsertPulledResponse(r PulledResponse) (bool, error) {
-	// This API predates caller contexts; workers pass their context directly.
-	ctx := context.Background()
-	s, err := db.newPullSession(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer s.close()
-	if err := s.begin(ctx, false); err != nil {
-		return false, err
-	}
-	changed, err := s.upsertPulledResponse(ctx, r)
-	if err != nil {
-		return false, err
-	}
-	return changed, s.commit(ctx)
+	return pullOne(db, false, func(ctx context.Context, s *pullSession) (bool, error) {
+		return s.upsertPulledResponse(ctx, r)
+	})
 }
 
 func (s *pullSession) upsertPulledResponse(ctx context.Context, r PulledResponse) (bool, error) {
@@ -1488,21 +1452,10 @@ func (db *DB) GetKnownJobUUIDs() (map[uuid.UUID]struct{}, error) {
 // Note: Single local repos are always preferred, even if a placeholder exists
 // from a previous sync (e.g., when there were 0 or 2+ clones before).
 func (db *DB) GetOrCreateRepoByIdentity(identity string) (int64, error) {
-	// This API predates caller contexts; workers pass their context directly.
-	ctx := context.Background()
-	s, err := db.newPullSession(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer s.close()
-	if err := s.begin(ctx, false); err != nil {
-		return 0, err
-	}
-	id, _, err := s.getOrCreateRepoByIdentity(ctx, identity)
-	if err != nil {
-		return 0, err
-	}
-	return id, s.commit(ctx)
+	return pullOne(db, false, func(ctx context.Context, s *pullSession) (int64, error) {
+		id, _, err := s.getOrCreateRepoByIdentity(ctx, identity)
+		return id, err
+	})
 }
 
 func (s *pullSession) getOrCreateRepoByIdentity(ctx context.Context, identity string) (int64, bool, error) {
@@ -1600,21 +1553,10 @@ func ExtractRepoNameFromIdentity(identity string) string {
 
 // GetOrCreateCommitByRepoAndSHA finds or creates a commit.
 func (db *DB) GetOrCreateCommitByRepoAndSHA(repoID int64, sha, author, subject string, timestamp time.Time) (int64, error) {
-	// This API predates caller contexts; workers pass their context directly.
-	ctx := context.Background()
-	s, err := db.newPullSession(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer s.close()
-	if err := s.begin(ctx, false); err != nil {
-		return 0, err
-	}
-	id, _, err := s.getOrCreateCommitByRepoAndSHA(ctx, repoID, sha, author, subject, timestamp)
-	if err != nil {
-		return 0, err
-	}
-	return id, s.commit(ctx)
+	return pullOne(db, false, func(ctx context.Context, s *pullSession) (int64, error) {
+		id, _, err := s.getOrCreateCommitByRepoAndSHA(ctx, repoID, sha, author, subject, timestamp)
+		return id, err
+	})
 }
 
 func (s *pullSession) getOrCreateCommitByRepoAndSHA(ctx context.Context, repoID int64, sha, author, subject string, timestamp time.Time) (int64, bool, error) {

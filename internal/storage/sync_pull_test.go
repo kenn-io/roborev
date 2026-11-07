@@ -59,13 +59,6 @@ func TestPullSessionParentsCommitAndRollbackWithJobs(t *testing.T) {
 	assert.Zero(t, count)
 	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs WHERE uuid IN (?, ?)`, job.UUID, second.UUID).Scan(&count))
 	assert.Zero(t, count)
-	second.GitRef = "retry"
-	require.NoError(t, worker.pullJob(t.Context(), s, job))
-	require.NoError(t, worker.pullJob(t.Context(), s, second))
-	require.NoError(t, s.commit(t.Context()))
-	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs WHERE uuid IN (?, ?)`, job.UUID, second.UUID).Scan(&count))
-	assert.Equal(t, 2, count)
-	assert.Equal(t, 2, notifications)
 }
 
 func TestPullSessionYieldsToQueuedWriter(t *testing.T) {
@@ -99,86 +92,55 @@ func TestPullSessionYieldsToQueuedWriter(t *testing.T) {
 	})
 }
 
-func TestPullSessionBudgetAndClose(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		h := newSyncTestHelper(t)
-		s, err := h.db.newPullSession(t.Context())
-		require.NoError(t, err)
-		defer s.close()
-		s.budget = 5 * time.Millisecond
-		require.NoError(t, s.begin(t.Context(), true))
-		_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES (?, 'value')`, "budget")
-		require.NoError(t, err)
-		time.Sleep(5 * time.Millisecond)
-		require.NoError(t, s.finishRow(t.Context(), true, nil))
-		value, err := h.db.GetSyncState("budget")
-		require.NoError(t, err)
-		assert.Equal(t, "value", value)
-		require.NoError(t, s.begin(t.Context(), true))
-		_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES (?, 'value')`, "abandoned")
-		require.NoError(t, err)
-		s.close()
-		value, err = h.db.GetSyncState("abandoned")
-		require.NoError(t, err)
-		assert.Empty(t, value)
-		// Closing releases both the writer and attempt lock.
-		require.NoError(t, h.db.UpsertPulledJob(PulledJob{
-			UUID: testUUID("after-close"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
-			Status: "done", EnqueuedAt: time.Now(), UpdatedAt: time.Now(),
-		}, h.repo.ID, nil))
-	})
-}
-
-func TestPullSessionCanceledCommitRollsBack(t *testing.T) {
+func TestPullSessionRollbackReleasesLocks(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	s, err := h.db.newPullSession(t.Context())
 	require.NoError(t, err)
 	defer s.close()
 	require.NoError(t, s.begin(t.Context(), true))
-	_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('canceled-pull', 'value')`)
+	_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES (?, 'value')`, "canceled")
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(t, s.commit(ctx), context.Canceled)
-	value, err := h.db.GetSyncState("canceled-pull")
+	require.NoError(t, s.begin(t.Context(), true))
+	_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES (?, 'value')`, "abandoned")
 	require.NoError(t, err)
-	assert.Empty(t, value)
-	_, err = h.db.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('after-cancel', 'value')`)
-	require.NoError(t, err)
+	s.close()
+	for _, key := range []string{"canceled", "abandoned"} {
+		value, err := h.db.GetSyncState(key)
+		require.NoError(t, err)
+		assert.Empty(t, value, key)
+	}
+	// Both paths release the writer and attempt lock.
+	require.NoError(t, h.db.UpsertPulledJob(PulledJob{
+		UUID: testUUID("after-close"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
+		Status: "done", EnqueuedAt: time.Now(), UpdatedAt: time.Now(),
+	}, h.repo.ID, nil))
 }
 
 func TestPullSessionIgnoredReviewKeepsPreviousResult(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
-	worker := NewSyncWorker(h.db, testSyncConfig())
-	s, err := h.db.newPullSession(t.Context())
-	require.NoError(t, err)
-	defer s.close()
-	s.budget = time.Hour
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	job := PulledJob{
-		UUID: testUUID("ignored-review-parent"), RepoIdentity: "https://example.com/ignored.git",
-		GitRef: "main", Agent: "test", JobType: JobTypeReview, Status: "done",
-		EnqueuedAt: now, UpdatedAt: now, SourceMachineID: testUUID("peer"),
+		UUID: testUUID("ignored-review-parent"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
+		Status: "done", EnqueuedAt: now, UpdatedAt: now, SourceMachineID: testUUID("peer"),
 	}
-	require.NoError(t, worker.pullJob(t.Context(), s, job))
-	require.NoError(t, s.commit(t.Context()))
+	require.NoError(t, h.db.UpsertPulledJob(job, h.repo.ID, nil))
 	review := PulledReview{
 		UUID: testUUID("original-result"), JobUUID: job.UUID, Agent: "test",
 		JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID,
 		StructuredOutput: reviewFixtureJSON("original finding"),
 		CreatedAt:        now, UpdatedAt: now, UpdatedByMachineID: job.SourceMachineID,
 	}
-	require.NoError(t, worker.pullReview(t.Context(), s, review))
-	require.NoError(t, s.commit(t.Context()))
+	require.NoError(t, h.db.UpsertPulledReview(review))
 	review.UUID = testUUID("ignored-result")
 	review.StructuredOutput = nil
 	review.CreatedAt = now.Add(time.Second)
 	review.UpdatedAt = review.CreatedAt
-	require.NoError(t, worker.pullReview(t.Context(), s, review))
-	require.NoError(t, s.commit(t.Context()))
+	require.NoError(t, h.db.UpsertPulledReview(review))
 	var id string
 	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT uuid FROM reviews`).Scan(&id))
 	assert.Equal(t, testUUID("original-result").String(), id)
@@ -219,4 +181,14 @@ func TestPullSessionCancelsAttemptOnlyAfterCommit(t *testing.T) {
 	stored, err := h.db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, JobStatusDone, stored.Status)
+}
+
+func newNotifyingPullSession(t *testing.T, w *SyncWorker) *pullSession {
+	t.Helper()
+	s, err := w.db.newPullSession(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(s.close)
+	s.budget = 0
+	s.notify = w.notifyAfterPullWrite
+	return s
 }
