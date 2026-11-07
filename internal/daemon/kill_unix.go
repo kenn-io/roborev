@@ -4,12 +4,12 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
+
+	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 // processIdentity represents the result of identifying a process.
@@ -124,12 +124,9 @@ func looksLikeFlagValue(token string) bool {
 	return false
 }
 
-// isProcessAlive checks whether a process with the given PID exists.
-// It uses signal 0 which doesn't actually send a signal but checks for existence.
+// isProcessAlive reports whether pid appears to name a live process.
 func isProcessAlive(pid int) bool {
-	process, _ := os.FindProcess(pid)
-	err := process.Signal(syscall.Signal(0))
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return kitdaemon.ProcessAlive(pid)
 }
 
 // ProcessExists reports whether pid appears to name a live process.

@@ -26,7 +26,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v93 v93.0.0
 	github.com/google/jsonschema-go v0.4.3
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/klauspost/compress v1.20.3
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-runewidth v0.0.31
@@ -38,9 +38,9 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
-	github.com/yuin/goldmark/v2 v2.1.11
+	github.com/yuin/goldmark/v2 v2.1.12
 	gitlab.com/gitlab-org/api/client-go/v3 v3.40.0
-	go.kenn.io/kit v0.48.1
+	go.kenn.io/kit v0.48.4
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
@@ -98,7 +98,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect

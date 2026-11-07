@@ -4,25 +4,17 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"strconv"
-	"syscall"
+
+	kitdaemon "go.kenn.io/kit/daemon"
 )
 
-// isPIDAliveForUpdateDefault returns true when pid exists.
-// Uses signal 0 so no signal is delivered.
+// isPIDAliveForUpdateDefault reports whether pid could still be a live roborev daemon.
 func isPIDAliveForUpdateDefault(pid int) bool {
-	if pid <= 0 {
+	if !kitdaemon.ProcessAlive(pid) {
 		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		return errors.Is(err, syscall.EPERM)
 	}
 	// PID exists. If it's clearly not a roborev daemon anymore, treat as exited
 	// (covers PID reuse after daemon shutdown).
