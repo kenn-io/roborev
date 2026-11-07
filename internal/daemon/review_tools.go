@@ -34,7 +34,17 @@ func reviewJobSettings(job *storage.ReviewJob, configRepoPath string, cfg *confi
 		return settings, nil
 	}
 	if job.PanelMemberConfigJSON != "" {
-		if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &settings); err != nil {
+		if hasSuppliedReviewSettings(job) {
+			var snapshot suppliedReviewSnapshot
+			if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &snapshot); err != nil {
+				return settings, fmt.Errorf("decode supplied review settings: %w", err)
+			}
+			settings = config.ReviewSettings{
+				Tools:           snapshot.Tools,
+				BinaryEvidence:  snapshot.BinaryEvidence,
+				ExcludePatterns: snapshot.ExcludePatterns,
+			}
+		} else if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &settings); err != nil {
 			return settings, fmt.Errorf("decode frozen review settings: %w", err)
 		}
 		var err error
