@@ -71,7 +71,7 @@ func (m model) renderQueuePaneBody(innerW, innerH int) []string {
 	lines := make([]string, 0, innerH)
 	if len(rows) == 0 {
 		if m.showFirstReview() {
-			lines = append(lines, firstReviewLines(innerW)...)
+			lines = append(lines, firstReviewLines(innerW, innerH)...)
 		} else {
 			lines = append(lines, statusStyle.Render("No jobs"))
 		}

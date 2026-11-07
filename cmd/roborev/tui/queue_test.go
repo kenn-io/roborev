@@ -15,6 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -1603,6 +1604,20 @@ func TestTUIFirstReviewEmptyQueueWraps(t *testing.T) {
 		assert.LessOrEqual(t, lipgloss.Width(line), 32)
 	}
 	assert.Contains(t, strings.Join(strings.Fields(stripANSI(strings.Join(lines, " "))), " "), "current commit")
+}
+
+func TestTUIFirstReviewShortTerminal(t *testing.T) {
+	t.Parallel()
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.loadingJobs = false
+	m.cwdRepoRoot = "/test/repo"
+	m.width, m.height = 40, 5
+	output := m.View().Content
+	assert.LessOrEqual(t, lipgloss.Height(output), m.height)
+	screen := uv.NewScreenBuffer(m.width, m.height)
+	uv.NewStyledString(output).Draw(screen, screen.Bounds())
+	assert.Contains(t, stripANSI(screen.String()), "roborev review")
+	assert.Contains(t, stripANSI(strings.Join(m.renderQueuePaneBody(40, 2), "\n")), "roborev review")
 }
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
