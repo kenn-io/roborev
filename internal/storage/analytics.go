@@ -1,14 +1,13 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -190,52 +189,12 @@ func (db *DB) GetAnalytics(opts AnalyticsOptions) (*AnalyticsSnapshot, error) {
 	return aggregator.snapshot(), nil
 }
 
-// analyticsStmts holds a prepared statement for each analytics query text.
-// modernc.org/sqlite prepares every Query from scratch, and planning this
-// query costs more than running it on a small window. A *sql.Stmt keeps one
-// prepared copy per pool connection, so calls stop re-preparing once each
-// connection has run the query. The map stays small because
-// analyticsRowsQuery builds one of four texts.
-type analyticsStmts struct {
-	mu    sync.Mutex
-	stmts map[string]*sql.Stmt
-}
-
-// stmt returns the prepared statement for query, preparing it on first use
-// so that preparation happens after Open's migrations.
-func (s *analyticsStmts) stmt(db *sql.DB, query string) (*sql.Stmt, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if stmt, ok := s.stmts[query]; ok {
-		return stmt, nil
-	}
-	stmt, err := db.Prepare(query)
-	if err != nil {
-		return nil, err
-	}
-	if s.stmts == nil {
-		s.stmts = make(map[string]*sql.Stmt)
-	}
-	s.stmts[query] = stmt
-	return stmt, nil
-}
-
-func (s *analyticsStmts) close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var errs []error
-	for _, stmt := range s.stmts {
-		errs = append(errs, stmt.Close())
-	}
-	s.stmts = nil
-	return errors.Join(errs...)
-}
-
 // analyticsQuerier runs analytics queries through db's prepared statements.
 type analyticsQuerier struct{ db *DB }
 
 func (q analyticsQuerier) Query(query string, args ...any) (*sql.Rows, error) {
-	stmt, err := q.db.analytics.stmt(q.db.DB, query)
+	// Analytics queries predate caller contexts.
+	stmt, err := q.db.analytics.stmt(context.Background(), q.db.PrepareContext, query)
 	if err != nil {
 		return nil, err
 	}

@@ -593,27 +593,54 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 
 func TestUpsertPulledReviewIgnoresMarkdown(t *testing.T) {
 	t.Parallel()
-	h := newSyncTestHelper(t)
-	job := h.createPendingJob("legacy-pulled-review")
-	setStatus(t, h.db, job.ID, JobStatusDone)
-	const prose = "I am unable to read the diff."
-	incoming := PulledReview{
-		JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
-		UUID: testUUID("legacy-pulled-review"), JobUUID: *job.UUID,
-		Agent: "test", Output: prose,
-		VerdictBool: new(false), UpdatedByMachineID: testUUID("remote-machine"),
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	}
-	require.NoError(t, h.db.UpsertPulledReview(incoming))
-	_, err := h.db.GetReviewByJobID(job.ID)
-	require.ErrorIs(t, err, sql.ErrNoRows)
-	records, err := h.db.UnresolvedLegacyReviews()
-	require.NoError(t, err)
-	assert.Empty(t, records)
-	require.NoError(t, h.db.UpsertPulledReview(incoming))
-	records, err = h.db.UnresolvedLegacyReviews()
-	require.NoError(t, err)
-	assert.Empty(t, records)
+	t.Run("without existing review", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		job := h.createPendingJob("legacy-pulled-review")
+		setStatus(t, h.db, job.ID, JobStatusDone)
+		const prose = "I am unable to read the diff."
+		incoming := PulledReview{
+			JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: storedJobSourceMachineID(t, h.db, job.ID),
+			UUID: testUUID("legacy-pulled-review"), JobUUID: *job.UUID,
+			Agent: "test", Output: prose,
+			VerdictBool: new(false), UpdatedByMachineID: testUUID("remote-machine"),
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+		require.NoError(t, h.db.UpsertPulledReview(incoming))
+		_, err := h.db.GetReviewByJobID(job.ID)
+		require.ErrorIs(t, err, sql.ErrNoRows)
+		records, err := h.db.UnresolvedLegacyReviews()
+		require.NoError(t, err)
+		assert.Empty(t, records)
+		require.NoError(t, h.db.UpsertPulledReview(incoming))
+		records, err = h.db.UnresolvedLegacyReviews()
+		require.NoError(t, err)
+		assert.Empty(t, records)
+	})
+	t.Run("with existing review", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		job := PulledJob{
+			UUID: testUUID("ignored-review-parent"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
+			Status: "done", EnqueuedAt: now, UpdatedAt: now, SourceMachineID: testUUID("peer"),
+		}
+		require.NoError(t, h.db.UpsertPulledJob(job, h.repo.ID, nil))
+		review := PulledReview{
+			UUID: testUUID("original-result"), JobUUID: job.UUID, Agent: "test",
+			JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID,
+			StructuredOutput: reviewFixtureJSON("original finding"),
+			CreatedAt:        now, UpdatedAt: now, UpdatedByMachineID: job.SourceMachineID,
+		}
+		require.NoError(t, h.db.UpsertPulledReview(review))
+		review.UUID = testUUID("ignored-result")
+		review.StructuredOutput = nil
+		review.Output = "I am unable to read the diff."
+		review.CreatedAt = now.Add(time.Second)
+		review.UpdatedAt = review.CreatedAt
+		require.NoError(t, h.db.UpsertPulledReview(review))
+		var id string
+		require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT uuid FROM reviews`).Scan(&id))
+		assert.Equal(t, testUUID("original-result").String(), id)
+	})
 }
 
 // TestGetCommentsToSync_RequiresJobSynced verifies that responses are only

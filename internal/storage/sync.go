@@ -1007,36 +1007,23 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 // use this to avoid waking derived-data reconcilers for cursor lookback
 // replays and rejected stale records while preserving the public API above.
 func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool, error) {
-	db.attempts.mu.Lock()
-	defer db.attempts.mu.Unlock()
+	return pullOne(db, true, func(ctx context.Context, s *pullSession) (bool, error) {
+		return s.upsertPulledJob(ctx, j, repoID, commitID)
+	})
+}
+
+func (s *pullSession) upsertPulledJob(ctx context.Context, j PulledJob, repoID int64, commitID *int64) (bool, error) {
 	now := preciseTimestampAt(time.Now())
 	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
 	if err != nil {
 		return false, err
 	}
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer conn.Close()
-	// Acquire the writer before reading attempt state. A deferred read
-	// transaction cannot upgrade while another connection is writing.
-	if err := beginImmediate(ctx, conn); err != nil {
-		return false, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = rollbackConn(conn)
-		}
-	}()
 	var enqueuedAt string
 	var localID int64
 	var sourceMachineID uuid.UUID
 	var localReviewUUID sql.NullString
 	var pendingReview bool
-	err = conn.QueryRowContext(ctx, `SELECT j.id, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'), rv.uuid,
+	err = s.queryRow(ctx, `SELECT j.id, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'), rv.uuid,
 		COALESCE(rv.synced_at IS NULL AND rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0)
 		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`, j.UUID).
 		Scan(&localID, &enqueuedAt, &sourceMachineID, &localReviewUUID, &pendingReview)
@@ -1057,7 +1044,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		}
 		keepReview = localReviewUUID.Valid && j.CurrentReviewUUID != nil && strings.EqualFold(localReviewUUID.String, j.CurrentReviewUUID.String())
 	}
-	result, err := conn.ExecContext(ctx, `
+	result, err := s.exec(ctx, `
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, branch, session_id, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic, agent_invoked,
 			enqueued_at, started_at, finished_at, dirty_files, error, token_usage,
@@ -1148,7 +1135,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON), j.NonVoting,
-		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339Nano), now, db.attempts.active[localID] != nil, now, attemptOrder < 0)
+		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339Nano), now, s.db.attempts.active[localID] != nil, now, attemptOrder < 0)
 	if err != nil {
 		return false, err
 	}
@@ -1160,14 +1147,14 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		// Retire a different attempt, but retain the same canonical review
 		// and its archive during historical association repair.
 		if !keepReview {
-			if _, err := conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
+			if _, err := s.exec(ctx, `DELETE FROM reviews WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
 				return false, fmt.Errorf("clear previous attempt review: %w", err)
 			}
-			if _, err := conn.ExecContext(ctx, `UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?) AND resolved_at IS NULL`, now, j.UUID); err != nil {
+			if _, err := s.exec(ctx, `UPDATE legacy_reviews SET resolved_at = ? WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?) AND resolved_at IS NULL`, now, j.UUID); err != nil {
 				return false, fmt.Errorf("retire previous attempt archive: %w", err)
 			}
 		}
-		if _, err := conn.ExecContext(ctx, `UPDATE job_content SET prompt = NULL, patch = NULL WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
+		if _, err := s.exec(ctx, `UPDATE job_content SET prompt = NULL, patch = NULL WHERE job_id = (SELECT id FROM review_jobs WHERE uuid = ?)`, j.UUID); err != nil {
 			return false, fmt.Errorf("clear previous attempt content: %w", err)
 		}
 	}
@@ -1180,7 +1167,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 		diff = *j.DiffContent
 	}
 	if rows > 0 && (j.Prompt != "" || diff != "") {
-		if _, err := conn.ExecContext(ctx, `
+		if _, err := s.exec(ctx, `
 			INSERT INTO job_content (job_id, prompt, diff_content)
 			SELECT id, zstd_compress(?), zstd_compress(?) FROM review_jobs WHERE uuid = ?
 			ON CONFLICT(job_id) DO UPDATE SET
@@ -1190,13 +1177,9 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 			return false, fmt.Errorf("store pulled job content: %w", err)
 		}
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return false, err
-	}
-	committed = true
 	if rows > 0 {
-		if active := db.attempts.active[localID]; active != nil {
-			active.cancel()
+		if active := s.db.attempts.active[localID]; active != nil {
+			s.cancels = append(s.cancels, active.cancel)
 		}
 	}
 	return rows > 0, nil
@@ -1211,29 +1194,18 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 // upsertPulledReview reports whether the canonical review row committed a
 // change. A skipped orphan or stale timestamp is a successful no-op.
 func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer conn.Close()
-	// Acquire the writer before reading attempt state. A deferred read
-	// transaction cannot upgrade while another connection is writing.
-	if err := beginImmediate(ctx, conn); err != nil {
-		return false, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = rollbackConn(conn)
-		}
-	}()
+	return pullOne(db, false, func(ctx context.Context, s *pullSession) (bool, error) {
+		return s.upsertPulledReview(ctx, r)
+	})
+}
+
+func (s *pullSession) upsertPulledReview(ctx context.Context, r PulledReview) (bool, error) {
 	// First, find the job_id by uuid
 	var jobID int64
 	var jobType, threshold, enqueuedAt, status, reviewCreatedAt, reviewUpdatedAt string
 	var locallyOwned, hasReview, sameReview, pendingReview bool
 	var sourceMachineID uuid.UUID
-	err = conn.QueryRowContext(ctx, `SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
+	err := s.queryRow(ctx, `SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
 		COALESCE(j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0),
 		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(rv.updated_at, ''), COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'),
 		COALESCE(rv.synced_at IS NULL AND rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0)
@@ -1276,12 +1248,6 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		if parseSQLiteTime(reviewCreatedAt).After(r.CreatedAt) {
 			return false, nil
 		}
-		// PullReviews selects the newest PostgreSQL row, including equal-time
-		// ties. Replace the old attempt completely so nullable verdict and
-		// coverage fields do not leak into the incoming review.
-		if _, err := conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID); err != nil {
-			return false, fmt.Errorf("replace pulled review attempt: %w", err)
-		}
 	}
 
 	legacyDocument := false
@@ -1303,6 +1269,14 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 			legacyDocument = true
 		} else if r.VerdictBool == nil && !doc.UnableToReview() {
 			r.VerdictBool = new(doc.Passed(threshold))
+		}
+	}
+
+	if hasReview && !sameReview {
+		// Validate before deleting: an ignored Markdown-only row must leave
+		// the existing review intact even when other rows share this transaction.
+		if _, err := s.exec(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID); err != nil {
+			return false, fmt.Errorf("replace pulled review attempt: %w", err)
 		}
 	}
 
@@ -1332,7 +1306,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	if noVerdict {
 		verdictOnConflict = "NULL"
 	}
-	result, err := conn.ExecContext(ctx, `
+	result, err := s.exec(ctx, `
 		INSERT INTO reviews (
 			uuid, job_id, agent, output, closed,
 			verdict_bool, structured_output, reviewed_file_count, excluded_file_count,
@@ -1360,7 +1334,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		return false, fmt.Errorf("read pulled review rows affected: %w", err)
 	}
 	if legacyDocument {
-		if _, err := conn.ExecContext(ctx, `INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error)
+		if _, err := s.exec(ctx, `INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error)
  SELECT id, job_id, agent, json_extract(structured_output, '$.legacy.markdown'), created_at, closed,
  reviewed_file_count, excluded_file_count, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at, synced_at,
  'Unstructured historical review' FROM reviews WHERE uuid = ? AND json_extract(structured_output, '$.legacy') IS NOT NULL
@@ -1369,7 +1343,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 		}
 	}
 	if requiresReviewDocument(jobType) && !legacyDocument {
-		if _, err := conn.ExecContext(ctx, `UPDATE legacy_reviews SET resolved_at = ? WHERE uuid = ? AND resolved_at IS NULL`, now, r.UUID); err != nil {
+		if _, err := s.exec(ctx, `UPDATE legacy_reviews SET resolved_at = ? WHERE uuid = ? AND resolved_at IS NULL`, now, r.UUID); err != nil {
 			return false, err
 		}
 	}
@@ -1379,7 +1353,7 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 	// an unchanged review writes nothing, so a prompt removed by retention
 	// stays removed.
 	if rows > 0 && r.JobPrompt != "" {
-		if _, err := conn.ExecContext(ctx, `
+		if _, err := s.exec(ctx, `
 			INSERT INTO job_content (job_id, prompt)
 			SELECT id, zstd_compress(?) FROM review_jobs
 			WHERE id = ? AND source_machine_id != (SELECT value FROM sync_state WHERE key = ?)
@@ -1388,10 +1362,6 @@ func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
 			return false, fmt.Errorf("store pulled review's job prompt: %w", err)
 		}
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return false, err
-	}
-	committed = true
 	return rows > 0, nil
 }
 
@@ -1413,10 +1383,16 @@ func (db *DB) UpsertPulledResponse(r PulledResponse) error {
 
 // upsertPulledResponse reports whether the append-only response was inserted.
 func (db *DB) upsertPulledResponse(r PulledResponse) (bool, error) {
+	return pullOne(db, false, func(ctx context.Context, s *pullSession) (bool, error) {
+		return s.upsertPulledResponse(ctx, r)
+	})
+}
+
+func (s *pullSession) upsertPulledResponse(ctx context.Context, r PulledResponse) (bool, error) {
 	// First, find the job_id by uuid
 	var jobID int64
 	var jobType string
-	err := db.QueryRow(`SELECT id, job_type FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType)
+	err := s.queryRow(ctx, `SELECT id, job_type FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID, &jobType)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this response (orphaned)
 		return false, nil
@@ -1426,7 +1402,7 @@ func (db *DB) upsertPulledResponse(r PulledResponse) (bool, error) {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := db.Exec(`
+	result, err := s.exec(ctx, `
 		INSERT INTO responses (
 			uuid, job_id, responder, response, source, source_machine_id, created_at, synced_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1476,14 +1452,16 @@ func (db *DB) GetKnownJobUUIDs() (map[uuid.UUID]struct{}, error) {
 // Note: Single local repos are always preferred, even if a placeholder exists
 // from a previous sync (e.g., when there were 0 or 2+ clones before).
 func (db *DB) GetOrCreateRepoByIdentity(identity string) (int64, error) {
-	id, _, err := db.getOrCreateRepoByIdentity(identity)
-	return id, err
+	return pullOne(db, false, func(ctx context.Context, s *pullSession) (int64, error) {
+		id, _, err := s.getOrCreateRepoByIdentity(ctx, identity)
+		return id, err
+	})
 }
 
-func (db *DB) getOrCreateRepoByIdentity(identity string) (int64, bool, error) {
+func (s *pullSession) getOrCreateRepoByIdentity(ctx context.Context, identity string) (int64, bool, error) {
 	// First, check for local repos with this identity
 	// (excluding placeholders where root_path == identity)
-	rows, err := db.Query(`SELECT id FROM repos WHERE identity = ? AND root_path != ?`, identity, identity)
+	rows, err := s.query(ctx, `SELECT id FROM repos WHERE identity = ? AND root_path != ?`, identity, identity)
 	if err != nil {
 		return 0, false, fmt.Errorf("find repos by identity: %w", err)
 	}
@@ -1508,7 +1486,7 @@ func (db *DB) getOrCreateRepoByIdentity(identity string) (int64, bool, error) {
 
 	// 0 or 2+ local repos - look for existing placeholder
 	var placeholderID int64
-	err = db.QueryRow(`SELECT id FROM repos WHERE root_path = ? AND identity = ?`, identity, identity).Scan(&placeholderID)
+	err = s.queryRow(ctx, `SELECT id FROM repos WHERE root_path = ? AND identity = ?`, identity, identity).Scan(&placeholderID)
 	if err == nil {
 		return placeholderID, false, nil
 	}
@@ -1519,7 +1497,7 @@ func (db *DB) getOrCreateRepoByIdentity(identity string) (int64, bool, error) {
 	// No placeholder exists - create one
 	// Use extracted repo name for display, but root_path stays as identity to mark it as a placeholder
 	displayName := ExtractRepoNameFromIdentity(identity)
-	result, err := db.Exec(`
+	result, err := s.exec(ctx, `
 		INSERT INTO repos (root_path, name, identity)
 		VALUES (?, ?, ?)
 	`, identity, displayName, identity)
@@ -1575,14 +1553,16 @@ func ExtractRepoNameFromIdentity(identity string) string {
 
 // GetOrCreateCommitByRepoAndSHA finds or creates a commit.
 func (db *DB) GetOrCreateCommitByRepoAndSHA(repoID int64, sha, author, subject string, timestamp time.Time) (int64, error) {
-	id, _, err := db.getOrCreateCommitByRepoAndSHA(repoID, sha, author, subject, timestamp)
-	return id, err
+	return pullOne(db, false, func(ctx context.Context, s *pullSession) (int64, error) {
+		id, _, err := s.getOrCreateCommitByRepoAndSHA(ctx, repoID, sha, author, subject, timestamp)
+		return id, err
+	})
 }
 
-func (db *DB) getOrCreateCommitByRepoAndSHA(repoID int64, sha, author, subject string, timestamp time.Time) (int64, bool, error) {
+func (s *pullSession) getOrCreateCommitByRepoAndSHA(ctx context.Context, repoID int64, sha, author, subject string, timestamp time.Time) (int64, bool, error) {
 	// Try to find existing
 	var id int64
-	err := db.QueryRow(`SELECT id FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha).Scan(&id)
+	err := s.queryRow(ctx, `SELECT id FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha).Scan(&id)
 	if err == nil {
 		return id, false, nil
 	}
@@ -1591,7 +1571,7 @@ func (db *DB) getOrCreateCommitByRepoAndSHA(repoID int64, sha, author, subject s
 	}
 
 	// Create
-	result, err := db.Exec(`
+	result, err := s.exec(ctx, `
 		INSERT INTO commits (repo_id, sha, author, subject, timestamp)
 		VALUES (?, ?, ?, ?, ?)
 	`, repoID, sha, author, subject, timestamp.Format(time.RFC3339))

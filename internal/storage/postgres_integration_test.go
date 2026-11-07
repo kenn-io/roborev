@@ -693,7 +693,7 @@ func TestIntegration_SearchWakeFollowsCommittedPullsWithoutPostgresSidecars(t *t
 	assert.Equal(t, 1, stats.PulledJobs)
 	assert.Equal(t, 1, stats.PulledReviews)
 	assert.Equal(t, 1, stats.PulledResponses)
-	assert.Equal(t, int64(4), wakes.Load(), "commit, job, review, and response each wake after commit")
+	assert.Equal(t, int64(3), wakes.Load(), "job with its parents, review, and response each wake after commit")
 
 	document, err := feedDocument(targetDB, review.UUID.String())
 	require.NoError(t, err)
@@ -759,7 +759,7 @@ func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t 
 	require.Equal(t, 1, pulls)
 	require.ErrorContains(t, err, "injected pulled review failure")
 	assert.Nil(t, stats)
-	assert.Equal(t, int64(2), wakes.Load(), "committed commit and job writes must notify before review failure")
+	assert.Equal(t, int64(1), wakes.Load(), "committed job and parents must notify before review failure")
 
 	var jobCount, reviewCount int
 	require.NoError(t, targetDB.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&jobCount))
@@ -2128,7 +2128,7 @@ func TestIntegration_AfterPullNotifiesAfterFreshBulkPull(t *testing.T) { //nolin
 	assert.Equal(t, 500, stats.PulledJobs)
 	assert.Equal(t, 500, stats.PulledReviews)
 	assert.Equal(t, 1, pulls)
-	assert.Greater(t, writes, 500, "per-row search wakes remain")
+	assert.Positive(t, writes, "committed transactions wake search during the pull")
 	require.NoError(t, target.doSync())
 	assert.Equal(t, 1, pulls, "empty background pulls do not notify")
 	_, err = target.SyncNow()
