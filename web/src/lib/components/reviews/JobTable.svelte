@@ -244,7 +244,7 @@
     <div class="first-review">
       <EmptyState
         title="No reviews yet"
-        description={"Your next commit starts a review.\nTo review the current commit now, run:"}
+        description="Your next commit starts a review.&#10;To review the current commit now, run:"
       >
         <span class="first-review-command">
           <code>roborev review</code>

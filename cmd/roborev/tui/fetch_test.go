@@ -40,7 +40,7 @@ func TestFetchJobsFirstReviewRecoversAfterError(t *testing.T) {
 	unrelated := errors.New("copy failed")
 	m.err = unrelated
 	m, _ = updateModel(t, m, fetchJobsMessage(t, m))
-	assert.ErrorIs(t, m.err, unrelated)
+	require.ErrorIs(t, m.err, unrelated)
 	for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(120, 12), "\n")} {
 		assert.Contains(t, output, "No reviews yet")
 	}
