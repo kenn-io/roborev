@@ -784,6 +784,11 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 			require.NoError(t, rows.Err())
 			plan := strings.Join(details, "\n")
 			assert.Contains(t, plan, "SEARCH "+tc.alias+" ")
+			if tc.name == "jobs" {
+				assert.Contains(t, plan, "USING INDEX idx_review_jobs_sync_pending")
+			} else {
+				assert.Contains(t, plan, "USING INDEX idx_reviews_sync_pending")
+			}
 			assert.NotContains(t, plan, "SCAN j")
 			assert.NotContains(t, plan, "SCAN r")
 			assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")

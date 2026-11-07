@@ -566,6 +566,7 @@ type SyncableJob struct {
 	FinishedAtRaw         string
 }
 
+// idx_review_jobs_sync_pending holds exactly the rows this WHERE selects.
 var jobsToSyncQuery = `
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
@@ -576,7 +577,7 @@ var jobsToSyncQuery = `
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, 0),
 			j.source_machine_id, j.updated_at
-		FROM review_jobs j NOT INDEXED
+		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
 		LEFT JOIN job_content jc ON jc.job_id = j.id
@@ -814,9 +815,8 @@ const reviewsToSyncQuery = `
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
 		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
-		AND ((r.updated_by_machine_id = ? AND r.synced_at IS NULL)
-		 OR (j.source_machine_id = ? AND (r.synced_at IS NULL
-		 OR replace(rtrim(j.synced_at, 'Z'), ' ', 'T') > replace(rtrim(r.synced_at, 'Z'), ' ', 'T'))))
+		AND (r.synced_at IS NULL OR replace(rtrim(r.job_synced_at, 'Z'), ' ', 'T') > replace(rtrim(r.synced_at, 'Z'), ' ', 'T'))
+		AND ((r.updated_by_machine_id = ? AND r.synced_at IS NULL) OR j.source_machine_id = ?)
 		ORDER BY r.job_id
 		LIMIT ?
 	`
@@ -827,6 +827,7 @@ const reviewsToSyncQuery = `
 // Local edits clear synced_at. Do not compare a pulled PostgreSQL timestamp
 // with a local acknowledgment: the server's clock can be ahead. Parent and
 // review acknowledgments both use the local clock; keep their full precision.
+// job_synced_at mirrors the local parent's acknowledgment on the review.
 func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
 	return db.reviewsToSync(machineID, 0, math.MaxInt64, limit)
 }
