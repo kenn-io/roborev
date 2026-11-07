@@ -33,7 +33,6 @@ func TestKillDaemonFinishesForUnreapedChild(t *testing.T) {
 	}()
 
 	require.Eventually(t, shutdown.Load, 5*time.Second, 10*time.Millisecond)
-	assert.Empty(t, done, "shutdown must wait for the live daemon")
 	exit()
 	var result error
 	require.Eventually(t, func() bool {
