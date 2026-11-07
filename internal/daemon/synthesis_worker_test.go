@@ -1181,10 +1181,10 @@ func TestSynthesisMemberFetchErrorRetries(t *testing.T) {
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
 
-	// Drop the reviews table so GetPanelMemberReviews errors mid-query while the
-	// review_jobs table (and the failover path) stays intact. This drives the
-	// real load-error branch rather than mocking it.
-	_, err := tc.DB.ExecContext(t.Context(), "DROP TABLE reviews")
+	// Rename reviews so GetPanelMemberReviews fails to load it. SQLite updates
+	// trigger references to the new name, keeping review_jobs updates and the
+	// retry path intact.
+	_, err := tc.DB.ExecContext(t.Context(), "ALTER TABLE reviews RENAME TO unavailable_reviews")
 	require.NoError(t, err)
 
 	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
