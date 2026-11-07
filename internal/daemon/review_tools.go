@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 
@@ -83,4 +84,11 @@ func validateMemberTools(members []config.ResolvedMember, repoCfg *config.RepoCo
 		}
 	}
 	return nil
+}
+
+func reviewJobExcludes(ctx context.Context, job *storage.ReviewJob, settings config.ReviewSettings, configRepoPath string, cfg *config.Config) []string {
+	if hasSuppliedReviewSettings(job) {
+		return settings.ExcludePatterns
+	}
+	return config.ResolveExcludePatterns(ctx, configRepoPath, cfg, job.ReviewType)
 }

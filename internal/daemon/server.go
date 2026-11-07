@@ -1126,6 +1126,9 @@ func resolveRerunOpts(
 	assignment *storage.ExperimentAssignmentInput,
 	selectedAgent string,
 ) (storage.ReenqueueOpts, error) {
+	if hasSuppliedReviewSettings(job) {
+		return suppliedReviewRerunOpts(job, cfg, selectedAgent)
+	}
 	// Budget routing changes the effective execution choice for one retry
 	// chain. Resolve a manual rerun's model and availability from its original
 	// choice, unless the caller selects a different agent.
@@ -3003,6 +3006,9 @@ func (s *Server) humaEnqueue(
 	ctx context.Context, input *EnqueueInput,
 ) (*RawJSONOutput, error) {
 	req := input.Body
+	if err := validateSuppliedReviewSettings(&req); err != nil {
+		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	}
 	if req.ReviewPrompt != "" {
 		if err := validateReviewPromptRequest(req); err != nil {
 			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
@@ -3053,7 +3059,10 @@ func (s *Server) humaEnqueue(
 		worktreePath = filepath.Clean(checkoutRoot)
 	}
 	cfg := s.configWatcher.Config().ForRepo(checkoutRoot)
-	repoCfg, err := config.LoadRepoConfig(checkoutRoot)
+	var repoCfg *config.RepoConfig
+	if req.ReviewSettings == nil {
+		repoCfg, err = config.LoadRepoConfig(checkoutRoot)
+	}
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusBadRequest,
@@ -3088,7 +3097,7 @@ func (s *Server) humaEnqueue(
 			branchToCheck = ""
 		}
 	}
-	if branchToCheck != "" &&
+	if req.ReviewSettings == nil && branchToCheck != "" &&
 		isBranchExcluded(checkoutRoot, repoCfg, branchToCheck, req.Source) {
 		return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
 			Skipped: true,
@@ -3138,7 +3147,10 @@ func (s *Server) humaEnqueue(
 	requestedModel := strings.TrimSpace(req.Model)
 	requestedProvider := strings.TrimSpace(req.Provider)
 
-	repoCfg, rawRepoCfg, err := config.LoadRepoConfigWithRaw(resolutionPath)
+	var rawRepoCfg map[string]any
+	if req.ReviewSettings == nil {
+		repoCfg, rawRepoCfg, err = config.LoadRepoConfigWithRaw(resolutionPath)
+	}
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusBadRequest,
@@ -3176,7 +3188,7 @@ func (s *Server) humaEnqueue(
 		if inferred := git.InferBranchForCommit(
 			ctx, checkoutRoot, descriptor.sessionSHA,
 		); inferred != "" {
-			if isBranchExcluded(
+			if req.ReviewSettings == nil && isBranchExcluded(
 				checkoutRoot, repoCfg, inferred, req.Source,
 			) {
 				return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
@@ -3322,6 +3334,14 @@ type resolvedSingleAgent struct {
 func (s *Server) resolveSingleAgent(
 	in singleAgentInputs,
 ) (resolvedSingleAgent, *RawJSONOutput) {
+	if in.req.ReviewSettings != nil {
+		execution, err := resolveSuppliedReviewExecution(in)
+		if err != nil {
+			out, _ := rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return resolvedSingleAgent{}, out
+		}
+		return execution, nil
+	}
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(
 		in.req.Agent, in.repoCfg, in.cfg, in.workflow, in.reasoning,
 	)
@@ -3410,6 +3430,19 @@ func (s *Server) enqueueSingleAgent(
 	o.Provider = in.descriptor.requestedProvider
 	o.Reasoning = in.reasoning
 	o.ReviewType = in.req.ReviewType
+	if in.req.ReviewSettings != nil {
+		o.BackupAgent, o.BackupModel = execution.BackupAgent, execution.BackupModel
+		// Even an empty severity is supplied policy, not an invitation to resolve local defaults.
+		plan, err := experimentPlanForJob(o)
+		if err != nil {
+			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		}
+		snapshot, err := json.Marshal(suppliedReviewSnapshot{SuppliedReviewSettings: *in.req.ReviewSettings, Execution: plan})
+		if err != nil {
+			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		}
+		o.PanelMemberConfigJSON = string(snapshot)
+	}
 	if in.experiment != nil {
 		o.BackupAgent = execution.BackupAgent
 		o.BackupModel = execution.BackupModel
@@ -3426,10 +3459,12 @@ func (s *Server) enqueueSingleAgent(
 		}
 		o.Experiment = assignment
 	}
-	o.SessionID, o.ResumeSourceJobUUID = findCompatibleReusableSession(
-		ctx, s.db, in.checkoutRoot, in.descriptor.sessionSHA, o,
-		in.repoCfg, in.rawRepoCfg, in.cfg, o.Experiment, 0,
-	)
+	if in.req.ReviewSettings == nil {
+		o.SessionID, o.ResumeSourceJobUUID = findCompatibleReusableSession(
+			ctx, s.db, in.checkoutRoot, in.descriptor.sessionSHA, o,
+			in.repoCfg, in.rawRepoCfg, in.cfg, o.Experiment, 0,
+		)
+	}
 
 	var job *storage.ReviewJob
 	var duplicate bool

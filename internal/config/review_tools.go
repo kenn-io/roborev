@@ -18,8 +18,9 @@ type ReviewToolPolicy struct {
 // ReviewSettings holds the resolved per-review settings frozen with panel and
 // CI member config. Operator-only MCP settings never belong here.
 type ReviewSettings struct {
-	Tools          *ReviewToolPolicy `json:"tools,omitzero"`
-	BinaryEvidence bool              `json:"binary_evidence,omitzero"`
+	ExcludePatterns []string          `json:"exclude_patterns,omitzero"`
+	Tools           *ReviewToolPolicy `json:"tools,omitzero"`
+	BinaryEvidence  bool              `json:"binary_evidence,omitzero"`
 }
 
 var reviewToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)

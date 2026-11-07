@@ -1557,6 +1557,8 @@ components:
           type: string
         review_prompt:
           type: string
+        review_settings:
+          $ref: "#/components/schemas/SuppliedReviewSettings"
         review_type:
           type: string
         since:
@@ -4118,6 +4120,21 @@ components:
         - created_at
         - closed
       type: object
+    ReviewToolPolicy:
+      additionalProperties: false
+      properties:
+        mcp:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
+        mode:
+          type: string
+      required:
+        - mode
+        - mcp
+      type: object
     ScanTokenUsageInputBody:
       additionalProperties: false
       properties:
@@ -4663,6 +4680,22 @@ components:
         - job_types
         - failures
         - cost
+      type: object
+    SuppliedReviewSettings:
+      additionalProperties: false
+      properties:
+        backup_agent:
+          type: string
+        backup_model:
+          type: string
+        binary_evidence:
+          type: boolean
+        exclude_patterns:
+          items:
+            type: string
+          type: array
+        tools:
+          $ref: "#/components/schemas/ReviewToolPolicy"
       type: object
     SyncPendingCounts:
       additionalProperties: false

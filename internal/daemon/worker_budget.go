@@ -15,7 +15,7 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 	if wp.budgetRouter == nil || cfg == nil || !cfg.Budget.Enabled ||
 		!hasBudgetPrice(job.Agent, cfg.Budget.AgentCosts) ||
 		agent.CanonicalName(job.Agent) == "test" ||
-		job.FrozenExperimentPlan != nil || job.BudgetRoutingLocked || job.RetryCount != 0 || job.SessionID != "" ||
+		job.FrozenExperimentPlan != nil || hasSuppliedReviewSettings(job) || job.BudgetRoutingLocked || job.RetryCount != 0 || job.SessionID != "" ||
 		job.RequestedModel != "" || job.RequestedProvider != "" || job.PanelRole != "" ||
 		job.IsCIReview() || job.JobType == storage.JobTypeClassify || job.IsSynthesisJob() {
 		return nil, true

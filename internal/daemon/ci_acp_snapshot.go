@@ -63,6 +63,9 @@ func resolveConfiguredJobAgent(
 	cfg *config.Config,
 	backups ...string,
 ) (agent.Agent, error) {
+	if hasSuppliedReviewSettings(job) {
+		return agent.GetPreferredOrBackupWithConfigFromConfig(nil, job.Agent, cfg, backups...)
+	}
 	repoCfg, snapshotted, err := ciACPRepoConfig(job)
 	if err != nil {
 		return nil, err

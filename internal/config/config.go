@@ -1903,8 +1903,14 @@ func clampPositive(v int) int {
 // 2. Global config (if set and > 0)
 // 3. Default (30 minutes)
 func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	return ResolveJobTimeoutFromConfig(repoCfg, globalCfg)
+}
+
+// ResolveJobTimeoutFromConfig resolves runtime limits without reading repository files.
+func ResolveJobTimeoutFromConfig(repoCfg *RepoConfig, globalCfg *Config) int {
 	var repoVal int
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+	if repoCfg != nil {
 		repoVal = clampPositive(repoCfg.JobTimeoutMinutes)
 	}
 	var globalVal int
