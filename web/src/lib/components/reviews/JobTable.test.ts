@@ -210,12 +210,12 @@ describe("JobTable infinite scroll", () => {
   });
 
   it("shows the first review command after loading and replaces it with a job", async () => {
-    const pending = Promise.withResolvers<void>();
+    let pending = Promise.resolve();
     let jobs: ReviewJob[] = [];
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     mountTable(async () => {
-      await pending.promise;
+      await pending;
       return {
         jobs,
         has_more: false,
@@ -223,9 +223,6 @@ describe("JobTable infinite scroll", () => {
         stats: { done: 0, closed: 0, open: 0 },
       };
     });
-    await vi.waitFor(() => expect(context.jobs?.isLoading()).toBe(true));
-    expect(screen.queryByText("No reviews yet")).toBeNull();
-    pending.resolve();
     await screen.findByText("No reviews yet");
     expect(
       screen.getByText(/Your next commit starts a review/),
@@ -235,7 +232,12 @@ describe("JobTable infinite scroll", () => {
       expect(writeText).toHaveBeenCalledWith("roborev review"),
     );
     jobs = [makeJob(1)];
+    const reload = Promise.withResolvers<void>();
+    pending = reload.promise;
     context.jobs?.loadJobs();
+    await vi.waitFor(() => expect(context.jobs?.isLoading()).toBe(true));
+    expect(screen.queryByText("No reviews yet")).toBeNull();
+    reload.resolve();
     await vi.waitFor(() => expect(renderedRows()).toBe(1));
     expect(screen.queryByText("No reviews yet")).toBeNull();
   });
@@ -255,14 +257,28 @@ describe("JobTable infinite scroll", () => {
     expect(screen.queryByText("No reviews yet")).toBeNull();
   });
 
-  it.each(["failed", "canceled"] as const)(
+  it.each(["closed", "failed", "canceled"] as const)(
     "keeps the empty message when Hide closed conceals a %s job",
     async (status) => {
       mountTable(async (query) => ({
-        jobs: query.closed === "false" ? [] : [{ ...makeJob(1), status }],
+        jobs:
+          query.closed === "false"
+            ? []
+            : [
+                {
+                  ...makeJob(1),
+                  status: status === "closed" ? "done" : status,
+                  closed: status === "closed",
+                },
+              ],
         has_more: false,
         next_cursor: null,
-        stats: { done: 0, closed: 0, open: 0, [status]: 1 },
+        stats: {
+          done: status === "closed" ? 1 : 0,
+          closed: 0,
+          open: 0,
+          [status]: 1,
+        },
       }));
       await vi.waitFor(() => expect(renderedRows()).toBe(1));
       context.jobs?.setFilter("hideClosed", true);
@@ -271,26 +287,21 @@ describe("JobTable infinite scroll", () => {
     },
   );
 
-  it.each([
-    "hideClosed",
-    "status",
-    "search",
-    "branch",
-    "jobType",
-    "repo",
-  ] as const)("keeps the empty message for %s hiding jobs", async (filter) => {
-    mountTable(async (query) => ({
-      jobs: [],
-      has_more: false,
-      next_cursor: null,
-      stats: { done: 1, closed: query.closed === "false" ? 1 : 0, open: 0 },
-    }));
-    await screen.findByText("No reviews yet");
-    if (filter === "hideClosed") context.jobs?.setFilter("hideClosed", true);
-    else context.jobs?.setFilter(filter, "chosen");
-    await screen.findByText("No jobs found");
-    expect(screen.queryByText("No reviews yet")).toBeNull();
-  });
+  it.each(["status", "search", "branch", "jobType", "repo"] as const)(
+    "keeps the empty message for %s hiding jobs",
+    async (filter) => {
+      mountTable(async () => ({
+        jobs: [],
+        has_more: false,
+        next_cursor: null,
+        stats: { done: 0, closed: 0, open: 0 },
+      }));
+      await screen.findByText("No reviews yet");
+      context.jobs?.setFilter(filter, "chosen");
+      await screen.findByText("No jobs found");
+      expect(screen.queryByText("No reviews yet")).toBeNull();
+    },
+  );
 
   it("sends one request while a page is loading", async () => {
     rowsThatFit = 5;

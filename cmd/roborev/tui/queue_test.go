@@ -1562,6 +1562,9 @@ func TestTUIFirstReviewEmptyQueue(t *testing.T) {
 		wantHint  bool
 	}{
 		{"default repo and branch", func(m *model) {}, true},
+		{"hidden closed", func(m *model) { m.hideClosed = true; m.jobStats.Closed = 1 }, false},
+		{"hidden failed", func(m *model) { m.hideClosed = true; m.jobStats.Failed = 1 }, false},
+		{"hidden canceled", func(m *model) { m.hideClosed = true; m.jobStats.Canceled = 1 }, false},
 		{"outside repo", func(m *model) {
 			m.cwdRepoRoot, m.cwdBranch = "", ""
 			m.activeRepoFilter, m.activeBranchFilter = nil, ""

@@ -18,36 +18,6 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-func TestFetchJobsFirstReview(t *testing.T) {
-	t.Parallel()
-	for name, stats := range map[string]storage.JobStats{"empty": {}, "closed": {Closed: 1}, "failed": {Failed: 1}, "canceled": {Canceled: 1}} {
-		t.Run(name, func(t *testing.T) {
-			_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/api/jobs", r.URL.Path)
-				assert.Equal(t, []string{"/test/repo"}, r.URL.Query()["repo"])
-				assert.Equal(t, "main", r.URL.Query().Get("branch"))
-				assert.Equal(t, "false", r.URL.Query().Get("closed"))
-				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-					"jobs": []storage.ReviewJob{}, "has_more": false, "stats": stats,
-				}))
-			})
-			m.width, m.height = 120, 24
-			m.cwdRepoRoot, m.cwdBranch = "/test/repo", "main"
-			m.activeRepoFilter, m.activeBranchFilter = []string{m.cwdRepoRoot}, m.cwdBranch
-			m.autoRepoFilter, m.hideClosed = true, true
-			m, _ = updateModel(t, m, fetchJobsMessage(t, m))
-			output := m.renderQueueView() + strings.Join(m.renderQueuePaneBody(120, 12), "\n")
-			if stats == (storage.JobStats{}) {
-				assert.Contains(t, output, "No reviews yet")
-			} else {
-				assert.Contains(t, output, "No jobs matching filters")
-				assert.NotContains(t, output, "No reviews yet")
-			}
-		})
-	}
-}
-
 func TestFetchJobsFirstReviewRecoversAfterError(t *testing.T) {
 	t.Parallel()
 	fail := true
