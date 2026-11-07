@@ -451,7 +451,7 @@ func (c *HTTPClient) FindPostCommitRangeReviewForHead(
 				break
 			}
 			if result.NextCursor == nil || *result.NextCursor == "" || *result.NextCursor == cursor {
-				return nil, fmt.Errorf("query post-commit range reviews for %s: missing next cursor", branch)
+				return nil, fmt.Errorf("query post-commit range reviews for %s: invalid server response: more results reported without a next page", branch)
 			}
 			cursor = *result.NextCursor
 		}

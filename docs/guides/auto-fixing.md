@@ -136,6 +136,10 @@ streaks. A hook review that has not appeared yet preserves the pending fix.
 Retries without a new commit do not count; each fix commit counts at most once,
 including when its review is found later.
 
+The `roborev-refine` skill installed with `--mcp` tracks only the High plus
+Medium signal, because MCP review data has severity counts but no finding
+locations.
+
 Each signal advises once per streak, even with `--quiet` or on the last allowed
 iteration. Simultaneous signals produce one advisory; a later independent signal
 can advise again. A comment-write failure prints a warning.

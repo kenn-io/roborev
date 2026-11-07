@@ -76,6 +76,8 @@ func TestRefineStallLoop(t *testing.T) {
 		{name: "final branch hook range stalls with distinct since base", hookMode: "branch", severityOnly: true, rounds: 3, stop: true, recovery: "branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final batch hook range passes with distinct since base", hookMode: "batch", rounds: 3, stop: true, recovery: "branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
 		{name: "final batch hook range stalls with distinct since base", hookMode: "batch", severityOnly: true, rounds: 3, stop: true, recovery: "branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
+		{name: "final quiet-period hook range passes with distinct since base", hookMode: "quiet", rounds: 3, stop: true, recovery: "branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
+		{name: "final quiet-period hook range stalls with distinct since base", hookMode: "quiet", severityOnly: true, rounds: 3, stop: true, recovery: "branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final partial batch pass keeps older unresolved failure", hookMode: "batch", batchCheckpointAfterOther: true, otherFailed: true, keepOtherFailed: true, rounds: 3, stop: true, recovery: "branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3, wantError: "max iterations"},
 		{name: "failed re-review resets", rounds: 4, reviewFailure: true, wantCalls: 4, wantError: "max iterations"},
 		{name: "provider retries do not count", rounds: 3, retry: true, wantCalls: 3, wantError: "max iterations"},
@@ -94,6 +96,7 @@ func TestRefineStallLoop(t *testing.T) {
 				config := map[string]string{
 					"branch": "post_commit_review = \"branch\"\n",
 					"batch":  "post_commit_batch_size = 2\n",
+					"quiet":  "post_commit_quiet_period = \"5m\"\n",
 				}[tc.hookMode]
 				writeRoborevConfig(t, repo, config)
 				repo.Run("add", ".roborev.toml")

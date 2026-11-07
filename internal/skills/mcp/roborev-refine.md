@@ -23,7 +23,24 @@
    `roborev-refine`, and `comment` describing fixes and rejected findings.
    Only after that succeeds, call `roborev_close_review` with the job ID if
    every finding is resolved. Audit with `roborev_get_review`.
-7. Repeat from step 3 using the same branch/range scope. Do not substitute a
+7. Track a severity stall streak across full-scope re-reviews. The initial
+   review is the baseline. Count one round only after a new fix commit and its
+   completed `fail` review; a retry without a new commit does not count. Use
+   `finding_counts.high + finding_counts.medium` from `roborev_get_review`.
+   Critical and Low do not count. If the total is positive and no smaller than
+   the preceding positive total, increment the streak; otherwise reset it to
+   zero. Always replace the preceding total. A missing `finding_counts`, a
+   passing or closed review, a no-change fix, or a failed re-review resets the
+   streak. MCP mode cannot read finding locations, so it does not track the
+   repeated-file signal.
+8. When the streak reaches exactly three, print one advisory that names the
+   signal and ends with: "Change the plan, or split the change into smaller
+   reviewable pieces." These signals are heuristics, not proof that refine
+   cannot converge. Save it with `roborev_add_comment` on the newly failed job
+   with `commenter` set to `roborev-refine`, and warn if that fails. Advise even
+   on the final iteration. Continue by default. With `--stop-on-stall`, stop
+   before another fix and leave the review open.
+9. Repeat from step 3 using the same branch/range scope. Do not substitute a
    commit-only hook review for the full-scope re-review. Stop at the iteration
    limit and report remaining findings. Do not fetch or close unrelated jobs.
 

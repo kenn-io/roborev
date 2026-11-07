@@ -552,8 +552,12 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 			}
 
 			branchName := gitrepo.CurrentBranch(ctx, repoPath)
+			// A quiet period batches hook reviews even at the default batch size.
+			// On a config error, still search; an unmatched lookup is harmless.
+			quietPeriod, quietErr := config.ResolvePostCommitQuietPeriod(repoPath)
 			if config.ResolvePostCommitReview(repoPath) == "branch" ||
-				config.ResolvePostCommitBatchSize(repoPath) >= 2 {
+				config.ResolvePostCommitBatchSize(repoPath) >= 2 ||
+				quietErr != nil || quietPeriod > 0 {
 				hookJob, err := client.FindPostCommitRangeReviewForHead(ctx, repoPath, branchName, headSHA)
 				if err != nil {
 					return fmt.Errorf("fetch pending post-commit range review: %w", err)
