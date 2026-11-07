@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// A 10,000-job first pull with foreground writes every 250 ms measured
-// enqueue p99 at 116 ms with 5 ms batches, versus 55 to 67 ms on main.
-// Yield after 500 us plus the current row and commit to preserve foreground latency.
+// A queued foreground write waits at most one budget plus the current row
+// and its commit before the pull yields the write gate.
 const pullTxBudget = 500 * time.Microsecond
 
 // pullSession reuses one connection and its compiled statements across pages.
@@ -16,7 +15,7 @@ const pullTxBudget = 500 * time.Microsecond
 type pullSession struct {
 	db      *DB
 	conn    *sql.Conn
-	stmts   map[string]*sql.Stmt
+	stmts   statementCache
 	started time.Time
 	budget  time.Duration
 	jobs    bool
@@ -30,7 +29,7 @@ func (db *DB) newPullSession(ctx context.Context) (*pullSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &pullSession{db: db, conn: conn, stmts: make(map[string]*sql.Stmt), budget: pullTxBudget}, nil
+	return &pullSession{db: db, conn: conn, budget: pullTxBudget}, nil
 }
 
 // pullOne runs one row in its own transaction for callers outside the sync worker.
@@ -55,9 +54,7 @@ func pullOne[T any](db *DB, jobs bool, row func(context.Context, *pullSession) (
 
 func (s *pullSession) close() {
 	s.rollback()
-	for _, stmt := range s.stmts {
-		_ = stmt.Close()
-	}
+	_ = s.stmts.close()
 	_ = s.conn.Close()
 }
 
@@ -130,19 +127,8 @@ func (s *pullSession) finishRow(ctx context.Context, changed bool, err error) er
 	return nil
 }
 
-func (s *pullSession) prepare(ctx context.Context, query string) (*sql.Stmt, error) {
-	if stmt := s.stmts[query]; stmt != nil {
-		return stmt, nil
-	}
-	stmt, err := s.conn.PrepareContext(ctx, query)
-	if err == nil {
-		s.stmts[query] = stmt
-	}
-	return stmt, err
-}
-
 func (s *pullSession) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	stmt, err := s.prepare(ctx, query)
+	stmt, err := s.stmts.stmt(ctx, s.conn.PrepareContext, query)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +136,7 @@ func (s *pullSession) exec(ctx context.Context, query string, args ...any) (sql.
 }
 
 func (s *pullSession) query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	stmt, err := s.prepare(ctx, query)
+	stmt, err := s.stmts.stmt(ctx, s.conn.PrepareContext, query)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +144,7 @@ func (s *pullSession) query(ctx context.Context, query string, args ...any) (*sq
 }
 
 func (s *pullSession) queryRow(ctx context.Context, query string, args ...any) *sql.Row {
-	if stmt, err := s.prepare(ctx, query); err == nil {
+	if stmt, err := s.stmts.stmt(ctx, s.conn.PrepareContext, query); err == nil {
 		return stmt.QueryRowContext(ctx, args...)
 	}
 	// Unprepared, the same query reports its failure from Scan.

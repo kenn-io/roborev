@@ -237,7 +237,7 @@ CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
 
 type DB struct {
 	*sql.DB
-	analytics analyticsStmts
+	analytics statementCache
 	attempts  jobAttempts
 
 	machineIDMu sync.Mutex
