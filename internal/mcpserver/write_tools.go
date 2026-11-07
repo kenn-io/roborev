@@ -41,10 +41,16 @@ type successOutput struct {
 }
 
 func (s *Server) registerWriteTools() {
-	mcp.AddTool(s.mcp, &mcp.Tool{Name: "roborev_add_comment", Description: "Record a comment on an existing review job. Use the synthesis parent for panel reviews."}, wrapTool(s.addComment))
-	mcp.AddTool(s.mcp, &mcp.Tool{Name: "roborev_close_review", Description: "Close an existing review after its findings have been resolved or shown invalid. Use the synthesis parent for panel reviews."}, wrapTool(s.closeReview))
-	mcp.AddTool(s.mcp, &mcp.Tool{Name: "roborev_snooze", Description: "Snooze or resume Agent Hook reminders for a repository, worktree, and branch. Review generation continues."}, wrapTool(s.snooze))
-	mcp.AddTool(s.mcp, &mcp.Tool{Name: "roborev_complete_fix", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"fix_session_id": map[string]any{"type": "string", "format": "uuid"}}, "required": []string{"fix_session_id"}}, Description: "Complete the exact Agent Hook fix session supplied in the current hook instruction after auditing its original reviews. Do not invent or discover a session ID."}, wrapTool(s.completeFix))
+	destructive, nonDestructive, closedWorld := true, false, false
+	// Closing and snoozing rewrite timestamps on each call; only removing an
+	// exact fix session is safe to repeat without additional state changes.
+	commentHints := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &nonDestructive, IdempotentHint: false, OpenWorldHint: &closedWorld}
+	updateHints := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive, IdempotentHint: false, OpenWorldHint: &closedWorld}
+	completeHints := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive, IdempotentHint: true, OpenWorldHint: &closedWorld}
+	mcp.AddTool(s.mcp, &mcp.Tool{Name: "roborev_add_comment", Annotations: commentHints, Description: "Record a comment on an existing review job. Use the synthesis parent for panel reviews."}, wrapTool(s.addComment))
+	mcp.AddTool(s.mcp, &mcp.Tool{Name: "roborev_close_review", Annotations: updateHints, Description: "Close an existing review after its findings have been resolved or shown invalid. Use the synthesis parent for panel reviews."}, wrapTool(s.closeReview))
+	mcp.AddTool(s.mcp, &mcp.Tool{Name: "roborev_snooze", Annotations: updateHints, Description: "Snooze or resume Agent Hook reminders for a repository, worktree, and branch. Review generation continues."}, wrapTool(s.snooze))
+	mcp.AddTool(s.mcp, &mcp.Tool{Name: "roborev_complete_fix", Annotations: completeHints, InputSchema: map[string]any{"type": "object", "properties": map[string]any{"fix_session_id": map[string]any{"type": "string", "format": "uuid"}}, "required": []string{"fix_session_id"}}, Description: "Complete the exact Agent Hook fix session supplied in the current hook instruction after auditing its original reviews. Do not invent or discover a session ID."}, wrapTool(s.completeFix))
 }
 
 func (s *Server) addComment(ctx context.Context, in AddCommentInput) (commentRow, error) {
