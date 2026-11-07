@@ -16,17 +16,6 @@ import (
 )
 
 func TestKillDaemonFinishesForUnreapedChild(t *testing.T) {
-	done := make(chan struct{})
-	finished := func() bool {
-		select {
-		case <-done:
-			return true
-		default:
-			return false
-		}
-	}
-	// The child is reaped first during cleanup, releasing the wait even on failure.
-	t.Cleanup(func() { require.Eventually(t, finished, 5*time.Second, 10*time.Millisecond) })
 	pid, exit := testutil.StartLivenessChild(t)
 	address, mux := startMockDaemon(t)
 	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
@@ -38,16 +27,23 @@ func TestKillDaemonFinishesForUnreapedChild(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	path := createRuntimeFile(t, t.TempDir(), pid, nil)
-	var result error
+	done := make(chan error, 1)
 	go func() {
-		result = KillDaemon(&RuntimeInfo{PID: pid, Network: "tcp", Address: address, SourcePath: path})
-		close(done)
+		done <- KillDaemon(&RuntimeInfo{PID: pid, Network: "tcp", Address: address, SourcePath: path})
 	}()
 
 	require.Eventually(t, shutdown.Load, 5*time.Second, 10*time.Millisecond)
-	assert.False(t, finished(), "shutdown must wait for the live daemon")
+	assert.Empty(t, done, "shutdown must wait for the live daemon")
 	exit()
-	require.Eventually(t, finished, 5*time.Second, 10*time.Millisecond)
+	var result error
+	require.Eventually(t, func() bool {
+		select {
+		case result = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
 	require.NoError(t, result)
 	assert.NoFileExists(t, path)
 }

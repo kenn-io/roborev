@@ -1415,9 +1415,6 @@ restart reports that it is waiting, lets running jobs and worker finalization
 finish without a timeout, and only then starts the replacement daemon. On macOS,
 `daemon restart` restarts an owned daemon through its LaunchAgent.
 
-On Linux, stop, restart, and update treat an exited daemon as stopped even if
-the container's init process has yet to reap it.
-
 !!! tip "Broken post-commit hook?"
 
     If your post-commit hook was corrupted during a previous upgrade (e.g. a stray
