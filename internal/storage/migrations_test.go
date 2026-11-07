@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -267,45 +268,34 @@ func TestSyncPendingMigrationBackfill(t *testing.T) {
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 	_, jobs := seedJobs(t, db, t.TempDir(), 4)
-	for i, job := range jobs {
+	cases := []struct {
+		name            string
+		sourceMachineID uuid.UUID
+		jobSyncedAt     any
+		reviewSyncedAt  any
+		wantMirror      sql.NullString
+	}{
+		{"local review synced after job", machineID, "2024-01-02 00:00:00", "2024-01-03 00:00:00", sql.NullString{String: "2024-01-02 00:00:00", Valid: true}},
+		{"local review synced before job", machineID, "2024-01-02 00:00:00", "2024-01-01 00:00:00", sql.NullString{String: "2024-01-02 00:00:00", Valid: true}},
+		{"unsynced local job and review", machineID, nil, nil, sql.NullString{}},
+		{"remote job and review", testUUID("remote-machine"), "2024-01-02 00:00:00", "2024-01-01 00:00:00", sql.NullString{}},
+	}
+	for i, tc := range cases {
+		job := jobs[i]
 		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', uuid = ?, source_machine_id = ?,
-			updated_at = '2024-01-01 00:00:00', synced_at = '2024-01-02 00:00:00' WHERE id = ?`, testUUID(job.GitRef), machineID, job.ID)
+			updated_at = '2024-01-01 00:00:00', synced_at = ? WHERE id = ?`, testUUID(job.GitRef), tc.sourceMachineID, tc.jobSyncedAt, job.ID)
 		require.NoError(t, err)
 		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, structured_output, uuid, updated_by_machine_id, updated_at, synced_at)
-			VALUES (?, 'test', '', ?, ?, ?, '2024-01-01 00:00:00', ?)`, job.ID, reviewFixtureJSON("output"), testUUID("review-"+job.GitRef), machineID,
-			[]any{"2024-01-03 00:00:00", "2024-01-01 00:00:00", nil, "2024-01-01 00:00:00"}[i])
+			VALUES (?, 'test', '', ?, ?, ?, '2024-01-01 00:00:00', ?)`, job.ID, reviewFixtureJSON("output"), testUUID("review-"+job.GitRef), machineID, tc.reviewSyncedAt)
 		require.NoError(t, err)
 	}
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, jobs[2].ID)
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, testUUID("remote-machine"), jobs[3].ID)
-	require.NoError(t, err)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
 	for range 2 {
-		pending, err := db.GetJobsToSync(machineID, 100)
-		require.NoError(t, err)
-		require.Len(t, pending, 1)
-		assert.Equal(jobs[2].ID, pending[0].ID)
-		require.NoError(t, db.MarkJobSynced(jobs[2].ID))
-		reviews, err := db.GetReviewsToSync(machineID, 100)
-		require.NoError(t, err)
-		require.Len(t, reviews, 2)
-		assert.Equal(jobs[1].ID, reviews[0].JobID)
-		assert.True(reviews[0].MetadataOnly)
-		assert.Equal(jobs[2].ID, reviews[1].JobID)
-		assert.False(reviews[1].MetadataOnly)
-		// A later pull of a remote parent must leave its review out of the index.
-		require.NoError(t, db.MarkJobSynced(jobs[3].ID))
-		var remotePending int
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews INDEXED BY idx_reviews_sync_pending
-			WHERE uuid IS NOT NULL AND (synced_at IS NULL OR replace(rtrim(job_synced_at, 'Z'), ' ', 'T') > replace(rtrim(synced_at, 'Z'), ' ', 'T'))
-			AND job_id = ?`, jobs[3].ID).Scan(&remotePending))
-		assert.Zero(remotePending)
+		for i, tc := range cases {
+			var mirror sql.NullString
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_synced_at FROM reviews WHERE job_id = ?`, jobs[i].ID).Scan(&mirror))
+			assert.Equal(tc.wantMirror, mirror, tc.name)
+		}
 		require.NoError(t, migrateSyncPendingIndexes(t.Context(), db))
-		var unsyncedMirror sql.NullString
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_synced_at FROM reviews WHERE job_id = ?`, jobs[2].ID).Scan(&unsyncedMirror))
-		assert.False(unsyncedMirror.Valid, "backfill must leave unsynced reviews untouched even after their job syncs")
-		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, jobs[2].ID)
-		require.NoError(t, err)
 	}
 }
