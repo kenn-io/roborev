@@ -1050,6 +1050,13 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 	}
 
+	session, err := w.db.newPullSession(ctx)
+	if err != nil {
+		return stats, err
+	}
+	defer session.close()
+	session.notify = w.notifyAfterPullWrite
+
 	// Pull jobs
 	jobCursor, err := w.db.GetSyncState(SyncStateLastJobCursor)
 	if err != nil {
@@ -1068,11 +1075,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		for _, j := range jobs {
-			if err := w.pullJob(j); err != nil {
+			if err := w.pullJob(ctx, session, j); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull job %s: %w", j.UUID, err)
 			}
 			stats.Jobs++
+		}
+
+		if err := session.commit(ctx); err != nil {
+			return stats, fmt.Errorf("commit pulled job page: %w", err)
 		}
 
 		jobQueryCursor = newCursor
@@ -1145,11 +1156,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		for _, r := range reviews {
-			if err := w.pullReview(r); err != nil {
+			if err := w.pullReview(ctx, session, r); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull review %s: %w", r.UUID, err)
 			}
 			stats.Reviews++
+		}
+
+		if err := session.commit(ctx); err != nil {
+			return stats, fmt.Errorf("commit pulled review page: %w", err)
 		}
 
 		reviewQueryCursor = newCursor
@@ -1190,11 +1205,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				SourceMachineID: r.SourceMachineID,
 				CreatedAt:       r.CreatedAt,
 			}
-			if err := w.pullResponse(pr); err != nil {
+			if err := w.pullResponse(ctx, session, pr); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull response %s: %w", r.UUID, err)
 			}
 			stats.Responses++
+		}
+
+		if err := session.commit(ctx); err != nil {
+			return stats, fmt.Errorf("commit pulled response page: %w", err)
 		}
 
 		responseQueryCursor = newCursor
@@ -1296,59 +1315,50 @@ func formatTimestampIDCursor(cursorTime time.Time, cursorID int64) string {
 }
 
 // pullJob inserts a pulled job into SQLite, creating repo/commit as needed
-func (w *SyncWorker) pullJob(j PulledJob) error {
+func (w *SyncWorker) pullJob(ctx context.Context, s *pullSession, j PulledJob) error {
+	if err := s.begin(ctx, true); err != nil {
+		return err
+	}
 	// Get or create repo by identity
-	repoID, repoChanged, err := w.db.getOrCreateRepoByIdentity(j.RepoIdentity)
+	repoID, repoChanged, err := s.getOrCreateRepoByIdentity(ctx, j.RepoIdentity)
 	if err != nil {
-		return fmt.Errorf("get or create repo: %w", err)
+		return s.finishRow(ctx, false, fmt.Errorf("get or create repo: %w", err))
 	}
 	if repoChanged {
-		w.notifyAfterPullWrite()
+		s.changed = true
 	}
 
 	// Get or create commit if we have one
 	var commitID *int64
 	if j.CommitSHA != "" {
-		id, changed, err := w.db.getOrCreateCommitByRepoAndSHA(repoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
+		id, changed, err := s.getOrCreateCommitByRepoAndSHA(ctx, repoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 		if err != nil {
-			return fmt.Errorf("get or create commit: %w", err)
+			return s.finishRow(ctx, false, fmt.Errorf("get or create commit: %w", err))
 		}
 		commitID = &id
 		if changed {
-			w.notifyAfterPullWrite()
+			s.changed = true
 		}
 	}
 
-	changed, err := w.db.upsertPulledJob(j, repoID, commitID)
-	if err != nil {
-		return err
-	}
-	if changed {
-		w.notifyAfterPullWrite()
-	}
-	return nil
+	changed, err := s.upsertPulledJob(ctx, j, repoID, commitID)
+	return s.finishRow(ctx, changed, err)
 }
 
-func (w *SyncWorker) pullReview(review PulledReview) error {
-	changed, err := w.db.upsertPulledReview(review)
-	if err != nil {
+func (w *SyncWorker) pullReview(ctx context.Context, s *pullSession, review PulledReview) error {
+	if err := s.begin(ctx, false); err != nil {
 		return err
 	}
-	if changed {
-		w.notifyAfterPullWrite()
-	}
-	return nil
+	changed, err := s.upsertPulledReview(ctx, review)
+	return s.finishRow(ctx, changed, err)
 }
 
-func (w *SyncWorker) pullResponse(response PulledResponse) error {
-	changed, err := w.db.upsertPulledResponse(response)
-	if err != nil {
+func (w *SyncWorker) pullResponse(ctx context.Context, s *pullSession, response PulledResponse) error {
+	if err := s.begin(ctx, false); err != nil {
 		return err
 	}
-	if changed {
-		w.notifyAfterPullWrite()
-	}
-	return nil
+	changed, err := s.upsertPulledResponse(ctx, response)
+	return s.finishRow(ctx, changed, err)
 }
 
 // HealthCheck returns the health status of the sync worker

@@ -313,6 +313,11 @@ func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
+	session, err := h.db.newPullSession(t.Context())
+	require.NoError(t, err)
+	defer session.close()
+	session.budget = 0
+	session.notify = worker.notifyAfterPullWrite
 	var notifications atomic.Int64
 	worker.SetAfterPullWrite(func() { notifications.Add(1) })
 
@@ -326,8 +331,8 @@ func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
 		EnqueuedAt: now, FinishedAt: &finished, SourceMachineID: testUUID("search-wake-machine"),
 		UpdatedAt: now,
 	}
-	require.NoError(t, worker.pullJob(job))
-	assert.Equal(t, int64(3), notifications.Load(), "repo, commit, and job each notify")
+	require.NoError(t, worker.pullJob(t.Context(), session, job))
+	assert.Equal(t, int64(1), notifications.Load(), "repo, commit, and job commit together")
 
 	review := PulledReview{
 		JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID,
@@ -335,39 +340,44 @@ func TestSyncPullWritesNotifyAfterEachCommittedMutation(t *testing.T) {
 		StructuredOutput:   reviewFixtureJSON("searchable finding"),
 		UpdatedByMachineID: testUUID("search-wake-review-machine"), CreatedAt: now, UpdatedAt: now,
 	}
-	require.NoError(t, worker.pullReview(review))
-	assert.Equal(t, int64(4), notifications.Load())
+	require.NoError(t, worker.pullReview(t.Context(), session, review))
+	assert.Equal(t, int64(2), notifications.Load())
 
 	response := PulledResponse{
 		UUID: testUUID("search-wake-response"), JobUUID: job.UUID,
 		Responder: "human", Response: "fixed", SourceMachineID: testUUID("search-wake-response-machine"),
 		CreatedAt: now,
 	}
-	require.NoError(t, worker.pullResponse(response))
-	assert.Equal(t, int64(5), notifications.Load())
+	require.NoError(t, worker.pullResponse(t.Context(), session, response))
+	assert.Equal(t, int64(3), notifications.Load())
 
 	// Replaying the cursor lookback window must not schedule redundant work.
-	require.NoError(t, worker.pullJob(job))
-	require.NoError(t, worker.pullReview(review))
-	require.NoError(t, worker.pullResponse(response))
-	assert.Equal(t, int64(5), notifications.Load())
+	require.NoError(t, worker.pullJob(t.Context(), session, job))
+	require.NoError(t, worker.pullReview(t.Context(), session, review))
+	require.NoError(t, worker.pullResponse(t.Context(), session, response))
+	assert.Equal(t, int64(3), notifications.Load())
 }
 
 func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
+	session, err := h.db.newPullSession(t.Context())
+	require.NoError(t, err)
+	defer session.close()
+	session.budget = 0
+	session.notify = worker.notifyAfterPullWrite
 	var notifications atomic.Int64
 	worker.SetAfterPullWrite(func() { notifications.Add(1) })
 
 	now := time.Now().UTC()
 	missingJob := testUUID("missing-search-wake-job")
-	require.NoError(t, worker.pullReview(PulledReview{
+	require.NoError(t, worker.pullReview(t.Context(), session, PulledReview{
 		JobEnqueuedAt: now,
 		UUID:          testUUID("orphan-review"), JobUUID: missingJob, Agent: "test",
 		UpdatedByMachineID: testUUID("orphan-review-machine"), CreatedAt: now, UpdatedAt: now,
 	}))
-	require.NoError(t, worker.pullResponse(PulledResponse{
+	require.NoError(t, worker.pullResponse(t.Context(), session, PulledResponse{
 		UUID: testUUID("orphan-response"), JobUUID: missingJob,
 		Responder: "human", Response: "orphan", SourceMachineID: testUUID("orphan-response-machine"),
 		CreatedAt: now,
@@ -380,9 +390,9 @@ func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 		ReviewType: "code", Status: string(JobStatusDone), EnqueuedAt: now,
 		SourceMachineID: testUUID("invalid-review-parent-machine"), UpdatedAt: now,
 	}
-	require.NoError(t, worker.pullJob(job))
+	require.NoError(t, worker.pullJob(t.Context(), session, job))
 	before := notifications.Load()
-	err := worker.pullReview(PulledReview{
+	err = worker.pullReview(t.Context(), session, PulledReview{
 		JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID,
 		UUID: testUUID("invalid-review"), JobUUID: job.UUID, Agent: "test",
 		StructuredOutput:   []byte(`{"schema_version":`),
@@ -399,7 +409,7 @@ func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 		Status: string(JobStatusDone), EnqueuedAt: now.Add(-time.Hour),
 		SourceMachineID: job.SourceMachineID, UpdatedAt: now.Add(-time.Hour),
 	}
-	require.NoError(t, worker.pullJob(stale))
+	require.NoError(t, worker.pullJob(t.Context(), session, stale))
 	assert.Equal(t, before, notifications.Load(), "rejected stale job must not notify")
 }
 
@@ -407,6 +417,11 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	worker := NewSyncWorker(h.db, testSyncConfig())
+	session, err := h.db.newPullSession(t.Context())
+	require.NoError(t, err)
+	defer session.close()
+	session.budget = 0
+	session.notify = worker.notifyAfterPullWrite
 	var notifications atomic.Int64
 	worker.SetAfterPullWrite(func() { notifications.Add(1) })
 
@@ -417,13 +432,13 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 		ReviewType: "code", Status: string(JobStatusDone), EnqueuedAt: now,
 		SourceMachineID: testUUID("rollback-review-parent-machine"), UpdatedAt: now,
 	}
-	require.NoError(t, worker.pullJob(job))
+	require.NoError(t, worker.pullJob(t.Context(), session, job))
 	before := notifications.Load()
 
 	var jobID int64
 	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&jobID))
 	reviewUUID := testUUID("rollback-review")
-	_, err := h.db.ExecContext(t.Context(), `
+	_, err = h.db.ExecContext(t.Context(), `
 		INSERT INTO legacy_reviews (
 			job_id, agent, output, created_at, closed, uuid, migration_error
 		) VALUES (?, 'test', 'legacy', ?, 0, ?, 'pending conversion')
@@ -438,7 +453,7 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	`)
 	require.NoError(t, err)
 
-	err = worker.pullReview(PulledReview{
+	err = worker.pullReview(t.Context(), session, PulledReview{
 		JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID,
 		UUID: reviewUUID, JobUUID: job.UUID, Agent: "test",
 		StructuredOutput:   reviewFixtureJSON("transaction should roll back"),
