@@ -1552,7 +1552,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 
 	assert.GreaterOrEqual(t, len(lines), m.height-3)
 
-	assert.Contains(t, output, "No jobs in queue")
+	assert.Contains(t, output, "No jobs in queue", "Expected 'No jobs in queue' message in output")
 }
 
 func TestTUIFirstReviewEmptyQueue(t *testing.T) {
@@ -1561,19 +1561,20 @@ func TestTUIFirstReviewEmptyQueue(t *testing.T) {
 		name      string
 		configure func(*model)
 		wantHint  bool
+		render    bool
 	}{
-		{"default repo and branch", func(m *model) {}, true},
-		{"hidden closed", func(m *model) { m.hideClosed = true; m.jobStats.Closed = 1 }, false},
-		{"hidden failed", func(m *model) { m.hideClosed = true; m.jobStats.Failed = 1 }, false},
-		{"hidden canceled", func(m *model) { m.hideClosed = true; m.jobStats.Canceled = 1 }, false},
+		{"default repo and branch", func(m *model) {}, true, true},
+		{"hidden closed", func(m *model) { m.hideClosed = true; m.jobStats.Closed = 1 }, false, false},
+		{"hidden failed", func(m *model) { m.hideClosed = true; m.jobStats.Failed = 1 }, false, false},
+		{"hidden canceled", func(m *model) { m.hideClosed = true; m.jobStats.Canceled = 1 }, false, false},
 		{"outside repo", func(m *model) {
 			m.cwdRepoRoot, m.cwdBranch = "", ""
 			m.activeRepoFilter, m.activeBranchFilter = nil, ""
-		}, false},
-		{"chosen repo", func(m *model) { m.autoRepoFilter = false }, false},
-		{"chosen branch", func(m *model) { m.activeBranchFilter = "other" }, false},
-		{"locked branch", func(m *model) { m.lockedBranchFilter = true }, false},
-		{"loading", func(m *model) { m.loadingJobs = true }, false},
+		}, false, true},
+		{"chosen repo", func(m *model) { m.autoRepoFilter = false }, false, false},
+		{"chosen branch", func(m *model) { m.activeBranchFilter = "other" }, false, false},
+		{"locked branch", func(m *model) { m.lockedBranchFilter = true }, false, false},
+		{"loading", func(m *model) { m.loadingJobs = true }, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -1584,7 +1585,7 @@ func TestTUIFirstReviewEmptyQueue(t *testing.T) {
 			m.autoRepoFilter = true
 			tc.configure(&m)
 			assert.Equal(t, tc.wantHint, m.showFirstReview())
-			if tc.name == "default repo and branch" || tc.name == "outside repo" {
+			if tc.render {
 				for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(100, 12), "\n")} {
 					assert.Equal(t, tc.wantHint, strings.Contains(output, "No reviews yet"))
 				}
@@ -1593,31 +1594,36 @@ func TestTUIFirstReviewEmptyQueue(t *testing.T) {
 	}
 }
 
-func TestTUIFirstReviewEmptyQueueWraps(t *testing.T) {
+func TestTUIFirstReviewFitsTerminal(t *testing.T) {
 	t.Parallel()
-	m := newModel(localhostEndpoint, withExternalIODisabled())
-	m.loadingJobs = false
-	m.cwdRepoRoot = "/test/repo"
-	m.width, m.height = 40, 24
-	lines := m.renderQueuePaneBody(32, 12)
-	for _, line := range lines {
-		assert.LessOrEqual(t, lipgloss.Width(line), 32)
+	for _, tc := range []struct {
+		name          string
+		width, height int
+		want          string
+		renderView    bool
+	}{
+		{"wrapped", 32, 12, "current commit", false},
+		{"short", 40, 2, "roborev review", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(localhostEndpoint, withExternalIODisabled())
+			m.loadingJobs = false
+			m.cwdRepoRoot = "/test/repo"
+			lines := m.renderQueuePaneBody(tc.width, tc.height)
+			for _, line := range lines {
+				assert.LessOrEqual(t, lipgloss.Width(line), tc.width)
+			}
+			assert.Contains(t, strings.Join(strings.Fields(stripANSI(strings.Join(lines, " "))), " "), tc.want)
+			if tc.renderView {
+				m.width, m.height = 40, 5
+				output := m.View().Content
+				assert.LessOrEqual(t, lipgloss.Height(output), m.height)
+				screen := uv.NewScreenBuffer(m.width, m.height)
+				uv.NewStyledString(output).Draw(screen, screen.Bounds())
+				assert.Contains(t, stripANSI(screen.String()), "roborev review")
+			}
+		})
 	}
-	assert.Contains(t, strings.Join(strings.Fields(stripANSI(strings.Join(lines, " "))), " "), "current commit")
-}
-
-func TestTUIFirstReviewShortTerminal(t *testing.T) {
-	t.Parallel()
-	m := newModel(localhostEndpoint, withExternalIODisabled())
-	m.loadingJobs = false
-	m.cwdRepoRoot = "/test/repo"
-	m.width, m.height = 40, 5
-	output := m.View().Content
-	assert.LessOrEqual(t, lipgloss.Height(output), m.height)
-	screen := uv.NewScreenBuffer(m.width, m.height)
-	uv.NewStyledString(output).Draw(screen, screen.Bounds())
-	assert.Contains(t, stripANSI(screen.String()), "roborev review")
-	assert.Contains(t, stripANSI(strings.Join(m.renderQueuePaneBody(40, 2), "\n")), "roborev review")
 }
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {

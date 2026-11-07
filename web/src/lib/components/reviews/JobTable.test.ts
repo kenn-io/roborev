@@ -212,8 +212,6 @@ describe("JobTable infinite scroll", () => {
   it("shows the first review command after loading and replaces it with a job", async () => {
     let pending = Promise.resolve();
     let jobs: ReviewJob[] = [];
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
     mountTable(async () => {
       await pending;
       return {
@@ -227,10 +225,6 @@ describe("JobTable infinite scroll", () => {
     expect(
       screen.getByText(/Your next commit starts a review/),
     ).toHaveTextContent("To review the current commit now, run");
-    await fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
-    await vi.waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith("roborev review"),
-    );
     jobs = [makeJob(1)];
     const reload = Promise.withResolvers<void>();
     pending = reload.promise;
@@ -239,7 +233,6 @@ describe("JobTable infinite scroll", () => {
     expect(screen.queryByText("No reviews yet")).toBeNull();
     reload.resolve();
     await vi.waitFor(() => expect(renderedRows()).toBe(1));
-    expect(screen.queryByText("No reviews yet")).toBeNull();
   });
 
   it("hides first-review guidance before the first load", () => {

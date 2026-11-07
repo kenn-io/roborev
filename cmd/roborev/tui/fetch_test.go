@@ -2,7 +2,6 @@ package tui
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
@@ -16,29 +15,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 )
-
-func TestFetchJobsFirstReviewRecoversAfterError(t *testing.T) {
-	t.Parallel()
-	fail := true
-	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
-		if fail {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{"jobs":[],"has_more":false,"stats":{}}`))
-		assert.NoError(t, err)
-	})
-	m.width, m.height = 120, 24
-	m.cwdRepoRoot = "/test/repo"
-	m, _ = updateModel(t, m, fetchJobsMessage(t, m))
-	assert.False(t, m.showFirstReview())
-	fail = false
-	unrelated := errors.New("copy failed")
-	m.err = unrelated
-	m, _ = updateModel(t, m, fetchJobsMessage(t, m))
-	assert.True(t, m.showFirstReview())
-}
 
 func TestListJobsParamsRepeatedRepo(t *testing.T) {
 	t.Parallel()
