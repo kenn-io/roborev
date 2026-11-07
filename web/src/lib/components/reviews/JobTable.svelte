@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EmptyState, TableHeaderCell } from "@kenn-io/kit-ui";
+  import { CopyButton, EmptyState, TableHeaderCell } from "@kenn-io/kit-ui";
   import { getReviewStores } from "../../stores/context";
   import type { SortColumn } from "../../stores/roborev/jobs.svelte";
   import { isPanelParent } from "../../utils/roborev-panel";
@@ -44,6 +44,23 @@
     jobsStore !== undefined &&
       !jobsStore.getHasMore() &&
       !jobsStore.areAllJobsLoaded(),
+  );
+
+  // A list emptied by a chosen filter, or by hiding closed reviews that
+  // exist, keeps the filter message; only a scope with no reviews at all
+  // offers the first one.
+  const showFirstReview = $derived(
+    jobsStore !== undefined &&
+      jobsStore.hasLoadedJobs() &&
+      !jobsStore.isLoading() &&
+      jobsStore.getError() === null &&
+      jobsStore.getJobs().length === 0 &&
+      !jobsStore.getFilterRepo() &&
+      !jobsStore.getFilterBranch() &&
+      !jobsStore.getFilterStatus() &&
+      !jobsStore.getFilterSearch() &&
+      !jobsStore.getFilterJobType() &&
+      !(jobsStore.getFilterHideClosed() && jobsStore.getStats().closed > 0),
   );
 
   // A new observer reports the sentinel's position once on observe(). The
@@ -217,7 +234,18 @@
     </div>
   {/if}
 
-  {#if jobsStore && !jobsStore.isLoading() && jobsStore.getJobs().length === 0}
+  {#if showFirstReview}
+    <EmptyState
+      title="No reviews yet"
+      description="Your next commit starts a review. To review the current commit now, run roborev review."
+    >
+      <CopyButton
+        text="roborev review"
+        ariaLabel="Copy command"
+        title="Copy command"
+      />
+    </EmptyState>
+  {:else if jobsStore && !jobsStore.isLoading() && jobsStore.getJobs().length === 0}
     <EmptyState title="No jobs found" />
   {/if}
 

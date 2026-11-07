@@ -190,6 +190,84 @@ describe("JobTable infinite scroll", () => {
     expect(pageRequests(api)[0]?.cursor).toBe("1");
   });
 
+  it("shows the first review command after loading and replaces it with a job", async () => {
+    const pending = Promise.withResolvers<void>();
+    let jobs: ReviewJob[] = [];
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    mountTable(async () => {
+      await pending.promise;
+      return {
+        jobs,
+        has_more: false,
+        next_cursor: null,
+        stats: { done: 0, closed: 0, open: 0 },
+      };
+    });
+    await vi.waitFor(() => expect(context.jobs?.isLoading()).toBe(true));
+    expect(screen.queryByText("No reviews yet")).toBeNull();
+    pending.resolve();
+    await screen.findByText("No reviews yet");
+    expect(
+      screen.getByText(/Your next commit starts a review/),
+    ).toHaveTextContent("To review the current commit now, run");
+    await fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    await vi.waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("roborev review"),
+    );
+    jobs = [makeJob(1)];
+    context.jobs?.loadJobs();
+    await vi.waitFor(() => expect(renderedRows()).toBe(1));
+    expect(screen.queryByText("No reviews yet")).toBeNull();
+  });
+
+  it("waits for a successful list before offering the first review", () => {
+    context.jobs = createJobsStore({
+      api: {
+        listJobs: vi.fn(),
+        cancelJob: vi.fn(),
+        rerunJob: vi.fn(),
+      } as never,
+      runtime,
+      owner: "job-table-test",
+      navigate: vi.fn(),
+    });
+    render(JobTable);
+    expect(screen.queryByText("No reviews yet")).toBeNull();
+  });
+
+  it.each([
+    "hideClosed",
+    "status",
+    "search",
+    "branch",
+    "jobType",
+    "repo",
+  ] as const)("keeps the empty message for %s hiding jobs", async (filter) => {
+    const api = mountTable(async (query) => ({
+      jobs: [],
+      has_more: false,
+      next_cursor: null,
+      stats: { done: 1, closed: query.closed === "false" ? 1 : 0, open: 0 },
+    }));
+    await screen.findByText("No reviews yet");
+    if (filter === "hideClosed") context.jobs?.setFilter("hideClosed", true);
+    else context.jobs?.setFilter(filter, "chosen");
+    await screen.findByText("No jobs found");
+    expect(screen.queryByText("No reviews yet")).toBeNull();
+    const expected = {
+      hideClosed: { closed: "false" },
+      status: { status: "chosen" },
+      search: { git_ref: "chosen" },
+      branch: { branch: "chosen" },
+      jobType: { job_type: "chosen" },
+      repo: { repo: ["chosen"] },
+    }[filter];
+    await vi.waitFor(() =>
+      expect(api.mock.calls.at(-1)?.[0]).toMatchObject(expected),
+    );
+  });
+
   it("sends one request while a page is loading", async () => {
     rowsThatFit = 5;
     const serve = pagedJobs(10, 2);

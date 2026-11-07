@@ -507,6 +507,13 @@ func (m model) renderQueueTitle() string {
 	return fitTitleLeft(app, filters, hideClosed, width)
 }
 
+// firstReviewLines wraps the empty-queue message for a scope that has never
+// been reviewed to width.
+func firstReviewLines(width int) []string {
+	const msg = "No reviews yet\nYour next commit starts a review. To review the current commit now, run roborev review."
+	return strings.Split(xansi.Wrap(msg, width, ""), "\n")
+}
+
 func (m model) renderQueueView() string {
 	var b strings.Builder
 	compact := m.queueCompact()
@@ -550,23 +557,29 @@ func (m model) renderQueueView() string {
 	end := 0
 
 	if len(rows) == 0 {
-		if m.loadingJobs || m.loadingMore {
-			b.WriteString("Loading...")
-			b.WriteString("\x1b[K\n")
-		} else if len(m.activeRepoFilter) > 0 || m.hideClosed {
-			b.WriteString("No jobs matching filters")
-			b.WriteString("\x1b[K\n")
-		} else {
-			b.WriteString("No jobs in queue")
-			b.WriteString("\x1b[K\n")
+		var msg []string
+		switch {
+		case m.loadingJobs || m.loadingMore:
+			msg = []string{"Loading..."}
+		case m.showFirstReview():
+			msg = firstReviewLines(m.width)
+		case len(m.activeRepoFilter) > 0 || m.hideClosed:
+			msg = []string{"No jobs matching filters"}
+		default:
+			msg = []string{"No jobs in queue"}
 		}
-		// Pad empty queue to fill visibleRows (minus 1 for the message we just wrote)
+		// Pad empty queue to fill visibleRows (minus the message lines)
 		// Also need header lines (2) to match non-empty case (skip in compact)
-		linesWritten := 1
 		padTarget := visibleRows
 		if !compact {
 			padTarget += 2 // +2 for header lines we skipped
 		}
+		msg = msg[:min(len(msg), max(padTarget, 1))]
+		for _, line := range msg {
+			b.WriteString(line)
+			b.WriteString("\x1b[K\n")
+		}
+		linesWritten := len(msg)
 		for linesWritten < padTarget {
 			b.WriteString("\x1b[K\n")
 			linesWritten++

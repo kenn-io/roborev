@@ -1551,7 +1551,59 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 
 	assert.GreaterOrEqual(t, len(lines), m.height-3)
 
-	assert.Contains(t, output, "No jobs in queue", "Expected 'No jobs in queue' message in output")
+	assert.Contains(t, output, "No reviews yet")
+}
+
+func TestTUIFirstReviewEmptyQueue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		configure func(*model)
+		wantHint  bool
+	}{
+		{"default repo and branch", func(m *model) {}, true},
+		{"hidden closed", func(m *model) { m.hideClosed = true; m.jobStats.Closed = 1 }, false},
+		{"hide closed without history", func(m *model) { m.hideClosed = true }, true},
+		{"chosen repo", func(m *model) { m.autoRepoFilter = false }, false},
+		{"chosen branch", func(m *model) { m.activeBranchFilter = "other" }, false},
+		{"locked repo", func(m *model) { m.lockedRepoFilter = true }, false},
+		{"locked branch", func(m *model) { m.lockedBranchFilter = true }, false},
+		{"loading", func(m *model) { m.loadingJobs = true }, false},
+		{"failed", func(m *model) { m.err = errors.New("unavailable") }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(localhostEndpoint, withExternalIODisabled())
+			m.width, m.height = 100, 24
+			m.loadingJobs = false
+			m.cwdRepoRoot, m.cwdBranch = "/test/repo", "main"
+			m.activeRepoFilter, m.activeBranchFilter = []string{m.cwdRepoRoot}, m.cwdBranch
+			m.autoRepoFilter = true
+			tc.configure(&m)
+			for _, output := range []string{m.renderQueueView(), strings.Join(m.renderQueuePaneBody(100, 12), "\n")} {
+				if tc.wantHint {
+					assert.Contains(t, output, "No reviews yet")
+					assert.Contains(t, output, "Your next commit starts a review.")
+					assert.Contains(t, output, "roborev review")
+				} else {
+					assert.NotContains(t, output, "No reviews yet")
+				}
+			}
+		})
+	}
+}
+
+func TestTUIFirstReviewEmptyQueueWraps(t *testing.T) {
+	t.Parallel()
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.loadingJobs = false
+	m.width, m.height = 40, 24
+	lines := m.renderQueuePaneBody(32, 12)
+	assert.Len(t, lines, 12)
+	for _, line := range lines {
+		assert.LessOrEqual(t, lipgloss.Width(line), 32)
+	}
+	assert.Contains(t, stripANSI(strings.Join(lines, " ")), "current commit")
+	assert.GreaterOrEqual(t, len(strings.Split(m.renderQueueView(), "\n")), m.height-3)
 }
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
