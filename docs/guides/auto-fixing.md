@@ -96,6 +96,18 @@ agent addressing findings and the planning agent with `--plan` or `--plan-only`.
 Blank guidelines add no policy instructions. The separate `analyze --fix`
 workflow does not use this setting.
 
+The default address and planning prompts ask the agent to check the finding's
+trigger and incorrect behavior against the current code or reviewed material.
+The expected outcome and any stated legitimate behavior to preserve guide the
+repair. For example, an invoice authorization fix should reject cross-tenant
+reads while continuing to serve the caller's own invoices. Documentation and
+improvement findings use their stated desired outcome instead of requiring a
+runtime defect.
+
+Reproduction or regression suggestions remain proposed until run. The agent
+should report missing information and distinguish observed verification from
+unrun checks. Custom address templates continue to control their own guidance.
+
 The default address prompt asks for `Changes:`, `Not changed:`, and
 `Verification:` sections. For findings left unchanged, it asks for a reason and
 evidence such as a file and line read or a command run. Verification lists only

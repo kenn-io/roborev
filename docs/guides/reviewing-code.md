@@ -9,6 +9,26 @@ reviewed commit or range endpoint; dirty reviews read the working tree. Nested
 modules use their own `go.mod`, so each version is labeled with its manifest
 path. Modules without a readable, valid Go directive contribute no version fact.
 
+## What a Finding Explains
+
+Review guidance asks defect findings to describe the known triggering input,
+state, or ordering, what actually goes wrong, and the correct behavior a fix
+should produce. The existing `problem` and `fix` fields carry this description,
+including known legitimate behavior to preserve. For example, a cross-tenant
+invoice read should be rejected while the caller can still read their own
+invoices.
+
+When known, a finding can suggest an observation or regression check that
+distinguishes incorrect from correct behavior. These suggestions are optional; a
+proposed test is not a claim that it ran. Findings should state uncertainty and
+distinguish source reasoning from observed results. Documentation, improvement,
+and custom reviews describe the problem and desired outcome in their reviewed
+material without inventing runtime defects.
+
+Panel synthesis is instructed to preserve these details when combining findings.
+This guidance does not guarantee model accuracy; verify findings against the
+current code before acting on them.
+
 ## Feature Branches
 
 Use `--branch` to review all commits since your branch diverged from main:
