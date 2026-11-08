@@ -24,7 +24,8 @@ func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt s
 }
 
 // RunAgentReview validates JSON for every review, including agents without a
-// native schema mode. Markdown is a presentation of the validated document.
+// native schema mode. out receives only adapter output. Callers can display
+// the returned Markdown separately from provider events and diagnostics.
 // A non-nil tools policy fails before the agent runs unless a was prepared by
 // agent.PrepareReviewToolPolicy.
 func RunAgentReview(
@@ -63,9 +64,6 @@ func RunAgentReview(
 		return ReviewResult{RawOutput: raw}, fmt.Errorf("encode structured review: %w", err)
 	}
 	output := structured.Markdown(minSeverity)
-	if out != nil {
-		_, _ = fmt.Fprintln(out, output)
-	}
 	return ReviewResult{
 		Output:           output,
 		RawOutput:        raw,

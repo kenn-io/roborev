@@ -72,11 +72,13 @@ func (db *DB) BeginReviewInvocation(ctx context.Context, job *ReviewJob, agentNa
 
 // FinishReviewInvocation records the outcome even if sync or cancellation has
 // replaced the job row. The invocation ID belongs only to this execution.
+// Subprocess diagnostics need not be UTF-8; replace invalid bytes when encoding
+// strings so a diagnostic cannot discard evidence or block retry/failover.
 func (db *DB) FinishReviewInvocation(ctx context.Context, report ReviewInvocation) error {
 	if report.FinishedAt == nil || (report.Status != "succeeded" && report.Status != "failed" && report.Status != "canceled") {
 		return fmt.Errorf("invalid invocation completion")
 	}
-	data, err := json.Marshal(report)
+	data, err := json.Marshal(report, jsontext.AllowInvalidUTF8(true))
 	if err != nil {
 		return err
 	}

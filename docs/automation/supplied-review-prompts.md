@@ -118,7 +118,9 @@ manual reruns add records; they do not replace earlier outcomes. A failed
 invocation can have partial output and usage even when a later invocation
 completes the review. `raw_output` contains the adapter's returned text, or its
 captured output stream when it returns no text. This preserves partial responses
-that a native adapter rejects before returning a review document.
+that a native adapter rejects before returning a review document. Invalid UTF-8
+bytes in diagnostics are replaced with the Unicode replacement character
+(`U+FFFD`) so they cannot prevent saving the report or retrying the review.
 
 `status` is `succeeded`, `failed`, `canceled`, or `unfinished`. An unfinished
 record means the daemon saved the start but has no recorded outcome. It does not
@@ -128,12 +130,13 @@ If that write fails, no agent runs. If saving the outcome fails, the job fails
 without an automatic retry, and the record stays unfinished.
 
 `usage` contains the token and cost evidence available in that invocation's
-output stream when it ends, captured independently of the best-effort job log. A
-log-file failure cannot substitute an earlier attempt's usage. It is `null` when
-no usage was reported. Within a usage object, `has_cost: false` means cost is
-unknown, not free. These snapshots do not perform later AgentsView lookups or
-replace the job's existing cost reconciliation. A `usage_error` reports a
-failure reading that evidence.
+adapter output stream when it ends, captured independently of the best-effort
+job log. Rendered review text is excluded, so quoted provider events cannot
+replace measured usage. A log-file failure cannot substitute an earlier
+attempt's usage. It is `null` when no usage was reported. Within a usage object,
+`has_cost: false` means cost is unknown, not free. These snapshots do not
+perform later AgentsView lookups or replace the job's existing cost
+reconciliation. A `usage_error` reports a failure reading that evidence.
 
 History covers calls made with this feature enabled, not earlier runs or
 individual provider requests inside an agent. Ordinary reviews and the CI poller

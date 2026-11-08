@@ -1491,7 +1491,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			wp.captureSessionlessUsage(workerID, job, agentName)
 		}
 	}()
-	agentOutput := io.MultiWriter(jobLog, outputWriter)
+	displayOutput := io.MultiWriter(jobLog, outputWriter)
+	agentOutput := displayOutput
 	var planningUsageCapture *tokens.CodexUsageCaptureWriter
 	var implementationUsageCapture *tokens.CodexUsageCaptureWriter
 	var planningSessionWriter *agent.SessionCaptureWriter
@@ -1501,6 +1502,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		implementationUsageCapture = tokens.NewCodexUsageCaptureWriter()
 		agentOutput = io.MultiWriter(jobLog, outputWriter, implementationUsageCapture)
 	}
+	var invocationStream invocationOutput
+	if hasSuppliedReviewSettings(job) {
+		agentOutput = io.MultiWriter(&invocationStream, agentOutput)
+	}
+	// Keep the session writer outermost: adapters may report sessions directly.
 	sessionWriter := agent.NewSessionCaptureWriter(agentOutput, func(sessionID string) {
 		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
@@ -1606,7 +1612,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}, err != nil)
 	}
 	var invocation *storage.ReviewInvocation
-	var invocationStream invocationOutput
 	if err == nil {
 		preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, snapshotTarget)
 		if prepareErr != nil {
@@ -1639,7 +1644,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				return
 			}
 			invocation = &record
-			agentOutput = io.MultiWriter(&invocationStream, agentOutput)
 		}
 		wp.markAgentInvoked(workerID, job, a)
 		if planningPrompt != "" {
@@ -1670,6 +1674,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
 			effectiveMinSeverity, tools, agentOutput,
 		)
+		if err == nil {
+			// Render for readers without treating review text as provider events.
+			_, _ = fmt.Fprintln(displayOutput, agentReview.Output)
+		}
 	}
 	output := agentReview.Output
 	sessionWriter.Flush()

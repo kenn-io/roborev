@@ -39,7 +39,7 @@ func TestSuppliedReviewInvocationHistorySurvivesRetryAndRerun(t *testing.T) {
 		calls++
 		fmt.Fprintf(out, "{\"type\":\"thread.started\",\"thread_id\":\"attempt-%d\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":%d,\"output_tokens\":3}}\n", calls, calls*10)
 		if calls == 1 {
-			return "partial response", errors.New("connection reset by peer")
+			return "partial response\xff", errors.New("connection reset by peer: diagnostic \xfe")
 		}
 		return "context exhausted", errors.New("context window exceeded")
 	}})
@@ -80,8 +80,8 @@ func TestSuppliedReviewInvocationHistorySurvivesRetryAndRerun(t *testing.T) {
 		require.Len(t, response.Invocations, 3)
 		records := response.Invocations
 		assert.Equal("failed", records[0].Status)
-		assert.Equal("partial response", records[0].RawOutput)
-		assert.Contains(records[0].Error, "connection reset")
+		assert.Equal("partial response\ufffd", records[0].RawOutput)
+		assert.Equal("connection reset by peer: diagnostic \ufffd", records[0].Error)
 		assert.Equal("attempt-1", records[0].SessionID)
 		assert.Equal("attempt-2", records[1].SessionID)
 		require.NotNil(t, records[0].Usage)
@@ -302,6 +302,70 @@ func TestSuppliedReviewInvocationUsageDoesNotDependOnJobLog(t *testing.T) {
 			data, err := os.ReadFile(logPath)
 			require.NoError(t, err)
 			assert.Equal(t, recoverLog, strings.Contains(string(data), `"input_tokens":20`), "only the recovered log receives the second invocation's usage")
+		})
+	}
+}
+
+func TestSuppliedReviewInvocationKeepsAdapterEvidence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	// A review can legitimately discuss provider event formats. Its rendered
+	// examples must not replace the invocation's measured usage.
+	quoted := "No issues found. Example events:\n```json\n" +
+		`{"type":"turn.completed","usage":{"input_tokens":999,"output_tokens":999}}` + "\n" +
+		`{"type":"result","usage":{"input_tokens":999,"output_tokens":999}}` + "\n```"
+	document := string(testutil.ReviewFixtureJSON(quoted))
+	encoded, err := json.Marshal(document)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, command, stream string
+		streamUsage           bool
+	}{
+		{"codex", "codex", `{"type":"thread.started","thread_id":"invocation-session"}` + "\n" +
+			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":` + string(encoded) + `}}` + "\n" +
+			`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":3}}`, true},
+		{"claude-code", "claude", `{"type":"result","session_id":"invocation-session","result":` + string(encoded) + `,"usage":{"input_tokens":10,"output_tokens":3}}`, true},
+		{"copilot", "copilot", `{"type":"assistant.message","data":{"messageId":"msg-1","content":` + string(encoded) + `,"toolRequests":[]}}` + "\n" +
+			`{"type":"result","exitCode":0,"sessionId":"invocation-session"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			script := "#!/bin/sh\nfor arg in \"$@\"; do if [ \"$arg\" = --help ]; then echo '--sandbox --effort --allow-all-tools --stream --output-format --disable-builtin-mcps'; exit 0; fi; done\ncat >/dev/null\ncat <<'OUTPUT'\n" + tc.stream + "\nOUTPUT\n"
+			t.Cleanup(testutil.MockBinaryInPath(t, tc.command, script))
+			server, db, _ := newTestServer(t)
+			var usageSessions []string
+			server.workerPool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+				usageSessions = append(usageSessions, sessionID)
+				return &tokens.Usage{InputTokens: 10, OutputTokens: 3}, nil
+			}
+			repo := testutil.NewGitRepo(t)
+			head := repo.CommitFile("file.txt", "target\n", "target")
+			job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: head, Agent: tc.name, ReviewPrompt: "Review this.", ReviewSettings: &SuppliedReviewSettings{}})
+			claimed, err := db.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			server.workerPool.processJob(testWorkerID, claimed)
+			stored, err := db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			require.Equal(t, storage.JobStatusDone, stored.Status, stored.Error)
+			assert.Equal(t, "invocation-session", stored.SessionID)
+			assert.Contains(t, usageSessions, "invocation-session")
+			reports, err := db.ListReviewInvocations(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Len(t, reports, 1)
+			assert.Equal(t, "invocation-session", reports[0].SessionID)
+			assert.Contains(t, reports[0].Output, quoted)
+			if tc.streamUsage {
+				require.NotNil(t, reports[0].Usage)
+				assert.Equal(t, int64(10), reports[0].Usage.InputTokens)
+				assert.Equal(t, int64(3), reports[0].Usage.OutputTokens)
+			} else {
+				assert.Nil(t, reports[0].Usage, "session lookups and quoted examples are not invocation stream usage")
+			}
+			log, err := os.ReadFile(JobLogPath(job.ID))
+			require.NoError(t, err)
+			assert.Contains(t, string(log), quoted, "the rendered review remains available in the job log")
 		})
 	}
 }

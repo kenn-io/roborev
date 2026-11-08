@@ -30,11 +30,9 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
   ]
 }`),
 	}
-	var streamed strings.Builder
-
 	got, err := RunAgentReview(
 		t.Context(), a, t.TempDir(), "HEAD", "prompt",
-		"custom", "medium", nil, &streamed,
+		"custom", "medium", nil, nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, got.Structured)
@@ -45,7 +43,6 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	assert.Contains(t, got.Output, "Vague name", "findings below the threshold stay in the output")
 	assert.Contains(t, got.Output, "No findings at or above medium severity.")
 	assert.Equal(t, storage.VerdictPass, got.Verdict)
-	assert.Equal(t, got.Output+"\n", streamed.String())
 	assert.Equal(t, storage.VerdictFail, storage.ParseVerdict(got.Output),
 		"rendered prose must not replace the structured verdict")
 }
