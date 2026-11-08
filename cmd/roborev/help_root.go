@@ -11,7 +11,7 @@ import (
 func applyRootHelp(root *cobra.Command) {
 	cobra.AddTemplateFunc("roborevGlobalFlags", roborevGlobalFlags)
 	root.Long = roborevRootHelp
-	root.Example = "  roborev cli search \"review uncommitted changes\"\n  roborev doctor\n  roborev review HEAD\n  roborev show --job 42"
+	root.Example = "  roborev doctor\n  roborev review HEAD\n  roborev show --job 42"
 	for _, group := range []cobra.Group{
 		{ID: "review", Title: "Review code:"},
 		{ID: "fix", Title: "Fix findings:"},

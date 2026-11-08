@@ -39,7 +39,7 @@ func cliSearchCmd(root *cobra.Command) *cobra.Command {
 	cmd.Long = "Find roborev commands by describing a task. Command discovery runs locally without configuration, a repository or a daemon."
 	cmd.Example = "  roborev cli search \"review uncommitted changes\""
 	search := directCommand(cmd, "search")
-	search.Long = "Find commands for a task using local command metadata. Results use preferred command paths and omit interactive UIs and internal hook/server entry points. To search completed review content, use roborev job search."
+	search.Long = "Find commands for a task locally. Results use preferred commands and omit interactive UIs and commands that run hooks or servers. To search completed review content, use roborev job search."
 	search.Example = "  roborev cli search \"review uncommitted changes\"\n  roborev cli search add a note to a review --json"
 	search.Flags().BoolVar(&jsonOutput, "json", false, "emit command suggestions as JSON")
 	return cmd
