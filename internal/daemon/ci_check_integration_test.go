@@ -7,12 +7,14 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	goversion "go/version"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -63,6 +65,61 @@ if cat "$1"; then exit 1; fi
 	assert.Contains(string(output), " M fixture.txt")
 	assert.Contains(string(output), "+changed")
 	assert.Contains(string(output), "checker history fixture")
+}
+
+func TestCICheckProviderSocketSandboxIntegration(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(t.TempDir(), "nested", "checker-data"))
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.HeadSHA()
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
+	hostTmp := filepath.Join(t.TempDir(), "daemon-temporary-directory-with-a-long-configured-path")
+	require.NoError(t, os.Mkdir(hostTmp, 0o700))
+	t.Setenv("TMPDIR", hostTmp)
+	wp := &WorkerPool{}
+	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	run.Job.Route = sandbox.Route{Name: "fixture", Upstream: "https://example.com", Path: "/responses", EnvVar: "FIXTURE_TOKEN", Capture: []string{"/bin/echo", "fixture-token"}}
+	const probe = `
+import socket,subprocess,sys
+child = '''
+import os,socket,tempfile
+fd,path=tempfile.mkstemp(prefix="plugin")
+os.close(fd)
+os.unlink(path)
+with socket.socket(socket.AF_UNIX) as server:
+ server.settimeout(5)
+ server.bind(path)
+ server.listen(1)
+ print(path,flush=True)
+ peer,_=server.accept()
+ with peer:
+  peer.settimeout(5)
+  assert peer.recv(64)==b"greet fixture"
+  peer.sendall(b"hello fixture")
+os.unlink(path)
+'''
+process=subprocess.Popen([sys.executable,"-c",child],stdout=subprocess.PIPE,text=True)
+try:
+ with socket.socket(socket.AF_UNIX) as client:
+  client.settimeout(5)
+  client.connect(process.stdout.readline().strip())
+  client.sendall(b"greet fixture")
+  assert client.recv(64)==b"hello fixture"
+ assert process.wait(timeout=5)==0
+finally:
+ if process.poll() is None: process.terminate()
+ process.wait()
+`
+	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"/usr/bin/python3", "-c", probe})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
 }
 
 func TestCICheckSandboxIntegration(t *testing.T) {
@@ -289,6 +346,69 @@ echo 'OK rewrite read-only'
 			require.NoError(t, err)
 			if commandLine != "" {
 				assert.Equal(t, commandLine, finished.CommandLine)
+			}
+		})
+	}
+}
+
+func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	for _, name := range []string{"direct runtime", "linked mise"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			repo := testutil.NewTestRepoWithCommit(t)
+			probe, want := "node", "runtime ready\n"
+			if name == "direct runtime" {
+				ciCheckMiseFixture(t)
+			} else {
+				mise, err := exec.LookPath("mise")
+				if err != nil {
+					t.Skip("requires mise")
+				}
+				versionCmd := exec.CommandContext(t.Context(), mise, "exec", "--", "go", "env", "GOVERSION")
+				versionCmd.Dir = "/"
+				version, err := versionCmd.Output()
+				if err != nil {
+					t.Skipf("requires a globally selected installed Go version: %v", err)
+				}
+				language := goversion.Lang(strings.TrimSpace(string(version)))
+				if language == "" {
+					t.Skip("requires a released Go version")
+				}
+				pin := strings.TrimPrefix(language, "go")
+				// The executable target sits outside the PATH directory and installed tool roots.
+				binary, err := os.ReadFile(mise)
+				require.NoError(t, err)
+				target := filepath.Join(t.TempDir(), "mise")
+				require.NoError(t, os.WriteFile(target, binary, 0o700))
+				commands := t.TempDir()
+				require.NoError(t, os.Symlink(target, filepath.Join(commands, "mise")))
+				t.Setenv("PATH", commands+string(os.PathListSeparator)+os.Getenv("PATH"))
+				repo.CommitFile("mise.toml", fmt.Sprintf("[tools]\ngo = %q\n[env]\nCHECKER_MISE = 'trusted config'\n", pin), "mise fixture")
+				probe = `mise exec -- sh -c 'go version && printf "%s\n" "$CHECKER_MISE"'`
+				want = "go version " + language
+			}
+			sha := repo.HeadSHA()
+			command := filepath.Join(t.TempDir(), "codex")
+			require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+			run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+			require.NoError(t, err)
+			t.Cleanup(run.cleanup)
+			server := httptest.NewServer(http.NotFoundHandler())
+			t.Cleanup(server.Close)
+			run.Job.Route = sandbox.Route{Name: "test", Upstream: server.URL, Path: "/responses", EnvVar: "TEST_TOKEN", Capture: []string{"/bin/echo", "synthetic-proxy-token"}}
+			argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", `cd "$1"; ` + probe, "toolchain-probe", run.Repo})
+			require.NoError(t, err)
+			t.Cleanup(cleanup)
+			cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+			cmd.Env = env
+			output, err := cmd.CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			if name == "direct runtime" {
+				assert.Equal(t, want, string(output))
+			} else {
+				assert.Contains(t, string(output), want)
+				assert.Contains(t, string(output), "trusted config\n")
 			}
 		})
 	}

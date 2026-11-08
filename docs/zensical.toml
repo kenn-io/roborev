@@ -18,6 +18,7 @@ nav = [
   {"Changelog" = "changelog.md"},
   {"Automation" = [
     {"Post-Commit Reviews" = "automation/post-commit-reviews.md"},
+    {"Supplied Review Prompts" = "automation/supplied-review-prompts.md"},
     {"Agent Hook"          = "agent-hook.md"},
     {"Review Event Hooks"  = "guides/hooks.md"},
   ]},

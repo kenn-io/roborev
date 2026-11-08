@@ -508,6 +508,13 @@ Repos remain eligible when the API omits the pull-request setting. If you enable
 pull requests later, the next discovery refresh includes the repo again.
 Explicit (non-wildcard) repos always take priority when `max_repos` is reached.
 
+Failed repository lookups retry on the first poll after 15 minutes, then after
+30 minutes, and then hourly. Other lookups keep their hourly cache, and the
+poller keeps polling known repositories while discovery is incomplete. Config
+edits, including GitHub App installations, force fresh discovery on the next
+poll. Token or access fixes take effect on the first poll after the failed
+lookup's retry window.
+
 Exclusion patterns in `exclude_repos` apply to both exact entries and
 wildcard-expanded entries.
 
@@ -566,8 +573,10 @@ repository's `CODEOWNERS` file names as an owner, on any line.
     team's members, including members of child teams. Email owners are ignored
     because they do not identify a GitHub login.
 - A repository without a `CODEOWNERS` file has no code owners.
-- The poller reads `CODEOWNERS` only for authors that the other author options
-    do not already admit, and at most once per base branch on each poll.
+- The poller reads `CODEOWNERS` only for authors the other author options do not
+    already admit, at most once per base branch per poll. PRs already reviewed
+    at their current commit cost no reads. Non-owners, deferred retries, and
+    exhausted failures at the current commit are re-checked every poll.
 - Expanding a team needs permission to read organization members. Give the
     GitHub App the **Members: Read-only** organization permission. Personal `gh`
     logins need the `read:org` scope, which `gh auth login` requests by default.
@@ -834,6 +843,52 @@ to warm Go modules. See
 [sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
 build and host requirements.
 
+The checker discovers the host's globally selected, installed mise tools outside
+the PR checkout and runs them ahead of mise shims on `PATH`. It can read their
+installation directories and mise's default managed installs directory. This
+supports Node, Bun, OpenTofu, Terraform, Python, and other installed mise tools.
+It can also run `mise exec` when the mise executable links outside those
+directories. It reads the repository's mise config without loading host or
+parent checkout config. Provision the required versions on the host. Starting
+providers or other services remains a separate requirement. The checker logs
+failed mise queries and keeps its existing tools.
+
+Before starting the sandbox, the checker prepares committed JavaScript and
+Python package declarations, including nested projects such as `web/`.
+JavaScript uses installed npm or Bun to install packages and installed Node and
+npm to classify sources and workspace membership. It honors supported lockfiles,
+includes development dependencies, and disables lifecycle scripts. Projects
+without a supported npm or Bun lockfile use `package.json` through npm,
+including projects with other lockfile formats. JavaScript workspace roots,
+their declared members, and local dependencies are skipped, as are npm projects
+with Git sources. npm must support its native `allow-file`, `allow-directory`,
+and `allow-git` fetch policies; older installations skip npm preparation. Only
+the selected installer's active lockfile is used, with npm shrinkwrap taking
+precedence over package-lock. Preparation rejects committed directory-link
+records before installation, then npm applies its native source policies during
+dependency resolution and installation while preserving valid lock pins.
+
+Python uses installed `python3` with venv and pip. Downloads use PyPI and ignore
+pip configuration files. It reads static dependencies and optional dependencies
+from `[project]`, plus string entries in `[dependency-groups]` in
+`pyproject.toml`. It preserves version constraints and markers, downloads wheels
+only, and skips requirements whose dependencies need source builds or conflict
+with accepted requirements. Required dependencies come first, followed by
+optional groups and dependency groups in sorted name order. Requirements files,
+editable installs, direct URLs, and local packages are unsupported. References
+to the project's own distribution name are excluded. These declarations do not
+apply Python lockfile pins. The root `.venv/bin` leads the sandbox's `PATH`;
+nested projects can use their own `.venv/bin/python`. An existing committed
+`.venv` is left alone.
+
+Installers run from private copies of dependency metadata, with private caches
+and without repository package-manager settings. Downloads run on the host and
+follow PR-declared remote URLs. Bun receives CI's existing Git authentication.
+They can reach host-accessible network destinations; the sandbox's network rules
+govern agent and PR-code execution. Prepared packages live in the disposable
+checker clone. Missing tools and failed downloads are logged; tests that still
+need unavailable packages keep the existing checker failure behavior.
+
 The checker works in its own clone of the PR checkout. The clone borrows the
 host clone's object store and none of its Git config, so the checker can't read
 credentials stored there. It has no submodules or Git LFS files. The host warms
@@ -843,10 +898,16 @@ or `go.work.sum` must also be a regular file; otherwise the review posts
 unchecked. Warming cannot change the code being checked. Nested modules and Go
 workspaces receive no separate warming; findings that need unavailable
 dependencies post unchecked. Inside the sandbox, the checker can change its
-scratch files and read the shared object store and warmed caches. Model calls
-use nono's credential route, which reads the host's current Codex login outside
-the sandbox. Tests that start loopback servers cannot run in this sandbox; the
-checker keeps findings it cannot try.
+scratch files and read the shared object store and warmed caches. Tests can bind
+and connect to pathname Unix sockets inside the job's scratch directory,
+including its temporary directory. A short alias under `/tmp` lets provider
+plugins bind Unix sockets even with deeply nested checkout paths. Temporary
+contents stay inside the checkout for cleanup and startup recovery. Host Unix
+sockets outside scratch remain blocked. Tests can read their own scope's CPU and
+memory limits, which DuckDB needs at startup. Model calls use nono's credential
+route, which reads the host's current Codex login outside the sandbox. Tests
+that start TCP loopback servers cannot run in this sandbox; the checker keeps
+findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the

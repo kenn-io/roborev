@@ -92,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -145,7 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -258,7 +258,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
         if: runner.os == 'Linux'
 
       - name: Install SQLite headers
@@ -286,7 +286,7 @@ jobs:
           group: ${{ runner.os }}
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@v5.2.4
+      - uses: jdx/mise-action@v5.2.5
 
       - name: Build
         if: runner.os != 'Windows' || matrix.shard == 'windows-remaining'
@@ -307,9 +307,15 @@ jobs:
             --packages "$packages" \
             -- -timeout 15m -race -shuffle=on -tags integration
 
+      - name: Search mirror growth (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 12
+        run: make test-search-mirror-growth
+
       - name: Test (macOS)
         if: matrix.os == 'macos-latest'
         env:
+          ROBOREV_TEST_LAUNCHD: '1'
           SUITE: ${{ matrix.shard || matrix.os }}
         run: |
           # Go's race detector can intermittently hang/crash while spawning child
@@ -416,7 +422,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -467,7 +473,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -483,7 +489,7 @@ jobs:
           group: Linux
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@v5.2.4
+      - uses: jdx/mise-action@v5.2.5
 
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here
@@ -541,7 +547,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
@@ -588,7 +594,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.6
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
       - name: Install SQLite headers
         if: needs.go-changes.outputs.changed == 'true'
@@ -640,7 +646,7 @@ jobs:
         if: needs.go-changes.outputs.changed == 'true'
         uses: $/.github/actions/go-cache-save
 
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: '0.13.6'
           enable-cache: true

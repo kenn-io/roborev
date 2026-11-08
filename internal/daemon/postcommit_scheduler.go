@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -126,7 +125,7 @@ func (s *Server) flushPostCommitBatch(ctx context.Context, root, branch, head st
 	s.endpointMu.Lock()
 	endpoint := s.endpoint
 	s.endpointMu.Unlock()
-	cmd := exec.CommandContext(ctx, binary, "post-commit", "--repo", root,
+	cmd := HiddenCommand(ctx, binary, "post-commit", "--repo", root,
 		"--flush", "--flush-branch", branch, "--quiet-head", head, "--server", endpoint.ConfigAddr())
 	if output, err := cmd.CombinedOutput(); err != nil || len(output) > 0 {
 		log.Printf("Post-commit quiet flush for %s: %v %s", branch, err, output)

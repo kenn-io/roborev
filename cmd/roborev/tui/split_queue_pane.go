@@ -70,7 +70,11 @@ func (m model) renderQueuePaneBody(innerW, innerH int) []string {
 	rows := m.visibleQueueRows()
 	lines := make([]string, 0, innerH)
 	if len(rows) == 0 {
-		lines = append(lines, statusStyle.Render("No jobs"))
+		if m.showFirstReview() {
+			lines = append(lines, firstReviewLines(innerW, innerH)...)
+		} else {
+			lines = append(lines, statusStyle.Render("No jobs"))
+		}
 	} else {
 		hasAnyPanel := anyPanelRow(rows)
 		treeColor := queueColorEnabled()

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"cmp"
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -39,6 +41,8 @@ func listCmd() *cobra.Command {
 		Long: `List review jobs with optional filtering.
 
 By default, lists jobs for the current repo and branch.
+Outside a git repository, lists jobs for repos under the current directory.
+Read a job's stored prompt with roborev job show --prompt --job <id>.
 
 Examples:
   roborev list                        # Jobs for current repo/branch
@@ -99,7 +103,7 @@ Examples:
 			}
 
 			// Build query URL
-			params := generated.ListJobsQuery{}
+			params := generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue)}
 			if repoPrefix != "" {
 				params.RepoPrefix = new(repoPrefix)
 			} else if repoPath != "" {
@@ -154,11 +158,21 @@ Examples:
 
 			if jsonOutput {
 				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
-				return json.MarshalEncode(enc, jobsResp.Jobs)
+				if err := json.MarshalEncode(enc, jobsResp.Jobs); err != nil {
+					return err
+				}
+				if jobsResp.HasMore {
+					fmt.Fprintln(cmd.ErrOrStderr(), "hint: more jobs exist; raise --limit")
+				}
+				if len(jobsResp.Jobs) == 0 {
+					listEmptyHint(ctx, cmd, params)
+				}
+				return nil
 			}
 
 			if len(jobsResp.Jobs) == 0 {
 				fmt.Println("No jobs found.")
+				listEmptyHint(ctx, cmd, params)
 				return nil
 			}
 
@@ -235,4 +249,34 @@ func normalizeListFile(repoRoot, file string) string {
 		}
 	}
 	return filepath.ToSlash(clean)
+}
+
+func listEmptyHint(ctx context.Context, cmd *cobra.Command, params generated.ListJobsQuery) {
+	switch {
+	case params.RepoPrefix != nil:
+		prefix := *params.RepoPrefix
+		params.RepoPrefix, params.OmitStats = nil, nil
+		params.IncludeTotals = new(generated.ListJobsQueryIncludeTotalsTrue)
+		if _, stats := queryHintJobs(ctx, params); stats.Total != nil && stats.RepoCount != nil && *stats.Total > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: no matching jobs for repos under %s; the daemon has %d matching jobs in %s; see roborev repo list, then roborev job list --repo <path> --all-branches\n", prefix, *stats.Total, plural(int(*stats.RepoCount), "repo"))
+		}
+	case params.Branch != nil && !cmd.Flags().Changed("branch"):
+		branch := *params.Branch
+		params.Branch, params.BranchIncludeEmpty = nil, nil
+		if jobs, _ := queryHintJobs(ctx, params); jobs > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "hint: no matching jobs on branch %s; other branches have matching jobs; run again with --all-branches\n", branch)
+		}
+	}
+}
+
+// queryHintJobs returns the row count of a one-row page and its stats,
+// preferring the closed-filtered stats; a failed request returns zeros.
+func queryHintJobs(ctx context.Context, params generated.ListJobsQuery) (int, generated.JobStats) {
+	params.Limit = new(int64(1))
+	params.OmitPrompt = new(generated.ListJobsQueryOmitPromptTrue)
+	resp, err := getDaemonEndpoint().APIClient(5*time.Second).ListJobs(ctx, &generated.ListJobsRequestOptions{Query: &params})
+	if err != nil {
+		return 0, generated.JobStats{}
+	}
+	return len(resp.Jobs), *cmp.Or(resp.FilteredStats, resp.Stats, &generated.JobStats{})
 }

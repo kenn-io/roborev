@@ -185,7 +185,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) { //nolint:para
 	})
 
 	t.Run("empty knownJobUUIDs returns empty and preserves cursor", func(t *testing.T) {
-		reviews, newCursor, err := pool.PullReviews(ctx, machineID, []uuid.UUID{}, "", 100)
+		reviews, newCursor, err := pool.PullReviews(ctx, machineID, map[uuid.UUID]struct{}{}, "", 100)
 		require.NoError(t, err, "PullReviews failed: %v")
 
 		assert.Empty(t, reviews)
@@ -194,7 +194,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) { //nolint:para
 
 	t.Run("filters to only known job UUIDs", func(t *testing.T) {
 		// Only request reviews for job1
-		reviews, _, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID1}, "", 100)
+		reviews, _, err := pool.PullReviews(ctx, machineID, map[uuid.UUID]struct{}{jobUUID1: {}}, "", 100)
 		require.NoError(t, err, "PullReviews failed: %v")
 
 		assert.Len(t, reviews, 1)
@@ -203,14 +203,14 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) { //nolint:para
 
 	t.Run("cursor does not skip reviews for later-known jobs", func(t *testing.T) {
 		// First pull with only job1 known - gets review1, advances cursor
-		reviews1, cursor1, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID1}, "", 100)
+		reviews1, cursor1, err := pool.PullReviews(ctx, machineID, map[uuid.UUID]struct{}{jobUUID1: {}}, "", 100)
 		require.NoError(t, err, "First PullReviews failed: %v")
 
 		assert.Len(t, reviews1, 1)
 
 		// Second pull with both jobs known - should still get review2
 		// even though cursor advanced past review1's timestamp
-		reviews2, _, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID1, jobUUID2}, cursor1, 100)
+		reviews2, _, err := pool.PullReviews(ctx, machineID, map[uuid.UUID]struct{}{jobUUID1: {}, jobUUID2: {}}, cursor1, 100)
 		require.NoError(t, err, "Second PullReviews failed: %v")
 
 		assert.Len(t, reviews2, 1)

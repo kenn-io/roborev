@@ -321,7 +321,7 @@ func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
 			_, err = server.humaCancelJob(t.Context(), &CancelJobInput{Body: CancelJobRequest{JobID: cancelID}})
 			require.NoError(t, err)
 
-			reviewed, err := h.Poller.alreadyReviewedPR("acme/api", pr)
+			reviewed, _, err := h.Poller.alreadyReviewedPR("acme/api", pr)
 			require.NoError(t, err)
 			assert.Equal(posted, reviewed, "only a delivered review suppresses a new automatic run after cancellation")
 			if posted {

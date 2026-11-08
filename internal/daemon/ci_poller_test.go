@@ -597,6 +597,73 @@ func TestGitHubTokenForRepo_CaseInsensitiveOwner(t *testing.T) {
 	assert.Equal(t, "ghs_token_wesm", p.githubTokenForRepo("Wesm/my-repo"))
 }
 
+func TestCIPollerListOpenPRsRevalidatesPages(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	for _, tt := range []struct {
+		name       string
+		changed    bool
+		wantBodies int
+		want304s   int
+	}{
+		{name: "unchanged", wantBodies: 0, want304s: 2},
+		{name: "page changed", changed: true, wantBodies: 1, want304s: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			var changed bool
+			var bodies, notModified int
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("/api/v3/repos/acme/api/pulls", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				etag, body := `W/"page-1"`, `[{"number":1,"title":"First PR"}]`
+				switch r.URL.Query().Get("page") {
+				case "":
+				case "2":
+					etag, body = `W/"page-2"`, `[{"number":2,"title":"Second PR"}]`
+					if changed {
+						etag, body = `W/"page-2-changed"`, `[{"number":3,"title":"New PR"}]`
+					}
+				default:
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("ETag", etag)
+				if r.Header.Get("If-None-Match") == etag {
+					notModified++
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				if r.URL.Query().Get("page") == "" {
+					w.Header().Set("Link", fmt.Sprintf("<http://%s%s?page=2>; rel=\"next\"", r.Host, r.URL.Path))
+				}
+				bodies++
+				fmt.Fprint(w, body)
+			}))
+			t.Cleanup(api.Close)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Poller.githubAPIURL = api.URL + "/api/v3"
+
+			prs, err := h.Poller.listOpenPRs(t.Context(), "acme/api")
+			require.NoError(t, err)
+			assert.Equal([]ghPR{{Number: 1, Title: "First PR", Labels: []string{}}, {Number: 2, Title: "Second PR", Labels: []string{}}}, prs)
+			assert.Equal(2, bodies)
+			assert.Zero(notModified)
+
+			bodies, notModified = 0, 0
+			changed = tt.changed
+			next, err := h.Poller.listOpenPRs(t.Context(), "acme/api")
+			require.NoError(t, err)
+			if tt.changed {
+				assert.Equal([]ghPR{{Number: 1, Title: "First PR", Labels: []string{}}, {Number: 3, Title: "New PR", Labels: []string{}}}, next)
+			} else {
+				assert.Equal(prs, next)
+			}
+			assert.Equal(tt.wantBodies, bodies)
+			assert.Equal(tt.want304s, notModified)
+		})
+	}
+}
+
 func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
 	t.Setenv("GITHUB_API_URL", "")
 	var authHeader string
@@ -1089,7 +1156,7 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.stubProcessPRGit()
 	statuses := h.CaptureCommitStatuses()
-	h.CaptureSkippedChecks()
+	skippedChecks := h.CaptureSkippedChecks()
 
 	var reads []string
 	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
@@ -1137,6 +1204,18 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 
 	require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "team members unavailable")
 	assert.Equal([]string{"main", "release", "main", "release"}, reads, "the next poll reads CODEOWNERS again")
+
+	prs = prs[:1]
+	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
+		assert.Equal("acme/api", ghRepo)
+		reads = append(reads, ref)
+		return nil, errors.New("team members unavailable")
+	}
+	statusCount, skippedCheckCount := len(*statuses), len(*skippedChecks)
+	require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+	assert.Equal([]string{"main", "release", "main", "release"}, reads, "a reviewed head needs no ownership decision")
+	assert.Len(*statuses, statusCount)
+	assert.Len(*skippedChecks, skippedCheckCount)
 }
 
 // drivePanelOutcome resolves the panel run for a PR HEAD and drives every
@@ -3119,6 +3198,45 @@ func TestToReviewResults(t *testing.T) {
 	assert.True(t, rrs[1].AllowFailure)
 }
 
+func TestCIPollerDeferredStatusRepublishesWhenNeeded(t *testing.T) {
+	for _, change := range []string{"deadline", "other status", "failed write"} {
+		t.Run(change, func(t *testing.T) {
+			h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+			pr := ghPR{Number: 70, HeadRefOid: "head-sha"}
+			nextEligible := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+			statuses := h.CaptureCommitStatuses()
+			h.Poller.postDeferredStatus("acme/api", pr, nextEligible)
+			require.Len(t, *statuses, 1)
+
+			wantDesc := "Review deferred — next eligible at 12:00 UTC"
+			switch change {
+			case "deadline":
+				nextEligible = nextEligible.Add(time.Hour)
+				wantDesc = "Review deferred — next eligible at 13:00 UTC"
+			case "other status":
+				require.NoError(t, h.Poller.callSetCommitStatus("acme/api", pr.HeadRefOid, "pending", "Review pending"))
+			case "failed write":
+				nextEligible = nextEligible.Add(time.Hour)
+				wantDesc = "Review deferred — next eligible at 13:00 UTC"
+				calls := 0
+				h.Poller.setCommitStatusFn = func(string, string, string, string) error {
+					calls++
+					return errors.New("status unavailable")
+				}
+				h.Poller.postDeferredStatus("acme/api", pr, nextEligible)
+				assert.Equal(t, 1, calls)
+				statuses = h.CaptureCommitStatuses()
+			}
+
+			*statuses = nil
+			h.Poller.postDeferredStatus("acme/api", pr, nextEligible)
+			assert.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: "head-sha", State: "pending", Desc: wantDesc}}, *statuses)
+			h.Poller.postDeferredStatus("acme/api", pr, nextEligible)
+			assert.Len(t, *statuses, 1, "successful retry must suppress subsequent duplicates")
+		})
+	}
+}
+
 func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
@@ -3169,6 +3287,13 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	require.Len(t, *captured, 1, "expected one deferred status")
 	assert.Equal("pending", (*captured)[0].State)
 	assert.Contains((*captured)[0].Desc, "Review deferred")
+
+	for range 3 {
+		require.NoError(t, h.Poller.processPR(
+			t.Context(), "acme/api",
+			ghPR{Number: 70, HeadRefOid: "second-sha", BaseRefName: "main"}, h.Cfg))
+	}
+	require.Len(t, *captured, 1, "repeated polls must publish the deferred status only once")
 
 	// A third poll inside the same throttle window must still be throttled even
 	// though the first active run was retired.

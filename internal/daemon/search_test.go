@@ -52,6 +52,7 @@ type recordingSearchReconciler struct {
 	started chan struct{}
 	stopped chan struct{}
 	wakes   chan struct{}
+	changes chan struct{}
 	jobs    chan int64
 	health  searchindex.HealthSnapshot
 }
@@ -83,6 +84,8 @@ func (r *countingSearchReconciler) Run(ctx context.Context) error {
 
 func (r *countingSearchReconciler) Wake() {}
 
+func (r *countingSearchReconciler) WakeChanges() {}
+
 func (r *countingSearchReconciler) WakeJob(int64) {}
 
 func (r *countingSearchReconciler) Health() searchindex.HealthSnapshot {
@@ -113,6 +116,7 @@ func newRecordingSearchReconciler() *recordingSearchReconciler {
 		started: make(chan struct{}),
 		stopped: make(chan struct{}),
 		wakes:   make(chan struct{}, 8),
+		changes: make(chan struct{}, 8),
 		jobs:    make(chan int64, 8),
 	}
 }
@@ -127,6 +131,13 @@ func (r *recordingSearchReconciler) Run(ctx context.Context) error {
 func (r *recordingSearchReconciler) Wake() {
 	select {
 	case r.wakes <- struct{}{}:
+	default:
+	}
+}
+
+func (r *recordingSearchReconciler) WakeChanges() {
+	select {
+	case r.changes <- struct{}{}:
 	default:
 	}
 }
@@ -579,4 +590,48 @@ func TestSearchRejectsAmbiguousRepoName(t *testing.T) {
 		assert.Contains(t, response.Body.String(), path)
 	}
 	assert.Empty(t, searcher.params)
+}
+
+func TestSearchEveryWordHintEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name, query                  string
+		mode                         searchindex.SearchMode
+		params                       searchindex.SearchParams
+		partial, degraded, hit, want bool
+	}{
+		{name: "lexical", query: "nil pointer", want: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "fallback", query: "nil pointer", degraded: true, want: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "partial", query: "nil pointer", partial: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "hit", query: "nil pointer", hit: true, params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "punctuation field", query: "nil ?", params: searchindex.SearchParams{State: searchindex.StateAll}},
+		{name: "repo", query: "nil pointer", params: searchindex.SearchParams{RepoID: 1, State: searchindex.StateAll}},
+		{name: "branch", query: "nil pointer", params: searchindex.SearchParams{Branch: "other", State: searchindex.StateAll}},
+		{name: "since", query: "nil pointer", params: searchindex.SearchParams{Since: new(time.Now()), State: searchindex.StateAll}},
+		{name: "verdict", query: "nil pointer", params: searchindex.SearchParams{Verdict: "pass", State: searchindex.StateAll}},
+		{name: "state", query: "nil pointer", params: searchindex.SearchParams{State: searchindex.StateOpen}},
+		{name: "hybrid", query: "nil pointer", mode: searchindex.ModeHybrid, params: searchindex.SearchParams{State: searchindex.StateAll}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := searchindex.SearchResult{
+				Query: tc.query, Mode: tc.mode, Partial: tc.partial, Degraded: tc.degraded,
+				Coverage: searchindex.SearchCoverage{MirrorComplete: !tc.partial},
+			}
+			if tc.degraded {
+				result.DegradedReason = searchindex.ReasonSemanticUnavailable
+				result.Coverage.EmbeddingsConfigured = true
+			}
+			if result.Mode == "" {
+				result.Mode = searchindex.ModeLexical
+			}
+			if tc.hit {
+				result.Hits = []searchindex.SearchHit{{JobID: 1}}
+			}
+			response := searchResponse(result, tc.params)
+			if tc.want {
+				assert.Equal(t, []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}}, response.Hints)
+			} else {
+				assert.Empty(t, response.Hints)
+			}
+		})
+	}
 }

@@ -44,7 +44,7 @@ func (r *Reconciler) ShareVectors(shared SharedVectors) {
 // sync database cannot accept its vectors yet.
 func (r *Reconciler) ReviewsPushed(reviewUUIDs []string) {
 	if r.queuePublish(reviewUUIDs...) {
-		r.Wake()
+		r.signalWake()
 	}
 }
 
@@ -146,10 +146,11 @@ func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, s
 // anything, and publishes the vectors Fill embeds.
 type sharingStore struct {
 	vector.Store[string, string]
-	index  *Index
-	shared SharedVectors
-	space  string
-	keys   map[string]storage.SearchVectorKey
+	index   *Index
+	shared  SharedVectors
+	space   string
+	keys    map[string]storage.SearchVectorKey
+	scanned *string
 }
 
 func newSharingStore(store vector.Store[string, string], index *Index, shared SharedVectors, space string) *sharingStore {
@@ -160,10 +161,13 @@ func newSharingStore(store vector.Store[string, string], index *Index, shared Sh
 }
 
 // PendingForGeneration imports every shared hit in one lookup page and
-// returns only documents that still need the encoder. A page of hits returns
-// nothing, which ends this Fill; the reconciler continues while backlog remains.
-func (s *sharingStore) PendingForGeneration(ctx context.Context, gen string, limit int) ([]vector.Pending[string], error) {
-	pending, err := s.Store.PendingForGeneration(ctx, gen, max(limit, sharedLookupPage))
+// returns only documents that still need the encoder. After scanning a page,
+// later calls in this Fill return nothing; the next turn resumes at scanned.
+func (s *sharingStore) PendingForGeneration(ctx context.Context, gen string, after *string, limit int) ([]vector.Pending[string], error) {
+	if s.scanned != nil {
+		return nil, nil
+	}
+	pending, err := s.Store.PendingForGeneration(ctx, gen, after, max(limit, sharedLookupPage))
 	if err != nil {
 		return nil, err
 	}
@@ -171,12 +175,16 @@ func (s *sharingStore) PendingForGeneration(ctx context.Context, gen string, lim
 	if err != nil {
 		return nil, err
 	}
+	if len(pending) > 0 {
+		s.scanned = new(pending[len(pending)-1].Doc)
+	}
 	misses := make([]vector.Pending[string], 0, min(limit, len(pending)))
 	for _, doc := range pending {
 		if _, ok := imported[doc.Doc]; ok {
 			continue
 		}
 		if len(misses) == limit {
+			s.scanned = new(misses[len(misses)-1].Doc)
 			break
 		}
 		misses = append(misses, doc)
@@ -338,7 +346,7 @@ func (index *Index) coveredSharedDocuments(
 	}
 	rows, err := snapshot.CoveredDocs(ctx, sqlitevec.DocQuery{
 		Columns: []string{"review_uuid", "content_hash"},
-		Where:   "d.review_uuid IN (" + placeholders(len(reviewUUIDs)) + ")",
+		Where:   "d.doc_key IN (" + placeholders(len(reviewUUIDs)) + ")",
 		Args:    args,
 	})
 	if err != nil {

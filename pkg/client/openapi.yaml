@@ -1555,6 +1555,8 @@ components:
           type: string
         repo_path:
           type: string
+        review_prompt:
+          type: string
         review_type:
           type: string
         since:
@@ -2475,10 +2477,16 @@ components:
         queued:
           format: int64
           type: integer
+        repo_count:
+          format: int64
+          type: integer
         running:
           format: int64
           type: integer
         skipped:
+          format: int64
+          type: integer
+        total:
           format: int64
           type: integer
       required:
@@ -4263,6 +4271,17 @@ components:
         - embedding_backlog
         - vector_state
       type: object
+    SearchHint:
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      required:
+        - code
+        - message
+      type: object
     SearchHit:
       additionalProperties: false
       properties:
@@ -4344,6 +4363,10 @@ components:
           type: boolean
         degraded_reason:
           type: string
+        hints:
+          items:
+            $ref: "#/components/schemas/SearchHint"
+          type: array
         hits:
           items:
             $ref: "#/components/schemas/SearchHit"
@@ -6108,6 +6131,28 @@ paths:
           name: include_panel_members
           schema:
             description: Include individual panel member jobs alongside panel synthesis jobs
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
+        - description: Include total jobs and distinct repository counts in stats
+          explode: false
+          in: query
+          name: include_totals
+          schema:
+            description: Include total jobs and distinct repository counts in stats
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
+        - description: Skip the queue counts (stats and filtered_stats) for callers that only read jobs
+          explode: false
+          in: query
+          name: omit_stats
+          schema:
+            description: Skip the queue counts (stats and filtered_stats) for callers that only read jobs
             enum:
               - "true"
               - "false"

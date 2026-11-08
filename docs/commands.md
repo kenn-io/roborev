@@ -136,11 +136,15 @@ roborev --server https://reviews.example.com show --job 42
 ### Output, errors and exit codes
 
 Output flags belong to commands. There is no global `--json` or `--agent`. For
-example, `list --json` includes job status and verdict, while `show --json`
-returns the review record with its stored document. `search --agent` prints
-concise text; the `--agent` flags on review, fix and setup commands select an AI
-provider or integration profile. Export commands emit JSON through their own
-`--format` option.
+example, `job list --json` includes job status and verdict, while
+`job show --json` returns the review record with its stored document.
+`search --agent` prints concise text; the `--agent` flags on review, fix and
+setup commands select an AI provider or integration profile. Export commands
+emit JSON through their own `--format` option.
+
+`job list --json` and `daemon status --json` omit stored prompts from finished
+jobs. Queued and running jobs keep their prompts. Read a stored prompt with
+`roborev job show --prompt --job <id>`, including failed and canceled jobs.
 
 Errors go to stderr and include an actionable recovery hint. Commands supporting
 `--json` emit a JSON error envelope with `error.code`, `error.message`,
@@ -377,14 +381,15 @@ unchanged.
 
 `roborev ui` starts the daemon when needed, reads the browser origin and path
 prefix from the live daemon runtime, and opens `/reviews` below that prefix when
-one is configured. An optional positive numeric job ID opens `/reviews/<job-id>`
-below the same prefix. Job IDs are local to that daemon's SQLite database, so a
-numeric deep link is not portable to another machine even when review data is
-synchronized. Authentication tokens are never placed in the launch URL. The
-browser listener is enabled on loopback by default, so an installed release
-needs no additional configuration for local use: run `roborev ui` and the
-application displays the reviews from the same SQLite database used by the CLI
-and terminal UI.
+one is configured. It prints `Opening <url>` before launching the browser, so
+you can open the printed URL yourself. An optional positive numeric job ID opens
+`/reviews/<job-id>` below the same prefix. Job IDs are local to that daemon's
+SQLite database, so a numeric deep link is not portable to another machine even
+when review data is synchronized. Authentication tokens are never placed in the
+launch URL. The browser listener is enabled on loopback by default, so an
+installed release needs no additional configuration for local use: run
+`roborev ui` and the application displays the reviews from the same SQLite
+database used by the CLI and terminal UI.
 
 See [Browser UI](/docs/web-ui/) for analytics definitions, remote HTTPS access,
 and the production Tailscale Serve setup.
@@ -435,7 +440,9 @@ configured semantic path that is temporarily unavailable falls back to lexical
 with a degradation reason. Quoted and unquoted query words behave the same.
 Human output also reports `partial` coverage, bounded semantic retrieval, and
 mirror/vector progress. A hexadecimal lexical query from 7 through 40 characters
-matches commit SHA prefixes case-insensitively.
+matches commit SHA prefixes case-insensitively. An unfiltered, empty multi-word
+lexical search with complete coverage writes a fewer-words hint to stderr;
+`--json` carries its `code` and `message` in `hints` instead.
 
 See [Review History Search](/docs/search/) for mode semantics, Voyage setup,
 privacy, freshness, panel grouping, and the HTTP/MCP interfaces.
@@ -1428,7 +1435,8 @@ pausing the whole queue.
 
 Daemon shutdown also stops workers from claiming new jobs. If work is active,
 restart reports that it is waiting, lets running jobs and worker finalization
-finish without a timeout, and only then starts the replacement daemon.
+finish without a timeout, and only then starts the replacement daemon. On macOS,
+`daemon restart` restarts an owned daemon through its LaunchAgent.
 
 !!! tip "Broken post-commit hook?"
 
@@ -1643,10 +1651,14 @@ See: [PostgreSQL Sync](/docs/advanced/postgres-sync/),
 
 ## Multi-Repo Workspaces
 
-`roborev job list` looks in immediate child subfolders for repositories, so you
-can run it from a parent directory that contains multiple repos.
-`roborev review` suggests repo-level review commands when run from a workspace
-root, making it easy to review across projects.
+`roborev job list` lists jobs for repos anywhere under the current directory, so
+you can run it from a parent directory that contains multiple repos. When no
+jobs match, a hint points to jobs outside the directory or on other branches.
+Outside a repository, `roborev fix` and `roborev job compact` also point to
+repos with completed, unclosed jobs when no jobs match the current directory.
+Use `roborev repo list`, then `roborev job list --repo <path> --all-branches` to
+inspect those jobs. `roborev review` suggests repo-level review commands when
+run from a workspace root, making it easy to review across projects.
 
 ## Global Flags
 
@@ -1684,6 +1696,13 @@ The updater coordinates daemon replacement with the review queue:
     `--yes` defaults to `wait`.
 - `--no-restart` skips daemon preparation, restart, hook repair, and skill
     updates.
+
+On macOS, `update` restarts an owned daemon through its LaunchAgent. When the
+daemon is running at the start, an ownership failure stops the update before
+installation; use `--no-restart` to install without restarting it. A daemon that
+appears during installation is checked afterward. If that ownership check fails,
+the update reports that the binary is installed and instructs you to restart the
+daemon through its job.
 
 When an interactive update finds active reviews, it asks once:
 

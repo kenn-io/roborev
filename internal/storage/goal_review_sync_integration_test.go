@@ -78,7 +78,7 @@ func TestIntegrationGoalReviewSyncRequiresDocument(t *testing.T) { //nolint:para
 	_, err = pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, job_source_machine_id, agent, prompt, output, updated_by_machine_id)
  VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2), 'test', 'frozen prompt', 'No issues found.', $3)`, uuid.New(), jobID, defaultTestMachineID)
 	require.NoError(t, err)
-	pulled, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobID}, "", 10)
+	pulled, _, err := pool.PullReviews(ctx, uuid.New(), map[uuid.UUID]struct{}{jobID: {}}, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, pulled, "prose-only goal reviews must not be pulled")
 }

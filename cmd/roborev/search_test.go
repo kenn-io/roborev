@@ -704,3 +704,46 @@ func writeSearchResponse(t *testing.T, w http.ResponseWriter, response any) {
 	w.Header().Set("Content-Type", "application/json")
 	assert.NoError(t, json.NewEncoder(w).Encode(response))
 }
+
+func TestSearchCmdEveryWordHint(t *testing.T) {
+	response := emptySearchResponse("nil pointer", "lexical")
+	response["hints"] = []map[string]string{{
+		"code":    "every_word_required",
+		"message": "no review contains every word; search again with fewer words",
+	}}
+	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/search" {
+			return false
+		}
+		writeSearchResponse(t, w, response)
+		return true
+	}})
+	for _, tc := range []struct {
+		name, flag, output string
+		json               bool
+	}{
+		{name: "human", output: "Mode: lexical\nCoverage: mirror complete; vectors disabled\nNo matching reviews.\n"},
+		{name: "agent", flag: "--agent", output: "OK search count=0 query=\"nil pointer\" mode=lexical partial=false bounded=false\n"},
+		{name: "json", flag: "--json", json: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderrBuffer bytes.Buffer
+			cmd := searchCmd()
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderrBuffer)
+			args := []string{"nil pointer"}
+			if tc.flag != "" {
+				args = append(args, tc.flag)
+			}
+			cmd.SetArgs(args)
+			require.NoError(t, cmd.ExecuteContext(t.Context()))
+			output, stderr := stdout.String(), stderrBuffer.String()
+			if tc.json {
+				assert.Empty(t, stderr)
+			} else {
+				assert.Equal(t, "Hint: no review contains every word; search again with fewer words\n", stderr)
+				assert.Equal(t, tc.output, output)
+			}
+		})
+	}
+}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	ghtransport "github.com/bored-engineer/github-conditional-http-transport"
+	"github.com/bored-engineer/github-conditional-http-transport/memory"
 	googlegithub "github.com/google/go-github/v93/github"
 
 	"go.kenn.io/roborev/internal/procutil"
@@ -27,6 +29,11 @@ type Client struct {
 }
 
 const defaultHTTPTimeout = 30 * time.Second
+
+// NewConditionalHTTPClient revalidates unchanged GETs with quota-free 304 responses.
+func NewConditionalHTTPClient() *http.Client {
+	return &http.Client{Timeout: defaultHTTPTimeout, Transport: ghtransport.NewTransport(memory.NewStorage(), nil)}
+}
 
 var ghAuthTokenFn = func(ctx context.Context, hostname string) (string, error) {
 	if ctx == nil {
@@ -148,9 +155,15 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
+	next := httpClient.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	transport := &limitTransport{next: next, key: cooldownKey{token: strings.TrimSpace(token)}}
 
 	apiOpts := []googlegithub.ClientOptionsFunc{
 		googlegithub.WithHTTPClient(httpClient),
+		googlegithub.WithTransport(transport),
 	}
 	if cfg.baseURL != nil {
 		base := cfg.baseURL.String()
@@ -164,6 +177,7 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	transport.key.base = api.BaseURL()
 	return &Client{api: api}, nil
 }
 

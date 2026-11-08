@@ -198,7 +198,7 @@ func TestIntegrationCoveragePostgres(t *testing.T) { //nolint:paralleltest // sh
 		UpdatedByMachineID: updatedBy,
 		CreatedAt:          time.Now(),
 	}))
-	reviews, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{jobUUID}, "", 10)
+	reviews, _, err := pool.PullReviews(ctx, uuid.New(), map[uuid.UUID]struct{}{jobUUID: {}}, "", 10)
 	require.NoError(t, err)
 	require.Len(t, reviews, 1)
 	assert.NotNil(t, reviews[0].ReviewedFileCount)

@@ -166,9 +166,12 @@ func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 	}
 	if opts.agentOutput {
 		printSearchAgentResults(cmd, *response.JSON200)
-		return nil
+	} else {
+		printSearchResults(cmd, *response.JSON200)
 	}
-	printSearchResults(cmd, *response.JSON200)
+	for _, hint := range response.JSON200.Hints {
+		cmd.PrintErrln("Hint: " + sanitizeSearchSingleLine(hint.Message))
+	}
 	return nil
 }
 

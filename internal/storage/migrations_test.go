@@ -204,6 +204,12 @@ func TestIndexMigrations(t *testing.T) {
 		{"summary repo window", 6, "idx_review_jobs_repo_enqueued", "repo_id, " + sqliteNormalizedTimestampExpr("enqueued_at")},
 		{"review export completion", 7, "idx_reviews_export_completed", "ON reviews(" + sqliteNormalizedTimestampExpr("created_at")},
 		{"search changes", 8, "idx_review_jobs_commit_id", "ON review_jobs(commit_id)"},
+		{"cost aggregate", 9, "idx_review_jobs_cost", "ON review_jobs(repo_id, branch, CASE WHEN"},
+		{"open failed reviews", 10, "idx_reviews_open_failed", "ON reviews(job_id) WHERE closed = 0 AND verdict_bool = 0"},
+		{"CI panel run", 11, "idx_ci_panels_panel_run", "ON ci_pr_panels(panel_run_uuid)"},
+		{"branch list position", 12, "idx_review_jobs_branch_position", "branch, " + sqliteNormalizedTimestampExpr("enqueued_at") + " DESC, id DESC"},
+		{"queue stats closed state", 13, "idx_review_jobs_queue_stats", "panel_role, review_closed)"},
+		{"closed list position", 12, "idx_review_jobs_closed_position", "DESC, id DESC) WHERE review_closed = 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := openUnmigratedDB(t)
@@ -225,5 +231,24 @@ func TestIndexMigrations(t *testing.T) {
 				require.NoError(t, err)
 			}
 		})
+	}
+}
+
+func TestQueueListPositionMigrationBackfill(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:11]))
+	_, jobs := seedJobs(t, db, "/tmp/migration-closed", 3)
+	for _, job := range jobs {
+		setStatus(t, db, job.ID, JobStatusDone)
+	}
+	_, err := db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, closed) VALUES (?, 'test', '', 1), (?, 'test', '', 0)`, jobs[0].ID, jobs[1].ID)
+	require.NoError(t, err)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	for range 2 {
+		var flags string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT group_concat(review_closed) FROM (SELECT review_closed FROM review_jobs ORDER BY id)`).Scan(&flags))
+		assert.Equal(t, "1,0,0", flags)
+		require.NoError(t, migrateQueueListPositionIndexes(t.Context(), db))
 	}
 }

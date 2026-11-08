@@ -292,7 +292,7 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 	if draft {
 		reason = "Review skipped: draft"
 	}
-	for _, recovery := range []string{"closed", "new head", "skipped"} {
+	for _, recovery := range []string{"closed", "new head", "retire without ownership lookup", "skipped"} {
 		if draft && recovery != "skipped" {
 			continue
 		}
@@ -336,6 +336,19 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 				require.NoError(t, err)
 			case "new head":
 				pr.HeadRefOid = "head-b"
+			case "retire without ownership lookup":
+				pr.HeadRefOid = "head-b"
+				pr.Author.Login = "mallory"
+				h.Cfg.CI.AllowCodeowners = true
+				h.Poller.codeownersFn = func(context.Context, string, string) (map[string]struct{}, error) {
+					return nil, errors.New("CODEOWNERS unavailable")
+				}
+				require.NoError(t, h.Poller.reconcileRetryHealth(t.Context(), "acme/api", []ghPR{pr}, h.Cfg, nil),
+					"retiring an exhausted failure at an old head needs no ownership lookup")
+				attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, "head-a")
+				require.NoError(t, err)
+				require.Nil(t, attempt)
+				return
 			case "skipped":
 				h.Cfg.CI.SkipLabels = []string{"skip-review"}
 				pr.Labels = []string{"skip-review"}
@@ -1048,37 +1061,46 @@ func TestHealthCIPollerStuckAttemptFailure(t *testing.T) {
 func TestHealthCIPollerDiscoveryFailureAndRecovery(t *testing.T) {
 	for _, discovery := range []string{"wildcard", "canonical name"} {
 		t.Run(discovery, func(t *testing.T) {
-			h, server := newCIHealthHarness(t)
-			discoveryErr := errors.New("provider unavailable")
-			h.Cfg.CI.Repos = []string{"acme/api"}
-			if discovery == "wildcard" {
-				h.Cfg.CI.Repos = append(h.Cfg.CI.Repos, "acme/*")
-				h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) {
-					return []string{"acme/api"}, discoveryErr
+			synctest.Test(t, func(t *testing.T) {
+				h, server := newCIHealthHarness(t)
+				discoveryErr := errors.New("provider unavailable")
+				h.Cfg.CI.Repos = []string{"acme/api"}
+				if discovery == "wildcard" {
+					h.Cfg.CI.Repos = append(h.Cfg.CI.Repos, "acme/*")
+					h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) {
+						if discoveryErr != nil {
+							return nil, discoveryErr
+						}
+						return []string{"acme/api"}, nil
+					}
+				} else {
+					h.Poller.repoResolver.canonicalRepoFn = func(context.Context, string, string) (string, error) {
+						if discoveryErr != nil {
+							return "", discoveryErr
+						}
+						return "acme/api", nil
+					}
 				}
-			} else {
-				h.Poller.repoResolver.canonicalRepoFn = func(context.Context, string, string) (string, error) {
-					return "acme/api", discoveryErr
+				var visited []string
+				h.Poller.listOpenPRsFn = func(_ context.Context, repo string) ([]ghPR, error) {
+					visited = append(visited, repo)
+					return nil, nil
 				}
-			}
-			var visited []string
-			h.Poller.listOpenPRsFn = func(_ context.Context, repo string) ([]ghPR, error) {
-				visited = append(visited, repo)
-				return nil, nil
-			}
 
-			h.Poller.poll(t.Context())
-			health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
-			assert.False(t, health.Healthy)
-			assert.Contains(t, health.Components, storage.ComponentHealth{
-				Name: "ci", Healthy: false, Message: "repository discovery failed",
+				h.Poller.poll(t.Context())
+				health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
+				assert.False(t, health.Healthy)
+				assert.Contains(t, health.Components, storage.ComponentHealth{
+					Name: "ci", Healthy: false, Message: "repository discovery failed",
+				})
+				assert.Equal(t, []string{"acme/api"}, visited, "fallback repositories still poll")
+
+				discoveryErr = nil
+				time.Sleep(15 * time.Minute)
+				h.Poller.poll(t.Context())
+				health = decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
+				assert.True(t, health.Healthy)
 			})
-			assert.Equal(t, []string{"acme/api"}, visited, "fallback repositories still poll")
-
-			discoveryErr = nil
-			h.Poller.poll(t.Context())
-			health = decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
-			assert.True(t, health.Healthy)
 		})
 	}
 }

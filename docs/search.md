@@ -119,12 +119,13 @@ The daemon scans existing reviews at startup. Every five minutes, it refreshes
 only jobs recorded in the local search change log. Completing, closing,
 reopening, commenting on, or rerunning a job refreshes only that job's search
 document. Repeated updates to the same job coalesce. Embedding backfill
-continues without rereading unchanged review history between batches.
+continues without rereading unchanged review history between batches. Pulls from
+PostgreSQL sync refresh only the changed reviews right away.
 
 Changes that span multiple jobs, such as commit-level comments and repository
 remaps, still request a full scan. The periodic sweep also picks up missed
-events and reviews pulled from PostgreSQL sync. Job updates do not postpone that
-sweep. Synced reviews can import vectors from another machine; see
+events. Job updates do not postpone that sweep. Synced reviews can import
+vectors from another machine; see
 [Shared vectors across synced machines](#shared-vectors-across-synced-machines).
 
 Lexical rows become available as mirror pages commit. A first embedding
@@ -166,9 +167,9 @@ There is no setting.
 - After embedding a review, the daemon publishes its vectors. A daemon only
     publishes vectors for a review that sync has already stored in PostgreSQL. A
     review embedded before sync pushes it is published right after the push.
-- Startup and full rescans, such as after sync pulls changes from another
-    machine, publish existing local vectors. Sweeps publish vectors for changed
-    reviews. Matching shared entries are skipped.
+    Pushes publish only the pushed reviews' vectors.
+- Startup and full rescans publish existing local vectors. Sync pulls and sweeps
+    publish vectors for changed reviews. Matching shared entries are skipped.
 - Only daemons with the same `base_url`, `model`, `dims`, `request_dimensions`,
     `input_type_mode`, role prefixes and suffixes, `fingerprint_salt`, and
     document recipe share vectors. Other daemons embed for themselves.
@@ -385,6 +386,13 @@ and `limit`. The response includes query and mode state, coverage, and grouped
 hits with canonical job and review IDs, repository/ref metadata, score, matching
 legs, and a bounded excerpt. Interpret `score` together with `mode`; lexical,
 semantic, and hybrid modes use different ranking scales.
+
+An unfiltered, empty multi-word lexical search with complete coverage includes
+an `every_word_required` hint: “no review contains every word; search again with
+fewer words”. Human and agent output write `Hint: <message>` to stderr. JSON and
+MCP include `hints` with `code` and `message`. Punctuation-only fields do not
+count as searchable words. Single-word misses, incomplete coverage, and semantic
+or hybrid searches omit the hint.
 
 The MCP tool `roborev_search_reviews` accepts the same inputs and returns the
 same response fields. Use `auto` for ordinary discovery, `lexical` for exact

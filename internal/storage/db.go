@@ -10,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+	"uuid"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -235,8 +237,11 @@ CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
 
 type DB struct {
 	*sql.DB
-	analytics analyticsStmts
+	analytics statementCache
 	attempts  jobAttempts
+
+	machineIDMu sync.Mutex
+	machineID   uuid.UUID
 }
 
 // Close closes the cached prepared statements and then the database.
@@ -261,13 +266,12 @@ func Open(dbPath string) (*DB, error) {
 		return nil, err
 	}
 
-	// Open with WAL mode and busy timeout.
-	// 30s busy_timeout gives enough headroom for concurrent writers
-	// (worker pool + sync worker) to wait for locks rather than failing.
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
+	// Queue in-process writers fairly; busy_timeout covers other processes.
+	connector, err := sqlite.NewConnector(fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)", dbPath, sqliteWriteWait.Milliseconds()))
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	db := sql.OpenDB(newWriteGateConnector(connector))
 
 	wrapped := &DB{DB: db}
 
@@ -342,7 +346,7 @@ func OpenReadOnly(dbPath string) (*DB, error) {
 	dsn := url.URL{Scheme: "file", Path: uriPath}
 	query := dsn.Query()
 	query.Set("mode", "ro")
-	query.Add("_pragma", "busy_timeout(30000)")
+	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", sqliteWriteWait.Milliseconds()))
 	dsn.RawQuery = query.Encode()
 
 	if err := registerContentFunctions(); err != nil {
@@ -1480,6 +1484,7 @@ func (db *DB) migrate() error {
 	// let it skip the large prompt columns stored before the values it needs;
 	// analyticsJobsIndexSQL explains the job index. analyticsRowsQuery names
 	// idx_reviews_job_verdict with INDEXED BY, so the two must stay in sync.
+	// listJobsQuery also names idx_review_jobs_analytics with INDEXED BY.
 	if _, err = db.Exec(analyticsJobsIndexSQL()); err != nil {
 		return fmt.Errorf("create idx_review_jobs_analytics: %w", err)
 	}

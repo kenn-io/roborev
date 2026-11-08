@@ -369,7 +369,10 @@ func TestFindJobForCommit(t *testing.T) {
 				handler = mockSequenceHandler(t, steps...)
 			}
 
-			daemonFromHandler(t, handler)
+			daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "true", r.URL.Query().Get("omit_stats"))
+				handler(w, r)
+			}))
 
 			job, err := findJobForCommit(repoDir, tt.commitSHA)
 

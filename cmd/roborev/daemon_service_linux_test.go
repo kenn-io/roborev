@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -26,31 +25,34 @@ import (
 func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	probeErr := errors.New("probe failed")
 	for _, tc := range []struct {
-		outcome        string
-		probeErr       error
-		wantError      string
-		stops, starts  int
-		queueCommand   bool
-		paused         bool
-		failPause      bool
-		pauseNotFound  bool
-		failDiscovery  bool
-		recheckCurrent bool
+		outcome          string
+		probeErr         error
+		wantError        string
+		stops, starts    int
+		queueCommand     bool
+		paused           bool
+		failPause        bool
+		pauseNotFound    bool
+		failDiscovery    bool
+		recheckCurrent   bool
+		skipVersionCheck bool
+		reprobeFails     bool
 	}{
 		{outcome: "replacement current"},
+		{outcome: "skip version check", skipVersionCheck: true},
 		{outcome: "live current after probe failure", probeErr: probeErr, recheckCurrent: true},
 		{outcome: "pause write failure", queueCommand: true, paused: true, failPause: true, wantError: "pause queue before shutdown"},
 		{outcome: "pause unsupported by old daemon", queueCommand: true, paused: true, pauseNotFound: true, wantError: "daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart fixture.service and retry roborev pause"},
-		{outcome: "failed version probe", queueCommand: true, paused: true, probeErr: probeErr, stops: 1, starts: 1},
+		{outcome: "failed version probe", queueCommand: true, paused: true, probeErr: probeErr, reprobeFails: true, wantError: "daemon is unresponsive: repeat probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "failed rediscovery", queueCommand: true, paused: true, failDiscovery: true, stops: 1, starts: 1},
 		{outcome: "unpause", queueCommand: true, stops: 1, starts: 1},
 		{outcome: "child responsive"},
 		{outcome: "child failed", probeErr: probeErr, wantError: "service child requires attention: probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "replacement outdated", stops: 1, starts: 1},
 		{outcome: "vanished owned", starts: 1},
-		{outcome: "failed", probeErr: probeErr, stops: 1, starts: 1},
+		{outcome: "failed", probeErr: probeErr, wantError: "daemon is unresponsive: probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "foreign responsive"},
-		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed; run systemctl --user restart fixture.service"},
+		{outcome: "foreign failed", probeErr: probeErr, wantError: "requires attention: probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "remain after exit"},
 		{outcome: "transient"},
 		{outcome: "forking"},
@@ -67,7 +69,11 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			stubServiceRecovery(t)
 			var progress bytes.Buffer
 			lifecycleOut, verbose = &progress, false
-			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
+			original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
+			if tc.skipVersionCheck {
+				t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
+				original.Version = "v-old"
+			}
 			var events []string
 			if tc.queueCommand {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +97,9 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			t.Cleanup(func() { probeDaemonForEnsure = oldProbe })
 			probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
 				assert.Equal(t, original.Endpoint(), ep)
+				if tc.reprobeFails {
+					return nil, errors.New("repeat probe failed")
+				}
 				liveVersion := "v-old"
 				if tc.recheckCurrent {
 					liveVersion = version.Version
@@ -202,7 +211,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			if tc.queueCommand {
 				var want []string
-				if tc.paused {
+				if tc.paused && !tc.reprobeFails {
 					want = append(want, "/api/queue/pause")
 				}
 				if tc.stops != 0 {
@@ -212,6 +221,12 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			assert.Equal(t, tc.stops, stops)
 			assert.Equal(t, tc.starts, starts)
+			if tc.pauseNotFound {
+				oldRestart := serviceRestartCommand
+				t.Cleanup(func() { serviceRestartCommand = oldRestart })
+				serviceRestartCommand = "launchctl kickstart -k"
+				require.ErrorContains(t, pauseServiceBeforeRecovery(t.Context(), original, "gui/501/com.example.daemon"), "run launchctl kickstart -k gui/501/com.example.daemon and retry roborev pause")
+			}
 			if reason := map[string]string{
 				"uncertain":          "properties unavailable",
 				"unreadable":         "cannot confirm executable",
@@ -231,10 +246,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				assert.Contains(t, progress.String(), "systemctl --user restart fixture.service")
 			}
 			assert.Zero(t, detached)
-			release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-			require.NoError(t, err)
-			require.True(t, acquired, "recovery must release the start lock on every outcome")
-			release()
+			assertRecoveryLock(t, true)
 		})
 	}
 }
@@ -307,8 +319,8 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		stubServiceRecovery(t)
 		var progress bytes.Buffer
-		lifecycleOut = &progress
-		old := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+		lifecycleOut, verbose = &progress, false
+		old := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
 		var current atomic.Pointer[daemon.RuntimeInfo]
 		current.Store(old)
 		drained, resume := make(chan struct{}), make(chan struct{})
@@ -347,8 +359,8 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		synctest.Wait()
 		assert.Contains(t, progress.String(), "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...\n")
 		assert.Empty(t, recovery, "recovery must remain blocked while reviews drain")
-		go func() { coldStart <- startDaemon() }()
 		progress.Reset()
+		go func() { coldStart <- startDaemon() }()
 		go func() { competingRecovery <- recoverDaemon(old, nil, false) }()
 		synctest.Wait()
 		assert.Contains(t, progress.String(), "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...\n")
@@ -519,28 +531,32 @@ func TestUserServiceCommandsNeverRestart(t *testing.T) {
 	assert.Equal(t, [][]string{{"start", "--", "fixture.service"}, {"show", "--property=MainPID", "--", "fixture.service"}}, *calls)
 }
 
-// A CLI whose own binary was replaced after it started runs a different
-// version than the service would start, so it must not drain the daemon.
-func TestDaemonServiceReplacedCLIIsAnotherInstallation(t *testing.T) {
-	path, err := os.Executable()
-	require.NoError(t, err)
-	if os.Getenv("ROBOREV_TEST_EXECUTABLE_REPLACEMENT") == "1" {
-		same, err := (&daemonService{executable: path}).sameInstallation()
-		require.NoError(t, err)
-		require.True(t, same)
-		require.NoError(t, os.WriteFile(path+".next", []byte("replacement executable"), 0o700))
-		require.NoError(t, os.Rename(path+".next", path))
-		same, err = (&daemonService{executable: path}).sameInstallation()
-		require.NoError(t, err)
-		assert.False(t, same)
-		return
+func TestSystemdRestartKeepsDetachedWorkflow(t *testing.T) {
+	stubServiceRecovery(t)
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: os.Getpid()}}, nil
 	}
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	copyPath := filepath.Join(t.TempDir(), "roborev-test")
-	require.NoError(t, os.WriteFile(copyPath, data, 0o700))
-	cmd := exec.CommandContext(t.Context(), copyPath, "-test.run=^TestDaemonServiceReplacedCLIIsAnotherInstallation$")
-	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", output)
+	lookups, starts := 0, 0
+	findDaemonService = func(context.Context, int) (*daemonService, error) {
+		lookups++
+		return &daemonService{unit: "fixture.service", serviceType: "exec", mainPID: os.Getpid()}, nil
+	}
+	startDaemonService = func(context.Context, string) error {
+		starts++
+		return nil
+	}
+	var calls []string
+	withDaemonCommandDependencies(t,
+		func() error { calls = append(calls, "ensure"); return nil },
+		func() error { calls = append(calls, "stop"); return nil },
+		func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+	)
+	cmd := daemonCmd()
+	cmd.SetArgs([]string{"restart"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	assert.Equal(t, []string{"stop", "ensure"}, calls)
+	assert.Zero(t, lookups)
+	assert.Zero(t, starts)
 }

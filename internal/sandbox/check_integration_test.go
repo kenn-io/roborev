@@ -185,6 +185,81 @@ exit "$failed"
 	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
 }
 
+func TestSandboxCgroupLimits(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	job := routeJob(t, t.TempDir())
+	script := shellChecks + `
+while IFS=: read -r hierarchy controllers path; do
+  [ "$hierarchy" = 0 ] && [ -z "$controllers" ] || continue
+  scope=/sys/fs/cgroup$path
+done < /proc/self/cgroup
+# Without CPU controller delegation, cpu.max is absent and this probe is skipped.
+if [ -f "$scope/cpu.max" ]; then
+  check cpu-limit allow cat "$scope/cpu.max"
+else
+  echo "SKIP cpu-limit: CPU controller is not delegated"
+fi
+check memory-usage deny cat "$scope/memory.current"
+parent=$(dirname "$scope")
+check parent-limit-exists allow test -f "$parent/memory.max"
+check parent-limit deny cat "$parent/memory.max"
+cat "$scope/memory.max"
+exit "$failed"
+`
+	out := runInJob(t, job, "bash", "-c", script)
+	t.Log(out)
+	assert.Contains(t, out, "\n1073741824\n")
+	if strings.Contains(out, "SKIP cpu-limit:") {
+		t.Skip("CPU controller is not delegated")
+	}
+}
+
+func TestSandboxUnixSockets(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	base := t.TempDir()
+	work := filepath.Join(base, "job*")
+	host := filepath.Join(base, "job-private")
+	for _, dir := range []string{work, host} {
+		require.NoError(t, os.Mkdir(dir, 0o700))
+	}
+	hostSocket := filepath.Join(host, "host.sock")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", hostSocket)
+	require.NoError(t, err)
+	defer listener.Close()
+	control, err := (&net.Dialer{}).DialContext(t.Context(), "unix", hostSocket)
+	require.NoError(t, err)
+	require.NoError(t, control.Close())
+	require.NoError(t, os.Symlink(hostSocket, filepath.Join(work, "host.sock")))
+	job := routeJob(t, work)
+	// The host directory is readable, so socket mediation must deny the connection.
+	job.ReadPaths = []string{host}
+	const probe = `
+import os,socket,sys,tempfile
+with tempfile.TemporaryDirectory(dir=sys.argv[1]) as tmp:
+ with socket.socket(socket.AF_UNIX) as server:
+  server.settimeout(2)
+  server.bind(os.path.join(tmp,"provider.sock"))
+  server.listen(1)
+  with socket.socket(socket.AF_UNIX) as client:
+   client.settimeout(2)
+   client.connect(server.getsockname())
+   peer,_=server.accept()
+   with peer:
+    peer.settimeout(2)
+    client.sendall(b"request")
+    assert peer.recv(7)==b"request"
+    peer.sendall(b"response")
+    assert client.recv(8)==b"response"
+for path in sys.argv[2:]:
+ with socket.socket(socket.AF_UNIX) as client:
+  client.settimeout(2)
+  try: client.connect(path)
+  except PermissionError: pass
+  else: raise AssertionError("host socket connection allowed")
+`
+	runInJob(t, job, "/usr/bin/python3", "-c", probe, work, hostSocket, filepath.Join(work, "host.sock"))
+}
+
 func TestSandboxHostPTYIsolation(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)

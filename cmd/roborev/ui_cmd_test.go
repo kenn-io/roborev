@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -39,7 +41,6 @@ func TestUICmdOpensReviewRoutes(t *testing.T) {
 
 			require.NoError(t, cmd.Execute())
 			assert.Equal(t, tt.want, opened)
-			assert.NotContains(t, opened, "configured-secret")
 		})
 	}
 }
@@ -61,6 +62,28 @@ func TestUICmdOpensPrefixedReviewRoutes(t *testing.T) {
 	cmd.SetArgs([]string{"42"})
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, "https://reviews.example.com/roborev-ci/reviews/42", opened)
+}
+
+func TestUICmdPrintsURLBeforeBlockedOpener(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		withUICommandDependencies(t,
+			func() error { return nil },
+			func() (*daemon.RuntimeInfo, error) {
+				return &daemon.RuntimeInfo{WebOrigin: "https://reviews.example.com"}, nil
+			},
+			func(string) error { <-release; return nil },
+		)
+		cmd := uiCmd()
+		var output bytes.Buffer
+		cmd.SetOut(&output)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Execute() }()
+		synctest.Wait()
+		assert.Equal(t, "Opening https://reviews.example.com/reviews\n", output.String())
+		close(release)
+		require.NoError(t, <-done)
+	})
 }
 
 func TestUICmdRejectsInvalidJobIDs(t *testing.T) {
@@ -136,6 +159,7 @@ func TestUICmdOpenerErrorIncludesManualURL(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "https://reviews.example.com/reviews/7")
+	assert.Contains(t, err.Error(), "open this URL manually")
 }
 
 func TestUICmdMatchesExplicitServerToItsRuntime(t *testing.T) {

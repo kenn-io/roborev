@@ -35,6 +35,7 @@ type reviewSearcher interface {
 type searchReconciler interface {
 	Run(context.Context) error
 	Wake()
+	WakeChanges()
 	WakeJob(int64)
 	Health() searchindex.HealthSnapshot
 }
@@ -158,7 +159,7 @@ func (s *Server) humaSearchReviews(
 		return nil, huma.Error500InternalServerError("search failed")
 	}
 
-	response := searchResponseFromResult(result)
+	response := searchResponse(result, params)
 	if response.Hits == nil {
 		response.Hits = []SearchHit{}
 	}
@@ -255,6 +256,18 @@ func (s *Server) resolveSearchRepo(identifier string) (int64, error) {
 		return 0, errSearchRepoNotFound
 	}
 	return repo.ID, nil
+}
+
+func searchResponse(result searchindex.SearchResult, params searchindex.SearchParams) SearchResponse {
+	response := searchResponseFromResult(result)
+	if params.RepoID != 0 || params.Branch != "" || params.Since != nil || params.Verdict != "" ||
+		(params.State != "" && params.State != searchindex.StateAll) {
+		return response
+	}
+	if result.Mode == searchindex.ModeLexical && !result.Partial && len(result.Hits) == 0 && searchindex.LiteralWordCount(result.Query) > 1 {
+		response.Hints = []storage.SearchHint{{Code: "every_word_required", Message: "no review contains every word; search again with fewer words"}}
+	}
+	return response
 }
 
 func searchResponseFromResult(result searchindex.SearchResult) SearchResponse {

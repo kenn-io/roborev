@@ -1,0 +1,237 @@
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestPullSessionParentsCommitAndRollbackWithJobs(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	worker := NewSyncWorker(h.db, testSyncConfig())
+	s, err := h.db.newPullSession(t.Context())
+	require.NoError(t, err)
+	defer s.close()
+	s.budget = time.Hour
+	var notifications int
+	s.notify = func() { notifications++ }
+	now := time.Now().UTC()
+	job := PulledJob{
+		UUID: testUUID("batch-first"), RepoIdentity: "https://example.com/batch.git",
+		CommitSHA: "abc123", CommitTimestamp: now, GitRef: "first", Agent: "test",
+		JobType: JobTypeReview, Status: "done", EnqueuedAt: now, UpdatedAt: now,
+		SourceMachineID: testUUID("peer"),
+	}
+	require.NoError(t, worker.pullJob(t.Context(), s, job))
+	second := job
+	second.UUID = testUUID("batch-second")
+	require.NoError(t, worker.pullJob(t.Context(), s, second))
+	assert.Zero(t, notifications)
+	var count int
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM repos WHERE identity = ?`, job.RepoIdentity).Scan(&count))
+	assert.Zero(t, count, "parents remain private until commit")
+	require.NoError(t, s.commit(t.Context()))
+	assert.Equal(t, 1, notifications)
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM repos WHERE identity = ?`, job.RepoIdentity).Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM commits WHERE sha = ?`, job.CommitSHA).Scan(&count))
+	assert.Equal(t, 1, count, "rows in the same transaction reuse their parents")
+
+	_, err = h.db.ExecContext(t.Context(), `CREATE TRIGGER fail_pull BEFORE INSERT ON review_jobs WHEN NEW.git_ref = 'fail' BEGIN SELECT RAISE(ABORT, 'injected row failure'); END`)
+	require.NoError(t, err)
+	job.UUID = testUUID("rollback-first")
+	job.RepoIdentity = "https://example.com/rollback.git"
+	job.CommitSHA = "def456"
+	require.NoError(t, worker.pullJob(t.Context(), s, job))
+	second = job
+	second.UUID = testUUID("rollback-second")
+	second.GitRef = "fail"
+	require.ErrorContains(t, worker.pullJob(t.Context(), s, second), "injected row failure")
+	assert.Equal(t, 1, notifications)
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM repos WHERE identity = ?`, job.RepoIdentity).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM commits WHERE sha = ?`, job.CommitSHA).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs WHERE uuid IN (?, ?)`, job.UUID, second.UUID).Scan(&count))
+	assert.Zero(t, count)
+}
+
+func TestPullSessionYieldsToQueuedWriter(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		s, err := h.db.newPullSession(t.Context())
+		require.NoError(t, err)
+		defer s.close()
+		_, err = h.db.ExecContext(t.Context(), `CREATE TABLE pull_order (id INTEGER PRIMARY KEY, writer TEXT)`)
+		require.NoError(t, err)
+		require.NoError(t, s.begin(t.Context(), false))
+		_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-first")
+		require.NoError(t, err)
+		require.NoError(t, s.finishRow(t.Context(), true, nil))
+		var count int
+		require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM pull_order`).Scan(&count))
+		assert.Zero(t, count, "the row stays uncommitted before the budget expires")
+		done := make(chan error, 1)
+		go func() {
+			_, err := h.db.ExecContext(t.Context(), `INSERT INTO pull_order (writer) VALUES ('user')`)
+			done <- err
+		}()
+		synctest.Wait()
+		time.Sleep(pullTxBudget)
+		require.NoError(t, s.finishRow(t.Context(), true, nil))
+		require.NoError(t, s.begin(t.Context(), false))
+		_, err = s.exec(t.Context(), `INSERT INTO pull_order (writer) VALUES (?)`, "pull-second")
+		require.NoError(t, err)
+		time.Sleep(pullTxBudget)
+		require.NoError(t, s.finishRow(t.Context(), true, nil))
+		require.NoError(t, <-done)
+		var order string
+		require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT group_concat(writer, ',') FROM (SELECT writer FROM pull_order ORDER BY id)`).Scan(&order))
+		assert.Equal(t, "pull-first,user,pull-second", order)
+	})
+}
+
+func TestPullSessionRollbackReleasesLocks(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	s, err := h.db.newPullSession(t.Context())
+	require.NoError(t, err)
+	defer s.close()
+	require.NoError(t, s.begin(t.Context(), true))
+	_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES (?, 'value')`, "canceled")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, s.commit(ctx), context.Canceled)
+	require.NoError(t, h.db.UpsertPulledJob(PulledJob{
+		UUID: testUUID("after-cancel"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
+		Status: "done", EnqueuedAt: time.Now(), UpdatedAt: time.Now(),
+	}, h.repo.ID, nil))
+	require.NoError(t, s.begin(t.Context(), true))
+	_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES (?, 'value')`, "abandoned")
+	require.NoError(t, err)
+	s.close()
+	for _, key := range []string{"canceled", "abandoned"} {
+		value, err := h.db.GetSyncState(key)
+		require.NoError(t, err)
+		assert.Empty(t, value, key)
+	}
+	// Closing an abandoned session also releases the writer and attempt lock.
+	require.NoError(t, h.db.UpsertPulledJob(PulledJob{
+		UUID: testUUID("after-close"), GitRef: "main", Agent: "test", JobType: JobTypeReview,
+		Status: "done", EnqueuedAt: time.Now(), UpdatedAt: time.Now(),
+	}, h.repo.ID, nil))
+}
+
+func TestPullSessionCancelsAttemptOnlyAfterCommit(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	h.createPendingJob("active-pull")
+	job := claimJob(t, h.db, "worker")
+	require.NotNil(t, job)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	release, err := h.db.StartJobAttempt(t.Context(), job, "worker", cancel)
+	require.NoError(t, err)
+	defer release()
+	s, err := h.db.newPullSession(t.Context())
+	require.NoError(t, err)
+	defer s.close()
+	incoming := PulledJob{
+		UUID: *job.UUID, GitRef: job.GitRef, Agent: "test", JobType: JobTypeReview,
+		Status: "done", EnqueuedAt: job.EnqueuedAt, UpdatedAt: time.Now().UTC(),
+		SourceMachineID: *job.SourceMachineID,
+	}
+	require.NoError(t, s.begin(t.Context(), true))
+	changed, err := s.upsertPulledJob(t.Context(), incoming, h.repo.ID, nil)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	require.NoError(t, ctx.Err())
+	s.rollback()
+	require.NoError(t, ctx.Err(), "a rolled-back pull must keep the attempt running")
+	require.NoError(t, s.begin(t.Context(), true))
+	changed, err = s.upsertPulledJob(t.Context(), incoming, h.repo.ID, nil)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	require.NoError(t, s.commit(t.Context()))
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	stored, err := h.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusDone, stored.Status)
+}
+
+func newNotifyingPullSession(t *testing.T, w *SyncWorker) *pullSession {
+	t.Helper()
+	s, err := w.db.newPullSession(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(s.close)
+	s.budget = 0
+	s.notify = w.notifyAfterPullWrite
+	return s
+}
+
+func TestPullSessionClosesStatementsBeforeDiscard(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"begin", "close"} {
+		t.Run(failure, func(t *testing.T) {
+			db := openTestDB(t)
+			defer db.Close()
+			s, err := db.newPullSession(t.Context())
+			require.NoError(t, err)
+			require.NoError(t, s.begin(t.Context(), true))
+			_, err = s.exec(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('discard', 'value')`)
+			require.NoError(t, err)
+			if failure == "begin" {
+				require.NoError(t, s.commit(t.Context()))
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				require.ErrorIs(t, s.begin(ctx, true), context.Canceled)
+			} else {
+				// Simulate a transaction already ended by SQLite before cleanup.
+				_, err = s.conn.ExecContext(t.Context(), "ROLLBACK")
+				require.NoError(t, err)
+			}
+			assert.NotPanics(t, s.close)
+			_ = s.conn.Close()
+		})
+	}
+}
+
+func TestPullSessionKeepsCommitEffectsAfterCancellation(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	var path string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pool := sql.OpenDB(cancelSetupClaimConnector{driver: db.Driver(), dsn: path, cancel: cancel})
+	defer pool.Close()
+	s, err := (&DB{DB: pool}).newPullSession(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NotPanics(t, s.close) })
+	require.NoError(t, s.begin(ctx, true))
+	_, err = s.exec(ctx, `INSERT INTO sync_state (key, value) VALUES ('commit-effects', 'saved')`)
+	require.NoError(t, err)
+	attemptCtx, cancelAttempt := context.WithCancel(t.Context())
+	defer cancelAttempt()
+	s.cancels = append(s.cancels, cancelAttempt)
+	var notified bool
+	s.notify = func() { notified = true }
+	s.changed = true
+	commitErr := s.commit(ctx)
+	value, err := db.GetSyncState("commit-effects")
+	require.NoError(t, err)
+	assert.Equal(t, "saved", value)
+	assert.True(t, notified)
+	require.ErrorIs(t, attemptCtx.Err(), context.Canceled)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.NoError(t, commitErr)
+}

@@ -28,6 +28,7 @@ type EnqueueRequest struct {
 	Reasoning         string   `json:"reasoning,omitempty"`           // Legacy or exact reasoning level
 	ReviewType        string   `json:"review_type,omitempty"`         // Review type (e.g., "security") — changes system prompt
 	CustomPrompt      string   `json:"custom_prompt,omitempty"`       // Custom prompt for ad-hoc agent work
+	ReviewPrompt      string   `json:"review_prompt,omitempty"`       // Supplied review prompt for a committed revision; runs in an exact checkout
 	Agentic           bool     `json:"agentic,omitempty"`             // Enable agentic mode (allow file edits)
 	OutputPrefix      string   `json:"output_prefix,omitempty"`       // Prefix to prepend to review output
 	AnalysisType      string   `json:"analysis_type,omitempty"`       // Recorded analyze type
@@ -114,6 +115,8 @@ type ListJobsInput struct {
 	HideClassifyJobs    string    `query:"hide_classify_jobs" doc:"Hide auto-design-router rows (job_type=classify and status=skipped)" enum:"true,false,"`
 	PanelRun            uuid.UUID `query:"panel_run" doc:"Return all jobs (members + synthesis) of one panel run"`
 	IncludePanelMembers string    `query:"include_panel_members" doc:"Include individual panel member jobs alongside panel synthesis jobs" enum:"true,false,"`
+	IncludeTotals       string    `query:"include_totals" doc:"Include total jobs and distinct repository counts in stats" enum:"true,false,"`
+	OmitStats           string    `query:"omit_stats" doc:"Skip the queue counts (stats and filtered_stats) for callers that only read jobs" enum:"true,false,"`
 	OmitPrompt          string    `query:"omit_prompt" doc:"Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)" enum:"true,false,"`
 	IncludeFindings     string    `query:"include_findings" doc:"Include nullable finding severity counts for eligible completed reviews" enum:"true,false,"`
 	RepoPrefix          string    `query:"repo_prefix" doc:"Filter repos by path prefix"`

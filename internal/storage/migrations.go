@@ -42,6 +42,58 @@ var schemaMigrations = []schemaMigration{
 	{6, "summary repo window index", migrateSummaryRepoWindowIndex},
 	{7, "review export completion index", migrateReviewExportCompletedIndex},
 	{8, "search change log", migrateSearchChanges},
+	{9, "cost aggregate index", migrateCostAggregateIndex},
+	{10, "open failed reviews index", migrateOpenFailedReviewsIndex},
+	{11, "CI panel run index", migrateCIPanelRunIndex},
+	{12, "queue list position indexes", migrateQueueListPositionIndexes},
+	{13, "queue stats closed state", migrateQueueStatsClosedState},
+}
+
+func migrateQueueStatsClosedState(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_review_jobs_queue_stats;
+		CREATE INDEX idx_review_jobs_queue_stats ON review_jobs(status, repo_id, job_type, source, panel_role, review_closed)`)
+	return err
+}
+
+// migrateQueueListPositionIndexes's triggers keep review_jobs.review_closed equal to the job's reviews.closed.
+func migrateQueueListPositionIndexes(ctx context.Context, db *DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch_position
+		ON review_jobs(branch, `+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC)`); err != nil {
+		return err
+	}
+	exists, err := hasColumn(ctx, db, "review_jobs", "review_closed")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE review_jobs ADD COLUMN review_closed INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	_, err = db.ExecContext(ctx, `
+		UPDATE review_jobs SET review_closed = 1 WHERE id IN (SELECT job_id FROM reviews WHERE closed = 1);
+		CREATE TRIGGER IF NOT EXISTS review_closed_insert AFTER INSERT ON reviews BEGIN
+			UPDATE review_jobs SET review_closed = NEW.closed WHERE id = NEW.job_id AND review_closed <> NEW.closed;
+		END;
+		CREATE TRIGGER IF NOT EXISTS review_closed_update AFTER UPDATE OF closed ON reviews BEGIN
+			UPDATE review_jobs SET review_closed = NEW.closed WHERE id = NEW.job_id AND review_closed <> NEW.closed;
+		END;
+		CREATE TRIGGER IF NOT EXISTS review_closed_delete AFTER DELETE ON reviews BEGIN
+			UPDATE review_jobs SET review_closed = 0 WHERE id = OLD.job_id AND review_closed <> 0;
+		END;
+		CREATE INDEX IF NOT EXISTS idx_review_jobs_closed_position
+		ON review_jobs(`+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC) WHERE review_closed = 1;
+	`)
+	return err
+}
+
+func migrateCostAggregateIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_cost
+		ON review_jobs(repo_id, branch, CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) THEN 1 ELSE 0 END,
+			CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) AND json_valid(token_usage) AND COALESCE(json_extract(token_usage, '$.has_cost'), 0) AND json_extract(token_usage, '$.cost_usd') IS NOT NULL AND COALESCE(json_extract(token_usage, '$.expected_provider_sessions'), 0) <= COALESCE(json_array_length(token_usage, '$.provider_session_ids'), 0) THEN 1 ELSE 0 END,
+			CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) AND json_valid(token_usage) AND COALESCE(json_extract(token_usage, '$.has_cost'), 0) AND json_extract(token_usage, '$.cost_usd') IS NOT NULL THEN json_extract(token_usage, '$.cost_usd') ELSE 0 END
+		)`)
+	return err
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -107,9 +159,21 @@ func migrateCIPanelRetireReason(ctx context.Context, db *DB) error {
 	return err
 }
 
+func migrateOpenFailedReviewsIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_reviews_open_failed
+		ON reviews(job_id) WHERE closed = 0 AND verdict_bool = 0`)
+	return err
+}
+
 func migrateCIPanelPRHeadIndex(ctx context.Context, db *DB) error {
 	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_ci_panels_pr_head
 		ON ci_pr_panels(github_repo, pr_number, head_sha)`)
+	return err
+}
+
+func migrateCIPanelRunIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_ci_panels_panel_run
+		ON ci_pr_panels(panel_run_uuid)`)
 	return err
 }
 

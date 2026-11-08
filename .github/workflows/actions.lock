@@ -10,9 +10,9 @@ workflows:
         - 'actions/setup-go@v7.0.0'
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
-        - 'astral-sh/setup-uv@v10.3.2'
-        - 'jdx/mise-action@v5.2.4'
-        - 'kenn-io/kit@v0.47.6'
+        - 'astral-sh/setup-uv@v10.3.3'
+        - 'jdx/mise-action@v5.2.5'
+        - 'kenn-io/kit@v0.48.2'
         - 'step-security/codecov-action@v7.1.1'
         - 'step-security/golangci-lint-action@v9.3.0'
         - 'step-security/paths-filter@v4.0.3'
@@ -29,12 +29,12 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'actions/upload-artifact@v7.0.2'
-        - 'kenn-io/kit@v0.47.6'
+        - 'kenn-io/kit@v0.48.2'
         - 'step-security/paths-filter@v4.0.3'
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'kenn-io/kit@v0.47.6'
+        - 'kenn-io/kit@v0.48.2'
         - 'step-security/jactionlint@v2.2.0'
 dependencies:
     'actions/cache@v6.1.0':
@@ -77,9 +77,9 @@ dependencies:
         commit: 'sha1-cf430e030ddbb5b0abf93d22962f4752f3646cd9'
         owner_id: 44036562
         repo_id: 192625955
-    'astral-sh/setup-uv@v10.3.2':
-        ref: 'v10.3.2'
-        commit: 'sha1-07a047e608db84b3d8c06cd9a7c7dcc9c355c18e'
+    'astral-sh/setup-uv@v10.3.3':
+        ref: 'v10.3.3'
+        commit: 'sha1-68559e99cc807c1eb7e9238fd43a15bba460eec2'
         owner_id: 115962839
         repo_id: 846733598
     'github/codeql-action@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee':
@@ -92,9 +92,9 @@ dependencies:
         commit: 'sha1-9b3254085494b55a0f7c4c2b3d2d52cc712ce370'
         owner_id: 9919
         repo_id: 259445878
-    'jdx/mise-action@v5.2.4':
-        ref: 'v5.2.4'
-        commit: 'sha1-6be3c7ed4c21d4f76b208d351d95aac273ebb76d'
+    'jdx/mise-action@v5.2.5':
+        ref: 'v5.2.5'
+        commit: 'sha1-6612f0ef07ed2a736cd1e00a94a065522dd41195'
         owner_id: 216188
         repo_id: 738284564
     'kenn-io/actions@main':
@@ -105,9 +105,9 @@ dependencies:
         uses:
             - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
             - 'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
-    'kenn-io/kit@v0.47.6':
-        ref: 'v0.47.6'
-        commit: 'sha1-192b82084042e49ff5d1b3f779642c2e607ef0bf'
+    'kenn-io/kit@v0.48.2':
+        ref: 'v0.48.2'
+        commit: 'sha1-65da48adcac18f7c08c304d412cf55a02ec8625a'
         owner_id: 259885253
         repo_id: 1238000987
     'step-security/codecov-action@v7.1.1':

@@ -148,7 +148,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 
 	// Query by git_ref and repo to avoid matching jobs from different repos.
 	// Fetch every match: newer fix and task jobs can share the ref.
-	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(0))}})
+	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(0))}})
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func findJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
 	// Fetch jobs and filter client-side to avoid cross-repo mismatch
 	// Use high limit since we're filtering client-side; in practice same SHA
 	// across many repos is rare
-	fallbackResp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(100))}})
+	fallbackResp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &sha, Limit: new(int64(100))}})
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
 	}

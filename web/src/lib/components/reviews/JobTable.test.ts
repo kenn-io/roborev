@@ -102,7 +102,13 @@ interface JobsPage {
   jobs: ReviewJob[];
   has_more: boolean;
   next_cursor: string | null;
-  stats: { done: number; closed: number; open: number };
+  stats: {
+    done: number;
+    closed: number;
+    open: number;
+    failed?: number;
+    canceled?: number;
+  };
 }
 
 // Serves `pageCount` pages of `pageSize` jobs, newest first, linked by cursor.
@@ -132,7 +138,20 @@ let runtime: OwnedAppRuntime;
 function mountTable(
   listJobs: (query: ListJobsParams) => Promise<JobsPage>,
 ): ReturnType<typeof vi.fn> {
-  const api = vi.fn(listJobs);
+  const api = vi.fn(async (query: ListJobsParams) => {
+    const page = await listJobs(query);
+    return {
+      ...page,
+      stats: {
+        queued: 0,
+        running: 0,
+        failed: 0,
+        canceled: 0,
+        skipped: 0,
+        ...page.stats,
+      },
+    };
+  });
   const store = createJobsStore({
     api: { listJobs: api, cancelJob: vi.fn(), rerunJob: vi.fn() } as never,
     runtime,
@@ -189,6 +208,99 @@ describe("JobTable infinite scroll", () => {
     expect(pageRequests(api)).toHaveLength(1);
     expect(pageRequests(api)[0]?.cursor).toBe("1");
   });
+
+  it("shows the first review command after loading and replaces it with a job", async () => {
+    let pending = Promise.resolve();
+    let jobs: ReviewJob[] = [];
+    mountTable(async () => {
+      await pending;
+      return {
+        jobs,
+        has_more: false,
+        next_cursor: null,
+        stats: { done: 0, closed: 0, open: 0 },
+      };
+    });
+    await screen.findByText("No reviews yet");
+    expect(
+      screen.getByText(/Your next commit starts a review/),
+    ).toHaveTextContent("To review the current commit now, run");
+    jobs = [makeJob(1)];
+    const reload = Promise.withResolvers<void>();
+    pending = reload.promise;
+    context.jobs?.loadJobs();
+    await vi.waitFor(() => expect(context.jobs?.isLoading()).toBe(true));
+    expect(screen.queryByText("No reviews yet")).toBeNull();
+    reload.resolve();
+    await vi.waitFor(() => expect(renderedRows()).toBe(1));
+  });
+
+  it("hides first-review guidance before the first load", () => {
+    context.jobs = createJobsStore({
+      api: {
+        listJobs: vi.fn(),
+        cancelJob: vi.fn(),
+        rerunJob: vi.fn(),
+      } as never,
+      runtime,
+      owner: "job-table-test",
+      navigate: vi.fn(),
+    });
+    render(JobTable);
+    expect(screen.queryByText("No reviews yet")).toBeNull();
+  });
+
+  it.each(["closed", "failed", "canceled"] as const)(
+    "keeps the empty message when Hide closed conceals a %s job",
+    async (status) => {
+      mountTable(async (query) => ({
+        jobs:
+          query.closed === "false"
+            ? []
+            : [
+                {
+                  ...makeJob(1),
+                  status: status === "closed" ? "done" : status,
+                  closed: status === "closed",
+                },
+              ],
+        has_more: false,
+        next_cursor: null,
+        stats: {
+          done: status === "closed" ? 1 : 0,
+          closed: 0,
+          open: 0,
+          [status]: 1,
+        },
+      }));
+      await vi.waitFor(() => expect(renderedRows()).toBe(1));
+      context.jobs?.setFilter("hideClosed", true);
+      await screen.findByText("No jobs found");
+      expect(screen.queryByText("No reviews yet")).toBeNull();
+    },
+  );
+
+  it.each([
+    ["status", "done"],
+    ["search", "chosen"],
+    ["branch", "main"],
+    ["jobType", "review"],
+    ["repo", "/test/repo"],
+  ] as const)(
+    "keeps the empty message for %s hiding jobs",
+    async (filter, value) => {
+      mountTable(async () => ({
+        jobs: [],
+        has_more: false,
+        next_cursor: null,
+        stats: { done: 0, closed: 0, open: 0 },
+      }));
+      await screen.findByText("No reviews yet");
+      context.jobs?.setFilter(filter, value);
+      await screen.findByText("No jobs found");
+      expect(screen.queryByText("No reviews yet")).toBeNull();
+    },
+  );
 
   it("sends one request while a page is loading", async () => {
     rowsThatFit = 5;

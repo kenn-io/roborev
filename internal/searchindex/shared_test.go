@@ -148,8 +148,11 @@ func TestSharedVectorsLetPeersSkipTheProvider(t *testing.T) {
 
 	uuids := []string{sources[0].ReviewUUID, sources[1].ReviewUUID, sources[2].ReviewUUID}
 	shared.push(uuids...)
+	store := origin.reconciler.store.(*reconcilerStore)
+	fullReads := store.callCount()
 	origin.reconciler.ReviewsPushed(uuids)
 	origin.reconcile(t)
+	assert.Equal(fullReads, store.callCount(), "publishing does not scan review history")
 	assert.Equal(3, shared.rowCount(), "pushed reviews publish their existing vectors")
 	assert.Equal(3, origin.embeddedTexts(), "publishing does not re-embed")
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -146,6 +147,60 @@ func decodeText(t *testing.T, result *mcp.CallToolResult, out any) {
 	require.NoError(t, json.Unmarshal([]byte(text.Text), out))
 }
 
+// Base catalog: 19,684 bytes, plus 10% rounded up to the next 1,000 bytes.
+const toolCatalogBudget = 22_000
+
+func toolCatalogJSONSize(t *testing.T, value any) int {
+	t.Helper()
+	var data strings.Builder
+	encoder := json.NewEncoder(&data)
+	encoder.SetEscapeHTML(false) // Match the SDK's JSON-RPC encoding.
+	require.NoError(t, encoder.Encode(value))
+	return data.Len() - 1 // Exclude Encoder.Encode's trailing newline.
+}
+
+func checkToolCatalogBudget(t *testing.T, result *mcp.ListToolsResult) error {
+	t.Helper()
+	require.Empty(t, result.NextCursor, "budget must cover the complete catalog")
+	size := toolCatalogJSONSize(t, result)
+	if size <= toolCatalogBudget {
+		return nil
+	}
+	var breakdown strings.Builder
+	for _, tool := range result.Tools {
+		fmt.Fprintf(&breakdown, "\n%s: %d bytes", tool.Name, toolCatalogJSONSize(t, tool))
+	}
+	return fmt.Errorf("tool catalog: %d bytes exceeds budget of %d bytes%s", size, toolCatalogBudget, breakdown.String())
+}
+
+func TestToolCatalogBudgetBoundary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := &Server{mcp: mcp.NewServer(&mcp.Implementation{Name: "budget-fixture", Version: "test"}, nil)}
+	tool := &mcp.Tool{Name: "budget_fixture", InputSchema: map[string]any{"type": "object"}}
+	server.mcp.AddTool(tool, nil)
+	session := connectServer(t, server)
+	result, err := session.ListTools(t.Context(), nil)
+	require.NoError(err)
+	// A nonempty description also adds its JSON key, quotes, and comma.
+	tool.Description = "<>&" + strings.Repeat("x", toolCatalogBudget-toolCatalogJSONSize(t, result)-len(`,"description":""`)-3)
+	for _, extra := range []int{0, 1} {
+		tool.Description += strings.Repeat("x", extra)
+		server.mcp.AddTool(tool, nil)
+		result, err = session.ListTools(t.Context(), nil)
+		require.NoError(err)
+		require.Equal(toolCatalogBudget+extra, toolCatalogJSONSize(t, result))
+		err = checkToolCatalogBudget(t, result)
+		if extra == 0 {
+			require.NoError(err)
+		} else {
+			require.Error(err)
+			assert.Contains(err.Error(), fmt.Sprintf("%d bytes exceeds budget of %d bytes", toolCatalogBudget+extra, toolCatalogBudget))
+			assert.Contains(err.Error(), fmt.Sprintf("budget_fixture: %d bytes", toolCatalogJSONSize(t, tool)))
+		}
+	}
+}
+
 func TestRegisteredToolsAndGuidance(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -153,6 +208,7 @@ func TestRegisteredToolsAndGuidance(t *testing.T) {
 
 	tools, err := session.ListTools(t.Context(), nil)
 	require.NoError(err)
+	require.NoError(checkToolCatalogBudget(t, tools))
 	var names []string
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
@@ -264,13 +320,19 @@ func TestMCPSearchAppliesDefaultsAndPreservesResponse(t *testing.T) {
 	var got SearchQuery
 	backend := &fakeBackend{searchFn: func(_ context.Context, query SearchQuery) (storage.SearchResponse, error) {
 		got = query
-		return storage.SearchResponse{Query: query.Query, Mode: "lexical", Hits: nil}, nil
+		return storage.SearchResponse{
+			Query: query.Query, Mode: "lexical", Hits: nil,
+			Coverage: storage.SearchCoverage{MirrorComplete: true},
+			Hints: []storage.SearchHint{{
+				Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+			}},
+		}, nil
 	}}
 	session := connectSession(t, backend)
 
-	result := callTool(t, session, "roborev_search_reviews", map[string]any{"query": "  needle  "})
+	result := callTool(t, session, "roborev_search_reviews", map[string]any{"query": "  nil pointer  "})
 	require.False(result.IsError)
-	assert.Equal(SearchQuery{Query: "needle", Mode: "auto", State: "all", Limit: 20}, got)
+	assert.Equal(SearchQuery{Query: "nil pointer", Mode: "auto", State: "all", Limit: 20}, got)
 	var out storage.SearchResponse
 	decodeText(t, result, &out)
 	require.NotNil(result.StructuredContent)
@@ -279,10 +341,13 @@ func TestMCPSearchAppliesDefaultsAndPreservesResponse(t *testing.T) {
 	var structuredOut storage.SearchResponse
 	require.NoError(json.Unmarshal(structuredJSON, &structuredOut))
 	assert.Equal(out, structuredOut)
-	assert.Equal("needle", out.Query)
+	assert.Equal("nil pointer", out.Query)
 	assert.Equal("lexical", out.Mode)
 	assert.NotNil(out.Hits)
 	assert.Empty(out.Hits)
+	assert.Equal([]storage.SearchHint{{
+		Code: "every_word_required", Message: "no review contains every word; search again with fewer words",
+	}}, out.Hints)
 }
 
 func TestMCPSearchPreservesExactFilters(t *testing.T) {

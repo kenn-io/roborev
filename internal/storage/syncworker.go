@@ -15,20 +15,28 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 	"github.com/jackc/pgx/v5/pgconn"
+	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/roborev/internal/config"
 )
+
+const healthInterval = 10 * time.Second
 
 // SyncWorker handles background synchronization between SQLite and PostgreSQL
 type SyncWorker struct {
 	db              *DB
 	cfg             config.SyncConfig
 	pgPool          *PgPool
+	pgReachable     bool
+	healthCheckedAt time.Time
+	healthPinging   bool
+	healthCtx       context.Context //nolint:containedctx // owns probes for the current pool's lifetime
+	healthCancel    context.CancelFunc
 	stopCh          chan struct{}
 	doneCh          chan struct{}
-	mu              sync.Mutex // protects running, pgPool, and callbacks
-	syncMu          sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
-	connectMu       sync.Mutex // serializes connect operations
+	mu              sync.Mutex          // protects running, pgPool, health state, and callbacks
+	syncMu          *semaphore.Weighted // queues sync operations in arrival order
+	connectMu       sync.Mutex          // serializes connect operations
 	running         bool
 	skipInitialSync bool  // when true, skip the immediate doSync on connect
 	working         bool  // protected by syncMu; requires a completed push and pull
@@ -144,7 +152,7 @@ func (w *SyncWorker) SetAfterPull(fn func()) {
 
 func (w *SyncWorker) finishSync() {
 	wrote := w.pullWrote
-	w.syncMu.Unlock()
+	w.syncMu.Release(1)
 	w.mu.Lock()
 	fn := w.afterPull
 	w.mu.Unlock()
@@ -221,6 +229,7 @@ func NewSyncWorker(db *DB, cfg config.SyncConfig) *SyncWorker {
 		cfg:    cfg,
 		stopCh: make(chan struct{}),
 		doneCh: make(chan struct{}),
+		syncMu: semaphore.NewWeighted(1),
 	}
 }
 
@@ -279,6 +288,11 @@ func (w *SyncWorker) Start() error {
 	return nil
 }
 
+func (w *SyncWorker) lockSync() {
+	// Acquire cannot fail with a background context.
+	_ = w.syncMu.Acquire(context.Background(), 1)
+}
+
 // Stop gracefully stops the sync worker
 func (w *SyncWorker) Stop() {
 	w.mu.Lock()
@@ -299,15 +313,15 @@ func (w *SyncWorker) Stop() {
 
 	// Acquire syncMu to wait for any in-flight SyncNow or FinalPush to complete
 	// before closing the pool
-	w.syncMu.Lock()
-	defer w.syncMu.Unlock()
+	w.lockSync()
+	defer w.syncMu.Release(1)
 
 	w.mu.Lock()
-	if w.pgPool != nil {
-		w.pgPool.Close()
-		w.pgPool = nil
-	}
+	pool := w.closePool()
 	w.mu.Unlock()
+	if pool != nil {
+		pool.Close()
+	}
 }
 
 // SyncStats contains statistics from a sync operation
@@ -333,9 +347,8 @@ func (w *SyncWorker) FinalPush() error {
 		return nil // Not connected, nothing to push
 	}
 
-	// Serialize with other sync operations
-	w.syncMu.Lock()
-	defer w.syncMu.Unlock()
+	w.lockSync()
+	defer w.syncMu.Release(1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -411,11 +424,11 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 		w.mu.Lock()
 		if !w.running {
 			// Worker was stopped during connect - close pool and abort
-			if w.pgPool != nil {
-				w.pgPool.Close()
-				w.pgPool = nil
-			}
+			pool = w.closePool()
 			w.mu.Unlock()
+			if pool != nil {
+				pool.Close()
+			}
 			return nil, fmt.Errorf("sync worker stopped during connect")
 		}
 		pool = w.pgPool
@@ -426,8 +439,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 		log.Printf("Sync: connected to PostgreSQL (triggered by sync now)")
 	}
 
-	// Serialize with other sync operations
-	w.syncMu.Lock()
+	w.lockSync()
 	w.pullWrote = false
 	defer w.finishSync()
 
@@ -570,11 +582,11 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 
 		// If we get here, we disconnected - try to reconnect
 		w.mu.Lock()
-		if w.pgPool != nil {
-			w.pgPool.Close()
-			w.pgPool = nil
-		}
+		pool := w.closePool()
 		w.mu.Unlock()
+		if pool != nil {
+			pool.Close()
+		}
 	}
 }
 
@@ -677,9 +689,44 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 
 	w.mu.Lock()
 	w.pgPool = pool
+	w.pgReachable = true
+	w.healthCheckedAt = time.Now()
+	// The pool outlives this connection attempt and owns its health probes.
+	w.healthCtx, w.healthCancel = context.WithCancel(context.Background())
 	w.mu.Unlock()
 
 	return true, nil
+}
+
+// closePool requires w.mu to be held. Close the returned pool after unlocking.
+func (w *SyncWorker) closePool() *PgPool {
+	if w.healthCancel != nil {
+		w.healthCancel()
+		w.healthCancel = nil
+	}
+	pool := w.pgPool
+	w.pgPool = nil
+	return pool
+}
+
+func (w *SyncWorker) pingPool(ctx context.Context, pool *PgPool) error {
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err := pool.Ping(pingCtx)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.pgPool == pool {
+		w.pgReachable = err == nil
+		w.healthCheckedAt = time.Now()
+	}
+	return err
+}
+
+func (w *SyncWorker) checkHealth(ctx context.Context, pool *PgPool) {
+	_ = w.pingPool(ctx, pool)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.healthPinging = false
 }
 
 // syncLoop runs the periodic sync until stop or disconnection
@@ -708,12 +755,10 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 				pool := w.pgPool
 				w.mu.Unlock()
 				if pool != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					if pool.Ping(ctx) != nil {
-						cancel()
+					// The sync loop owns this probe outside any request lifetime.
+					if err := w.pingPool(context.Background(), pool); err != nil {
 						return // Connection lost, exit to reconnect
 					}
-					cancel()
 				}
 			}
 		}
@@ -723,10 +768,6 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 // doSync performs a single sync cycle (push then pull)
 // Loops until all pending items are pushed.
 func (w *SyncWorker) doSync() error {
-	w.syncMu.Lock()
-	w.pullWrote = false
-	defer w.finishSync()
-
 	w.mu.Lock()
 	pool := w.pgPool
 	w.mu.Unlock()
@@ -735,17 +776,21 @@ func (w *SyncWorker) doSync() error {
 		return fmt.Errorf("not connected")
 	}
 
+	w.lockSync()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	w.passError = nil
 	// Push all local changes to PostgreSQL (loop until no more pending)
 	var totalJobs, totalReviews, totalResponses int
 	cur := pushCursor{}
+	failed := false
 	for {
+		w.passError = nil
 		stats, err := w.pushChangesWithStats(ctx, pool, &cur)
+		w.observeFailure(err)
+		failed = failed || reportableSyncError(w.passError)
+		w.syncMu.Release(1)
 		if err != nil {
-			w.observeFailure(err)
 			return fmt.Errorf("push: %w", err)
 		}
 		if stats.Jobs == 0 && stats.Reviews == 0 && stats.Responses == 0 {
@@ -756,15 +801,22 @@ func (w *SyncWorker) doSync() error {
 		totalResponses += stats.Responses
 		log.Printf("Sync: pushed %d jobs, %d reviews, %d responses (total: %d/%d/%d)",
 			stats.Jobs, stats.Reviews, stats.Responses, totalJobs, totalReviews, totalResponses)
+		w.lockSync()
 	}
 
 	// Pull remote changes from PostgreSQL
+	w.lockSync()
+	w.pullWrote = false
+	w.passError = nil
+	defer w.finishSync()
 	if err := w.pullChanges(ctx, pool); err != nil {
 		w.observeFailure(err)
 		return fmt.Errorf("pull: %w", err)
 	}
 
-	w.observePass()
+	if !failed {
+		w.observePass()
+	}
 	return nil
 }
 
@@ -998,6 +1050,13 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 	}
 
+	session, err := w.db.newPullSession(ctx)
+	if err != nil {
+		return stats, err
+	}
+	defer session.close()
+	session.notify = w.notifyAfterPullWrite
+
 	// Pull jobs
 	jobCursor, err := w.db.GetSyncState(SyncStateLastJobCursor)
 	if err != nil {
@@ -1016,11 +1075,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		for _, j := range jobs {
-			if err := w.pullJob(j); err != nil {
+			if err := w.pullJob(ctx, session, j); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull job %s: %w", j.UUID, err)
 			}
 			stats.Jobs++
+		}
+
+		if err := session.commit(ctx); err != nil {
+			return stats, fmt.Errorf("save jobs: %w", err)
 		}
 
 		jobQueryCursor = newCursor
@@ -1093,11 +1156,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		for _, r := range reviews {
-			if err := w.pullReview(r); err != nil {
+			if err := w.pullReview(ctx, session, r); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull review %s: %w", r.UUID, err)
 			}
 			stats.Reviews++
+		}
+
+		if err := session.commit(ctx); err != nil {
+			return stats, fmt.Errorf("save reviews: %w", err)
 		}
 
 		reviewQueryCursor = newCursor
@@ -1138,11 +1205,15 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				SourceMachineID: r.SourceMachineID,
 				CreatedAt:       r.CreatedAt,
 			}
-			if err := w.pullResponse(pr); err != nil {
+			if err := w.pullResponse(ctx, session, pr); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull response %s: %w", r.UUID, err)
 			}
 			stats.Responses++
+		}
+
+		if err := session.commit(ctx); err != nil {
+			return stats, fmt.Errorf("save comments: %w", err)
 		}
 
 		responseQueryCursor = newCursor
@@ -1244,81 +1315,67 @@ func formatTimestampIDCursor(cursorTime time.Time, cursorID int64) string {
 }
 
 // pullJob inserts a pulled job into SQLite, creating repo/commit as needed
-func (w *SyncWorker) pullJob(j PulledJob) error {
+func (w *SyncWorker) pullJob(ctx context.Context, s *pullSession, j PulledJob) error {
+	if err := s.begin(ctx, true); err != nil {
+		return err
+	}
 	// Get or create repo by identity
-	repoID, repoChanged, err := w.db.getOrCreateRepoByIdentity(j.RepoIdentity)
+	repoID, repoChanged, err := s.getOrCreateRepoByIdentity(ctx, j.RepoIdentity)
 	if err != nil {
-		return fmt.Errorf("get or create repo: %w", err)
+		return s.finishRow(ctx, false, fmt.Errorf("get or create repo: %w", err))
 	}
-	if repoChanged {
-		w.notifyAfterPullWrite()
-	}
+	s.changed = s.changed || repoChanged
 
 	// Get or create commit if we have one
 	var commitID *int64
 	if j.CommitSHA != "" {
-		id, changed, err := w.db.getOrCreateCommitByRepoAndSHA(repoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
+		id, changed, err := s.getOrCreateCommitByRepoAndSHA(ctx, repoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 		if err != nil {
-			return fmt.Errorf("get or create commit: %w", err)
+			return s.finishRow(ctx, false, fmt.Errorf("get or create commit: %w", err))
 		}
 		commitID = &id
-		if changed {
-			w.notifyAfterPullWrite()
-		}
+		s.changed = s.changed || changed
 	}
 
-	changed, err := w.db.upsertPulledJob(j, repoID, commitID)
-	if err != nil {
-		return err
-	}
-	if changed {
-		w.notifyAfterPullWrite()
-	}
-	return nil
+	changed, err := s.upsertPulledJob(ctx, j, repoID, commitID)
+	return s.finishRow(ctx, changed, err)
 }
 
-func (w *SyncWorker) pullReview(review PulledReview) error {
-	changed, err := w.db.upsertPulledReview(review)
-	if err != nil {
+func (w *SyncWorker) pullReview(ctx context.Context, s *pullSession, review PulledReview) error {
+	if err := s.begin(ctx, false); err != nil {
 		return err
 	}
-	if changed {
-		w.notifyAfterPullWrite()
-	}
-	return nil
+	changed, err := s.upsertPulledReview(ctx, review)
+	return s.finishRow(ctx, changed, err)
 }
 
-func (w *SyncWorker) pullResponse(response PulledResponse) error {
-	changed, err := w.db.upsertPulledResponse(response)
-	if err != nil {
+func (w *SyncWorker) pullResponse(ctx context.Context, s *pullSession, response PulledResponse) error {
+	if err := s.begin(ctx, false); err != nil {
 		return err
 	}
-	if changed {
-		w.notifyAfterPullWrite()
-	}
-	return nil
+	changed, err := s.upsertPulledResponse(ctx, response)
+	return s.finishRow(ctx, changed, err)
 }
 
 // HealthCheck returns the health status of the sync worker
 func (w *SyncWorker) HealthCheck() (healthy bool, message string) {
 	w.mu.Lock()
-	running := w.running
-	pool := w.pgPool
-	w.mu.Unlock()
+	defer w.mu.Unlock()
 
-	if !running {
+	if !w.running {
 		return false, "not running"
 	}
 
-	if pool == nil {
+	if w.pgPool == nil {
 		return false, "not connected"
 	}
 
-	// Check if we can ping PostgreSQL
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	if !w.healthPinging && time.Since(w.healthCheckedAt) >= healthInterval {
+		w.healthPinging = true
+		go w.checkHealth(w.healthCtx, w.pgPool)
+	}
 
-	if err := pool.Ping(ctx); err != nil {
+	if !w.pgReachable {
 		return false, "connection lost"
 	}
 

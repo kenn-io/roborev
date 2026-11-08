@@ -34,6 +34,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 	}
 	if !msg.append {
 		m.loadingJobs = false
+		m.jobsErr = nil
 	}
 	m.consecutiveErrors = 0
 
@@ -2448,6 +2449,7 @@ func (m model) handleJobsErrMsg(
 		return m, nil
 	}
 	m.err = msg.err
+	m.jobsErr = msg.err
 	m.loadingJobs = false
 	if cmd := m.handleConnectionError(msg.err); cmd != nil {
 		return m, cmd

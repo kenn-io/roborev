@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
@@ -29,11 +30,17 @@ type managedRecoveryError struct {
 }
 
 func (e *managedRecoveryError) Error() string {
-	return fmt.Sprintf("systemd service %s: %v", e.unit, e.cause)
+	return fmt.Sprintf("%s %s: %v", serviceDescription, e.unit, e.cause)
 }
 func (e *managedRecoveryError) Unwrap() error { return e.cause }
 
 var (
+	restartThroughService = false
+	serviceDescription    = "systemd service"
+	serviceRestartCommand = "systemctl --user restart"
+	serviceStartCommand   = "systemctl --user start"
+	cliExecutableInfo     = func() (os.FileInfo, error) { return os.Stat("/proc/self/exe") }
+
 	errRecoveryLock = errors.New("wait for daemon recovery lock")
 
 	findDaemonService  = lookupDaemonService
@@ -43,32 +50,32 @@ var (
 	drainManagedDaemon = daemon.KillDaemon
 )
 
-// supported reports unit settings that systemctl start cannot replace safely.
+// supported reports unit settings that a service start cannot replace safely.
 func (s *daemonService) supported() error {
 	switch {
 	case s.transient:
-		return fmt.Errorf("transient units require manual restart; run systemctl --user restart %s", s.unit)
+		return fmt.Errorf("transient units require manual restart; run %s %s", serviceRestartCommand, s.unit)
 	case s.remainAfterExit:
-		return fmt.Errorf("RemainAfterExit=yes requires manual restart; run systemctl --user restart %s", s.unit)
+		return fmt.Errorf("RemainAfterExit=yes requires manual restart; run %s %s", serviceRestartCommand, s.unit)
 	case !slices.Contains([]string{"simple", "exec", "notify"}, s.serviceType):
-		return fmt.Errorf("unsupported service Type=%s; run systemctl --user restart %s", s.serviceType, s.unit)
+		return fmt.Errorf("unsupported service Type=%s; run %s %s", s.serviceType, serviceRestartCommand, s.unit)
 	}
 	return nil
 }
 
-// keepReason explains why systemd cannot replace a responsive daemon in
+// keepReason explains why the service manager cannot replace a responsive daemon in
 // place, or returns "" when it can.
 func (s *daemonService) keepReason(pid int) string {
 	if s.mainPID != pid {
-		// A wrapper child stays in use; systemd cannot replace it directly.
-		return fmt.Sprintf("systemd service %s runs the daemon as a child process", s.unit)
+		// A wrapper child stays in use; the service manager cannot replace it directly.
+		return fmt.Sprintf("%s %s runs the daemon as a child process", serviceDescription, s.unit)
 	}
 	same, err := s.sameInstallation()
 	if err != nil {
-		return fmt.Sprintf("systemd service %s: cannot confirm executable %s: %v", s.unit, s.executable, err)
+		return fmt.Sprintf("%s %s: cannot confirm executable %s: %v", serviceDescription, s.unit, s.executable, err)
 	}
 	if !same {
-		return fmt.Sprintf("systemd service %s uses another installation (%s)", s.unit, s.executable)
+		return fmt.Sprintf("%s %s uses another installation (%s)", serviceDescription, s.unit, s.executable)
 	}
 	if err := s.supported(); err != nil {
 		return (&managedRecoveryError{s.unit, err}).Error()
@@ -79,7 +86,7 @@ func (s *daemonService) keepReason(pid int) string {
 func pauseServiceBeforeRecovery(ctx context.Context, info *daemon.RuntimeInfo, unit string) error {
 	resp, err := info.Endpoint().APIClient(0).PauseQueueWithResponse(ctx)
 	if resp != nil && resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart %s and retry roborev pause", unit)
+		return fmt.Errorf("daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run %s %s and retry roborev pause", serviceRestartCommand, unit)
 	}
 	return err
 }
@@ -90,7 +97,7 @@ func (s *daemonService) sameInstallation() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	cli, err := os.Stat("/proc/self/exe")
+	cli, err := cliExecutableInfo()
 	if err != nil {
 		return false, err
 	}
@@ -100,14 +107,14 @@ func (s *daemonService) sameInstallation() (bool, error) {
 // acquireRecoveryLock lets waiting commands share the active review drain.
 // The holder drains without a deadline, so waiters wait as long as it does
 // and then reuse its replacement instead of failing mid-drain.
-func acquireRecoveryLock() (func(), error) {
+func acquireRecoveryLock(ctx context.Context) (func(), error) {
 	store := daemon.RuntimeStore()
-	release, acquired, err := store.TryAcquireStartLock(context.Background())
+	release, acquired, err := store.TryAcquireStartLock(ctx)
 	if err != nil || acquired {
 		return release, err
 	}
 	fmt.Fprintln(lifecycleOut, "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...")
-	return store.AcquireStartLock(context.Background())
+	return store.AcquireStartLock(ctx)
 }
 
 // snapshotDaemonService treats a vanished PID as unmanaged when it ran
@@ -133,6 +140,11 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	snapshot, snapshotErr := snapshotDaemonService(ctx, info.PID, outsideService)
 	cancel()
+	return recoverDaemonWithSnapshot(info, probeErr, snapshot, snapshotErr)
+}
+
+func recoverDaemonWithSnapshot(info *daemon.RuntimeInfo, probeErr error, snapshot *daemonService, snapshotErr error) error {
+	probeFailed := probeErr != nil
 	if probeErr == nil && snapshotErr == nil && snapshot != nil {
 		// Keeping a responsive daemon changes nothing, so it needs no lock.
 		if reason := snapshot.keepReason(info.PID); reason != "" {
@@ -140,7 +152,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return nil
 		}
 	}
-	release, err := acquireRecoveryLock()
+	release, err := acquireRecoveryLock(context.Background())
 	if err != nil {
 		return fmt.Errorf("%w: %w", errRecoveryLock, err)
 	}
@@ -149,7 +161,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			release()
 		}
 	}()
-	ctx, cancel = context.WithTimeout(context.Background(), daemonStartTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
 	current, err := findDaemonForStart(ctx)
 	if err != nil {
@@ -173,6 +185,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 	}
 	responsive := current != nil
+	if responsive && os.Getenv("ROBOREV_SKIP_VERSION_CHECK") == "1" {
+		return nil
+	}
 	if responsive && current.PID == info.PID && probeErr != nil {
 		// Discovery retains the runtime record's version. Confirm the live
 		// version before reusing a daemon whose earlier probe failed.
@@ -182,6 +197,10 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 		if err == nil && probe.Version == version.Version {
 			return nil
+		}
+		if err != nil {
+			responsive = false
+			probeErr = err
 		}
 	}
 	if responsive && current.PID != info.PID && current.Version == version.Version {
@@ -224,24 +243,31 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 	} else {
 		if owner.mainPID != current.PID {
-			return fail(fmt.Errorf("service child requires attention: %w; run systemctl --user restart %s", probeErr, owner.unit))
+			return fail(fmt.Errorf("service child requires attention: %w; run %s %s", probeErr, serviceRestartCommand, owner.unit))
 		}
 		same, err := owner.sameInstallation()
 		if err != nil {
 			return fail(fmt.Errorf("cannot confirm executable %s: %w", owner.executable, err))
 		}
 		if !same {
-			return fail(fmt.Errorf("installation %s requires attention: %w; run systemctl --user restart %s", owner.executable, probeErr, owner.unit))
+			return fail(fmt.Errorf("installation %s requires attention: %w; run %s %s", owner.executable, probeErr, serviceRestartCommand, owner.unit))
 		}
 		if err := owner.supported(); err != nil {
 			return fail(err)
+		}
+		if probeFailed && !current.Stale() {
+			cause := probeErr
+			if !errors.Is(probeErr, kitdaemon.ErrDaemonUnreachable) {
+				cause = fmt.Errorf("daemon is unresponsive: %w", probeErr)
+			}
+			return fail(fmt.Errorf("%w; run %s %s", cause, serviceRestartCommand, owner.unit))
 		}
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.
 	// Persist pause before any drain or service start, or leave it alone.
 	if pendingStartPause != nil && *pendingStartPause {
 		if vanished {
-			return fail(fmt.Errorf("pause queue before shutdown: daemon PID %d has exited; run systemctl --user start %s, then retry roborev pause", current.PID, owner.unit))
+			return fail(fmt.Errorf("pause queue before shutdown: daemon PID %d has exited; run %s %s, then retry roborev pause", current.PID, serviceStartCommand, owner.unit))
 		}
 		if err := pauseServiceBeforeRecovery(ctx, current, owner.unit); err != nil {
 			return fail(fmt.Errorf("pause queue before shutdown: %w", err))
@@ -253,40 +279,90 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return fail(err)
 		}
 	}
+	_, err = startServiceReplacement(context.Background(), owner)
+	return err
+}
+
+func startServiceReplacement(ctx context.Context, owner *daemonService) (*daemon.RuntimeInfo, error) {
+	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
 	// Reviews may take longer than startup. Give the replacement a fresh budget.
-	readyCtx, readyCancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	readyCtx, readyCancel := context.WithTimeout(ctx, daemonStartTimeout)
 	defer readyCancel()
 	// Start leaves a socket-activated replacement running.
 	if err := startDaemonService(readyCtx, owner.unit); err != nil {
-		return fail(err)
+		return nil, fail(err)
 	}
-	if err := awaitServiceReplacement(readyCtx, owner.unit); err != nil {
-		return fail(err)
+	info, err := awaitServiceReplacement(readyCtx, owner.unit)
+	if err != nil {
+		return nil, fail(err)
 	}
-	return nil
+	return info, nil
 }
 
 // awaitServiceReplacement polls until a responsive daemon is the unit's main
 // process. Unit startup can precede runtime publication.
-func awaitServiceReplacement(ctx context.Context, unit string) error {
-	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+func awaitServiceReplacement(ctx context.Context, unit string) (*daemon.RuntimeInfo, error) {
+	return backoff.Retry(ctx, func() (*daemon.RuntimeInfo, error) {
 		replacement, err := getAnyRunningDaemonForStart(ctx)
 		if err != nil {
 			err = fmt.Errorf("replacement readiness: %w", err)
 			if !errors.Is(err, os.ErrNotExist) {
 				err = backoff.Permanent(err)
 			}
-			return struct{}{}, err
+			return nil, err
 		}
 		mainPID, err := serviceMainPID(ctx, unit)
 		if err != nil {
-			return struct{}{}, backoff.Permanent(err)
+			return nil, backoff.Permanent(err)
 		}
 		if mainPID != replacement.PID {
-			return struct{}{}, fmt.Errorf("replacement is outside service %s", unit)
+			return nil, fmt.Errorf("replacement is outside service %s", unit)
 		}
-		return struct{}{}, nil
+		return replacement, nil
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)),
 		backoff.WithMaxElapsedTime(0))
-	return err
+}
+
+// restartService checks ownership before an explicit restart shuts down a daemon.
+func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo, error)) (owner *daemonService, runtimes []*daemon.RuntimeInfo, release func(), err error) {
+	release, err = acquireRecoveryLock(ctx)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("%w: %w", errRecoveryLock, err)
+	}
+	defer func() {
+		if err != nil || owner == nil {
+			release()
+			release = nil
+		}
+	}()
+	runtimes, err = discover()
+	if err != nil {
+		return nil, nil, release, err
+	}
+	liveCount := 0
+	for _, info := range runtimes {
+		if info.PID <= 0 || info.Stale() {
+			continue
+		}
+		liveCount++
+		candidate, err := findDaemonService(ctx, info.PID)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, release, fmt.Errorf("daemon exited during restart; run it again: %w", err)
+		}
+		if err != nil {
+			return nil, nil, release, err
+		}
+		if candidate == nil {
+			continue
+		}
+		if reason := candidate.keepReason(info.PID); reason != "" {
+			hint := fmt.Sprintf("run %s %s", serviceRestartCommand, candidate.unit)
+			return nil, nil, release, fmt.Errorf("%s; %s", reason, hint)
+		}
+		owner = candidate
+	}
+	if liveCount > 1 && owner != nil {
+		return nil, nil, release, fmt.Errorf("found %d live daemons including a service-owned daemon; stop the others or restart through each job", liveCount)
+	}
+	return owner, runtimes, release, nil
 }

@@ -81,6 +81,54 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 	assert.Zero(t, services)
 }
 
+func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
+	for _, ownership := range []string{"managed", "unmanaged", "vanished outside service"} {
+		t.Run(ownership, func(t *testing.T) {
+			isolateDaemonSelection(t)
+			stubServiceRecovery(t)
+			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+			require.NoError(t, daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, version.Version, nil))
+			info, err := daemon.ReadRuntime()
+			require.NoError(t, err)
+			require.False(t, info.Stale())
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{info}, nil }
+			service := ownedDaemonService(t)
+			getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
+			lookups := 0
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+				assert.Equal(t, info.PID, pid)
+				lookups++
+				if ownership == "vanished outside service" {
+					return nil, os.ErrNotExist
+				}
+				if ownership == "unmanaged" {
+					return nil, nil
+				}
+				service.mainPID = pid
+				return service, nil
+			}
+			var mutations []string
+			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { mutations = append(mutations, "cleanup"); return 0 }
+			startDaemonForEnsure = func() error { mutations = append(mutations, "detached start"); return nil }
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error { mutations = append(mutations, "drain"); return nil }
+			startDaemonService = func(context.Context, string) error { mutations = append(mutations, "service start"); return nil }
+			err = ensureDaemon()
+			if ownership == "unmanaged" || ownership == "vanished outside service" {
+				require.NoError(t, err)
+				assert.Equal(t, 1, lookups)
+				assert.Equal(t, []string{"cleanup", "detached start"}, mutations)
+				return
+			}
+			assert.Equal(t, []string{"cleanup"}, mutations)
+			var managed *managedRecoveryError
+			require.ErrorAs(t, err, &managed)
+			require.EqualError(t, err, fmt.Sprintf("%s %s: daemon is unreachable; run %s %s", serviceDescription, service.unit, serviceRestartCommand, service.unit))
+		})
+	}
+}
+
 func TestEnsureDaemonPropagatesDiscoveryTLSConfigError(t *testing.T) {
 	isolateDaemonSelection(t)
 	getAnyRunningDaemon = daemon.GetAnyRunningDaemon

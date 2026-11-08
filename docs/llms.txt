@@ -35,6 +35,8 @@ as raw Markdown at /docs/<page>.md.
 - [Changelog](https://roborev.io/docs/changelog.md): release history
 - [Post-commit reviews](https://roborev.io/docs/automation/post-commit-reviews.md):
   the two automation layers, batching, and hands-off setup
+- [Supplied review prompts](https://roborev.io/docs/automation/supplied-review-prompts.md):
+  submit automation-owned instructions for a fixed commit or range
 - [Agent Hook](https://roborev.io/docs/agent-hook.md): bring open findings
   back into Claude Code, Codex, Copilot, Cursor, Droid, Gemini, Hermes,
   Qwen, Grok Build, and ZCode sessions

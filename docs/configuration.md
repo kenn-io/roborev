@@ -1880,6 +1880,15 @@ EOF
 launchctl load ~/Library/LaunchAgents/com.roborev.daemon.plist
 ```
 
+On macOS, recovery finds the daemon's LaunchAgent by matching the daemon or an
+ancestor against the jobs listed by `launchctl print` in the user's domains. An
+outdated daemon owned by that job is replaced with `launchctl kickstart` after
+running reviews finish. A wrapper child or another installation stays in use. An
+unreadable job stops recovery before shutdown. `roborev daemon restart` and
+`roborev update` replace the daemon through its job too. They stop before
+shutdown for a wrapper child, another installation, or an unreadable job. Use
+`roborev update --no-restart` to install without restarting.
+
 The heredoc expands `${ROBOREV_BIN}`, `${BREW_PREFIX}`, and `${HOME}` at
 generation time so the plist contains absolute paths. Launchd does not expand
 `~` or environment variables in plist values.
@@ -1894,8 +1903,8 @@ files, enable the user-level service:
 systemctl --user enable --now roborev
 ```
 
-Ordinary CLI commands replace an outdated daemon, or one that stops responding
-after discovery, through its owning user service after active reviews finish:
+Ordinary CLI commands replace a responsive outdated daemon through its owning
+user service after active reviews finish:
 
 1. Under the start lock, the command rediscovers the daemon and reuses a
     responsive replacement already running this CLI's version.
@@ -1939,10 +1948,11 @@ user manager cannot answer. Otherwise recovery waits up to two minutes for a
 managed replacement.
 
 Before managed recovery drains reviews or starts the service, local
-`roborev daemon pause` must save the pause through the current daemon, even if
-the initial version check failed. If rediscovery misses the daemon, the command
-tries its last known runtime API unless ownership lookup confirms the process
-has exited. In that case, recovery returns an error without dialing an
+`roborev daemon pause` must save the pause through the current daemon. A live
+managed daemon that fails HTTP probes stays running, and the command reports the
+error with manual restart guidance. If rediscovery misses the daemon, the
+command tries its last known runtime API unless ownership lookup confirms the
+process has exited. In that case, recovery returns an error without dialing an
 activation socket that could start unpaused workers. This keeps replacement
 workers from claiming queued jobs. If the pause write fails, recovery returns an
 error before draining reviews or starting the service. If recovery fails after
@@ -2815,8 +2825,12 @@ commit degrades to the classifier instead of being silently skipped.
 The daemon `/api/status` endpoint exposes a `SkippedJobs` aggregate count, plus
 an `auto_design` subobject with five per-outcome counters (`triggered`,
 `skipped_heuristic`, `triggered_classifier`, `skipped_classifier`, `errored`)
-when the feature is enabled anywhere. The subobject is omitted from the JSON
-when the feature is disabled across all repos.
+when the feature is enabled globally or the latest completed repo scan found it
+enabled. The initial scan runs in the background at daemon startup; the
+subobject is omitted until global config or a completed scan enables it. Once
+the cached scan is 30 seconds old, the next status request starts a background
+rescan and returns the cached answer. Requests after it finishes reflect
+per-repo changes, including newly registered repos.
 
 ## Reasoning Levels
 

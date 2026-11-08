@@ -352,6 +352,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	if len(jobs) == 0 {
 		if !opts.quiet {
 			cmd.Println("No open jobs found.")
+			printOutsideRepoHint(ctx, cmd, roots)
 		}
 		return nil
 	}

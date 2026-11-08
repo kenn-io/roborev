@@ -665,6 +665,7 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 		if len(newIDs) == 0 {
 			if len(seen) == 0 && !opts.quiet {
 				cmd.Println("No open jobs found.")
+				printOutsideRepoHint(ctx, cmd, roots)
 			}
 			return nil
 		}
@@ -828,7 +829,8 @@ func queryOpenJobs(
 		// omit_prompt: discovery only needs job metadata; prompts would add
 		// megabytes of JSON on repos with a long review history.
 		query := &generated.ListJobsQuery{
-			Status: new("done"), Repo: []string{repoRoot}, Closed: new(generated.ListJobsQueryClosedFalse),
+			OmitStats: new(generated.ListJobsQueryOmitStatsTrue),
+			Status:    new("done"), Repo: []string{repoRoot}, Closed: new(generated.ListJobsQueryClosedFalse),
 			Limit: new(int64(0)), OmitPrompt: new(generated.ListJobsQueryOmitPromptTrue),
 		}
 		if branch != "" {
@@ -972,6 +974,7 @@ func runFixList(
 
 	if len(jobIDs) == 0 {
 		cmd.Println("No open jobs found.")
+		printOutsideRepoHint(ctx, cmd, roots)
 		return nil
 	}
 
@@ -1364,6 +1367,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		if len(newIDs) == 0 {
 			if len(seen) == 0 && !opts.quiet {
 				cmd.Println("No open jobs found.")
+				printOutsideRepoHint(ctx, cmd, roots)
 			}
 			return nil
 		}
@@ -2265,7 +2269,7 @@ func hasJobForSHA(serverAddr, sha string) (bool, error) {
 }
 
 func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
-	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &sha, Limit: new(int64(1))}})
 	if err != nil {
 		return false, err
 	}
@@ -2288,7 +2292,7 @@ func hasJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, err
 }
 
 func verifyJobForSHAContext(ctx context.Context, serverAddr, sha string) (bool, error) {
-	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(1))}})
+	resp, err := newDaemonAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second)).ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue), GitRef: &sha, Limit: new(int64(1))}})
 	if err != nil {
 		return false, err
 	}

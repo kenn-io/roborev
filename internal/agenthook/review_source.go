@@ -12,7 +12,7 @@ type ReviewSource interface {
 	ResolveTrackedRepo(
 		ctx context.Context, path, branch string,
 	) (TrackedRepoResolution, bool)
-	ListOpenReviewJobs(
+	ListOpenFailedReviewJobs(
 		ctx context.Context, repoRoot, branch string,
 	) ([]storage.ReviewJob, bool)
 }

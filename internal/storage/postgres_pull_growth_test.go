@@ -1,0 +1,104 @@
+//go:build postgres
+
+package storage
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+	"uuid"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/growthtest"
+
+	"go.kenn.io/roborev/internal/config"
+)
+
+func TestIntegration_FirstPullGrowth(t *testing.T) { //nolint:paralleltest // measures wall time and shares the PostgreSQL schema
+	growthtest.Run(t, growthtest.Check{
+		Small: 1000, Large: 10000,
+		MaxRatio: 20,
+		Floor:    float64(100 * time.Millisecond),
+		Measure:  growthtest.Fastest(3),
+		Build: func(_ testing.TB, size int) (func(), func()) {
+			env := newIntegrationEnv(t)
+			seedPullHistory(t, env.Pool, size)
+			var db *DB
+			var worker *SyncWorker
+			t.Cleanup(func() {
+				if db != nil {
+					require.NoError(t, db.Close())
+				}
+			})
+			return func() {
+					_, err := worker.pullChangesWithStats(t.Context(), env.Pool)
+					require.NoError(t, err)
+				}, func() {
+					if db != nil {
+						require.NoError(t, db.Close())
+					}
+					db = openTestDB(t)
+					worker = NewSyncWorker(db, config.SyncConfig{})
+				}
+		},
+	})
+}
+
+// Count executed PostgreSQL work across every page of a first pull. This
+// isolates repeated cursor scans from the SQLite writes in the full pull.
+func TestIntegration_FirstPullQueryGrowth(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	var cost float64
+	growthtest.Run(t, growthtest.Check{
+		Small: 1000, Large: 10000,
+		MaxRatio: 20,
+		Floor:    1000,
+		Measure: func(run, _ func()) float64 {
+			run()
+			return cost
+		},
+		Build: func(_ testing.TB, size int) (func(), func()) {
+			pool := newIntegrationEnv(t).Pool
+			seedPullHistory(t, pool, size)
+			ctx := t.Context()
+			tx, probes := preparePullPlans(t, pool)
+			// Use fixture page boundaries to explain every first-pull page.
+			cursors := make([][]string, len(probes))
+			for i, probe := range probes {
+				cursors[i] = []string{"'1970-01-01T00:00:00Z', 0"}
+				rows, err := tx.Query(ctx, fmt.Sprintf("SELECT %s, id FROM %s ORDER BY %s, id", probe.column, probe.table, probe.column))
+				require.NoError(t, err)
+				count := 0
+				for rows.Next() {
+					var updated time.Time
+					var id int64
+					require.NoError(t, rows.Scan(&updated, &id))
+					count++
+					if count%100 == 0 && count < size {
+						cursors[i] = append(cursors[i], fmt.Sprintf("'%s', %d", updated.Format(time.RFC3339Nano), id))
+					}
+				}
+				rows.Close()
+				require.NoError(t, rows.Err())
+				require.Equal(t, size, count, probe.name)
+			}
+			machineID := uuid.New()
+			return func() {
+				defer func() { require.NoError(t, tx.Rollback(context.WithoutCancel(ctx))) }()
+				var totalWork float64
+				for i, probe := range probes {
+					var returned float64
+					for _, cursor := range cursors[i] {
+						raw := probe.explain(t, tx, machineID, cursor)
+						rows, work := pullPlanWork(t, raw)
+						require.InDelta(t, 100, rows, 0, probe.name)
+						returned += rows
+						totalWork += work
+					}
+					require.InDelta(t, size, returned, 0, probe.name)
+				}
+				cost = totalWork
+			}, nil
+		},
+	})
+}

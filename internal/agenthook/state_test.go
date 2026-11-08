@@ -34,7 +34,7 @@ func (f fakeReviewSource) ResolveTrackedRepo(
 	return f.resolve(ctx, path, branch)
 }
 
-func (f fakeReviewSource) ListOpenReviewJobs(
+func (f fakeReviewSource) ListOpenFailedReviewJobs(
 	ctx context.Context, repoRoot, branch string,
 ) ([]storage.ReviewJob, bool) {
 	if f.list == nil {
@@ -143,13 +143,82 @@ func TestStateStoreSessionsReturnsDeepSnapshot(t *testing.T) {
 	assert.Equal(t, 3, current.StopCountsSincePrompt["repo-a"])
 }
 
+func TestSaveSessionDropsIdleSessions(t *testing.T) {
+	assert := assert.New(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	store := &StateStore{
+		path: StatePath(),
+		now:  func() time.Time { return now },
+		sessions: map[string]SessionState{
+			"idle":    {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+			"recent":  {LastSeenAt: now.Add(-29 * 24 * time.Hour)},
+			"current": {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+			"queued": {
+				LastSeenAt:       now.Add(-90 * 24 * time.Hour),
+				PendingReminders: map[string]PendingReminder{"reminder": {TriggeredBy: "commit"}},
+			},
+		},
+	}
+
+	require.NoError(t, store.saveSessionLocked("current", store.sessions["current"]))
+
+	body, err := os.ReadFile(StatePath())
+	require.NoError(t, err)
+	var snapshot Snapshot
+	require.NoError(t, json.Unmarshal(body, &snapshot))
+	assert.NotContains(snapshot.Sessions, "idle")
+	assert.Contains(snapshot.Sessions, "recent")
+	assert.NotContains(snapshot.Sessions, "queued")
+	assert.Contains(snapshot.Sessions, "current")
+	assert.NotContains(store.sessions, "idle")
+	assert.NotContains(store.sessions, "queued")
+}
+
+func TestLoadStateDropsIdleSessions(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	now := time.Now().UTC()
+	snapshot := Snapshot{Sessions: map[string]SessionState{
+		"idle":   {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+		"recent": {Count: 3, LastSeenAt: now.Add(-29 * 24 * time.Hour)},
+	}}
+	body, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(StatePath()), 0o700))
+	require.NoError(t, os.WriteFile(StatePath(), body, 0o600))
+
+	store, err := LoadState(nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]SessionState{"recent": snapshot.Sessions["recent"]}, store.Sessions())
+}
+
+func TestSaveSessionPreservesIdleSessionsWhenReplaceFails(t *testing.T) {
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	store := &StateStore{
+		// Replacing a directory with the state file must fail.
+		path: t.TempDir(),
+		now:  func() time.Time { return now },
+		sessions: map[string]SessionState{
+			"idle":    {Count: 2, LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+			"current": {Count: 3, LastSeenAt: now.Add(-time.Hour)},
+		},
+	}
+	previous := store.Sessions()
+
+	err := store.saveSessionLocked("current", SessionState{Count: 4})
+
+	require.ErrorContains(t, err, "replace agent hook state")
+	assert.Equal(t, previous, store.Sessions())
+}
+
 func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	store := &StateStore{
 		path: StatePath(),
 		sessions: map[string]SessionState{
-			"session-1": {Count: 1},
-			"session-2": {Count: 2},
+			"session-1": {Count: 1, LastSeenAt: time.Now().UTC()},
+			"session-2": {Count: 2, LastSeenAt: time.Now().UTC()},
 		},
 		fixSessions: map[string]FixSession{
 			"worktree-1": {SessionID: "session-1"},
@@ -172,7 +241,7 @@ func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
 func TestStateStoreResetRollsBackWhenSaveFails(t *testing.T) {
 	store := &StateStore{
 		path:     t.TempDir(),
-		sessions: map[string]SessionState{"session-1": {Count: 2}},
+		sessions: map[string]SessionState{"session-1": {Count: 2, LastSeenAt: time.Now().UTC()}},
 	}
 
 	err := store.Reset("session-1", false)

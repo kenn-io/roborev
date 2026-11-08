@@ -340,8 +340,10 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 	completedExpr := sqliteNormalizedTimestampExpr("rv.created_at")
 	var conditions []string
 	args := make([]any, 0)
+	// Unary + keeps status and closed indexes from displacing the completion
+	// index, which supplies export order without sorting before LIMIT.
 	conditions = append(conditions,
-		"j.status = 'done'",
+		"+j.status = 'done'",
 		"COALESCE(j.job_type, 'review') IN ('review','range','dirty','synthesis')",
 		"COALESCE(j.panel_role, '') != 'member'",
 		exportReviewHasVerdictExpr,
@@ -355,7 +357,7 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 		args = append(args, opts.Until.UTC().Format(time.RFC3339))
 	}
 	if opts.ClosedOnly {
-		conditions = append(conditions, "rv.closed = 1")
+		conditions = append(conditions, "+rv.closed = 1")
 	}
 	if !opts.UpdatedSince.IsZero() {
 		conditions = append(conditions, sqliteNormalizedTimestampExpr(exportReviewUpdatedAtExpr)+" >= datetime(?)")

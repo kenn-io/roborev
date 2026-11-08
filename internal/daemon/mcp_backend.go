@@ -59,6 +59,7 @@ func (b mcpBackend) ListJobs(ctx context.Context, q mcpserver.JobsQuery) (mcpser
 		Branch:          q.Branch,
 		JobType:         q.JobType,
 		OmitPrompt:      "true",
+		OmitStats:       "true",
 		IncludeFindings: "true",
 		Limit:           limitNotProvided,
 		Offset:          -1,
@@ -176,7 +177,7 @@ func (b mcpBackend) Search(
 		return storage.SearchResponse{}, mcpserver.NewError(
 			mcpserver.ErrorCodeInternal, "review search failed")
 	}
-	response := searchResponseFromResult(result)
+	response := searchResponse(result, params)
 	if response.Hits == nil {
 		response.Hits = []storage.SearchHit{}
 	}

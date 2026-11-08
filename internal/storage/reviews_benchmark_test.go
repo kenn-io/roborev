@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,22 +15,10 @@ func BenchmarkRangeReviewCandidates(b *testing.B) {
 	b.Cleanup(func() { require.NoError(b, db.Close()) })
 	repo, err := db.GetOrCreateRepo(b.TempDir())
 	require.NoError(b, err)
-	_, err = db.ExecContext(b.Context(), `
-		WITH RECURSIVE sequence(n) AS (
-			SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 5000
-		)
-		INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, uuid)
-		SELECT ?, 'base..head', 'test', 'done', 'range',
-		       printf('00000000-0000-4000-8000-%012d', n)
-		FROM sequence`, repo.ID)
-	require.NoError(b, err)
+	seedRangeReviews(b.Context(), b, db, repo.ID, 5000, strings.Repeat("review\n", 2048))
 	_, err = db.ExecContext(b.Context(), `
 		INSERT INTO job_content (job_id, prompt) SELECT id, zstd_compress(?) FROM review_jobs`,
 		strings.Repeat("prompt\n", 2048))
-	require.NoError(b, err)
-	_, err = db.ExecContext(b.Context(), `
-		INSERT INTO reviews (job_id, agent, output, uuid)
-		SELECT id, agent, ?, uuid FROM review_jobs`, strings.Repeat("review\n", 2048))
 	require.NoError(b, err)
 
 	for b.Loop() {
@@ -37,4 +26,21 @@ func BenchmarkRangeReviewCandidates(b *testing.B) {
 		require.NoError(b, err)
 		require.Len(b, candidates, 5000)
 	}
+}
+
+func seedRangeReviews(ctx context.Context, b testing.TB, db *DB, repoID int64, count int, output string) {
+	b.Helper()
+	_, err := db.ExecContext(ctx, `
+		WITH RECURSIVE sequence(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
+		)
+		INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, uuid)
+		SELECT ?, 'base..head', 'test', 'done', 'range',
+		       printf('00000000-0000-4000-8000-%012d', n)
+		FROM sequence`, count, repoID)
+	require.NoError(b, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO reviews (job_id, agent, output, uuid)
+		SELECT id, agent, ?, uuid FROM review_jobs`, output)
+	require.NoError(b, err)
 }

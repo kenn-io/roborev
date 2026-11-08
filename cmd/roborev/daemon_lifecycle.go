@@ -314,6 +314,9 @@ func ensureDaemon() (err error) {
 		if exit, ok := errors.AsType[*exitError](err); ok && exit.hint != "" {
 			hint = exit.hint
 		}
+		if _, ok := errors.AsType[*managedRecoveryError](err); ok {
+			hint = ""
+		}
 		err = &exitError{code: 1, cause: err, kind: "daemon_unreachable", hint: hint}
 	}()
 	// An explicit endpoint is caller-managed. The command reports its request
@@ -373,8 +376,38 @@ func ensureDaemon() (err error) {
 	// an unpublished daemon by probing the shared default loopback port.
 	cleanupZombieDaemons(fallbackDaemonEndpoint())
 
+	runtimes, err := liveDaemonRuntimes()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	defer cancel()
+	for _, info := range runtimes {
+		outside := discoveredOutsideService(info.PID)
+		owner, err := snapshotDaemonService(ctx, info.PID, outside)
+		if err == nil && owner == nil {
+			continue
+		}
+		return recoverDaemonWithSnapshot(info, kitdaemon.ErrDaemonUnreachable, owner, err)
+	}
+
 	// Start daemon in background
 	return startDaemonForEnsure()
+}
+
+func liveDaemonRuntimes() ([]*daemon.RuntimeInfo, error) {
+	runtimes, err := listAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	var live []*daemon.RuntimeInfo
+	for _, info := range runtimes {
+		if info.Stale() {
+			continue
+		}
+		live = append(live, info)
+	}
+	return live, nil
 }
 
 func startDaemon() error {
@@ -560,10 +593,9 @@ func findDaemonForStart(ctx context.Context) (*daemon.RuntimeInfo, error) {
 	return info, err
 }
 
-// daemonStartupContenderExists reports whether a competing daemon is still
-// starting. Pre-v0.57 daemons do not use the database owner lock, so also
-// honor a live legacy runtime record from the data directory root. The legacy
-// endpoint is never probed here; it only identifies the recorded process.
+// daemonStartupContenderExists reports whether a competing daemon holds a
+// startup lock. Legacy daemons cannot publish current readiness, so their
+// runtime records must not prolong the wait after a replacement exits.
 func daemonStartupContenderExists() (bool, error) {
 	// Logging starts before database setup, so check it first. Probing the
 	// database lock while another daemon owns the log lock could temporarily
@@ -572,24 +604,7 @@ func daemonStartupContenderExists() (bool, error) {
 	if err != nil || owned {
 		return owned, err
 	}
-	owned, err = daemonDatabaseOwnerExists(storage.DefaultDBPath())
-	if err != nil || owned {
-		return owned, err
-	}
-	runtimes, err := listAllRuntimes()
-	if err != nil {
-		return false, err
-	}
-	dataDir := filepath.Clean(config.DataDir())
-	for _, info := range runtimes {
-		if info == nil || info.SourcePath == "" || filepath.Clean(filepath.Dir(info.SourcePath)) != dataDir {
-			continue
-		}
-		if !info.Stale() {
-			return true, nil
-		}
-	}
-	return false, nil
+	return daemonDatabaseOwnerExists(storage.DefaultDBPath())
 }
 
 func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
@@ -629,6 +644,10 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		// Propagate other errors (permission, IO, etc.)
 		return fmt.Errorf("failed to list daemon runtimes: %w", err)
 	}
+	return stopDaemonSnapshot(runtimes, drain, out)
+}
+
+func stopDaemonSnapshot(runtimes []*daemon.RuntimeInfo, drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
 	if len(runtimes) == 0 {
 		return ErrDaemonNotRunning
 	}
