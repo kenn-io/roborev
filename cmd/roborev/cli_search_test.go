@@ -38,14 +38,14 @@ func TestCLISearchDiscovery(t *testing.T) {
 	code, output, diagnostics := executeCLISearch("--help")
 	require.Equal(t, 0, code)
 	assert.Empty(diagnostics)
-	firstLine := strings.SplitN(output, "\n", 2)[0]
+	firstLine, _, _ := strings.Cut(output, "\n")
 	assert.Equal(`Agents: find the right command with: roborev cli search "<what you want to do>"`, firstLine)
 	_, invocation, found := strings.Cut(firstLine, "with: ")
 	require.True(t, found)
 	commands, err := advertisedCommands(invocation)
 	require.NoError(t, err)
 	require.Len(t, commands, 1)
-	assert.NoError(validateHelpInvocation(commands[0]))
+	require.NoError(t, validateHelpInvocation(commands[0]))
 	code, output, diagnostics = executeCLISearch("cli")
 	assert.Equal(0, code)
 	assert.Contains(output, "search")
@@ -135,8 +135,13 @@ func TestCLISearchUsageErrors(t *testing.T) {
 	assert := assert.New(t)
 	isolateCLIErrorGlobals(t)
 	for _, args := range [][]string{
-		{}, {" "}, {"review", "--limit", "0"}, {"review", "--limit", "21"},
-		{"review", "--limit", "-1"}, {"review", "--limit", "many"}, {"review", "--missing"},
+		{},
+		{" "},
+		{"review", "--limit", "0"},
+		{"review", "--limit", "21"},
+		{"review", "--limit", "-1"},
+		{"review", "--limit", "many"},
+		{"review", "--missing"},
 	} {
 		for _, jsonMode := range []bool{false, true} {
 			command := append([]string{"cli", "search"}, args...)
