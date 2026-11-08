@@ -83,9 +83,13 @@ func (wp *WorkerPool) finishReviewInvocation(ctx context.Context, report storage
 	report.Output = result.Output
 	report.StructuredOutput = result.StructuredOutput
 	var err error
-	report.Usage, err = tokens.ParseSchemaUsage(report.Agent, strings.NewReader(stream))
-	if err == nil && report.Usage == nil {
+	// Parse only known provider-event formats. Other streams can be assistant
+	// text, where an example event is not evidence of measured usage.
+	switch report.Agent {
+	case "codex":
 		report.Usage, err = tokens.ParseCodexUsageJSONL(strings.NewReader(stream))
+	case "claude-code", "pi":
+		report.Usage, err = tokens.ParseSchemaUsage(report.Agent, strings.NewReader(stream))
 	}
 	if err != nil {
 		report.UsageError = fmt.Sprintf("read invocation usage: %v", err)

@@ -281,21 +281,29 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 		cmd.Stderr = &stderr
 	}
 
-	if err := cmd.Run(); err != nil {
-		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
-			return "", ctxErr
-		}
-		return "", fmt.Errorf("copilot failed: %w\nstderr: %s", err, stderr.String())
-	}
-
+	runErr := cmd.Run()
 	result := stdout.String()
 	if supportsJSONOutput {
+		// Failed and canceled runs can still emit a session and partial response.
 		if sessionCapture, ok := output.(*SessionCaptureWriter); ok {
 			sessionCapture.capture([]byte(lineTerminated(result)))
 		}
+	}
+	if runErr != nil {
+		if supportsJSONOutput {
+			writeCopilotReviewOutput(output, result)
+		}
+		if ctxErr := contextProcessError(ctx, tracker, runErr, nil); ctxErr != nil {
+			return result, ctxErr
+		}
+		return result, fmt.Errorf("copilot failed: %w\nstderr: %s", runErr, stderr.String())
+	}
+
+	if supportsJSONOutput {
 		parsed, parseErr := parseCopilotJSON(strings.NewReader(result))
 		if parseErr != nil && !errors.Is(parseErr, errNoCopilotJSON) {
-			return "", parseErr
+			writeCopilotReviewOutput(output, result)
+			return result, parseErr
 		}
 		if parsed != "" {
 			writeCopilotReviewOutput(output, parsed)

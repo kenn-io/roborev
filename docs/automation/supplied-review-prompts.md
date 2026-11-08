@@ -133,9 +133,12 @@ without an automatic retry, and the record stays unfinished.
 adapter output stream when it ends, captured independently of the best-effort
 job log. Rendered review text is excluded, so quoted provider events cannot
 replace measured usage. A log-file failure cannot substitute an earlier
-attempt's usage. It is `null` when no usage was reported. Within a usage object,
-`has_cost: false` means cost is unknown, not free. These snapshots do not
-perform later AgentsView lookups or replace the job's existing cost
+attempt's usage. Codex, Claude and Pi expose provider events that can supply
+these measurements. Adapters that expose only assistant text, including Copilot,
+Muse and ACP, leave invocation usage unavailable even if their text quotes usage
+events. Usage is `null` when no measurements are available. Within a usage
+object, `has_cost: false` means cost is unknown, not free. These snapshots do
+not perform later AgentsView lookups or replace the job's existing cost
 reconciliation. A `usage_error` reports a failure reading that evidence.
 
 History covers calls made with this feature enabled, not earlier runs or

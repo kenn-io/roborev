@@ -35,7 +35,10 @@ func TestSuppliedReviewInvocationHistorySurvivesRetryAndRerun(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("file.txt", "target\n", "target")
 	calls := 0
-	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "invocation-primary", ReviewFn: func(_ context.Context, _, _, _ string, out io.Writer) (string, error) {
+	originalCodex, err := agent.Get("codex")
+	require.NoError(t, err)
+	t.Cleanup(func() { agent.Register(originalCodex) })
+	agent.Register(&agent.FakeAgent{NameStr: "codex", ReviewFn: func(_ context.Context, _, _, _ string, out io.Writer) (string, error) {
 		calls++
 		fmt.Fprintf(out, "{\"type\":\"thread.started\",\"thread_id\":\"attempt-%d\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":%d,\"output_tokens\":3}}\n", calls, calls*10)
 		if calls == 1 {
@@ -46,7 +49,7 @@ func TestSuppliedReviewInvocationHistorySurvivesRetryAndRerun(t *testing.T) {
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "invocation-backup", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 		return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 	}})
-	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: head, Agent: "invocation-primary", Model: "primary-model", ReviewPrompt: "Review the change.", ReviewSettings: &SuppliedReviewSettings{BackupAgent: "invocation-backup", BackupModel: "backup-model"}})
+	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: head, Agent: "codex", Model: "primary-model", ReviewPrompt: "Review the change.", ReviewSettings: &SuppliedReviewSettings{BackupAgent: "invocation-backup", BackupModel: "backup-model"}})
 	for range 3 {
 		claimed, err := db.ClaimJob(testWorkerID)
 		require.NoError(t, err)
@@ -218,22 +221,17 @@ func TestSuppliedReviewInvocationCapturesNativeAdapterFailures(t *testing.T) {
 		t.Skip("fixture uses a POSIX executable")
 	}
 	for _, tc := range []struct {
-		name   string
-		stream string
-		exit   string
-		want   string
+		name, command, stream, exit, want, session string
 	}{
-		{"codex", `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"incomplete review response"}}`, "0", "incomplete review response"},
-		{"claude-code", `{"type":"result","is_error":true,"result":"provider unavailable, partial review"}`, "1", "provider unavailable, partial review"},
+		{"codex", "codex", `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"incomplete review response"}}`, "0", "incomplete review response", ""},
+		{"claude-code", "claude", `{"type":"result","is_error":true,"result":"provider unavailable, partial review"}`, "1", "provider unavailable, partial review", ""},
+		{"copilot", "copilot", `{"type":"assistant.message","data":{"messageId":"msg-1","content":"Partial review before failure","toolRequests":[]}}` + "\n" +
+			`{"type":"result","exitCode":1,"sessionId":"failed-session"}`, "1", "Partial review before failure", "failed-session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testenv.SetDataDir(t)
-			script := "#!/bin/sh\nfor arg in \"$@\"; do if [ \"$arg\" = --help ]; then echo '--sandbox --effort'; exit 0; fi; done\ncat >/dev/null\ncat <<'OUTPUT'\n" + tc.stream + "\nOUTPUT\nexit " + tc.exit + "\n"
-			command := "codex"
-			if tc.name == "claude-code" {
-				command = "claude"
-			}
-			t.Cleanup(testutil.MockBinaryInPath(t, command, script))
+			script := "#!/bin/sh\nfor arg in \"$@\"; do if [ \"$arg\" = --help ]; then echo '--sandbox --effort --output-format'; exit 0; fi; done\ncat >/dev/null\ncat <<'OUTPUT'\n" + tc.stream + "\nOUTPUT\nexit " + tc.exit + "\n"
+			t.Cleanup(testutil.MockBinaryInPath(t, tc.command, script))
 			server, db, _ := newTestServer(t)
 			repo := testutil.NewGitRepo(t)
 			head := repo.CommitFile("file.txt", "target\n", "target")
@@ -247,6 +245,7 @@ func TestSuppliedReviewInvocationCapturesNativeAdapterFailures(t *testing.T) {
 			require.Len(t, reports, 1)
 			assert.Equal(t, "failed", reports[0].Status)
 			assert.Contains(t, reports[0].RawOutput, tc.want)
+			assert.Equal(t, tc.session, reports[0].SessionID)
 			assert.NotEmpty(t, reports[0].Error)
 		})
 	}
@@ -269,7 +268,10 @@ func TestSuppliedReviewInvocationUsageDoesNotDependOnJobLog(t *testing.T) {
 			head := repo.CommitFile("file.txt", "target\n", "target")
 			calls := 0
 			var logPath string
-			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "invocation-log-failure", ReviewFn: func(_ context.Context, _, _, _ string, out io.Writer) (string, error) {
+			originalCodex, err := agent.Get("codex")
+			require.NoError(t, err)
+			t.Cleanup(func() { agent.Register(originalCodex) })
+			agent.Register(&agent.FakeAgent{NameStr: "codex", ReviewFn: func(_ context.Context, _, _, _ string, out io.Writer) (string, error) {
 				calls++
 				fmt.Fprintf(out, "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":%d,\"output_tokens\":3}}\n", calls*10)
 				if calls == 1 {
@@ -280,7 +282,7 @@ func TestSuppliedReviewInvocationUsageDoesNotDependOnJobLog(t *testing.T) {
 				}
 				return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 			}})
-			job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: head, Agent: "invocation-log-failure", ReviewPrompt: "Review this.", ReviewSettings: &SuppliedReviewSettings{}})
+			job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: head, Agent: "codex", ReviewPrompt: "Review this.", ReviewSettings: &SuppliedReviewSettings{}})
 			logPath = JobLogPath(job.ID)
 			for attempt := range 2 {
 				claimed, err := db.ClaimJob(testWorkerID)
@@ -318,6 +320,9 @@ func TestSuppliedReviewInvocationKeepsAdapterEvidence(t *testing.T) {
 	document := string(testutil.ReviewFixtureJSON(quoted))
 	encoded, err := json.Marshal(document)
 	require.NoError(t, err)
+	narration := quoted + "\n" + document
+	encodedNarration, err := json.Marshal(narration)
+	require.NoError(t, err)
 	for _, tc := range []struct {
 		name, command, stream string
 		streamUsage           bool
@@ -326,8 +331,9 @@ func TestSuppliedReviewInvocationKeepsAdapterEvidence(t *testing.T) {
 			`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":` + string(encoded) + `}}` + "\n" +
 			`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":3}}`, true},
 		{"claude-code", "claude", `{"type":"result","session_id":"invocation-session","result":` + string(encoded) + `,"usage":{"input_tokens":10,"output_tokens":3}}`, true},
-		{"copilot", "copilot", `{"type":"assistant.message","data":{"messageId":"msg-1","content":` + string(encoded) + `,"toolRequests":[]}}` + "\n" +
+		{"copilot", "copilot", `{"type":"assistant.message","data":{"messageId":"msg-1","content":` + string(encodedNarration) + `,"toolRequests":[]}}` + "\n" +
 			`{"type":"result","exitCode":0,"sessionId":"invocation-session"}`, false},
+		{"muse", "muse", narration, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testenv.SetDataDir(t)
@@ -349,12 +355,14 @@ func TestSuppliedReviewInvocationKeepsAdapterEvidence(t *testing.T) {
 			stored, err := db.GetJobByID(job.ID)
 			require.NoError(t, err)
 			require.Equal(t, storage.JobStatusDone, stored.Status, stored.Error)
-			assert.Equal(t, "invocation-session", stored.SessionID)
-			assert.Contains(t, usageSessions, "invocation-session")
+			if tc.name != "muse" {
+				assert.Equal(t, "invocation-session", stored.SessionID)
+				assert.Contains(t, usageSessions, "invocation-session")
+			}
 			reports, err := db.ListReviewInvocations(t.Context(), job.ID)
 			require.NoError(t, err)
 			require.Len(t, reports, 1)
-			assert.Equal(t, "invocation-session", reports[0].SessionID)
+			assert.Equal(t, stored.SessionID, reports[0].SessionID)
 			assert.Contains(t, reports[0].Output, quoted)
 			if tc.streamUsage {
 				require.NotNil(t, reports[0].Usage)
