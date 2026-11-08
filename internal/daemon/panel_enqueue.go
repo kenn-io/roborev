@@ -289,8 +289,10 @@ func (s *Server) descriptorForRange(
 	}
 
 	fullRef := startSHA + ".." + endSHA
-	if skip := s.rangeExclusionSkip(in.repoRoot, in.metadata, fullRef); skip != nil {
-		return targetDescriptor{}, skip
+	if in.req.ReviewSettings == nil {
+		if skip := s.rangeExclusionSkip(in.repoRoot, in.metadata, fullRef); skip != nil {
+			return targetDescriptor{}, skip
+		}
 	}
 
 	return targetDescriptor{
@@ -354,7 +356,7 @@ func (s *Server) descriptorForSingleCommit(
 	}
 
 	fullMessage := info.Subject + "\n" + info.Body
-	if config.IsCommitMessageExcluded(in.repoRoot, fullMessage) {
+	if in.req.ReviewSettings == nil && config.IsCommitMessageExcluded(in.repoRoot, fullMessage) {
 		out, _ := rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
 			Skipped: true,
 			Reason:  "commit message matches an excluded pattern",

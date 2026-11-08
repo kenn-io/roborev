@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 
@@ -33,7 +34,17 @@ func reviewJobSettings(job *storage.ReviewJob, configRepoPath string, cfg *confi
 		return settings, nil
 	}
 	if job.PanelMemberConfigJSON != "" {
-		if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &settings); err != nil {
+		if hasSuppliedReviewSettings(job) {
+			var snapshot suppliedReviewSnapshot
+			if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &snapshot); err != nil {
+				return settings, fmt.Errorf("decode supplied review settings: %w", err)
+			}
+			settings = config.ReviewSettings{
+				Tools:           snapshot.Tools,
+				BinaryEvidence:  snapshot.BinaryEvidence,
+				ExcludePatterns: snapshot.ExcludePatterns,
+			}
+		} else if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &settings); err != nil {
 			return settings, fmt.Errorf("decode frozen review settings: %w", err)
 		}
 		var err error
@@ -83,4 +94,11 @@ func validateMemberTools(members []config.ResolvedMember, repoCfg *config.RepoCo
 		}
 	}
 	return nil
+}
+
+func reviewJobExcludes(ctx context.Context, job *storage.ReviewJob, settings config.ReviewSettings, configRepoPath string, cfg *config.Config) []string {
+	if hasSuppliedReviewSettings(job) {
+		return settings.ExcludePatterns
+	}
+	return config.ResolveExcludePatterns(ctx, configRepoPath, cfg, job.ReviewType)
 }

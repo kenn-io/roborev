@@ -18,7 +18,15 @@ func (b *Builder) Prepare(text string, target SnapshotTarget) (SnapshotResult, e
 	if configRepo == "" {
 		configRepo = b.resolvedConfigRepoPath()
 	}
-	if len(text) <= config.ResolveMaxPromptSize(configRepo, b.globalCfg) {
+	threshold := config.DefaultMaxPromptSize
+	if target.IgnoreRepoConfig {
+		if b.globalCfg != nil && b.globalCfg.DefaultMaxPromptSize > 0 {
+			threshold = b.globalCfg.DefaultMaxPromptSize
+		}
+	} else {
+		threshold = config.ResolveMaxPromptSize(configRepo, b.globalCfg)
+	}
+	if len(text) <= threshold {
 		return SnapshotResult{Prompt: text}, nil
 	}
 	repo, root, err := b.resolveSnapshotTarget(target)

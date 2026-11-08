@@ -42,11 +42,63 @@ backup agent. Submit a new request with the intended prompt to recover.
 
 ## Execution settings
 
-These requests still use normal execution configuration, agent permissions,
-retries, and backup agents. Repository configuration comes from the caller's
-worktree while it exists, or the main checkout otherwise. It can control file
-exclusions, binary evidence, and tool mode. A request without `min_severity`
-uses the configured `review_min_severity` to decide which findings fail the
-review. Supplying a prompt does not freeze this configuration source or its
-settings, or isolate the agent from repository files. Use this mode only with
-execution settings you trust.
+Without `review_settings`, these requests use normal execution configuration.
+Repository configuration comes from the caller's worktree while it exists, or
+the main checkout otherwise. It can control exclusions, binary evidence, and
+tool mode. Omitting `min_severity` uses the configured `review_min_severity`.
+
+To supply policy independently of the checkout, include `review_settings`:
+
+```json
+{
+  "repo_path": "/path/to/repository",
+  "git_ref": "base-sha..head-sha",
+  "agent": "codex",
+  "model": "your-model",
+  "reasoning": "high",
+  "min_severity": "medium",
+  "review_prompt": "Review this range for data loss. Inspect the diff with git.",
+  "review_settings": {
+    "tools": { "mode": "read-only", "mcp": {} },
+    "binary_evidence": true,
+    "exclude_patterns": [],
+    "backup_agent": "claude-code",
+    "backup_model": "your-backup-model"
+  }
+}
+```
+
+Replace the model names with models available to your agents. Go callers use
+`generated.EnqueueRequest.ReviewSettings`. The object requires `review_prompt`
+and has these semantics:
+
+| Field | Behavior when omitted or empty |
+| --- | --- |
+| `tools` | Uses the selected adapter's ordinary non-agentic review tools. To require restricted tools, supply `{"mode":"read-only","mcp":{}}`. Both agents must support the policy. |
+| `binary_evidence` | Does not add committed binary files to the prompt. |
+| `exclude_patterns` | Does not exclude any files from daemon-prepared diff or binary evidence. The daemon does not filter text the caller already included in the prompt. |
+| `backup_agent` | Does not use a backup, even if one is configured locally. |
+| `backup_model` | Lets the supplied backup use its default model. Requires `backup_agent` when nonempty. |
+
+An empty `review_settings: {}` is meaningful: it opts out of repository policy
+with all the defaults above. It does not inherit local exclusions or review-type
+tool settings. `min_severity` comes only from the request; omitting it retains
+all findings. Agent, model, and reasoning defaults resolve from the daemon's
+configuration at enqueue time. The resolved choices and supplied settings remain
+with the job through retries, sync, and reruns. Rerunning after backup failover
+restores the original choice. To change the agent or policy, enqueue a new job.
+Automatic budget routing does not substitute another agent for these jobs.
+
+Repository configuration cannot suppress these requests through branch or commit
+exclusions. A malformed `.roborev.toml` does not block enqueue or rerun.
+Daemon-created snapshots use `.roborev` in the detached checkout. Include prior
+reviews and discussion in `review_prompt`; the dynamic prior-review placeholder
+is rejected because it would add mutable inputs on each attempt.
+
+The daemon still owns executable configuration, credentials, MCP allowlists,
+agent permissions, timeouts, cooldowns, automatic closure of passing reviews,
+and within-job retries. The host's prompt size threshold chooses inline text or
+a complete prompt file without dropping content. Supplied settings do not
+sandbox an agent or prevent it from reading repository files or its own native
+configuration. Use an execution environment appropriate for the repositories you
+review.

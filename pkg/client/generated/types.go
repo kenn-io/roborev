@@ -1317,36 +1317,51 @@ func (e EnqueueCreatedResponse) Validate() error {
 
 type EnqueueRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema            *string  `json:"$schema,omitempty"`
-	Agent             *string  `json:"agent,omitempty"`
-	Agentic           *bool    `json:"agentic,omitempty"`
-	AnalysisCommitSha *string  `json:"analysis_commit_sha,omitempty"`
-	AnalysisFiles     []string `json:"analysis_files,omitempty"`
-	AnalysisType      *string  `json:"analysis_type,omitempty"`
-	Branch            *string  `json:"branch,omitempty"`
-	CommitSha         *string  `json:"commit_sha,omitempty"`
-	CustomPrompt      *string  `json:"custom_prompt,omitempty"`
-	DiffContent       *string  `json:"diff_content,omitempty"`
-	DirtyFiles        []string `json:"dirty_files,omitempty"`
-	GitRef            *string  `json:"git_ref,omitempty"`
-	JobType           *string  `json:"job_type,omitempty"`
-	MinSeverity       *string  `json:"min_severity,omitempty"`
-	Model             *string  `json:"model,omitempty"`
-	OutputPrefix      *string  `json:"output_prefix,omitempty"`
-	Panel             *string  `json:"panel,omitempty"`
-	PlanFile          *string  `json:"plan_file,omitempty"`
-	Provider          *string  `json:"provider,omitempty"`
-	Reasoning         *string  `json:"reasoning,omitempty"`
-	RepoPath          string   `json:"repo_path" validate:"required"`
-	ReviewPrompt      *string  `json:"review_prompt,omitempty"`
-	ReviewType        *string  `json:"review_type,omitempty"`
-	Since             *string  `json:"since,omitempty"`
-	Source            *string  `json:"source,omitempty"`
-	SpecFile          *string  `json:"spec_file,omitempty"`
+	Schema            *string                 `json:"$schema,omitempty"`
+	Agent             *string                 `json:"agent,omitempty"`
+	Agentic           *bool                   `json:"agentic,omitempty"`
+	AnalysisCommitSha *string                 `json:"analysis_commit_sha,omitempty"`
+	AnalysisFiles     []string                `json:"analysis_files,omitempty"`
+	AnalysisType      *string                 `json:"analysis_type,omitempty"`
+	Branch            *string                 `json:"branch,omitempty"`
+	CommitSha         *string                 `json:"commit_sha,omitempty"`
+	CustomPrompt      *string                 `json:"custom_prompt,omitempty"`
+	DiffContent       *string                 `json:"diff_content,omitempty"`
+	DirtyFiles        []string                `json:"dirty_files,omitempty"`
+	GitRef            *string                 `json:"git_ref,omitempty"`
+	JobType           *string                 `json:"job_type,omitempty"`
+	MinSeverity       *string                 `json:"min_severity,omitempty"`
+	Model             *string                 `json:"model,omitempty"`
+	OutputPrefix      *string                 `json:"output_prefix,omitempty"`
+	Panel             *string                 `json:"panel,omitempty"`
+	PlanFile          *string                 `json:"plan_file,omitempty"`
+	Provider          *string                 `json:"provider,omitempty"`
+	Reasoning         *string                 `json:"reasoning,omitempty"`
+	RepoPath          string                  `json:"repo_path" validate:"required"`
+	ReviewPrompt      *string                 `json:"review_prompt,omitempty"`
+	ReviewSettings    *SuppliedReviewSettings `json:"review_settings,omitempty"`
+	ReviewType        *string                 `json:"review_type,omitempty"`
+	Since             *string                 `json:"since,omitempty"`
+	Source            *string                 `json:"source,omitempty"`
+	SpecFile          *string                 `json:"spec_file,omitempty"`
 }
 
 func (e EnqueueRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.RepoPath, "required"); err != nil {
+		errors = errors.Append("RepoPath", err)
+	}
+	if e.ReviewSettings != nil {
+		if v, ok := any(e.ReviewSettings).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReviewSettings", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type EnqueueSkippedResponse struct {
@@ -3835,6 +3850,15 @@ func (r ReviewProjectionReview) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
+type ReviewToolPolicy struct {
+	Mcp  map[string][]string `json:"mcp"`
+	Mode string              `json:"mode" validate:"required"`
+}
+
+func (r ReviewToolPolicy) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type ScanTokenUsageInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -4266,6 +4290,29 @@ func (s Summary) Validate() error {
 	if v, ok := any(s.Verdicts).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Verdicts", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SuppliedReviewSettings struct {
+	BackupAgent     *string           `json:"backup_agent,omitempty"`
+	BackupModel     *string           `json:"backup_model,omitempty"`
+	BinaryEvidence  *bool             `json:"binary_evidence,omitempty"`
+	ExcludePatterns []string          `json:"exclude_patterns,omitempty"`
+	Tools           *ReviewToolPolicy `json:"tools,omitempty"`
+}
+
+func (s SuppliedReviewSettings) Validate() error {
+	var errors runtime.ValidationErrors
+	if s.Tools != nil {
+		if v, ok := any(s.Tools).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Tools", err)
+			}
 		}
 	}
 	if len(errors) == 0 {

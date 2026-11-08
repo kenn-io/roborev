@@ -1019,7 +1019,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if job.IsGoalReviewJob() {
 		configRoot = GoalReviewConfigRepoPath(job)
 	}
-	timeoutMinutes := config.ResolveJobTimeout(configRoot, cfg)
+	var timeoutMinutes int
+	if hasSuppliedReviewSettings(job) {
+		timeoutMinutes = config.ResolveJobTimeoutFromConfig(nil, cfg)
+	} else {
+		timeoutMinutes = config.ResolveJobTimeout(configRoot, cfg)
+	}
 	jobTimeoutDuration := resolveJobTimeoutDuration(job, timeoutMinutes)
 	timeoutDuration := jobTimeoutDuration
 	var planningTimeout time.Duration
@@ -1196,6 +1201,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job.ResumeSourceJobUUID = nil
 	}
 	checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
+	checkout.snapshotTarget.IgnoreRepoConfig = hasSuppliedReviewSettings(job)
 	// Settings frozen at enqueue time decide this review's tools and evidence.
 	settings, err := reviewJobSettings(job, checkout.resolvedConfigRepoPath(), cfg)
 	if err != nil {
@@ -1206,8 +1212,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
 	// repository review configuration that it no longer needs.
 	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg).WithBinaryEvidence(settings.BinaryEvidence)
-	if err := cleanupStaleSnapshotsForJob(pb, checkout, job.RepoID); err != nil {
-		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
+	if !hasSuppliedReviewSettings(job) {
+		if err := cleanupStaleSnapshotsForJob(pb, checkout, job.RepoID); err != nil {
+			log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
+		}
 	}
 	var reviewPrompt string
 	var fileCoverage *storage.ReviewFileCoverage
@@ -1237,7 +1245,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		promptToPersist = storedPromptValue
 		// CI jobs store their threshold at enqueue. A supplied prompt replaces
 		// only the prompt, so its threshold resolves like an ordinary review's.
-		if job.Source == storage.JobSourceReviewPrompt && effectiveMinSeverity == "" {
+		if job.Source == storage.JobSourceReviewPrompt && !hasSuppliedReviewSettings(job) && effectiveMinSeverity == "" {
 			resolved, resErr := config.ResolveReviewMinSeverity("", checkout.resolvedConfigRepoPath(), cfg)
 			if resErr != nil {
 				log.Printf("[%s] Error resolving min-severity: %v", workerID, resErr)
@@ -1247,9 +1255,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			effectiveMinSeverity = resolved
 		}
 		var cleanup func()
-		excludes := config.ResolveExcludePatterns(
-			ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
-		)
+		excludes := reviewJobExcludes(ctx, job, settings, checkout.resolvedConfigRepoPath(), cfg)
 		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
 			ctx, checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes,
 		)
@@ -1336,7 +1342,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Each attempt writes fresh committed binary evidence into the agent's
 	// checkout; it is removed when the attempt ends.
 	if !job.IsDirtyJob() && !job.UsesStoredPrompt() && job.Source != storage.JobSourceRebuttal {
-		excludes := config.ResolveExcludePatterns(ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType)
+		excludes := reviewJobExcludes(ctx, job, settings, checkout.resolvedConfigRepoPath(), cfg)
 		var cleanup func()
 		reviewPrompt, cleanup, err = pb.AppendBinaryEvidence(reviewPrompt, job.GitRef, excludes, checkout.snapshotTarget)
 		if cleanup != nil {
@@ -1544,11 +1550,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			return
 		}
 	}
-	priorResult, priorErr := pb.PreparePriorRangeReviewsSnapshot(
-		reviewPrompt, job.GitRef, contextCount, prompt.SnapshotTarget{
-			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.resolvedConfigRepoPath(),
-		},
-	)
+	snapshotTarget := checkout.snapshotTarget
+	snapshotTarget.RepoPath = reviewRepoPath
+	priorResult, priorErr := pb.PreparePriorRangeReviewsSnapshot(reviewPrompt, job.GitRef, contextCount, snapshotTarget)
 	if priorErr != nil {
 		wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prior reviews: %v", priorErr))
 		return
@@ -1602,9 +1606,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}, err != nil)
 	}
 	if err == nil {
-		preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, prompt.SnapshotTarget{
-			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.resolvedConfigRepoPath(),
-		})
+		preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, snapshotTarget)
 		if prepareErr != nil {
 			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare prompt: %v", prepareErr))
 			return
@@ -1920,7 +1922,11 @@ func (wp *WorkerPool) autoClosePassingReview(
 		return
 	}
 	cfg := wp.cfgGetter.Config()
-	if !config.ResolveAutoClosePassingReviews(job.RepoPath, cfg) {
+	autoClose := cfg.AutoClosePassingReviews
+	if !hasSuppliedReviewSettings(job) {
+		autoClose = config.ResolveAutoClosePassingReviews(job.RepoPath, cfg)
+	}
+	if !autoClose {
 		return
 	}
 	if err := wp.db.MarkReviewClosedByJobID(job.ID, true); err != nil {
@@ -2245,7 +2251,7 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	// value if the name is unknown so the override is never silently dropped.
 	// Note: agent.Get resolves from the registry, not PATH, so this does not
 	// require local installation.
-	if job.FrozenExperimentPlan != nil && job.BackupAgent == "" {
+	if (job.FrozenExperimentPlan != nil || hasSuppliedReviewSettings(job)) && job.BackupAgent == "" {
 		return ""
 	}
 	if job.BackupAgent != "" {
@@ -2294,7 +2300,7 @@ func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 	// Stored backup agent present => use the stored model, even if empty. Never
 	// fall through to the workflow backup model, which is resolved for a
 	// different agent (the user's F7 guardrail).
-	if job.FrozenExperimentPlan != nil {
+	if job.FrozenExperimentPlan != nil || hasSuppliedReviewSettings(job) {
 		return job.BackupModel
 	}
 	if job.BackupAgent != "" {

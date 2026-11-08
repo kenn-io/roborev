@@ -272,8 +272,9 @@ type SnapshotResult struct {
 // snapshot_dir config. Set RepoPath to write under a different checkout, and
 // ConfigRepoPath to resolve snapshot_dir from a trusted checkout.
 type SnapshotTarget struct {
-	RepoPath       string
-	ConfigRepoPath string
+	IgnoreRepoConfig bool // Use the default snapshot directory and host prompt threshold.
+	RepoPath         string
+	ConfigRepoPath   string
 }
 
 // BuildWithSnapshot builds a review prompt with optional prior-review documents
@@ -383,6 +384,9 @@ func (b *Builder) resolveSnapshotTarget(target SnapshotTarget) (string, string, 
 	configRepoPath := target.ConfigRepoPath
 	if configRepoPath == "" {
 		configRepoPath = b.resolvedConfigRepoPath()
+	}
+	if target.IgnoreRepoConfig {
+		return repoPath, filepath.Join(repoPath, config.DefaultSnapshotDir), nil
 	}
 	configuredRoot, err := config.ResolveSnapshotDir(configRepoPath)
 	if err != nil {
