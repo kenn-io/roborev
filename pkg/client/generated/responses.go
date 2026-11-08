@@ -194,6 +194,10 @@ type CreateFixJobErrorResponseJSON500 = ErrorResponse
 
 type CreateFixJobErrorResponseJSON503 = ErrorResponse
 
+type GetJobInvocationsResponse = JobInvocationsOutputBody
+
+type GetJobInvocationsErrorResponse = ErrorModel
+
 type GetJobLogErrorResponse = ErrorModel
 
 type GetJobOutputErrorResponse = ErrorModel
@@ -611,6 +615,14 @@ type CreateFixJobResp struct {
 	JSON404      *CreateFixJobErrorResponseJSON
 	JSON500      *CreateFixJobErrorResponseJSON500
 	JSON503      *CreateFixJobErrorResponseJSON503
+}
+
+type GetJobInvocationsResp struct {
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetJobInvocationsResponse
+	ApplicationProblemPlusJSONDefault *GetJobInvocationsErrorResponse
 }
 
 type GetJobLogResp struct {
@@ -1337,6 +1349,21 @@ func (c *RawClient) CreateFixJobRaw(ctx context.Context, options *CreateFixJobRe
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) GetJobInvocationsRaw(ctx context.Context, options *GetJobInvocationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &GetJobInvocationsRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/job/invocations",
+		Method:     "GET",
+		Options:    options,
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

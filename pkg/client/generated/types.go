@@ -2451,6 +2451,30 @@ type JobIDRequest struct {
 	JobID  int64   `json:"job_id"`
 }
 
+type JobInvocationsOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string            `json:"$schema,omitempty"`
+	Invocations []ReviewInvocation `json:"invocations" validate:"required"`
+}
+
+func (j JobInvocationsOutputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(j.Invocations, "required"); err != nil {
+		errors = errors.Append("Invocations", err)
+	}
+	for i, item := range j.Invocations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Invocations[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type JobStats struct {
 	Canceled  int64  `json:"canceled"`
 	Closed    int64  `json:"closed"`
@@ -3569,6 +3593,82 @@ type ReviewFileCoverage struct {
 
 type ReviewIDSetValue = map[string]any
 
+type ReviewInvocation struct {
+	Agent            string     `json:"agent" validate:"required"`
+	EnqueuedAt       time.Time  `json:"enqueued_at" validate:"required"`
+	ErrorData        string     `json:"error" validate:"required"`
+	FinishedAt       *time.Time `json:"finished_at" validate:"required"`
+	GitRef           string     `json:"git_ref" validate:"required"`
+	ID               int64      `json:"id"`
+	JobID            int64      `json:"job_id"`
+	Model            string     `json:"model" validate:"required"`
+	Output           string     `json:"output" validate:"required"`
+	Provider         string     `json:"provider" validate:"required"`
+	RawOutput        string     `json:"raw_output" validate:"required"`
+	Reasoning        string     `json:"reasoning" validate:"required"`
+	RetryCount       int64      `json:"retry_count"`
+	SessionID        string     `json:"session_id" validate:"required"`
+	StartedAt        time.Time  `json:"started_at" validate:"required"`
+	Status           string     `json:"status" validate:"required"`
+	StructuredOutput *struct{}  `json:"structured_output,omitempty"`
+	Usage            Usage      `json:"usage"`
+	UsageError       *string    `json:"usage_error,omitempty"`
+}
+
+func (r ReviewInvocation) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.Agent, "required"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if err := typesValidator.Var(r.EnqueuedAt, "required"); err != nil {
+		errors = errors.Append("EnqueuedAt", err)
+	}
+	if err := typesValidator.Var(r.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if r.FinishedAt != nil {
+		if err := typesValidator.Var(r.FinishedAt, "required"); err != nil {
+			errors = errors.Append("FinishedAt", err)
+		}
+	}
+	if err := typesValidator.Var(r.GitRef, "required"); err != nil {
+		errors = errors.Append("GitRef", err)
+	}
+	if err := typesValidator.Var(r.Model, "required"); err != nil {
+		errors = errors.Append("Model", err)
+	}
+	if err := typesValidator.Var(r.Output, "required"); err != nil {
+		errors = errors.Append("Output", err)
+	}
+	if err := typesValidator.Var(r.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if err := typesValidator.Var(r.RawOutput, "required"); err != nil {
+		errors = errors.Append("RawOutput", err)
+	}
+	if err := typesValidator.Var(r.Reasoning, "required"); err != nil {
+		errors = errors.Append("Reasoning", err)
+	}
+	if err := typesValidator.Var(r.SessionID, "required"); err != nil {
+		errors = errors.Append("SessionID", err)
+	}
+	if err := typesValidator.Var(r.StartedAt, "required"); err != nil {
+		errors = errors.Append("StartedAt", err)
+	}
+	if err := typesValidator.Var(r.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if v, ok := any(r.Usage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Usage", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ReviewJob struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema                *string                `json:"$schema,omitempty"`
@@ -4480,6 +4580,21 @@ type UpdateLeaseRequestBody struct {
 
 func (u UpdateLeaseRequestBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type Usage struct {
+	CacheCreationTokens      *int64   `json:"cache_creation_tokens,omitempty"`
+	CachedInputTokens        *int64   `json:"cached_input_tokens,omitempty"`
+	CostUsd                  float64  `json:"cost_usd"`
+	EventOffset              *int64   `json:"event_offset,omitempty"`
+	ExpectedProviderSessions *int64   `json:"expected_provider_sessions,omitempty"`
+	HasCost                  *bool    `json:"has_cost,omitempty"`
+	InputTokens              *int64   `json:"input_tokens,omitempty"`
+	PeakContextTokens        *int64   `json:"peak_context_tokens,omitempty"`
+	ProviderSessionIds       []string `json:"provider_session_ids,omitempty"`
+	ThreadID                 *string  `json:"thread_id,omitempty"`
+	TotalOutputTokens        *int64   `json:"total_output_tokens,omitempty"`
+	UsageSource              *string  `json:"usage_source,omitempty"`
 }
 
 type VerdictStats struct {

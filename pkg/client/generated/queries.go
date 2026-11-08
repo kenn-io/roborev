@@ -138,6 +138,15 @@ type ExportReviewsQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 }
 
+type GetJobInvocationsQuery struct {
+	// JobID Local review job ID
+	JobID int64 `json:"job_id" validate:"gte=1"`
+}
+
+func (g GetJobInvocationsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GetJobLogQuery struct {
 	// Raw Return the complete raw log, including orphaned logs
 	Raw *bool `json:"raw,omitempty"`

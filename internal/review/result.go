@@ -15,6 +15,8 @@ import (
 // ReviewResult holds the outcome of a single review in a batch.
 // Decoupled from storage.BatchReviewResult for daemon-free use.
 type ReviewResult struct {
+	// RawOutput preserves the adapter response, including malformed or partial output.
+	RawOutput  string
 	Agent      string
 	ReviewType string
 	Output     string

@@ -48,6 +48,7 @@ var schemaMigrations = []schemaMigration{
 	{12, "queue list position indexes", migrateQueueListPositionIndexes},
 	{13, "queue stats closed state", migrateQueueStatsClosedState},
 	{14, "sync pending indexes", migrateSyncPendingIndexes},
+	{15, "local review invocation reports", migrateReviewInvocations},
 }
 
 func migrateSyncPendingIndexes(ctx context.Context, db *DB) error {

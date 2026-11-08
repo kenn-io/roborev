@@ -44,23 +44,23 @@ func RunAgentReview(
 		ctx, a, repoPath, gitRef, reviewPrompt, CustomReviewSchema, out,
 	)
 	if err != nil {
-		return ReviewResult{}, err
+		return ReviewResult{RawOutput: raw}, err
 	}
 	document, err := agentReviewJSON(raw)
 	if err != nil {
-		return ReviewResult{}, err
+		return ReviewResult{RawOutput: raw}, err
 	}
 	structured, err := DecodeStructuredReview(document)
 	if err != nil {
-		return ReviewResult{}, err
+		return ReviewResult{RawOutput: raw}, err
 	}
 	if err := validateLiveDocument(a.Name(), structured); err != nil {
-		return ReviewResult{}, err
+		return ReviewResult{RawOutput: raw}, err
 	}
 	settleFindings(ctx, repoPath, gitRef, &structured)
 	document, err = json.Marshal(structured)
 	if err != nil {
-		return ReviewResult{}, fmt.Errorf("encode structured review: %w", err)
+		return ReviewResult{RawOutput: raw}, fmt.Errorf("encode structured review: %w", err)
 	}
 	output := structured.Markdown(minSeverity)
 	if out != nil {
@@ -68,6 +68,7 @@ func RunAgentReview(
 	}
 	return ReviewResult{
 		Output:           output,
+		RawOutput:        raw,
 		Verdict:          storage.VerdictFromPassed(structured.Passed(minSeverity)),
 		Structured:       &structured,
 		StructuredOutput: jsontext.Value(document),
