@@ -12,6 +12,7 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
+	"github.com/rivo/uniseg"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
@@ -360,21 +361,35 @@ func wrapText(text string, width int) []string {
 			runes := []rune(line)
 			breakPoint := 0
 			currentWidth := 0
+			firstGlyph := 0
 
-			// Walk runes up to the width limit
-			for i, r := range runes {
-				rw := runewidth.RuneWidth(r)
-				if currentWidth+rw > width {
+			// Walk glyphs up to the width limit. A glyph is what a terminal
+			// draws as one character and may be several runes: a flag, an
+			// emoji carrying a skin tone, a family joined by zero-width
+			// joiners. The loop above asks StringWidth, which counts a family
+			// as the two columns it occupies; adding its runes up gives eight,
+			// and a break between them tears the glyph apart.
+			rest := line
+			state := -1
+			for len(rest) > 0 {
+				var cluster string
+				cluster, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+				n := len([]rune(cluster))
+				if firstGlyph == 0 {
+					firstGlyph = n
+				}
+				gw := runewidth.StringWidth(cluster)
+				if currentWidth+gw > width {
 					break
 				}
-				currentWidth += rw
-				breakPoint = i + 1
+				currentWidth += gw
+				breakPoint += n
 			}
 
-			// Ensure forward progress: if the first rune is wider than width,
-			// take at least one rune to avoid an infinite loop.
+			// Ensure forward progress: if the first glyph is wider than width,
+			// take at least one glyph to avoid an infinite loop.
 			if breakPoint == 0 {
-				breakPoint = 1
+				breakPoint = firstGlyph
 			}
 
 			// Try to find a space to break at (look back from breakPoint)

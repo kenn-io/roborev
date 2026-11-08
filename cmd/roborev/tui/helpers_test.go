@@ -12,6 +12,7 @@ import (
 	"charm.land/glamour/v2/styles"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
+	"github.com/rivo/uniseg"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/tui/helplayout"
@@ -1211,6 +1212,47 @@ func TestStripTrailingPadding(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := stripTrailingPadding(tt.line, tt.noColor)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// Glyphs a terminal draws as one character out of several runes.
+var multiRuneGlyphs = []struct {
+	name  string
+	glyph string
+}{
+	{"family", "\U0001F468\u200d\U0001F469\u200d\U0001F467\u200d\U0001F466"},
+	{"rainbow flag", "\U0001F3F3\ufe0f\u200d\U0001F308"},
+	{"thumb with a skin tone", "\U0001F44D\U0001F3FD"},
+	{"flag", "\U0001F1EF\U0001F1F5"},
+}
+
+func TestWrapTextKeepsGlyphsWhole(t *testing.T) {
+	for _, tt := range multiRuneGlyphs {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			text := strings.Repeat(tt.glyph, 10)
+
+			boundaries := map[int]bool{0: true}
+			for g := uniseg.NewGraphemes(text); g.Next(); {
+				_, to := g.Positions()
+				boundaries[to] = true
+			}
+
+			for width := 2; width <= 12; width++ {
+				lines := wrapText(text, width)
+				require.Equal(t, text, strings.Join(lines, ""),
+					"width %d: the lines must rejoin into the text", width)
+
+				offset := 0
+				for i, line := range lines {
+					assert.LessOrEqual(runewidth.StringWidth(line), width,
+						"width %d: line %d is wider than asked", width, i)
+					offset += len(line)
+					assert.True(boundaries[offset],
+						"width %d: the break after line %d falls inside a glyph", width, i)
+				}
+			}
 		})
 	}
 }
