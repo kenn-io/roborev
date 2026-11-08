@@ -126,7 +126,11 @@ func (m *mockDaemonClient) FindPendingJobForRef(ctx context.Context, repoPath, g
 	return nil, nil
 }
 
-func (m *mockDaemonClient) GetCommentsForJob(_ context.Context, jobID int64) ([]storage.Response, error) {
+func (m *mockDaemonClient) FindPostCommitRangeReviewForHead(context.Context, string, string, string) (*storage.ReviewJob, error) {
+	return nil, nil
+}
+
+func (m *mockDaemonClient) GetCommentsForJob(ctx context.Context, jobID int64) ([]storage.Response, error) {
 	return m.responses[jobID], nil
 }
 
