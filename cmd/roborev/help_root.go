@@ -119,15 +119,14 @@ roborev reviews git commits with AI agents and stores findings in a local daemon
 Use the CLI directly or install optional coding-agent skills and hooks.
 
 Agent workflow (replace job 42 with the ID returned by review or job list):
-  roborev cli search "review uncommitted changes"  # 1. find the command for a task
-  roborev doctor                      # 2. diagnose configuration and agents
-  roborev init                        # 3. initialize this repo and its git hook
-  roborev review HEAD                 # 4. enqueue a review; records a job ID
-  roborev wait --job 42                # 5. wait for that existing job
-  roborev show --job 42                # 6. read findings
-  roborev fix 42                      # 7. run a foreground agent to edit and commit
-  roborev comment --job 42 "Fixed and verified the findings"  # 8. record evidence
-  roborev close 42                    # 9. resolve any remaining open review
+  roborev doctor                      # 1. diagnose configuration and agents
+  roborev init                        # 2. initialize this repo and its git hook
+  roborev review HEAD                 # 3. enqueue a review; records a job ID
+  roborev wait --job 42                # 4. wait for that existing job
+  roborev show --job 42                # 5. read findings
+  roborev fix 42                      # 6. run a foreground agent to edit and commit
+  roborev comment --job 42 "Fixed and verified the findings"  # 7. record evidence
+  roborev close 42                    # 8. resolve any remaining open review
 A fix closes its completed job automatically. Review the resulting commit again
 when you need fresh verification. Use fix --list to preview candidate jobs;
 refine automates repeated review and fix cycles. These agent flows can edit code.
