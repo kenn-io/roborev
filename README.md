@@ -1,24 +1,35 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-08
 ---
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://roborev.io/docs/assets/static/logo-with-text-dark-bg.svg">
-  <img alt="roborev" src="https://roborev.io/docs/assets/static/logo-with-text-light.svg">
-</picture>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://roborev.io/docs/assets/static/logo-with-text-dark-bg.svg">
+    <img alt="roborev" src="https://roborev.io/docs/assets/static/logo-with-text-light.svg">
+  </picture>
+</p>
 
-[![Go](https://img.shields.io/badge/Go-1.27.3+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Docs](https://img.shields.io/badge/Docs-roborev.io-blue)](https://roborev.io)
+<p align="center">
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.27.3+-00ADD8?logo=go&logoColor=white" alt="Go 1.27.3+"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://roborev.io"><img src="https://img.shields.io/badge/Docs-roborev.io-blue" alt="Docs"></a>
+</p>
 
-**[Documentation](https://roborev.io/docs/)** | **[Quick Start](https://roborev.io/docs/quickstart/)** | **[Installation](https://roborev.io/docs/installation/)**
+<p align="center">
+  <a href="https://roborev.io/docs/">Documentation</a> ·
+  <a href="https://roborev.io/docs/quickstart/">Quick Start</a> ·
+  <a href="https://roborev.io/docs/installation/">Installation</a>
+</p>
 
-Continuous code review for AI coding agents. roborev runs in the
-background, reviews every commit as agents write code, and surfaces
-issues in seconds -- before they compound. Pull code reviews into
-your agentic loop while context is fresh.
+**Continuous code review for AI coding agents.**
 
-![Roborev browser application](https://roborev.io/docs/assets/generated/web-ui.png)
+roborev runs in the background, reviews every commit as agents write code,
+and surfaces issues in seconds -- before they compound. Pull code reviews
+into your agentic loop while context is fresh.
+
+<p align="center">
+  <img src="https://roborev.io/docs/assets/generated/web-ui.png" alt="Roborev browser application">
+</p>
 
 ## How It Works
 
@@ -63,7 +74,7 @@ You can also choose the exact binary path with
 
 ![roborev review](https://roborev.io/docs/assets/generated/tui-review.svg)
 
-## Features
+## What you can do
 
 - **Background Reviews** - Every commit is reviewed automatically via
   git hooks. No remote review workflow required.
