@@ -47,6 +47,35 @@ var schemaMigrations = []schemaMigration{
 	{11, "CI panel run index", migrateCIPanelRunIndex},
 	{12, "queue list position indexes", migrateQueueListPositionIndexes},
 	{13, "queue stats closed state", migrateQueueStatsClosedState},
+	{14, "sync pending indexes", migrateSyncPendingIndexes},
+}
+
+func migrateSyncPendingIndexes(ctx context.Context, db *DB) error {
+	exists, err := hasColumn(ctx, db, "reviews", "job_synced_at")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE reviews ADD COLUMN job_synced_at TEXT`); err != nil {
+			return err
+		}
+	}
+	// Unsynced reviews are already pending; mirroring their jobs would add
+	// review writes to the first push. Remote jobs stay out after repeated pulls.
+	_, err = db.ExecContext(ctx, `
+		UPDATE reviews SET job_synced_at = (SELECT synced_at FROM review_jobs
+			WHERE id = reviews.job_id AND source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'))
+			WHERE synced_at IS NOT NULL;
+		CREATE TRIGGER IF NOT EXISTS review_job_synced_update AFTER UPDATE OF synced_at ON review_jobs BEGIN
+			UPDATE reviews SET job_synced_at = CASE WHEN NEW.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id')
+				THEN NEW.synced_at END WHERE job_id = NEW.id AND synced_at IS NOT NULL;
+		END;
+		CREATE INDEX IF NOT EXISTS idx_review_jobs_sync_pending ON review_jobs(source_machine_id, id) WHERE status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') AND uuid IS NOT NULL
+		AND (synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("updated_at")+` > `+sqliteNormalizedTimestampExpr("synced_at")+`);
+		CREATE INDEX IF NOT EXISTS idx_reviews_sync_pending ON reviews(job_id) WHERE uuid IS NOT NULL
+		AND (synced_at IS NULL OR replace(rtrim(job_synced_at, 'Z'), ' ', 'T') > replace(rtrim(synced_at, 'Z'), ' ', 'T'));
+	`)
+	return err
 }
 
 func migrateQueueStatsClosedState(ctx context.Context, db *DB) error {

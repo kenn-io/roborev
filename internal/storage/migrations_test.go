@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -210,6 +212,8 @@ func TestIndexMigrations(t *testing.T) {
 		{"branch list position", 12, "idx_review_jobs_branch_position", "branch, " + sqliteNormalizedTimestampExpr("enqueued_at") + " DESC, id DESC"},
 		{"queue stats closed state", 13, "idx_review_jobs_queue_stats", "panel_role, review_closed)"},
 		{"closed list position", 12, "idx_review_jobs_closed_position", "DESC, id DESC) WHERE review_closed = 1"},
+		{"pending jobs", 14, "idx_review_jobs_sync_pending", "ON review_jobs(source_machine_id, id) WHERE status IN"},
+		{"pending reviews", 14, "idx_reviews_sync_pending", "ON reviews(job_id) WHERE uuid IS NOT NULL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := openUnmigratedDB(t)
@@ -250,5 +254,48 @@ func TestQueueListPositionMigrationBackfill(t *testing.T) {
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT group_concat(review_closed) FROM (SELECT review_closed FROM review_jobs ORDER BY id)`).Scan(&flags))
 		assert.Equal(t, "1,0,0", flags)
 		require.NoError(t, migrateQueueListPositionIndexes(t.Context(), db))
+	}
+}
+
+func TestSyncPendingMigrationBackfill(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require.NoError(t, registerContentFunctions())
+	db := openUnmigratedDB(t)
+	migrationIndex := slices.IndexFunc(schemaMigrations, func(m schemaMigration) bool { return m.version == 14 })
+	require.NotEqual(t, -1, migrationIndex)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:migrationIndex]))
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	_, jobs := seedJobs(t, db, t.TempDir(), 4)
+	cases := []struct {
+		name            string
+		sourceMachineID uuid.UUID
+		jobSyncedAt     any
+		reviewSyncedAt  any
+		wantMirror      sql.NullString
+	}{
+		{"local review synced after job", machineID, "2024-01-02 00:00:00", "2024-01-03 00:00:00", sql.NullString{String: "2024-01-02 00:00:00", Valid: true}},
+		{"local review synced before job", machineID, "2024-01-02 00:00:00", "2024-01-01 00:00:00", sql.NullString{String: "2024-01-02 00:00:00", Valid: true}},
+		{"unsynced local job and review", machineID, nil, nil, sql.NullString{}},
+		{"remote job and review", testUUID("remote-machine"), "2024-01-02 00:00:00", "2024-01-01 00:00:00", sql.NullString{}},
+	}
+	for i, tc := range cases {
+		job := jobs[i]
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', uuid = ?, source_machine_id = ?,
+			updated_at = '2024-01-01 00:00:00', synced_at = ? WHERE id = ?`, testUUID(job.GitRef), tc.sourceMachineID, tc.jobSyncedAt, job.ID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews(job_id, agent, output, structured_output, uuid, updated_by_machine_id, updated_at, synced_at)
+			VALUES (?, 'test', '', ?, ?, ?, '2024-01-01 00:00:00', ?)`, job.ID, reviewFixtureJSON("output"), testUUID("review-"+job.GitRef), machineID, tc.reviewSyncedAt)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	for range 2 {
+		for i, tc := range cases {
+			var mirror sql.NullString
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_synced_at FROM reviews WHERE job_id = ?`, jobs[i].ID).Scan(&mirror))
+			assert.Equal(tc.wantMirror, mirror, tc.name)
+		}
+		require.NoError(t, migrateSyncPendingIndexes(t.Context(), db))
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -760,15 +761,43 @@ func TestGetJobsToSync_IncludesSkipped(t *testing.T) {
 	assert.True(t, found, "expected skipped job to be syncable")
 }
 
+func TestReviewSyncAfterJobAcknowledgment(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		assert := assert.New(t)
+		job := h.createCompletedJob("review-acknowledgment")
+		jobs, err := h.db.GetJobsToSync(h.machineID, 10)
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(jobs[0])}))
+		var mirror sql.NullString
+		require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT job_synced_at FROM reviews WHERE job_id = ?`, job.ID).Scan(&mirror))
+		assert.False(mirror.Valid, "first pushes must leave unsynced reviews untouched")
+
+		// Start with a synced review so a later parent acknowledgment must
+		// republish only its metadata.
+		_, err = h.db.ExecContext(t.Context(), `UPDATE reviews SET synced_at = ? WHERE job_id = ?`, preciseTimestampAt(time.Now()), job.ID)
+		require.NoError(t, err)
+		time.Sleep(time.Millisecond)
+		require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(jobs[0])}))
+		reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
+		require.NoError(t, err)
+		require.Len(t, reviews, 1)
+		assert.Equal(job.ID, reviews[0].JobID)
+		assert.True(reviews[0].MetadataOnly)
+	})
+}
+
 func TestSyncQueriesSeekPastCursor(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	for _, tc := range []struct {
-		name, query, alias string
-		args               []any
+		name, query, alias, index, bounds string
+		args                              []any
 	}{
-		{"jobs", jobsToSyncQuery, "j", []any{h.machineID, 25, 25}},
-		{"reviews", reviewsToSyncQuery, "r", []any{h.machineID, 25, 50, h.machineID, h.machineID, 25}},
+		{"jobs", jobsToSyncQuery, "j", "idx_review_jobs_sync_pending", "id>?", []any{h.machineID, 25, 25}},
+		{"reviews", reviewsToSyncQuery, "r", "idx_reviews_sync_pending", "job_id>? AND job_id<?", []any{h.machineID, 25, 50, h.machineID, h.machineID, 25}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := h.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
@@ -784,12 +813,11 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 			require.NoError(t, rows.Err())
 			plan := strings.Join(details, "\n")
 			assert.Contains(t, plan, "SEARCH "+tc.alias+" ")
+			assert.Contains(t, plan, "USING INDEX "+tc.index)
+			assert.Contains(t, plan, tc.bounds)
 			assert.NotContains(t, plan, "SCAN j")
 			assert.NotContains(t, plan, "SCAN r")
 			assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")
-			if tc.name == "reviews" {
-				assert.Contains(t, plan, "job_id>? AND job_id<?")
-			}
 		})
 	}
 }
