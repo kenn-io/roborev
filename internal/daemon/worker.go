@@ -1606,6 +1606,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}, err != nil)
 	}
 	var invocation *storage.ReviewInvocation
+	var invocationStream invocationOutput
 	if err == nil {
 		preparedPrompt, prepareErr := pb.Prepare(reviewPrompt, snapshotTarget)
 		if prepareErr != nil {
@@ -1638,6 +1639,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				return
 			}
 			invocation = &record
+			agentOutput = io.MultiWriter(&invocationStream, agentOutput)
 		}
 		wp.markAgentInvoked(workerID, job, a)
 		if planningPrompt != "" {
@@ -1662,6 +1664,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		agentReview.Output, err = a.Review(
 			ctx, reviewRepoPath, implementationRef, reviewPrompt, agentOutput,
 		)
+		agentReview.RawOutput = agentReview.Output
 	} else if err == nil {
 		agentReview, err = review.RunAgentReview(
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
@@ -1671,7 +1674,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	output := agentReview.Output
 	sessionWriter.Flush()
 	if invocation != nil {
-		if recordErr := wp.finishReviewInvocation(ctx, *invocation, agentReview, err, sessionWriter.SessionID()); recordErr != nil {
+		if recordErr := wp.finishReviewInvocation(ctx, *invocation, agentReview, err, sessionWriter.SessionID(), invocationStream.String()); recordErr != nil {
 			wp.runAttemptTransition(workerID, job, func() {
 				wp.failNonRetryableJobLocked(workerID, job, agentName, fmt.Sprintf("record invocation outcome: %v", recordErr))
 			})

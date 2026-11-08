@@ -2,12 +2,17 @@ package daemon
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +22,8 @@ import (
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
+	"go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 func TestSuppliedReviewInvocationHistorySurvivesRetryAndRerun(t *testing.T) {
@@ -92,6 +99,21 @@ func TestSuppliedReviewInvocationHistorySurvivesRetryAndRerun(t *testing.T) {
 			assert.Equal(first, records)
 		}
 	}
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+	api, err := client.NewWithHTTPClient(httpServer.URL, httpServer.Client())
+	require.NoError(t, err)
+	decoded, err := api.GetJobInvocations(t.Context(), &generated.GetJobInvocationsRequestOptions{
+		Query: &generated.GetJobInvocationsQuery{JobID: job.ID},
+	})
+	require.NoError(t, err)
+	require.Len(t, decoded.Invocations, 3)
+	structured, err := json.Marshal(decoded.Invocations[2].StructuredOutput)
+	require.NoError(t, err)
+	assert.JSONEq(string(testutil.ReviewFixtureJSON("No issues found.")), string(structured))
+	assert.Nil(decoded.Invocations[2].Usage, "the generated client must preserve unavailable usage")
+	require.NotNil(t, decoded.Invocations[0].Usage.InputTokens)
+	assert.Equal(int64(10), *decoded.Invocations[0].Usage.InputTokens)
 	assert.Equal(2, calls)
 	_, err = server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: job.ID}})
 	require.NoError(t, err)
@@ -189,4 +211,97 @@ func TestSuppliedReviewInvocationCancellationKeepsPartialOutput(t *testing.T) {
 	assert.Equal(t, "partial canceled response", reports[0].RawOutput)
 	assert.NotNil(t, reports[0].FinishedAt)
 	assert.Nil(t, reports[0].Usage)
+}
+
+func TestSuppliedReviewInvocationCapturesNativeAdapterFailures(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	for _, tc := range []struct {
+		name   string
+		stream string
+		exit   string
+		want   string
+	}{
+		{"codex", `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"incomplete review response"}}`, "0", "incomplete review response"},
+		{"claude-code", `{"type":"result","is_error":true,"result":"provider unavailable, partial review"}`, "1", "provider unavailable, partial review"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			script := "#!/bin/sh\nfor arg in \"$@\"; do if [ \"$arg\" = --help ]; then echo '--sandbox --effort'; exit 0; fi; done\ncat >/dev/null\ncat <<'OUTPUT'\n" + tc.stream + "\nOUTPUT\nexit " + tc.exit + "\n"
+			command := "codex"
+			if tc.name == "claude-code" {
+				command = "claude"
+			}
+			t.Cleanup(testutil.MockBinaryInPath(t, command, script))
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			head := repo.CommitFile("file.txt", "target\n", "target")
+			job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: head, Agent: tc.name, ReviewPrompt: "Review this.", ReviewSettings: &SuppliedReviewSettings{}})
+			claimed, err := db.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			server.workerPool.processJob(testWorkerID, claimed)
+			reports, err := db.ListReviewInvocations(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Len(t, reports, 1)
+			assert.Equal(t, "failed", reports[0].Status)
+			assert.Contains(t, reports[0].RawOutput, tc.want)
+			assert.NotEmpty(t, reports[0].Error)
+		})
+	}
+}
+
+func TestSuppliedReviewInvocationUsageDoesNotDependOnJobLog(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("fixture needs Unix file permissions enforced")
+	}
+	for _, recoverLog := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recover=%t", recoverLog), func(t *testing.T) {
+			testenv.SetDataDir(t)
+			previousInterval := jobLogOpenRetryInterval
+			jobLogOpenRetryInterval = time.Hour
+			t.Cleanup(func() { jobLogOpenRetryInterval = previousInterval })
+			server, db, _ := newTestServer(t)
+			server.workerPool.retryBackoff = 0
+			server.workerPool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) { return nil, tokens.ErrUsageProviderUnavailable }
+			repo := testutil.NewGitRepo(t)
+			head := repo.CommitFile("file.txt", "target\n", "target")
+			calls := 0
+			var logPath string
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "invocation-log-failure", ReviewFn: func(_ context.Context, _, _, _ string, out io.Writer) (string, error) {
+				calls++
+				fmt.Fprintf(out, "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":%d,\"output_tokens\":3}}\n", calls*10)
+				if calls == 1 {
+					return "partial response", errors.New("connection reset by peer")
+				}
+				if recoverLog {
+					require.NoError(t, os.Chmod(logPath, 0o600))
+				}
+				return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+			}})
+			job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: head, Agent: "invocation-log-failure", ReviewPrompt: "Review this.", ReviewSettings: &SuppliedReviewSettings{}})
+			logPath = JobLogPath(job.ID)
+			for attempt := range 2 {
+				claimed, err := db.ClaimJob(testWorkerID)
+				require.NoError(t, err)
+				require.NotNil(t, claimed)
+				server.workerPool.processJob(testWorkerID, claimed)
+				if attempt == 0 {
+					require.NoError(t, os.Chmod(logPath, 0o400))
+				}
+			}
+			reports, err := db.ListReviewInvocations(t.Context(), job.ID)
+			require.NoError(t, err)
+			require.Len(t, reports, 2)
+			require.NotNil(t, reports[0].Usage)
+			require.NotNil(t, reports[1].Usage)
+			assert.Equal(t, int64(10), reports[0].Usage.InputTokens)
+			assert.Equal(t, int64(20), reports[1].Usage.InputTokens)
+			assert.Empty(t, reports[1].UsageError)
+			data, err := os.ReadFile(logPath)
+			require.NoError(t, err)
+			assert.Equal(t, recoverLog, strings.Contains(string(data), `"input_tokens":20`), "only the recovered log receives the second invocation's usage")
+		})
+	}
 }

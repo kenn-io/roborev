@@ -3594,25 +3594,25 @@ type ReviewFileCoverage struct {
 type ReviewIDSetValue = map[string]any
 
 type ReviewInvocation struct {
-	Agent            string     `json:"agent" validate:"required"`
-	EnqueuedAt       time.Time  `json:"enqueued_at" validate:"required"`
-	ErrorData        string     `json:"error" validate:"required"`
-	FinishedAt       *time.Time `json:"finished_at" validate:"required"`
-	GitRef           string     `json:"git_ref" validate:"required"`
-	ID               int64      `json:"id"`
-	JobID            int64      `json:"job_id"`
-	Model            string     `json:"model" validate:"required"`
-	Output           string     `json:"output" validate:"required"`
-	Provider         string     `json:"provider" validate:"required"`
-	RawOutput        string     `json:"raw_output" validate:"required"`
-	Reasoning        string     `json:"reasoning" validate:"required"`
-	RetryCount       int64      `json:"retry_count"`
-	SessionID        string     `json:"session_id" validate:"required"`
-	StartedAt        time.Time  `json:"started_at" validate:"required"`
-	Status           string     `json:"status" validate:"required"`
-	StructuredOutput *struct{}  `json:"structured_output,omitempty"`
-	Usage            Usage      `json:"usage"`
-	UsageError       *string    `json:"usage_error,omitempty"`
+	Agent            string         `json:"agent" validate:"required"`
+	EnqueuedAt       time.Time      `json:"enqueued_at" validate:"required"`
+	ErrorData        string         `json:"error" validate:"required"`
+	FinishedAt       *time.Time     `json:"finished_at" validate:"required"`
+	GitRef           string         `json:"git_ref" validate:"required"`
+	ID               int64          `json:"id"`
+	JobID            int64          `json:"job_id"`
+	Model            string         `json:"model" validate:"required"`
+	Output           string         `json:"output" validate:"required"`
+	Provider         string         `json:"provider" validate:"required"`
+	RawOutput        string         `json:"raw_output" validate:"required"`
+	Reasoning        string         `json:"reasoning" validate:"required"`
+	RetryCount       int64          `json:"retry_count"`
+	SessionID        string         `json:"session_id" validate:"required"`
+	StartedAt        time.Time      `json:"started_at" validate:"required"`
+	Status           string         `json:"status" validate:"required"`
+	StructuredOutput map[string]any `json:"structured_output,omitempty"`
+	Usage            *Usage         `json:"usage"`
+	UsageError       *string        `json:"usage_error,omitempty"`
 }
 
 func (r ReviewInvocation) Validate() error {
@@ -3658,9 +3658,11 @@ func (r ReviewInvocation) Validate() error {
 	if err := typesValidator.Var(r.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
 	}
-	if v, ok := any(r.Usage).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Usage", err)
+	if r.Usage != nil {
+		if v, ok := any(r.Usage).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Usage", err)
+			}
 		}
 	}
 	if len(errors) == 0 {

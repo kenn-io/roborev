@@ -3881,9 +3881,13 @@ components:
           type: string
         status:
           type: string
-        structured_output: {}
+        structured_output:
+          additionalProperties: true
+          type: object
         usage:
-          $ref: "#/components/schemas/Usage"
+          anyOf:
+            - $ref: "#/components/schemas/Usage"
+            - type: "null"
         usage_error:
           type: string
       required:

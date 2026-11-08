@@ -179,6 +179,7 @@ export * from "./review";
 export * from "./reviewFileCoverage";
 export * from "./reviewIDSetValue";
 export * from "./reviewInvocation";
+export * from "./reviewInvocationStructuredOutput";
 export * from "./reviewJob";
 export * from "./reviewProjection";
 export * from "./reviewProjectionJob";

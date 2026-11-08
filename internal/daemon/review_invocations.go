@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -41,7 +43,27 @@ func (s *Server) humaJobInvocations(ctx context.Context, input *JobInvocationsIn
 	return output, nil
 }
 
-func (wp *WorkerPool) finishReviewInvocation(ctx context.Context, report storage.ReviewInvocation, result review.ReviewResult, runErr error, sessionID string) error {
+// invocationOutput keeps this call's evidence independent of the best-effort
+// job log, which may still contain an earlier attempt after an open failure.
+// Some adapters write stdout and stderr concurrently.
+type invocationOutput struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (o *invocationOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.Write(p)
+}
+
+func (o *invocationOutput) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.String()
+}
+
+func (wp *WorkerPool) finishReviewInvocation(ctx context.Context, report storage.ReviewInvocation, result review.ReviewResult, runErr error, sessionID, stream string) error {
 	report.FinishedAt = new(time.Now().UTC())
 	report.Status = "succeeded"
 	if runErr != nil {
@@ -53,15 +75,17 @@ func (wp *WorkerPool) finishReviewInvocation(ctx context.Context, report storage
 	}
 	report.SessionID = sessionID
 	report.RawOutput = result.RawOutput
+	if report.RawOutput == "" {
+		// Native adapters can reject a partial response before returning it.
+		// Keep the bytes they emitted even when no final response is available.
+		report.RawOutput = stream
+	}
 	report.Output = result.Output
 	report.StructuredOutput = result.StructuredOutput
-	file, err := os.Open(JobLogPath(report.JobID))
-	if err == nil {
-		report.Usage, err = tokens.ParseSchemaUsage(report.Agent, file)
-		err = errors.Join(err, file.Close())
-		if err == nil && report.Usage == nil {
-			report.Usage, err = tokens.ParseCodexUsageFile(JobLogPath(report.JobID))
-		}
+	var err error
+	report.Usage, err = tokens.ParseSchemaUsage(report.Agent, strings.NewReader(stream))
+	if err == nil && report.Usage == nil {
+		report.Usage, err = tokens.ParseCodexUsageJSONL(strings.NewReader(stream))
 	}
 	if err != nil {
 		report.UsageError = fmt.Sprintf("read invocation usage: %v", err)

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/roborev/internal/tokens"
 )
 
@@ -33,6 +35,16 @@ type ReviewInvocation struct {
 	Error            string         `json:"error"`
 	Usage            *tokens.Usage  `json:"usage"`
 	UsageError       string         `json:"usage_error,omitempty"`
+}
+
+// TransformSchema preserves arbitrary review properties and distinguishes
+// missing usage from a measured zero. Huma does not infer nullable objects.
+func (ReviewInvocation) TransformSchema(r huma.Registry, s *huma.Schema) *huma.Schema {
+	s.Properties["structured_output"] = (StructuredOutput{}).Schema(r)
+	s.Properties["usage"] = &huma.Schema{AnyOf: []*huma.Schema{
+		s.Properties["usage"], {Type: "null"},
+	}}
+	return s
 }
 
 func migrateReviewInvocations(ctx context.Context, db *DB) error {
