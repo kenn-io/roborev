@@ -248,10 +248,6 @@ func (s *StateStore) Reset(sessionID string, all bool) error {
 
 func cloneSessionState(state SessionState) SessionState {
 	state.OwnedCommits = maps.Clone(state.OwnedCommits)
-	state.PendingCommitRanges = maps.Clone(state.PendingCommitRanges)
-	for root, ranges := range state.PendingCommitRanges {
-		state.PendingCommitRanges[root] = slices.Clone(ranges)
-	}
 	state.StopCountsSincePrompt = maps.Clone(state.StopCountsSincePrompt)
 	state.CommitCountsSincePrompt = maps.Clone(state.CommitCountsSincePrompt)
 	state.FailedReviewTriggeredCounts = maps.Clone(state.FailedReviewTriggeredCounts)
@@ -272,12 +268,6 @@ func cloneSessionState(state SessionState) SessionState {
 func (s *StateStore) RecordContext(ctx context.Context, req Request) (Response, error) {
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
-	}
-	if isShellCommandTool(req.Event.ToolName) || req.Event.HookEventName == "" || req.Event.HookEventName == "Stop" || req.Event.HookEventName == "UserPromptSubmit" || req.Event.HookEventName == "SessionStart" {
-		req.pendingCommitObservations = s.observePendingCommitRanges(ctx, req.Event.SessionID)
-		if err := ctx.Err(); err != nil {
-			return Response{}, err
-		}
 	}
 
 	switch req.Event.HookEventName {
@@ -364,7 +354,7 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 		return resp, err
 	}
 
-	openFailedJobs, haveFailedReviewCount := findOpenFailedReviewJobs(ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head, s.ownedCommits(req))
+	openFailedJobs, haveFailedReviewCount := findOpenFailedReviewJobs(ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head, s.ownedCommits(req.Event.SessionID))
 	openFailedReviewIDs := reviewIDsFromJobs(openFailedJobs)
 
 	s.mu.Lock()
@@ -374,7 +364,6 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 	}
 
 	st := cloneSessionState(s.sessions[req.Event.SessionID])
-	applyPendingCommitRanges(&st, req.pendingCommitObservations)
 	lineageKey := ensureLineageKey(&st, scope)
 	recordSequenceHeads(&st, scope, []string{scope.WorktreeKey})
 	st.LastCWD = req.Event.CWD
@@ -494,7 +483,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 		}, nil
 	}
 
-	openFailedReviewIDs, haveFailedReviewCount := findOpenFailedReviewIDs(ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head, s.ownedCommits(req))
+	openFailedReviewIDs, haveFailedReviewCount := findOpenFailedReviewIDs(ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head, s.ownedCommits(req.Event.SessionID))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -503,7 +492,6 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	}
 
 	st := cloneSessionState(s.sessions[req.Event.SessionID])
-	applyPendingCommitRanges(&st, req.pendingCommitObservations)
 	lineageKey := ensureLineageKey(&st, scope)
 	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
 	failedReviewCount := len(actionableReviewIDs)
@@ -629,7 +617,6 @@ func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Respons
 	}
 
 	st := cloneSessionState(s.sessions[req.Event.SessionID])
-	applyPendingCommitRanges(&st, req.pendingCommitObservations)
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
@@ -687,7 +674,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	haveFailedReviewCount := false
 	if scope.Tracked && s.reviews != nil {
 		haveFailedReviewCount = true
-		if commitCommand || len(s.ownedCommits(req)) > 0 {
+		if commitCommand || len(s.ownedCommits(req.Event.SessionID)) > 0 {
 			failedJobs, haveFailedReviewCount = s.reviews.ListOpenFailedReviewJobs(ctx, scope.TrackedRepoRoot, scope.Branch)
 		}
 	}
@@ -699,8 +686,6 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	}
 
 	st := cloneSessionState(s.sessions[req.Event.SessionID])
-	applyPendingCommitRanges(&st, req.pendingCommitObservations)
-
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
@@ -772,7 +757,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	}
 
 	if commitCommand {
-		collectCommitObservations(&st, scope, observations)
+		collectCommitObservations(&st, observations)
 		delete(st.RepoHeads, callHeadKey(req.Event.ToolUseID))
 	}
 	recordSequenceHeads(&st, scope, sequenceKeys)
@@ -925,7 +910,6 @@ func (s *StateStore) recordSnoozed(
 }
 
 func applySnoozedState(ctx context.Context, st *SessionState, req Request, scope hookScope) Response {
-	applyPendingCommitRanges(st, req.pendingCommitObservations)
 	lineageKey := ensureLineageKey(st, scope)
 	keys := uniqueStrings(append(
 		[]string{scope.WorktreeKey, lineageKey},
@@ -1072,7 +1056,7 @@ func (s *StateStore) deliverPendingReminder(
 			continue
 		}
 		openFailedReviewIDs, ok := findOpenFailedReviewIDs(
-			ctx, s.reviews, pending.TrackedRepoRoot, pending.Branch, pending.Head, s.ownedCommits(req),
+			ctx, s.reviews, pending.TrackedRepoRoot, pending.Branch, pending.Head, s.ownedCommits(req.Event.SessionID),
 		)
 		if err := ctx.Err(); err != nil {
 			return Response{}, false, err
@@ -1094,7 +1078,6 @@ func (s *StateStore) deliverPendingReminder(
 			return Response{}, false, err
 		}
 		st = cloneSessionState(s.sessions[req.Event.SessionID])
-		applyPendingCommitRanges(&st, req.pendingCommitObservations)
 		applyPendingReminderDiscards(&st, discards)
 		current, ok := st.PendingReminders[candidate.key]
 		if !ok || current != candidate.reminder {
@@ -1201,7 +1184,6 @@ func (s *StateStore) deliverPendingReminder(
 		return Response{}, false, err
 	}
 	st = cloneSessionState(s.sessions[req.Event.SessionID])
-	applyPendingCommitRanges(&st, req.pendingCommitObservations)
 	changed := applyPendingReminderDiscards(&st, discards)
 	resp := Response{}
 	if prepare != nil {
@@ -1387,7 +1369,7 @@ func advanceMutedHeads(ctx context.Context, st *SessionState, req Request, scope
 			recordCallHead(st, req, scope)
 		case "PostToolUse", "PostToolUseFailure":
 			call := callHeadKey(req.Event.ToolUseID)
-			collectCommitObservations(st, scope, headGains(ctx, *st, scope, append(commitSequenceKeys(scope, lineageKey), call)...))
+			collectCommitObservations(st, headGains(ctx, *st, scope, append(commitSequenceKeys(scope, lineageKey), call)...))
 			delete(st.RepoHeads, call)
 		}
 	}
@@ -1397,7 +1379,6 @@ func advanceMutedHeads(ctx context.Context, st *SessionState, req Request, scope
 type commitObservation struct {
 	commits    []string
 	continuous bool
-	err        error
 }
 
 // headGains observes each distinct baseline once for both ownership and counters.
@@ -1409,73 +1390,16 @@ func headGains(ctx context.Context, st SessionState, scope hookScope, keys ...st
 			continue
 		}
 		if _, observed := observations[previousHead]; !observed {
-			commits, continuous, err := newCommitSHAs(ctx, scope.WorktreeRoot, previousHead, scope.Head)
-			observations[previousHead] = commitObservation{commits, continuous, err}
+			commits, continuous := newCommitSHAs(ctx, scope.WorktreeRoot, previousHead, scope.Head)
+			observations[previousHead] = commitObservation{commits, continuous}
 		}
 	}
 	return observations
 }
 
-func commitRange(oldHead, newHead string) string {
-	if oldHead == "" {
-		return newHead
-	}
-	return oldHead + ".." + newHead
-}
-
-func collectCommitObservations(st *SessionState, scope hookScope, observations map[string]commitObservation) {
-	for baseline, observation := range observations {
-		if observation.err == nil {
-			ownCommits(st, observation.commits)
-			continue
-		}
-		if st.PendingCommitRanges == nil {
-			st.PendingCommitRanges = map[string][]string{}
-		}
-		ref := commitRange(baseline, scope.Head)
-		st.PendingCommitRanges[scope.WorktreeRoot] = appendUniqueCommitSHAs(st.PendingCommitRanges[scope.WorktreeRoot], []string{ref})
-	}
-}
-
-// observePendingCommitRanges freezes retry results once per event. They are
-// applied to a cloned session with the event's other changes, so cancellation
-// and failed persistence cannot publish partial recovery.
-func (s *StateStore) observePendingCommitRanges(ctx context.Context, session string) map[string]map[string]commitObservation {
-	s.mu.Lock()
-	pending := maps.Clone(s.sessions[session].PendingCommitRanges)
-	for root, ranges := range pending {
-		pending[root] = slices.Clone(ranges)
-	}
-	s.mu.Unlock()
-	observations := map[string]map[string]commitObservation{}
-	for root, ranges := range pending {
-		observations[root] = map[string]commitObservation{}
-		for _, ref := range ranges {
-			rangeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			commits, err := roborevgit.GetRangeCommitsCtx(rangeCtx, root, ref)
-			cancel()
-			observations[root][ref] = commitObservation{commits: commits, err: err}
-		}
-	}
-	return observations
-}
-
-func applyPendingCommitRanges(st *SessionState, observations map[string]map[string]commitObservation) {
-	for root, ranges := range st.PendingCommitRanges {
-		remaining := ranges[:0]
-		for _, ref := range ranges {
-			observation, observed := observations[root][ref]
-			if !observed || observation.err != nil {
-				remaining = append(remaining, ref)
-				continue
-			}
-			ownCommits(st, observation.commits)
-		}
-		if len(remaining) == 0 {
-			delete(st.PendingCommitRanges, root)
-		} else {
-			st.PendingCommitRanges[root] = remaining
-		}
+func collectCommitObservations(st *SessionState, observations map[string]commitObservation) {
+	for _, observation := range observations {
+		ownCommits(st, observation.commits)
 	}
 }
 
@@ -2011,7 +1935,7 @@ func configuredWorktree(parent context.Context, commonDir string) string {
 	return filepath.Clean(worktree)
 }
 
-func newCommitSHAs(parent context.Context, repoRoot, oldHead, newHead string) ([]string, bool, error) {
+func newCommitSHAs(parent context.Context, repoRoot, oldHead, newHead string) ([]string, bool) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	continuous := oldHead == ""
@@ -2025,9 +1949,13 @@ func newCommitSHAs(parent context.Context, repoRoot, oldHead, newHead string) ([
 	}
 	out, err := agentHookGit.Output(ctx, repoRoot, "rev-list", "--reverse", ref)
 	if err != nil {
-		return nil, continuous, err
+		// Rewrites can restore old history; only a proven forward move permits HEAD fallback.
+		if continuous {
+			return []string{newHead}, true
+		}
+		return nil, false
 	}
-	return strings.Fields(string(out)), continuous, nil
+	return strings.Fields(string(out)), continuous
 }
 
 func IsCommitProducingCommand(command string) bool {
@@ -2433,10 +2361,8 @@ func refReachableFromHead(repoRoot, ref, head string) bool {
 	return err == nil && ok
 }
 
-func (s *StateStore) ownedCommits(req Request) map[string]bool {
+func (s *StateStore) ownedCommits(session string) map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := cloneSessionState(s.sessions[req.Event.SessionID])
-	applyPendingCommitRanges(&st, req.pendingCommitObservations)
-	return st.OwnedCommits
+	return s.sessions[session].OwnedCommits
 }

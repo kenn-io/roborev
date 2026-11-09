@@ -3345,101 +3345,54 @@ func TestMutedCommitObservationHonorsCancellation(t *testing.T) {
 	require.Equal(t, before, store.Sessions())
 }
 
-func TestCommitObservationTimeoutRetriesOwnership(t *testing.T) {
+func TestCommitObservationFailureKeepsOnlyForwardHead(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fixture uses an executable shell wrapper")
 	}
-	for _, name := range []string{"status", "amended Stop after reload", "muted", "empty aborted range"} {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	for _, mode := range []string{"forward", "amend", "rewind"} {
+		t.Run(mode, func(t *testing.T) {
 			repo := gittest.NewRepoWithCommit(t)
 			base := repo.Head()
 			repo.CommitFile("before.txt", "before", "before session")
-			muted := name == "muted"
-			var jobs []storage.ReviewJob
-			source := fakeReviewSource{
-				resolve: func(_ context.Context, root, _ string) (TrackedRepoResolution, bool) {
-					r := TrackedRepoResolution{Tracked: true, RootPath: root}
-					if muted {
-						r.SnoozedUntil = time.Now().Add(time.Hour)
-					}
-					return r, true
-				},
-				list: func(_ context.Context, root, _ string) ([]storage.ReviewJob, bool) {
-					if root != repo.Root {
-						return nil, true
-					}
-					return jobs, true
-				},
+			store := &StateStore{reviews: trackedReviewSource(repo.Root), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+			command := "git commit -m own"
+			if mode == "amend" {
+				command = "git commit --amend -m amended"
 			}
-			store, err := LoadState(source)
+			if mode == "rewind" {
+				command = "git reset --hard " + base + " && git commit -m rejected"
+			}
+			raw, err := json.Marshal(command)
 			require.NoError(t, err)
-			req := Request{Event: Input{SessionID: "session", CWD: repo.Root, HookEventName: "PreToolUse", ToolUseID: "commit", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m own && git commit -m next"`)}}, FailedReviewThreshold: 1}
+			req := Request{Event: Input{SessionID: "session", CWD: repo.Root, HookEventName: "PreToolUse", ToolUseID: "commit", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": raw}}, FailedReviewThreshold: 1}
 			_, err = store.RecordContext(t.Context(), req)
 			require.NoError(t, err)
-			var own string
-			switch name {
-			case "amended Stop after reload":
+			switch mode {
+			case "forward":
+				repo.CommitFile("own.txt", "own", "own")
+			case "amend":
 				repo.Run("commit", "--amend", "--allow-empty", "-m", "amended")
-				own = repo.Head()
-				repo.CommitFile("next.txt", "next", "next")
-			case "empty aborted range":
+			case "rewind":
 				repo.Run("reset", "--hard", base)
-				own = base
-			default:
-				own = repo.CommitFile("own.txt", "own", "own")
+				_, _, err := repo.Runner.Run(t.Context(), repo.Root, nil, "commit", "-m", "rejected")
+				require.Error(t, err)
 			}
-			jobs = []storage.ReviewJob{failedReviewJob(42, own)}
-			realPath := os.Getenv("PATH")
+			head := repo.Head()
+			store.reviews = trackedReviewSource(repo.Root, failedReviewJob(42, head))
 			gitPath, err := exec.LookPath("git")
 			require.NoError(t, err)
-			wrapperDir := t.TempDir()
+			dir := t.TempDir()
 			quote := func(path string) string { return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'" }
-			wrapper := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *rev-list*) exec sleep 5;; esac\nexec %s \"$@\"\n", quote(gitPath))
-			require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(wrapper), 0o755))
-			t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+realPath)
+			wrapper := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *rev-list*) exit 1;; esac\nexec %s \"$@\"\n", quote(gitPath))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "git"), []byte(wrapper), 0o755))
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			req.Event.HookEventName = "PostToolUse"
-			_, err = store.RecordContext(t.Context(), req)
-			require.NoError(t, err)
-			require.NoError(t, t.Context().Err(), "the parent's deadline stays live")
-			pending := store.Sessions()["session"].PendingCommitRanges[repo.Root]
-			require.Len(t, pending, 1, "shared baselines must queue the frozen range once")
-			t.Setenv("PATH", realPath)
-			var later string
-			if name == "amended Stop after reload" {
-				later = repo.CommitFile("later.txt", "later", "after completed command")
-				store, err = LoadState(source)
-				require.NoError(t, err)
-			}
-			req.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)}
-			req.Event.HookEventName = "PostToolUse"
-			if name == "amended Stop after reload" || name == "muted" {
-				req.Event.HookEventName = "Stop"
-			}
 			got, err := store.RecordContext(t.Context(), req)
 			require.NoError(t, err)
-			require.Empty(t, store.Sessions()["session"].PendingCommitRanges, "successful reads, including empty ranges, remove pending work")
-			if name == "empty aborted range" {
-				require.False(t, got.Triggered)
-				require.False(t, store.Sessions()["session"].OwnedCommits[own])
-				return
+			require.Equal(t, mode == "forward", got.Triggered, "enumeration failure may use HEAD only after a proven forward move")
+			if mode == "forward" {
+				require.Contains(t, got.Reason, "Review job IDs: 42.")
 			}
-			require.True(t, store.Sessions()["session"].OwnedCommits[own])
-			if later != "" {
-				require.False(t, store.Sessions()["session"].OwnedCommits[later], "retry must stop at the frozen completed HEAD")
-			}
-			if name == "muted" {
-				require.False(t, got.Triggered)
-				muted = false
-			}
-			if name == "muted" {
-				req.Event.CWD = repo.Root
-				req.Event.HookEventName = "Stop"
-				got, err = store.RecordContext(t.Context(), req)
-				require.NoError(t, err)
-			}
-			require.True(t, got.Triggered, "a healthy event must recover the session commit's review")
-			require.Contains(t, got.Reason, "Review job IDs: 42.")
 		})
 	}
 }

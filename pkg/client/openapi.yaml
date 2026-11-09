@@ -4462,12 +4462,6 @@ components:
           additionalProperties:
             type: boolean
           type: object
-        pending_commit_ranges:
-          additionalProperties:
-            items:
-              type: string
-            type: array
-          type: object
         pending_reminders:
           additionalProperties:
             $ref: "#/components/schemas/PendingReminder"

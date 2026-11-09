@@ -126,15 +126,14 @@ func (i Input) Command() string {
 }
 
 type Request struct {
-	pendingCommitObservations map[string]map[string]commitObservation
-	MCP                       bool               `json:"-"`
-	Agent                     kitagenthook.Agent `json:"agent"`
-	Event                     Input              `json:"event"`
-	Threshold                 int                `json:"threshold"`
-	CommitThreshold           int                `json:"commit_threshold"`
-	FailedReviewThreshold     int                `json:"failed_review_threshold"`
-	Instruction               string             `json:"instruction"`
-	DeferPostToolReminder     bool               `json:"defer_post_tool_reminder,omitempty"`
+	MCP                   bool               `json:"-"`
+	Agent                 kitagenthook.Agent `json:"agent"`
+	Event                 Input              `json:"event"`
+	Threshold             int                `json:"threshold"`
+	CommitThreshold       int                `json:"commit_threshold"`
+	FailedReviewThreshold int                `json:"failed_review_threshold"`
+	Instruction           string             `json:"instruction"`
+	DeferPostToolReminder bool               `json:"defer_post_tool_reminder,omitempty"`
 }
 
 type Response struct {
@@ -160,7 +159,6 @@ type Response struct {
 type reviewIDSet map[int64]struct{}
 
 type SessionState struct {
-	PendingCommitRanges         map[string][]string        `json:"pending_commit_ranges,omitempty"`
 	OwnedCommits                map[string]bool            `json:"owned_commits,omitempty"`
 	Count                       int                        `json:"count"`
 	StopCountsSincePrompt       map[string]int             `json:"stop_counts_since_prompt,omitempty"`

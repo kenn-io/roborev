@@ -4065,7 +4065,6 @@ type SessionState struct {
 	LastSeenAt                  *time.Time                             `json:"last_seen_at,omitempty"`
 	LastTurnID                  *string                                `json:"last_turn_id,omitempty"`
 	OwnedCommits                map[string]bool                        `json:"owned_commits,omitempty"`
-	PendingCommitRanges         map[string][]string                    `json:"pending_commit_ranges,omitempty"`
 	PendingReminders            map[string]PendingReminder             `json:"pending_reminders,omitempty"`
 	RemindCount                 *int64                                 `json:"remind_count,omitempty"`
 	RepoHeads                   map[string]string                      `json:"repo_heads,omitempty"`

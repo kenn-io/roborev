@@ -47,10 +47,7 @@ Agent Hook tracks three signals per session:
     failing, and so from counting, set
     [`review_min_severity`](configuration.md#per-repository-options) to `medium`.
 
-Existing sessions start collecting newly observed commits after an upgrade. If
-Git temporarily fails while listing a completed command's commits, roborev keeps
-that command's exact commit range and retries it on later hook events, even
-after restarting the daemon. Changing branches does not change that range.
+Existing sessions start collecting newly observed commits after an upgrade.
 
 Roborev scopes commit and failed-review accounting to repository lineage, so
 activity in one worktree does not consume another worktree's reminder. Older

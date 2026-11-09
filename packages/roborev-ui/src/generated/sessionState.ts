@@ -6,7 +6,6 @@ import type { SessionStateCommitCountsSincePrompt } from "./sessionStateCommitCo
 import type { SessionStateCommitShasSincePrompt } from "./sessionStateCommitShasSincePrompt";
 import type { SessionStateFailedReviewTriggeredCounts } from "./sessionStateFailedReviewTriggeredCounts";
 import type { SessionStateOwnedCommits } from "./sessionStateOwnedCommits";
-import type { SessionStatePendingCommitRanges } from "./sessionStatePendingCommitRanges";
 import type { SessionStatePendingReminders } from "./sessionStatePendingReminders";
 import type { SessionStateRepoHeads } from "./sessionStateRepoHeads";
 import type { SessionStateStopCountsSincePrompt } from "./sessionStateStopCountsSincePrompt";
@@ -30,7 +29,6 @@ export interface SessionState {
   last_seen_at?: string;
   last_turn_id?: string;
   owned_commits?: SessionStateOwnedCommits;
-  pending_commit_ranges?: SessionStatePendingCommitRanges;
   pending_reminders?: SessionStatePendingReminders;
   remind_count?: number;
   repo_heads?: SessionStateRepoHeads;

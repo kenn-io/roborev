@@ -158,20 +158,24 @@ func TestSessionOwnershipWorkflows(t *testing.T) {
 }
 
 func TestSessionCommitFollowedByFailedPushStillReminds(t *testing.T) {
-	repo := gittest.NewRepoWithCommit(t)
-	store := &StateStore{reviews: trackedReviewSource(repo.Root), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
-	req := Request{Event: Input{SessionID: "own", CWD: repo.Root, HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit --allow-empty -m own && git push"`)}}, FailedReviewThreshold: 1}
-	_, err := store.RecordContext(t.Context(), req)
-	require.NoError(t, err)
-	repo.Run("commit", "--allow-empty", "-m", "own")
-	_, _, err = repo.Runner.Run(t.Context(), repo.Root, nil, "push")
-	require.Error(t, err, "the fixture has no push remote")
-	store.reviews = trackedReviewSource(repo.Root, failedReviewJob(42, repo.Head()))
-	req.Event.HookEventName = "PostToolUseFailure"
-	got, err := store.RecordContext(t.Context(), req)
-	require.NoError(t, err)
-	require.True(t, got.Triggered, "a failed push must retain the preceding commit's review")
-	require.Contains(t, got.Reason, "Review job IDs: 42.")
+	for _, event := range []string{"PostToolUse", "PostToolUseFailure"} {
+		t.Run(event, func(t *testing.T) {
+			repo := gittest.NewRepoWithCommit(t)
+			store := &StateStore{reviews: trackedReviewSource(repo.Root), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+			req := Request{Event: Input{SessionID: "own", CWD: repo.Root, HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit --allow-empty -m own && git push"`)}}, FailedReviewThreshold: 1}
+			_, err := store.RecordContext(t.Context(), req)
+			require.NoError(t, err)
+			repo.Run("commit", "--allow-empty", "-m", "own")
+			_, _, err = repo.Runner.Run(t.Context(), repo.Root, nil, "push")
+			require.Error(t, err, "the fixture has no push remote")
+			store.reviews = trackedReviewSource(repo.Root, failedReviewJob(42, repo.Head()))
+			req.Event.HookEventName = event
+			got, err := store.RecordContext(t.Context(), req)
+			require.NoError(t, err)
+			require.True(t, got.Triggered, "a failed push must retain the preceding commit's review")
+			require.Contains(t, got.Reason, "Review job IDs: 42.")
+		})
+	}
 }
 
 func TestSessionOwnsCommitsHeadGains(t *testing.T) {
