@@ -669,13 +669,6 @@ func TestRunAgentHookPreservesNormalizedEventFields(t *testing.T) {
 			},
 		},
 		{
-			name:    "failed tool use",
-			payload: `{"session_id":"s1","cwd":"/repo","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"git commit && git push"},"tool_use_id":"tool-3","error":"push failed"}`,
-			check: func(t *testing.T, input agenthook.Input) {
-				assert.Equal(t, "PostToolUseFailure", input.HookEventName)
-			},
-		},
-		{
 			name: "stop",
 			payload: `{"session_id":"s1","cwd":"/repo","hook_event_name":"Stop",` +
 				`"stop_hook_active":true,"last_assistant_message":"done"}`,

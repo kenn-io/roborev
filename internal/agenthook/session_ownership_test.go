@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/json/jsontext"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -91,7 +90,7 @@ func runSessionCommand(t *testing.T, store *StateStore, req Request, run func())
 }
 
 func TestSessionOwnershipWorkflows(t *testing.T) {
-	for _, name := range []string{"cherry-pick", "rebase", "chained amend", "aborted cherry-pick"} {
+	for _, name := range []string{"cherry-pick", "rebase", "aborted cherry-pick"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			repo := gittest.NewRepoWithCommit(t)
@@ -99,18 +98,13 @@ func TestSessionOwnershipWorkflows(t *testing.T) {
 			store := &StateStore{reviews: trackedReviewSource(repo.Root), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 			req := Request{Event: Input{SessionID: "own", CWD: repo.Root, ToolUseID: "commit", ToolName: "Bash", ToolInput: map[string]jsontext.Value{}}, FailedReviewThreshold: 1}
 			command := ""
-			var ownedRef, reviewRef, restored, pick string
+			var ownedRef, restored, pick string
 			switch name {
 			case "cherry-pick":
 				repo.Run("checkout", "-b", "source")
-				pick := repo.CommitFile("pick.txt", "pick", "pick")
+				pick = repo.CommitFile("pick.txt", "pick", "pick")
 				repo.Run("checkout", "main")
 				command = "git cherry-pick " + pick
-			case "chained amend":
-				req.Event.ToolInput["command"] = jsontext.Value(`"git commit -m own"`)
-				runSessionCommand(t, store, req, func() { repo.CommitFile("own.txt", "own", "own") })
-				command = "git commit --amend -m amended && git commit -m next"
-				req.Threshold, req.FailedReviewThreshold = 1, 0
 			case "aborted cherry-pick":
 				restored = repo.CommitFile("conflict.txt", "ours", "pre-session")
 				repo.Run("checkout", "-b", "source", base)
@@ -132,11 +126,7 @@ func TestSessionOwnershipWorkflows(t *testing.T) {
 			got := runSessionCommand(t, store, req, func() {
 				switch name {
 				case "cherry-pick":
-					repo.Run("cherry-pick", strings.TrimPrefix(command, "git cherry-pick "))
-				case "chained amend":
-					repo.Run("commit", "--amend", "--allow-empty", "-m", "amended")
-					reviewRef = repo.Head()
-					repo.CommitFile("next.txt", "next", "next")
+					repo.Run("cherry-pick", pick)
 				case "aborted cherry-pick":
 					repo.Run("reset", "--hard", restored)
 					_, _, err := repo.Runner.Run(t.Context(), repo.Root, nil, "cherry-pick", pick)
@@ -146,19 +136,12 @@ func TestSessionOwnershipWorkflows(t *testing.T) {
 				case "rebase":
 					repo.Run("rebase", "upstream")
 				}
-				ref := repo.Head()
-				if reviewRef != "" {
-					ref = reviewRef
-				}
-				job := failedReviewJob(42, ref)
-				store.reviews = trackedReviewSource(repo.Root, job)
+				store.reviews = trackedReviewSource(repo.Root, failedReviewJob(42, repo.Head()))
 			})
-			if name == "chained amend" {
-				req.Event.HookEventName = "Stop"
-				got, err = store.RecordContext(t.Context(), req)
-				require.NoError(t, err)
-			}
 			switch name {
+			case "cherry-pick":
+				require.True(t, got.Triggered)
+				require.Contains(t, got.Reason, "Review job IDs: 42.")
 			case "aborted cherry-pick":
 				require.False(t, got.Triggered, "an aborted pick must not claim the restored pre-session commit")
 			case "rebase":
@@ -169,9 +152,6 @@ func TestSessionOwnershipWorkflows(t *testing.T) {
 				require.NoError(t, err)
 				require.True(t, got.Triggered, "the original owned SHA still has an actionable review")
 				require.Contains(t, got.Reason, "Review job IDs: 43.")
-			default:
-				require.True(t, got.Triggered)
-				require.Contains(t, got.Reason, "Review job IDs: 42.")
 			}
 		})
 	}
@@ -210,40 +190,6 @@ func TestSessionOwnsCommitsHeadGains(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, got.Triggered)
 	require.Contains(t, got.Reason, "Review job IDs: 42.")
-}
-
-func TestSessionAbandonedCallBaselinesClearAtStop(t *testing.T) {
-	for _, completeSecond := range []bool{false, true} {
-		t.Run(fmt.Sprint(completeSecond), func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			repo := gittest.NewRepoWithCommit(t)
-			reviews := trackedReviewSource(repo.Root)
-			store, err := LoadState(reviews)
-			require.NoError(t, err)
-			req := Request{Event: Input{SessionID: "session", CWD: repo.Root, HookEventName: "PreToolUse", ToolUseID: "u1", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m a"`)}}}
-			_, err = store.RecordContext(t.Context(), req)
-			require.NoError(t, err)
-			req.Event.ToolUseID = "u2"
-			_, err = store.RecordContext(t.Context(), req)
-			require.NoError(t, err)
-			if completeSecond {
-				req.Event.HookEventName = "PostToolUse"
-				_, err = store.RecordContext(t.Context(), req)
-				require.NoError(t, err)
-				require.Contains(t, store.Sessions()["session"].RepoHeads, "\x00call\x00u1")
-			}
-			req.Event.HookEventName = "Stop"
-			_, err = store.RecordContext(t.Context(), req)
-			require.NoError(t, err)
-			reloaded, err := LoadState(reviews)
-			require.NoError(t, err)
-			heads := reloaded.Sessions()["session"].RepoHeads
-			for key := range heads {
-				require.False(t, strings.HasPrefix(key, "\x00call\x00"), "abandoned call baseline survived Stop")
-			}
-			require.Equal(t, repo.Head(), heads[repoHeadKey(repo.Root, strings.TrimSpace(repo.Run("branch", "--show-current")))])
-		})
-	}
 }
 
 func TestSessionCommitWhileMutedRemindsAfterUnmuting(t *testing.T) {

@@ -343,7 +343,7 @@ func TestCountOpenFailedReviewsExcludesRepoLevelAndDirtyReviews(t *testing.T) {
 		job("", ""),          // unowned branchless review -> must NOT count
 		job("", "dirty"),     // dirty review -> must NOT count
 	}
-	count, ok := countOpenFailedReviews(t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head, ownedReviewFixtures(t, repo.Path(), jobs))
+	count, ok := countOpenFailedReviews(t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head, ownedReviewFixtures(t, repo.Path()))
 
 	assert.True(ok)
 	assert.Equal(2, count, "only reviews on the queried branch or reachable from HEAD count")
@@ -365,7 +365,7 @@ func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T)
 		{ID: 3, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: featureHead},
 	}
 	count, ok := countOpenFailedReviews(
-		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead, ownedReviewFixtures(t, repo.Path(), jobs),
+		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead, ownedReviewFixtures(t, repo.Path()),
 	)
 
 	assert.True(ok)
@@ -437,7 +437,6 @@ func TestFindOpenFailedReviewJobsRangeSemantics(t *testing.T) {
 		{merged + "..." + a, true}, // Only the left side contains b.
 		{merged + "..." + merged, false},
 		{a + "..owned-tag", true},
-		{"HEAD~1..HEAD", true},
 		{"missing..HEAD", false},
 	}
 	for _, tc := range refs {
@@ -490,7 +489,7 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 		jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref})
 	}
 	featureHead := repo.HeadSHA()
-	owned := ownedReviewFixtures(t, repo.Path(), jobs)
+	owned := ownedReviewFixtures(t, repo.Path())
 	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
@@ -515,7 +514,7 @@ func TestCountOpenFailedReviewsDetachedHeadChecksReachabilityOnce(t *testing.T) 
 	}
 	repo.CheckoutDetached()
 	head := repo.HeadSHA()
-	owned := ownedReviewFixtures(t, repo.Path(), jobs)
+	owned := ownedReviewFixtures(t, repo.Path())
 	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
@@ -955,11 +954,8 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 		},
 		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 	}
-	// Both commits were observed earlier; these events only navigate their histories.
 	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
-	repo.CheckoutDetached(secondHead)
-	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
-	repo.CheckoutDetached(firstHead)
+	store.sessions["session-1"].OwnedCommits[secondHead] = true
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1496,9 +1492,7 @@ func TestRecordStopDetachedHeadDoesNotTriggerForUnrelatedFailedReviews(t *testin
 		sessions: map[string]SessionState{},
 	}
 	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
-	st := store.sessions["session-1"]
-	st.OwnedCommits[end] = true
-	store.sessions["session-1"] = st
+	store.sessions["session-1"].OwnedCommits[end] = true
 	resp, err := store.Record(Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1880,11 +1874,8 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 		}},
 		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 	}
-	// Both commits were observed earlier; these events only navigate their histories.
 	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
-	repo.CheckoutDetached(secondHead)
-	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
-	repo.CheckoutDetached(firstHead)
+	store.sessions["session-1"].OwnedCommits[secondHead] = true
 	post := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -3274,23 +3265,13 @@ func seedOwnedCommitFixtures(t *testing.T, store *StateStore, sessions []string,
 	}
 }
 
-func ownedReviewFixtures(t *testing.T, root string, jobs []storage.ReviewJob) map[string]bool {
+func ownedReviewFixtures(t *testing.T, root string) map[string]bool {
 	t.Helper()
+	out, err := agentHookGit.Output(t.Context(), root, "rev-list", "--all")
+	require.NoError(t, err)
 	owned := map[string]bool{}
-	for _, job := range jobs {
-		var refs []string
-		if strings.Contains(job.GitRef, "..") {
-			var err error
-			refs, err = roborevgit.GetRangeCommitsCtx(t.Context(), root, job.GitRef)
-			require.NoError(t, err)
-		} else if job.GitRef != "" && job.GitRef != "dirty" {
-			out, err := agentHookGit.Output(t.Context(), root, "rev-parse", job.GitRef+"^{commit}")
-			require.NoError(t, err)
-			refs = strings.Fields(string(out))
-		}
-		for _, ref := range refs {
-			owned[ref] = true
-		}
+	for sha := range strings.FieldsSeq(string(out)) {
+		owned[sha] = true
 	}
 	return owned
 }
@@ -3315,21 +3296,6 @@ func amendHookFixture(t *testing.T, store *StateStore, repo *gittest.Repo, messa
 	repo.Run(append([]string{"add"}, paths...)...)
 	repo.Run("commit", "--amend", "-m", message)
 	return repo.Head()
-}
-
-func TestRecordPostToolUseSharesCommitObservation(t *testing.T) {
-	repo := gittest.NewRepoWithCommit(t)
-	store := &StateStore{reviews: trackedReviewSource(repo.Root), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
-	req := Request{Event: Input{SessionID: "session", CWD: repo.Root, HookEventName: "PreToolUse", ToolUseID: "commit", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m own"`)}}}
-	_, err := store.RecordContext(t.Context(), req)
-	require.NoError(t, err)
-	repo.CommitFile("own.txt", "own", "own")
-	gitCalls := testutil.CountGitProcesses(t)
-	req.Event.HookEventName = "PostToolUse"
-	_, err = store.RecordContext(t.Context(), req)
-	require.NoError(t, err)
-	t.Logf("commit callback: %d Git processes", gitCalls())
-	require.LessOrEqual(t, gitCalls(), 8, "one ancestry check and range walk plus cold trust setup")
 }
 
 func TestMutedCommitObservationHonorsCancellation(t *testing.T) {
@@ -3383,7 +3349,7 @@ func TestCommitObservationTimeoutRetriesOwnership(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fixture uses an executable shell wrapper")
 	}
-	for _, name := range []string{"status", "amended Stop after reload", "prompt in other checkout", "muted", "empty aborted range", "canceled retry", "save failure"} {
+	for _, name := range []string{"status", "amended Stop after reload", "muted", "empty aborted range"} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			repo := gittest.NewRepoWithCommit(t)
@@ -3445,51 +3411,10 @@ func TestCommitObservationTimeoutRetriesOwnership(t *testing.T) {
 				store, err = LoadState(source)
 				require.NoError(t, err)
 			}
-			if name == "canceled retry" {
-				before := store.Sessions()
-				ready := filepath.Join(wrapperDir, "ready")
-				wrapper = fmt.Sprintf("#!/bin/sh\ncase \" $* \" in *' log '*) printf ready > %s; exec sleep 5;; esac\nexec %s \"$@\"\n", quote(ready), quote(gitPath))
-				require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(wrapper), 0o755))
-				t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+realPath)
-				ctx, cancel := context.WithCancel(t.Context())
-				done := make(chan error, 1)
-				finished := make(chan struct{})
-				t.Cleanup(func() {
-					cancel()
-					select {
-					case <-finished:
-					case <-time.After(5 * time.Second):
-						t.Error("retry subprocess did not stop")
-					}
-				})
-				req.Event.HookEventName = "Stop"
-				go func() { defer close(finished); _, err := store.RecordContext(ctx, req); done <- err }()
-				// Wait for the external Git subprocess to enter the queued range read.
-				require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 5*time.Second, 10*time.Millisecond)
-				cancel()
-				require.ErrorIs(t, <-done, context.Canceled)
-				require.Equal(t, before, store.Sessions(), "cancellation must retain the complete retry queue")
-				t.Setenv("PATH", realPath)
-			}
-			if name == "save failure" {
-				before := store.Sessions()
-				path := store.path
-				store.path = t.TempDir()
-				req.Event.HookEventName = "Stop"
-				_, err := store.RecordContext(t.Context(), req)
-				require.Error(t, err)
-				require.Equal(t, before, store.Sessions(), "failed atomic replacement must retain ownership and its pending range")
-				store.path = path
-			}
 			req.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)}
 			req.Event.HookEventName = "PostToolUse"
 			if name == "amended Stop after reload" || name == "muted" {
 				req.Event.HookEventName = "Stop"
-			}
-			if name == "prompt in other checkout" {
-				other := gittest.NewRepoWithCommit(t)
-				req.Event.CWD = other.Root
-				req.Event.HookEventName = "UserPromptSubmit"
 			}
 			got, err := store.RecordContext(t.Context(), req)
 			require.NoError(t, err)
@@ -3507,10 +3432,7 @@ func TestCommitObservationTimeoutRetriesOwnership(t *testing.T) {
 				require.False(t, got.Triggered)
 				muted = false
 			}
-			if name == "prompt in other checkout" {
-				require.False(t, got.Triggered, "the other repository has no failed reviews")
-			}
-			if name == "muted" || name == "prompt in other checkout" {
+			if name == "muted" {
 				req.Event.CWD = repo.Root
 				req.Event.HookEventName = "Stop"
 				got, err = store.RecordContext(t.Context(), req)

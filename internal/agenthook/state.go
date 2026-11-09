@@ -683,6 +683,15 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		return s.recordSnoozed(ctx, req, scope)
 	}
 
+	var failedJobs []storage.ReviewJob
+	haveFailedReviewCount := false
+	if scope.Tracked && s.reviews != nil {
+		haveFailedReviewCount = true
+		if commitCommand || len(s.ownedCommits(req)) > 0 {
+			failedJobs, haveFailedReviewCount = s.reviews.ListOpenFailedReviewJobs(ctx, scope.TrackedRepoRoot, scope.Branch)
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -691,14 +700,6 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 
 	st := cloneSessionState(s.sessions[req.Event.SessionID])
 	applyPendingCommitRanges(&st, req.pendingCommitObservations)
-	var failedJobs []storage.ReviewJob
-	haveFailedReviewCount := false
-	if scope.Tracked && s.reviews != nil {
-		haveFailedReviewCount = true
-		if commitCommand || len(st.OwnedCommits) > 0 {
-			failedJobs, haveFailedReviewCount = s.reviews.ListOpenFailedReviewJobs(ctx, scope.TrackedRepoRoot, scope.Branch)
-		}
-	}
 
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
