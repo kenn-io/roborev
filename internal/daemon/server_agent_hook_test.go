@@ -92,50 +92,37 @@ func TestAgentHookFixDoneRejectsZeroAndAcceptsUnknownIDs(t *testing.T) {
 
 func TestAgentHookEventUsesDatabaseReviewState(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
-	head := repo.CommitFiles(map[string]string{
-		"main.go":       "package main\n",
-		".roborev.toml": "review_guidelines = \"Flag unsafe queries.\"\n",
-	}, "initial")
+	repo.WriteFile(".roborev.toml", "review_guidelines = \"Flag unsafe queries.\"\n")
+	repo.CommitFile("main.go", "package main\n", "initial")
+	repo.CommitFile("feature.go", "package main\n", "session")
+	body, err := json.Marshal(agenthook.Snapshot{Sessions: map[string]agenthook.SessionState{
+		"session-1": {OwnedCommits: map[string]bool{repo.HeadSHA(): true}, LastSeenAt: time.Now().UTC()},
+	}})
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
+	require.NoError(t, os.WriteFile(agenthook.StatePath(), body, 0o600))
+	server, db, _ := newTestServer(t)
 	storedRepo, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
-	commit, err := db.GetOrCreateCommit(
-		storedRepo.ID, head, "Test Author", "initial", time.Now(),
-	)
+	commit, err := db.GetOrCreateCommit(storedRepo.ID, repo.HeadSHA(), "Test Author", "session", time.Now())
 	require.NoError(t, err)
-	job, err := db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:   storedRepo.ID,
-		CommitID: commit.ID,
-		GitRef:   head,
-		Branch:   "main",
-		Agent:    "test",
-	})
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: repo.HeadSHA(), Branch: "main", Agent: "test"})
 	require.NoError(t, err)
 	setJobStatus(t, db, job.ID, storage.JobStatusRunning)
-	require.NoError(t, testutil.CompleteReviewFixture(db,
-		job.ID, "test", "review", "- High — unsafe query construction",
-	))
-
-	body, err := json.Marshal(agenthook.Request{
-		Event: agenthook.Input{
-			SessionID:     "session-1",
-			CWD:           repo.Path(),
-			HookEventName: "Stop",
-		},
-		Threshold:             100,
-		FailedReviewThreshold: 1,
-		Instruction:           "Resolve failed reviews.",
-	})
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "review", "- High — unsafe query construction"))
+	request := agenthook.Request{
+		Event:     agenthook.Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		Threshold: 100, FailedReviewThreshold: 1, Instruction: "Resolve failed reviews.",
+	}
+	body, err = json.Marshal(request)
 	require.NoError(t, err)
 	got := serveHuma(t, server, http.MethodPost, "/api/agent-hook/event", body)
-
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
 	var response agenthook.Response
 	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &response))
 	assert.True(t, response.Triggered)
 	assert.Equal(t, "failed_reviews", response.TriggeredBy)
-
 	persisted, err := os.ReadFile(agenthook.StatePath())
 	require.NoError(t, err)
 	var snapshot agenthook.Snapshot

@@ -247,6 +247,7 @@ func (s *StateStore) Reset(sessionID string, all bool) error {
 }
 
 func cloneSessionState(state SessionState) SessionState {
+	state.OwnedCommits = maps.Clone(state.OwnedCommits)
 	state.StopCountsSincePrompt = maps.Clone(state.StopCountsSincePrompt)
 	state.CommitCountsSincePrompt = maps.Clone(state.CommitCountsSincePrompt)
 	state.FailedReviewTriggeredCounts = maps.Clone(state.FailedReviewTriggeredCounts)
@@ -268,18 +269,37 @@ func (s *StateStore) RecordContext(ctx context.Context, req Request) (Response, 
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
+
 	switch req.Event.HookEventName {
 	case "PreToolUse":
 		return s.recordPreToolUse(ctx, req)
 	case "", "Stop":
-		return s.recordStop(ctx, req)
-	case "PostToolUse":
+		response, err := s.recordStop(ctx, req)
+		if err == nil {
+			err = s.dropCallHeads(req.Event.SessionID)
+		}
+		return response, err
+	case "PostToolUse", "PostToolUseFailure":
 		return s.recordPostToolUse(ctx, req)
 	case "UserPromptSubmit", "SessionStart":
 		return s.recordUserPrompt(ctx, req)
 	default:
 		return Response{SessionID: req.Event.SessionID, Skipped: true}, nil
 	}
+}
+
+func (s *StateStore) dropCallHeads(session string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := s.sessions[session]
+	for key := range state.RepoHeads {
+		if strings.HasPrefix(key, callHeadKey("")) {
+			state = cloneSessionState(state)
+			maps.DeleteFunc(state.RepoHeads, func(key, _ string) bool { return strings.HasPrefix(key, callHeadKey("")) })
+			return s.saveSessionLocked(session, state)
+		}
+	}
+	return nil
 }
 
 // recordUserPrompt handles UserPromptSubmit and SessionStart, the only hook
@@ -329,17 +349,12 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 		if scope.SnoozedUntil.After(time.Now()) {
 			reason = "reminders snoozed until " + scope.SnoozedUntil.Format(time.RFC3339)
 		}
-		return Response{
-			SessionID:             req.Event.SessionID,
-			Threshold:             req.Threshold,
-			FailedReviewThreshold: req.FailedReviewThreshold,
-			Skipped:               true,
-			Diagnosis:             reason,
-		}, nil
+		resp, err := s.recordSnoozed(ctx, req, scope)
+		resp.Diagnosis = reason
+		return resp, err
 	}
-	openFailedJobs, haveFailedReviewCount := findOpenFailedReviewJobs(
-		ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head,
-	)
+
+	openFailedJobs, haveFailedReviewCount := findOpenFailedReviewJobs(ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head, s.ownedCommits(req.Event.SessionID))
 	openFailedReviewIDs := reviewIDsFromJobs(openFailedJobs)
 
 	s.mu.Lock()
@@ -442,7 +457,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	var prepare func(*SessionState) Response
 	if snoozed {
 		prepare = func(st *SessionState) Response {
-			return applySnoozedState(st, req, scope)
+			return applySnoozedState(ctx, st, req, scope)
 		}
 	}
 	if resp, delivered, err := s.deliverPendingReminder(ctx, req, prepare); err != nil || delivered {
@@ -467,9 +482,8 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 			Skipped:               true,
 		}, nil
 	}
-	openFailedReviewIDs, haveFailedReviewCount := findOpenFailedReviewIDs(
-		ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head,
-	)
+
+	openFailedReviewIDs, haveFailedReviewCount := findOpenFailedReviewIDs(ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head, s.ownedCommits(req.Event.SessionID))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -581,12 +595,16 @@ func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Respons
 
 	scope, ok := s.resolveHookScope(ctx, commandGitDir(req.Event.CWD, req.Event.Command()))
 	if !ok {
-		return Response{
-			SessionID:             req.Event.SessionID,
-			CommitThreshold:       req.CommitThreshold,
-			FailedReviewThreshold: req.FailedReviewThreshold,
-			Skipped:               true,
-		}, nil
+		gitInfo, unborn := unbornGitScope(ctx, commandGitDir(req.Event.CWD, req.Event.Command()))
+		if !unborn {
+			return Response{
+				SessionID:             req.Event.SessionID,
+				CommitThreshold:       req.CommitThreshold,
+				FailedReviewThreshold: req.FailedReviewThreshold,
+				Skipped:               true,
+			}, nil
+		}
+		scope = s.hookScopeFor(ctx, gitInfo)
 	}
 	if scope.remindersMuted(time.Now()) {
 		return s.recordSnoozed(ctx, req, scope)
@@ -604,6 +622,7 @@ func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Respons
 	}
 	lineageKey := ensureLineageKey(&st, scope)
 	recordSequenceHeads(&st, scope, commitSequenceKeys(scope, lineageKey))
+	recordCallHead(&st, req, scope)
 	st.LastCWD = req.Event.CWD
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
@@ -651,12 +670,13 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		return s.recordSnoozed(ctx, req, scope)
 	}
 
-	var openFailedReviewIDs reviewIDSet
+	var failedJobs []storage.ReviewJob
 	haveFailedReviewCount := false
-	if scope.Tracked {
-		openFailedReviewIDs, haveFailedReviewCount = findOpenFailedReviewIDs(
-			ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head,
-		)
+	if scope.Tracked && s.reviews != nil {
+		haveFailedReviewCount = true
+		if commitCommand || len(s.ownedCommits(req.Event.SessionID)) > 0 {
+			failedJobs, haveFailedReviewCount = s.reviews.ListOpenFailedReviewJobs(ctx, scope.TrackedRepoRoot, scope.Branch)
+		}
 	}
 
 	s.mu.Lock()
@@ -692,13 +712,17 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	// Counting on the first observation would misfire when a failed commit
 	// command leaves an unrelated older commit as the latest reflog entry.
 	var eventNewCommits []string
+	var observations map[string]commitObservation
 	if commitCommand {
+		observations = headGains(ctx, st, scope, append(sequenceKeys, callHeadKey(req.Event.ToolUseID))...)
 		for _, key := range sequenceKeys {
-			previousHead := st.RepoHeads[key]
-			if previousHead == "" || previousHead == scope.Head {
+			// A present empty baseline records a verified unborn checkout.
+			previousHead, seen := st.RepoHeads[key]
+			if !seen || previousHead == scope.Head {
 				continue
 			}
-			newCommits, continuous := newCommitSHAs(scope.WorktreeRoot, previousHead, scope.Head)
+			observation := observations[previousHead]
+			newCommits, continuous := observation.commits, observation.continuous
 			if err := ctx.Err(); err != nil {
 				return Response{}, err
 			}
@@ -722,7 +746,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 				continue
 			}
 			if len(newCommits) == 0 {
-				continue
+				newCommits = []string{scope.Head}
 			}
 			if st.CommitSHAsSincePrompt == nil {
 				st.CommitSHAsSincePrompt = map[string][]string{}
@@ -732,6 +756,10 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		}
 	}
 
+	if commitCommand {
+		collectCommitObservations(&st, observations)
+		delete(st.RepoHeads, callHeadKey(req.Event.ToolUseID))
+	}
 	recordSequenceHeads(&st, scope, sequenceKeys)
 	st.LastCWD = req.Event.CWD
 	now := s.currentTime()
@@ -740,6 +768,8 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		st.LastCommitRepo = scope.WorktreeRoot
 		st.LastCommitHead = scope.Head
 	}
+
+	openFailedReviewIDs := reviewIDsFromJobs(filterFailedReviewJobs(ctx, scope.TrackedRepoRoot, scope.Branch, scope.Head, failedJobs, st.OwnedCommits))
 
 	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
 	failedReviewCount := len(actionableReviewIDs)
@@ -869,7 +899,7 @@ func (s *StateStore) recordSnoozed(
 	}
 
 	st := cloneSessionState(s.sessions[req.Event.SessionID])
-	resp := applySnoozedState(&st, req, scope)
+	resp := applySnoozedState(ctx, &st, req, scope)
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
@@ -879,13 +909,13 @@ func (s *StateStore) recordSnoozed(
 	return resp, nil
 }
 
-func applySnoozedState(st *SessionState, req Request, scope hookScope) Response {
+func applySnoozedState(ctx context.Context, st *SessionState, req Request, scope hookScope) Response {
 	lineageKey := ensureLineageKey(st, scope)
 	keys := uniqueStrings(append(
 		[]string{scope.WorktreeKey, lineageKey},
 		commitSequenceKeys(scope, lineageKey)...,
 	))
-	recordSequenceHeads(st, scope, keys)
+	advanceMutedHeads(ctx, st, req, scope, lineageKey, keys)
 	resetPromptCountersForKeys(st, keys)
 	delete(st.FailedReviewTriggeredCounts, lineageKey)
 	for key, pending := range st.PendingReminders {
@@ -1026,7 +1056,7 @@ func (s *StateStore) deliverPendingReminder(
 			continue
 		}
 		openFailedReviewIDs, ok := findOpenFailedReviewIDs(
-			ctx, s.reviews, pending.TrackedRepoRoot, pending.Branch, pending.Head,
+			ctx, s.reviews, pending.TrackedRepoRoot, pending.Branch, pending.Head, s.ownedCommits(req.Event.SessionID),
 		)
 		if err := ctx.Err(); err != nil {
 			return Response{}, false, err
@@ -1318,6 +1348,67 @@ func recordSequenceHeads(st *SessionState, scope hookScope, keys []string) {
 	}
 	for _, key := range keys {
 		st.RepoHeads[key] = scope.Head
+	}
+}
+
+func callHeadKey(id string) string { return "\x00call\x00" + id }
+
+func recordCallHead(st *SessionState, req Request, scope hookScope) {
+	if req.Event.ToolUseID != "" {
+		recordSequenceHeads(st, scope, []string{callHeadKey(req.Event.ToolUseID)})
+	}
+}
+
+// advanceMutedHeads moves a muted event's baselines. A muted commit call
+// still records the commits HEAD gains, so they stay owned once reminders
+// resume.
+func advanceMutedHeads(ctx context.Context, st *SessionState, req Request, scope hookScope, lineageKey string, keys []string) {
+	if isShellCommandTool(req.Event.ToolName) && IsCommitProducingCommand(req.Event.Command()) {
+		switch req.Event.HookEventName {
+		case "PreToolUse":
+			recordCallHead(st, req, scope)
+		case "PostToolUse", "PostToolUseFailure":
+			call := callHeadKey(req.Event.ToolUseID)
+			collectCommitObservations(st, headGains(ctx, *st, scope, append(commitSequenceKeys(scope, lineageKey), call)...))
+			delete(st.RepoHeads, call)
+		}
+	}
+	recordSequenceHeads(st, scope, keys)
+}
+
+type commitObservation struct {
+	commits    []string
+	continuous bool
+}
+
+// headGains observes each distinct baseline once for both ownership and counters.
+func headGains(ctx context.Context, st SessionState, scope hookScope, keys ...string) map[string]commitObservation {
+	observations := map[string]commitObservation{}
+	for _, key := range keys {
+		previousHead, seen := st.RepoHeads[key]
+		if !seen || previousHead == scope.Head {
+			continue
+		}
+		if _, observed := observations[previousHead]; !observed {
+			commits, continuous := newCommitSHAs(ctx, scope.WorktreeRoot, previousHead, scope.Head)
+			observations[previousHead] = commitObservation{commits, continuous}
+		}
+	}
+	return observations
+}
+
+func collectCommitObservations(st *SessionState, observations map[string]commitObservation) {
+	for _, observation := range observations {
+		ownCommits(st, observation.commits)
+	}
+}
+
+func ownCommits(st *SessionState, shas []string) {
+	if len(shas) > 0 && st.OwnedCommits == nil {
+		st.OwnedCommits = map[string]bool{}
+	}
+	for _, sha := range shas {
+		st.OwnedCommits[sha] = true
 	}
 }
 
@@ -1712,6 +1803,26 @@ func currentGitScopeSubprocess(parent context.Context, cwd string) (gitScope, bo
 	}, true
 }
 
+func unbornGitScope(parent context.Context, cwd string) (gitScope, bool) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	out, err := agentHookGit.Output(ctx, cwd, "rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir")
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(string(out), "\r\n", "\n")), "\n")
+	if err != nil || len(lines) < 3 || !gitrepo.IsUnbornHead(ctx, cwd) {
+		return gitScope{}, false
+	}
+	branch := gitrepo.CurrentBranch(ctx, cwd)
+	if branch == "" {
+		return gitScope{}, false
+	}
+	return gitScope{
+		WorktreeRoot: cleanGitPath(lines[0]),
+		GitDir:       absGitPath(cwd, cleanGitPath(lines[1])),
+		CommonDir:    absGitPath(cwd, cleanGitPath(lines[2])),
+		Branch:       branch,
+	}, true
+}
+
 func cleanGitPath(path string) string {
 	path = gitrepo.NormalizePath(path)
 	if path == "" {
@@ -1735,6 +1846,10 @@ func (s *StateStore) resolveHookScope(ctx context.Context, cwd string) (hookScop
 	if !ok {
 		return hookScope{}, false
 	}
+	return s.hookScopeFor(ctx, gitInfo), true
+}
+
+func (s *StateStore) hookScopeFor(ctx context.Context, gitInfo gitScope) hookScope {
 	trackedRoot := mainRepoRoot(ctx, gitInfo)
 	trackedIdentity := ""
 	tracked := true
@@ -1768,7 +1883,7 @@ func (s *StateStore) resolveHookScope(ctx context.Context, cwd string) (hookScop
 		SnoozedUntil:            snoozedUntil,
 		ReviewGuidelinesMissing: guidelinesMissing,
 		Tracked:                 tracked,
-	}, true
+	}
 }
 
 // mainRepoRoot resolves the main repository root for daemon API queries,
@@ -1820,38 +1935,27 @@ func configuredWorktree(parent context.Context, commonDir string) string {
 	return filepath.Clean(worktree)
 }
 
-func newCommitSHAs(repoRoot, oldHead, newHead string) ([]string, bool) {
-	if oldHead == "" || newHead == "" || oldHead == newHead {
-		return nil, true
+func newCommitSHAs(parent context.Context, repoRoot, oldHead, newHead string) ([]string, bool) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	continuous := oldHead == ""
+	if oldHead != "" {
+		_, err := agentHookGit.Output(ctx, repoRoot, "merge-base", "--is-ancestor", oldHead, newHead)
+		continuous = err == nil
 	}
-	if !refReachableFromHead(repoRoot, oldHead, newHead) {
+	ref := newHead
+	if oldHead != "" {
+		ref = oldHead + ".." + newHead
+	}
+	out, err := agentHookGit.Output(ctx, repoRoot, "rev-list", "--reverse", ref)
+	if err != nil {
+		// Rewrites can restore old history; only a proven forward move permits HEAD fallback.
+		if continuous {
+			return []string{newHead}, true
+		}
 		return nil, false
 	}
-	out, err := gitOutput(repoRoot, "rev-list", "--reverse", oldHead+".."+newHead)
-	if err != nil {
-		return []string{newHead}, true
-	}
-	var shas []string
-	for line := range strings.SplitSeq(out, "\n") {
-		sha := strings.TrimSpace(line)
-		if sha != "" {
-			shas = append(shas, sha)
-		}
-	}
-	if len(shas) == 0 {
-		return []string{newHead}, true
-	}
-	return shas, true
-}
-
-func gitOutput(cwd string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	out, err := agentHookGit.Output(ctx, cwd, args...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.Fields(string(out)), continuous
 }
 
 func IsCommitProducingCommand(command string) bool {
@@ -2092,8 +2196,9 @@ func countOpenFailedReviews(
 	ctx context.Context,
 	reviews ReviewSource,
 	repoRoot, branch, head string,
+	owned map[string]bool,
 ) (int, bool) {
-	ids, ok := findOpenFailedReviewIDs(ctx, reviews, repoRoot, branch, head)
+	ids, ok := findOpenFailedReviewIDs(ctx, reviews, repoRoot, branch, head, owned)
 	return len(ids), ok
 }
 
@@ -2101,8 +2206,9 @@ func findOpenFailedReviewIDs(
 	ctx context.Context,
 	reviews ReviewSource,
 	repoRoot, branch, head string,
+	owned map[string]bool,
 ) (reviewIDSet, bool) {
-	jobs, ok := findOpenFailedReviewJobs(ctx, reviews, repoRoot, branch, head)
+	jobs, ok := findOpenFailedReviewJobs(ctx, reviews, repoRoot, branch, head, owned)
 	if !ok {
 		return nil, false
 	}
@@ -2121,26 +2227,29 @@ func findOpenFailedReviewJobs(
 	ctx context.Context,
 	reviews ReviewSource,
 	repoRoot, branch, head string,
+	owned map[string]bool,
 ) ([]storage.ReviewJob, bool) {
 	if repoRoot == "" || reviews == nil {
 		return nil, false
+	}
+	if len(owned) == 0 {
+		return nil, true
 	}
 	jobs, ok := reviews.ListOpenFailedReviewJobs(ctx, repoRoot, branch)
 	if !ok {
 		return nil, false
 	}
+	return filterFailedReviewJobs(ctx, repoRoot, branch, head, jobs, owned), true
+}
+
+func filterFailedReviewJobs(ctx context.Context, repoRoot, branch, head string, jobs []storage.ReviewJob, owned map[string]bool) []storage.ReviewJob {
+	if len(owned) == 0 {
+		return nil
+	}
+
 	failed := make([]storage.ReviewJob, 0, len(jobs))
 	for _, job := range jobs {
-		if job.Status != "" && job.Status != storage.JobStatusDone {
-			continue
-		}
-		if job.Closed != nil && *job.Closed {
-			continue
-		}
 		if !countsAsFailedReview(job) {
-			continue
-		}
-		if job.Verdict == nil || !strings.EqualFold(*job.Verdict, "F") {
 			continue
 		}
 		failed = append(failed, job)
@@ -2154,13 +2263,22 @@ func findOpenFailedReviewJobs(
 		}
 		return lineageMatcher != nil && lineageMatcher.Matches(ref)
 	}
-	ids := make([]storage.ReviewJob, 0, len(failed))
+	refs := make([]string, 0, len(failed))
+	eligible := make([]storage.ReviewJob, 0, len(failed))
 	for _, job := range failed {
 		if failedReviewCountsForHead(branch, head, job, lineageMatches) {
+			refs = append(refs, job.GitRef)
+			eligible = append(eligible, job)
+		}
+	}
+	ranges := ownedRanges(ctx, repoRoot, refs, owned)
+	ids := make([]storage.ReviewJob, 0, len(failed))
+	for _, job := range eligible {
+		if owned[job.GitRef] || ranges[job.GitRef] {
 			ids = append(ids, job)
 		}
 	}
-	return ids, true
+	return ids
 }
 
 // loadFailedReviewMatcher builds the commit set for the current checkout and
@@ -2232,4 +2350,10 @@ func refReachableFromHead(repoRoot, ref, head string) bool {
 	}
 	ok, err := roborevgit.IsAncestor(repoRoot, ref, head)
 	return err == nil && ok
+}
+
+func (s *StateStore) ownedCommits(session string) map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessions[session].OwnedCommits
 }

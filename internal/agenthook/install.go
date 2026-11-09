@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -328,6 +329,10 @@ func kitInstallOptions(agent kitagenthook.Agent, opts InstallOptions) kitagentho
 			{Event: kitagenthook.EventStop, Timeout: opts.Timeout},
 		},
 	}
+	if profile, ok := kitagenthook.LookupProfile(agent); ok && slices.Contains(profile.SupportedEvents, kitagenthook.EventPostToolUseFailure) {
+		kitOpts.Hooks = append(kitOpts.Hooks, kitagenthook.Hook{Event: kitagenthook.EventPostToolUseFailure, Matcher: kitagenthook.ToolBash, Timeout: opts.Timeout})
+	}
+
 	if opts.Command == "" {
 		kitOpts.Arguments = []string{
 			"agent-hook", "run", "--agent", string(agent), agentHookMarker,

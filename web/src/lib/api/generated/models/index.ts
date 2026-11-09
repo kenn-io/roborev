@@ -202,6 +202,7 @@ export * from "./sessionStateAcknowledgedReviewIds";
 export * from "./sessionStateCommitCountsSincePrompt";
 export * from "./sessionStateCommitShasSincePrompt";
 export * from "./sessionStateFailedReviewTriggeredCounts";
+export * from "./sessionStateOwnedCommits";
 export * from "./sessionStatePendingReminders";
 export * from "./sessionStateRepoHeads";
 export * from "./sessionStateStopCountsSincePrompt";

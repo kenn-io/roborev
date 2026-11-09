@@ -355,6 +355,8 @@ func (s *Server) descriptorForSingleCommit(
 		return targetDescriptor{}, out
 	}
 
+	sha = info.SHA
+
 	fullMessage := info.Subject + "\n" + info.Body
 	if in.req.ReviewSettings == nil && config.IsCommitMessageExcluded(in.repoRoot, fullMessage) {
 		out, _ := rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{

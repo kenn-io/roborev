@@ -59,6 +59,8 @@ func NormalizeHookEventName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "pretooluse", "pre_tool_use":
 		return "PreToolUse"
+	case "posttoolusefailure", "post_tool_use_failure":
+		return "PostToolUseFailure"
 	case "posttooluse", "post_tool_use":
 		return "PostToolUse"
 	case "stop":
@@ -157,6 +159,7 @@ type Response struct {
 type reviewIDSet map[int64]struct{}
 
 type SessionState struct {
+	OwnedCommits                map[string]bool            `json:"owned_commits,omitempty"`
 	Count                       int                        `json:"count"`
 	StopCountsSincePrompt       map[string]int             `json:"stop_counts_since_prompt,omitempty"`
 	CommitCount                 int                        `json:"commit_count,omitempty"`

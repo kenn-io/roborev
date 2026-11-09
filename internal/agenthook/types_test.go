@@ -87,6 +87,8 @@ func TestNormalizeHookEventName(t *testing.T) {
 	assert.Equal("PreToolUse", NormalizeHookEventName("preToolUse"))
 	assert.Equal("PostToolUse", NormalizeHookEventName("post_tool_use"))
 	assert.Equal("PostToolUse", NormalizeHookEventName("PostToolUse"))
+	assert.Equal("PostToolUseFailure", NormalizeHookEventName("posttoolusefailure"))
+	assert.Equal("PostToolUseFailure", NormalizeHookEventName("post_tool_use_failure"))
 	assert.Equal("Stop", NormalizeHookEventName("stop"))
 	assert.Equal("Stop", NormalizeHookEventName("Stop"))
 	assert.Empty(NormalizeHookEventName(""))
