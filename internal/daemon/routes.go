@@ -547,6 +547,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"jobs"}
 		})
 
+	huma.Get(api, "/api/job/invocations", s.humaJobInvocations,
+		func(o *huma.Operation) {
+			o.OperationID = "get-job-invocations"
+			o.Summary = "Get locally recorded agent invocations for a supplied review"
+			o.Tags = []string{"jobs"}
+		})
+
 	huma.Get(api, "/api/job/log", s.humaJobLog,
 		func(o *huma.Operation) {
 			o.OperationID = "get-job-log"

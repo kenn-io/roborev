@@ -534,23 +534,23 @@ func TestBrowserHandlerProjectsFailureReasonOnlyForFailedJobs(t *testing.T) {
 }
 
 func TestBrowserHandlerRejectsRawJobLogs(t *testing.T) {
-	const secret = "SENTINEL_RAW_LOG_SESSION"
-	coreCalled := false
-	core := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		coreCalled = true
-		_, _ = w.Write([]byte(`{"type":"thread.started","thread_id":"` + secret + `"}`))
-	})
-	handler, sessions := newBrowserHandlerFixtureWithCore(t, testBrowserAuthToken, core)
-	request := authenticatedBrowserRequest(
-		t, sessions, http.MethodGet, "/api/job/log?job_id=7",
-	)
-	recorder := httptest.NewRecorder()
-
-	handler.ServeHTTP(recorder, request)
-
-	assert.Equal(t, http.StatusNotFound, recorder.Code)
-	assert.False(t, coreCalled)
-	assert.NotContains(t, recorder.Body.String(), secret)
+	for _, path := range []string{"/api/job/log?job_id=7", "/api/job/invocations?job_id=7"} {
+		t.Run(path, func(t *testing.T) {
+			const secret = "SENTINEL_RAW_LOG_SESSION"
+			coreCalled := false
+			core := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				coreCalled = true
+				_, _ = w.Write([]byte(`{"type":"thread.started","thread_id":"` + secret + `"}`))
+			})
+			handler, sessions := newBrowserHandlerFixtureWithCore(t, testBrowserAuthToken, core)
+			request := authenticatedBrowserRequest(t, sessions, http.MethodGet, path)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			assert.Equal(t, http.StatusNotFound, recorder.Code)
+			assert.False(t, coreCalled)
+			assert.NotContains(t, recorder.Body.String(), secret)
+		})
+	}
 }
 
 func TestBrowserHandlerProjectsSafeTokenUsage(t *testing.T) {

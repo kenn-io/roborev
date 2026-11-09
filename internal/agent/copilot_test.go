@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -425,4 +426,46 @@ func readFileContent(t *testing.T, path string) string {
 	content, err := os.ReadFile(path)
 	require.NoError(t, err, "failed to read %s", path)
 	return strings.TrimSpace(string(content))
+}
+
+func TestCopilotCanceledJSONOutputKeepsPartialResponse(t *testing.T) {
+	skipIfWindows(t)
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+case "$*" in *--help*) echo "--output-format"; exit 0;; esac
+printf '%s\n%s' \
+'{"type":"assistant.message","data":{"messageId":"msg-1","content":"Partial review","toolRequests":[]}}' \
+'{"type":"result","exitCode":1,"sessionId":"interrupted-session"}'
+printf 'ready\n' >&2
+exec sleep 60
+`)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r, w := io.Pipe()
+	defer r.Close()
+	defer w.Close()
+	capture := NewSessionCaptureWriter(w, nil)
+	type outcome struct {
+		output string
+		err    error
+	}
+	done := make(chan outcome, 1)
+	dir := t.TempDir()
+	go func() {
+		output, err := NewCopilotAgent(cmdPath).Review(ctx, dir, "HEAD", "prompt", capture)
+		capture.Flush()
+		_ = w.Close()
+		done <- outcome{output, err}
+	}()
+	reader := bufio.NewReader(r)
+	ready, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "ready\n", ready)
+	cancel()
+	stream, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	result := <-done
+	require.ErrorIs(t, result.err, context.Canceled)
+	assert.Contains(t, result.output, "Partial review")
+	assert.Contains(t, string(stream), "Partial review")
+	assert.Equal(t, "interrupted-session", capture.SessionID())
 }

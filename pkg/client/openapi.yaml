@@ -2458,6 +2458,23 @@ components:
       required:
         - job_id
       type: object
+    JobInvocationsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/JobInvocationsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        invocations:
+          items:
+            $ref: "#/components/schemas/ReviewInvocation"
+          type: array
+      required:
+        - invocations
+      type: object
     JobStats:
       additionalProperties: false
       properties:
@@ -3821,6 +3838,77 @@ components:
     ReviewIDSetValue:
       additionalProperties: false
       type: object
+    ReviewInvocation:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        enqueued_at:
+          format: date-time
+          type: string
+        error:
+          type: string
+        finished_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        git_ref:
+          type: string
+        id:
+          format: int64
+          type: integer
+        job_id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        output:
+          type: string
+        provider:
+          type: string
+        raw_output:
+          type: string
+        reasoning:
+          type: string
+        retry_count:
+          format: int64
+          type: integer
+        session_id:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        status:
+          type: string
+        structured_output:
+          additionalProperties: true
+          type: object
+        usage:
+          anyOf:
+            - $ref: "#/components/schemas/Usage"
+            - type: "null"
+        usage_error:
+          type: string
+      required:
+        - id
+        - job_id
+        - enqueued_at
+        - started_at
+        - finished_at
+        - status
+        - agent
+        - model
+        - provider
+        - reasoning
+        - git_ref
+        - retry_count
+        - session_id
+        - raw_output
+        - output
+        - error
+        - usage
+      type: object
     ReviewJob:
       additionalProperties: false
       properties:
@@ -4928,6 +5016,46 @@ components:
       required:
         - lease_token
       type: object
+    Usage:
+      additionalProperties: false
+      properties:
+        cache_creation_tokens:
+          format: int64
+          type: integer
+        cached_input_tokens:
+          format: int64
+          type: integer
+        cost_usd:
+          format: double
+          type: number
+        event_offset:
+          format: int64
+          type: integer
+        expected_provider_sessions:
+          format: int64
+          type: integer
+        has_cost:
+          type: boolean
+        input_tokens:
+          format: int64
+          type: integer
+        peak_context_tokens:
+          format: int64
+          type: integer
+        provider_session_ids:
+          items:
+            type: string
+          type: array
+        thread_id:
+          type: string
+        total_output_tokens:
+          format: int64
+          type: integer
+        usage_source:
+          type: string
+      required:
+        - cost_usd
+      type: object
     VerdictStats:
       additionalProperties: false
       properties:
@@ -5857,6 +5985,36 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: HTTP 503 response
       summary: Create a background fix job
+      tags:
+        - jobs
+  /api/job/invocations:
+    get:
+      operationId: get-job-invocations
+      parameters:
+        - description: Local review job ID
+          explode: false
+          in: query
+          name: job_id
+          required: true
+          schema:
+            description: Local review job ID
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobInvocationsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get locally recorded agent invocations for a supplied review
       tags:
         - jobs
   /api/job/log:

@@ -11,10 +11,12 @@ import type {
   EnqueueRequest,
   EnqueueSkippedResponse,
   FixJobRequest,
+  GetJobInvocationsParams,
   GetJobLogParams,
   GetJobOutputParams,
   GetJobPatchParams,
   JobIDRequest,
+  JobInvocationsOutputBody,
   JobStatusOutputBody,
   ListJobsOutputBody,
   ListJobsParams,
@@ -234,6 +236,38 @@ export const createFixJob = async (
     },
     body: JSON.stringify(fixJobRequest),
   });
+};
+
+export const getGetJobInvocationsUrl = (params: GetJobInvocationsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/job/invocations?${stringifiedParams}`
+    : `/api/job/invocations`;
+};
+
+/**
+ * @summary Get locally recorded agent invocations for a supplied review
+ */
+export const getJobInvocations = async (
+  params: GetJobInvocationsParams,
+  options?: RequestInit,
+): Promise<JobInvocationsOutputBody> => {
+  return roborevFetch<JobInvocationsOutputBody>(
+    getGetJobInvocationsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export const getGetJobLogUrl = (params?: GetJobLogParams) => {
