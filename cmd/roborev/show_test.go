@@ -3,6 +3,7 @@ package main
 // Tests for the show command
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,78 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func runShowCmdWithStderr(t *testing.T, args ...string) (string, string) {
+	t.Helper()
+	cmd := showCmd()
+	cmd.SetArgs(args)
+	var output, notices bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetErr(&notices)
+	stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+	return output.String() + stdout, notices.String()
+}
+
+func TestShowOpenFailedReviewHint(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		closed   bool
+		verdict  *int
+		jobType  string
+		prompt   bool
+		wantHint string
+	}{
+		{name: "open failed", verdict: new(0), jobType: storage.JobTypeReview, wantHint: "hint: review 7 is open. After its findings are fixed or answered, record what changed and close it: roborev job comment --job 7 -m \"<what changed>\" && roborev job close 7\n"},
+		{name: "closed failed", closed: true, verdict: new(0), jobType: storage.JobTypeReview},
+		{name: "open passing", verdict: new(1), jobType: storage.JobTypeReview},
+		{name: "unknown verdict", jobType: storage.JobTypeReview},
+		{name: "fix output", verdict: new(0), jobType: storage.JobTypeFix},
+		{name: "prompt", verdict: new(0), jobType: storage.JobTypeReview, prompt: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mockReviewDaemon(t, storage.Review{
+				JobID: 7, Agent: "test", Output: "Finding", Prompt: "Instructions",
+				Closed: tc.closed, VerdictBool: tc.verdict,
+				Job: &storage.ReviewJob{ID: 7, JobType: tc.jobType},
+			})
+			args := []string{"--job", "7"}
+			content := "Finding"
+			if tc.prompt {
+				args = append(args, "--prompt")
+				content = "Instructions"
+			}
+			stdout, stderr := runShowCmdWithStderr(t, args...)
+			assert.Equal(t, "Review for job 7 (by test)\n------------------------------------------------------------\n"+content+"\n", stdout)
+			assert.Equal(t, tc.wantHint, stderr)
+		})
+	}
+}
+
+func TestShowJSONOpenReviewHint(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verdict int
+	}{
+		{"open failed", 0},
+		{"open passing", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mockReviewDaemon(t, storage.Review{
+				JobID: 7, Agent: "test", Output: "Review", VerdictBool: &tc.verdict,
+				Job: &storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview},
+			})
+			stdout, stderr := runShowCmdWithStderr(t, "--job", "7", "--json")
+			assert.Empty(t, stderr)
+			var result map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
+			if tc.verdict == 1 {
+				assert.NotContains(t, result, "hints")
+				return
+			}
+			assert.JSONEq(t, `[{"code":"review_open","message":"review 7 is open. After its findings are fixed or answered, record what changed and close it","next":"roborev job comment --job 7 -m \"<what changed>\" && roborev job close 7"}]`, string(result["hints"]))
+		})
+	}
+}
 
 func TestShowCommandArgParsing(t *testing.T) {
 	tests := []struct {

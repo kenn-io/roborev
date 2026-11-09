@@ -25,6 +25,23 @@ import (
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
+type cliHint struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Next    string `json:"next,omitempty"`
+}
+
+func openReviewHint(review storage.Review) *cliHint {
+	if review.Job == nil || !review.Job.IsReadableReview() || review.Closed || review.Verdict() != storage.VerdictFail {
+		return nil
+	}
+	return &cliHint{
+		Code:    "review_open",
+		Message: fmt.Sprintf("review %d is open. After its findings are fixed or answered, record what changed and close it", review.JobID),
+		Next:    fmt.Sprintf("roborev job comment --job %d -m \"<what changed>\" && roborev job close %d", review.JobID, review.JobID),
+	}
+}
+
 // showPanelMember is one reviewer in the additive show --json panel block.
 type showPanelMember struct {
 	JobID      int64  `json:"job_id"`
@@ -231,6 +248,11 @@ Examples:
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
+			var hint *cliHint
+			if !showPrompt && !ep.IsRemote() {
+				hint = openReviewHint(review)
+			}
+
 			var allComments []storage.Response
 			if ep.IsRemote() {
 				// Remote job comments already include eligible legacy comments.
@@ -246,8 +268,12 @@ Examples:
 					storage.Review
 					Comments []storage.Response `json:"comments,omitempty"`
 					Panel    *showPanelBlock    `json:"panel,omitempty"`
+					Hints    []cliHint          `json:"hints,omitempty"`
 				}
 				out := reviewWithComments{Review: review, Comments: allComments}
+				if hint != nil {
+					out.Hints = []cliHint{*hint}
+				}
 				if !ep.IsRemote() {
 					out.Comments = fetchShowComments(client, addr, review)
 				}
@@ -307,6 +333,10 @@ Examples:
 					fmt.Printf("\n[%s] %s:\n", ts, r.Responder)
 					fmt.Println(r.Response)
 				}
+			}
+
+			if hint != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "hint: %s: %s\n", hint.Message, hint.Next)
 			}
 
 			if !showPrompt && review.Job != nil && review.Job.IsReadableReview() {

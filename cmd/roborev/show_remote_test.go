@@ -52,7 +52,7 @@ func TestRemoteShowRequiresCommentsBeforeOutput(t *testing.T) {
 					_, _ = w.Write([]byte(`{"ok":true,"service":"roborev","version":"test"}`))
 				case "/history/api/review":
 					assert.Equal("42", r.URL.Query().Get("job_id"))
-					_, _ = w.Write([]byte(`{"id":1,"job_id":42,"agent":"test","output":"review output","job":{"id":42,"commit_id":7,"git_ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","job_type":"review"}}`))
+					_, _ = w.Write([]byte(`{"id":1,"job_id":42,"agent":"test","output":"review output","verdict_bool":0,"closed":false,"job":{"id":42,"commit_id":7,"git_ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","job_type":"review"}}`))
 				case "/history/api/comments":
 					mu.Lock()
 					queries = append(queries, r.URL.RawQuery)
@@ -101,6 +101,7 @@ func TestRemoteShowRequiresCommentsBeforeOutput(t *testing.T) {
 				return
 			}
 			require.NoError(t, commandErr)
+			assert.NotContains(output.String()+stdout, `"hints"`)
 			assert.Contains(output.String()+stdout, "review output")
 			assert.Contains(output.String()+stdout, "job feedback")
 			assert.Contains(output.String()+stdout, "legacy feedback")
