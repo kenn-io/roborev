@@ -266,8 +266,7 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 	for _, candidate := range candidates {
 		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate.TokenCostCandidate)
 		noUsageSessionID := ""
-		var noUsage *sessionWithoutUsageError
-		if errors.As(err, &noUsage) {
+		if noUsage, ok := errors.AsType[*sessionWithoutUsageError](err); ok {
 			noUsageSessionID = noUsage.sessionID
 		}
 		if err != nil && !errors.Is(err, tokens.ErrSessionWithoutUsage) {
