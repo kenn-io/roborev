@@ -26,6 +26,10 @@ import (
 )
 
 func TestShowOpenFailedReviewHint(t *testing.T) {
+	wantNext := `roborev job comment --job 7 -m "<what changed>" && roborev job close 7`
+	if runtime.GOOS == "windows" {
+		wantNext = `roborev job comment --job 7 -m "<what changed>"; if ($LASTEXITCODE -eq 0) { roborev job close 7 }`
+	}
 	for _, tc := range []struct {
 		name    string
 		closed  bool
@@ -80,7 +84,9 @@ func TestShowOpenFailedReviewHint(t *testing.T) {
 					var result map[string]json.RawMessage
 					require.NoError(t, json.Unmarshal([]byte(run.stdout), &result))
 					if tc.wantHint {
-						assert.JSONEq(t, `[{"code":"review_open","message":"review 7 is open. After its findings are fixed or answered, record what changed and close it","next":"roborev job comment --job 7 -m \"<what changed>\" && roborev job close 7"}]`, string(result["hints"]))
+						var hints []map[string]string
+						require.NoError(t, json.Unmarshal(result["hints"], &hints))
+						assert.Equal(t, []map[string]string{{"code": "review_open", "message": "review 7 is open. After its findings are fixed or answered, record what changed and close it", "next": wantNext}}, hints)
 					} else {
 						assert.NotContains(t, result, "hints")
 					}
@@ -88,12 +94,33 @@ func TestShowOpenFailedReviewHint(t *testing.T) {
 				}
 				assert.Equal(t, "Review for job 7 (by test)\n------------------------------------------------------------\n"+content+"\n", run.stdout)
 				if tc.wantHint {
-					assert.Equal(t, "hint: review 7 is open. After its findings are fixed or answered, record what changed and close it: roborev job comment --job 7 -m \"<what changed>\" && roborev job close 7\n", run.stderr)
+					assert.Equal(t, "hint: review 7 is open. After its findings are fixed or answered, record what changed and close it: "+wantNext+"\n", run.stderr)
 				} else {
 					assert.Empty(t, run.stderr)
 				}
 			})
 		}
+	}
+}
+
+func TestShowHintPowerShellConditionalClose(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("exercises Windows PowerShell")
+	}
+	hint := openReviewHint(storage.Review{
+		JobID: 7, VerdictBool: new(0), Job: &storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview},
+	}, "roborev --server '127.0.0.1:7777'")
+	for _, tc := range []struct {
+		name string
+		code int
+		want string
+	}{{"comment succeeds", 0, "comment\nclose"}, {"comment fails", 1, "comment"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := fmt.Sprintf(`function roborev { if ($args[0] -ne '--server' -or $args[1] -ne '127.0.0.1:7777') { throw 'wrong daemon' }; $args[3]; $global:LASTEXITCODE = %d }; `, tc.code) + hint.Next
+			output, err := exec.CommandContext(t.Context(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			assert.Equal(t, tc.want, strings.TrimSpace(strings.ReplaceAll(string(output), "\r\n", "\n")))
+		})
 	}
 }
 

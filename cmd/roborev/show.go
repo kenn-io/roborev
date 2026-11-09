@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,10 +37,14 @@ func openReviewHint(review storage.Review, command string) *cliHint {
 	if review.Job == nil || !review.Job.IsReadableReview() || review.Closed || review.Verdict() != storage.VerdictFail {
 		return nil
 	}
+	next := fmt.Sprintf("%s job comment --job %d -m \"<what changed>\" && %s job close %d", command, review.JobID, command, review.JobID)
+	if runtime.GOOS == "windows" {
+		next = fmt.Sprintf("%s job comment --job %d -m \"<what changed>\"; if ($LASTEXITCODE -eq 0) { %s job close %d }", command, review.JobID, command, review.JobID)
+	}
 	return &cliHint{
 		Code:    "review_open",
 		Message: fmt.Sprintf("review %d is open. After its findings are fixed or answered, record what changed and close it", review.JobID),
-		Next:    fmt.Sprintf("%s job comment --job %d -m \"<what changed>\" && %s job close %d", command, review.JobID, command, review.JobID),
+		Next:    next,
 	}
 }
 
