@@ -922,9 +922,10 @@ auto-prefers `agy` before the legacy `gemini` command; set
 Gemini model overrides.
 
 A custom `cursor_cmd` must forward `--version` or `-v` to Cursor and produce
-non-empty version output that does not identify as Grok. Wrappers that ignore
-version flags, hang, or print nothing are treated as unavailable (fail-closed
-identity probe), so a Grok-only `agent` alias cannot be selected as Cursor.
+non-empty version output that does not identify as Grok. The version check has
+up to five seconds to respond. Wrappers that ignore version flags, hang, or
+print nothing are treated as unavailable (fail-closed identity probe), so a
+Grok-only `agent` alias cannot be selected as Cursor.
 
 ### Agent Name Validation
 
