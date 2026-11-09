@@ -799,7 +799,7 @@ printf ']}'
 			ids := tokenCostPageSessionIDs(21)
 			if slow {
 				t.Setenv("SLOW", "1")
-				ids = []string{"slow", "healthy"}
+				ids = []string{"slow", "healthy-1", "healthy-2", "healthy-3"}
 			}
 			var jobs []*storage.ReviewJob
 			for _, id := range ids {
@@ -817,7 +817,7 @@ printf ']}'
 			data, err := os.ReadFile(calls)
 			require.NoError(t, err)
 			if slow {
-				assert.Equal(t, "session usage-batch slow healthy --format json --no-sync\nsession usage slow --format json --no-sync\nsession usage healthy --format json --no-sync\n", string(data))
+				assert.Equal(t, "session usage-batch slow healthy-1 healthy-2 healthy-3 --format json --no-sync\nsession usage slow --format json --no-sync\nsession usage healthy-1 --format json --no-sync\nsession usage healthy-2 --format json --no-sync\nsession usage healthy-3 --format json --no-sync\n", string(data))
 				var misses int
 				var next string
 				require.NoError(t, worker.DB.QueryRowContext(t.Context(), "SELECT misses, next_check_at FROM token_cost_lookups WHERE job_id = ?", jobs[0].ID).Scan(&misses, &next))
