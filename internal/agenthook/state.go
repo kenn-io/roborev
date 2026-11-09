@@ -2249,16 +2249,7 @@ func filterFailedReviewJobs(ctx context.Context, repoRoot, branch, head string, 
 
 	failed := make([]storage.ReviewJob, 0, len(jobs))
 	for _, job := range jobs {
-		if job.Status != "" && job.Status != storage.JobStatusDone {
-			continue
-		}
-		if job.Closed != nil && *job.Closed {
-			continue
-		}
 		if !countsAsFailedReview(job) {
-			continue
-		}
-		if job.Verdict == nil || !strings.EqualFold(*job.Verdict, "F") {
 			continue
 		}
 		failed = append(failed, job)

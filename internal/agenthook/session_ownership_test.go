@@ -178,7 +178,7 @@ func TestSessionCommitFollowedByFailedPushStillReminds(t *testing.T) {
 	}
 }
 
-func TestSessionOwnsCommitsHeadGains(t *testing.T) {
+func TestSessionFirstCommitInUnbornCheckoutReminds(t *testing.T) {
 	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	store := &StateStore{reviews: trackedReviewSource(repo.Root), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	req := Request{Event: Input{SessionID: "session", CWD: repo.Root, HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m own"`)}}, Threshold: 1}

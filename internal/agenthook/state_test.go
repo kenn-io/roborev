@@ -558,7 +558,7 @@ func TestLoadFailedReviewMatcherDetachedHeadPeelsAnnotatedTags(t *testing.T) {
 	assert.False(matcher.Matches(unrelatedTag))
 }
 
-func TestFilterFailedReviewJobsExcludesIneligibleReviews(t *testing.T) {
+func TestFilterFailedReviewJobsExcludesNonCodeReviewJobs(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("base.txt", "base\n", "base")
@@ -585,7 +585,7 @@ func TestFilterFailedReviewJobsExcludesIneligibleReviews(t *testing.T) {
 	jobs = append(jobs, design)
 	owned := map[string]bool{head: true}
 	got := filterFailedReviewJobs(t.Context(), repo.Path(), "main", head, jobs, owned)
-	require.Len(t, got, 1, "only open, completed, failed code reviews count")
+	require.Len(t, got, 1, "only code review jobs count toward reminders")
 	assert.Equal(int64(1), got[0].ID)
 }
 
