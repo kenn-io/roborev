@@ -27,19 +27,17 @@ const (
 	// resolve it. Older jobs remain reachable via `roborev backfill-tokens`,
 	// which scans without an age bound.
 	tokenCostMaxCandidateAge = 7 * 24 * time.Hour
+	// tokenCostNoUsageSettle is how long after a job finishes a "session has
+	// no usage" answer is final. AgentsView can store a Codex session before
+	// it parses the session's token_count line, and its fallback reconcile
+	// runs every 15 minutes (periodicSyncInterval in cmd/agentsview/main.go,
+	// AgentsView v0.47.0).
+	tokenCostNoUsageSettle = 15 * time.Minute
 )
 
 type tokenCostRetryState struct {
 	attempts       int
 	ticksRemaining int
-}
-
-// tokenCostMiss records periodic-scan lookups that did not price a job. Each
-// lookup can start an agentsview process, so a session that never resolves
-// is rechecked with exponential backoff instead of on every scan.
-type tokenCostMiss struct {
-	count     int
-	checkedAt time.Time
 }
 
 // tokenCostMissDelay doubles the wait from the scan interval with each miss.
@@ -70,8 +68,7 @@ func (wp *WorkerPool) runTokenCostReconciler() {
 	defer wp.wg.Done()
 
 	wp.recoverTokenUsageLogs(wp.stopCtx)
-	misses := make(map[int64]tokenCostMiss)
-	cursor := wp.reconcileTokenCostPage(wp.stopCtx, 0, misses)
+	cursor := wp.reconcileTokenCostPage(wp.stopCtx, 0)
 	scanTicker := time.NewTicker(wp.tokenCostScanInterval)
 	defer scanTicker.Stop()
 	logScanTicker := time.NewTicker(wp.tokenUsageLogScanInterval)
@@ -89,7 +86,7 @@ func (wp *WorkerPool) runTokenCostReconciler() {
 		case <-retryTicker.C:
 			wp.processTokenCostRetries(wp.stopCtx, pending)
 		case <-scanTicker.C:
-			cursor = wp.reconcileTokenCostPage(wp.stopCtx, cursor, misses)
+			cursor = wp.reconcileTokenCostPage(wp.stopCtx, cursor)
 		case <-logScanTicker.C:
 			wp.recoverTokenUsageLogs(wp.stopCtx)
 		}
@@ -213,7 +210,7 @@ func (wp *WorkerPool) processTokenCostRetries(
 			delete(pending, jobID)
 			continue
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, tokens.ErrSessionWithoutUsage) {
 			if errors.Is(err, tokens.ErrUsageProviderUnavailable) {
 				if !providerUnavailableLogged {
 					log.Printf("token cost reconciliation: usage provider unavailable: %v", err)
@@ -234,13 +231,18 @@ func (wp *WorkerPool) processTokenCostRetries(
 	}
 }
 
+// reconcileTokenCostPage looks up one page of due candidates. Each lookup can
+// start an agentsview process or send an HTTP request, so a job that does not
+// resolve is rechecked with exponential backoff, and lookups stop once the
+// provider settles that the session has no usage. The state is stored per job
+// attempt so a daemon restart keeps it.
 func (wp *WorkerPool) reconcileTokenCostPage(
-	ctx context.Context, afterJobID int64, misses map[int64]tokenCostMiss,
+	ctx context.Context, afterJobID int64,
 ) int64 {
 	now := time.Now()
-	candidates, err := wp.db.ListTokenCostCandidates(
-		afterJobID, wp.tokenCostPageSize,
-		now.Add(-wp.tokenCostMaxCandidateAge),
+	startedAfter := now.Add(-wp.tokenCostMaxCandidateAge)
+	candidates, err := wp.db.ListDueTokenCostCandidates(
+		ctx, afterJobID, wp.tokenCostPageSize, startedAfter, now,
 	)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -249,12 +251,10 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 		return afterJobID
 	}
 	if len(candidates) < wp.tokenCostPageSize {
-		// The scan wraps here. A job last checked before the age window
-		// started has aged out of the candidate set.
-		for jobID, miss := range misses {
-			if now.Sub(miss.checkedAt) > wp.tokenCostMaxCandidateAge {
-				delete(misses, jobID)
-			}
+		// The scan wraps here, so drop state for jobs that left the scan.
+		if err := wp.db.PruneTokenCostLookups(ctx, startedAfter); err != nil &&
+			!errors.Is(err, context.Canceled) {
+			log.Printf("token cost reconciliation: %v", err)
 		}
 	}
 	if len(candidates) == 0 {
@@ -263,16 +263,9 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 
 	cursor := afterJobID
 	for _, candidate := range candidates {
-		miss, missed := misses[candidate.JobID]
-		if missed && now.Sub(miss.checkedAt) < wp.tokenCostMissDelay(miss.count) {
-			cursor = candidate.JobID
-			continue
-		}
-		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate)
-		if resolved {
-			delete(misses, candidate.JobID)
-		}
-		if err != nil {
+		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate.TokenCostCandidate)
+		noUsage := errors.Is(err, tokens.ErrSessionWithoutUsage)
+		if err != nil && !noUsage {
 			if errors.Is(err, context.Canceled) {
 				return cursor
 			}
@@ -283,9 +276,7 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 			log.Printf("token cost reconciliation: job %d: %v", candidate.JobID, err)
 		}
 		if !resolved {
-			misses[candidate.JobID] = tokenCostMiss{
-				count: miss.count + 1, checkedAt: now,
-			}
+			wp.recordTokenCostMiss(ctx, candidate, noUsage, now)
 		}
 		cursor = candidate.JobID
 	}
@@ -293,6 +284,31 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 		return 0
 	}
 	return cursor
+}
+
+// recordTokenCostMiss schedules the next lookup of a candidate that did not
+// price. Lookups stop when the provider reports the session without usage on
+// two lookups in a row, the later one at least tokenCostNoUsageSettle after
+// the job finished, so usage that was still being indexed gets a second look.
+func (wp *WorkerPool) recordTokenCostMiss(
+	ctx context.Context, candidate storage.DueTokenCostCandidate, noUsage bool, now time.Time,
+) {
+	lookup := storage.TokenCostLookup{
+		JobID:       candidate.JobID,
+		StartedAt:   candidate.StartedAtRaw,
+		SessionID:   candidate.SessionID,
+		Misses:      candidate.LookupMisses + 1,
+		LastNoUsage: noUsage,
+	}
+	settled := noUsage && candidate.LastLookupNoUsage &&
+		now.Sub(candidate.FinishedAt) >= tokenCostNoUsageSettle
+	if !settled {
+		lookup.NextCheckAt = now.Add(wp.tokenCostMissDelay(lookup.Misses))
+	}
+	if err := wp.db.SaveTokenCostLookup(ctx, lookup); err != nil &&
+		!errors.Is(err, context.Canceled) {
+		log.Printf("token cost reconciliation: job %d: %v", candidate.JobID, err)
+	}
 }
 
 func (wp *WorkerPool) reconcileTokenCostJob(
@@ -314,6 +330,8 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	sessionIDs, expectedSessions := tokenUsageProviderSessions(candidate)
 	fetchedSessions := make([]*tokens.Usage, 0, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
+		// ErrSessionWithoutUsage passes through so the caller can stop
+		// asking about a session that will never have a price.
 		fetched, err := wp.fetchTokenUsage(ctx, sessionID)
 		if err != nil {
 			return false, err

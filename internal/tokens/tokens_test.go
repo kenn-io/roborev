@@ -788,6 +788,24 @@ func TestUsageFromSessionPayloadCostShapes(t *testing.T) {
 			body:      `{"has_token_data":false,"has_cost":false}`,
 			wantNoUse: true,
 		},
+		{
+			name: "zero token counts are data, not a schema error",
+			body: `{"has_token_data":true,"total_output_tokens":0,` +
+				`"peak_context_tokens":0,"has_cost":false}`,
+			wantNoUse: true,
+		},
+		{
+			name: "output without peak context keeps its cost",
+			body: `{"has_token_data":true,"total_output_tokens":120,` +
+				`"peak_context_tokens":0,"cost":{"microdollars":5000},"has_cost":true}`,
+			wantCost: true,
+			wantUSD:  0.005,
+		},
+		{
+			name:    "token data without an input-side count is a schema error",
+			body:    `{"has_token_data":true,"total_output_tokens":120,"has_cost":false}`,
+			wantErr: "missing token counts",
+		},
 	}
 
 	for _, tt := range tests {
@@ -958,4 +976,123 @@ func TestFetchForSessionReturnsUsageWhenHelperKeepsPipesOpen(t *testing.T) {
 	require.NotNil(t, result.usage)
 	assert.Equal(t, int64(42), result.usage.OutputTokens)
 	assert.InDelta(t, 0.07, result.usage.CostUSD, 1e-9)
+}
+
+func TestLookupSessionUsageHTTPSeparatesUnindexedFromUnusedSessions(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   int
+		body     string
+		wantErr  error
+		wantCost float64
+	}{
+		{name: "not indexed", status: http.StatusNotFound},
+		{
+			name:   "found without usage",
+			status: http.StatusOK,
+			body: `{"session_id":"codex:s","agent":"codex","total_output_tokens":0,` +
+				`"peak_context_tokens":0,"has_token_data":false,"cost":{"microdollars":0},` +
+				`"has_cost":false,"models":[],"unpriced_models":[],"breakdown_count":0,` +
+				`"breakdown":[],"server_running":true}`,
+			wantErr: ErrSessionWithoutUsage,
+		},
+		{
+			name:   "found with zero token counts",
+			status: http.StatusOK,
+			body: `{"session_id":"s","total_output_tokens":0,"peak_context_tokens":0,` +
+				`"has_token_data":true,"has_cost":false}`,
+			wantErr: ErrSessionWithoutUsage,
+		},
+		{
+			name:   "found with usage",
+			status: http.StatusOK,
+			body: `{"session_id":"s","total_output_tokens":40,"peak_context_tokens":900,` +
+				`"has_token_data":true,"cost":{"microdollars":21000},"has_cost":true}`,
+			wantCost: 0.021,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			t.Cleanup(server.Close)
+			cfg := FetchConfig{Endpoint: server.URL + "/usage/{session_id}", Timeout: time.Second}
+
+			usage, err := LookupSessionUsage(t.Context(), "s", cfg)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				assert.Nil(t, usage)
+				// The fetch wrapper keeps reporting a session without usage as nil.
+				usage, err = FetchForSessionWithConfig(t.Context(), "s", cfg)
+				require.NoError(t, err)
+				assert.Nil(t, usage)
+				return
+			}
+			require.NoError(t, err)
+			if tc.wantCost == 0 {
+				assert.Nil(t, usage)
+				return
+			}
+			require.NotNil(t, usage)
+			assert.InDelta(t, tc.wantCost, usage.CostUSD, 1e-9)
+		})
+	}
+}
+
+func TestLookupSessionUsageAgentsViewReportsSessionWithoutUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/sessions/s/usage", r.URL.Path)
+		fmt.Fprint(w, `{"session_id":"s","total_output_tokens":0,"peak_context_tokens":0,`+
+			`"has_token_data":false,"has_cost":false}`)
+	}))
+	t.Cleanup(server.Close)
+
+	usage, err := LookupSessionUsage(t.Context(), "s", FetchConfig{
+		AgentsViewURL: server.URL, Timeout: time.Second,
+	})
+
+	require.ErrorIs(t, err, ErrSessionWithoutUsage)
+	assert.Nil(t, usage)
+}
+
+func TestLookupSessionUsageCLISeparatesUnindexedFromUnusedSessions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		script  string
+		wantErr error
+	}{
+		{name: "session usage exit 2", script: `exit 2`},
+		{name: "session usage exit 3", script: `exit 3`, wantErr: ErrSessionWithoutUsage},
+		{
+			name:    "session usage zero counts",
+			script:  `echo '{"session_id":"s","total_output_tokens":0,"peak_context_tokens":0,"has_token_data":false,"has_cost":false}'`,
+			wantErr: ErrSessionWithoutUsage,
+		},
+		{
+			name: "token-use exit 2",
+			script: `if [ "$1" = "token-use" ]; then exit 2; fi
+echo "unknown command: session usage" >&2
+exit 1`,
+		},
+		{
+			name: "token-use exit 3",
+			script: `if [ "$1" = "token-use" ]; then exit 3; fi
+echo "unknown command: session usage" >&2
+exit 1`,
+			wantErr: ErrSessionWithoutUsage,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			installFakeAgentsview(t, "#!/bin/sh\n"+tc.script+"\n")
+
+			usage, err := LookupSessionUsage(t.Context(), "s", FetchConfig{})
+			assert.Nil(t, usage)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }

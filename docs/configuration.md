@@ -2283,11 +2283,18 @@ zero, or negative values also fall back to `10s`.
 
 Usage indexing can lag behind job completion. The daemon retries fresh misses
 and periodically revisits terminal jobs from the past week that still lack a
-recorded price. The missing price in SQLite is the durable retry state, so
-reconciliation resumes after daemon restarts. Each lookup can start an
-`agentsview` process, so a job that stays unpriced is rechecked with backoff:
-the wait starts at one minute and doubles after each miss. The backoff resets
-when the daemon restarts. For rows without a stored session ID, the daemon
+recorded price. Each lookup can start an `agentsview` process or send an HTTP
+request, so a job that stays unpriced is rechecked with backoff: the wait starts
+at one minute and doubles after each miss. The daemon stores the backoff in
+SQLite, so it continues after a restart.
+
+The daemon stops looking up a job when the provider reports its session with no
+token or cost data on two lookups in a row, and the later lookup comes at least
+15 minutes after the job finished. That report is an HTTP `200` with
+`has_token_data` and `has_cost` false (or no nonzero counts), or exit code `3`
+from the `agentsview` CLI. A session the provider has not indexed (`404` or exit
+code `2`) keeps the backoff and is never treated as final. Rerunning a job
+starts its lookups over. For rows without a stored session ID, the daemon
 recovers the ID and token counts from the per-job JSONL log before retrying the
 provider. Provider failures do not change the completed job result. Deleted
 sessions and sessions reused by multiple started jobs can remain unpriced; jobs
@@ -2311,8 +2318,10 @@ The endpoint should return JSON compatible with
 ```
 
 `has_token_data` and `has_cost` are required booleans. When `has_token_data` is
-true, token counts are required. A `404` response is treated as no usage data
-for that session.
+true, `total_output_tokens` and either `peak_context_tokens` or `input_tokens`
+are required; zero is a valid count. A `404` response means the provider has not
+indexed the session yet. A `200` response with no nonzero counts and no cost
+means the session has no usage data.
 
 When `has_cost` is true, the cost must arrive in one of two shapes. Either
 `cost_usd` as a float, or the integer envelope agentsview adopted in v0.39.0:

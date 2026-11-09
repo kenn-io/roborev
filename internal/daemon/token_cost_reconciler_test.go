@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
@@ -356,6 +357,112 @@ func TestTokenCostReconcilerBacksOffRepeatedMisses(t *testing.T) {
 		usage := tokens.ParseJSON(updated.TokenUsage)
 		require.NotNil(t, usage)
 		assert.InDelta(t, 0.12, usage.CostUSD, 1e-9)
+	})
+}
+
+// startQuietTokenCostReconciler runs only the cost scan, once a minute, so a
+// synctest bubble counts provider lookups without worker or log-scan noise.
+func startQuietTokenCostReconciler(t *testing.T, pool *WorkerPool) {
+	t.Helper()
+	pool.tokenCostScanInterval = time.Minute
+	pool.tokenCostRetryInterval = time.Hour
+	// Keep worker lock retries and overlapping log scans from delaying cost
+	// scans; SQLite retry sleeps on macOS let synctest.Wait return early.
+	pool.numWorkers = 0
+	pool.tokenUsageLogScanInterval = 24 * time.Hour
+	pool.Start()
+}
+
+func TestTokenCostReconcilerStopsAskingAboutSessionWithoutUsage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		job := seedTokenCostCandidate(t, tc, "empty-session", `{}`)
+		var lookups atomic.Int32
+		tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+			lookups.Add(1)
+			return nil, tokens.ErrSessionWithoutUsage
+		}
+		startQuietTokenCostReconciler(t, tc.Pool)
+		t.Cleanup(tc.Pool.Stop)
+
+		// Lookups run at minutes 0, 1, 3, 7, and 15. The answer at minute 15
+		// repeats the one before it and comes 15 minutes after the job
+		// finished, so it is final.
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		assert.Equal(t, int32(5), lookups.Load())
+
+		time.Sleep(6 * 24 * time.Hour)
+		synctest.Wait()
+		assert.Equal(t, int32(5), lookups.Load())
+		updated, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Nil(t, tokens.ParseJSON(updated.TokenUsage))
+	})
+}
+
+func TestTokenCostReconcilerPricesUsageThatArrivesAfterEmptyAnswers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		job := seedTokenCostCandidate(t, tc, "arriving-session", `{}`)
+		var indexed atomic.Bool
+		tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+			if !indexed.Load() {
+				return nil, tokens.ErrSessionWithoutUsage
+			}
+			return &tokens.Usage{OutputTokens: 64, HasCost: true, CostUSD: 0.08}, nil
+		}
+		startQuietTokenCostReconciler(t, tc.Pool)
+		t.Cleanup(tc.Pool.Stop)
+
+		// Empty answers at minutes 0, 1, and 3 all come within 15 minutes of
+		// the job finishing, so the lookup at minute 7 still runs.
+		time.Sleep(5 * time.Minute)
+		synctest.Wait()
+		indexed.Store(true)
+		time.Sleep(3 * time.Minute)
+		synctest.Wait()
+
+		updated, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		require.NotNil(t, usage)
+		assert.True(t, usage.HasCost)
+		assert.InDelta(t, 0.08, usage.CostUSD, 1e-9)
+	})
+}
+
+func TestTokenCostReconcilerBackoffSurvivesRestart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		seedTokenCostCandidate(t, tc, "unindexed-session", `{}`)
+		var lookups atomic.Int32
+		fetcher := func(context.Context, string) (*tokens.Usage, error) {
+			lookups.Add(1)
+			return nil, nil
+		}
+		tc.Pool.tokenUsageFetcher = fetcher
+		startQuietTokenCostReconciler(t, tc.Pool)
+
+		// Lookups at minutes 0, 1, and 3 schedule the next one for minute 7.
+		time.Sleep(3*time.Minute + 30*time.Second)
+		synctest.Wait()
+		require.Equal(t, int32(3), lookups.Load())
+		tc.Pool.Stop()
+
+		cfg := config.DefaultConfig()
+		restarted := NewWorkerPool(tc.DB, NewStaticConfig(cfg), cfg.MaxWorkers, tc.Broadcaster, nil, nil)
+		restarted.tokenUsageFetcher = fetcher
+		startQuietTokenCostReconciler(t, restarted)
+		t.Cleanup(restarted.Stop)
+
+		time.Sleep(3*time.Minute + 30*time.Second)
+		synctest.Wait()
+		assert.Equal(t, int32(3), lookups.Load(), "restart must not reset the backoff")
+
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		assert.Equal(t, int32(4), lookups.Load())
 	})
 }
 
