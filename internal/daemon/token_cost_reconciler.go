@@ -262,17 +262,41 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 		return 0
 	}
 
+	var ids []string
+	for _, candidate := range candidates {
+		sessionIDs, _ := tokenUsageProviderSessions(candidate.TokenCostCandidate)
+		ids = append(ids, sessionIDs...)
+	}
+	fetch := wp.fetchTokenUsage
+	if len(ids) > 0 {
+		results, batchErr := wp.fetchTokenUsageBatch(ctx, ids)
+		if ctx.Err() != nil {
+			return afterJobID
+		}
+		if batchErr == nil {
+			fetch = func(ctx context.Context, id string) (*tokens.Usage, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				result := results[id]
+				return result.Usage, result.Err
+			}
+		} else if !errors.Is(batchErr, tokens.ErrBatchUnsupported) {
+			log.Printf("token cost reconciliation: batch usage lookup: %v", batchErr)
+		}
+	}
+
 	cursor := afterJobID
 	for _, candidate := range candidates {
-		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate.TokenCostCandidate)
+		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate.TokenCostCandidate, fetch)
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return cursor
+		}
 		noUsageSessionID := ""
 		if noUsage, ok := errors.AsType[*sessionWithoutUsageError](err); ok {
 			noUsageSessionID = noUsage.sessionID
 		}
 		if err != nil && !errors.Is(err, tokens.ErrSessionWithoutUsage) {
-			if errors.Is(err, context.Canceled) {
-				return cursor
-			}
 			if errors.Is(err, tokens.ErrUsageProviderUnavailable) {
 				log.Printf("token cost reconciliation: usage provider unavailable: %v", err)
 				return cursor
@@ -329,18 +353,17 @@ func (wp *WorkerPool) reconcileTokenCostJob(
 	if candidate == nil {
 		return true, nil
 	}
-	return wp.reconcileTokenCostCandidate(ctx, *candidate)
+	return wp.reconcileTokenCostCandidate(ctx, *candidate, wp.fetchTokenUsage)
 }
 
 func (wp *WorkerPool) reconcileTokenCostCandidate(
 	ctx context.Context, candidate storage.TokenCostCandidate,
+	fetch func(context.Context, string) (*tokens.Usage, error),
 ) (bool, error) {
 	sessionIDs, expectedSessions := tokenUsageProviderSessions(candidate)
 	fetchedSessions := make([]*tokens.Usage, 0, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
-		// ErrSessionWithoutUsage passes through, naming the session, so the
-		// caller can stop asking about a session that will never have a price.
-		fetched, err := wp.fetchTokenUsage(ctx, sessionID)
+		fetched, err := fetch(ctx, sessionID)
 		if errors.Is(err, tokens.ErrSessionWithoutUsage) {
 			return false, &sessionWithoutUsageError{sessionID: sessionID, err: err}
 		}

@@ -1,10 +1,14 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -101,7 +105,7 @@ func TestTokenCostReconcilerAggregatesPlanPhaseSessions(t *testing.T) {
 		return &tokens.Usage{CostUSD: costs[sessionID], HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate, tc.Pool.fetchTokenUsage)
 	require.NoError(t, err)
 	assert.True(t, resolved)
 	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, fetchedSessions)
@@ -129,7 +133,7 @@ func TestTokenCostReconcilerPreservesStoredCountsWhenPlanPhaseHasNoCounts(t *tes
 		return &tokens.Usage{InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate, tc.Pool.fetchTokenUsage)
 	require.NoError(t, err)
 	assert.True(t, resolved)
 	updated, err := tc.DB.GetJobByID(job.ID)
@@ -155,7 +159,7 @@ func TestTokenCostReconcilerPricesAvailableSessionWithMissingPlanSession(t *test
 		return &tokens.Usage{InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate, tc.Pool.fetchTokenUsage)
 	require.NoError(t, err)
 	assert.True(t, resolved, "the available implementation session is priced")
 	assert.Equal(t, 1, fetches)
@@ -608,4 +612,237 @@ func seedTokenCostCandidate(
 		require.True(t, updated)
 	}
 	return job
+}
+
+func TestTokenCostPageBatchesPartialCandidate(t *testing.T) {
+	worker := newWorkerTestContext(t, 1)
+	job := seedTokenCostCandidate(t, worker, "implementation-session", `{"input_tokens":300,"total_output_tokens":40,"provider_session_ids":["implementation-session"],"expected_provider_sessions":2}`)
+	var calls [][]string
+	worker.Pool.tokenUsageBatchFetcher = func(_ context.Context, ids []string) (map[string]tokens.SessionUsageResult, error) {
+		calls = append(calls, ids)
+		return map[string]tokens.SessionUsageResult{"implementation-session": {Usage: &tokens.Usage{HasCost: true, CostUSD: 0.25}}}, nil
+	}
+	var individualCalls []string
+	worker.Pool.tokenUsageFetcher = func(_ context.Context, id string) (*tokens.Usage, error) {
+		individualCalls = append(individualCalls, id)
+		return nil, nil
+	}
+	assert.Zero(t, worker.Pool.reconcileTokenCostPage(t.Context(), 0))
+	assert.Equal(t, [][]string{{"implementation-session"}}, calls)
+	assert.Empty(t, individualCalls)
+	updated, err := worker.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.25, usage.CostUSD, 1e-9)
+}
+
+func tokenCostPageSessionIDs(count int) []string {
+	ids := make([]string, count)
+	for i := range count {
+		ids[i] = fmt.Sprintf("session-%d", i)
+	}
+	return ids
+}
+
+func TestTokenCostPageHandlesBatchFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		batchErr                error
+		individualCalls         []string
+		unpricedIDs             map[string]bool
+		individualTimeoutID     string
+		individualUnavailableID string
+		logMessage              string
+		cancelBatch             bool
+		wantDue                 int
+	}{
+		{
+			name:            "backend failure recovers individually",
+			batchErr:        fmt.Errorf("archive read failed"),
+			individualCalls: []string{"slow", "healthy"},
+			logMessage:      "archive read failed",
+			wantDue:         0,
+		},
+		{
+			name:                "timeout retries sessions individually",
+			batchErr:            context.DeadlineExceeded,
+			individualCalls:     []string{"slow", "healthy"},
+			unpricedIDs:         map[string]bool{"slow": true},
+			individualTimeoutID: "slow",
+			logMessage:          "batch usage lookup",
+			wantDue:             0,
+		},
+		{
+			name:            "unsupported batch recovers individually",
+			batchErr:        tokens.ErrBatchUnsupported,
+			individualCalls: []string{"slow", "healthy"},
+		},
+		{
+			name:                    "provider unavailable stops page",
+			batchErr:                tokens.ErrBatchUnsupported,
+			individualCalls:         []string{"slow"},
+			unpricedIDs:             map[string]bool{"slow": true, "healthy": true},
+			individualUnavailableID: "slow",
+			logMessage:              "token cost reconciliation: usage provider unavailable",
+			wantDue:                 2,
+		},
+		{
+			name:        "batch cancellation leaves candidates due",
+			cancelBatch: true,
+			wantDue:     2,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			worker := newWorkerTestContext(t, 1)
+			slow := seedTokenCostCandidate(t, worker, "slow", `{}`)
+			healthy := seedTokenCostCandidate(t, worker, "healthy", `{}`)
+			ctx := t.Context()
+			cancel := func() {}
+			if tc.cancelBatch {
+				ctx, cancel = context.WithCancel(t.Context())
+			}
+			defer cancel()
+			var logOutput bytes.Buffer
+			origOutput := log.Writer()
+			log.SetOutput(&logOutput)
+			t.Cleanup(func() { log.SetOutput(origOutput) })
+			var batches [][]string
+			worker.Pool.tokenUsageBatchFetcher = func(ctx context.Context, ids []string) (map[string]tokens.SessionUsageResult, error) {
+				batches = append(batches, ids)
+				if tc.cancelBatch {
+					cancel()
+					return nil, ctx.Err()
+				}
+				return nil, tc.batchErr
+			}
+			var individualCalls []string
+			worker.Pool.tokenUsageFetcher = func(_ context.Context, id string) (*tokens.Usage, error) {
+				individualCalls = append(individualCalls, id)
+				if id == tc.individualUnavailableID {
+					return nil, tokens.ErrUsageProviderUnavailable
+				}
+				if id == tc.individualTimeoutID {
+					return nil, context.DeadlineExceeded
+				}
+				return &tokens.Usage{HasCost: true, CostUSD: 0.37}, nil
+			}
+
+			assert.Zero(t, worker.Pool.reconcileTokenCostPage(ctx, 0))
+			if !tc.cancelBatch {
+				for id, job := range map[string]*storage.ReviewJob{"slow": slow, "healthy": healthy} {
+					updated, err := worker.DB.GetJobByID(job.ID)
+					require.NoError(t, err)
+					if tc.unpricedIDs[id] {
+						assert.Equal(t, "{}", updated.TokenUsage)
+						continue
+					}
+					usage := tokens.ParseJSON(updated.TokenUsage)
+					require.NotNil(t, usage)
+					assert.True(t, usage.HasCost)
+					assert.InDelta(t, 0.37, usage.CostUSD, 1e-9)
+				}
+			}
+			assert.Equal(t, [][]string{{"slow", "healthy"}}, batches)
+			assert.Equal(t, tc.individualCalls, individualCalls)
+			if tc.logMessage != "" {
+				assert.Contains(t, logOutput.String(), tc.logMessage)
+			}
+			due, err := worker.DB.ListDueTokenCostCandidates(
+				t.Context(), 0, 10,
+				time.Now().Add(-worker.Pool.tokenCostMaxCandidateAge), time.Now(),
+			)
+			require.NoError(t, err)
+			assert.Len(t, due, tc.wantDue)
+		})
+	}
+}
+
+func TestTokenCostPageRealBatchAndSlowRecovery(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses shell scripts")
+	}
+	for _, slow := range []bool{false, true} {
+		name := "two successful pages"
+		if slow {
+			name = "slow first session"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("CALLS", calls)
+			t.Setenv("SLOW", "0")
+			script := `#!/bin/sh
+printf '%s\n' "$*" >> "$CALLS"
+if [ "$SLOW" = 1 ]; then
+  if [ "$2" = usage-batch ] || [ "$3" = slow ]; then while :; do :; done; fi
+  echo '{"has_cost":true,"cost_usd":0.37}'
+  exit 0
+fi
+shift 2
+printf '{"results":['
+sep=''
+while [ "$1" != --format ]; do
+  printf '%s{"requested_id":"%s","exit_code":0,"usage":{"has_cost":true,"cost_usd":0.25}}' "$sep" "$1"
+  sep=,
+  shift
+done
+printf ']}'
+`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "agentsview"), []byte(script), 0o755))
+			worker := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.Cost.Timeout = "1s"
+			worker.reconfigurePool(cfg)
+			ids := tokenCostPageSessionIDs(21)
+			if slow {
+				t.Setenv("SLOW", "1")
+				ids = []string{"slow", "healthy"}
+			}
+			var jobs []*storage.ReviewJob
+			for _, id := range ids {
+				jobs = append(jobs, seedTokenCostCandidate(t, worker, id, `{"total_output_tokens":40}`))
+			}
+			start := time.Now()
+			cursor := worker.Pool.reconcileTokenCostPage(t.Context(), 0)
+			if !slow {
+				require.Equal(t, jobs[19].ID, cursor)
+				require.Zero(t, worker.Pool.reconcileTokenCostPage(t.Context(), cursor))
+			} else {
+				require.Zero(t, cursor)
+				assert.Less(t, time.Since(start), 3500*time.Millisecond)
+			}
+			data, err := os.ReadFile(calls)
+			require.NoError(t, err)
+			if slow {
+				assert.Equal(t, "session usage-batch slow healthy --format json --no-sync\nsession usage slow --format json --no-sync\nsession usage healthy --format json --no-sync\n", string(data))
+				var misses int
+				var next string
+				require.NoError(t, worker.DB.QueryRowContext(t.Context(), "SELECT misses, next_check_at FROM token_cost_lookups WHERE job_id = ?", jobs[0].ID).Scan(&misses, &next))
+				assert.Equal(t, 1, misses)
+				assert.NotEmpty(t, next)
+			} else {
+				assert.Equal(t, "session usage-batch "+strings.Join(ids[:20], " ")+" --format json --no-sync\nsession usage-batch "+ids[20]+" --format json --no-sync\n", string(data))
+			}
+			for i, job := range jobs {
+				updated, err := worker.DB.GetJobByID(job.ID)
+				require.NoError(t, err)
+				usage := tokens.ParseJSON(updated.TokenUsage)
+				require.NotNil(t, usage)
+				assert.Equal(t, int64(40), usage.OutputTokens)
+				if slow && i == 0 {
+					assert.False(t, usage.HasCost)
+				} else {
+					assert.True(t, usage.HasCost)
+					if slow {
+						assert.InDelta(t, 0.37, usage.CostUSD, 1e-9)
+					} else {
+						assert.InDelta(t, 0.25, usage.CostUSD, 1e-9)
+					}
+				}
+			}
+		})
+	}
 }

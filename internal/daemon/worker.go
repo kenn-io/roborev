@@ -104,7 +104,8 @@ type WorkerPool struct {
 	// tokens.ErrSessionWithoutUsage for a session the provider has with no
 	// usage. Nil uses the configured tokens.LookupSessionUsage path; tests
 	// substitute a deterministic fetcher.
-	tokenUsageFetcher func(context.Context, string) (*tokens.Usage, error)
+	tokenUsageFetcher      func(context.Context, string) (*tokens.Usage, error)
+	tokenUsageBatchFetcher func(context.Context, []string) (map[string]tokens.SessionUsageResult, error)
 	// tokenUsageIndexRetryWindow and tokenUsageIndexRetryInterval bound the
 	// fresh-session indexing retry. Tests shorten both values.
 	tokenUsageIndexRetryWindow   time.Duration
@@ -2592,6 +2593,22 @@ func (wp *WorkerPool) fetchTokenUsage(
 		return nil, err
 	}
 	return tokens.LookupSessionUsage(ctx, sessionID, fetchConfig)
+}
+
+func (wp *WorkerPool) fetchTokenUsageBatch(
+	ctx context.Context, ids []string,
+) (map[string]tokens.SessionUsageResult, error) {
+	if wp.tokenUsageBatchFetcher != nil {
+		return wp.tokenUsageBatchFetcher(ctx, ids)
+	}
+	if wp.tokenUsageFetcher != nil {
+		return nil, tokens.ErrBatchUnsupported
+	}
+	fetchConfig, err := tokens.FetchConfigFromConfig(wp.cfgGetter.Config())
+	if err != nil {
+		return nil, tokens.ErrBatchUnsupported
+	}
+	return tokens.FetchForSessionsWithConfig(ctx, ids, fetchConfig)
 }
 
 func (wp *WorkerPool) fetchFreshSessionUsage(
