@@ -3353,8 +3353,8 @@ func (s *Server) resolveSingleAgent(
 		return resolvedSingleAgent{}, out
 	}
 	agentName := resolution.PreferredAgent
-	resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
-		in.repoCfg, agentName, in.cfg, resolution.BackupAgent,
+	resolved, err := selectEnqueueAgent(
+		in.req.Source, agentName, in.repoCfg, in.cfg, resolution.BackupAgent, true,
 	)
 	if err != nil {
 		if _, ok := errors.AsType[*agent.UnknownAgentError](err); ok {

@@ -21,7 +21,7 @@ import (
 // single probe invocation is approximately timeout + WaitDelay: CommandContext
 // kills the process at the deadline, and WaitDelay bounds how long Wait may
 // block on unclosed stdout/stderr pipes held by orphan descendants.
-var identityProbeTimeout = 2 * time.Second
+var identityProbeTimeout = 5 * time.Second
 
 // identityProbeWaitDelay is the post-kill Wait bound for identity probes.
 // WaitDelay == 0 (the CombinedOutput default) can leave Wait blocked forever

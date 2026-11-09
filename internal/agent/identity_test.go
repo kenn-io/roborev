@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
+var productionIdentityProbeTimeout = identityProbeTimeout
+
 // writeProbeScript creates a fake CLI that answers --version / -v with
 // versionLine. Positional args (version, v, or anything else) fail and,
 // when marker is non-empty, append a line so tests can detect accidental
@@ -211,6 +213,42 @@ func TestCommandIsUsableCursorCandidate_FailClosedOnUnknown(t *testing.T) {
 		assert.Equal(t, identityUnknown, resolveCommandIdentity(bin))
 		assert.False(t, commandIsUsableCursorCandidate(bin),
 			"timeout must not classify binary as Cursor")
+	})
+}
+
+func TestIdentityProbeProductionTimeout(t *testing.T) {
+	prev := identityProbeTimeout
+	identityProbeTimeout = productionIdentityProbeTimeout
+	t.Cleanup(func() {
+		identityProbeTimeout = prev
+		clearIdentityProbeCache()
+	})
+	// The delay is in an external subprocess, outside Go's virtual clock.
+	t.Run("slow response", func(t *testing.T) {
+		clearIdentityProbeCache()
+		cursor := writeProbeScript(t, t.TempDir(), "agent", "cursor agent 1.0")
+		data, err := os.ReadFile(cursor)
+		require.NoError(t, err)
+		script := string(data)
+		if runtime.GOOS == "windows" {
+			script = strings.ReplaceAll(script, "  echo(!PROBE_VERSION!", "  ping -n 4 127.0.0.1 >nul\r\n  echo(!PROBE_VERSION!")
+		} else {
+			script = strings.Replace(script, "--version|-v) echo", "--version|-v) sleep 3; echo", 1)
+		}
+		require.NotEqual(t, string(data), script)
+		require.NoError(t, os.WriteFile(cursor, []byte(script), 0o755))
+		assert.Equal(t, identityNotGrok, resolveCommandIdentity(cursor))
+	})
+	t.Run("no response", func(t *testing.T) {
+		clearIdentityProbeCache()
+		path := filepath.Join(t.TempDir(), "agent")
+		script := "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\nexec sleep 6\n"
+		if runtime.GOOS == "windows" {
+			path += ".bat"
+			script = "@echo off\r\nif \"%~1\"==\"--help-probe-etxtbsy\" exit /b 0\r\n:loop\r\ngoto loop\r\n"
+		}
+		require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+		assert.Equal(t, identityUnknown, resolveCommandIdentity(path))
 	})
 }
 
