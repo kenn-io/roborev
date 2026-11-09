@@ -185,6 +185,10 @@ func versionOutputLooksLikeGrok(command string) bool {
 }
 
 func probeVersionIdentity(command string) commandIdentity {
+	return probeVersionIdentityWithRunner(command, runIdentityProbe)
+}
+
+func probeVersionIdentityWithRunner(command string, runProbe func(context.Context, string, string) ([]byte, error)) commandIdentity {
 	ctx, cancel := context.WithTimeout(context.Background(), identityProbeTimeout)
 	defer cancel()
 	// Availability checks run before an agent is selected and have no review
@@ -199,7 +203,7 @@ func probeVersionIdentity(command string) commandIdentity {
 		if ctx.Err() != nil {
 			return identityUnknown
 		}
-		out, err := runIdentityProbe(ctx, command, arg)
+		out, err := runProbe(ctx, command, arg)
 		// Timeout, WaitDelay, oversize dump, crash, or empty → try next flag
 		// or fail closed as unknown. Never treat these as NotGrok.
 		if errors.Is(err, errProbeOutputExceeded) ||
