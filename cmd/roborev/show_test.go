@@ -3,89 +3,182 @@ package main
 // Tests for the show command
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/version"
 )
-
-func runShowCmdWithStderr(t *testing.T, args ...string) (string, string) {
-	t.Helper()
-	cmd := showCmd()
-	cmd.SetArgs(args)
-	var output, notices bytes.Buffer
-	cmd.SetOut(&output)
-	cmd.SetErr(&notices)
-	stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-	return output.String() + stdout, notices.String()
-}
 
 func TestShowOpenFailedReviewHint(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		closed   bool
-		verdict  *int
-		jobType  string
-		prompt   bool
-		wantHint string
+		name    string
+		closed  bool
+		verdict *int
+		jobType string
+		prompt  bool
 	}{
-		{name: "open failed", verdict: new(0), jobType: storage.JobTypeReview, wantHint: "hint: review 7 is open. After its findings are fixed or answered, record what changed and close it: roborev job comment --job 7 -m \"<what changed>\" && roborev job close 7\n"},
+		{name: "open failed", verdict: new(0), jobType: storage.JobTypeReview},
 		{name: "closed failed", closed: true, verdict: new(0), jobType: storage.JobTypeReview},
 		{name: "open passing", verdict: new(1), jobType: storage.JobTypeReview},
 		{name: "unknown verdict", jobType: storage.JobTypeReview},
 		{name: "fix output", verdict: new(0), jobType: storage.JobTypeFix},
 		{name: "prompt", verdict: new(0), jobType: storage.JobTypeReview, prompt: true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			mockReviewDaemon(t, storage.Review{
-				JobID: 7, Agent: "test", Output: "Finding", Prompt: "Instructions",
-				Closed: tc.closed, VerdictBool: tc.verdict,
-				Job: &storage.ReviewJob{ID: 7, JobType: tc.jobType},
+		for _, jsonOutput := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", tc.name, jsonOutput), func(t *testing.T) {
+				isolateDaemonSelection(t)
+				mockReviewDaemon(t, storage.Review{
+					JobID: 7, Agent: "test", Output: "Finding", Prompt: "Instructions",
+					Closed: tc.closed, VerdictBool: tc.verdict,
+					Job: &storage.ReviewJob{ID: 7, JobType: tc.jobType},
+				})
+				ep := getDaemonEndpoint()
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					return &daemon.RuntimeInfo{Network: ep.Network, Address: ep.Address, Version: version.Version}, nil
+				}
+				args := []string{"job", "show", "--job", "7"}
+				content := "Finding"
+				if tc.prompt {
+					args = append(args, "--prompt")
+					content = "Instructions"
+				}
+				if jsonOutput {
+					args = append(args, "--json")
+				}
+				run := runCLI(t, args...)
+				require.NoError(t, run.err)
+				wantHint := tc.name == "open failed"
+				if jsonOutput {
+					assert.Empty(t, run.stderr)
+					var result map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal([]byte(run.stdout), &result))
+					if wantHint {
+						assert.JSONEq(t, `[{"code":"review_open","message":"review 7 is open. After its findings are fixed or answered, record what changed and close it","next":"roborev job comment --job 7 -m \"<what changed>\" && roborev job close 7"}]`, string(result["hints"]))
+					} else {
+						assert.NotContains(t, result, "hints")
+					}
+					return
+				}
+				assert.Equal(t, "Review for job 7 (by test)\n------------------------------------------------------------\n"+content+"\n", run.stdout)
+				if wantHint {
+					assert.Equal(t, "hint: review 7 is open. After its findings are fixed or answered, record what changed and close it: roborev job comment --job 7 -m \"<what changed>\" && roborev job close 7\n", run.stderr)
+				} else {
+					assert.Empty(t, run.stderr)
+				}
 			})
-			args := []string{"--job", "7"}
-			content := "Finding"
-			if tc.prompt {
-				args = append(args, "--prompt")
-				content = "Instructions"
-			}
-			stdout, stderr := runShowCmdWithStderr(t, args...)
-			assert.Equal(t, "Review for job 7 (by test)\n------------------------------------------------------------\n"+content+"\n", stdout)
-			assert.Equal(t, tc.wantHint, stderr)
-		})
+		}
 	}
 }
 
-func TestShowJSONOpenReviewHint(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		verdict int
-	}{
-		{"open failed", 0},
-		{"open passing", 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			mockReviewDaemon(t, storage.Review{
-				JobID: 7, Agent: "test", Output: "Review", VerdictBool: &tc.verdict,
-				Job: &storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview},
+func TestShowHintFollowupTargetsSelectedDaemon(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("commands use the Unix shell on this platform")
+	}
+	for _, network := range []string{"tcp", "unix"} {
+		for _, jsonOutput := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", network, jsonOutput), func(t *testing.T) {
+				isolateDaemonSelection(t)
+				type write struct {
+					Path    string
+					JobID   int64  `json:"job_id"`
+					Comment string `json:"comment"`
+					Closed  bool   `json:"closed"`
+				}
+				selectedWrites, defaultWrites := make(chan write, 2), make(chan write, 2)
+				handler := func(name string, writes chan<- write) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						switch r.URL.Path {
+						case "/api/ping":
+							writeJSON(w, map[string]any{"ok": true, "service": "roborev", "version": version.Version})
+						case "/api/review":
+							assert.Equal(t, "7", r.URL.Query().Get("job_id"))
+							writeJSON(w, storage.Review{JobID: 7, Output: name, VerdictBool: new(0), Job: &storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview}})
+						case "/api/comment", "/api/review/close":
+							var body write
+							assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+							body.Path = r.URL.Path
+							writes <- body
+							if r.URL.Path == "/api/comment" {
+								w.WriteHeader(http.StatusCreated)
+							}
+							writeJSON(w, map[string]any{})
+						default:
+							writeJSON(w, map[string]any{})
+						}
+					})
+				}
+				defaultServer := httptest.NewServer(handler("unrelated review", defaultWrites))
+				t.Cleanup(defaultServer.Close)
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(defaultServer.URL, "http://"), Version: version.Version}, nil
+				}
+				selected := httptest.NewUnstartedServer(handler("selected review", selectedWrites))
+				addr := ""
+				if network == "unix" {
+					// Keep the socket below the Unix path length limit on macOS too.
+					dir, err := os.MkdirTemp("/tmp", "rr-show-*")
+					require.NoError(t, err)
+					t.Cleanup(func() { assert.NoError(t, os.RemoveAll(dir)) })
+					addr = filepath.Join(dir, "daemon's socket")
+					listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", addr)
+					require.NoError(t, err)
+					require.NoError(t, selected.Listener.Close())
+					selected.Listener = listener
+					addr = "unix://" + addr
+				}
+				selected.Start()
+				t.Cleanup(selected.Close)
+				if network == "tcp" {
+					addr = selected.URL
+				}
+				args := []string{"--server", addr, "job", "show", "--job", "7"}
+				if jsonOutput {
+					args = append(args, "--json")
+				}
+				run := runCLI(t, args...)
+				require.NoError(t, run.err)
+				require.Contains(t, run.stdout, "selected review")
+				var next string
+				if jsonOutput {
+					var result struct{ Hints []struct{ Next string } }
+					require.NoError(t, json.Unmarshal([]byte(run.stdout), &result))
+					require.Len(t, result.Hints, 1)
+					next = result.Hints[0].Next
+				} else {
+					parts := strings.SplitN(run.stderr, ": roborev ", 2)
+					require.Len(t, parts, 2)
+					next = "roborev " + strings.TrimSpace(parts[1])
+				}
+				commands := strings.Split(next, " && ")
+				require.Len(t, commands, 2)
+				for _, command := range commands {
+					parsed, err := exec.CommandContext(t.Context(), "sh", "-c", `roborev() { printf '%s\000' "$@"; }; `+command).Output()
+					require.NoError(t, err)
+					followup := runCLI(t, strings.Split(strings.TrimSuffix(string(parsed), "\x00"), "\x00")...)
+					require.NoError(t, followup.err)
+				}
+				assert.Empty(t, defaultWrites)
+				require.Len(t, selectedWrites, 2)
+				assert.Equal(t, write{Path: "/api/comment", JobID: 7, Comment: "<what changed>"}, <-selectedWrites)
+				assert.Equal(t, write{Path: "/api/review/close", JobID: 7, Closed: true}, <-selectedWrites)
 			})
-			stdout, stderr := runShowCmdWithStderr(t, "--job", "7", "--json")
-			assert.Empty(t, stderr)
-			var result map[string]json.RawMessage
-			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
-			if tc.verdict == 1 {
-				assert.NotContains(t, result, "hints")
-				return
-			}
-			assert.JSONEq(t, `[{"code":"review_open","message":"review 7 is open. After its findings are fixed or answered, record what changed and close it","next":"roborev job comment --job 7 -m \"<what changed>\" && roborev job close 7"}]`, string(result["hints"]))
-		})
+		}
 	}
 }
 

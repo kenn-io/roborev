@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/tokens"
@@ -31,14 +32,14 @@ type cliHint struct {
 	Next    string `json:"next,omitempty"`
 }
 
-func openReviewHint(review storage.Review) *cliHint {
+func openReviewHint(review storage.Review, command string) *cliHint {
 	if review.Job == nil || !review.Job.IsReadableReview() || review.Closed || review.Verdict() != storage.VerdictFail {
 		return nil
 	}
 	return &cliHint{
 		Code:    "review_open",
 		Message: fmt.Sprintf("review %d is open. After its findings are fixed or answered, record what changed and close it", review.JobID),
-		Next:    fmt.Sprintf("roborev job comment --job %d -m \"<what changed>\" && roborev job close %d", review.JobID, review.JobID),
+		Next:    fmt.Sprintf("%s job comment --job %d -m \"<what changed>\" && %s job close %d", command, review.JobID, command, review.JobID),
 	}
 }
 
@@ -249,8 +250,13 @@ Examples:
 			}
 
 			var hint *cliHint
+			// Remote history is read-only, so it cannot run the suggested writes.
 			if !showPrompt && !ep.IsRemote() {
-				hint = openReviewHint(review)
+				command := "roborev"
+				if serverAddr != "" {
+					command += " --server " + daemon.ShellEscape(ep.ConfigAddr())
+				}
+				hint = openReviewHint(review, command)
 			}
 
 			var allComments []storage.Response
