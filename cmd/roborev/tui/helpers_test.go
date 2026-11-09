@@ -1228,6 +1228,7 @@ var multiRuneGlyphs = []struct {
 }
 
 func TestWrapTextKeepsGlyphsWhole(t *testing.T) {
+	t.Parallel()
 	for _, tt := range multiRuneGlyphs {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
