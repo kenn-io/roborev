@@ -2351,26 +2351,7 @@ func filterFailedReviewJobs(ctx context.Context, repoRoot, branch, head string, 
 			eligible = append(eligible, job)
 		}
 	}
-	ranges := map[string]bool{}
-	for _, ref := range refs {
-		if !roborevgit.IsRange(ref) {
-			continue
-		}
-		if _, seen := ranges[ref]; seen {
-			continue
-		}
-		ranges[ref] = false
-		commits, err := roborevgit.GetRangeCommitsCtx(ctx, repoRoot, strings.TrimPrefix(ref, roborevgit.EmptyTreeSHA+".."))
-		if err != nil {
-			continue
-		}
-		for _, sha := range commits {
-			if owned[sha] {
-				ranges[ref] = true
-				break
-			}
-		}
-	}
+	ranges := ownedRanges(ctx, repoRoot, refs, owned)
 	ids := make([]storage.ReviewJob, 0, len(failed))
 	for _, job := range eligible {
 		if owned[job.GitRef] || ranges[job.GitRef] {

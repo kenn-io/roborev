@@ -386,6 +386,31 @@ func TestFindOpenFailedReviewJobsWithoutOwnershipSkipsQuery(t *testing.T) {
 	assert.Zero(t, gitCalls(), "a session without commits needs no Git lookup")
 }
 
+func TestFindOpenFailedReviewJobsBatchesDistinctRanges(t *testing.T) {
+	repo := gittest.NewRepoWithCommit(t)
+	base := repo.Head()
+	jobs := make([]storage.ReviewJob, 0, 201)
+	for id := int64(1); id <= 200; id++ {
+		tip := repo.CommitFile("foreign.txt", fmt.Sprint(id), "foreign")
+		job := failedReviewJob(id, base+".."+tip)
+		job.Branch = "main"
+		jobs = append(jobs, job)
+	}
+	repo.Run("commit", "--allow-empty", "-m", "own")
+	own := repo.Head()
+	job := failedReviewJob(201, base+".."+own)
+	job.Branch = "main"
+	jobs = append(jobs, job)
+	gitCalls := testutil.CountGitProcesses(t)
+	start := time.Now()
+	got, ok := findOpenFailedReviewJobs(t.Context(), reviewSourceWithJobs(jobs...), repo.Root, "main", own, map[string]bool{own: true})
+	t.Logf("201 distinct ranges: %s, %d Git processes", time.Since(start), gitCalls())
+	require.True(t, ok)
+	require.Len(t, got, 1)
+	assert.Equal(t, int64(201), got[0].ID)
+	assert.LessOrEqual(t, gitCalls(), 10, "three data commands plus cold Git trust setup must stay independent of the number of ranges")
+}
+
 func TestFindOpenFailedReviewJobsRangeSemantics(t *testing.T) {
 	repo := gittest.NewRepoWithCommit(t)
 	base := repo.Head()
@@ -427,6 +452,22 @@ func TestFindOpenFailedReviewJobsRangeSemantics(t *testing.T) {
 			} else {
 				assert.Empty(t, got)
 			}
+		})
+	}
+	repo.Run("checkout", "--orphan", "unrelated")
+	repo.Run("commit", "-m", "unrelated root")
+	unrelated := repo.Head()
+	repo.Run("checkout", "main")
+	for name, owned := range map[string]map[string]bool{
+		"owned ancestor and descendant": {a: true, merged: true},
+		"owned unrelated histories":     {a: true, unrelated: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			job := failedReviewJob(42, base+".."+a)
+			job.Branch = "main"
+			got, ok := findOpenFailedReviewJobs(t.Context(), reviewSourceWithJobs(job), repo.Root, "main", merged, owned)
+			require.True(t, ok)
+			require.Len(t, got, 1, "pruning old ancestry must preserve every owned commit")
 		})
 	}
 }
