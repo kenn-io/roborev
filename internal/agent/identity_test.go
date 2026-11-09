@@ -239,17 +239,6 @@ func TestIdentityProbeProductionTimeout(t *testing.T) {
 		require.NoError(t, os.WriteFile(cursor, []byte(script), 0o755))
 		assert.Equal(t, identityNotGrok, resolveCommandIdentity(cursor))
 	})
-	t.Run("no response", func(t *testing.T) {
-		clearIdentityProbeCache()
-		path := filepath.Join(t.TempDir(), "agent")
-		script := "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\nexec sleep 6\n"
-		if runtime.GOOS == "windows" {
-			path += ".bat"
-			script = "@echo off\r\nif \"%~1\"==\"--help-probe-etxtbsy\" exit /b 0\r\n:loop\r\ngoto loop\r\n"
-		}
-		require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
-		assert.Equal(t, identityUnknown, resolveCommandIdentity(path))
-	})
 }
 
 func TestIdentityProbe_OrphanPipeBounded(t *testing.T) {

@@ -742,18 +742,6 @@ func panelMemberOpts(
 	return out, nil
 }
 
-func selectEnqueueAgent(source, preferred string, repoCfg *config.RepoConfig, cfg *config.Config, backup string, strict bool) (agent.Agent, error) {
-	if source == storage.JobSourcePostCommit && agent.CanonicalName(preferred) == "cursor" {
-		// The worker checks availability before execution; a cold probe can
-		// outlast the post-commit request deadline.
-		return agent.Get("cursor")
-	}
-	if strict {
-		return agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, preferred, cfg, backup)
-	}
-	return agent.GetAvailableWithConfigFromConfig(repoCfg, preferred, cfg, backup)
-}
-
 func resolvePanelMemberExecution(
 	m config.ResolvedMember, descriptor targetDescriptor, repoCfg *config.RepoConfig, cfg *config.Config,
 ) (string, string, string, string, error) {
@@ -769,9 +757,16 @@ func resolvePanelMemberExecution(
 			resolution.RepoConfig, cfg, resolution.Workflow, resolution.Reasoning,
 		) ||
 		strings.TrimSpace(resolution.BackupAgent) != ""
-	selected, err := selectEnqueueAgent(
-		descriptor.source, resolution.PreferredAgent, repoCfg, cfg, resolution.BackupAgent, strictWorkflowAgent,
-	)
+	var selected agent.Agent
+	if strictWorkflowAgent {
+		selected, err = agent.GetPreferredOrBackupWithConfigFromConfig(
+			repoCfg, resolution.PreferredAgent, cfg, resolution.BackupAgent,
+		)
+	} else {
+		selected, err = agent.GetAvailableWithConfigFromConfig(
+			repoCfg, resolution.PreferredAgent, cfg, resolution.BackupAgent,
+		)
+	}
 	if err != nil {
 		return "", "", "", "", err
 	}

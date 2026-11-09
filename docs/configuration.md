@@ -923,10 +923,9 @@ Gemini model overrides.
 
 A custom `cursor_cmd` must forward `--version` or `-v` to Cursor and produce
 non-empty version output that does not identify as Grok. The version check has
-up to five seconds to respond. Automatic reviews perform this check when the
-worker starts them. Wrappers that ignore version flags, hang, or print nothing
-are treated as unavailable (fail-closed identity probe), so a Grok-only `agent`
-alias cannot be selected as Cursor.
+up to five seconds to respond. Wrappers that ignore version flags, hang, or
+print nothing are treated as unavailable (fail-closed identity probe), so a
+Grok-only `agent` alias cannot be selected as Cursor.
 
 ### Agent Name Validation
 

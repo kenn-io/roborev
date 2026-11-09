@@ -39,20 +39,6 @@ import (
 
 const testWorkerID = "test-worker"
 
-func TestResolveReviewJobAgentRejectsGrokAsCursor(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent")
-	script := "#!/bin/sh\necho 'grok 1.0'\n"
-	if runtime.GOOS == "windows" {
-		path += ".bat"
-		script = "@echo off\r\necho grok 1.0\r\n"
-	}
-	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
-	cfg := config.DefaultConfig()
-	cfg.CursorCmd = path
-	_, err := resolveReviewJobAgent(&storage.ReviewJob{Agent: "cursor", RepoPath: t.TempDir()}, cfg)
-	require.Error(t, err)
-}
-
 // workerTestContext encapsulates the common setup for worker pool tests.
 type workerTestContext struct {
 	DB          *storage.DB

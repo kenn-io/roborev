@@ -428,18 +428,8 @@ synthesis_agent = "test"
 	t.Run("post_commit uses hook_review_panel", func(t *testing.T) {
 		assert := assert.New(t)
 		server, db, _ := newTestServer(t)
-		dir := t.TempDir()
-		cursor := filepath.Join(dir, "agent")
-		marker := filepath.Join(dir, "probed")
-		script := "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\necho probe > '" + marker + "'\necho 'cursor 1.0'\n"
-		if runtime.GOOS == "windows" {
-			cursor += ".bat"
-			script = "@echo off\r\nif \"%~1\"==\"--help-probe-etxtbsy\" exit /b 0\r\necho probe > \"" + marker + "\"\r\necho cursor 1.0\r\n"
-		}
-		require.NoError(t, os.WriteFile(cursor, []byte(script), 0o755))
-		server.configWatcher.Config().CursorCmd = cursor
 		repo := testutil.NewGitRepo(t)
-		repo.WriteFile(".roborev.toml", strings.Replace(twoPanels, "agent = \"test\"", "agent = \"cursor\"", 1))
+		repo.WriteFile(".roborev.toml", twoPanels)
 		repo.CommitFile("a.txt", "a", "add a")
 
 		resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
@@ -451,9 +441,7 @@ synthesis_agent = "test"
 		assert.Equal("hook", resp.PanelName)
 		members, err := db.GetPanelMembers(resp.PanelRunUUID)
 		require.NoError(t, err)
-		require.Len(t, members, 1, "hook_review_panel hook has one member")
-		assert.Equal("cursor", members[0].Agent)
-		assert.NoFileExists(marker)
+		assert.Len(members, 1, "hook_review_panel hook has one member")
 	})
 
 	t.Run("no defaults stays single-agent", func(t *testing.T) {

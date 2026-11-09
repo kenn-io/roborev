@@ -18,10 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/githook"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func executePostCommitCmd(
@@ -249,47 +247,6 @@ func TestPostCommitBatchFailedEnqueueRetriesRange(t *testing.T) {
 
 	assert.Equal(t, base+".."+repo.Run("rev-parse", head+"^1"), failed.GitRef)
 	assert.Equal(t, base+".."+head, retried.GitRef)
-}
-
-func TestPostCommitBatchDefersCursorProbe(t *testing.T) {
-	repo := newTestGitRepo(t)
-	repo.CommitFile("base.txt", "base", "base")
-	repo.Run("checkout", "-b", "feature")
-	writeRoborevConfig(t, repo, "agent = \"cursor\"\nbackup_agent = \"test\"\npost_commit_batch_size = 2\nhook_timeout_seconds = 1\n")
-	repo.CommitFile("one.txt", "one", "one")
-	dir := t.TempDir()
-	cursor := filepath.Join(dir, "agent")
-	marker := filepath.Join(dir, "probed")
-	// Subprocesses and loopback HTTP cannot use Go's virtual clock.
-	script := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\necho probe > '%s'\nsleep 3\necho 'cursor agent 1.0'\n", marker)
-	if runtime.GOOS == "windows" {
-		cursor += ".bat"
-		script = fmt.Sprintf("@echo off\r\nif \"%%~1\"==\"--help-probe-etxtbsy\" exit /b 0\r\necho probe > \"%s\"\r\nping -n 4 127.0.0.1 >nul\r\necho cursor agent 1.0\r\n", marker)
-	}
-	require.NoError(t, os.WriteFile(cursor, []byte(script), 0o755))
-	cfg := config.DefaultConfig()
-	cfg.CursorCmd = cursor
-	db := testutil.OpenTestDB(t)
-	server := daemon.NewServer(db, cfg, "")
-	t.Cleanup(func() { assert.NoError(t, server.Close()) })
-	daemonFromHandler(t, server.Handler())
-	_, _, err := executePostCommitCmd("--repo", repo.Dir)
-	require.NoError(t, err)
-	head := repo.CommitFile("two.txt", "two", "two")
-	_, stderr, err := executePostCommitCmd("--repo", repo.Dir)
-	require.NoError(t, err)
-	assert.Empty(t, stderr)
-	jobs, err := db.ListJobs("", "", 10, 0)
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	assert.Equal(t, "cursor", jobs[0].Agent)
-	statePath, err := postCommitBatchStatePath(repo.Dir)
-	require.NoError(t, err)
-	state, exists, err := loadPostCommitBatchState(statePath)
-	require.NoError(t, err)
-	require.True(t, exists)
-	assert.Equal(t, head, state.Branches["feature"].Checkpoint)
-	assert.NoFileExists(t, marker)
 }
 
 func TestPostCommitBatchSerializesConcurrentHooks(t *testing.T) {
