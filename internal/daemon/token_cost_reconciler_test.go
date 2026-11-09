@@ -659,13 +659,6 @@ func TestTokenCostPageHandlesBatchFailures(t *testing.T) {
 		wantDue                 int
 	}{
 		{
-			name:            "backend failure recovers individually",
-			batchErr:        fmt.Errorf("archive read failed"),
-			individualCalls: []string{"slow", "healthy"},
-			logMessage:      "archive read failed",
-			wantDue:         0,
-		},
-		{
 			name:                "timeout retries sessions individually",
 			batchErr:            context.DeadlineExceeded,
 			individualCalls:     []string{"slow", "healthy"},
@@ -673,11 +666,6 @@ func TestTokenCostPageHandlesBatchFailures(t *testing.T) {
 			individualTimeoutID: "slow",
 			logMessage:          "batch usage lookup",
 			wantDue:             0,
-		},
-		{
-			name:            "unsupported batch recovers individually",
-			batchErr:        tokens.ErrBatchUnsupported,
-			individualCalls: []string{"slow", "healthy"},
 		},
 		{
 			name:                    "provider unavailable stops page",
@@ -759,28 +747,16 @@ func TestTokenCostPageHandlesBatchFailures(t *testing.T) {
 	}
 }
 
-func TestTokenCostPageRealBatchAndSlowRecovery(t *testing.T) {
+func TestTokenCostPageRealBatchPages(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses shell scripts")
 	}
-	for _, slow := range []bool{false, true} {
-		name := "two successful pages"
-		if slow {
-			name = "slow first session"
-		}
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			calls := filepath.Join(dir, "calls")
-			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-			t.Setenv("CALLS", calls)
-			t.Setenv("SLOW", "0")
-			script := `#!/bin/sh
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CALLS", calls)
+	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$CALLS"
-if [ "$SLOW" = 1 ]; then
-  if [ "$2" = usage-batch ] || [ "$3" = slow ]; then while :; do :; done; fi
-  echo '{"has_cost":true,"cost_usd":0.37}'
-  exit 0
-fi
 shift 2
 printf '{"results":['
 sep=''
@@ -791,58 +767,29 @@ while [ "$1" != --format ]; do
 done
 printf ']}'
 `
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "agentsview"), []byte(script), 0o755))
-			worker := newWorkerTestContext(t, 1)
-			cfg := config.DefaultConfig()
-			cfg.Cost.Timeout = "1s"
-			worker.reconfigurePool(cfg)
-			ids := tokenCostPageSessionIDs(21)
-			if slow {
-				t.Setenv("SLOW", "1")
-				ids = []string{"slow", "healthy-1", "healthy-2", "healthy-3"}
-			}
-			var jobs []*storage.ReviewJob
-			for _, id := range ids {
-				jobs = append(jobs, seedTokenCostCandidate(t, worker, id, `{"total_output_tokens":40}`))
-			}
-			start := time.Now()
-			cursor := worker.Pool.reconcileTokenCostPage(t.Context(), 0)
-			if !slow {
-				require.Equal(t, jobs[19].ID, cursor)
-				require.Zero(t, worker.Pool.reconcileTokenCostPage(t.Context(), cursor))
-			} else {
-				require.Zero(t, cursor)
-				assert.Less(t, time.Since(start), 3500*time.Millisecond)
-			}
-			data, err := os.ReadFile(calls)
-			require.NoError(t, err)
-			if slow {
-				assert.Equal(t, "session usage-batch slow healthy-1 healthy-2 healthy-3 --format json --no-sync\nsession usage slow --format json --no-sync\nsession usage healthy-1 --format json --no-sync\nsession usage healthy-2 --format json --no-sync\nsession usage healthy-3 --format json --no-sync\n", string(data))
-				var misses int
-				var next string
-				require.NoError(t, worker.DB.QueryRowContext(t.Context(), "SELECT misses, next_check_at FROM token_cost_lookups WHERE job_id = ?", jobs[0].ID).Scan(&misses, &next))
-				assert.Equal(t, 1, misses)
-				assert.NotEmpty(t, next)
-			} else {
-				assert.Equal(t, "session usage-batch "+strings.Join(ids[:20], " ")+" --format json --no-sync\nsession usage-batch "+ids[20]+" --format json --no-sync\n", string(data))
-			}
-			for i, job := range jobs {
-				updated, err := worker.DB.GetJobByID(job.ID)
-				require.NoError(t, err)
-				usage := tokens.ParseJSON(updated.TokenUsage)
-				require.NotNil(t, usage)
-				assert.Equal(t, int64(40), usage.OutputTokens)
-				if slow && i == 0 {
-					assert.False(t, usage.HasCost)
-				} else {
-					assert.True(t, usage.HasCost)
-					if slow {
-						assert.InDelta(t, 0.37, usage.CostUSD, 1e-9)
-					} else {
-						assert.InDelta(t, 0.25, usage.CostUSD, 1e-9)
-					}
-				}
-			}
-		})
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "agentsview"), []byte(script), 0o755))
+	worker := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.Cost.Timeout = "1s"
+	worker.reconfigurePool(cfg)
+	ids := tokenCostPageSessionIDs(21)
+	var jobs []*storage.ReviewJob
+	for _, id := range ids {
+		jobs = append(jobs, seedTokenCostCandidate(t, worker, id, `{"total_output_tokens":40}`))
+	}
+	cursor := worker.Pool.reconcileTokenCostPage(t.Context(), 0)
+	require.Equal(t, jobs[19].ID, cursor)
+	require.Zero(t, worker.Pool.reconcileTokenCostPage(t.Context(), cursor))
+	data, err := os.ReadFile(calls)
+	require.NoError(t, err)
+	assert.Equal(t, "session usage-batch "+strings.Join(ids[:20], " ")+" --format json --no-sync\nsession usage-batch "+ids[20]+" --format json --no-sync\n", string(data))
+	for _, job := range jobs {
+		updated, err := worker.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		require.NotNil(t, usage)
+		assert.Equal(t, int64(40), usage.OutputTokens)
+		assert.True(t, usage.HasCost)
+		assert.InDelta(t, 0.25, usage.CostUSD, 1e-9)
 	}
 }

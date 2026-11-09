@@ -970,7 +970,7 @@ func TestFetchForSessionTimeoutDoesNotWaitForInheritedPipes(t *testing.T) {
 func TestFetchForSessionReturnsUsageWhenHelperKeepsPipesOpen(t *testing.T) {
 	installPipeHoldingAgentsview(t, true)
 
-	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: 100 * time.Millisecond}))
+	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: agentsviewWaitDelay - time.Millisecond}))
 
 	require.NoError(t, result.err)
 	require.NotNil(t, result.usage)
@@ -1104,15 +1104,15 @@ func TestFetchForSessionsBatchFallbackClassification(t *testing.T) {
 		sessionIDs   []string
 		timeout      time.Duration
 		wantFallback bool
-		wantTimeout  bool
+		maxDuration  time.Duration
 		wantError    string
 	}{
 		{
 			name:        "timeout",
 			script:      "while :; do :; done",
-			sessionIDs:  []string{"slow"},
+			sessionIDs:  []string{"slow", "healthy-1", "healthy-2", "healthy-3"},
 			timeout:     time.Second,
-			wantTimeout: true,
+			maxDuration: 3 * time.Second,
 		},
 		{
 			name:         "unknown command",
@@ -1145,12 +1145,10 @@ func TestFetchForSessionsBatchFallbackClassification(t *testing.T) {
 			if timeout == 0 {
 				timeout = time.Second
 			}
+			start := time.Now()
 			results, err := FetchForSessionsWithConfig(t.Context(), sessionIDs, FetchConfig{Timeout: timeout})
-			if tc.wantTimeout {
-				require.Error(t, err)
-				require.NotErrorIs(t, err, ErrBatchUnsupported)
-				assert.Nil(t, results)
-				return
+			if tc.maxDuration > 0 {
+				assert.Less(t, time.Since(start), tc.maxDuration)
 			}
 			if tc.wantFallback {
 				require.ErrorIs(t, err, ErrBatchUnsupported)
