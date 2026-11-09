@@ -231,9 +231,9 @@ func TestIdentityProbeProductionTimeout(t *testing.T) {
 		require.NoError(t, err)
 		script := string(data)
 		if runtime.GOOS == "windows" {
-			script = strings.ReplaceAll(script, "  echo(!PROBE_VERSION!", "  ping -n 4 127.0.0.1 >nul\r\n  echo(!PROBE_VERSION!")
+			script = strings.ReplaceAll(script, "  echo(!PROBE_VERSION!", "  powershell -NoProfile -Command \"Start-Sleep -Milliseconds 2500\"\r\n  echo(!PROBE_VERSION!")
 		} else {
-			script = strings.Replace(script, "--version|-v) echo", "--version|-v) sleep 3; echo", 1)
+			script = strings.Replace(script, "--version|-v) echo", "--version|-v) sleep 2.5; echo", 1)
 		}
 		require.NotEqual(t, string(data), script)
 		require.NoError(t, os.WriteFile(cursor, []byte(script), 0o755))
