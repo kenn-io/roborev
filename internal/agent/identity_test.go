@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -223,22 +225,31 @@ func TestIdentityProbeProductionTimeout(t *testing.T) {
 		identityProbeTimeout = prev
 		clearIdentityProbeCache()
 	})
-	// The delay is in an external subprocess, outside Go's virtual clock.
-	t.Run("slow response", func(t *testing.T) {
-		clearIdentityProbeCache()
-		cursor := writeProbeScript(t, t.TempDir(), "agent", "cursor agent 1.0")
-		data, err := os.ReadFile(cursor)
-		require.NoError(t, err)
-		script := string(data)
-		if runtime.GOOS == "windows" {
-			script = strings.ReplaceAll(script, "  echo(!PROBE_VERSION!", "  powershell -NoProfile -Command \"Start-Sleep -Milliseconds 2500\"\r\n  echo(!PROBE_VERSION!")
-		} else {
-			script = strings.Replace(script, "--version|-v) echo", "--version|-v) sleep 2.5; echo", 1)
-		}
-		require.NotEqual(t, string(data), script)
-		require.NoError(t, os.WriteFile(cursor, []byte(script), 0o755))
-		assert.Equal(t, identityNotGrok, resolveCommandIdentity(cursor))
-	})
+	for _, tt := range []struct {
+		name  string
+		delay time.Duration
+		want  commandIdentity
+	}{
+		{name: "slow response", delay: 2500 * time.Millisecond, want: identityNotGrok},
+		{name: "response after deadline", delay: 6 * time.Second, want: identityUnknown},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				// Replace only subprocess I/O so startup and scheduling use no deadline budget.
+				probe := func(ctx context.Context, command, arg string) ([]byte, error) {
+					assert.Equal(t, "agent", command)
+					assert.Equal(t, "--version", arg)
+					select {
+					case <-time.After(tt.delay):
+						return []byte("cursor agent 1.0"), nil
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				}
+				assert.Equal(t, tt.want, probeVersionIdentityWithRunner("agent", probe))
+			})
+		})
+	}
 }
 
 func TestIdentityProbe_OrphanPipeBounded(t *testing.T) {
