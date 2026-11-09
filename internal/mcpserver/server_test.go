@@ -242,7 +242,7 @@ func TestRegisteredToolsAndGuidance(t *testing.T) {
 	assert.False(*searchTool.Annotations.DestructiveHint)
 	assert.True(searchTool.Annotations.IdempotentHint)
 	require.NotNil(searchTool.Annotations.OpenWorldHint)
-	assert.False(*searchTool.Annotations.OpenWorldHint)
+	assert.True(*searchTool.Annotations.OpenWorldHint)
 	assert.Contains(searchTool.Description, "auto")
 	assert.Contains(searchTool.Description, "lexical")
 	assert.Contains(searchTool.Description, "semantic")
