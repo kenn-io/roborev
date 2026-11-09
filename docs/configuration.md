@@ -2288,12 +2288,14 @@ request, so a job that stays unpriced is rechecked with backoff: the wait starts
 at one minute and doubles after each miss. The daemon stores the backoff in
 SQLite, so it continues after a restart.
 
-The daemon stops looking up a job when the provider reports its session with no
-token or cost data on two lookups in a row, and the later lookup comes at least
-15 minutes after the job finished. That report is an HTTP `200` with
-`has_token_data` and `has_cost` false (or no nonzero counts), or exit code `3`
-from the `agentsview` CLI. A session the provider has not indexed (`404` or exit
-code `2`) keeps the backoff and is never treated as final. Rerunning a job
+The daemon stops looking up a job when the provider reports the same session
+with no token or cost data on two lookups in a row, and the later lookup comes
+at least 15 minutes after the job finished. A job with several phase sessions,
+such as a planner and an implementation session, keeps its lookups when the
+empty report moves from one session to another. That report is an HTTP `200`
+with `has_token_data` and `has_cost` false (or no nonzero counts), or exit code
+`3` from the `agentsview` CLI. A session the provider has not indexed (`404` or
+exit code `2`) keeps the backoff and is never treated as final. Rerunning a job
 starts its lookups over. For rows without a stored session ID, the daemon
 recovers the ID and token counts from the per-job JSONL log before retrying the
 provider. Provider failures do not change the completed job result. Deleted

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -429,6 +430,50 @@ func TestTokenCostReconcilerPricesUsageThatArrivesAfterEmptyAnswers(t *testing.T
 		require.NotNil(t, usage)
 		assert.True(t, usage.HasCost)
 		assert.InDelta(t, 0.08, usage.CostUSD, 1e-9)
+	})
+}
+
+func TestTokenCostReconcilerKeepsAskingWhenEmptyAnswerMovesToAnotherPhase(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		job := seedTokenCostCandidate(t, tc, "implementation-session", `{"input_tokens":300,"total_output_tokens":40,"provider_session_ids":["planner-session","implementation-session"],"expected_provider_sessions":2}`)
+		var plannerIndexed, implementationIndexed atomic.Bool
+		tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+			switch sessionID {
+			case "planner-session":
+				if !plannerIndexed.Load() {
+					return nil, tokens.ErrSessionWithoutUsage
+				}
+				return &tokens.Usage{CostUSD: 0.13, HasCost: true}, nil
+			case "implementation-session":
+				if !implementationIndexed.Load() {
+					return nil, tokens.ErrSessionWithoutUsage
+				}
+				return &tokens.Usage{CostUSD: 0.29, HasCost: true}, nil
+			}
+			return nil, fmt.Errorf("unexpected session %q", sessionID)
+		}
+		startQuietTokenCostReconciler(t, tc.Pool)
+		t.Cleanup(tc.Pool.Stop)
+
+		// The planner comes back empty at minutes 0, 1, 3, and 7.
+		time.Sleep(10 * time.Minute)
+		synctest.Wait()
+		// At minute 15 the planner has usage and the implementation session
+		// is empty for the first time, so the lookup at minute 31 still runs.
+		plannerIndexed.Store(true)
+		time.Sleep(10 * time.Minute)
+		synctest.Wait()
+		implementationIndexed.Store(true)
+		time.Sleep(15 * time.Minute)
+		synctest.Wait()
+
+		updated, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		require.NotNil(t, usage)
+		assert.True(t, usage.HasCost)
+		assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
 	})
 }
 

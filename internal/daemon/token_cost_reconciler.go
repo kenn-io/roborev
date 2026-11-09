@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"slices"
@@ -264,8 +265,12 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 	cursor := afterJobID
 	for _, candidate := range candidates {
 		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate.TokenCostCandidate)
-		noUsage := errors.Is(err, tokens.ErrSessionWithoutUsage)
-		if err != nil && !noUsage {
+		noUsageSessionID := ""
+		var noUsage *sessionWithoutUsageError
+		if errors.As(err, &noUsage) {
+			noUsageSessionID = noUsage.sessionID
+		}
+		if err != nil && !errors.Is(err, tokens.ErrSessionWithoutUsage) {
 			if errors.Is(err, context.Canceled) {
 				return cursor
 			}
@@ -276,7 +281,7 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 			log.Printf("token cost reconciliation: job %d: %v", candidate.JobID, err)
 		}
 		if !resolved {
-			wp.recordTokenCostMiss(ctx, candidate, noUsage, now)
+			wp.recordTokenCostMiss(ctx, candidate, noUsageSessionID, now)
 		}
 		cursor = candidate.JobID
 	}
@@ -287,20 +292,24 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 }
 
 // recordTokenCostMiss schedules the next lookup of a candidate that did not
-// price. Lookups stop when the provider reports the session without usage on
-// two lookups in a row, the later one at least tokenCostNoUsageSettle after
-// the job finished, so usage that was still being indexed gets a second look.
+// price. noUsageSessionID names the provider session this lookup found
+// without usage, or is empty. Lookups stop when the provider reports the same
+// session without usage on two lookups in a row, the later one at least
+// tokenCostNoUsageSettle after the job finished, so usage that was still being
+// indexed gets a second look. A job with several phase sessions keeps going
+// when the empty answer moves from one session to another.
 func (wp *WorkerPool) recordTokenCostMiss(
-	ctx context.Context, candidate storage.DueTokenCostCandidate, noUsage bool, now time.Time,
+	ctx context.Context, candidate storage.DueTokenCostCandidate, noUsageSessionID string, now time.Time,
 ) {
 	lookup := storage.TokenCostLookup{
-		JobID:       candidate.JobID,
-		StartedAt:   candidate.StartedAtRaw,
-		SessionID:   candidate.SessionID,
-		Misses:      candidate.LookupMisses + 1,
-		LastNoUsage: noUsage,
+		JobID:            candidate.JobID,
+		StartedAt:        candidate.StartedAtRaw,
+		SessionID:        candidate.SessionID,
+		Misses:           candidate.LookupMisses + 1,
+		NoUsageSessionID: noUsageSessionID,
 	}
-	settled := noUsage && candidate.LastLookupNoUsage &&
+	settled := noUsageSessionID != "" &&
+		noUsageSessionID == candidate.LastNoUsageSessionID &&
 		now.Sub(candidate.FinishedAt) >= tokenCostNoUsageSettle
 	if !settled {
 		lookup.NextCheckAt = now.Add(wp.tokenCostMissDelay(lookup.Misses))
@@ -330,9 +339,12 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	sessionIDs, expectedSessions := tokenUsageProviderSessions(candidate)
 	fetchedSessions := make([]*tokens.Usage, 0, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
-		// ErrSessionWithoutUsage passes through so the caller can stop
-		// asking about a session that will never have a price.
+		// ErrSessionWithoutUsage passes through, naming the session, so the
+		// caller can stop asking about a session that will never have a price.
 		fetched, err := wp.fetchTokenUsage(ctx, sessionID)
+		if errors.Is(err, tokens.ErrSessionWithoutUsage) {
+			return false, &sessionWithoutUsageError{sessionID: sessionID, err: err}
+		}
 		if err != nil {
 			return false, err
 		}
@@ -369,6 +381,19 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	}
 	return updated, nil
 }
+
+// sessionWithoutUsageError names the provider session that the usage provider
+// reported without usage. It wraps tokens.ErrSessionWithoutUsage.
+type sessionWithoutUsageError struct {
+	sessionID string
+	err       error
+}
+
+func (e *sessionWithoutUsageError) Error() string {
+	return fmt.Sprintf("provider session %s: %v", e.sessionID, e.err)
+}
+
+func (e *sessionWithoutUsageError) Unwrap() error { return e.err }
 
 // setReconciledSessions records the sessions reconciliation priced. When some
 // expected sessions have no ID, the stored row already counts every phase's

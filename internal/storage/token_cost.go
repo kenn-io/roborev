@@ -68,19 +68,22 @@ type DueTokenCostCandidate struct {
 	// LookupMisses counts earlier periodic lookups of this attempt that did
 	// not price it.
 	LookupMisses int
-	// LastLookupNoUsage reports that the previous lookup found the session
-	// with no token or cost data.
-	LastLookupNoUsage bool
+	// LastNoUsageSessionID names the provider session that the previous
+	// lookup found with no token or cost data. It is empty when the previous
+	// lookup ended any other way.
+	LastNoUsageSessionID string
 }
 
 // TokenCostLookup is the periodic reconciler's state for one job attempt.
 // StartedAt and SessionID identify the attempt; a rerun starts a new one.
 type TokenCostLookup struct {
-	JobID       int64
-	StartedAt   string
-	SessionID   string
-	Misses      int
-	LastNoUsage bool
+	JobID     int64
+	StartedAt string
+	SessionID string
+	Misses    int
+	// NoUsageSessionID names the provider session this lookup found with no
+	// token or cost data, or is empty when the lookup ended any other way.
+	NoUsageSessionID string
 	// NextCheckAt is when the next lookup is due. Zero stops periodic
 	// lookups for this attempt.
 	NextCheckAt time.Time
@@ -101,7 +104,7 @@ func migrateTokenCostLookups(ctx context.Context, db *DB) error {
   started_at TEXT NOT NULL,
   session_id TEXT NOT NULL,
   misses INTEGER NOT NULL,
-  last_no_usage INTEGER NOT NULL,
+  no_usage_session_id TEXT NOT NULL,
   next_check_at TEXT
  )`)
 	return err
@@ -179,7 +182,7 @@ func (db *DB) ListTokenCostCandidates(
 func listDueTokenCostCandidatesQuery(afterJobID int64, limit int, startedAfter, now time.Time, machineID uuid.UUID) (string, []any) {
 	return listTokenCandidatesQuery(
 		tokenCostCandidateColumns+`, j.finished_at,
-		COALESCE(l.misses, 0), COALESCE(l.last_no_usage, 0)`,
+		COALESCE(l.misses, 0), COALESCE(l.no_usage_session_id, '')`,
 		tokenCostLookupJoin,
 		tokenCostCandidatePredicate+` AND `+uniqueStartedSessionPredicate+`
 		  AND (l.job_id IS NULL OR l.next_check_at <= ?)`,
@@ -220,7 +223,7 @@ func (db *DB) ListDueTokenCostCandidates(
 			&candidate.StartedAtRaw,
 			&finishedAt,
 			&candidate.LookupMisses,
-			&candidate.LastLookupNoUsage,
+			&candidate.LastNoUsageSessionID,
 		); err != nil {
 			return nil, fmt.Errorf("scan due token cost candidate: %w", err)
 		}
@@ -242,16 +245,16 @@ func (db *DB) SaveTokenCostLookup(ctx context.Context, lookup TokenCostLookup) e
 	}
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO token_cost_lookups
-		  (job_id, started_at, session_id, misses, last_no_usage, next_check_at)
+		  (job_id, started_at, session_id, misses, no_usage_session_id, next_check_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(job_id) DO UPDATE SET
 		  started_at = excluded.started_at,
 		  session_id = excluded.session_id,
 		  misses = excluded.misses,
-		  last_no_usage = excluded.last_no_usage,
+		  no_usage_session_id = excluded.no_usage_session_id,
 		  next_check_at = excluded.next_check_at`,
 		lookup.JobID, lookup.StartedAt, lookup.SessionID,
-		lookup.Misses, lookup.LastNoUsage, nextCheckAt,
+		lookup.Misses, lookup.NoUsageSessionID, nextCheckAt,
 	)
 	if err != nil {
 		return fmt.Errorf("save token cost lookup: %w", err)

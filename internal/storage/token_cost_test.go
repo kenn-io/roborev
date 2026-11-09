@@ -864,7 +864,7 @@ func TestTokenCostLookupsGateOnlyTheirOwnUnpricedAttempt(t *testing.T) {
 	for i, job := range jobs {
 		require.NoError(t, db.SaveTokenCostLookup(t.Context(), TokenCostLookup{
 			JobID: job.ID, StartedAt: startedAt, SessionID: fmt.Sprintf("session-%d", i),
-			Misses: 4, LastNoUsage: true,
+			Misses: 4, NoUsageSessionID: fmt.Sprintf("session-%d", i),
 		}))
 	}
 
