@@ -5,16 +5,209 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/version"
 )
+
+func TestShowOpenFailedReviewHint(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		closed   bool
+		verdict  *int
+		jobType  string
+		command  string
+		wantNext string
+	}{
+		{name: "open failed", verdict: new(0), jobType: storage.JobTypeReview, command: "roborev", wantNext: `roborev job comment --job 7 -m "<what changed>" && roborev job close 7`},
+		{name: "selected daemon", verdict: new(0), jobType: storage.JobTypeReview, command: "roborev --server '127.0.0.1:7777'", wantNext: `roborev --server '127.0.0.1:7777' job comment --job 7 -m "<what changed>" && roborev --server '127.0.0.1:7777' job close 7`},
+		{name: "closed failed", closed: true, verdict: new(0), jobType: storage.JobTypeReview},
+		{name: "open passing", verdict: new(1), jobType: storage.JobTypeReview},
+		{name: "unknown verdict", jobType: storage.JobTypeReview},
+		{name: "fix output", verdict: new(0), jobType: storage.JobTypeFix},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hint := openReviewHint(storage.Review{
+				JobID: 7, Closed: tc.closed, VerdictBool: tc.verdict,
+				Job: &storage.ReviewJob{ID: 7, JobType: tc.jobType},
+			}, tc.command)
+			if tc.wantNext == "" {
+				assert.Nil(t, hint)
+				return
+			}
+			require.NotNil(t, hint)
+			assert.Equal(t, "review_open", hint.Code)
+			assert.Equal(t, "review 7 is open. After its findings are fixed or answered, record what changed and close it", hint.Message)
+			if runtime.GOOS != "windows" {
+				assert.Equal(t, tc.wantNext, hint.Next)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name     string
+		prompt   bool
+		wantHint bool
+	}{
+		{name: "open failed", wantHint: true},
+		{name: "prompt", prompt: true},
+	} {
+		for _, jsonOutput := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", tc.name, jsonOutput), func(t *testing.T) {
+				isolateDaemonSelection(t)
+				mockReviewDaemon(t, storage.Review{
+					JobID: 7, Agent: "test", Output: "Finding", Prompt: "Instructions",
+					VerdictBool: new(0),
+					Job:         &storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview},
+				})
+				ep := getDaemonEndpoint()
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					return &daemon.RuntimeInfo{Network: ep.Network, Address: ep.Address, Version: version.Version}, nil
+				}
+				args := []string{"job", "show", "--job", "7"}
+				content := "Finding"
+				if tc.prompt {
+					args = append(args, "--prompt")
+					content = "Instructions"
+				}
+				if jsonOutput {
+					args = append(args, "--json")
+				}
+				run := runCLI(t, args...)
+				require.NoError(t, run.err)
+				if jsonOutput {
+					assert.Empty(t, run.stderr)
+					var result map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal([]byte(run.stdout), &result))
+					if tc.wantHint {
+						var hints []map[string]string
+						require.NoError(t, json.Unmarshal(result["hints"], &hints))
+						require.Len(t, hints, 1)
+						assert.Equal(t, "review_open", hints[0]["code"])
+					} else {
+						assert.NotContains(t, result, "hints")
+					}
+					return
+				}
+				assert.Equal(t, "Review for job 7 (by test)\n------------------------------------------------------------\n"+content+"\n", run.stdout)
+				if tc.wantHint {
+					assert.Contains(t, run.stderr, "hint: review 7 is open.")
+				} else {
+					assert.Empty(t, run.stderr)
+				}
+			})
+		}
+	}
+}
+
+func TestShowHintPowerShellConditionalClose(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("exercises Windows PowerShell")
+	}
+	hint := openReviewHint(storage.Review{
+		JobID: 7, VerdictBool: new(0), Job: &storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview},
+	}, "roborev")
+	for _, tc := range []struct {
+		name string
+		code int
+		want string
+	}{{"comment succeeds", 0, "comment\nclose"}, {"comment fails", 1, "comment"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := fmt.Sprintf(`function roborev { $args[1]; $global:LASTEXITCODE = %d }; `, tc.code) + hint.Next
+			output, err := exec.CommandContext(t.Context(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			assert.Equal(t, tc.want, strings.TrimSpace(strings.ReplaceAll(string(output), "\r\n", "\n")))
+		})
+	}
+}
+
+func TestShowHintFollowupTargetsSelectedDaemon(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("commands use the Unix shell on this platform")
+	}
+	for _, network := range []string{"tcp", "unix"} {
+		t.Run(network, func(t *testing.T) {
+			isolateDaemonSelection(t)
+			selectedWrites, defaultWrites := make(chan string, 2), make(chan string, 2)
+			handler := func(name string, writes chan<- string) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/ping":
+						writeJSON(w, map[string]any{"ok": true, "service": "roborev", "version": version.Version})
+					case "/api/review":
+						assert.Equal(t, "7", r.URL.Query().Get("job_id"))
+						writeJSON(w, storage.Review{JobID: 7, Output: name, VerdictBool: new(0), Job: &storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview}})
+					case "/api/comment", "/api/review/close":
+						writes <- r.URL.Path
+						if r.URL.Path == "/api/comment" {
+							w.WriteHeader(http.StatusCreated)
+						}
+						writeJSON(w, map[string]any{})
+					default:
+						writeJSON(w, map[string]any{})
+					}
+				})
+			}
+			defaultServer := httptest.NewServer(handler("unrelated review", defaultWrites))
+			t.Cleanup(defaultServer.Close)
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(defaultServer.URL, "http://"), Version: version.Version}, nil
+			}
+			selected := httptest.NewUnstartedServer(handler("selected review", selectedWrites))
+			addr := ""
+			if network == "unix" {
+				// Keep the socket below the Unix path length limit on macOS too.
+				dir, err := os.MkdirTemp("/tmp", "rr-show-*")
+				require.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, os.RemoveAll(dir)) })
+				addr = filepath.Join(dir, "daemon's socket")
+				listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", addr)
+				require.NoError(t, err)
+				require.NoError(t, selected.Listener.Close())
+				selected.Listener = listener
+				addr = "unix://" + addr
+			}
+			selected.Start()
+			t.Cleanup(selected.Close)
+			if network == "tcp" {
+				addr = selected.URL
+			}
+			args := []string{"--server", addr, "job", "show", "--job", "7"}
+			run := runCLI(t, args...)
+			require.NoError(t, run.err)
+			require.Contains(t, run.stdout, "selected review")
+			parts := strings.SplitN(run.stderr, ": roborev ", 2)
+			require.Len(t, parts, 2)
+			next := "roborev " + strings.TrimSpace(parts[1])
+			commands := strings.Split(next, " && ")
+			require.Len(t, commands, 2)
+			for _, command := range commands {
+				parsed, err := exec.CommandContext(t.Context(), "sh", "-c", `roborev() { printf '%s\000' "$@"; }; `+command).Output()
+				require.NoError(t, err)
+				followup := runCLI(t, strings.Split(strings.TrimSuffix(string(parsed), "\x00"), "\x00")...)
+				require.NoError(t, followup.err)
+			}
+			assert.Empty(t, defaultWrites)
+			require.Len(t, selectedWrites, 2)
+			assert.Equal(t, "/api/comment", <-selectedWrites)
+			assert.Equal(t, "/api/review/close", <-selectedWrites)
+		})
+	}
+}
 
 func TestShowCommandArgParsing(t *testing.T) {
 	tests := []struct {

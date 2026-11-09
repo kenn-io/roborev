@@ -24,9 +24,9 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
-// quote wraps a string in platform-appropriate shell quoting (matches shellEscape output).
+// quote wraps a string in platform-appropriate shell quoting (matches ShellEscape output).
 func quote(s string) string {
-	return shellEscape(s)
+	return ShellEscape(s)
 }
 
 // setupRunner initializes a HookRunner and Broadcaster for testing.
@@ -168,7 +168,7 @@ func TestInterpolate(t *testing.T) {
 func TestInterpolateShellInjection(t *testing.T) {
 	// Test with payloads that attempt to break out of quoting and execute commands.
 	// We assert safety properties rather than exact output to avoid testing
-	// shellEscape against itself.
+	// ShellEscape against itself.
 	payloads := []string{
 		"'; rm -rf / #",
 		"`rm -rf /`",
@@ -274,11 +274,11 @@ func TestShellEscape(t *testing.T) {
 		}
 	}
 	for _, tt := range tests {
-		got := shellEscape(tt.in)
+		got := ShellEscape(tt.in)
 		if got != tt.want {
 			assert.Condition(t, func() bool {
 				return false
-			}, "shellEscape(%q) = %q, want %q", tt.in, got, tt.want)
+			}, "ShellEscape(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 
@@ -290,16 +290,16 @@ func TestShellEscape(t *testing.T) {
 		"a; echo pwned",
 	}
 	for _, payload := range injections {
-		got := shellEscape(payload)
+		got := ShellEscape(payload)
 		if len(got) < 2 {
 			require.Condition(t, func() bool {
 				return false
-			}, "shellEscape(%q) too short: %q", payload, got)
+			}, "ShellEscape(%q) too short: %q", payload, got)
 		}
 		if got[0] != '\'' || got[len(got)-1] != '\'' {
 			assert.Condition(t, func() bool {
 				return false
-			}, "shellEscape(%q) not single-quoted: %q", payload, got)
+			}, "ShellEscape(%q) not single-quoted: %q", payload, got)
 		}
 	}
 }
