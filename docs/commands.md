@@ -121,9 +121,8 @@ emit JSON through their own `--format` option.
 
 For an open failed local review, `job show` adds a stderr `hint:` with the
 comment-and-close step, and `job show --json` adds a `hints` entry with code
-`review_open`.
-Both follow-up commands retain an explicit local `--server` selection. Remote
-history is read-only and omits this hint.
+`review_open`. Both follow-up commands retain an explicit local `--server`
+selection. Remote history is read-only and omits this hint.
 
 `job list --json` and `daemon status --json` omit stored prompts from finished
 jobs. Queued and running jobs keep their prompts. Read a stored prompt with
