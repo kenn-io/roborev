@@ -126,8 +126,9 @@ func installPipeHoldingAgentsview(t *testing.T, returnsUsage bool) {
 			size := uint32(len(path))
 			err = windows.QueryFullProcessImageName(process, 0, &path[0], &size)
 			if err != nil {
-				// The process may have terminated since the zero-time wait.
-				state, waitErr = windows.WaitForSingleObject(process, 0)
+				// The process may be terminating since the zero-time wait.
+				// Its image can disappear before its handle is signaled.
+				state, waitErr = windows.WaitForSingleObject(process, 10_000)
 				assert.NoError(waitErr)
 				assert.Equal(uint32(windows.WAIT_OBJECT_0), state)
 				assert.NoError(windows.CloseHandle(process))
