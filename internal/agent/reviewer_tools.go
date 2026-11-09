@@ -51,16 +51,35 @@ func claudeReviewerToolNames(tools ReviewerTools) []string {
 	return names
 }
 
-// claudeReviewerArgs connects a Claude review to the reviewer endpoint only.
+// claudeReviewerArgs connects a Claude review to the reviewer endpoint.
 // --strict-mcp-config drops every user and project MCP server, and the
 // reviewer tools are preapproved by exact name alongside the existing tools.
+// A strict review already loads its private config; Claude reads every file
+// listed after one --mcp-config, so the reviewer config joins that list.
 func claudeReviewerArgs(args []string, configPath string, tools ReviewerTools) []string {
 	out := slices.Clone(args)
 	allowed := strings.Join(claudeReviewerToolNames(tools), ",")
 	for i := 0; i+1 < len(out); i++ {
-		if out[i] == "--allowedTools" {
+		switch out[i] {
+		case "--allowedTools":
 			out[i+1] += "," + allowed
+		case "--disallowedTools":
+			// A deny rule beats an allow rule, so the blanket MCP deny would
+			// block the reviewer tools. --strict-mcp-config already limits
+			// MCP to the reviewer server.
+			denied := slices.DeleteFunc(strings.Split(out[i+1], ","), func(rule string) bool {
+				return rule == "mcp__*"
+			})
+			if len(denied) == 0 {
+				out = slices.Delete(out, i, i+2)
+				i--
+				continue
+			}
+			out[i+1] = strings.Join(denied, ",")
 		}
+	}
+	if i := slices.Index(out, "--mcp-config"); i >= 0 && i+1 < len(out) {
+		return slices.Insert(out, i+2, configPath)
 	}
 	return append(out, "--strict-mcp-config", "--mcp-config", configPath)
 }
