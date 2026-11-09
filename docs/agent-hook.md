@@ -35,17 +35,28 @@ Agent Hook tracks three signals per session:
 
 - **Turns:** `Stop` events, for periodic repair during long sessions.
 - **Commits:** normalized shell `PreToolUse` and `PostToolUse` events. Kit maps
-    each harness's native shell tool to the common `Bash` vocabulary.
-- **Failed reviews:** open, non-closed roborev reviews with a failed verdict.
-    Design reviews do not count. They grade a written design, so the agent
-    fixing the code usually cannot resolve their findings. To stop reviews whose
-    findings are all low from failing, and so from counting, set
-    [`review_min_severity`](configuration.md#per-repository-options) to
-    `medium`.
+    each harness's native shell tool to the common `Bash` vocabulary. Claude
+    also records commit commands through `PostToolUseFailure` when a later
+    command in the same call fails.
+- **Failed reviews:** open, non-closed roborev reviews of commits this session
+    gained during `git commit`, `git cherry-pick`, or `git revert`, including
+    amends and batched reviews whose range contains one of those commits.
+    Reviews of uncommitted changes do not count. Design reviews do not count.
+    They grade a written design, so the agent fixing the code usually cannot
+    resolve their findings. To stop reviews whose findings are all low from
+    failing, and so from counting, set
+    [`review_min_severity`](configuration.md#per-repository-options) to `medium`.
+
+Existing sessions start collecting newly observed commits after an upgrade. If
+Git temporarily fails while listing a completed command's commits, roborev keeps
+that command's exact commit range and retries it on later hook events, even
+after restarting the daemon. Changing branches does not change that range.
 
 Roborev scopes commit and failed-review accounting to repository lineage, so
-activity in one worktree does not consume another worktree's reminder. Outside a
-tracked git repository the hook returns an empty native response.
+activity in one worktree does not consume another worktree's reminder. Older
+failed reviews, compacted reviews, and reviews moved by a rebase remain
+available in the TUI and `/roborev-fix`. Outside a tracked git repository the
+hook returns an empty native response.
 
 Agents that roborev launches for reviews, synthesis, and fixes run with
 `ROBOREV_AGENT_HOOK_SUPPRESS=1`. The hook returns an empty native response in
@@ -191,9 +202,10 @@ daemon endpoint. See [MCP setup](integrations/mcp.md).
 Factory Droid remains user-scoped. Roborev rejects project `.factory/hooks.json`
 paths because they are executable repository-local configuration.
 
-ZCode receives reminders at session start and prompt submission. See
-[ZCode](#zcode) for its installation details and diagnostics. All profiles
-require [repository review guidelines](#review-guidelines-are-required).
+ZCode's prompt-only events establish no commit ownership, so its reminders stay
+silent. See [ZCode](#zcode) for its installation details and diagnostics. All
+profiles require
+[repository review guidelines](#review-guidelines-are-required).
 
 Agent Hook uses the same stable binary resolver as `roborev init`. Pin a shim or
 binary explicitly when needed:
@@ -236,8 +248,7 @@ restart command; follow local approval rules before running it.
 
 ### ZCode
 
-Receive reminders about open failed reviews when a ZCode session starts and when
-you submit a prompt:
+Install the ZCode hook and bundled skills:
 
 ```bash
 roborev agent hook install --agent zcode
@@ -256,9 +267,10 @@ review jobs, commits, and verdicts, and tells the agent how to handle them. The
 usual reminder thresholds, acknowledgments, and
 [review-guideline requirement](#review-guidelines-are-required) apply.
 
-The tested ZCode versions dispatch `SessionStart` and `UserPromptSubmit`, but
-not `Stop`, `PreToolUse`, or `PostToolUse`. A Stop registration stays installed
-and will take effect if ZCode starts dispatching it.
+The tested ZCode versions dispatch only `SessionStart` and `UserPromptSubmit`.
+Those events establish no commit ownership, so reminders stay silent. Reviews
+remain available through `/roborev-fix` and the TUI. A Stop registration stays
+installed for versions that dispatch shell events and stops.
 
 `--stop-form` replaces the `SessionStart` and `UserPromptSubmit` registrations
 with `Stop`, `PreToolUse`, and `PostToolUse`. Use it only with a ZCode version

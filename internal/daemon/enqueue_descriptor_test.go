@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -48,10 +49,14 @@ func TestEnqueueSingleCommitUnchanged(t *testing.T) {
 
 	repo := testutil.NewGitRepo(t)
 	sha := repo.CommitFile("a.txt", "a", "add a")
+	repo.Run("tag", "-a", "review-target", "-m", "review target", sha)
+	// Linked checkouts use subprocess metadata; the regular go-git reader peels tags early.
+	checkout := filepath.Join(t.TempDir(), "linked")
+	repo.Run("worktree", "add", "--detach", checkout)
 
 	job := enqueueViaHTTP(t, server, EnqueueRequest{
-		RepoPath: repo.Path(),
-		GitRef:   "HEAD",
+		RepoPath: checkout,
+		GitRef:   "review-target",
 		Agent:    "test",
 	})
 

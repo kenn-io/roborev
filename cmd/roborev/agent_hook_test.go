@@ -553,31 +553,38 @@ func TestRunAgentHookAppendsFixGuidelinesToKitOutput(t *testing.T) {
 // If the PostToolUse path is missed, commit-triggered reminders use a different
 // policy contract from Stop-triggered reminders.
 func TestRunAgentHookAppendsFixGuidelinesToPostToolUse(t *testing.T) {
-	oldPost := postAgentHook
-	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
-		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
-	}
-	t.Cleanup(func() { postAgentHook = oldPost })
+	for event, payload := range map[string]string{
+		"success": `{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{},"tool_response":{}}`,
+		"failure": `{"session_id":"s1","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{},"error":"push failed"}`,
+	} {
+		t.Run(event, func(t *testing.T) {
+			oldPost := postAgentHook
+			postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+				return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+			}
+			t.Cleanup(func() { postAgentHook = oldPost })
 
-	var stdout bytes.Buffer
-	opts := agenthook.DefaultOptions()
-	opts.FixGuidelines = "Verify before editing."
-	err := runAgentHook(
-		kitagenthook.AgentClaude,
-		opts,
-		strings.NewReader(`{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{},"tool_response":{}}`),
-		&stdout,
-		io.Discard,
-	)
-	require.NoError(t, err)
+			var stdout bytes.Buffer
+			opts := agenthook.DefaultOptions()
+			opts.FixGuidelines = "Verify before editing."
+			err := runAgentHook(
+				kitagenthook.AgentClaude,
+				opts,
+				strings.NewReader(payload),
+				&stdout,
+				io.Discard,
+			)
+			require.NoError(t, err)
 
-	var output struct {
-		HookSpecificOutput struct {
-			AdditionalContext string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
+			var output struct {
+				HookSpecificOutput struct {
+					AdditionalContext string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
+			}
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+			assert.True(t, strings.HasSuffix(strings.TrimSpace(output.HookSpecificOutput.AdditionalContext), "Verify before editing."))
+		})
 	}
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
-	assert.True(t, strings.HasSuffix(strings.TrimSpace(output.HookSpecificOutput.AdditionalContext), "Verify before editing."))
 }
 
 func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {
@@ -659,6 +666,13 @@ func TestRunAgentHookPreservesNormalizedEventFields(t *testing.T) {
 			check: func(t *testing.T, input agenthook.Input) {
 				assert.Equal(t, "tool-2", input.ToolUseID)
 				assert.JSONEq(t, `{"output":"ok"}`, string(input.ToolResponse))
+			},
+		},
+		{
+			name:    "failed tool use",
+			payload: `{"session_id":"s1","cwd":"/repo","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"git commit && git push"},"tool_use_id":"tool-3","error":"push failed"}`,
+			check: func(t *testing.T, input agenthook.Input) {
+				assert.Equal(t, "PostToolUseFailure", input.HookEventName)
 			},
 		},
 		{

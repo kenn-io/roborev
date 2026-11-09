@@ -189,8 +189,13 @@ Prompt and log cleanup stays off unless you configure `prompt_retention_days` or
 [retention guide](/docs/configuration/#stored-prompts-and-retention) explains
 what each setting removes and how sync affects cleanup.
 
-If you use ZCode, run `roborev agent hook install --agent zcode` after upgrading
-and restarting the daemon. See [ZCode reminders](/docs/agent-hook/#zcode).
+After upgrading, re-run `roborev agent hook install --agent <agent>` for Claude
+Code, Qwen Code, and other harnesses that support failed-tool events. This
+records commits when a later command in the same shell call fails.
+
+If you use ZCode, `roborev agent hook install --agent zcode` installs hooks and
+bundled skills. Its prompt-only events leave automatic reminders silent; use
+`/roborev-fix` or the TUI to find reviews. See [ZCode](/docs/agent-hook/#zcode).
 Update bundled agent skills with `roborev agent skills install` to add the
 [Superpowers and Kata workflow](/docs/integrations/goal-review/).
 

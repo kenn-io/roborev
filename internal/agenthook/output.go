@@ -62,7 +62,7 @@ func BuildOutputWithFixGuidelines(input Input, resp Response, guidelines string)
 // schedules only UserPromptSubmit and SessionStart today, and both take
 // additionalContext.
 func injectsAdditionalContext(eventName string) bool {
-	return eventName == "UserPromptSubmit" || eventName == "SessionStart"
+	return eventName == "UserPromptSubmit" || eventName == "SessionStart" || eventName == "PostToolUseFailure"
 }
 
 func additionalContextOutput(eventName, context string) map[string]any {

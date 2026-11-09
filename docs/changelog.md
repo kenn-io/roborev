@@ -7,6 +7,11 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- Receive failed-review reminders only for commits the session gains during
+    `git commit`, `git cherry-pick`, or `git revert`, including amends and
+    batched reviews containing them. Find older reviews and reviews moved by a
+    rebase in the TUI or `/roborev-fix`. ZCode's prompt-only events leave
+    automatic reminders silent.
 - Report the provider error when a Pi review or classification fails, instead of
     a missing `result.json`. When Amazon Bedrock rejects image input for a
     text-only model, the job goes to the backup agent without retries.

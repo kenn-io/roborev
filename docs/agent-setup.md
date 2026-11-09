@@ -200,9 +200,11 @@ user whether to install it. Do not install it by default.
     extra abstraction, and edge cases the project does not need, and the agent
     adds them. Each round of review then has more code to comment on. The hook
     refuses to run without guidelines, but having guidelines does not mean they
-    are tuned. Recommend that the user run without the hook for a while, tune
-    the guidelines on real reviews, and install the hook once most findings are
-    worth fixing.
+    are tuned. The hook covers commits the session gains during `git commit`,
+    `git cherry-pick`, or `git revert`, including amends and batched reviews
+    containing those commits. Older failures and reviews moved by a rebase
+    remain available in the TUI and `/roborev-fix`. Tune the guidelines on real
+    reviews before installing the hook so most findings are worth fixing.
 - **It changes what the agent does mid-task.** The agent may pause its current
     work to fix review findings, then continue. Sessions run longer and use more
     tokens. The fix stays scoped to the current task, and valid findings outside

@@ -59,6 +59,8 @@ func NormalizeHookEventName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "pretooluse", "pre_tool_use":
 		return "PreToolUse"
+	case "posttoolusefailure", "post_tool_use_failure":
+		return "PostToolUseFailure"
 	case "posttooluse", "post_tool_use":
 		return "PostToolUse"
 	case "stop":
@@ -124,14 +126,15 @@ func (i Input) Command() string {
 }
 
 type Request struct {
-	MCP                   bool               `json:"-"`
-	Agent                 kitagenthook.Agent `json:"agent"`
-	Event                 Input              `json:"event"`
-	Threshold             int                `json:"threshold"`
-	CommitThreshold       int                `json:"commit_threshold"`
-	FailedReviewThreshold int                `json:"failed_review_threshold"`
-	Instruction           string             `json:"instruction"`
-	DeferPostToolReminder bool               `json:"defer_post_tool_reminder,omitempty"`
+	pendingCommitObservations map[string]map[string]commitObservation
+	MCP                       bool               `json:"-"`
+	Agent                     kitagenthook.Agent `json:"agent"`
+	Event                     Input              `json:"event"`
+	Threshold                 int                `json:"threshold"`
+	CommitThreshold           int                `json:"commit_threshold"`
+	FailedReviewThreshold     int                `json:"failed_review_threshold"`
+	Instruction               string             `json:"instruction"`
+	DeferPostToolReminder     bool               `json:"defer_post_tool_reminder,omitempty"`
 }
 
 type Response struct {
@@ -157,6 +160,8 @@ type Response struct {
 type reviewIDSet map[int64]struct{}
 
 type SessionState struct {
+	PendingCommitRanges         map[string][]string        `json:"pending_commit_ranges,omitempty"`
+	OwnedCommits                map[string]bool            `json:"owned_commits,omitempty"`
 	Count                       int                        `json:"count"`
 	StopCountsSincePrompt       map[string]int             `json:"stop_counts_since_prompt,omitempty"`
 	CommitCount                 int                        `json:"commit_count,omitempty"`

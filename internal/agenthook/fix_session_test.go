@@ -63,12 +63,13 @@ func TestRecordStopFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
-	reviews, release := synchronizedFailedReviewSource(repo.Path(), 2)
+	reviews, release := synchronizedFailedReviewSource(repo.Path(), repo.HeadSHA(), 2)
 	store := &StateStore{
 		reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{}, fixSessions: map[string]FixSession{},
 		now: func() time.Time { return now },
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-a", "session-b"}, repo.Path())
 	requests := []Request{
 		{
 			Agent: "claude", Event: Input{SessionID: "session-a", CWD: repo.Path(), HookEventName: "Stop"},
@@ -126,7 +127,7 @@ func TestRecordStopFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 func TestRecordPostToolUseFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
-	reviews, release := synchronizedFailedReviewSource(repo.Path(), 2)
+	reviews, release := synchronizedFailedReviewSource(repo.Path(), repo.HeadSHA(), 2)
 	lineage := repoHeadKey(repo.Path(), "main")
 	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
 	seed := func() SessionState {
@@ -141,6 +142,7 @@ func TestRecordPostToolUseFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 		sessions:    map[string]SessionState{"session-a": seed(), "session-b": seed()},
 		fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-a", "session-b"}, repo.Path())
 	requests := []Request{
 		{
 			Agent: "claude", Event: Input{
@@ -182,15 +184,17 @@ func TestRecordFixSessionsDoNotCrossWorktrees(t *testing.T) {
 	repoA.CommitFile("a.go", "package main\n", "initial")
 	repoB := testutil.NewGitRepo(t)
 	repoB.CommitFile("b.go", "package main\n", "initial")
+	reviewRefs := map[string]string{repoA.Path(): repoA.HeadSHA(), repoB.Path(): repoB.HeadSHA()}
 	closed := false
 	verdict := "F"
 	reviews := fakeReviewSource{
 		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
 			return TrackedRepoResolution{Tracked: true, RootPath: path}, true
 		},
-		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+		list: func(_ context.Context, root, _ string) ([]storage.ReviewJob, bool) {
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRefs[root],
+				ID:     1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
@@ -198,6 +202,7 @@ func TestRecordFixSessionsDoNotCrossWorktrees(t *testing.T) {
 		reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{}, fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-0", "session-1"}, repoA.Path(), repoB.Path())
 
 	for i, repo := range []*testutil.TestRepo{repoA, repoB} {
 		resp, err := store.Record(Request{
@@ -218,9 +223,8 @@ func TestRecordWorktreeOwnerSurvivesReloadAndBranchTransitionUntilExpiry(t *test
 	repo := testutil.NewGitRepo(t)
 	firstHead := repo.CommitFile("main.go", "package main\n", "initial")
 	repo.CheckoutDetached(firstHead)
-	failedReview := failedReviewJob(1)
+	failedReview := failedReviewJob(1, firstHead)
 	failedReview.Branch = "feature"
-	failedReview.GitRef = firstHead
 	reviews := trackedReviewSource(repo.Path(), failedReview)
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	store := &StateStore{
@@ -228,6 +232,7 @@ func TestRecordWorktreeOwnerSurvivesReloadAndBranchTransitionUntilExpiry(t *test
 		fixSessions: map[string]FixSession{},
 		now:         func() time.Time { return now },
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-a", "session-b"}, repo.Path())
 
 	first, err := store.Record(Request{
 		Agent: "claude", Event: Input{
@@ -241,6 +246,7 @@ func TestRecordWorktreeOwnerSurvivesReloadAndBranchTransitionUntilExpiry(t *test
 	reloaded, err := LoadState(reviews)
 	require.NoError(t, err)
 	reloaded.now = func() time.Time { return now }
+	seedOwnedCommitFixtures(t, reloaded, []string{"session-b"}, repo.Path())
 	repo.CheckoutNewBranch("feature", firstHead)
 
 	secondRequest := Request{
@@ -267,10 +273,11 @@ func TestRecordCursorTriggerDoesNotAcquireFixSession(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	store := &StateStore{
-		reviews: trackedReviewSource(repo.Path(), failedReviewJob(1)),
+		reviews: trackedReviewSource(repo.Path(), failedReviewJob(1, repo.HeadSHA())),
 		path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-a"}, repo.Path())
 
 	resp, err := store.Record(Request{
 		Agent: "cursor", Event: Input{SessionID: "session-a", CWD: repo.Path(), HookEventName: "Stop"},
@@ -290,7 +297,7 @@ func TestDeferredReminderAcquiresFixSessionOnlyAtStop(t *testing.T) {
 	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
 	failedReviewCount := 1
 	store := &StateStore{
-		reviews: newDeferredReminderSource(repo.Path(), &failedReviewCount),
+		reviews: newDeferredReminderSource(t, repo.Path(), &failedReviewCount),
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{"session-a": {
 			CommitCountsSincePrompt: map[string]int{lineage: 1},
@@ -299,6 +306,7 @@ func TestDeferredReminderAcquiresFixSessionOnlyAtStop(t *testing.T) {
 		}},
 		fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-a"}, repo.Path())
 	post, err := store.Record(Request{
 		Agent: "hermes", Event: Input{
 			SessionID: "session-a", CWD: repo.Path(), HookEventName: "PostToolUse", ToolName: "Bash",
@@ -323,9 +331,10 @@ func TestRecordTriggerPersistenceFailureDoesNotGrantFixSession(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	store := &StateStore{
-		reviews: trackedReviewSource(repo.Path(), failedReviewJob(1)),
+		reviews: trackedReviewSource(repo.Path(), failedReviewJob(1, repo.HeadSHA())),
 		path:    t.TempDir(), sessions: map[string]SessionState{}, fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-a"}, repo.Path())
 
 	resp, err := store.Record(Request{
 		Agent: "claude", Event: Input{SessionID: "session-a", CWD: repo.Path(), HookEventName: "Stop"},
@@ -337,7 +346,7 @@ func TestRecordTriggerPersistenceFailureDoesNotGrantFixSession(t *testing.T) {
 	assert.Empty(t, store.fixSessions)
 }
 
-func synchronizedFailedReviewSource(repoPath string, blockedCalls int) (ReviewSource, func()) {
+func synchronizedFailedReviewSource(repoPath, reviewRef string, blockedCalls int) (ReviewSource, func()) {
 	arrived := make(chan struct{}, blockedCalls)
 	release := make(chan struct{})
 	var calls atomic.Int32
@@ -353,7 +362,8 @@ func synchronizedFailedReviewSource(repoPath string, blockedCalls int) (ReviewSo
 				<-release
 			}
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRef,
+				ID:     1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
@@ -407,9 +417,10 @@ func TestFixContinuationKeepsOriginalReviewsAfterReload(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
-	reviews := trackedReviewSource(repo.Path(), failedReviewJob(12), failedReviewJob(11))
+	reviews := trackedReviewSource(repo.Path(), failedReviewJob(12, repo.HeadSHA()), failedReviewJob(11, repo.HeadSHA()))
 	store, err := LoadState(reviews)
 	require.NoError(t, err)
+	seedOwnedCommitFixtures(t, store, []string{"owner"}, repo.Path())
 	request := Request{Agent: "codex", Event: Input{SessionID: "owner", CWD: repo.Path(), HookEventName: "Stop"}, Threshold: 1}
 	first, err := store.Record(request)
 	require.NoError(t, err)
@@ -417,7 +428,7 @@ func TestFixContinuationKeepsOriginalReviewsAfterReload(t *testing.T) {
 	assert.Contains(t, first.Reason, "Review job IDs: 11, 12.")
 	// The open queue changes while the daemon is stopped. The saved grant owns
 	// the original reviews, including ones which have since been closed.
-	reloaded, err := LoadState(trackedReviewSource(repo.Path(), failedReviewJob(13)))
+	reloaded, err := LoadState(trackedReviewSource(repo.Path(), failedReviewJob(13, repo.HeadSHA())))
 	require.NoError(t, err)
 	continuation, err := reloaded.Record(request)
 	require.NoError(t, err)

@@ -43,11 +43,11 @@ func TestBuildOutputWithFixGuidelinesPreservesEmptyPolicyOutput(t *testing.T) {
 	assert.Equal(t, BuildOutput(input, resp), BuildOutputWithFixGuidelines(input, resp, ""))
 }
 
-func TestBuildOutputInjectsAdditionalContextForScheduledZCodeEvents(t *testing.T) {
+func TestBuildOutputInjectsAdditionalContextForContextEvents(t *testing.T) {
 	assert := assert.New(t)
 	resp := Response{Triggered: true, Reason: "[roborev] demo has findings."}
 
-	for _, event := range []string{"UserPromptSubmit", "SessionStart"} {
+	for _, event := range []string{"UserPromptSubmit", "SessionStart", "PostToolUseFailure"} {
 		output := BuildOutput(Input{HookEventName: event}, resp)
 		specific, ok := output["hookSpecificOutput"].(map[string]any)
 		require.True(t, ok)

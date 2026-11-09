@@ -6,7 +6,10 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,8 +17,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gittest "go.kenn.io/kit/git/test"
 
 	"go.kenn.io/roborev/internal/config"
+	roborevgit "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -40,7 +45,11 @@ func (f fakeReviewSource) ListOpenFailedReviewJobs(
 	if f.list == nil {
 		return nil, false
 	}
-	return f.list(ctx, repoRoot, branch)
+	jobs, ok := f.list(ctx, repoRoot, branch)
+	// The daemon lists a branch's jobs and branchless ones (storage.WithBranchOrEmpty).
+	return slices.DeleteFunc(slices.Clone(jobs), func(job storage.ReviewJob) bool {
+		return branch != "" && job.Branch != "" && job.Branch != branch
+	}), ok
 }
 
 func reviewSourceWithJobs(jobs ...storage.ReviewJob) ReviewSource {
@@ -129,6 +138,7 @@ func TestStateStoreSessionsReturnsDeepSnapshot(t *testing.T) {
 			"session-1": {
 				Count:                 2,
 				StopCountsSincePrompt: map[string]int{"repo-a": 3},
+				OwnedCommits:          map[string]bool{"sha": true},
 			},
 		},
 	}
@@ -136,11 +146,13 @@ func TestStateStoreSessionsReturnsDeepSnapshot(t *testing.T) {
 	got := store.Sessions()
 	gotSession := got["session-1"]
 	gotSession.StopCountsSincePrompt["repo-a"] = 9
+	gotSession.OwnedCommits["sha"] = false
 	got["session-1"] = gotSession
 
 	current := store.Sessions()["session-1"]
 	assert.Equal(t, 2, current.Count)
 	assert.Equal(t, 3, current.StopCountsSincePrompt["repo-a"])
+	assert.True(t, current.OwnedCommits["sha"])
 }
 
 func TestSaveSessionDropsIdleSessions(t *testing.T) {
@@ -305,7 +317,7 @@ func TestCommitsSincePromptForKeysCountsUniqueSHAsAcrossKeys(t *testing.T) {
 	assert.Equal(t, 4, commitsSincePromptForKeys(st, []string{"worktree", "branch"}))
 }
 
-func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T) {
+func TestCountOpenFailedReviewsExcludesRepoLevelAndDirtyReviews(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("base.txt", "base\n", "base")
@@ -313,6 +325,7 @@ func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T
 	head := repo.CommitFile("b.txt", "b\n", "head")
 	repo.Checkout("-b", "other", reachable)
 	unreachable := repo.CommitFile("c.txt", "c\n", "divergent")
+	repo.Run("tag", "dirty", head)
 
 	closed := false
 	verdict := "F"
@@ -325,15 +338,15 @@ func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T
 	}
 	jobs := []storage.ReviewJob{
 		job("main", head),    // on the queried branch -> counts
-		job("", ""),          // branchless, no ref (repo-level) -> counts
-		job("", "dirty"),     // branchless dirty working-tree review -> counts
 		job("", reachable),   // branchless but reachable from HEAD -> counts
 		job("", unreachable), // unrelated branchless review -> must NOT count
+		job("", ""),          // unowned branchless review -> must NOT count
+		job("", "dirty"),     // dirty review -> must NOT count
 	}
-	count, ok := countOpenFailedReviews(t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
+	count, ok := countOpenFailedReviews(t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head, ownedReviewFixtures(t, repo.Path(), jobs))
 
 	assert.True(ok)
-	assert.Equal(4, count, "only the unreachable branchless review must be excluded on a branch query")
+	assert.Equal(2, count, "only reviews on the queried branch or reachable from HEAD count")
 }
 
 func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T) {
@@ -352,11 +365,70 @@ func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T)
 		{ID: 3, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: featureHead},
 	}
 	count, ok := countOpenFailedReviews(
-		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
+		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead, ownedReviewFixtures(t, repo.Path(), jobs),
 	)
 
 	assert.True(ok)
 	assert.Equal(1, count, "only the branchless review outside trunk history should count")
+}
+
+func TestFindOpenFailedReviewJobsWithoutOwnershipSkipsQuery(t *testing.T) {
+	calls := 0
+	source := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+		calls++
+		return nil, false
+	}}
+	gitCalls := testutil.CountGitProcesses(t)
+	jobs, ok := findOpenFailedReviewJobs(t.Context(), source, t.TempDir(), "main", "head", nil)
+	require.True(t, ok)
+	assert.Empty(t, jobs)
+	assert.Zero(t, calls, "a session without commits has no reviews to query")
+	assert.Zero(t, gitCalls(), "a session without commits needs no Git lookup")
+}
+
+func TestFindOpenFailedReviewJobsRangeSemantics(t *testing.T) {
+	repo := gittest.NewRepoWithCommit(t)
+	base := repo.Head()
+	a := repo.CommitFile("a.txt", "a", "own a")
+	repo.Run("checkout", "-b", "side", base)
+	b := repo.CommitFile("b.txt", "b", "own b")
+	repo.Run("tag", "-a", "owned-tag", "-m", "owned tag")
+	later := repo.CommitFile("later.txt", "later", "off-head range tip")
+	repo.Run("reset", "--hard", b)
+	repo.Run("checkout", "main")
+	repo.Run("merge", "--no-ff", "--no-edit", "side")
+	merged := repo.Head()
+	refs := []struct {
+		ref  string
+		want bool
+	}{
+		{base + ".." + merged, true},
+		{base + ".." + later, true}, // The range tip is outside HEAD but contains owned b.
+		{roborevgit.EmptyTreeSHA + ".." + merged, true},
+		{a + ".." + merged, true}, // b remains after excluding a's ancestors.
+		{b + ".." + merged, true},
+		{merged + ".." + a, false},
+		{a + "..." + b, true},
+		{merged + "..." + a, true}, // Only the left side contains b.
+		{merged + "..." + merged, false},
+		{a + "..owned-tag", true},
+		{"HEAD~1..HEAD", true},
+		{"missing..HEAD", false},
+	}
+	for _, tc := range refs {
+		t.Run(tc.ref, func(t *testing.T) {
+			job := failedReviewJob(42, tc.ref)
+			job.Branch = "main"
+			got, ok := findOpenFailedReviewJobs(t.Context(), reviewSourceWithJobs(job), repo.Root, "main", merged, map[string]bool{a: true, b: true})
+			require.True(t, ok)
+			if tc.want {
+				require.Len(t, got, 1)
+				assert.Equal(t, int64(42), got[0].ID)
+			} else {
+				assert.Empty(t, got)
+			}
+		})
+	}
 }
 
 func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
@@ -377,10 +449,11 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 		jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref})
 	}
 	featureHead := repo.HeadSHA()
+	owned := ownedReviewFixtures(t, repo.Path(), jobs)
 	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
-		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
+		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead, owned,
 	)
 
 	assert.True(ok)
@@ -401,10 +474,11 @@ func TestCountOpenFailedReviewsDetachedHeadChecksReachabilityOnce(t *testing.T) 
 	}
 	repo.CheckoutDetached()
 	head := repo.HeadSHA()
+	owned := ownedReviewFixtures(t, repo.Path(), jobs)
 	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
-		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
+		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "", head, owned,
 	)
 
 	assert.True(ok)
@@ -412,34 +486,11 @@ func TestCountOpenFailedReviewsDetachedHeadChecksReachabilityOnce(t *testing.T) 
 	assert.LessOrEqual(gitCalls(), 5, "detached HEAD reachability should be computed once instead of spawning git per review")
 }
 
-func TestCountOpenFailedReviewsSkipsReachabilityForPassingReviews(t *testing.T) {
-	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
-
-	closed := false
-	verdict := "P"
-	jobs := make([]storage.ReviewJob, 0, 25)
-	for i := range 25 {
-		ref := repo.CommitFile(fmt.Sprintf("file-%02d.txt", i), "content\n", "commit")
-		jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref[:12]})
-	}
-	repo.CheckoutDetached()
-	head := repo.HeadSHA()
-	gitCalls := testutil.CountGitProcesses(t)
-
-	count, ok := countOpenFailedReviews(
-		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
-	)
-
-	assert.True(ok)
-	assert.Equal(0, count)
-	assert.Equal(0, gitCalls(), "passing reviews should not start git for the reachability check")
-}
-
-func TestCountOpenFailedReviewsDetachedHeadPeelsAnnotatedTags(t *testing.T) {
+func TestLoadFailedReviewMatcherDetachedHeadPeelsAnnotatedTags(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	base := repo.CommitFile("base.txt", "base\n", "base")
+	repo.CommitFile("reachable.txt", "reachable", "reachable")
 	repo.Run("tag", "-a", "reachable", "-m", "reachable")
 	reachableTag := repo.Run("rev-parse", "reachable")
 	mainBranch := repo.Run("branch", "--show-current")
@@ -456,55 +507,46 @@ func TestCountOpenFailedReviewsDetachedHeadPeelsAnnotatedTags(t *testing.T) {
 	job := func(id int64, ref string) storage.ReviewJob {
 		return storage.ReviewJob{ID: id, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref}
 	}
-	ids, ok := findOpenFailedReviewIDs(
-		t.Context(),
-		reviewSourceWithJobs(
-			job(1, reachableTag),
-			job(2, base+".."+reachableTag),
-			job(3, unrelatedTag),
-		),
-		repo.Path(), "", repo.HeadSHA(),
-	)
-
-	assert.True(ok)
-	assert.Equal(reviewIDSet{1: {}, 2: {}}, ids, "reviews of reachable annotated tags count; unrelated tags do not")
+	matcher := loadFailedReviewMatcher(t.Context(), repo.Path(), "", repo.HeadSHA(), []storage.ReviewJob{
+		job(1, reachableTag),
+		job(2, base+".."+reachableTag),
+		job(3, unrelatedTag),
+	})
+	require.NotNil(t, matcher)
+	assert.True(matcher.Matches(reachableTag))
+	assert.True(matcher.Matches(base + ".." + reachableTag))
+	assert.False(matcher.Matches(unrelatedTag))
 }
 
-func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
+func TestFilterFailedReviewJobsExcludesIneligibleReviews(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("base.txt", "base\n", "base")
 
 	closed := false
 	failVerdict := "F"
-	passVerdict := "P"
 	var nextJobID int64
-	// All jobs are on the queried branch, so the reachability gate passes for
-	// each; only the job-type and verdict filters decide what counts.
-	job := func(jobType, verdict string) storage.ReviewJob {
+	// All fixtures satisfy the source query: failed, done, and open.
+	job := func(jobType string) storage.ReviewJob {
 		nextJobID++
 		return storage.ReviewJob{
-			ID: nextJobID, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main", JobType: jobType,
+			GitRef: head, ID: nextJobID, Status: storage.JobStatusDone, Closed: &closed, Verdict: &failVerdict, Branch: "main", JobType: jobType,
 		}
 	}
-	// Every job is done and open; only review-like jobs with an F verdict should
-	// count. A completed fix job stores a parsed verdict, so without the filter
+	// A completed fix job stores a parsed failure verdict, so without the filter
 	// it would keep the hook prompting $roborev-fix for itself.
 	jobs := []storage.ReviewJob{
-		job(storage.JobTypeReview, failVerdict),
-		job(storage.JobTypeReview, passVerdict),
-		job(storage.JobTypeFix, failVerdict),
-		job(storage.JobTypeTask, failVerdict),
-		job(storage.JobTypeInsights, failVerdict),
-		job(storage.JobTypeClassify, failVerdict),
+		job(storage.JobTypeReview),
+		job(storage.JobTypeFix),
+		job(storage.JobTypeClassify),
 	}
-	design := job(storage.JobTypeReview, failVerdict)
+	design := job(storage.JobTypeReview)
 	design.ReviewType = config.ReviewTypeDesign
 	jobs = append(jobs, design)
-	count, ok := countOpenFailedReviews(t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
-
-	assert.True(ok)
-	assert.Equal(1, count, "only failed code review jobs count; passed reviews, design reviews, and non-review job types are not actionable")
+	owned := map[string]bool{head: true}
+	got := filterFailedReviewJobs(t.Context(), repo.Path(), "main", head, jobs, owned)
+	require.Len(t, got, 1, "only open, completed, failed code reviews count")
+	assert.Equal(int64(1), got[0].ID)
 }
 
 func TestBuildPromptReasonKeepsPreambleWithCustomInstruction(t *testing.T) {
@@ -623,23 +665,24 @@ func TestApplyFailedReviewTriggerScopesDedupPerRepoBranch(t *testing.T) {
 
 func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T) {
 	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
 
 	closed := false
 	verdict := "F"
+	reviewRef := repo.Head()
 	store := &StateStore{
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 		reviews: reviewSourceWithJobs(storage.ReviewJob{
-			ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
+			GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
 		}),
 	}
 	post := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
 				SessionID:     "session-1",
-				CWD:           repo.Path(),
+				CWD:           repo.Root,
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
 				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
@@ -651,14 +694,22 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 		return resp
 	}
 
-	mainResp := post()
-	assert.True(mainResp.Triggered)
-	assert.Equal("failed_reviews", mainResp.TriggeredBy)
+	// The session's commit sits outside trunk history, so its branchless review
+	// belongs to this branch and to each branch descending from it.
+	repo.Run("checkout", "-b", "feature/base")
+	reviewRef = commitHookFixture(t, store, repo, "own.go", "package main\n", "own")
+	store.reviews = reviewSourceWithJobs(storage.ReviewJob{GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+	_, err := store.Record(Request{Event: Input{SessionID: "session-1", CWD: repo.Root, HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m own"`)}}})
+	require.NoError(t, err)
 
-	repo.CheckoutNewBranch("feature/lineage")
-	repo.CommitFile("feature.go", "package main\n", "feature")
+	baseResp := post()
+	assert.True(baseResp.Triggered)
+	assert.Equal("failed_reviews", baseResp.TriggeredBy)
+
+	repo.Run("checkout", "-b", "feature/lineage")
+	commitHookFixture(t, store, repo, "feature.go", "package main\n", "feature")
 	featureResp := post()
-	assert.True(featureResp.Triggered, "a descendant branch must not reuse main's failed-review dedupe key")
+	assert.True(featureResp.Triggered, "a descendant branch must not reuse its parent's failed-review dedupe key")
 	assert.Equal("failed_reviews", featureResp.TriggeredBy)
 }
 
@@ -666,21 +717,26 @@ func TestRecordStopAcknowledgesDeliveredReviewIDs(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
+	// Branchless reviews of a topic commit belong to topic and its descendants.
+	repo.CheckoutNewBranch("topic")
+	repo.CommitFile("topic.go", "package main\n", "topic")
 
 	closed := false
 	verdict := "F"
 	reviewIDs := []int64{101}
+	reviewRef := repo.HeadSHA()
 	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := make([]storage.ReviewJob, 0, len(reviewIDs))
 		for _, id := range reviewIDs {
 			jobs = append(jobs, storage.ReviewJob{
-				ID: id, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
+				GitRef: reviewRef, ID: id, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
 			})
 		}
 		return jobs, true
 	}}
 
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1", "session-2"}, repo.Path())
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event:                 Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
@@ -709,7 +765,7 @@ func TestRecordStopAcknowledgesDeliveredReviewIDs(t *testing.T) {
 	assert.Contains(feature.Reason, "101")
 	assert.Contains(feature.Reason, "102")
 
-	repo.Checkout("main")
+	repo.Checkout("topic")
 	otherSession, err := store.Record(Request{
 		Event:                 Input{SessionID: "session-2", CWD: repo.Path(), HookEventName: "Stop"},
 		FailedReviewThreshold: 1,
@@ -728,10 +784,12 @@ func TestDeferredReminderAcknowledgesReviewIDsAtDelivery(t *testing.T) {
 	closed := false
 	verdict := "F"
 	reviewIDs := []int64{101}
+	reviewRef := repo.HeadSHA()
 	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := make([]storage.ReviewJob, 0, len(reviewIDs))
 		for _, id := range reviewIDs {
 			jobs = append(jobs, storage.ReviewJob{
+				GitRef: reviewRef, Branch: "main",
 				ID: id, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
 			})
 		}
@@ -739,6 +797,7 @@ func TestDeferredReminderAcknowledgesReviewIDsAtDelivery(t *testing.T) {
 	}}
 
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	queued, err := store.Record(Request{
 		Event: Input{
 			SessionID: "session-1", CWD: repo.Path(), HookEventName: "PostToolUse",
@@ -808,6 +867,7 @@ func TestRecordStopFailedReviewPromptUsesNewDetachedLineageKey(t *testing.T) {
 		}),
 		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -837,6 +897,8 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 	repo := testutil.NewGitRepo(t)
 	base := repo.CommitFile("base.go", "package main\n", "base")
 	firstHead := repo.CommitFile("first.go", "package main\n", "first")
+	repo.CheckoutDetached(base)
+	secondHead := repo.CommitFile("second.go", "package main\n", "second detached")
 	repo.CheckoutDetached(firstHead)
 
 	reviewRef := firstHead
@@ -852,6 +914,11 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 		},
 		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 	}
+	// Both commits were observed earlier; these events only navigate their histories.
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
+	repo.CheckoutDetached(secondHead)
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
+	repo.CheckoutDetached(firstHead)
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -872,8 +939,6 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 	assert.Equal(firstHead, store.sessions["session-1"].RepoHeads[worktreeKey])
 	delete(store.sessions["session-1"].RepoHeads, worktreeKey)
 
-	repo.CheckoutBranchForce("unrelated", base)
-	secondHead := repo.CommitFile("second.go", "package main\n", "second")
 	repo.CheckoutDetached(secondHead)
 	reviewRef = secondHead
 	secondResp := stop()
@@ -882,71 +947,90 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 }
 
 func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
-	assert := assert.New(t)
-	repoA := testutil.NewGitRepo(t)
-	repoA.CommitFile("a.go", "package main\n", "initial A")
-	repoB := testutil.NewGitRepo(t)
-	repoB.CommitFile("b.go", "package main\n", "initial B")
-
-	var aReady, bReady atomic.Bool
-	bReady.Store(true) // repo B already has a failed review; repo A's lags.
-	closed := false
-	verdict := "F"
-	reviews := fakeReviewSource{list: func(_ context.Context, repoParam, _ string) ([]storage.ReviewJob, bool) {
-		ready := (repoParam == repoA.Path() && aReady.Load()) || (repoParam == repoB.Path() && bReady.Load())
-		jobs := []storage.ReviewJob{}
-		if ready {
-			jobs = append(jobs, storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
-		}
-		return jobs, true
-	}}
-
-	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
-	post := func(cwd, command string) Response {
-		resp, err := store.Record(Request{
-			Event: Input{
-				SessionID:     "session-1",
-				CWD:           cwd,
-				HookEventName: "PostToolUse",
-				ToolName:      "Bash",
-				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)},
-			},
-			CommitThreshold: 1,
-			Instruction:     "Run roborev fix.",
+	for _, tc := range []struct {
+		name         string
+		reviewsB     int
+		wantB        string
+		commitBFirst bool
+	}{
+		{name: "other repo commit reminder", reviewsB: 1, wantB: "commit", commitBFirst: true},
+		{name: "other repo failed-review reminder", reviewsB: 2, wantB: "failed_reviews", commitBFirst: true},
+		{name: "reason names original repo after another repo commits"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert := assert.New(t)
+			repoA := gittest.NewRepoWithCommit(t)
+			repoB := gittest.NewRepoWithCommit(t)
+			var aReady, bReady atomic.Bool
+			reviewRefs := map[string]string{}
+			reviews := fakeReviewSource{list: func(_ context.Context, root, _ string) ([]storage.ReviewJob, bool) {
+				n := 0
+				switch {
+				case root == repoA.Root && aReady.Load():
+					n = 1
+				case root == repoB.Root && bReady.Load():
+					n = tc.reviewsB
+				}
+				jobs := make([]storage.ReviewJob, 0, n)
+				for i := range n {
+					jobs = append(jobs, failedReviewJob(int64(i+1), reviewRefs[root]))
+				}
+				return jobs, true
+			}}
+			store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+			post := func(root, command string) Response {
+				resp, err := store.Record(Request{
+					Event:           Input{SessionID: "session-1", CWD: root, HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)}},
+					CommitThreshold: 1, FailedReviewThreshold: 2, Instruction: "Run roborev fix.",
+				})
+				require.NoError(t, err)
+				return resp
+			}
+			repos := []*gittest.Repo{repoA, repoB}
+			if tc.commitBFirst {
+				repos = []*gittest.Repo{repoB, repoA}
+			}
+			for _, repo := range repos {
+				post(repo.Root, "git status")
+				reviewRefs[repo.Root] = commitHookFixture(t, store, repo, "next.go", "package main\n", "second")
+				assert.False(post(repo.Root, "git commit -m second").Triggered, "commit reminders wait for each repo's review")
+				if repo == repoB {
+					bReady.Store(true)
+				}
+			}
+			if tc.wantB != "" {
+				inB := post(repoB.Root, "git status")
+				assert.True(inB.Triggered)
+				assert.Equal(tc.wantB, inB.TriggeredBy)
+			}
+			aReady.Store(true)
+			inA := post(repoA.Root, "go test ./...")
+			assert.True(inA.Triggered, "A's deferred commit reminder survives activity in B")
+			assert.Equal("commit", inA.TriggeredBy)
+			assert.Contains(inA.Reason, repoDisplayName(repoA.Root), "reminder names the triggering repo")
+			if !tc.commitBFirst {
+				assert.NotContains(inA.Reason, repoDisplayName(repoB.Root), "reminder does not name the most recent commit's repo")
+				assert.Contains(inA.Reason, "1 commit ", "reminder reports A's count instead of the session total")
+			}
 		})
-		require.NoError(t, err)
-		return resp
 	}
-
-	// Repo A: baseline, then a commit crosses the threshold while its review lags.
-	post(repoA.Path(), "git status")
-	repoA.CommitFile("a2.go", "package main\n", "second A")
-	assert.False(post(repoA.Path(), "git commit -m second").Triggered, "no prompt while repo A's review is pending")
-
-	// Switch to repo B, which already has a failed review. The deferred reminder
-	// for repo A must not be consumed here.
-	post(repoB.Path(), "git status")
-	assert.False(post(repoB.Path(), "go test ./...").Triggered, "repo B's reviews must not consume repo A's commit reminder")
-
-	// Back in repo A, once its review appears, the reminder fires for repo A.
-	aReady.Store(true)
-	inA := post(repoA.Path(), "go test ./...")
-	assert.True(inA.Triggered, "repo A's deferred commit reminder fires when its own review appears")
-	assert.Equal("commit", inA.TriggeredBy)
 }
 
 func TestRecordPostToolUseCommitReminderDoesNotFollowUnrelatedBranchInSameWorktree(t *testing.T) {
 	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
 
 	failed := false
 	closed := false
 	verdict := "F"
+	reviewRef := repo.Head()
 	reviews := fakeReviewSource{list: func(_ context.Context, _ string, branch string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
 			jobs = append(jobs, storage.ReviewJob{
+				GitRef:  reviewRef,
 				ID:      1,
 				Status:  storage.JobStatusDone,
 				Closed:  &closed,
@@ -962,7 +1046,7 @@ func TestRecordPostToolUseCommitReminderDoesNotFollowUnrelatedBranchInSameWorktr
 		resp, err := store.Record(Request{
 			Event: Input{
 				SessionID:     "session-1",
-				CWD:           repo.Path(),
+				CWD:           repo.Root,
 				HookEventName: "PostToolUse",
 				ToolName:      "Bash",
 				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)},
@@ -975,14 +1059,15 @@ func TestRecordPostToolUseCommitReminderDoesNotFollowUnrelatedBranchInSameWorktr
 	}
 
 	post("git status")
-	repo.CommitFile("main_pending.go", "package main\n", "main pending")
+	commitHookFixture(t, store, repo, "main_pending.go", "package main\n", "main pending")
 	assert.False(post("git commit -m main-pending").Triggered, "main commit waits for its review")
 
+	reviewRef = repo.Head()
 	failed = true
-	repo.CheckoutNewBranch("feature/unrelated")
+	repo.Run("checkout", "-b", "feature/unrelated")
 	assert.False(post("go test ./...").Triggered, "feature must not inherit main's pending commit reminder")
 
-	repo.CheckoutBranch("main")
+	repo.Run("checkout", "main")
 	mainResp := post("go test ./...")
 	assert.True(mainResp.Triggered, "main's own pending commit reminder still fires")
 	assert.Equal("commit", mainResp.TriggeredBy)
@@ -1004,72 +1089,6 @@ func commitsSincePrompt(st SessionState) int {
 	return total
 }
 
-func TestRecordPostToolUseFailedReviewPromptKeepsOtherRepoCommitReminder(t *testing.T) {
-	assert := assert.New(t)
-	repoA := testutil.NewGitRepo(t)
-	repoA.CommitFile("a.go", "package main\n", "initial A")
-	repoB := testutil.NewGitRepo(t)
-	repoB.CommitFile("b.go", "package main\n", "initial B")
-
-	var aReady, bReady atomic.Bool
-	bReady.Store(true)
-	closed := false
-	verdict := "F"
-	// Repo B has two failed reviews (meets FailedReviewThreshold); repo A has one
-	// once its review lands - actionable for the commit reminder but below the
-	// failed-review threshold, so only the commit path can prompt repo A.
-	reviews := fakeReviewSource{list: func(_ context.Context, repoParam, _ string) ([]storage.ReviewJob, bool) {
-		n := 0
-		switch {
-		case repoParam == repoB.Path() && bReady.Load():
-			n = 2
-		case repoParam == repoA.Path() && aReady.Load():
-			n = 1
-		}
-		jobs := make([]storage.ReviewJob, 0, n)
-		for i := 0; i < n; i++ {
-			jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
-		}
-		return jobs, true
-	}}
-
-	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
-	post := func(cwd, command string) Response {
-		resp, err := store.Record(Request{
-			Event: Input{
-				SessionID:     "session-1",
-				CWD:           cwd,
-				HookEventName: "PostToolUse",
-				ToolName:      "Bash",
-				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)},
-			},
-			CommitThreshold:       1,
-			FailedReviewThreshold: 2,
-			Instruction:           "Run roborev fix.",
-		})
-		require.NoError(t, err)
-		return resp
-	}
-
-	// Repo A: a commit crosses the commit threshold while A's review is pending.
-	post(repoA.Path(), "git status")
-	repoA.CommitFile("a2.go", "package main\n", "second A")
-	assert.False(post(repoA.Path(), "git commit -m second").Triggered, "A's commit reminder waits for its review")
-
-	// Repo B reaches the failed-review threshold and prompts. That prompt must
-	// not clear repo A's deferred commit reminder.
-	bResp := post(repoB.Path(), "go test ./...")
-	assert.True(bResp.Triggered, "repo B's failed-review threshold prompts")
-	assert.Equal("failed_reviews", bResp.TriggeredBy)
-
-	// Back in repo A once its review appears: the commit reminder still fires,
-	// since A's single review is below the failed-review threshold.
-	aReady.Store(true)
-	inA := post(repoA.Path(), "go test ./...")
-	assert.True(inA.Triggered, "A's commit reminder survives repo B's failed-review prompt")
-	assert.Equal("commit", inA.TriggeredBy)
-}
-
 func TestRecordStopCountsOnlyNewReviewReminders(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
@@ -1078,10 +1097,11 @@ func TestRecordStopCountsOnlyNewReviewReminders(t *testing.T) {
 	closed := false
 	verdict := "F"
 	failed := true
+	reviewRef := repo.HeadSHA()
 	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
-			jobs = append(jobs, storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+			jobs = append(jobs, storage.ReviewJob{GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
 		return jobs, true
 	}}
@@ -1091,6 +1111,7 @@ func TestRecordStopCountsOnlyNewReviewReminders(t *testing.T) {
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	req := Request{
 		Event:       Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
 		Threshold:   1,
@@ -1129,20 +1150,24 @@ func TestRecordStopQueriesMainRepoRootFromWorktree(t *testing.T) {
 
 	worktree := filepath.Join(t.TempDir(), "wt")
 	repo.RunGit("worktree", "add", "-b", "feature", worktree)
+	repo.RunGit("-C", worktree, "commit", "--allow-empty", "-m", "feature")
 
 	var gotRepo string
 	closed := false
 	verdict := "F"
+	reviewRef := strings.TrimSpace(repo.Run("-C", worktree, "rev-parse", "HEAD"))
 	store := &StateStore{
 		reviews: fakeReviewSource{list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
 			gotRepo = repoRoot
 			return []storage.ReviewJob{{
+				GitRef: reviewRef, Branch: "feature",
 				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
 			}}, true
 		}},
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
+	store.sessions["session-1"] = SessionState{OwnedCommits: map[string]bool{reviewRef: true}}
 	resp, err := store.Record(Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1175,6 +1200,7 @@ func TestRecordStopTriggersFailedReviewWithoutRepoConfig(t *testing.T) {
 
 	closed := false
 	verdict := "F"
+	reviewRef := repo.HeadSHA()
 	store := &StateStore{
 		reviews: fakeReviewSource{
 			resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
@@ -1187,13 +1213,14 @@ func TestRecordStopTriggersFailedReviewWithoutRepoConfig(t *testing.T) {
 				assert.Equal(repo.Path(), repoRoot)
 				assert.Equal("main", branch)
 				return []storage.ReviewJob{{
-					ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
+					GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
 				}}, true
 			},
 		},
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	resp, err := store.Record(Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1256,6 +1283,7 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 
+	reviewRef := repo.HeadSHA()
 	resolveCalls := 0
 	closed := false
 	verdict := "F"
@@ -1268,7 +1296,7 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 		},
 		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
@@ -1294,7 +1322,7 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 	require.NoError(t, err)
 	assert.False(pre.Skipped, "commit baseline must be recorded even before daemon registration")
 
-	repo.CommitFile("feature.go", "package main\n", "feature")
+	reviewRef = repo.CommitFile("feature.go", "package main\n", "feature")
 	postReq := req
 	postReq.Event.HookEventName = "PostToolUse"
 	post, err := store.Record(postReq)
@@ -1319,6 +1347,7 @@ func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	resp, err := store.Record(Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1353,6 +1382,7 @@ func TestRecordStopTriggersFailedRangeReviewOnDetachedHead(t *testing.T) {
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	resp, err := store.Record(Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1388,6 +1418,7 @@ func TestRecordStopDetachedHeadCountsReachableBranchfulReview(t *testing.T) {
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	resp, err := store.Record(Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1409,17 +1440,24 @@ func TestRecordStopDetachedHeadDoesNotTriggerForUnrelatedFailedReviews(t *testin
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
-	repo.CheckoutDetached()
+	repo.CheckoutNewBranch("unrelated")
+	start := repo.CommitFile("side1.go", "package main", "side one")
+	end := repo.CommitFile("side2.go", "package main", "side two")
+	repo.Run("checkout", "--detach", head)
 
 	closed := false
 	verdict := "F"
 	store := &StateStore{
 		reviews: trackedReviewSource(repo.Path(), storage.ReviewJob{
-			ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head + "^..unrelated",
+			ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: start + ".." + end,
 		}),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
+	st := store.sessions["session-1"]
+	st.OwnedCommits[end] = true
+	store.sessions["session-1"] = st
 	resp, err := store.Record(Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1601,21 +1639,23 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 
 func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold(t *testing.T) {
 	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
-	repo.CheckoutDetached()
+	repo.Run("checkout", "--detach")
 
 	failed := false
 	closed := false
 	verdict := "F"
+	reviewRef := repo.Head()
 	reviews := fakeReviewSource{
 		resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
-			return TrackedRepoResolution{Tracked: true, RootPath: repo.Path()}, true
+			return TrackedRepoResolution{Tracked: true, RootPath: repo.Root}, true
 		},
 		list: func(_ context.Context, _ string, branch string) ([]storage.ReviewJob, bool) {
 			jobs := []storage.ReviewJob{}
 			if failed {
 				jobs = append(jobs, storage.ReviewJob{
+					GitRef:  reviewRef,
 					Status:  storage.JobStatusDone,
 					Closed:  &closed,
 					Verdict: &verdict,
@@ -1634,7 +1674,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	baseReq := Request{
 		Event: Input{
 			SessionID:     "session-1",
-			CWD:           repo.Path(),
+			CWD:           repo.Root,
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
 			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
@@ -1645,27 +1685,28 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 
 	_, err := store.Record(baseReq)
 	require.NoError(t, err)
-	repo.CommitFile("feature-a.go", "package main\n", "detached")
+	commitHookFixture(t, store, repo, "feature-a.go", "package main\n", "detached")
 	commitReq := baseReq
 	commitReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m detached"`)}
 	resp, err := store.Record(commitReq)
 	require.NoError(t, err)
 	assert.False(resp.Triggered)
 
-	repo.CheckoutBranchForce("feature/attached")
+	repo.Run("checkout", "-B", "feature/attached")
 	checkoutReq := baseReq
 	checkoutReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git checkout -B feature/attached"`)}
 	_, err = store.Record(checkoutReq)
 	require.NoError(t, err)
 
-	repo.CommitFile("feature-b.go", "package main\n", "attached")
+	commitHookFixture(t, store, repo, "feature-b.go", "package main\n", "attached")
 	commitReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m attached"`)}
 	resp, err = store.Record(commitReq)
 	require.NoError(t, err)
 	assert.False(resp.Triggered)
 
 	repo.WriteFile("feature-b.go", "package main\nconst amended = true\n")
-	repo.AmendCommit("attached amended", "feature-b.go")
+	amendHookFixture(t, store, repo, "attached amended", "feature-b.go")
+	reviewRef = repo.Head()
 	failed = true
 	commitReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m attached amended"`)}
 	resp, err = store.Record(commitReq)
@@ -1673,31 +1714,28 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 
 	assert.True(resp.Triggered, "amend must preserve detached-to-branch pending commit continuity")
 	assert.Equal("commit", resp.TriggeredBy)
-	key := worktreeSequenceKey(repo.Path(), repo.Path())
-	branchKey := repoHeadKey(repo.Path(), "feature/attached")
+	key := worktreeSequenceKey(repo.Root, repo.Root)
+	branchKey := repoHeadKey(repo.Root, "feature/attached")
 	assert.Empty(store.sessions["session-1"].CommitSHAsSincePrompt[key])
 	assert.Empty(store.sessions["session-1"].CommitSHAsSincePrompt[branchKey])
 }
 
 func TestRecordPostToolUseAmendAfterBranchAttachmentDoesNotRepeatAcknowledgedReviews(t *testing.T) {
 	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
-	repo.CheckoutDetached()
-	reviewHead := repo.CommitFile("feature-a.go", "package main\n", "detached")
+	repo.Run("checkout", "--detach")
 
 	closed := false
 	verdict := "F"
 	store := &StateStore{
-		reviews: reviewSourceWithJobs(storage.ReviewJob{
-			ID: 101, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewHead,
-		}),
-		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+		reviews: trackedReviewSource(repo.Root),
+		path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 	}
 	baseReq := Request{
 		Event: Input{
 			SessionID:     "session-1",
-			CWD:           repo.Path(),
+			CWD:           repo.Root,
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
 			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)},
@@ -1707,17 +1745,20 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentDoesNotRepeatAcknowledgedRev
 		Instruction:           "Resolve reviews.",
 	}
 
+	reviewHead := commitHookFixture(t, store, repo, "feature-a.go", "package main\n", "detached")
+	store.reviews = reviewSourceWithJobs(storage.ReviewJob{ID: 101, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewHead})
+	baseReq.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m detached"`)}
 	first, err := store.Record(baseReq)
 	require.NoError(t, err)
 	assert.True(first.Triggered)
 
-	repo.CheckoutBranchForce("feature/attached")
+	repo.Run("checkout", "-B", "feature/attached")
 	checkout := baseReq
 	checkout.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git checkout -B feature/attached"`)}
 	_, err = store.Record(checkout)
 	require.NoError(t, err)
 
-	repo.CommitFile("feature-b.go", "package main\n", "attached")
+	commitHookFixture(t, store, repo, "feature-b.go", "package main\n", "attached")
 	commit := baseReq
 	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m attached"`)}
 	atCommit, err := store.Record(commit)
@@ -1725,7 +1766,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentDoesNotRepeatAcknowledgedRev
 	assert.False(atCommit.Triggered)
 
 	repo.WriteFile("feature-b.go", "package main\nconst amended = true\n")
-	repo.AmendCommit("attached amended", "feature-b.go")
+	amendHookFixture(t, store, repo, "attached amended", "feature-b.go")
 	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m attached amended"`)}
 	atAmend, err := store.Record(commit)
 	require.NoError(t, err)
@@ -1750,6 +1791,7 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByWorktree(t *testing.
 		}),
 		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	post := func(cwd string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1782,6 +1824,10 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 	repo.CheckoutDetached(base)
 	firstHead := repo.CommitFile("first.go", "package main\n", "first detached")
 
+	repo.CheckoutDetached(base)
+	secondHead := repo.CommitFile("second.go", "package main\n", "second detached")
+	repo.CheckoutDetached(firstHead)
+
 	reviewRef := firstHead
 	closed := false
 	verdict := "F"
@@ -1793,6 +1839,11 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 		}},
 		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 	}
+	// Both commits were observed earlier; these events only navigate their histories.
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
+	repo.CheckoutDetached(secondHead)
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
+	repo.CheckoutDetached(firstHead)
 	post := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1813,8 +1864,7 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 	assert.True(first.Triggered)
 	assert.Equal("failed_reviews", first.TriggeredBy)
 
-	repo.CheckoutDetached(base)
-	secondHead := repo.CommitFile("second.go", "package main\n", "second detached")
+	repo.CheckoutDetached(secondHead)
 	reviewRef = secondHead
 	second := post()
 	assert.True(second.Triggered, "sibling detached histories from the same base must not share failed-review dedupe")
@@ -1835,29 +1885,30 @@ func TestCurrentGitScopeDoesNotRequireGitExecutable(t *testing.T) {
 
 func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 	assert := assert.New(t)
-	outer := testutil.NewGitRepo(t)
+	outer := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	outer.CommitFile("outer.go", "package main\n", "outer initial")
-	inner := testutil.NewGitRepo(t)
+	inner := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	inner.CommitFile("inner.go", "package main\n", "inner initial")
 
 	// A failed review exists for the inner repo - the one the -C commit lands in.
+	reviewRef := ""
 	closed := false
 	verdict := "F"
 	reviews := fakeReviewSource{list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
-		if repoRoot == inner.Path() {
-			jobs = append(jobs, storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+		if repoRoot == inner.Root {
+			jobs = append(jobs, storage.ReviewJob{GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
 		return jobs, true
 	}}
 
-	cmd, err := json.Marshal(`git -C "` + inner.Path() + `" commit -m feature`)
+	cmd, err := json.Marshal(`git -C "` + inner.Root + `" commit -m feature`)
 	require.NoError(t, err)
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	req := Request{
 		Event: Input{
 			SessionID:     "session-1",
-			CWD:           outer.Path(),
+			CWD:           outer.Root,
 			HookEventName: "PreToolUse",
 			ToolName:      "Bash",
 			ToolInput:     map[string]jsontext.Value{"command": cmd},
@@ -1871,7 +1922,10 @@ func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(pre.Triggered)
 
-	inner.CommitFile("feature.go", "package main\n", "inner feature")
+	inner.WriteFile("feature.go", "package main\n")
+	inner.Run("add", "feature.go")
+	inner.Run("commit", "-m", "inner feature")
+	reviewRef = inner.Head()
 
 	post := req
 	post.Event.HookEventName = "PostToolUse"
@@ -1880,81 +1934,24 @@ func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 
 	st := store.sessions["session-1"]
 	assert.Equal(1, st.CommitCount, "the -C target repo's commit is counted")
-	assert.Equal(inner.Path(), st.LastCommitRepo, "the commit is attributed to the -C target repo")
+	assert.Equal(inner.Root, st.LastCommitRepo, "the commit is attributed to the -C target repo")
 	assert.True(resp.Triggered, "the commit reminder fires for the -C target repo")
 	assert.Equal("commit", resp.TriggeredBy)
 }
 
-func TestRecordPostToolUseCommitReasonReportsTriggeringRepo(t *testing.T) {
-	assert := assert.New(t)
-	repoA := testutil.NewGitRepo(t)
-	repoA.CommitFile("a.go", "package main\n", "A initial")
-	repoB := testutil.NewGitRepo(t)
-	repoB.CommitFile("b.go", "package main\n", "B initial")
-
-	var aReviewVisible atomic.Bool
-	closed := false
-	verdict := "F"
-	// Repo A's failed review only becomes visible after its commit, deferring A's
-	// commit reminder. Repo B has no failed reviews; its later commit advances the
-	// session-wide CommitCount and LastCommitRepo to B.
-	reviews := fakeReviewSource{list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
-		jobs := []storage.ReviewJob{}
-		if repoRoot == repoA.Path() && aReviewVisible.Load() {
-			jobs = append(jobs, storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
-		}
-		return jobs, true
-	}}
-
-	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
-	post := func(repo *testutil.TestRepo, command string) Response {
-		resp, err := store.Record(Request{
-			Event: Input{
-				SessionID:     "session-1",
-				CWD:           repo.Path(),
-				HookEventName: "PostToolUse",
-				ToolName:      "Bash",
-				ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"` + command + `"`)},
-			},
-			CommitThreshold: 1,
-			Instruction:     "Run roborev fix.",
-		})
-		require.NoError(t, err)
-		return resp
-	}
-
-	// Commit in A while its review is still pending: the reminder is deferred.
-	post(repoA, "git status")
-	repoA.CommitFile("a2.go", "package main\n", "A second")
-	assert.False(post(repoA, "git commit -m a2").Triggered, "A's reminder waits for its review")
-
-	// Commit in B: advances the session-wide count and last-commit repo to B.
-	post(repoB, "git status")
-	repoB.CommitFile("b2.go", "package main\n", "B second")
-	assert.False(post(repoB, "git commit -m b2").Triggered, "B has no failed reviews")
-
-	// A's review lands; the deferred reminder must report A and A's count, not B's.
-	aReviewVisible.Store(true)
-	resp := post(repoA, "go test ./...")
-	assert.True(resp.Triggered)
-	assert.Equal("commit", resp.TriggeredBy)
-	assert.Contains(resp.Reason, repoDisplayName(repoA.Path()), "reminder names the triggering repo")
-	assert.NotContains(resp.Reason, repoDisplayName(repoB.Path()), "reminder must not name the most-recent-commit repo")
-	assert.Contains(resp.Reason, "1 commit ", "reports A's single deferred commit, not the session total of 2")
-}
-
 func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T) {
 	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
 
 	failed := false
 	closed := false
 	verdict := "F"
+	reviewRef := repo.Head()
 	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
-			jobs = append(jobs, storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+			jobs = append(jobs, storage.ReviewJob{GitRef: reviewRef, Branch: "main", ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
 		return jobs, true
 	}}
@@ -1967,7 +1964,7 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	base := Request{
 		Event: Input{
 			SessionID:     "session-1",
-			CWD:           repo.Path(),
+			CWD:           repo.Root,
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
 			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
@@ -1982,7 +1979,7 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 
 	// A real commit crosses the threshold, but its review has not landed yet, so
 	// nothing prompts and the counter stays at the threshold.
-	repo.CommitFile("feature.go", "package main\n", "second")
+	commitHookFixture(t, store, repo, "feature.go", "package main\n", "second")
 	commit := base
 	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m second"`)}
 	atCommit, err := store.Record(commit)
@@ -1992,6 +1989,7 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 
 	// The failed review becomes visible on a later, non-commit tool call: the
 	// already-met threshold must prompt now rather than waiting for a new commit.
+	reviewRef = repo.Head()
 	failed = true
 	later := base
 	later.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)}
@@ -2004,16 +2002,17 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 
 func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
 
 	failed := false
 	closed := false
 	verdict := "F"
+	reviewRef := repo.Head()
 	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
-			jobs = append(jobs, storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+			jobs = append(jobs, storage.ReviewJob{GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
 		return jobs, true
 	}}
@@ -2026,7 +2025,7 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	base := Request{
 		Event: Input{
 			SessionID:     "session-1",
-			CWD:           repo.Path(),
+			CWD:           repo.Root,
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
 			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
@@ -2038,7 +2037,7 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	_, err := store.Record(base)
 	require.NoError(t, err)
 
-	repo.CommitFile("feature.go", "package main\n", "second")
+	commitHookFixture(t, store, repo, "feature.go", "package main\n", "second")
 	commit := base
 	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m second"`)}
 	atCommit, err := store.Record(commit)
@@ -2046,17 +2045,18 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	assert.False(atCommit.Triggered, "no prompt while the commit's review is still pending")
 
 	repo.WriteFile("feature.go", "package main\nconst feature = true\n")
-	amended := repo.AmendCommit("second amended", "feature.go")
+	amended := amendHookFixture(t, store, repo, "second amended", "feature.go")
 	amend := base
 	amend.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m second amended"`)}
 	atAmend, err := store.Record(amend)
 	require.NoError(t, err)
 	assert.False(atAmend.Triggered, "amend still waits for the commit's review")
 
-	key := repoHeadKey(repo.Path(), "main")
+	key := repoHeadKey(repo.Root, "main")
 	assert.Equal([]string{amended}, store.sessions["session-1"].CommitSHAsSincePrompt[key])
 	assert.Equal(1, commitsSincePrompt(store.sessions["session-1"]), "amend keeps one pending commit reminder")
 
+	reviewRef = repo.Head()
 	failed = true
 	later := base
 	later.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)}
@@ -2068,16 +2068,17 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 
 func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
 
 	failed := false
 	closed := false
 	verdict := "F"
+	reviewRef := repo.Head()
 	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
-			jobs = append(jobs, storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+			jobs = append(jobs, storage.ReviewJob{GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
 		return jobs, true
 	}}
@@ -2086,7 +2087,7 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 	base := Request{
 		Event: Input{
 			SessionID:     "session-1",
-			CWD:           repo.Path(),
+			CWD:           repo.Root,
 			HookEventName: "PostToolUse",
 			ToolName:      "Bash",
 			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)},
@@ -2098,29 +2099,30 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 	_, err := store.Record(base)
 	require.NoError(t, err)
 
-	first := repo.CommitFile("first.go", "package main\n", "first")
+	first := commitHookFixture(t, store, repo, "first.go", "package main\n", "first")
 	commit := base
 	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m first"`)}
 	_, err = store.Record(commit)
 	require.NoError(t, err)
 
-	repo.CommitFile("second.go", "package main\n", "second")
+	commitHookFixture(t, store, repo, "second.go", "package main\n", "second")
 	commit.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m second"`)}
 	_, err = store.Record(commit)
 	require.NoError(t, err)
 
 	repo.WriteFile("second.go", "package main\nconst second = true\n")
-	amended := repo.AmendCommit("second amended", "second.go")
+	amended := amendHookFixture(t, store, repo, "second amended", "second.go")
 	amend := base
 	amend.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m second amended"`)}
 	atAmend, err := store.Record(amend)
 	require.NoError(t, err)
 	assert.False(atAmend.Triggered, "amend still waits for reviews")
 
-	key := repoHeadKey(repo.Path(), "main")
+	key := repoHeadKey(repo.Root, "main")
 	assert.Equal([]string{first, amended}, store.sessions["session-1"].CommitSHAsSincePrompt[key])
 	assert.Equal(2, commitsSincePrompt(store.sessions["session-1"]), "amend preserves earlier pending commits")
 
+	reviewRef = repo.Head()
 	failed = true
 	later := base
 	later.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"go test ./..."`)}
@@ -2131,15 +2133,15 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 }
 
 func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing.T) {
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	reviews := newDeferredReminderSource(t, repo.Root, &failedReviewCount)
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
 			SessionID: "session-1",
-			CWD:       repo.Path(),
+			CWD:       repo.Root,
 			ToolName:  "Bash",
 			ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)},
 		},
@@ -2149,11 +2151,10 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 	}
 
 	queueCommit := func(name string) {
-		pre := base
-		pre.Event.HookEventName = "PreToolUse"
-		_, err := store.Record(pre)
-		require.NoError(t, err)
-		repo.CommitFile(name+".go", "package main\n", name)
+		commitHookFixture(t, store, repo, name+".go", "package main\n", name)
+		if name == "first" {
+			store.reviews = newDeferredReminderSource(t, repo.Root, &failedReviewCount)
+		}
 		post := base
 		post.Event.HookEventName = "PostToolUse"
 		resp, err := store.Record(post)
@@ -2180,7 +2181,7 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 	assert.Equal(t, 2, coalesced.CommitCount)
 	assert.Zero(t, state.ReminderPromptCount)
 
-	repo.CheckoutNewBranch("other")
+	repo.Run("checkout", "-b", "other")
 	waiting, err := store.Record(Request{
 		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
@@ -2196,7 +2197,7 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 	require.NoError(t, err)
 	assert.True(t, resp.Triggered)
 	assert.Equal(t, "commit", resp.TriggeredBy)
-	assert.Contains(t, resp.Reason, repo.Path())
+	assert.Contains(t, resp.Reason, repo.Root)
 	assert.Contains(t, resp.Reason, "change to")
 	assert.Empty(t, store.sessions["session-1"].PendingReminders)
 	assert.Equal(t, 1, store.sessions["session-1"].ReminderPromptCount)
@@ -2303,6 +2304,7 @@ func TestStopReminderProgressIsScopedAcrossSnoozedWorkspaces(t *testing.T) {
 	var snoozeA atomic.Bool
 	closed := false
 	verdict := "F"
+	reviewRefs := map[string]string{repoA.Path(): repoA.HeadSHA(), repoB.Path(): repoB.HeadSHA()}
 	reviews := fakeReviewSource{
 		resolve: func(_ context.Context, root, _ string) (TrackedRepoResolution, bool) {
 			resolved := TrackedRepoResolution{Tracked: true, RootPath: root, Name: filepath.Base(root)}
@@ -2311,13 +2313,15 @@ func TestStopReminderProgressIsScopedAcrossSnoozedWorkspaces(t *testing.T) {
 			}
 			return resolved, true
 		},
-		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+		list: func(_ context.Context, root, _ string) ([]storage.ReviewJob, bool) {
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRefs[root],
+				ID:     1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repoA.Path(), repoB.Path())
 	record := func(cwd string) Response {
 		resp, err := store.Record(Request{
 			Event:     Input{SessionID: "session-1", CWD: cwd, HookEventName: "Stop"},
@@ -2341,6 +2345,7 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 	repoB.CommitFile("b.go", "package b\n", "initial B")
 	closed := false
 	verdict := "F"
+	reviewRefs := map[string]string{repoA.Path(): repoA.HeadSHA(), repoB.Path(): repoB.HeadSHA()}
 	reviews := fakeReviewSource{
 		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
 			resolved := TrackedRepoResolution{Tracked: true, RootPath: path, Name: filepath.Base(path)}
@@ -2349,9 +2354,10 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 			}
 			return resolved, true
 		},
-		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+		list: func(_ context.Context, root, _ string) ([]storage.ReviewJob, bool) {
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRefs[root],
+				ID:     1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
@@ -2376,6 +2382,7 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 			}},
 		},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repoA.Path(), repoB.Path())
 
 	response, err := store.Record(Request{
 		Event: Input{SessionID: "session-1", CWD: repoA.Path(), HookEventName: "Stop"},
@@ -2418,8 +2425,9 @@ func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	reviews := newDeferredReminderSource(t, repo.Path(), &failedReviewCount)
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 
 	resp, err := store.Record(Request{
 		Event: Input{
@@ -2452,8 +2460,9 @@ func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testi
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 2
-	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	reviews := newDeferredReminderSource(t, repo.Path(), &failedReviewCount)
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	request := Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -2497,15 +2506,15 @@ func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testi
 }
 
 func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
-	repo := testutil.NewGitRepo(t)
+	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	reviews := newDeferredReminderSource(t, repo.Root, &failedReviewCount)
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
 			SessionID: "session-1",
-			CWD:       repo.Path(),
+			CWD:       repo.Root,
 			ToolName:  "Bash",
 			ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)},
 		},
@@ -2514,14 +2523,11 @@ func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
 		DeferPostToolReminder: true,
 	}
 
-	pre := base
-	pre.Event.HookEventName = "PreToolUse"
-	_, err := store.Record(pre)
-	require.NoError(t, err)
-	repo.CommitFile("feature.go", "package main\n", "feature")
+	commitHookFixture(t, store, repo, "feature.go", "package main\n", "feature")
+	store.reviews = newDeferredReminderSource(t, repo.Root, &failedReviewCount)
 	post := base
 	post.Event.HookEventName = "PostToolUse"
-	_, err = store.Record(post)
+	_, err := store.Record(post)
 	require.NoError(t, err)
 	require.Len(t, store.sessions["session-1"].PendingReminders, 1)
 
@@ -2640,7 +2646,7 @@ func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T)
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	reviews := newDeferredReminderSource(t, repo.Path(), &failedReviewCount)
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
 		TrackedRepoRoot: repo.Path(), WorktreeRoot: repo.Path(), Branch: "main", Head: head,
@@ -2654,6 +2660,7 @@ func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T)
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
 		},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 
 	_, err := store.Record(Request{
 		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
@@ -2665,11 +2672,12 @@ func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T)
 	assert.Zero(t, state.ReminderPromptCount)
 }
 
-func failedReviewJob(id int64) storage.ReviewJob {
+func failedReviewJob(id int64, ref string) storage.ReviewJob {
 	closed := false
 	verdict := "F"
 	return storage.ReviewJob{
-		ID: id, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+		GitRef: ref,
+		ID:     id, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 	}
 }
 
@@ -2709,6 +2717,8 @@ func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 				reviews: reviews,
 				path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 			}
+			seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
+			before := store.Sessions()
 			ctx, cancel := context.WithCancel(t.Context())
 			errCh := make(chan error, 1)
 			go func() {
@@ -2723,7 +2733,7 @@ func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 			err := <-errCh
 
 			require.ErrorIs(t, err, context.Canceled)
-			assert.Empty(t, store.sessions)
+			assert.Equal(t, before, store.Sessions())
 		})
 	}
 }
@@ -2733,6 +2743,7 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 	availableHead := available.CommitFile("main.go", "package main\n", "initial")
 	closed := false
 	verdict := "F"
+	reviewRef := available.HeadSHA()
 	reviews := fakeReviewSource{
 		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
 			if path == "/unavailable" {
@@ -2747,7 +2758,7 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 				return nil, false
 			}
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
@@ -2774,6 +2785,7 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 			},
 		},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, available.Path())
 
 	response, err := store.Record(Request{
 		Event:                 Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
@@ -2794,6 +2806,7 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 	repo.CommitFile("main.go", "package main\n", "initial")
 	closed := false
 	verdict := "F"
+	reviewRef := repo.HeadSHA()
 	reviews := fakeReviewSource{
 		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
 			if path == "/unavailable" {
@@ -2806,7 +2819,7 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 				return nil, false
 			}
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
@@ -2823,6 +2836,7 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
 		},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 
 	response, err := store.Record(Request{
 		Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
@@ -2907,6 +2921,7 @@ func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {
 	closed := false
 	verdict := "F"
 	var jobLookups atomic.Int32
+	reviewRef := repo.HeadSHA()
 	reviews := fakeReviewSource{
 		resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
 			return TrackedRepoResolution{Tracked: true, RootPath: repo.Path(), Name: filepath.Base(repo.Path())}, true
@@ -2916,7 +2931,7 @@ func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {
 				return nil, false
 			}
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
@@ -2933,6 +2948,7 @@ func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {
 			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
 		},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 
 	response, err := store.Record(Request{
 		Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
@@ -2961,9 +2977,13 @@ func TestQueuePendingReminderKeepsLatestAbsoluteFailedReviewCount(t *testing.T) 
 	assert.Equal(t, createdAt, pending.CreatedAt)
 }
 
-func newDeferredReminderSource(repoPath string, failedReviewCount *int) ReviewSource {
+func newDeferredReminderSource(t *testing.T, repoPath string, failedReviewCount *int) ReviewSource {
+	t.Helper()
 	closed := false
 	verdict := "F"
+	out, err := agentHookGit.Output(t.Context(), repoPath, "rev-parse", "HEAD")
+	require.NoError(t, err)
+	head := strings.TrimSpace(string(out))
 	return fakeReviewSource{
 		resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
 			return TrackedRepoResolution{Tracked: true, RootPath: repoPath, Name: filepath.Base(repoPath)}, true
@@ -2972,7 +2992,8 @@ func newDeferredReminderSource(repoPath string, failedReviewCount *int) ReviewSo
 			jobs := make([]storage.ReviewJob, 0, *failedReviewCount)
 			for i := range *failedReviewCount {
 				jobs = append(jobs, storage.ReviewJob{
-					ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+					GitRef: head,
+					ID:     int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 				})
 			}
 			return jobs, true
@@ -2988,6 +3009,7 @@ func TestRecordStopSuppressesReminderWithoutReviewGuidelines(t *testing.T) {
 	verdict := "F"
 	var guidelinesMissing atomic.Bool
 	guidelinesMissing.Store(true)
+	reviewRef := repo.HeadSHA()
 	reviews := fakeReviewSource{
 		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
 			return TrackedRepoResolution{
@@ -2997,11 +3019,12 @@ func TestRecordStopSuppressesReminderWithoutReviewGuidelines(t *testing.T) {
 		},
 		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 			return []storage.ReviewJob{{
-				ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				GitRef: reviewRef, ID: 1, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			}}, true
 		},
 	}
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
@@ -3026,14 +3049,14 @@ func TestRecordUserPromptSubmitInjectsSelfContainedReminder(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
-	failed := failedReviewJob(1)
-	failed.GitRef = head
+	failed := failedReviewJob(1, head)
 	failed.Branch = "main"
 	reviews := trackedReviewSource(repo.Path(), failed)
 	store := &StateStore{
 		reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{}, fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-a"}, repo.Path())
 	req := Request{
 		Agent: "zcode", Event: Input{
 			SessionID: "session-a", CWD: repo.Path(), HookEventName: "UserPromptSubmit",
@@ -3072,8 +3095,7 @@ func TestRecordUserPromptSubmitInjectsSelfContainedReminder(t *testing.T) {
 func TestRecordUserPromptCustomInstructionReplacesDefaultGuidance(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
-	failed := failedReviewJob(2)
-	failed.GitRef = head
+	failed := failedReviewJob(2, head)
 	failed.Branch = "main"
 	store := &StateStore{
 		reviews:     trackedReviewSource(repo.Path(), failed),
@@ -3081,6 +3103,7 @@ func TestRecordUserPromptCustomInstructionReplacesDefaultGuidance(t *testing.T) 
 		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"s1"}, repo.Path())
 
 	resp, err := store.Record(Request{
 		Agent: "zcode", Event: Input{
@@ -3101,8 +3124,7 @@ func TestRecordUserPromptCustomInstructionReplacesDefaultGuidance(t *testing.T) 
 func TestRecordSessionStartDeliversReminder(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
-	failed := failedReviewJob(7)
-	failed.GitRef = head
+	failed := failedReviewJob(7, head)
 	failed.Branch = "main"
 	store := &StateStore{
 		reviews:     trackedReviewSource(repo.Path(), failed),
@@ -3110,6 +3132,7 @@ func TestRecordSessionStartDeliversReminder(t *testing.T) {
 		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"session-a"}, repo.Path())
 
 	resp, err := store.Record(Request{
 		Agent: "zcode", Event: Input{
@@ -3147,8 +3170,7 @@ func TestRecordUserPromptDiagnosisExplainsEveryQuietOutcome(t *testing.T) {
 	assert.Contains(resp.Diagnosis, "not a tracked roborev repo")
 
 	head := repo.CommitFile("main.go", "package main\nfunc f() {}\n", "second")
-	failed := failedReviewJob(1)
-	failed.GitRef = head
+	failed := failedReviewJob(1, head)
 	failed.Branch = "main"
 	store := &StateStore{
 		reviews:     trackedReviewSource(repo.Path(), failed),
@@ -3156,6 +3178,7 @@ func TestRecordUserPromptDiagnosisExplainsEveryQuietOutcome(t *testing.T) {
 		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, store, []string{"s1", "s2", "s3"}, repo.Path())
 
 	evaluated, err := store.Record(Request{
 		Agent: "zcode", Event: Input{
@@ -3180,6 +3203,7 @@ func TestRecordUserPromptDiagnosisExplainsEveryQuietOutcome(t *testing.T) {
 		sessions:    map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
+	seedOwnedCommitFixtures(t, unavailable, []string{"s3"}, repo.Path())
 	broken, err := unavailable.Record(Request{
 		Agent: "zcode", Event: Input{
 			SessionID: "s3", CWD: repo.Path(), HookEventName: "UserPromptSubmit",
@@ -3189,4 +3213,270 @@ func TestRecordUserPromptDiagnosisExplainsEveryQuietOutcome(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(broken.Triggered)
 	assert.Contains(broken.Diagnosis, "open review query unavailable")
+}
+
+// These fixtures stand in for earlier session commits in reminder tests.
+func seedOwnedCommitFixtures(t *testing.T, store *StateStore, sessions []string, roots ...string) {
+	t.Helper()
+	for _, session := range sessions {
+		st := store.sessions[session]
+		if st.OwnedCommits == nil {
+			st.OwnedCommits = map[string]bool{}
+		}
+		st.LastSeenAt = store.currentTime()
+		for _, root := range roots {
+			out, err := agentHookGit.Output(t.Context(), root, "rev-parse", "HEAD")
+			require.NoError(t, err)
+			st.OwnedCommits[strings.TrimSpace(string(out))] = true
+		}
+		store.sessions[session] = st
+	}
+}
+
+func ownedReviewFixtures(t *testing.T, root string, jobs []storage.ReviewJob) map[string]bool {
+	t.Helper()
+	owned := map[string]bool{}
+	for _, job := range jobs {
+		var refs []string
+		if strings.Contains(job.GitRef, "..") {
+			var err error
+			refs, err = roborevgit.GetRangeCommitsCtx(t.Context(), root, job.GitRef)
+			require.NoError(t, err)
+		} else if job.GitRef != "" && job.GitRef != "dirty" {
+			out, err := agentHookGit.Output(t.Context(), root, "rev-parse", job.GitRef+"^{commit}")
+			require.NoError(t, err)
+			refs = strings.Fields(string(out))
+		}
+		for _, ref := range refs {
+			owned[ref] = true
+		}
+	}
+	return owned
+}
+
+func preHookFixture(t *testing.T, store *StateStore, repo *gittest.Repo, command string) {
+	t.Helper()
+	raw, err := json.Marshal(command)
+	require.NoError(t, err)
+	_, err = store.RecordContext(t.Context(), Request{Event: Input{SessionID: "session-1", CWD: repo.Root, HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": raw}}})
+	require.NoError(t, err)
+}
+
+func commitHookFixture(t *testing.T, store *StateStore, repo *gittest.Repo, file, content, message string) string {
+	t.Helper()
+	preHookFixture(t, store, repo, "git commit")
+	return repo.CommitFile(file, content, message)
+}
+
+func amendHookFixture(t *testing.T, store *StateStore, repo *gittest.Repo, message string, paths ...string) string {
+	t.Helper()
+	preHookFixture(t, store, repo, "git commit --amend")
+	repo.Run(append([]string{"add"}, paths...)...)
+	repo.Run("commit", "--amend", "-m", message)
+	return repo.Head()
+}
+
+func TestRecordPostToolUseSharesCommitObservation(t *testing.T) {
+	repo := gittest.NewRepoWithCommit(t)
+	store := &StateStore{reviews: trackedReviewSource(repo.Root), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	req := Request{Event: Input{SessionID: "session", CWD: repo.Root, HookEventName: "PreToolUse", ToolUseID: "commit", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m own"`)}}}
+	_, err := store.RecordContext(t.Context(), req)
+	require.NoError(t, err)
+	repo.CommitFile("own.txt", "own", "own")
+	gitCalls := testutil.CountGitProcesses(t)
+	req.Event.HookEventName = "PostToolUse"
+	_, err = store.RecordContext(t.Context(), req)
+	require.NoError(t, err)
+	t.Logf("commit callback: %d Git processes", gitCalls())
+	require.LessOrEqual(t, gitCalls(), 8, "one ancestry check and range walk plus cold trust setup")
+}
+
+func TestMutedCommitObservationHonorsCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses an executable shell wrapper")
+	}
+	repo := gittest.NewRepoWithCommit(t)
+	reviews := fakeReviewSource{resolve: func(_ context.Context, root, _ string) (TrackedRepoResolution, bool) {
+		return TrackedRepoResolution{Tracked: true, RootPath: root, SnoozedUntil: time.Now().Add(time.Hour)}, true
+	}}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	req := Request{Event: Input{SessionID: "session", CWD: repo.Root, HookEventName: "PreToolUse", ToolUseID: "commit", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m own"`)}}}
+	_, err := store.RecordContext(t.Context(), req)
+	require.NoError(t, err)
+	repo.CommitFile("own.txt", "own", "own")
+	before := store.Sessions()
+	gitPath, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	ready := filepath.Join(wrapperDir, "ready")
+	quote := func(path string) string { return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'" }
+	wrapper := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *rev-list*) printf ready > %s; exec sleep 5;; esac\nexec %s \"$@\"\n", quote(ready), quote(gitPath))
+	require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(wrapper), 0o755))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	errors := make(chan error, 1)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("commit observation did not stop")
+		}
+	})
+	req.Event.HookEventName = "PostToolUse"
+	go func() {
+		defer close(done)
+		_, err := store.RecordContext(ctx, req)
+		errors <- err
+	}()
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 5*time.Second, 10*time.Millisecond)
+	start := time.Now()
+	cancel()
+	require.ErrorIs(t, <-errors, context.Canceled)
+	require.Less(t, time.Since(start), time.Second, "canceled ownership must release the session store promptly")
+	require.Equal(t, before, store.Sessions())
+}
+
+func TestCommitObservationTimeoutRetriesOwnership(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses an executable shell wrapper")
+	}
+	for _, name := range []string{"status", "amended Stop after reload", "prompt in other checkout", "muted", "empty aborted range", "canceled retry", "save failure"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			repo := gittest.NewRepoWithCommit(t)
+			base := repo.Head()
+			repo.CommitFile("before.txt", "before", "before session")
+			muted := name == "muted"
+			var jobs []storage.ReviewJob
+			source := fakeReviewSource{
+				resolve: func(_ context.Context, root, _ string) (TrackedRepoResolution, bool) {
+					r := TrackedRepoResolution{Tracked: true, RootPath: root}
+					if muted {
+						r.SnoozedUntil = time.Now().Add(time.Hour)
+					}
+					return r, true
+				},
+				list: func(_ context.Context, root, _ string) ([]storage.ReviewJob, bool) {
+					if root != repo.Root {
+						return nil, true
+					}
+					return jobs, true
+				},
+			}
+			store, err := LoadState(source)
+			require.NoError(t, err)
+			req := Request{Event: Input{SessionID: "session", CWD: repo.Root, HookEventName: "PreToolUse", ToolUseID: "commit", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git commit --amend -m own && git commit -m next"`)}}, FailedReviewThreshold: 1}
+			_, err = store.RecordContext(t.Context(), req)
+			require.NoError(t, err)
+			var own string
+			switch name {
+			case "amended Stop after reload":
+				repo.Run("commit", "--amend", "--allow-empty", "-m", "amended")
+				own = repo.Head()
+				repo.CommitFile("next.txt", "next", "next")
+			case "empty aborted range":
+				repo.Run("reset", "--hard", base)
+				own = base
+			default:
+				own = repo.CommitFile("own.txt", "own", "own")
+			}
+			jobs = []storage.ReviewJob{failedReviewJob(42, own)}
+			realPath := os.Getenv("PATH")
+			gitPath, err := exec.LookPath("git")
+			require.NoError(t, err)
+			wrapperDir := t.TempDir()
+			quote := func(path string) string { return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'" }
+			wrapper := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *rev-list*) exec sleep 5;; esac\nexec %s \"$@\"\n", quote(gitPath))
+			require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(wrapper), 0o755))
+			t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+realPath)
+			req.Event.HookEventName = "PostToolUse"
+			_, err = store.RecordContext(t.Context(), req)
+			require.NoError(t, err)
+			require.NoError(t, t.Context().Err(), "the parent's deadline stays live")
+			pending := store.Sessions()["session"].PendingCommitRanges[repo.Root]
+			require.Len(t, pending, 1, "shared baselines must queue the frozen range once")
+			t.Setenv("PATH", realPath)
+			var later string
+			if name == "amended Stop after reload" {
+				later = repo.CommitFile("later.txt", "later", "after completed command")
+				store, err = LoadState(source)
+				require.NoError(t, err)
+			}
+			if name == "canceled retry" {
+				before := store.Sessions()
+				ready := filepath.Join(wrapperDir, "ready")
+				wrapper = fmt.Sprintf("#!/bin/sh\ncase \" $* \" in *' log '*) printf ready > %s; exec sleep 5;; esac\nexec %s \"$@\"\n", quote(ready), quote(gitPath))
+				require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(wrapper), 0o755))
+				t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+realPath)
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				finished := make(chan struct{})
+				t.Cleanup(func() {
+					cancel()
+					select {
+					case <-finished:
+					case <-time.After(5 * time.Second):
+						t.Error("retry subprocess did not stop")
+					}
+				})
+				req.Event.HookEventName = "Stop"
+				go func() { defer close(finished); _, err := store.RecordContext(ctx, req); done <- err }()
+				// Wait for the external Git subprocess to enter the queued range read.
+				require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 5*time.Second, 10*time.Millisecond)
+				cancel()
+				require.ErrorIs(t, <-done, context.Canceled)
+				require.Equal(t, before, store.Sessions(), "cancellation must retain the complete retry queue")
+				t.Setenv("PATH", realPath)
+			}
+			if name == "save failure" {
+				before := store.Sessions()
+				path := store.path
+				store.path = t.TempDir()
+				req.Event.HookEventName = "Stop"
+				_, err := store.RecordContext(t.Context(), req)
+				require.Error(t, err)
+				require.Equal(t, before, store.Sessions(), "failed atomic replacement must retain ownership and its pending range")
+				store.path = path
+			}
+			req.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)}
+			req.Event.HookEventName = "PostToolUse"
+			if name == "amended Stop after reload" || name == "muted" {
+				req.Event.HookEventName = "Stop"
+			}
+			if name == "prompt in other checkout" {
+				other := gittest.NewRepoWithCommit(t)
+				req.Event.CWD = other.Root
+				req.Event.HookEventName = "UserPromptSubmit"
+			}
+			got, err := store.RecordContext(t.Context(), req)
+			require.NoError(t, err)
+			require.Empty(t, store.Sessions()["session"].PendingCommitRanges, "successful reads, including empty ranges, remove pending work")
+			if name == "empty aborted range" {
+				require.False(t, got.Triggered)
+				require.False(t, store.Sessions()["session"].OwnedCommits[own])
+				return
+			}
+			require.True(t, store.Sessions()["session"].OwnedCommits[own])
+			if later != "" {
+				require.False(t, store.Sessions()["session"].OwnedCommits[later], "retry must stop at the frozen completed HEAD")
+			}
+			if name == "muted" {
+				require.False(t, got.Triggered)
+				muted = false
+			}
+			if name == "prompt in other checkout" {
+				require.False(t, got.Triggered, "the other repository has no failed reviews")
+			}
+			if name == "muted" || name == "prompt in other checkout" {
+				req.Event.CWD = repo.Root
+				req.Event.HookEventName = "Stop"
+				got, err = store.RecordContext(t.Context(), req)
+				require.NoError(t, err)
+			}
+			require.True(t, got.Triggered, "a healthy event must recover the session commit's review")
+			require.Contains(t, got.Reason, "Review job IDs: 42.")
+		})
+	}
 }

@@ -5,6 +5,8 @@ import type { SessionStateAcknowledgedReviewIds } from "./sessionStateAcknowledg
 import type { SessionStateCommitCountsSincePrompt } from "./sessionStateCommitCountsSincePrompt";
 import type { SessionStateCommitShasSincePrompt } from "./sessionStateCommitShasSincePrompt";
 import type { SessionStateFailedReviewTriggeredCounts } from "./sessionStateFailedReviewTriggeredCounts";
+import type { SessionStateOwnedCommits } from "./sessionStateOwnedCommits";
+import type { SessionStatePendingCommitRanges } from "./sessionStatePendingCommitRanges";
 import type { SessionStatePendingReminders } from "./sessionStatePendingReminders";
 import type { SessionStateRepoHeads } from "./sessionStateRepoHeads";
 import type { SessionStateStopCountsSincePrompt } from "./sessionStateStopCountsSincePrompt";
@@ -27,6 +29,8 @@ export interface SessionState {
   last_failed_review_repo?: string;
   last_seen_at?: string;
   last_turn_id?: string;
+  owned_commits?: SessionStateOwnedCommits;
+  pending_commit_ranges?: SessionStatePendingCommitRanges;
   pending_reminders?: SessionStatePendingReminders;
   remind_count?: number;
   repo_heads?: SessionStateRepoHeads;

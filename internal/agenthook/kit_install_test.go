@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -26,7 +27,12 @@ func TestKitInstallOptionsUseProfileSpecificRunArguments(t *testing.T) {
 				"agent-hook", "run", "--agent", string(profile.Agent), agentHookMarker,
 			}, opts.Arguments)
 			assert.Equal(t, agentHookMarker, opts.Marker)
-			assert.Len(t, opts.Hooks, 3)
+			count := 3
+			if slices.Contains(profile.SupportedEvents, kitagenthook.EventPostToolUseFailure) {
+				count = 4
+				assert.Contains(t, opts.Hooks, kitagenthook.Hook{Event: kitagenthook.EventPostToolUseFailure, Matcher: kitagenthook.ToolBash, Timeout: 10 * time.Second})
+			}
+			assert.Len(t, opts.Hooks, count)
 		})
 	}
 }

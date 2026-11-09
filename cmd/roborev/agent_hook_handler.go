@@ -109,6 +109,11 @@ func (h roborevAgentHookHandler) PostToolUse(
 	}, nil
 }
 
+func (h roborevAgentHookHandler) PostToolUseFailure(ctx context.Context, input kitagenthook.PostToolUseFailureInput) (kitagenthook.PostToolUseFailureOutput, error) {
+	output, err := h.PostToolUse(ctx, kitagenthook.PostToolUseInput{CommonInput: input.CommonInput, ToolName: input.ToolName, ToolInput: input.ToolInput, ToolUseID: input.ToolUseID})
+	return kitagenthook.PostToolUseFailureOutput{AdditionalContext: output.AdditionalContext}, err
+}
+
 func (h roborevAgentHookHandler) Stop(
 	ctx context.Context,
 	input kitagenthook.StopInput,
