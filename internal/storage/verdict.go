@@ -197,6 +197,12 @@ func verdictBoolFromOutput(output string) any {
 // that quickly turns into a brittle natural-language parser. If agent output is
 // too chatty or mixes process narration with findings, that should be fixed in
 // the review prompt rather than by adding more verdict heuristics here.
+//
+// Pass phrases are matched in both English and Chinese: the default pi
+// reviewer sometimes writes the entire review in Chinese and closes with
+// 未发现问题 ("no issues found"), which previously fell through to a false
+// fail. See internal/storage/testdata/review_no-findings_zh_*.txt for the
+// three real regressions this handles.
 func ParseVerdict(output string) Verdict {
 	return ParseVerdictAtSeverity(output, "")
 }
@@ -267,6 +273,23 @@ func hasPassPrefix(line string) bool {
 		"i didn't find any issues",
 		"i did not find any issues",
 		"i found no issues",
+		// Chinese no-findings phrasing. The pi reviewer writes Chinese
+		// reviews that previously fell through to a false fail. Line-start
+		// anchored, same rule as the English prefixes above:
+		//   未发现问题     = "no issues found"
+		//   未发现任何问题 = "did not find any issues"
+		//   没有发现问题   = "did not find any issues"
+		//   未发现任何缺陷 = "did not find any defects"
+		//   无问题         = "no issues"
+		//   没有问题       = "no problems"
+		//   无发现         = "nothing found"
+		"未发现问题",
+		"未发现任何问题",
+		"没有发现问题",
+		"未发现任何缺陷",
+		"无问题",
+		"没有问题",
+		"无发现",
 	}
 	for _, prefix := range passPrefixes {
 		if strings.HasPrefix(line, prefix) {
@@ -277,7 +300,9 @@ func hasPassPrefix(line string) bool {
 }
 
 func isNoFindingVerdictLine(line string) bool {
-	line = strings.TrimRight(line, ".!?")
+	// Trailing sentence punctuation: ASCII (. ! ?) and the full-width
+	// Chinese forms (。！？) used by Chinese-native reviews.
+	line = strings.TrimRight(line, ".!?。！？")
 	line = strings.Join(strings.Fields(line), " ")
 	switch line {
 	case "all previous findings have been addressed",
@@ -292,7 +317,14 @@ func isNoFindingVerdictLine(line string) bool {
 		"zero findings",
 		"zero findings remain",
 		"zero verified findings",
-		"zero verified findings remain":
+		"zero verified findings remain",
+		// Chinese numeric/word zero-findings phrasing
+		//   0 个发现 = "0 findings"; 零个发现 = "zero findings"
+		//   0 个问题 = "0 issues";  零个问题 = "zero issues"
+		"0 个发现",
+		"零个发现",
+		"0 个问题",
+		"零个问题":
 		return true
 	default:
 		return false
@@ -371,12 +403,27 @@ func stripFieldLabel(s string) string {
 		"result",
 		"verdict",
 		"review",
+		// Chinese field labels. Also accepts the full-width colon (：),
+		// which Chinese-native review output uses.
+		//   审查发现 = "review findings"; 审查结果 = "review result"
+		//   结果 = "result"; 结论 = "conclusion"; 发现 = "findings"
+		//   审查总结 / 总结 = "review summary" ("总结：未发现问题。")
+		"审查发现",
+		"审查结果",
+		"审查总结",
+		"结果",
+		"结论",
+		"发现",
+		"总结",
 	}
 	for _, label := range labels {
 		if strings.HasPrefix(s, label) {
 			rest := s[len(label):]
 			if len(rest) > 0 && rest[0] == ':' {
 				return strings.TrimSpace(rest[1:])
+			}
+			if strings.HasPrefix(rest, "：") {
+				return strings.TrimSpace(strings.TrimPrefix(rest, "："))
 			}
 		}
 	}

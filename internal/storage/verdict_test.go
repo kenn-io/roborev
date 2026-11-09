@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -914,6 +916,81 @@ var verdictTests = []verdictTestCase{
 		output: "SEVERITY_THRESHOLD_MET\n\n- High: critical bug found",
 		want:   VerdictFail,
 	},
+
+	// --- ChineseNoFindings: Chinese-language "no issues found" phrasing ---
+	// The pi reviewer sometimes writes the entire review in Chinese using
+	// 未发现问题 ("no issues found"). These reviews must parse to pass, not
+	// fall through to fail because only English pass phrases were matched.
+	{
+		name:   "ChineseNoFindings/未发现问题 standalone",
+		output: "未发现问题。",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ChineseNoFindings/未发现问题 on own line after narration",
+		output: "审查完成。\n\n未发现问题。\n\n代码看起来没问题。",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ChineseNoFindings/未发现任何问题 variant",
+		output: "审查发现：\n\n未发现任何问题。",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ChineseNoFindings/structured review with 审查发现 header is pass",
+		output: "## 审查发现\n\n未发现问题。\n\n## 总结\n\n该提交清理了配置。",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ChineseNoFindings/发现 header variant is pass",
+		output: "## 发现\n\n未发现问题。\n\n## 总结\n\n一切都已按预期工作。",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ChineseNoFindings/no-issue phrase leading a summary line is pass",
+		output: "审查总结：未发现问题。",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ChineseNoFindings/numeric zero findings in Chinese is pass",
+		output: "0 个发现。",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ChineseNoFindings/word zero findings in Chinese is pass",
+		output: "零个发现。",
+		want:   VerdictPass,
+	},
+	{
+		name:   "ChineseNoFindings/numeric zero issues in Chinese is pass",
+		output: "0 个问题。",
+		want:   VerdictPass,
+	},
+
+	// --- StructuredFail: an explicit findings header + Severity block must
+	// stay fail even when the review is otherwise narrated in Chinese. ---
+	{
+		name:   "StructuredFail/Review Findings header with Severity block is fail",
+		output: "## Review Findings\n\n- **Severity**: High\n- **Location**: main.go:42\n- **Problem**: Bug found.",
+		want:   VerdictFail,
+	},
+}
+
+// TestParseVerdictRealChineseNoFindings runs the verdict parser against the
+// full captured output of roborev review jobs 1927/1937/1946 (2026-11-08/09),
+// where the default pi reviewer wrote a fully Chinese review that states
+// 未发现问题 ("no issues found") — all three were falsely classified as F.
+// These fixtures are the canonical regression inputs.
+func TestParseVerdictRealChineseNoFindings(t *testing.T) {
+	for _, job := range []string{"1927", "1937", "1946"} {
+		name := "fixtures/job " + job + " Chinese no-findings review parses as pass"
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			output, err := os.ReadFile(filepath.Join("testdata", "review_no-findings_zh_"+job+".txt"))
+			assert.NoError(err)
+			assert.Equal(VerdictPass, ParseVerdict(string(output)))
+		})
+	}
 }
 
 func TestClassifyOutput(t *testing.T) {
