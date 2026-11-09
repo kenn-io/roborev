@@ -309,6 +309,19 @@ func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string,
 	}
 	args := a.buildStrictArgs(reasoningEffort(a.Reasoning) != "" && flags[claudeEffortFlag])
 	wantTools := a.strictAllowedTools()
+	wantServers := a.strictMCP.Servers
+	if tools, ok := reviewerToolsFrom(ctx); ok {
+		// The reviewer server is granted by the daemon, not the policy, and
+		// is held to the same startup check as the policy's servers.
+		path, cleanup, err := writeClaudeReviewerConfig(tools)
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		args = claudeReviewerArgs(args, path, tools)
+		wantTools = append(wantTools, claudeReviewerToolNames(tools)...)
+		wantServers = append(slices.Clone(wantServers), ReviewerToolsServer)
+	}
 	if hasSchema {
 		args = append(args, "--json-schema", string(schema))
 		wantTools = append(wantTools, "StructuredOutput")
@@ -329,7 +342,7 @@ func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string,
 			if sw != nil {
 				w = sw
 			}
-			return parseClaudeStrictStreamOrStop(r, w, wantTools, a.strictMCP.Servers, hasSchema, cancel)
+			return parseClaudeStrictStreamOrStop(r, w, wantTools, wantServers, hasSchema, cancel)
 		},
 	})
 	if errors.Is(result.ParseErr, ErrReviewToolPolicy) {
