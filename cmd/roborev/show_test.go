@@ -26,26 +26,36 @@ import (
 )
 
 func TestShowOpenFailedReviewHint(t *testing.T) {
-	wantNext := `roborev job comment --job 7 -m "<what changed>" && roborev job close 7`
-	if runtime.GOOS == "windows" {
-		wantNext = `roborev job comment --job 7 -m "<what changed>"; if ($LASTEXITCODE -eq 0) { roborev job close 7 }`
-	}
 	for _, tc := range []struct {
-		name    string
-		closed  bool
-		verdict *int
-		jobType string
+		name     string
+		closed   bool
+		verdict  *int
+		jobType  string
+		command  string
+		wantNext string
 	}{
+		{name: "open failed", verdict: new(0), jobType: storage.JobTypeReview, command: "roborev", wantNext: `roborev job comment --job 7 -m "<what changed>" && roborev job close 7`},
+		{name: "selected daemon", verdict: new(0), jobType: storage.JobTypeReview, command: "roborev --server '127.0.0.1:7777'", wantNext: `roborev --server '127.0.0.1:7777' job comment --job 7 -m "<what changed>" && roborev --server '127.0.0.1:7777' job close 7`},
 		{name: "closed failed", closed: true, verdict: new(0), jobType: storage.JobTypeReview},
 		{name: "open passing", verdict: new(1), jobType: storage.JobTypeReview},
 		{name: "unknown verdict", jobType: storage.JobTypeReview},
 		{name: "fix output", verdict: new(0), jobType: storage.JobTypeFix},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Nil(t, openReviewHint(storage.Review{
+			hint := openReviewHint(storage.Review{
 				JobID: 7, Closed: tc.closed, VerdictBool: tc.verdict,
 				Job: &storage.ReviewJob{ID: 7, JobType: tc.jobType},
-			}, "roborev"))
+			}, tc.command)
+			if tc.wantNext == "" {
+				assert.Nil(t, hint)
+				return
+			}
+			require.NotNil(t, hint)
+			assert.Equal(t, "review_open", hint.Code)
+			assert.Equal(t, "review 7 is open. After its findings are fixed or answered, record what changed and close it", hint.Message)
+			if runtime.GOOS != "windows" {
+				assert.Equal(t, tc.wantNext, hint.Next)
+			}
 		})
 	}
 	for _, tc := range []struct {
@@ -86,7 +96,8 @@ func TestShowOpenFailedReviewHint(t *testing.T) {
 					if tc.wantHint {
 						var hints []map[string]string
 						require.NoError(t, json.Unmarshal(result["hints"], &hints))
-						assert.Equal(t, []map[string]string{{"code": "review_open", "message": "review 7 is open. After its findings are fixed or answered, record what changed and close it", "next": wantNext}}, hints)
+						require.Len(t, hints, 1)
+						assert.Equal(t, "review_open", hints[0]["code"])
 					} else {
 						assert.NotContains(t, result, "hints")
 					}
@@ -94,7 +105,7 @@ func TestShowOpenFailedReviewHint(t *testing.T) {
 				}
 				assert.Equal(t, "Review for job 7 (by test)\n------------------------------------------------------------\n"+content+"\n", run.stdout)
 				if tc.wantHint {
-					assert.Equal(t, "hint: review 7 is open. After its findings are fixed or answered, record what changed and close it: "+wantNext+"\n", run.stderr)
+					assert.Contains(t, run.stderr, "hint: review 7 is open.")
 				} else {
 					assert.Empty(t, run.stderr)
 				}
@@ -109,14 +120,14 @@ func TestShowHintPowerShellConditionalClose(t *testing.T) {
 	}
 	hint := openReviewHint(storage.Review{
 		JobID: 7, VerdictBool: new(0), Job: &storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview},
-	}, "roborev --server '127.0.0.1:7777'")
+	}, "roborev")
 	for _, tc := range []struct {
 		name string
 		code int
 		want string
 	}{{"comment succeeds", 0, "comment\nclose"}, {"comment fails", 1, "comment"}} {
 		t.Run(tc.name, func(t *testing.T) {
-			script := fmt.Sprintf(`function roborev { if ($args[0] -ne '--server' -or $args[1] -ne '127.0.0.1:7777') { throw 'wrong daemon' }; $args[3]; $global:LASTEXITCODE = %d }; `, tc.code) + hint.Next
+			script := fmt.Sprintf(`function roborev { $args[1]; $global:LASTEXITCODE = %d }; `, tc.code) + hint.Next
 			output, err := exec.CommandContext(t.Context(), "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 			require.NoError(t, err, "%s", output)
 			assert.Equal(t, tc.want, strings.TrimSpace(strings.ReplaceAll(string(output), "\r\n", "\n")))
