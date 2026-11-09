@@ -100,9 +100,10 @@ type WorkerPool struct {
 	// field directly after construction (test-only access).
 	classify agent.LimitClassifier
 
-	// tokenUsageFetcher looks up captured session usage. Nil uses the
-	// configured tokens.FetchForSessionWithConfig path; tests substitute a
-	// deterministic fetcher.
+	// tokenUsageFetcher looks up captured session usage and returns
+	// tokens.ErrSessionWithoutUsage for a session the provider has with no
+	// usage. Nil uses the configured tokens.LookupSessionUsage path; tests
+	// substitute a deterministic fetcher.
 	tokenUsageFetcher func(context.Context, string) (*tokens.Usage, error)
 	// tokenUsageIndexRetryWindow and tokenUsageIndexRetryInterval bound the
 	// fresh-session indexing retry. Tests shorten both values.
@@ -2590,7 +2591,7 @@ func (wp *WorkerPool) fetchTokenUsage(
 	if err != nil {
 		return nil, err
 	}
-	return tokens.FetchForSessionWithConfig(ctx, sessionID, fetchConfig)
+	return tokens.LookupSessionUsage(ctx, sessionID, fetchConfig)
 }
 
 func (wp *WorkerPool) fetchFreshSessionUsage(
@@ -2603,6 +2604,11 @@ func (wp *WorkerPool) fetchFreshSessionUsage(
 
 	for {
 		usage, err := fetcher(retryCtx, sessionID)
+		// Right after a job ends, a session without usage may still be
+		// indexing its token counts, so keep waiting for them.
+		if errors.Is(err, tokens.ErrSessionWithoutUsage) {
+			usage, err = nil, nil
+		}
 		if err != nil {
 			if retryCtx.Err() != nil {
 				return nil, nil

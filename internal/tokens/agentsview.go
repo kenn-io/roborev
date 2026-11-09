@@ -135,7 +135,7 @@ func (cfg FetchConfig) agentsViewUsage(ctx context.Context, id string) (*Usage, 
 	if err := json.UnmarshalRead(resp.Body, &payload); err != nil {
 		return nil, false, fmt.Errorf("parse AgentsView usage output")
 	}
-	usage, err := UsageFromSessionPayload(payload)
+	usage, err := foundSessionUsage(payload)
 	return usage, false, err
 }
 

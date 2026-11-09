@@ -25,6 +25,11 @@ import (
 // the optional provider as a user-visible failure.
 var ErrUsageProviderUnavailable = errors.New("usage provider unavailable")
 
+// ErrSessionWithoutUsage reports that the usage provider has the session but
+// it carries no token or cost data. A session the provider has not indexed
+// yet is not this error: lookups report it as nil usage with no error.
+var ErrSessionWithoutUsage = errors.New("session has no usage data")
+
 // Usage holds token consumption data for a single review job.
 // Stored as JSON in the review_jobs.token_usage column.
 // Fields align with agentsview's session-usage output.
@@ -203,8 +208,23 @@ func FetchForSession(
 }
 
 // FetchForSessionWithConfig queries a configured HTTP endpoint when
-// provided; otherwise it uses the agentsview CLI path.
+// provided; otherwise it uses the agentsview CLI path. It returns nil usage
+// both for a session the provider has not indexed and for one it has with no
+// usage; LookupSessionUsage tells the two apart.
 func FetchForSessionWithConfig(
+	ctx context.Context, sessionID string, cfg FetchConfig,
+) (*Usage, error) {
+	usage, err := LookupSessionUsage(ctx, sessionID, cfg)
+	if errors.Is(err, ErrSessionWithoutUsage) {
+		return nil, nil
+	}
+	return usage, err
+}
+
+// LookupSessionUsage is FetchForSessionWithConfig, except that a session the
+// provider has with no token or cost data returns ErrSessionWithoutUsage.
+// Nil usage with no error means the provider does not have the session.
+func LookupSessionUsage(
 	ctx context.Context, sessionID string, cfg FetchConfig,
 ) (*Usage, error) {
 	if cfg.AgentsViewURL != "" {
@@ -275,7 +295,7 @@ func fetchForSessionCLI(
 	}
 
 	if resp.OutputTokens == 0 && resp.PeakContextTokens == 0 && !hasCost {
-		return nil, nil
+		return nil, ErrSessionWithoutUsage
 	}
 	return &Usage{
 		OutputTokens:      resp.OutputTokens,
@@ -325,11 +345,12 @@ func shouldFallbackToTokenUse(err error) bool {
 func handleSessionUsageError(err error) error {
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		// agentsview usage exit codes: 2 = session not found,
-		// 3 = found but no token/cost data. Both mean "no usage",
-		// not an error.
+		// 3 = found but no token/cost data.
 		switch code := exitErr.ExitCode(); code {
-		case 2, 3:
+		case 2:
 			return nil
+		case 3:
+			return ErrSessionWithoutUsage
 		default:
 			return fmt.Errorf(
 				"agentsview usage: exit %d: %s",
@@ -344,7 +365,10 @@ func handleTokenUseError(out []byte, err error) error {
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		// Earlier token-use versions signalled not-found with exit 1 and
 		// empty output; later versions use the same 2/3 codes as session usage.
-		if exitErr.ExitCode() == 2 || exitErr.ExitCode() == 3 ||
+		if exitErr.ExitCode() == 3 {
+			return ErrSessionWithoutUsage
+		}
+		if exitErr.ExitCode() == 2 ||
 			(exitErr.ExitCode() == 1 && len(out) == 0 && len(exitErr.Stderr) == 0) {
 			return nil
 		}
@@ -389,7 +413,17 @@ func fetchForSessionHTTP(
 	if err := json.UnmarshalRead(resp.Body, &respBody); err != nil {
 		return nil, fmt.Errorf("parse usage endpoint output: %w", err)
 	}
-	return UsageFromSessionPayload(respBody)
+	return foundSessionUsage(respBody)
+}
+
+// foundSessionUsage converts the payload of a session the provider returned,
+// so a valid payload without usage reports ErrSessionWithoutUsage.
+func foundSessionUsage(payload SessionUsagePayload) (*Usage, error) {
+	usage, err := UsageFromSessionPayload(payload)
+	if err == nil && usage == nil {
+		return nil, ErrSessionWithoutUsage
+	}
+	return usage, err
 }
 
 func expandEndpoint(template, sessionID string) (string, error) {
@@ -407,7 +441,10 @@ func expandEndpoint(template, sessionID string) (string, error) {
 }
 
 // UsageFromSessionPayload validates an AgentsView session-usage payload
-// and converts it to roborev's stored usage shape.
+// and converts it to roborev's stored usage shape. A zero count is valid
+// data: some sources record has_token_data with zero totals, and AgentsView's
+// HTTP response has no top-level input_tokens, so peak_context_tokens alone
+// stands in for the input side.
 func UsageFromSessionPayload(resp SessionUsagePayload) (*Usage, error) {
 	if resp.HasTokenData == nil {
 		return nil, fmt.Errorf("usage endpoint schema: missing has_token_data")
@@ -418,7 +455,8 @@ func UsageFromSessionPayload(resp SessionUsagePayload) (*Usage, error) {
 
 	usage := &Usage{}
 	if *resp.HasTokenData {
-		if resp.OutputTokens == nil {
+		if resp.OutputTokens == nil ||
+			(resp.PeakContextTokens == nil && resp.InputTokens == nil) {
 			return nil, fmt.Errorf("usage endpoint schema: missing token counts")
 		}
 		usage.OutputTokens = *resp.OutputTokens
@@ -430,9 +468,6 @@ func UsageFromSessionPayload(resp SessionUsagePayload) (*Usage, error) {
 		}
 		if resp.CachedInputTokens != nil {
 			usage.CachedInputTokens = *resp.CachedInputTokens
-		}
-		if usage.PeakContextTokens == 0 && usage.InputTokens == 0 {
-			return nil, fmt.Errorf("usage endpoint schema: missing token counts")
 		}
 	}
 	if *resp.HasCost {
