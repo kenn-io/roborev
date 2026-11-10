@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/skills"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -903,7 +904,7 @@ func main() {
 
 	newBinary := updatedRoborevBinary(binDir)
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", newBinary, fakeSource)
-	build.Env = os.Environ()
+	build.Env = testenv.UserEnv()
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "build fake roborev: %s", out)
 	t.Setenv("ROBOREV_FAKE_ARGS", argsPath)

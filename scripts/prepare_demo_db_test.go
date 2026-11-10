@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
+
+	"go.kenn.io/roborev/internal/testenv"
 )
 
 var docsScreenshotRepos = []string{"roborev"}
@@ -508,6 +510,7 @@ func runPrepareDemoDBWithTerms(t *testing.T, tempDir, sourceDB, termsFile string
 		"-c",
 		environment+"; exec bash "+shellQuote(bashPath(t, scriptPath)),
 	)
+	cmd.Env = testenv.UserEnv()
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
 	return filepath.Join(tempDir, "roborev-demo-data", "reviews.db")

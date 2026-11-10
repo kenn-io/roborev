@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
-	"strings"
 	"testing"
 )
 
@@ -32,12 +30,7 @@ func RunIsolatedMain(m *testing.M) int {
 	}
 	defer cleanupTempDir()
 
-	restoreGit, err := configureGitForTests(tmpDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to configure git: %v\n", err)
-		return 1
-	}
-	defer restoreGit()
+	configureGitForTests(tmpDir)
 
 	restoreDataDir := setDataDirEnv(tmpDir)
 	defer restoreDataDir()
@@ -120,81 +113,18 @@ func unsetAgentConfigDirEnv() func() {
 	}
 }
 
-// goFileValue follows Go's user-file precedence, including empty values.
-func goFileValue(key, goenv, root string) string {
-	var files []string
-	if goenv != "" && goenv != "off" {
-		files = append(files, goenv)
-	}
-	if root != "" {
-		files = append(files, filepath.Join(root, "go.env"))
-	}
-	for _, file := range files {
-		data, _ := os.ReadFile(file)
-		value, found := "", false
-		for line := range strings.SplitSeq(string(data), "\n") {
-			if v, ok := strings.CutPrefix(line, key+"="); ok {
-				value, found = v, true
-			}
-		}
-		if found {
-			return value
-		}
-	}
-	return ""
+var userEnv []string
+
+// UserEnv restores the original home and config paths for tool subprocesses.
+func UserEnv() []string {
+	return append(os.Environ(), userEnv...)
 }
 
-// configureGitForTests restores every changed variable before fixture removal.
-func configureGitForTests(tmpDir string) (restore func(), err error) {
-	var restores []func()
-	restore = func() {
-		for _, restore := range slices.Backward(restores) {
-			restore()
-		}
+func configureGitForTests(tmpDir string) {
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+		userEnv = append(userEnv, key+"="+os.Getenv(key))
 	}
-	defer func() {
-		if err != nil {
-			restore()
-		}
-	}()
-	set := func(key, value string) error {
-		old, exists := os.LookupEnv(key)
-		if err := os.Setenv(key, value); err != nil {
-			return err
-		}
-		restores = append(restores, func() {
-			if exists {
-				_ = os.Setenv(key, old)
-			} else {
-				_ = os.Unsetenv(key)
-			}
-		})
-		return nil
-	}
-	// Preserve Go's defaults before replacing the home and XDG config paths.
 	home, _ := os.UserHomeDir()
-	cache, _ := os.UserCacheDir()
-	config, _ := os.UserConfigDir()
-	root := os.Getenv("GOROOT")
-	if root == "" {
-		// The runtime identifies the test binary's toolchain even when PATH uses a shim.
-		root = runtime.GOROOT() //nolint:staticcheck
-	}
-	goenv := os.Getenv("GOENV")
-	if goenv == "" && config != "" {
-		goenv = filepath.Join(config, "go", "env")
-		if err = set("GOENV", goenv); err != nil {
-			return
-		}
-	}
-	for _, entry := range [][3]string{{"GOPATH", home, "go"}, {"GOCACHE", cache, "go-build"}} {
-		path := filepath.Join(entry[1], entry[2])
-		if os.Getenv(entry[0]) == "" && entry[1] != "" && goFileValue(entry[0], goenv, root) == "" && (entry[0] != "GOPATH" || path != root) {
-			if err = set(entry[0], path); err != nil {
-				return
-			}
-		}
-	}
 	// Mise selects tools and trusts config from these directories before it
 	// reads its own configuration. Keep their original locations across HOME.
 	for _, entry := range [][3]string{
@@ -218,21 +148,14 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 			}
 		}
 		if base != "" && os.Getenv(entry[0]) == "" {
-			if err = set(entry[0], filepath.Join(base, "mise")); err != nil {
-				return
-			}
+			_ = os.Setenv(entry[0], filepath.Join(base, "mise"))
 		}
 	}
-	// Git-for-Windows cannot read NUL as a config file. A regular file also
-	// works for runners that strip GIT_CONFIG_GLOBAL.
+	// Git-for-Windows cannot read NUL as a config file.
 	global := filepath.Join(tmpDir, ".gitconfig")
-	if err = os.WriteFile(global, nil, 0o644); err != nil {
-		return
-	}
+	_ = os.WriteFile(global, nil, 0o644)
 	xdg := filepath.Join(tmpDir, "xdg-config")
-	if err = os.MkdirAll(xdg, 0o755); err != nil {
-		return
-	}
+	_ = os.MkdirAll(xdg, 0o755)
 	for _, entry := range [][2]string{
 		{"HOME", tmpDir},
 		{"USERPROFILE", tmpDir},
@@ -241,9 +164,6 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 		{"XDG_CONFIG_HOME", xdg},
 		{"GIT_TERMINAL_PROMPT", "0"},
 	} {
-		if err = set(entry[0], entry[1]); err != nil {
-			return
-		}
+		_ = os.Setenv(entry[0], entry[1])
 	}
-	return
 }
