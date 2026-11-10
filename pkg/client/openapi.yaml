@@ -4688,10 +4688,63 @@ components:
       required:
         - panel_run_uuid
       type: object
+    StructuredReviewCheck:
+      additionalProperties: false
+      description: How the CI checker judged the review's findings before roborev stored and posted it.
+      properties:
+        findings:
+          description: One entry per finding the checker received, in that order. Kept entries keep their order in the document's findings. Empty when status is failed.
+          items:
+            $ref: "#/components/schemas/StructuredReviewCheckedFinding"
+          type: array
+        status:
+          description: completed when the checker returned verdicts, or failed when it ran but the review was stored unchecked.
+          type: string
+      required:
+        - status
+        - findings
+      type: object
+    StructuredReviewCheckVerdict:
+      additionalProperties: false
+      description: One verdict as the CI checker returned it. A member the checker left blank is omitted.
+      properties:
+        evidence:
+          description: The command the checker ran and its output, or what refutes the finding.
+          type: string
+        keep:
+          description: The checker's decision to keep the finding.
+          type: boolean
+        reason:
+          description: The checker's one-sentence explanation.
+          type: string
+      type: object
+    StructuredReviewCheckedFinding:
+      additionalProperties: false
+      description: One finding the CI checker tried and what became of it.
+      properties:
+        finding:
+          $ref: "#/components/schemas/StructuredReviewFinding"
+          description: The finding as the checker received it, before any rewrite.
+        outcome:
+          description: kept when the finding stayed in the review, or dropped when the checker refuted it and roborev removed it.
+          type: string
+        verdicts:
+          description: Every verdict the checker returned for this finding. A finding drops only with exactly one verdict whose keep is false and whose evidence and reason are both set; otherwise it is kept, including when this list is empty.
+          items:
+            $ref: "#/components/schemas/StructuredReviewCheckVerdict"
+          type: array
+      required:
+        - outcome
+        - finding
+        - verdicts
+      type: object
     StructuredReviewDocument:
       additionalProperties: false
       description: The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.
       properties:
+        check:
+          $ref: "#/components/schemas/StructuredReviewCheck"
+          description: The CI checker's record for this review. Omitted when no checker ran.
         findings:
           items:
             $ref: "#/components/schemas/StructuredReviewFinding"

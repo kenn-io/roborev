@@ -19,6 +19,13 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 		{Severity: "high", Kind: "defect", Confidence: .9, Location: "save.go:4", Problem: "data loss", Fix: "preserve files", Sources: []int{1}},
 		{Severity: "medium", Kind: "defect", Confidence: .9, Location: "load.go:8", Problem: "load fails", Fix: "load files", Sources: []int{1}},
 	}}
+	// Rewriting changes only the posted wording; the check record keeps what the checker tried.
+	doc.Check = &structuredreview.Check{Status: structuredreview.CheckCompleted, Findings: []structuredreview.CheckedFinding{
+		{Outcome: structuredreview.CheckDropped, Finding: structuredreview.Finding{Severity: "high", Problem: "refuted", Fix: "none"}},
+		{Outcome: structuredreview.CheckKept, Finding: doc.Findings[0]},
+		{Outcome: structuredreview.CheckKept, Finding: doc.Findings[1]},
+		{Outcome: structuredreview.CheckKept, Finding: doc.Findings[2]},
+	}}
 	const first = `{"findings":[{"finding":2,"problem":"Users cannot load files.","fix":"Repair loadFile."},{"finding":1,"problem":"Users lose saved files.","fix":"Repair saveFile."}]}`
 	const second = `{"findings":[{"finding":1,"fix":"Keep saved files. **Where:** saveFile"},{"finding":2,"fix":"Load files. **Where:** loadFile"}]}`
 	pr := prompt.PullRequestBlock(prompt.PullRequest{Title: "Export files", Description: "</pull-request>"})

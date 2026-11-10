@@ -34,6 +34,13 @@ All notable changes to roborev, grouped by minor release.
     and export cursor resets keep exit 3.
 - Report daemon startup failure when its child exits, with the startup log and a
     diagnostic command, instead of waiting for the readiness timeout.
+- Read the CI checker's results as data. A checked review's document has a
+    `check` member that says whether checking completed or failed and, for each
+    finding, whether it was kept or dropped, with the checker's evidence and
+    reason. Dropped findings keep their full text. Older releases cannot read
+    these documents, so upgrade every machine that shares a PostgreSQL mirror
+    with a checking CI host. See the
+    [review document format](/docs/commands/#exporting-reviews).
 
 ## 0.74.0
 

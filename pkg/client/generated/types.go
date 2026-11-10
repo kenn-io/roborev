@@ -4307,8 +4307,90 @@ func (s StartPanelSynthesisInputBody) Validate() error {
 	return errors
 }
 
+// StructuredReviewCheck How the CI checker judged the review's findings before roborev stored and posted it.
+type StructuredReviewCheck struct {
+	// Findings One entry per finding the checker received, in that order. Kept entries keep their order in the document's findings. Empty when status is failed.
+	Findings []StructuredReviewCheckedFinding `json:"findings" validate:"required"`
+
+	// Status completed when the checker returned verdicts, or failed when it ran but the review was stored unchecked.
+	Status string `json:"status" validate:"required"`
+}
+
+func (s StructuredReviewCheck) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Findings, "required"); err != nil {
+		errors = errors.Append("Findings", err)
+	}
+	for i, item := range s.Findings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Findings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(s.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+// StructuredReviewCheckVerdict One verdict as the CI checker returned it. A member the checker left blank is omitted.
+type StructuredReviewCheckVerdict struct {
+	// Evidence The command the checker ran and its output, or what refutes the finding.
+	Evidence *string `json:"evidence,omitempty"`
+
+	// Keep The checker's decision to keep the finding.
+	Keep *bool `json:"keep,omitempty"`
+
+	// Reason The checker's one-sentence explanation.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// StructuredReviewCheckedFinding One finding the CI checker tried and what became of it.
+type StructuredReviewCheckedFinding struct {
+	// Finding One finding in a structured review document.
+	Finding StructuredReviewFinding `json:"finding"`
+
+	// Outcome kept when the finding stayed in the review, or dropped when the checker refuted it and roborev removed it.
+	Outcome string `json:"outcome" validate:"required"`
+
+	// Verdicts Every verdict the checker returned for this finding. A finding drops only with exactly one verdict whose keep is false and whose evidence and reason are both set; otherwise it is kept, including when this list is empty.
+	Verdicts []StructuredReviewCheckVerdict `json:"verdicts" validate:"required"`
+}
+
+func (s StructuredReviewCheckedFinding) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.Finding).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Finding", err)
+		}
+	}
+	if err := typesValidator.Var(s.Outcome, "required"); err != nil {
+		errors = errors.Append("Outcome", err)
+	}
+	if err := typesValidator.Var(s.Verdicts, "required"); err != nil {
+		errors = errors.Append("Verdicts", err)
+	}
+	for i, item := range s.Verdicts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Verdicts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 // StructuredReviewDocument The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.
 type StructuredReviewDocument struct {
+	// Check How the CI checker judged the review's findings before roborev stored and posted it.
+	Check    *StructuredReviewCheck    `json:"check,omitempty"`
 	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
 
 	// SchemaVersion Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3.
@@ -4324,6 +4406,13 @@ type StructuredReviewDocument struct {
 
 func (s StructuredReviewDocument) Validate() error {
 	var errors runtime.ValidationErrors
+	if s.Check != nil {
+		if v, ok := any(s.Check).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Check", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(s.Findings, "required"); err != nil {
 		errors = errors.Append("Findings", err)
 	}

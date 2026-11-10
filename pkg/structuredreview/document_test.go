@@ -173,3 +173,99 @@ func TestMarkdownLeavesKindTopicAndConfidenceOut(t *testing.T) {
 		assert.NotContains(got, word, "rendered reviews are posted to pull requests and must not carry kind, topic, or confidence")
 	}
 }
+
+func checkedTestDocument() Document {
+	keep, drop := true, false
+	kept := Finding{Severity: "high", Kind: KindDefect, Confidence: 0.9, Problem: "Saves lose data.", Fix: "Flush before rename.", Sources: []int{1}}
+	kept.SetLocation("save.go", 10, 12)
+	dropped := Finding{Severity: "medium", Kind: KindDefect, Confidence: 0.6, Problem: "Build breaks.", Fix: "Add the import.", Sources: []int{1}}
+	unjudged := Finding{Severity: "low", Kind: KindImprovement, Confidence: 0.4, Problem: "Name is unclear.", Fix: "Rename it.", Sources: []int{1}}
+	return Document{
+		SchemaVersion: SchemaVersion, Summary: "2 findings.", Verdict: VerdictFail,
+		SourceLabels: []string{"codex"}, Findings: []Finding{kept, unjudged},
+		Check: &Check{Status: CheckCompleted, Findings: []CheckedFinding{
+			{Outcome: CheckKept, Finding: kept, Verdicts: []CheckVerdict{{Keep: &keep, Evidence: "go test ./save: FAIL", Reason: "The test loses the file."}}},
+			{Outcome: CheckDropped, Finding: dropped, Verdicts: []CheckVerdict{{Keep: &drop, Evidence: "go build ./...: ok", Reason: "The import exists."}}},
+			{Outcome: CheckKept, Finding: unjudged},
+		}},
+	}
+}
+
+func TestCheckRecordWireShape(t *testing.T) {
+	raw, err := json.Marshal(checkedTestDocument())
+	require.NoError(t, err)
+	var wire struct {
+		Check struct {
+			Status   string `json:"status"`
+			Findings []struct {
+				Outcome  string           `json:"outcome"`
+				Finding  map[string]any   `json:"finding"`
+				Verdicts []map[string]any `json:"verdicts"`
+			} `json:"findings"`
+		} `json:"check"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &wire))
+
+	assert := assert.New(t)
+	assert.Equal(CheckCompleted, wire.Check.Status)
+	require.Len(t, wire.Check.Findings, 3)
+	dropped := wire.Check.Findings[1]
+	assert.Equal(CheckDropped, dropped.Outcome)
+	assert.Equal("Build breaks.", dropped.Finding["problem"], "a dropped finding keeps its content")
+	assert.Contains(dropped.Finding, "location", "checked findings use the finding wire shape")
+	assert.Nil(dropped.Finding["location"])
+	assert.Equal([]map[string]any{{"keep": false, "evidence": "go build ./...: ok", "reason": "The import exists."}}, dropped.Verdicts)
+	assert.Equal("save.go:10-12", wire.Check.Findings[0].Finding["location"])
+	assert.NotNil(wire.Check.Findings[2].Verdicts, "a finding without verdicts encodes an empty list")
+	assert.Empty(wire.Check.Findings[2].Verdicts)
+}
+
+func TestCheckRecordRoundTrips(t *testing.T) {
+	blank := checkedTestDocument()
+	blank.Check.Findings[2].Verdicts = []CheckVerdict{{}}
+	failed := Document{
+		SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail,
+		Findings: []Finding{{Severity: "low", Kind: KindDefect, Confidence: 1, Problem: "p", Fix: "f"}},
+		Check:    &Check{Status: CheckFailed},
+	}
+	for name, doc := range map[string]Document{"completed": checkedTestDocument(), "blank verdict": blank, "failed": failed} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := json.Marshal(doc)
+			require.NoError(t, err)
+			got, err := Decode(raw)
+			require.NoError(t, err)
+			assert.Equal(t, doc, got)
+		})
+	}
+}
+
+func TestDecodeRejectsInvalidCheckRecords(t *testing.T) {
+	const finding = `{"severity":"low","kind":"defect","confidence":1,"problem":"p","fix":"f"}`
+	tests := []struct {
+		name, doc, want string
+	}{
+		{name: "unknown status", doc: `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"skipped","findings":[]}}`, want: `invalid status "skipped"`},
+		{name: "failed with findings", doc: `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"failed","findings":[{"outcome":"kept","finding":` + finding + `,"verdicts":[]}]}}`, want: "cannot list findings"},
+		{name: "unknown outcome", doc: `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"refuted","finding":` + finding + `,"verdicts":[]}]}}`, want: `invalid outcome "refuted"`},
+		{name: "missing finding", doc: `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","verdicts":[]}]}}`, want: "has no finding"},
+		{name: "invalid finding", doc: `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"urgent","problem":"p","fix":"f"},"verdicts":[]}]}}`, want: `invalid severity "urgent"`},
+		{name: "unknown verdict member", doc: `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":` + finding + `,"verdicts":[{"keep":true,"score":1}]}]}}`, want: "score"},
+		{name: "older version", doc: `{"schema_version":2,"summary":"s","verdict":"fail","findings":[],"check":{"status":"failed","findings":[]}}`, want: "check needs schema_version 3"},
+		{name: "legacy document", doc: `{"schema_version":0,"legacy":{"markdown":"m","recorded_verdict":null},"check":{"status":"failed","findings":[]}}`, want: "legacy document cannot contain"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(jsontext.Value(tc.doc))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestMarkdownLeavesTheCheckRecordOut(t *testing.T) {
+	checked := checkedTestDocument()
+	unchecked := checked
+	unchecked.Check = nil
+	assert.Equal(t, unchecked.Markdown("medium"), checked.Markdown("medium"),
+		"rendered reviews are posted to pull requests and must not change when a checker ran")
+}
