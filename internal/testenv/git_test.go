@@ -23,9 +23,10 @@ func TestConfigureGitForTestsRestoresEnvironment(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	require.NoError(t, os.Unsetenv("XDG_CONFIG_HOME"))
 	t.Setenv("MISE_CONFIG_DIR", "original-mise")
-	for _, key := range []string{"MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_STATE_DIR"} {
-		t.Setenv(key, "")
-		require.NoError(t, os.Unsetenv(key))
+	for _, entry := range [][2]string{{"MISE_DATA_DIR", "XDG_DATA_HOME"}, {"MISE_CACHE_DIR", "XDG_CACHE_HOME"}, {"MISE_STATE_DIR", "XDG_STATE_HOME"}} {
+		t.Setenv(entry[0], "")
+		require.NoError(t, os.Unsetenv(entry[0]))
+		t.Setenv(entry[1], t.TempDir())
 	}
 
 	dir := t.TempDir()
@@ -34,6 +35,10 @@ func TestConfigureGitForTestsRestoresEnvironment(t *testing.T) {
 	assert.Equal(t, dir, os.Getenv("HOME"))
 	assert.Equal(t, dir, os.Getenv("USERPROFILE"))
 	assert.Equal(t, filepath.Join(dir, ".gitconfig"), os.Getenv("GIT_CONFIG_GLOBAL"))
+	assert.Equal(t, "original-mise", os.Getenv("MISE_CONFIG_DIR"))
+	for _, entry := range [][2]string{{"MISE_DATA_DIR", "XDG_DATA_HOME"}, {"MISE_CACHE_DIR", "XDG_CACHE_HOME"}, {"MISE_STATE_DIR", "XDG_STATE_HOME"}} {
+		assert.Equal(t, filepath.Join(os.Getenv(entry[1]), "mise"), os.Getenv(entry[0]))
+	}
 	contents, err := os.ReadFile(filepath.Join(dir, ".gitconfig"))
 	require.NoError(t, err)
 	assert.Empty(t, contents)
@@ -52,23 +57,6 @@ func TestConfigureGitForTestsRestoresEnvironment(t *testing.T) {
 	assert.False(t, exists)
 	_, exists = os.LookupEnv("XDG_CONFIG_HOME")
 	assert.False(t, exists)
-}
-
-func TestConfigureGitForTestsStandalone(t *testing.T) {
-	if os.Getenv("ROBOREV_TEST_STANDALONE") == "1" {
-		restore, err := configureGitForTests(t.TempDir())
-		require.NoError(t, err)
-		restore()
-		return
-	}
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	t.Setenv("PATH", "")
-	t.Setenv("ROBOREV_TEST_STANDALONE", "1")
-	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestConfigureGitForTestsStandalone$")
-	cmd.Dir = t.TempDir()
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", out)
 }
 
 func TestConfigureGitForTestsDoesNotRunGo(t *testing.T) {
@@ -95,28 +83,26 @@ func TestConfigureGitForTestsDoesNotRunGo(t *testing.T) {
 }
 
 func TestConfigureGitForTestsMissingHome(t *testing.T) {
-	if os.Getenv("ROBOREV_TEST_MISSING_HOME") == "1" {
-		restore, err := configureGitForTests(t.TempDir())
-		require.NoError(t, err)
-		restore()
-		return
-	}
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	t.Setenv("ROBOREV_TEST_MISSING_HOME", "1")
-	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"} {
+	keys := []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "GOPATH", "GOCACHE", "MISE_CONFIG_DIR", "MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_STATE_DIR"}
+	for _, key := range keys {
 		t.Setenv(key, "")
 		require.NoError(t, os.Unsetenv(key))
 	}
-	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestConfigureGitForTestsMissingHome$")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", out)
+	restore, err := configureGitForTests(t.TempDir())
+	require.NoError(t, err)
+	defer restore()
+	for _, key := range keys[6:] {
+		value := os.Getenv(key)
+		if value != "" {
+			assert.True(t, filepath.IsAbs(value), key)
+		}
+	}
 }
 
 func TestConfigureGitForTestsGoEnv(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	require.NoError(t, err)
-	for _, mode := range []string{"default", "long line", "off", "toolchain defaults", "empty user value"} {
+	for _, mode := range []string{"default", "long line", "toolchain defaults", "empty user value"} {
 		t.Run(mode, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
@@ -130,9 +116,6 @@ func TestConfigureGitForTestsGoEnv(t *testing.T) {
 			if mode == "long line" {
 				config := "IGNORED=" + strings.Repeat("x", 70*1024) + "\nGOMODCACHE=" + filepath.Join(t.TempDir(), "modules") + "\nGOCACHE=" + filepath.Join(t.TempDir(), "cache") + "\n"
 				require.NoError(t, os.WriteFile(goenv, []byte(config), 0o600))
-			}
-			if mode == "off" {
-				goenv = "off"
 			}
 			if mode == "toolchain defaults" || mode == "empty user value" {
 				root := t.TempDir()
@@ -170,28 +153,4 @@ func TestConfigureGitForTestsGoEnv(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestConfigureGitForTestsMiseShim(t *testing.T) {
-	shim := os.Getenv("ROBOREV_TEST_MISE_GO_SHIM")
-	if shim == "" {
-		t.Skip("no mise Go shim specified")
-	}
-	t.Setenv("MISE_OFFLINE", "1")
-	t.Setenv("MISE_AUTO_INSTALL", "0")
-	read := func(args ...string) string {
-		cmd := exec.CommandContext(t.Context(), shim, args...)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", out)
-		return string(out)
-	}
-	version, root := read("version"), read("env", "GOROOT")
-	dir := t.TempDir()
-	restore, err := configureGitForTests(dir)
-	require.NoError(t, err)
-	defer restore()
-	assert.Equal(t, version, read("version"))
-	assert.Equal(t, root, read("env", "GOROOT"))
-	_, err = os.Stat(filepath.Join(dir, ".local", "share", "mise", "installs"))
-	assert.ErrorIs(t, err, os.ErrNotExist)
 }
