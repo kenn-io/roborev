@@ -94,7 +94,7 @@ func TestCICommentMinConfidence(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, global.Validate())
 			require.NoError(t, repo.Validate())
-			assert.Equal(t, tc.want, ResolveCICommentMinConfidence(&repo, &global))
+			assert.InDelta(t, tc.want, ResolveCICommentMinConfidence(&repo, &global), 0)
 		})
 	}
 	assert.Zero(t, ResolveCICommentMinConfidence(nil, nil))

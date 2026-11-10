@@ -18,9 +18,6 @@ type CommentConfig struct {
 	MinSeverity string
 	// MinConfidence filters stated structured confidence; zero disables it.
 	MinConfidence float64
-	// RankFindings enables synthesis publication ranking by severity, sources, and confidence.
-	// Other publishers retain their existing stable severity order.
-	RankFindings bool
 	// MaxFindings limits structured findings; zero leaves them unlimited.
 	MaxFindings int
 	// FullReviewReference points to the complete review when findings are omitted.
@@ -41,7 +38,6 @@ type PreparedComment struct {
 }
 
 type commentFinding struct {
-	rank     StructuredFinding
 	severity string
 	problem  string
 	fix      string
@@ -68,8 +64,11 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	if doc != nil {
 		comment.structured = true
 		for _, finding := range doc.Findings {
+			if finding.Kind != "" && finding.Confidence < cfg.MinConfidence {
+				continue
+			}
 			findings = append(findings, commentFinding{
-				rank: finding, severity: finding.Severity, problem: finding.Problem,
+				severity: finding.Severity, problem: finding.Problem,
 				fix: finding.Fix, location: finding.Location,
 			})
 		}
@@ -98,17 +97,11 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	threshold := config.SeverityRank(comment.minSeverity)
 	for _, finding := range findings {
 		if finding.severity == "" || config.SeverityRank(finding.severity) >= threshold {
-			if comment.structured && finding.rank.Kind != "" && finding.rank.Confidence < cfg.MinConfidence {
-				continue
-			}
 			comment.findings = append(comment.findings, finding)
 		}
 	}
 	if comment.structured {
 		slices.SortStableFunc(comment.findings, func(a, b commentFinding) int {
-			if cfg.RankFindings {
-				return compareFindingRank(a.rank, b.rank)
-			}
 			return config.SeverityRank(b.severity) - config.SeverityRank(a.severity)
 		})
 		if cfg.MaxFindings > 0 && len(comment.findings) > cfg.MaxFindings {

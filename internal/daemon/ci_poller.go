@@ -2962,7 +2962,6 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	maxFindings, minConfidence, whenClean := p.resolveCommentPolicy(row.GithubRepo)
 	commentConfig.MaxFindings = maxFindings
 	commentConfig.MinConfidence = minConfidence
-	commentConfig.RankFindings = true
 	commentConfig.FullReviewReference = fmt.Sprintf("roborev show --job %d", synth.ID)
 	prepared := preparePanelReviewComment(commentConfig, rev)
 	body := formatPreparedPanelPRCommentWithHead(

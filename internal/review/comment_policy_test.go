@@ -123,13 +123,13 @@ func TestCommentMinConfidence(t *testing.T) {
 		want    []string
 		omitted int
 	}{
-		{"off", 0, 0, []string{"critical", "supported", "confident", "at floor", "below floor", "legacy confidence", "explicit zero"}, 0},
-		{"inclusive floor", 0.7, 0, []string{"critical", "supported", "confident", "at floor", "legacy confidence"}, 0},
-		{"cap after filters", 0.7, 2, []string{"critical", "supported"}, 3},
+		{"off", 0, 0, []string{"critical", "legacy confidence", "explicit zero", "below floor", "at floor", "confident", "supported"}, 0},
+		{"inclusive floor", 0.7, 0, []string{"critical", "legacy confidence", "at floor", "confident", "supported"}, 0},
+		{"cap after filters", 0.7, 3, []string{"critical", "legacy confidence", "at floor"}, 2},
 		{"missing survives", 1, 0, []string{"legacy confidence"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			prepared := PrepareComment(CommentConfig{MinSeverity: "high", MinConfidence: tc.floor, RankFindings: true, MaxFindings: tc.cap}, ReviewResult{Structured: &doc})
+			prepared := PrepareComment(CommentConfig{MinSeverity: "high", MinConfidence: tc.floor, MaxFindings: tc.cap}, ReviewResult{Structured: &doc})
 			var got []string
 			for _, finding := range prepared.findings {
 				got = append(got, finding.problem)
@@ -139,14 +139,6 @@ func TestCommentMinConfidence(t *testing.T) {
 			assert.Equal(t, original, doc.Findings)
 		})
 	}
-	// Publishers that do not opt into daemon policy keep their stable severity order.
-	unfiltered := PrepareComment(CommentConfig{MinSeverity: "high"}, ReviewResult{Structured: &doc})
-	var unfilteredProblems []string
-	for _, finding := range unfiltered.findings {
-		unfilteredProblems = append(unfilteredProblems, finding.problem)
-	}
-	assert.Equal(t, []string{"critical", "legacy confidence", "explicit zero", "below floor", "at floor", "confident", "supported"}, unfilteredProblems)
-
 	empty := PrepareComment(CommentConfig{MinConfidence: 0.7}, ReviewResult{Structured: &StructuredReview{Findings: []StructuredFinding{{Severity: "high", Kind: "defect", Confidence: 0}}}})
 	assert.True(t, empty.IsClean())
 	assert.Contains(t, FormatComment(empty), "No findings match the comment filters.")

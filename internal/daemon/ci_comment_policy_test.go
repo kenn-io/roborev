@@ -272,8 +272,8 @@ func TestCIPanelCommentMinConfidence(t *testing.T) {
 	document := reviewpkg.StructuredReview{SchemaVersion: 3, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
 		{Severity: "critical", Kind: "defect", Confidence: 0, Problem: "Filtered confidence.", Fix: "Fix it."},
 		{Severity: "low", Kind: "defect", Confidence: 1, Problem: "Filtered severity.", Fix: "Fix it."},
-		{Severity: "high", Kind: "defect", Confidence: 0.8, Problem: "Eligible omitted.", Fix: "Fix it."},
-		{Severity: "high", Kind: "defect", Confidence: 0.9, Problem: "Published finding.", Fix: "Fix it."},
+		{Severity: "high", Kind: "defect", Confidence: 0.8, Problem: "Published finding.", Fix: "Fix it."},
+		{Severity: "high", Kind: "defect", Confidence: 0.9, Problem: "Eligible omitted.", Fix: "Fix it."},
 	}}
 	raw, err := json.Marshal(document)
 	require.NoError(t, err)

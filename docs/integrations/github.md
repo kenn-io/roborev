@@ -758,10 +758,9 @@ comment_when_clean = true # Create comments even when no findings survive
 ```
 
 Set `comment_max_findings` to a positive integer to show that many structured
-findings after severity and confidence filtering. Comments rank a copy by
-severity (critical, high, medium, low), then source count, then confidence,
-highest first. Exact ties preserve their original order. Publication never
-merges findings. An overflow line counts only findings omitted by the cap and
+findings after severity and confidence filtering. Comments show critical
+findings first, then high, medium, and low, preserving the stored order within
+each severity. An overflow line counts only findings omitted by the cap and
 points to `roborev show --job <synthesis-job-id>` for the complete review.
 Negative caps are invalid, including when loading, saving, or reloading global
 configuration. The omission count and retrieval command remain visible when a
