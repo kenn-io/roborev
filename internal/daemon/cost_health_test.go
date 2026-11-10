@@ -28,13 +28,11 @@ import (
 func installCostSourceFixture(t *testing.T, dir string) string {
 	t.Helper()
 	marker := filepath.Join(dir, "executed")
-	name := "agentsview"
 	script := fmt.Sprintf("#!/bin/sh\nprintf executed > %q\nexit 1\n", marker)
 	if runtime.GOOS == "windows" {
-		name += ".cmd"
 		script = fmt.Sprintf("@echo off\r\necho executed > \"%s\"\r\nexit /b 1\r\n", marker)
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755))
+	t.Cleanup(testutil.MockBinaryInPath(t, "agentsview", script))
 	return marker
 }
 
@@ -111,10 +109,24 @@ func TestHealthReportsMissingCostSourceAndConfigChanges(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code)
 		health := decodeHealthStatus(t, response)
 		assert.Equal(t, provider != "none", health.Healthy)
-		assert.Equal(t, provider != "none", health.Ready)
+		assert.True(t, health.Ready, "missing accounting does not block review work")
 		assert.Contains(t, health.Components, costSourceHealth(cfg))
 		assert.Empty(t, health.RecentErrors, "health requests must not log repeated warnings")
 	}
+}
+
+func TestHealthMissingCostSourcePreservesCIRecovery(t *testing.T) {
+	h, server, _ := recoveringCIHealth(t)
+	t.Setenv("PATH", t.TempDir())
+	h.Cfg.Cost.Endpoint = ""
+	server.agentHealth.run = func(_ context.Context, _ *config.Config) storage.ComponentHealth {
+		return storage.ComponentHealth{Name: "agents", Healthy: true}
+	}
+	health, ci := readCIHealth(t, server)
+	assert.False(t, health.Healthy)
+	assert.True(t, health.Ready)
+	assert.Contains(t, health.Components, costSourceHealth(h.Cfg))
+	require.NotNil(t, ci.Recovery, "missing accounting must not hide review retry recovery")
 }
 
 func TestCostSourceStartupWarning(t *testing.T) {

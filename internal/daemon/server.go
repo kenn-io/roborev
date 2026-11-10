@@ -4109,11 +4109,6 @@ func (s *Server) humaGetHealth(
 		allHealthy = false
 	}
 	components = append(components, agents)
-	cost := costSourceHealth(cfg)
-	if !cost.Healthy {
-		allHealthy = false
-	}
-	components = append(components, cost)
 
 	if s.syncWorker != nil {
 		syncHealthy, syncMessage := s.syncWorker.HealthCheck()
@@ -4140,6 +4135,13 @@ func (s *Server) humaGetHealth(
 		}
 		components = append(components, ci)
 	}
+	// Missing accounting data degrades health without blocking review work
+	// or hiding the CI recovery that explains an outstanding review failure.
+	cost := costSourceHealth(cfg)
+	if !cost.Healthy {
+		allHealthy = false
+	}
+	components = append(components, cost)
 
 	var recentErrors []storage.ErrorEntry
 	var errorCount24h int
