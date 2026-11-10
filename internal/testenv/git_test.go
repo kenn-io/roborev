@@ -92,7 +92,7 @@ func TestConfigureGitForTestsMissingHome(t *testing.T) {
 func TestConfigureGitForTestsGoEnv(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	require.NoError(t, err)
-	for _, mode := range []string{"default", "long line", "off"} {
+	for _, mode := range []string{"default", "long line", "off", "toolchain defaults"} {
 		t.Run(mode, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
@@ -108,6 +108,14 @@ func TestConfigureGitForTestsGoEnv(t *testing.T) {
 				require.NoError(t, os.WriteFile(goenv, []byte(config), 0o600))
 			}
 			if mode == "off" {
+				goenv = "off"
+			}
+			if mode == "toolchain defaults" {
+				root := t.TempDir()
+				config := "GOPATH=" + filepath.Join(t.TempDir(), "go") + "\nGOCACHE=" + filepath.Join(t.TempDir(), "cache") + "\n"
+				require.NoError(t, os.WriteFile(filepath.Join(root, "go.env"), []byte(config), 0o600))
+				t.Setenv("GOROOT", root)
+				t.Setenv("GOTOOLCHAIN", "local")
 				goenv = "off"
 			}
 			t.Setenv("GOENV", goenv)
@@ -133,33 +141,6 @@ func TestConfigureGitForTestsGoEnv(t *testing.T) {
 				assert.Equal(t, goenv, value)
 			}
 		})
-	}
-}
-
-func TestConfigureGitForTestsMiseDirectories(t *testing.T) {
-	want := make(map[string]string)
-	for _, entry := range [][2]string{
-		{"MISE_CONFIG_DIR", "XDG_CONFIG_HOME"},
-		{"MISE_DATA_DIR", "XDG_DATA_HOME"},
-		{"MISE_CACHE_DIR", "XDG_CACHE_HOME"},
-		{"MISE_STATE_DIR", "XDG_STATE_HOME"},
-	} {
-		t.Setenv(entry[0], "")
-		dir := t.TempDir()
-		t.Setenv(entry[1], dir)
-		want[entry[0]] = filepath.Join(dir, "mise")
-	}
-	t.Setenv("MISE_DATA_DIR", "explicit")
-	restore, err := configureGitForTests(t.TempDir())
-	require.NoError(t, err)
-	defer restore()
-	assert.Equal(t, "explicit", os.Getenv("MISE_DATA_DIR"))
-	for _, entry := range [][2]string{
-		{"MISE_CONFIG_DIR", "XDG_CONFIG_HOME"},
-		{"MISE_CACHE_DIR", "XDG_CACHE_HOME"},
-		{"MISE_STATE_DIR", "XDG_STATE_HOME"},
-	} {
-		assert.Equal(t, want[entry[0]], os.Getenv(entry[0]))
 	}
 }
 

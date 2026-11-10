@@ -4,12 +4,14 @@
 package testenv
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -149,7 +151,6 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 	}
 	// Preserve Go's defaults before replacing the home and XDG config paths.
 	home, _ := os.UserHomeDir()
-	cache, _ := os.UserCacheDir()
 	config, _ := os.UserConfigDir()
 	goenv := os.Getenv("GOENV")
 	if goenv == "" && config != "" {
@@ -158,23 +159,18 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 			return
 		}
 	}
-	goConfig := make(map[string]string)
-	if goenv != "" && goenv != "off" {
-		if data, readErr := os.ReadFile(goenv); readErr == nil {
-			for line := range strings.SplitSeq(string(data), "\n") {
-				if key, value, ok := strings.Cut(line, "="); ok && key != "" && key[0] >= 'A' && key[0] <= 'Z' {
-					goConfig[key] = value
+	// TestMain has no caller context. Go is optional for test binaries that
+	// don't build subprocesses, so leave its paths alone if it is unavailable.
+	cmd := exec.CommandContext(context.Background(), "go", "env", "-json", "GOPATH", "GOCACHE")
+	if output, runErr := cmd.Output(); runErr == nil {
+		var paths map[string]string
+		if json.Unmarshal(output, &paths) == nil {
+			for _, key := range []string{"GOPATH", "GOCACHE"} {
+				if os.Getenv(key) == "" && paths[key] != "" {
+					if err = set(key, paths[key]); err != nil {
+						return
+					}
 				}
-			}
-		}
-	}
-	for _, entry := range [][3]string{
-		{"GOPATH", home, "go"},
-		{"GOCACHE", cache, "go-build"},
-	} {
-		if entry[1] != "" && os.Getenv(entry[0]) == "" && goConfig[entry[0]] == "" {
-			if err = set(entry[0], filepath.Join(entry[1], entry[2])); err != nil {
-				return
 			}
 		}
 	}
