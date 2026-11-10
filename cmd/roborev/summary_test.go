@@ -273,7 +273,7 @@ func TestPrintFindingSummaryReasons(t *testing.T) {
 	}
 	printFindingSummary(cmd, &f)
 	assert.Contains(t, out.String(), "false-positive: 1 | spurious: 2 | risk-accepted: 3 | unspecified: 4")
-	assert.Contains(t, out.String(), "K coverage (unavailable): 0/10 mapped, 0/10 readable")
+	assert.Contains(t, out.String(), "K coverage (unavailable): 0/10 mapped, 0/10 readable | explicit reasons: 0/0 refutes\n")
 	assert.Contains(t, out.String(), "Confirmed share")
 	assert.Contains(t, out.String(), "Risk-accepted")
 }

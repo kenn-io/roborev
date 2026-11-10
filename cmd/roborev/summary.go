@@ -441,7 +441,7 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 	if state == "" {
 		state = "unavailable"
 	}
-	cmd.Printf("  K coverage (%s): %d/%d mapped, %d/%d readable | labeled: %d | explicit reasons: %d/%d refutes\n", state, k.Mapped, k.Eligible, k.Readable, k.Eligible, k.Labeled, k.ExplicitReasons, k.Refutes)
+	cmd.Printf("  K coverage (%s): %d/%d mapped, %d/%d readable | explicit reasons: %d/%d refutes\n", state, k.Mapped, k.Eligible, k.Readable, k.Eligible, k.ExplicitReasons, k.Refutes)
 	cmd.Printf("  K evidence: %d ineligible, %d unmapped, %d unavailable (%d incomplete, %d stale), %d invalid, %d conflicting, %d excluded, %d edited\n", k.Ineligible, k.Unmapped, k.Unavailable, k.Incomplete, k.Stale, k.Invalid, k.Conflicting, k.Excluded, k.Edited)
 	reasons := f.Total.RefuteReasons
 	cmd.Printf("  Refutes: false-positive: %d | spurious: %d | risk-accepted: %d | unspecified: %d\n", reasons.FalsePositive, reasons.Spurious, reasons.RiskAccepted, reasons.Unspecified)
