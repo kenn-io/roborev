@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -115,6 +116,29 @@ func unsetAgentConfigDirEnv() func() {
 
 var userEnv []string
 
+func goFileValue(key, goenv, root string) string {
+	var files []string
+	if goenv != "" && goenv != "off" {
+		files = append(files, goenv)
+	}
+	if root != "" {
+		files = append(files, filepath.Join(root, "go.env"))
+	}
+	for _, file := range files {
+		data, _ := os.ReadFile(file)
+		value, found := "", false
+		for line := range strings.SplitSeq(string(data), "\n") {
+			if v, ok := strings.CutPrefix(line, key+"="); ok {
+				value, found = v, true
+			}
+		}
+		if found {
+			return value
+		}
+	}
+	return ""
+}
+
 // UserEnv restores the original home and config paths for tool subprocesses.
 func UserEnv() []string {
 	return append(os.Environ(), userEnv...)
@@ -125,6 +149,27 @@ func configureGitForTests(tmpDir string) {
 		userEnv = append(userEnv, key+"="+os.Getenv(key))
 	}
 	home, _ := os.UserHomeDir()
+	cache, _ := os.UserCacheDir()
+	config, _ := os.UserConfigDir()
+	goenv := os.Getenv("GOENV")
+	if goenv == "" && config != "" {
+		goenv = filepath.Join(config, "go", "env")
+		_ = os.Setenv("GOENV", goenv)
+	}
+	root := goFileValue("GOROOT", goenv, "")
+	if root == "" {
+		root = os.Getenv("GOROOT")
+	}
+	if root == "" {
+		// PATH may resolve a version-manager shim rather than the toolchain.
+		root = runtime.GOROOT() //nolint:staticcheck
+	}
+	for _, entry := range [][3]string{{"GOPATH", home, "go"}, {"GOCACHE", cache, "go-build"}} {
+		path := filepath.Join(entry[1], entry[2])
+		if os.Getenv(entry[0]) == "" && entry[1] != "" && goFileValue(entry[0], goenv, root) == "" && (entry[0] != "GOPATH" || path != root) {
+			_ = os.Setenv(entry[0], path)
+		}
+	}
 	// Mise selects tools and trusts config from these directories before it
 	// reads its own configuration. Keep their original locations across HOME.
 	for _, entry := range [][3]string{

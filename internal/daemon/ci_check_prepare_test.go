@@ -201,6 +201,76 @@ func TestCICheckWarming(t *testing.T) {
 	})
 }
 
+func TestCICheckWarmingUsesOriginalGoCache(t *testing.T) {
+	if os.Getenv("ROBOREV_TEST_GO_CACHE_HOME") != "" {
+		checkout := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/check\n\ngo 1.25.0\n"), 0o600))
+		paths, err := warmGoModules(t.Context(), checkout, nil, io.Discard)
+		require.NoError(t, err)
+		require.Len(t, paths, 2)
+		assert.Equal(t, filepath.Join(os.Getenv("ROBOREV_TEST_GO_CACHE_HOME"), "go", "pkg", "mod"), paths[1])
+		cmd := exec.CommandContext(t.Context(), "go", "env", "GOCACHE")
+		output, err := cmd.Output()
+		require.NoError(t, err)
+		assert.Equal(t, os.Getenv("ROBOREV_TEST_GO_BUILD_CACHE"), strings.TrimSpace(string(output)))
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("ROBOREV_TEST_GO_CACHE_HOME", home)
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOPATH", "")
+	t.Setenv("GOMODCACHE", "")
+	t.Setenv("GOCACHE", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("GOPROXY", "off")
+	goEnv := exec.CommandContext(t.Context(), "go", "env", "GOCACHE")
+	cache, err := goEnv.Output()
+	require.NoError(t, err)
+	t.Setenv("ROBOREV_TEST_GO_BUILD_CACHE", strings.TrimSpace(string(cache)))
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestCICheckWarmingUsesOriginalGoCache$")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+}
+
+func TestCICheckWarmingUsesConfiguredGoRoot(t *testing.T) {
+	if expected := os.Getenv("ROBOREV_TEST_CONFIGURED_MODULE_CACHE"); expected != "" {
+		checkout := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/check\n\ngo 1.25.0\n"), 0o600))
+		paths, err := warmGoModules(t.Context(), checkout, nil, io.Discard)
+		require.NoError(t, err)
+		require.Len(t, paths, 2)
+		assert.Equal(t, expected, paths[1])
+		cmd := exec.CommandContext(t.Context(), "go", "env", "GOCACHE")
+		output, err := cmd.Output()
+		require.NoError(t, err)
+		assert.Equal(t, os.Getenv("ROBOREV_TEST_GO_BUILD_CACHE"), strings.TrimSpace(string(output)))
+		return
+	}
+	home, root, workspace, cache := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("GOPATH", "")
+	t.Setenv("GOMODCACHE", "")
+	t.Setenv("GOCACHE", "")
+	t.Setenv("GOROOT", "")
+	t.Setenv("GOTOOLCHAIN", "local")
+	goenv := filepath.Join(t.TempDir(), "goenv")
+	require.NoError(t, os.WriteFile(goenv, []byte("GOROOT="+root+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.env"), []byte("GOPATH="+workspace+"\nGOCACHE="+cache+"\n"), 0o600))
+	t.Setenv("GOENV", goenv)
+	t.Setenv("ROBOREV_TEST_CONFIGURED_MODULE_CACHE", filepath.Join(workspace, "pkg", "mod"))
+	t.Setenv("ROBOREV_TEST_GO_BUILD_CACHE", cache)
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestCICheckWarmingUsesConfiguredGoRoot$")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+}
+
 func TestCICheckCredentialOverlap(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.UserHomeDir reads USERPROFILE on Windows")
