@@ -317,6 +317,34 @@ func TestRecoverInsightsBaselineRequiresCounts(t *testing.T) {
 	assert.Nil(t, RecoverInsightsBaseline("<!-- roborev-insights-measured-v1 -->\n{\"time_basis\":\"finished_at\",\"since\":\"2026-01-01T00:00:00Z\",\"as_of\":\"2026-01-02T00:00:00Z\"}\n<!-- /roborev-insights-measured-v1 -->"))
 }
 
+func TestRecoverInsightsBaselineRejectsCaseCollidingContainers(t *testing.T) {
+	const counts = `{"findings":1,"labeled":1,"positive":0,"negative":1,"excluded":0,"unlabeled":0}`
+	const prefix = `{"since":"2026-01-01T00:00:00Z","as_of":"2026-01-02T00:00:00Z","time_basis":"finished_at","logical_reviews":1,"structured_reviews":1,"total":` + counts + `,`
+	for _, tc := range []struct {
+		name       string
+		containers string
+	}{
+		{"rows null", `"rows":[` + counts + `],"Rows":null`},
+		{"rows empty", `"rows":[` + counts + `],"ROWS":[]`},
+		{"rows shorter", `"rows":[` + counts + `,` + counts + `],"Rows":[` + counts + `]`},
+		{"rows same length", `"rows":[` + counts + `],"Rows":[{"negative":2}]`},
+		{"rows reversed keys", `"Rows":[],"rows":[` + counts + `]`},
+		{"tier coverage null", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":null`},
+		{"tier coverage reversed keys", `"Tier_Coverage":null,"tier_coverage":{"R":` + counts + `}`},
+		{"tier coverage merged", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":{"K":` + counts + `}`},
+		{"tier coverage overwritten", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":{"R":{"negative":2}}`},
+		{"total", `"Total":{"negative":2}`},
+		{"kata", `"kata":{"state":"available","eligible":1},"Kata":{"eligible":2}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stored := measuredStart + prefix + tc.containers + `}` + measuredEnd
+			var baseline *InsightsBaseline
+			require.NotPanics(t, func() { baseline = RecoverInsightsBaseline(stored) })
+			assert.Nil(t, baseline)
+		})
+	}
+}
+
 func FuzzRecoverInsightsSuggestions(f *testing.F) {
 	f.Add("## 5. Suggested Guideline Additions\n\nCheck errors.")
 	f.Add("```markdown\n## 5. Suggested Guideline Additions\nFake\n```")

@@ -387,6 +387,16 @@ func RecoverInsightsBaseline(storedPrompt string) *InsightsBaseline {
 	if json.Unmarshal([]byte(body), &fields) != nil {
 		return nil
 	}
+	// Struct decoding accepts case-insensitive keys, but the raw containers
+	// below use exact keys. Require canonical casing so both decodes select
+	// the same containers, even when an envelope includes conflicting aliases.
+	for name := range fields {
+		for _, container := range []string{"total", "rows", "tier_coverage", "kata"} {
+			if name != container && strings.EqualFold(name, container) {
+				return nil
+			}
+		}
+	}
 	for _, name := range []string{"logical_reviews", "structured_reviews", "total"} {
 		if len(fields[name]) == 0 || string(fields[name]) == "null" {
 			return nil
