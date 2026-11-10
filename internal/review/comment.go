@@ -16,6 +16,11 @@ import (
 // all findings; preparation never inherits policy from review data.
 type CommentConfig struct {
 	MinSeverity string
+	// MinConfidence filters stated structured confidence; zero disables it.
+	MinConfidence float64
+	// RankFindings enables synthesis publication ranking by severity, sources, and confidence.
+	// Other publishers retain their existing stable severity order.
+	RankFindings bool
 	// MaxFindings limits structured findings; zero leaves them unlimited.
 	MaxFindings int
 	// FullReviewReference points to the complete review when findings are omitted.
@@ -26,6 +31,7 @@ type CommentConfig struct {
 // so formatting receives only findings selected by PrepareComment.
 type PreparedComment struct {
 	minSeverity         string
+	minConfidence       float64
 	legacy              bool
 	structured          bool
 	verbatim            *string
@@ -35,6 +41,7 @@ type PreparedComment struct {
 }
 
 type commentFinding struct {
+	rank     StructuredFinding
 	severity string
 	problem  string
 	fix      string
@@ -45,7 +52,7 @@ type commentFinding struct {
 // PrepareComment ingests structured or prose review data and applies the
 // supplied publication policy. It never changes the review or its findings.
 func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
-	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
+	comment := PreparedComment{minConfidence: cfg.MinConfidence, minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
 	doc := r.Structured
 	if doc == nil && len(r.StructuredOutput) > 0 {
 		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
@@ -62,7 +69,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		comment.structured = true
 		for _, finding := range doc.Findings {
 			findings = append(findings, commentFinding{
-				severity: finding.Severity, problem: finding.Problem,
+				rank: finding, severity: finding.Severity, problem: finding.Problem,
 				fix: finding.Fix, location: finding.Location,
 			})
 		}
@@ -91,11 +98,17 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	threshold := config.SeverityRank(comment.minSeverity)
 	for _, finding := range findings {
 		if finding.severity == "" || config.SeverityRank(finding.severity) >= threshold {
+			if comment.structured && finding.rank.Kind != "" && finding.rank.Confidence < cfg.MinConfidence {
+				continue
+			}
 			comment.findings = append(comment.findings, finding)
 		}
 	}
 	if comment.structured {
 		slices.SortStableFunc(comment.findings, func(a, b commentFinding) int {
+			if cfg.RankFindings {
+				return compareFindingRank(a.rank, b.rank)
+			}
 			return config.SeverityRank(b.severity) - config.SeverityRank(a.severity)
 		})
 		if cfg.MaxFindings > 0 && len(comment.findings) > cfg.MaxFindings {
@@ -119,6 +132,9 @@ func FormatComment(comment PreparedComment) string {
 		return *comment.verbatim
 	}
 	if len(comment.findings) == 0 {
+		if comment.structured && comment.minConfidence > 0 {
+			return "**Verdict:** No findings match the comment filters.\n"
+		}
 		if comment.minSeverity != "" && comment.minSeverity != "low" {
 			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", comment.minSeverity)
 		}

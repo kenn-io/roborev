@@ -74,3 +74,77 @@ func TestCICommentPolicyGlobalBoundaries(t *testing.T) {
 		assert.Equal(t, cap, loaded.CI.CommentMaxFindings)
 	}
 }
+
+func TestCICommentMinConfidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, global, repo string
+		want               float64
+	}{
+		{"defaults", "", "", 0},
+		{"inherit", "comment_min_confidence = 0.8", "", 0.8},
+		{"reset", "comment_min_confidence = 0.8", "comment_min_confidence = 0.0", 0},
+		{"override", "comment_min_confidence = 0.8", "comment_min_confidence = 1.0", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var global Config
+			var repo RepoConfig
+			_, err := toml.Decode("[ci]\n"+tc.global, &global)
+			require.NoError(t, err)
+			_, err = toml.Decode("[ci]\n"+tc.repo, &repo)
+			require.NoError(t, err)
+			require.NoError(t, global.Validate())
+			require.NoError(t, repo.Validate())
+			assert.Equal(t, tc.want, ResolveCICommentMinConfidence(&repo, &global))
+		})
+	}
+	assert.Zero(t, ResolveCICommentMinConfidence(nil, nil))
+	path := filepath.Join(t.TempDir(), "config.toml")
+	for _, value := range []string{"-0.1", "1.1", "nan", "+inf", "-inf"} {
+		t.Run(value, func(t *testing.T) {
+			cfg := DefaultConfig()
+			require.NoError(t, SetConfigValue(cfg, "ci.comment_min_confidence", "0.8"))
+			require.NoError(t, SaveGlobalTo(path, cfg))
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, SetConfigValue(cfg, "ci.comment_min_confidence", value))
+			require.ErrorContains(t, cfg.Validate(), "ci.comment_min_confidence")
+			require.ErrorContains(t, SaveGlobalTo(path, cfg), "ci.comment_min_confidence")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			require.NoError(t, os.WriteFile(path, []byte("[ci]\ncomment_min_confidence = "+value+"\n"), 0o600))
+			_, err = LoadGlobalFrom(path)
+			require.ErrorContains(t, err, "ci.comment_min_confidence")
+			client, err := LoadGlobalClientFrom(path)
+			require.NoError(t, err)
+			require.ErrorContains(t, errors.Join(client.DaemonConfigWarnings()...), "ci.comment_min_confidence")
+			repo := &RepoConfig{}
+			require.NoError(t, SetConfigValue(repo, "ci.comment_min_confidence", value))
+			require.ErrorContains(t, repo.Validate(), "ci.comment_min_confidence")
+			repoDir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte("[ci]\ncomment_min_confidence = "+value+"\n"), 0o600))
+			_, err = LoadRepoConfig(repoDir)
+			require.ErrorContains(t, err, "ci.comment_min_confidence")
+		})
+	}
+	for _, value := range []string{"0", "0.75", "1"} {
+		cfg := DefaultConfig()
+		require.NoError(t, SetConfigValue(cfg, "ci.comment_min_confidence", value))
+		require.NoError(t, SaveGlobalTo(path, cfg))
+		loaded, err := LoadGlobalFrom(path)
+		require.NoError(t, err)
+		assert.Equal(t, cfg.CI.CommentMinConfidence, loaded.CI.CommentMinConfidence)
+		got, err := GetConfigValue(loaded, "ci.comment_min_confidence")
+		require.NoError(t, err)
+		assert.Equal(t, value, got)
+		repo := &RepoConfig{}
+		require.NoError(t, SetConfigValue(repo, "ci.comment_min_confidence", value))
+		repoDir := t.TempDir()
+		require.NoError(t, SaveRepoConfigTo(filepath.Join(repoDir, ".roborev.toml"), repo))
+		repoLoaded, err := LoadRepoConfig(repoDir)
+		require.NoError(t, err)
+		assert.Equal(t, repo.CI.CommentMinConfidence, repoLoaded.CI.CommentMinConfidence)
+	}
+	var cfg Config
+	require.ErrorContains(t, SetConfigValue(&cfg, "ci.comment_min_confidence", "high"), "invalid float")
+}

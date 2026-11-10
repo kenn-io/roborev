@@ -103,3 +103,53 @@ func FuzzCommentMaxFindings(f *testing.F) {
 		}
 	})
 }
+
+func TestCommentMinConfidence(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "high", Problem: "legacy confidence", Confidence: 0},
+		{Severity: "high", Problem: "explicit zero", Kind: "defect", Confidence: 0},
+		{Severity: "high", Problem: "below floor", Kind: "defect", Confidence: 0.69},
+		{Severity: "high", Problem: "at floor", Kind: "defect", Confidence: 0.7, Sources: []int{1}},
+		{Severity: "high", Problem: "confident", Kind: "defect", Confidence: 0.9, Sources: []int{1}},
+		{Severity: "high", Problem: "supported", Kind: "defect", Confidence: 0.7, Sources: []int{1, 2}},
+		{Severity: "critical", Problem: "critical", Kind: "defect", Confidence: 0.7},
+		{Severity: "low", Problem: "low severity", Kind: "defect", Confidence: 1},
+	}}
+	original := slices.Clone(doc.Findings)
+	for _, tc := range []struct {
+		name    string
+		floor   float64
+		cap     int
+		want    []string
+		omitted int
+	}{
+		{"off", 0, 0, []string{"critical", "supported", "confident", "at floor", "below floor", "legacy confidence", "explicit zero"}, 0},
+		{"inclusive floor", 0.7, 0, []string{"critical", "supported", "confident", "at floor", "legacy confidence"}, 0},
+		{"cap after filters", 0.7, 2, []string{"critical", "supported"}, 3},
+		{"missing survives", 1, 0, []string{"legacy confidence"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := PrepareComment(CommentConfig{MinSeverity: "high", MinConfidence: tc.floor, RankFindings: true, MaxFindings: tc.cap}, ReviewResult{Structured: &doc})
+			var got []string
+			for _, finding := range prepared.findings {
+				got = append(got, finding.problem)
+			}
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, tc.omitted, prepared.omitted)
+			assert.Equal(t, original, doc.Findings)
+		})
+	}
+	// Publishers that do not opt into daemon policy keep their stable severity order.
+	unfiltered := PrepareComment(CommentConfig{MinSeverity: "high"}, ReviewResult{Structured: &doc})
+	var unfilteredProblems []string
+	for _, finding := range unfiltered.findings {
+		unfilteredProblems = append(unfilteredProblems, finding.problem)
+	}
+	assert.Equal(t, []string{"critical", "legacy confidence", "explicit zero", "below floor", "at floor", "confident", "supported"}, unfilteredProblems)
+
+	empty := PrepareComment(CommentConfig{MinConfidence: 0.7}, ReviewResult{Structured: &StructuredReview{Findings: []StructuredFinding{{Severity: "high", Kind: "defect", Confidence: 0}}}})
+	assert.True(t, empty.IsClean())
+	assert.Contains(t, FormatComment(empty), "No findings match the comment filters.")
+	prose := "### High\nUnscored concern."
+	assert.Equal(t, prose, FormatComment(PrepareComment(CommentConfig{MinConfidence: 1}, ReviewResult{Output: prose})))
+}

@@ -193,14 +193,19 @@ func tidyFindings(findings []structuredreview.Finding) []structuredreview.Findin
 		}
 		kept[twin].Sources = sources
 	}
-	slices.SortStableFunc(kept, func(a, b structuredreview.Finding) int {
-		return cmp.Or(
-			cmp.Compare(config.SeverityRank(b.Severity), config.SeverityRank(a.Severity)),
-			cmp.Compare(len(b.Sources), len(a.Sources)),
-			cmp.Compare(b.Confidence, a.Confidence),
-		)
-	})
+	slices.SortStableFunc(kept, compareFindingRank)
+
 	return kept
+}
+
+// compareFindingRank orders by severity, source count, then confidence.
+// Publication reuses this order without merging or modifying stored findings.
+func compareFindingRank(a, b structuredreview.Finding) int {
+	return cmp.Or(
+		cmp.Compare(config.SeverityRank(b.Severity), config.SeverityRank(a.Severity)),
+		cmp.Compare(len(b.Sources), len(a.Sources)),
+		cmp.Compare(b.Confidence, a.Confidence),
+	)
 }
 
 func samePlace(a, b structuredreview.Finding) bool {
