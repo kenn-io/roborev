@@ -616,6 +616,17 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 	}
 	members, memberOpts, synthOpts := plan.members, plan.memberOpts, plan.synthOpts
+	if in.req.HoldSynthesis {
+		snapshot, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: synthOpts.PanelMemberConfigJSON})
+		if err != nil {
+			return nil, err
+		}
+		snapshot.HoldSynthesis = true
+		synthOpts.PanelMemberConfigJSON, err = snapshot.encode()
+		if err != nil {
+			return nil, err
+		}
+	}
 	if in.experiment != nil {
 		plan, planErr := experimentPlanForPanel(memberOpts, synthOpts)
 		if planErr != nil {

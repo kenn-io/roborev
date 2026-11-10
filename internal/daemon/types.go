@@ -39,6 +39,7 @@ type EnqueueRequest struct {
 	Provider          string                  `json:"provider,omitempty"`            // Provider for pi agent (e.g., "anthropic")
 	MinSeverity       string                  `json:"min_severity,omitempty"`        // Minimum severity filter: critical, high, medium, low
 	Panel             string                  `json:"panel,omitempty"`               // Panel name; "none" forces single-agent
+	HoldSynthesis     bool                    `json:"hold_synthesis,omitempty"`      // Wait for an explicit synthesis request; requires a named foreground panel
 	Source            string                  `json:"source,omitempty"`              // Provenance, e.g. "post_commit" (empty = foreground)
 }
 

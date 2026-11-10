@@ -132,6 +132,16 @@
       "permanent": true
     },
     {
+      "source": "/automation/manual-panel-synthesis/",
+      "destination": "/docs/automation/manual-panel-synthesis/",
+      "permanent": true
+    },
+    {
+      "source": "/automation/manual-panel-synthesis.md",
+      "destination": "/docs/automation/manual-panel-synthesis.md",
+      "permanent": true
+    },
+    {
       "source": "/agent-hook/",
       "destination": "/docs/agent-hook/",
       "permanent": true

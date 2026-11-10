@@ -8,6 +8,10 @@ reviewer specs, then produce one synthesis parent review. Use panels when a
 branch, PR, or risky change needs more than one review perspective without
 creating a pile of separate jobs for humans to track.
 
+Automation clients can [hold synthesis](../automation/manual-panel-synthesis.md)
+until they have inspected the member results. Without that option, synthesis
+starts automatically when the voting members finish.
+
 Panels are the system behind the 0.57 CI poller. The poller now creates panel
 runs for PR reviews. If you do not configure a named CI panel, the existing
 `agents`, `review_types`, and `[ci.reviews]` matrix is adapted into an implicit

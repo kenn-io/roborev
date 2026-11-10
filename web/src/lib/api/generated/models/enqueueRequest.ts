@@ -17,6 +17,7 @@ export interface EnqueueRequest {
   diff_content?: string;
   dirty_files?: string[];
   git_ref?: string;
+  hold_synthesis?: boolean;
   job_type?: string;
   min_severity?: string;
   model?: string;
