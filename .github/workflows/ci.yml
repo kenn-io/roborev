@@ -253,8 +253,13 @@ jobs:
             shard: windows-cli-n-s
             package: ./cmd/roborev
             pattern: '^Test[N-S]'
+            # Native Git forwarding raised the stall loop from 329s to 875s.
+            # At that slowdown, the 10.1m baseline package needs about 27m.
+            # Allow 30m for tests and 45m for setup, tests, and reruns.
+            test_timeout: 30m
+            job_timeout: 45
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.job_timeout || 30 }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -350,7 +355,7 @@ jobs:
             --jsonfile $jsonFile `
             --rerun-fails=2 --rerun-fails-report "gotestsum/$env:SUITE-reruns.txt" `
             --packages ($packages -join ' ') `
-            -- -timeout 15m -shuffle=on -tags integration @testArgs 2>&1 |
+            -- -timeout ${{ matrix.test_timeout || '15m' }} -shuffle=on -tags integration @testArgs 2>&1 |
             Tee-Object -FilePath $outputFile
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
