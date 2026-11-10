@@ -168,8 +168,9 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 // execution config there, which ciACPRepoConfig reads.
 type synthesisJobConfig struct {
 	ciACPExecutionConfig
-	Instructions string         `json:"instructions,omitempty"`
-	Check        *ciCheckConfig `json:"check,omitzero"`
+	Instructions  string         `json:"instructions,omitempty"`
+	Check         *ciCheckConfig `json:"check,omitzero"`
+	HoldSynthesis bool           `json:"hold_synthesis,omitzero"`
 }
 
 func synthesisExperimentConfig(snapshot string) (string, error) {
@@ -202,9 +203,9 @@ func restoreSynthesisExperimentConfig(frozen, snapshot string) (string, error) {
 }
 
 // encode returns "" when nothing is set, so a synthesis job without
-// instructions, a checker, or an ACP snapshot stores no config.
+// instructions, a checker, a hold, or an ACP snapshot stores no config.
 func (c synthesisJobConfig) encode() (string, error) {
-	if c.Instructions == "" && len(c.ACP) == 0 && c.Check == nil {
+	if c.Instructions == "" && len(c.ACP) == 0 && c.Check == nil && !c.HoldSynthesis {
 		return "", nil
 	}
 	raw, err := json.Marshal(c, json.Deterministic(true))

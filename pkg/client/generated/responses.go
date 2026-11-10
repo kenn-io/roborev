@@ -246,6 +246,10 @@ type BackfillVerdictsResponse = BackfillVerdictsOutputBody
 
 type BackfillVerdictsErrorResponse = ErrorModel
 
+type StartPanelSynthesisResponse = ReviewJob
+
+type StartPanelSynthesisErrorResponse = ErrorModel
+
 type PingResponse = PingInfo
 
 type PingErrorResponse = ErrorModel
@@ -731,6 +735,14 @@ type BackfillVerdictsResp struct {
 	StatusCode                        int
 	JSON200                           *BackfillVerdictsResponse
 	ApplicationProblemPlusJSONDefault *BackfillVerdictsErrorResponse
+}
+
+type StartPanelSynthesisResp struct {
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *StartPanelSynthesisResponse
+	ApplicationProblemPlusJSONDefault *StartPanelSynthesisErrorResponse
 }
 
 type PingResp struct {
@@ -1580,6 +1592,22 @@ func (c *RawClient) BackfillVerdictsRaw(ctx context.Context, reqEditors ...runti
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/maintenance/verdicts/backfill",
 		Method:     "POST",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) StartPanelSynthesisRaw(ctx context.Context, options *StartPanelSynthesisRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &StartPanelSynthesisRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/panel/synthesize",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

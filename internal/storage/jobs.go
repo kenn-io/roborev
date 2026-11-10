@@ -2992,7 +2992,8 @@ func (db *DB) ListJobsByStatus(repoID int64, status JobStatus) ([]ReviewJob, err
 }
 
 // MaybeReleasePanelSynthesis clears claim_blocked on a panel run's synthesis
-// job once every member job is terminal. Terminal = done/failed/canceled/
+// job once every voting member is terminal, unless the caller held synthesis.
+// Terminal = done/failed/canceled/
 // skipped/applied/rebased. Completion is derived from member rows, not from
 // maintained counters, so it cannot drift.
 //
@@ -3000,7 +3001,7 @@ func (db *DB) ListJobsByStatus(repoID int64, status JobStatus) ([]ReviewJob, err
 // either still see a non-terminal member (no-op) or all-terminal (one
 // UPDATE flips the flag, the rest are no-ops). It releases even when every
 // member failed or was canceled, so the synthesis job always runs and lands
-// a durable review — the parent never hangs.
+// a durable review. A held panel instead requires StartPanelSynthesis.
 func (db *DB) MaybeReleasePanelSynthesis(panelRunUUID uuid.UUID) error {
 	return db.MaybeReleasePanelSynthesisContext(context.Background(), panelRunUUID)
 }
@@ -3016,13 +3017,9 @@ func (db *DB) MaybeReleasePanelSynthesisContext(ctx context.Context, panelRunUUI
 		 WHERE panel_run_uuid = ?
 		   AND panel_role = 'synthesis'
 		   AND claim_blocked = 1
-		   AND NOT EXISTS (
-		       SELECT 1 FROM review_jobs m
-		        WHERE m.panel_run_uuid = review_jobs.panel_run_uuid
-		          AND m.panel_role = 'member'
-		          AND COALESCE(m.non_voting, 0) = 0
-		          AND m.status NOT IN ('done','failed','canceled','skipped','applied','rebased')
-		   )
+		   AND status = 'queued'
+		   AND `+panelSynthesisHeld+` = 0
+		   AND `+panelVotingMembersTerminal+`
 	`, now, panelRunUUID)
 	if err != nil {
 		return fmt.Errorf("release panel synthesis %q: %w", panelRunUUID, err)
@@ -3031,7 +3028,8 @@ func (db *DB) MaybeReleasePanelSynthesisContext(ctx context.Context, panelRunUUI
 }
 
 // ListStuckPanelRuns returns the panel_run_uuid of every run whose synthesis
-// job is still claim_blocked even though all its member jobs are terminal.
+// job is still claim_blocked even though all its voting members are terminal,
+// excluding panels held for an explicit synthesis request.
 // These are the runs the safety sweep must release. Reuses the same
 // member-terminal predicate as MaybeReleasePanelSynthesis.
 func (db *DB) ListStuckPanelRuns() ([]uuid.UUID, error) {
@@ -3040,16 +3038,12 @@ func (db *DB) ListStuckPanelRuns() ([]uuid.UUID, error) {
 
 func (db *DB) ListStuckPanelRunsContext(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT panel_run_uuid FROM review_jobs s
-		WHERE s.panel_role = 'synthesis'
-		  AND s.claim_blocked = 1
-		  AND NOT EXISTS (
-		      SELECT 1 FROM review_jobs m
-		       WHERE m.panel_run_uuid = s.panel_run_uuid
-		         AND m.panel_role = 'member'
-		         AND COALESCE(m.non_voting, 0) = 0
-		         AND m.status NOT IN ('done','failed','canceled','skipped','applied','rebased')
-		  )
+		SELECT panel_run_uuid FROM review_jobs
+		WHERE panel_role = 'synthesis'
+		  AND claim_blocked = 1
+		  AND status = 'queued'
+		  AND `+panelSynthesisHeld+` = 0
+		  AND `+panelVotingMembersTerminal+`
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("query stuck panel runs: %w", err)
