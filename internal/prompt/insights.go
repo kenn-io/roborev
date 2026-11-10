@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 	"time"
@@ -380,6 +381,11 @@ func RecoverInsightsBaseline(storedPrompt string) *InsightsBaseline {
 	}
 	body, _, found := strings.Cut(rest, measuredEnd)
 	if !found {
+		return nil
+	}
+	// Reject duplicate names before maps discard them and struct decoding can
+	// merge their values. Casing guards below also reject distinct folded names.
+	if !jsontext.Value(body).IsValid() {
 		return nil
 	}
 	// Missing numeric fields must not silently become measured zeroes.

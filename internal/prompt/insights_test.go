@@ -317,31 +317,13 @@ func TestRecoverInsightsBaselineRequiresCounts(t *testing.T) {
 	assert.Nil(t, RecoverInsightsBaseline("<!-- roborev-insights-measured-v1 -->\n{\"time_basis\":\"finished_at\",\"since\":\"2026-01-01T00:00:00Z\",\"as_of\":\"2026-01-02T00:00:00Z\"}\n<!-- /roborev-insights-measured-v1 -->"))
 }
 
-func TestRecoverInsightsBaselineRejectsCaseCollidingContainers(t *testing.T) {
-	const counts = `{"findings":1,"labeled":1,"positive":0,"negative":1,"excluded":0,"unlabeled":0}`
-	const prefix = `{"since":"2026-01-01T00:00:00Z","as_of":"2026-01-02T00:00:00Z","time_basis":"finished_at","logical_reviews":1,"structured_reviews":1,"total":` + counts + `,`
-	for _, tc := range []struct {
-		name       string
-		containers string
-	}{
-		{"rows empty", `"rows":[` + counts + `],"ROWS":[]`},
-		{"rows same length", `"rows":[` + counts + `],"Rows":[{"negative":2}]`},
-		{"tier coverage null", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":null`},
-		{"tier coverage merged", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":{"K":` + counts + `}`},
-		{"tier coverage overwritten", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":{"R":{"negative":2}}`},
-		{"total", `"Total":{"negative":2}`},
-		{"kata", `"kata":{"state":"available","eligible":1},"Kata":{"eligible":2}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			stored := measuredStart + prefix + tc.containers + `}` + measuredEnd
-			var baseline *InsightsBaseline
-			require.NotPanics(t, func() { baseline = RecoverInsightsBaseline(stored) })
-			assert.Nil(t, baseline)
-		})
+func TestRecoverInsightsBaselineRejectsAmbiguousJSON(t *testing.T) {
+	checkRejected := func(t *testing.T, body string) {
+		t.Helper()
+		var baseline *InsightsBaseline
+		require.NotPanics(t, func() { baseline = RecoverInsightsBaseline(measuredStart + body + measuredEnd) })
+		assert.Nil(t, baseline)
 	}
-}
-
-func TestRecoverInsightsBaselineRejectsNoncanonicalKeys(t *testing.T) {
 	for _, scope := range []struct {
 		name string
 		keys []string
@@ -354,6 +336,10 @@ func TestRecoverInsightsBaselineRejectsNoncanonicalKeys(t *testing.T) {
 	} {
 		for _, key := range scope.keys {
 			for _, collision := range []bool{false, true} {
+				// Required-field absence is already covered by RequiresCounts.
+				if !collision && (scope.name == "counts" || scope.name == "envelope" && (key == "logical_reviews" || key == "structured_reviews" || key == "total")) {
+					continue
+				}
 				t.Run(fmt.Sprintf("%s/%s/collision=%t", scope.name, key, collision), func(t *testing.T) {
 					cell := func() map[string]any {
 						return map[string]any{"findings": 1, "labeled": 1, "positive": 0, "negative": 1, "excluded": 0, "unlabeled": 0, "refute_reasons": map[string]int{"false_positive": 1}}
@@ -361,6 +347,9 @@ func TestRecoverInsightsBaselineRejectsNoncanonicalKeys(t *testing.T) {
 					total, row, tier := cell(), cell(), cell()
 					row["key"] = "high"
 					fields := map[string]any{"since": "2026-01-01T00:00:00Z", "as_of": "2026-01-02T00:00:00Z", "time_basis": "finished_at", "logical_reviews": 1, "structured_reviews": 1, "total": total, "rows": []any{row}, "tier_coverage": map[string]any{"R": tier}, "kata": map[string]any{"state": "available"}}
+					encoded, err := json.Marshal(fields)
+					require.NoError(t, err)
+					require.NotNil(t, RecoverInsightsBaseline(measuredStart+string(encoded)+measuredEnd))
 					target := fields
 					switch scope.name {
 					case "counts", "total reasons":
@@ -373,20 +362,70 @@ func TestRecoverInsightsBaselineRejectsNoncanonicalKeys(t *testing.T) {
 					aliasValue := target[key]
 					if key == "refute_reasons" {
 						aliasValue = map[string]int{"unspecified": 1}
+					} else if key == "rows" {
+						aliasValue = []any{}
+					} else if key == "tier_coverage" {
+						aliasValue = nil
 					} else if _, numeric := aliasValue.(int); numeric {
 						aliasValue = 9
 					}
-					target[strings.ToUpper(key)] = aliasValue
 					if !collision {
 						delete(target, key)
 					}
-					encoded, err := json.Marshal(fields)
+					raw, err := json.Marshal(target)
 					require.NoError(t, err)
-					assert.Nil(t, RecoverInsightsBaseline(measuredStart+string(encoded)+measuredEnd))
+					alias, err := json.Marshal(aliasValue)
+					require.NoError(t, err)
+					// Append the alias last, retaining the original panic-triggering order.
+					malformed := json.RawMessage(fmt.Sprintf("%s,%q:%s}", raw[:len(raw)-1], strings.ToUpper(key), alias))
+					switch scope.name {
+					case "envelope":
+						checkRejected(t, string(malformed))
+						return
+					case "counts", "total reasons":
+						fields["total"] = malformed
+					case "row reasons":
+						fields["rows"] = []json.RawMessage{malformed}
+					case "tier reasons":
+						fields["tier_coverage"] = map[string]json.RawMessage{"R": malformed}
+					}
+					encoded, err = json.Marshal(fields)
+					require.NoError(t, err)
+					checkRejected(t, string(encoded))
 				})
 			}
 		}
 	}
+	const metadata = `{"since":"2026-01-01T00:00:00Z","as_of":"2026-01-02T00:00:00Z","time_basis":"finished_at","logical_reviews":1,"structured_reviews":1,`
+	const counts = `"findings":1,"labeled":1,"positive":0,"negative":1,"excluded":0,"unlabeled":0`
+	const normal = `{` + counts + `,"refute_reasons":{"spurious":1}}`
+	const hidden = `{` + counts + `,"REFUTE_REASONS":{"false_positive":7}}`
+	for _, tc := range []struct{ name, body string }{
+		{"total hides alias", `"total":` + hidden + `,"total":` + normal},
+		{"rows hide alias", `"total":` + normal + `,"rows":[` + hidden + `],"rows":[` + normal + `]`},
+		{"tiers hide alias", `"total":` + normal + `,"tier_coverage":{"R":` + hidden + `},"tier_coverage":{"K":` + normal + `}`},
+		{"duplicate kata", `"total":` + normal + `,"kata":{"eligible":7},"kata":{"state":"available"}`},
+		{"nested duplicate", `"total":{` + counts + `,"refute_reasons":{"false_positive":7},"refute_reasons":{"spurious":1}}`},
+		{"escaped duplicate", `"total":` + hidden + `,"\u0074otal":` + normal},
+		{"unicode fold", `"total":` + normal + `,"rowſ":[]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NotNil(t, RecoverInsightsBaseline(measuredStart+metadata+`"total":`+normal+`}`+measuredEnd))
+			checkRejected(t, metadata+tc.body+`}`)
+		})
+	}
+	t.Run("prior context", func(t *testing.T) {
+		current := RecoverInsightsBaseline(measuredStart + metadata + `"total":` + normal + `,"future_field":true}` + measuredEnd)
+		require.NotNil(t, current, "unique unknown fields remain compatible")
+		baseline := RecoverInsightsBaseline(measuredStart + metadata + `"total":` + hidden + `,"total":` + normal + `}` + measuredEnd)
+		require.Nil(t, baseline)
+		result := BuildInsightsPrompt(InsightsData{Measured: current.FindingStats, Prior: &InsightsPrior{Suggestions: "Check errors.", Baseline: baseline}})
+		a := assert.New(t)
+		a.Contains(result, "Check errors.")
+		a.Contains(result, measuredStart)
+		a.Contains(result, `"logical_reviews": 1`)
+		a.Contains(result, "Baseline counts/window unavailable; insufficient comparable evidence.")
+	})
 }
 
 func FuzzRecoverInsightsSuggestions(f *testing.F) {
