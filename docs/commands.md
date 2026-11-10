@@ -1072,13 +1072,14 @@ below a passing review's configured threshold.
     reviews contributing to the cell. Each review counts once per cell. Closure
     never turns a finding into a positive or negative label.
 - **Coverage**: Structured / logical reviews and labeled / total findings, with
-    effective tier counts and rejected rebuttal coverage. The R cohort coverage
-    denominator is structured findings from local standalone reviews; it does
-    not promise that every stored session can still be resumed. Tier K (typed
-    replies), tier D (fix dispositions), and panel-parent tier R are unavailable
-    today. The outcome consumer supports validated typed-reply fixtures; a live
-    Kata mapper and complete reader are prerequisites for runtime K labels. The
-    default adapter remains unavailable and makes no Kata requests.
+    effective tier counts and rejected rebuttal coverage. “Local standalone
+    findings labeled by rebuttals” counts labeled findings over all structured
+    findings from local standalone reviews; it does not promise that every
+    stored session can still be resumed. Tier K (typed replies), tier D (fix
+    dispositions), and panel-parent tier R are unavailable today. The outcome
+    consumer supports validated typed-reply fixtures; a live Kata mapper and
+    complete reader are prerequisites for runtime K labels. The default adapter
+    remains unavailable and makes no Kata requests.
 
 The additive `refute_reasons` block in totals and each group distinguishes:
 
@@ -1114,20 +1115,21 @@ two concurrent reads and no retries; caller cancellation and access denial fail
 explicitly.
 
 Agent and model groups describe the logical parent's configuration, including
-panels that passed through one member's output. Arm groups use experiment ID,
-definition hash and arm; unassigned reviews have an explicit bucket.
-Non-severity groups retain zero-finding and unavailable-document reviews.
+panels that passed through one member's output. Arm group keys in JSON use
+`experimentID@definitionHash/arm`; human labels show `experimentID/arm`.
+Unassigned reviews have an explicit bucket. Non-severity groups retain
+zero-finding and unavailable-document reviews.
 
 Cost is approximate spend on distinct retained eligible execution rows, not all
 historical retries. Whole-panel cost includes parent and member work, including
 failed invoked and advisory members. Each execution is charged once per cell;
-severity cells overlap when a review contains several severities, so their spend
-is not additive. Runs that never invoked an agent do not reduce cost coverage. A
-fully priced zero-dollar execution counts as priced. A partly priced execution
-adds its recorded dollars to spend and leaves coverage incomplete. Cost per
-positive finding is unavailable without positive findings. Partial prices show a
-lower bound such as `≥$2.00 (0/1 priced)`. Human cost columns are omitted when
-no row has usable prices. JSON always preserves eligible and priced
+review costs can appear in multiple severity rows, so do not add them. Runs that
+never invoked an agent do not reduce cost coverage. A fully priced zero-dollar
+execution counts as priced. A partly priced execution adds its recorded dollars
+to spend and leaves coverage incomplete. Cost per positive finding is unavailable
+without positive findings. Partial prices show lower bounds on both values, with
+coverage shown on spend, such as `≥$2.00 (0/1 priced)`. Human cost columns are
+omitted when no row has usable prices. JSON always preserves eligible and priced
 denominators.
 
 ## Aggregate Cost
@@ -1196,7 +1198,7 @@ The agent produces:
 
 - Recurring finding patterns across reviews
 - Hotspot areas (files/packages with concentrated failures)
-- Noise candidates supported by validated refuted assessments
+- Potential review noise supported by refuted findings
 - Guideline gaps (patterns flagged by reviews but not covered by guidelines)
 - At most one suggested guideline line, supported by at least three distinct
     review job IDs, or `No guideline change recommended` with a reason

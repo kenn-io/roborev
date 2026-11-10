@@ -433,7 +433,7 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 	cmd.Printf("Finding outcomes by %s (finished_at; as of %s)\n", f.GroupBy, f.AsOf.UTC().Format(time.RFC3339))
 	cmd.Printf("  Structured reviews: %d/%d | Labeled findings: %d/%d (R: %d, K: %d)\n", f.StructuredReviews, f.LogicalReviews, f.Total.Labeled, f.Total.Findings, f.TierLabeled["R"], f.TierLabeled["K"])
 	cohort := f.TierCoverage["R"]
-	cmd.Printf("  R cohort labeled findings: %d/%d (local standalone reviews)\n", cohort.Labeled, cohort.Findings)
+	cmd.Printf("  Local standalone findings labeled by rebuttals: %d/%d\n", cohort.Labeled, cohort.Findings)
 	cmd.Printf("  Documents unavailable: %d missing, %d invalid, %d legacy, %d unable to review\n", f.MissingDocuments, f.InvalidDocuments, f.LegacyDocuments, f.UnableDocuments)
 	cmd.Printf("  Rebuttals: %d valid, %d unbound, %d stale, %d unmatched/ambiguous, %d invalid, %d ineligible\n", f.Rebuttals.Valid, f.Rebuttals.Unbound, f.Rebuttals.Stale, f.Rebuttals.Ambiguous, f.Rebuttals.Invalid, f.Rebuttals.Ineligible)
 	k := f.Kata
@@ -475,6 +475,14 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 			resolution += fmt.Sprintf(" (%.0f%%)", 100**r.ResolutionRate)
 		}
 		key := r.Key
+		if f.GroupBy == "arm" {
+			// IDs may contain @ or /; supported arms are default and experiment.
+			if at := strings.LastIndexByte(key, '@'); at >= 0 {
+				if _, arm, ok := strings.Cut(key[at+1:], "/"); ok {
+					key = key[:at] + "/" + arm
+				}
+			}
+		}
 		if key == "" {
 			key = "(unspecified)"
 		}
@@ -484,7 +492,10 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 			if r.Cost.HasUsableSpend() {
 				spend = formatFindingSpend(r.Cost, r.Cost.TotalUSD)
 				if r.CostPerPositive != nil {
-					per = formatFindingSpend(r.Cost, *r.CostPerPositive)
+					per = fmt.Sprintf("~$%.2f", *r.CostPerPositive)
+					if !r.Cost.Complete {
+						per = fmt.Sprintf("≥$%.2f", *r.CostPerPositive)
+					}
 				}
 			}
 			fmt.Fprintf(w, "\t%s\t%s", spend, per)
@@ -493,7 +504,7 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 	}
 	_ = w.Flush()
 	if f.GroupBy == "severity" && showSpend {
-		cmd.Println("  Severity spend overlaps across cells; each review is charged once per cell.")
+		cmd.Println("  Review costs can appear in multiple severity rows; do not add them.")
 	}
 	cmd.Println()
 }

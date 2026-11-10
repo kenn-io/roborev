@@ -47,7 +47,7 @@ This is an LLM-powered command that:
 The agent produces:
 - Recurring finding patterns across reviews
 - Hotspot areas (files/packages that concentrate failures)
-- Noise candidates supported by validated refuted assessments
+- Potential review noise supported by refuted findings
 - Guideline gaps (patterns flagged by reviews but not in guidelines)
 - At most one suggested guideline line, or "No guideline change recommended" with a reason
 

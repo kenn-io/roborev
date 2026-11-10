@@ -161,6 +161,7 @@ func TestSummaryFindingValidationBeforeDaemon(t *testing.T) {
 }
 
 func TestPrintFindingSummary(t *testing.T) {
+	assert := assert.New(t)
 	cmd := summaryCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -177,22 +178,59 @@ func TestPrintFindingSummary(t *testing.T) {
 		}},
 	}
 	printSummary(cmd, storage.Summary{CI: &storage.CISummary{TotalPanels: 1}, Findings: &f})
-	assert.Contains(t, out.String(), "CI Run Health")
-	assert.NotContains(t, out.String(), "No review data")
-	assert.Contains(t, out.String(), "2/3")
-	assert.Contains(t, out.String(), "n<5")
-	assert.Contains(t, out.String(), "1/1")
-	assert.Contains(t, out.String(), "≥$3.00 (1/2 priced)")
+	assert.Contains(out.String(), "CI Run Health")
+	assert.NotContains(out.String(), "No review data")
+	assert.Contains(out.String(), "2/3")
+	assert.Contains(out.String(), "n<5")
+	assert.Contains(out.String(), "1/1")
+	assert.Contains(out.String(), "≥$3.00 (1/2 priced)")
+	assert.Equal(1, strings.Count(out.String(), "(1/2 priced)"))
+	assert.Equal(2, strings.Count(out.String(), "≥$3.00"))
+	footer := "Review costs can appear in multiple severity rows; do not add them."
+	assert.Contains(out.String(), footer)
 	out.Reset()
 	f.Rows[0].Cost.JobsWithCost = 0
 	printFindingSummary(cmd, &f)
-	assert.Equal(t, 2, strings.Count(out.String(), "≥$3.00 (0/2 priced)"), "spend and cost per positive are lower bounds")
+	assert.Contains(out.String(), "≥$3.00 (0/2 priced)")
+	assert.Equal(2, strings.Count(out.String(), "≥$3.00"))
+	assert.Equal(1, strings.Count(out.String(), "(0/2 priced)"))
+	assert.Contains(out.String(), footer)
 	out.Reset()
 	f.Rows[0].Cost.TotalUSD = 0
 	f.Rows[0].CostPerPositive = nil
 	printFindingSummary(cmd, &f)
-	assert.NotContains(t, out.String(), "Retained spend")
-	assert.NotContains(t, out.String(), "Cost/positive")
+	assert.NotContains(out.String(), "Retained spend")
+	assert.NotContains(out.String(), "Cost/positive")
+	assert.NotContains(out.String(), footer)
+
+	for _, tc := range []struct {
+		key  string
+		want string
+	}{
+		{"trial@definition-hash/default", "trial/default"},
+		{"trial@team@definition-hash/experiment", "trial@team/experiment"},
+		{"team/trial@definition-hash/default", "team/trial/default"},
+		{"team/trial@v2@definition-hash/experiment", "team/trial@v2/experiment"},
+		{"unassigned", "unassigned"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			assert := assert.New(t)
+			out.Reset()
+			f.GroupBy = "arm"
+			f.Rows[0].Key = tc.key
+			f.Rows[0].Cost.JobsWithCost = 1
+			printFindingSummary(cmd, &f)
+			assert.Contains(out.String(), "  "+tc.want+" ")
+			assert.NotContains(out.String(), "definition-hash")
+			assert.NotContains(out.String(), footer)
+			assert.Equal(tc.key, f.Rows[0].Key)
+
+			out.Reset()
+			f.GroupBy = "model"
+			printFindingSummary(cmd, &f)
+			assert.Contains(out.String(), "  "+tc.key+" ")
+		})
+	}
 }
 
 func TestSummaryFindingRequest(t *testing.T) {
