@@ -1,6 +1,6 @@
 //go:build !windows
 
-package testenv
+package gitfixture
 
 import (
 	"context"
@@ -9,9 +9,9 @@ import (
 	"syscall"
 )
 
-func runFixtureGit(_ context.Context, realGit string) int {
+func runFixtureGit(_ context.Context, realGit string, args []string) int {
 	// Replacement preserves the PID, so caller cancellation targets Git itself.
-	args := append([]string{realGit}, os.Args[1:]...)
+	args = append([]string{realGit}, args...)
 	if err := syscall.Exec(realGit, args, os.Environ()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

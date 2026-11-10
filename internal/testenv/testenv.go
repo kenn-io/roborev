@@ -1,9 +1,9 @@
 // Package testenv provides environment isolation helpers for tests.
-// This package intentionally has no dependencies on other internal packages
-// to avoid import cycles.
+// Its Git launcher leaf package has no dependency on application packages.
 package testenv
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +30,8 @@ func RunIsolatedMain(m *testing.M) int {
 	}
 	defer cleanupTempDir()
 
-	restoreGit, err := configureGitForTests(tmpDir)
+	// TestMain has no caller context; setup owns this root until it returns.
+	restoreGit, err := configureGitForTests(context.Background(), tmpDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to configure git: %v\n", err)
 		return 1
@@ -119,7 +120,7 @@ func unsetAgentConfigDirEnv() func() {
 }
 
 // configureGitForTests restores every changed variable before fixture removal.
-func configureGitForTests(tmpDir string) (restore func(), err error) {
+func configureGitForTests(ctx context.Context, tmpDir string) (restore func(), err error) {
 	var restores []func()
 	restore = func() {
 		for _, restore := range slices.Backward(restores) {
@@ -165,6 +166,6 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 			return
 		}
 	}
-	err = installGitLauncher(tmpDir, global, set)
+	err = installGitLauncher(ctx, tmpDir, global, set)
 	return
 }

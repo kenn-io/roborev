@@ -9,65 +9,35 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"syscall"
+	"sync"
+
+	"go.kenn.io/roborev/internal/testenv/gitfixture"
 )
 
-// Metadata belongs to the exact executable, so a copy used as a native hook
-// continues its normal hook dispatch without inheriting launcher identity.
-type gitFixtureMetadata struct {
-	RealGit     string
-	Global      string
-	Home        string
-	UserProfile string
+var gitLauncherImage struct {
+	once sync.Once
+	data []byte
+	err  error
 }
 
-const gitFixtureMetadataSuffix = ".roborev-git-fixture.json"
-
-func readGitFixtureMetadata(executable string) (gitFixtureMetadata, error) {
-	var metadata gitFixtureMetadata
-	data, err := os.ReadFile(executable + gitFixtureMetadataSuffix)
+func buildGitLauncher(ctx context.Context) ([]byte, error) {
+	dir, err := os.MkdirTemp("", "roborev-git-launcher-*")
 	if err != nil {
-		return metadata, err
+		return nil, err
 	}
-	if err := json.Unmarshal(data, &metadata); err != nil {
-		return metadata, err
+	defer os.RemoveAll(dir)
+	executable := filepath.Join(dir, "gitfixture")
+	cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-race=false", "-cover=false", "-coverpkg=", "-o", executable,
+		"go.kenn.io/roborev/internal/testenv/gitfixture/cmd/gitfixture")
+	// Preserve the selected toolchain and GOFLAGS; disable CGO only for this helper.
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("build fixture Git launcher: %w\n%s", err, output)
 	}
-	if !filepath.IsAbs(metadata.RealGit) || !filepath.IsAbs(metadata.Global) {
-		return metadata, fmt.Errorf("fixture Git metadata requires absolute executable and config paths")
-	}
-	return metadata, nil
+	return os.ReadFile(executable)
 }
 
-func init() {
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	metadata, err := readGitFixtureMetadata(exe)
-	if errors.Is(err, os.ErrNotExist) {
-		return
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "read fixture Git metadata: %v\n", err)
-		syscall.Exit(1)
-	}
-	// This launcher is a helper process with no caller context.
-	// Only recognized launchers bypass test/race runtime finalization.
-	syscall.Exit(forwardFixtureGit(context.Background(), metadata))
-}
-
-func forwardFixtureGit(ctx context.Context, metadata gitFixtureMetadata) int {
-	if _, explicit := os.LookupEnv("GIT_CONFIG_GLOBAL"); !explicit &&
-		os.Getenv("HOME") == metadata.Home &&
-		os.Getenv("USERPROFILE") == metadata.UserProfile {
-		_ = os.Setenv("GIT_CONFIG_GLOBAL", metadata.Global)
-	}
-	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	return runFixtureGit(ctx, metadata.RealGit)
-}
-
-func installGitLauncher(tmpDir, global string, set func(string, string) error) error {
+func installGitLauncher(ctx context.Context, tmpDir, global string, set func(string, string) error) error {
 	realGit, err := exec.LookPath("git")
 	if err != nil {
 		return err
@@ -76,18 +46,21 @@ func installGitLauncher(tmpDir, global string, set func(string, string) error) e
 	if err != nil {
 		return err
 	}
-	// Nested setup unwraps the current fixture launcher before exposing a new one.
-	previous, err := readGitFixtureMetadata(realGit)
-	if err == nil {
-		realGit = previous.RealGit
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	exe, err := os.Executable()
+	// Resolve aliases before reading either the executable image or its sidecar.
+	realGit, err = filepath.EvalSymlinks(realGit)
 	if err != nil {
 		return err
 	}
-	data, err := os.ReadFile(exe)
+	var data []byte
+	previous, err := gitfixture.ReadMetadata(realGit)
+	if err == nil {
+		// A fresh nested process can reuse this image without Go or a module CWD.
+		data, err = os.ReadFile(realGit)
+		realGit = previous.RealGit
+	} else if errors.Is(err, os.ErrNotExist) {
+		gitLauncherImage.once.Do(func() { gitLauncherImage.data, gitLauncherImage.err = buildGitLauncher(ctx) })
+		data, err = gitLauncherImage.data, gitLauncherImage.err
+	}
 	if err != nil {
 		return err
 	}
@@ -103,7 +76,7 @@ func installGitLauncher(tmpDir, global string, set func(string, string) error) e
 	if err := os.WriteFile(launcher, data, 0o755); err != nil {
 		return err
 	}
-	metadata := gitFixtureMetadata{
+	metadata := gitfixture.Metadata{
 		RealGit:     realGit,
 		Global:      global,
 		Home:        os.Getenv("HOME"),
@@ -113,7 +86,7 @@ func installGitLauncher(tmpDir, global string, set func(string, string) error) e
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(launcher+gitFixtureMetadataSuffix, encoded, 0o600); err != nil {
+	if err := os.WriteFile(launcher+gitfixture.MetadataSuffix, encoded, 0o600); err != nil {
 		return err
 	}
 	return set("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

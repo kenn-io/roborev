@@ -1,4 +1,4 @@
-package testenv
+package gitfixture
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func runFixtureGit(ctx context.Context, realGit string) int {
+func runFixtureGit(ctx context.Context, realGit string, args []string) int {
 	// Nil security attributes create a non-inheritable handle. Children inherit
 	// membership, not this handle: killing the launcher closes the last handle.
 	job, err := windows.CreateJobObject(nil, nil)
@@ -31,9 +31,9 @@ func runFixtureGit(ctx context.Context, realGit string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	// Keep the sole job handle open until the recognized launcher's syscall.Exit.
+	// Keep the sole job handle open until the helper's os.Exit.
 	// Closing it here would terminate this process before its exit status is set.
-	cmd := exec.CommandContext(ctx, realGit, os.Args[1:]...)
+	cmd := exec.CommandContext(ctx, realGit, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		if exit, ok := errors.AsType[*exec.ExitError](err); ok {
