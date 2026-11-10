@@ -65,3 +65,43 @@ func TestGitIsolationPreservesMiseDirectories(t *testing.T) {
 		})
 	}
 }
+
+func TestGitIsolationPreservesGoCaches(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	require.NoError(t, err)
+	for _, configured := range []bool{false, true} {
+		name := "default"
+		if configured {
+			name = "toolchain configuration"
+		}
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "GOENV", "GOROOT", "GOTOOLCHAIN", "GOPATH", "GOMODCACHE", "GOCACHE", "MISE_CONFIG_DIR", "MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_STATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
+				t.Setenv(key, "")
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("GOENV", "off")
+			t.Setenv("GOTOOLCHAIN", "local")
+			if configured {
+				root := t.TempDir()
+				goenv := filepath.Join(t.TempDir(), "goenv")
+				require.NoError(t, os.WriteFile(goenv, []byte("GOROOT="+root+"\n"), 0o600))
+				data := "GOPATH=" + t.TempDir() + "\nGOCACHE=" + t.TempDir() + "\n"
+				require.NoError(t, os.WriteFile(filepath.Join(root, "go.env"), []byte(data), 0o600))
+				t.Setenv("GOENV", goenv)
+			}
+			originalUserEnv := userEnv
+			t.Cleanup(func() { userEnv = originalUserEnv })
+			readCaches := func() string {
+				cmd := exec.CommandContext(t.Context(), goBin, "env", "GOMODCACHE", "GOCACHE")
+				output, err := cmd.CombinedOutput()
+				require.NoError(t, err, "%s", output)
+				return string(output)
+			}
+			before := readCaches()
+			configureGitForTests(t.TempDir())
+			assert.Equal(t, before, readCaches())
+		})
+	}
+}
