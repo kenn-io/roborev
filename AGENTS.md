@@ -327,6 +327,8 @@ approvals, token permissions, and secrets are separate controls.
 - When committing, stage ALL modified files related to the work (including formatting-only and ancillary updates).
 - Before committing, run `git diff` and `git status` to verify nothing is unintentionally left unstaged.
 - When creating PRs, write a clean GitHub-facing summary with relevant context and links.
+- End every commit message with a `Co-authored-by:` trailer naming the agent that wrote the change.
+- End the pull request description with a `Model used:` line naming the model, such as `Model used: Opus 5.5` or `Model used: GPT-6.1 Sol`. Squash-merge keeps only the description, so put the `Co-authored-by:` trailer there too.
 - Before opening a PR: update the zensical docs under `docs/` for any user-facing behavior or config changes, and remove superpowers working documents (`docs/superpowers/` plans/specs) from the branch — unless the user explicitly asks to retain them.
 - Do not add navel-gazing PR sections for validation, testing, checks run, or
   lists of changes made. Keep PR bodies focused on reviewer-facing context,
