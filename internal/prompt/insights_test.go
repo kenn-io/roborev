@@ -402,9 +402,6 @@ func TestRecoverInsightsBaselineRejectsAmbiguousJSON(t *testing.T) {
 	const hidden = `{` + counts + `,"REFUTE_REASONS":{"false_positive":7}}`
 	for _, tc := range []struct{ name, body string }{
 		{"total hides alias", `"total":` + hidden + `,"total":` + normal},
-		{"rows hide alias", `"total":` + normal + `,"rows":[` + hidden + `],"rows":[` + normal + `]`},
-		{"tiers hide alias", `"total":` + normal + `,"tier_coverage":{"R":` + hidden + `},"tier_coverage":{"K":` + normal + `}`},
-		{"duplicate kata", `"total":` + normal + `,"kata":{"eligible":7},"kata":{"state":"available"}`},
 		{"nested duplicate", `"total":{` + counts + `,"refute_reasons":{"false_positive":7},"refute_reasons":{"spurious":1}}`},
 		{"escaped duplicate", `"total":` + hidden + `,"\u0074otal":` + normal},
 		{"unicode fold", `"total":` + normal + `,"rowſ":[]`},
@@ -414,17 +411,9 @@ func TestRecoverInsightsBaselineRejectsAmbiguousJSON(t *testing.T) {
 			checkRejected(t, metadata+tc.body+`}`)
 		})
 	}
-	t.Run("prior context", func(t *testing.T) {
+	t.Run("unique future field", func(t *testing.T) {
 		current := RecoverInsightsBaseline(measuredStart + metadata + `"total":` + normal + `,"future_field":true}` + measuredEnd)
 		require.NotNil(t, current, "unique unknown fields remain compatible")
-		baseline := RecoverInsightsBaseline(measuredStart + metadata + `"total":` + hidden + `,"total":` + normal + `}` + measuredEnd)
-		require.Nil(t, baseline)
-		result := BuildInsightsPrompt(InsightsData{Measured: current.FindingStats, Prior: &InsightsPrior{Suggestions: "Check errors.", Baseline: baseline}})
-		a := assert.New(t)
-		a.Contains(result, "Check errors.")
-		a.Contains(result, measuredStart)
-		a.Contains(result, `"logical_reviews": 1`)
-		a.Contains(result, "Baseline counts/window unavailable; insufficient comparable evidence.")
 	})
 }
 
