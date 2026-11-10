@@ -51,6 +51,68 @@ func assertTools(t *testing.T, args []string, want []string, dontWant []string) 
 	}
 }
 
+func TestClaudeHelpCapture(t *testing.T) {
+	for _, exitCode := range []int{0, 1} {
+		t.Run(fmt.Sprintf("exit_%d", exitCode), func(t *testing.T) {
+			// Model a CLI that flushes complete help only to a regular file.
+			// Put the capability flags after the observed truncated prefix.
+			assert := assert.New(t)
+			captureDir := t.TempDir()
+			t.Setenv("TMPDIR", captureDir)
+			prefix := strings.Repeat("help text\n", 100)
+			cmdPath := writeTempCommand(t, fmt.Sprintf(`#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+[ "$1" = "--help" ] || exit 2
+[ -f /dev/stdout ] || exit 3
+printf '%%s' '%s'
+echo '--tools --bare --effort --dangerously-skip-permissions'
+echo 'synthetic help diagnostic' >&2
+exit %d
+`, prefix, exitCode))
+			output, err := claudeHelpOutput(t.Context(), cmdPath)
+			if exitCode == 0 {
+				require.NoError(t, err)
+				assert.True(claudeSupportsToolsFlag(t.Context(), cmdPath))
+				assert.True(claudeSupportsBareFlag(t.Context(), cmdPath))
+				assert.True(claudeSupportsEffortFlag(t.Context(), cmdPath))
+				supported, probeErr := claudeSupportsDangerousFlag(t.Context(), cmdPath)
+				require.NoError(t, probeErr)
+				assert.True(supported)
+				flags, probeErr := claudeHelpFlags(t.Context(), cmdPath)
+				require.NoError(t, probeErr)
+				assert.True(flags["--tools"])
+				assert.True(flags["--bare"])
+			} else {
+				require.Error(t, err)
+				assert.False(claudeSupportsToolsFlag(t.Context(), cmdPath))
+				assert.False(claudeSupportsBareFlag(t.Context(), cmdPath))
+				_, probeErr := claudeHelpFlags(t.Context(), cmdPath)
+				require.Error(t, probeErr)
+			}
+			assert.Equal(prefix+"--tools --bare --effort --dangerously-skip-permissions\nsynthetic help diagnostic\n", string(output))
+			leftovers, err := filepath.Glob(filepath.Join(captureDir, "roborev-claude-help-*"))
+			require.NoError(t, err)
+			assert.Empty(leftovers)
+		})
+	}
+}
+
+func TestClaudeHelpCaptureCanceled(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	captureDir := t.TempDir()
+	t.Setenv("TMPDIR", captureDir)
+	t.Setenv("TEMP", captureDir)
+	t.Setenv("TMP", captureDir)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = claudeHelpOutput(ctx, executable)
+	require.ErrorIs(t, err, context.Canceled)
+	leftovers, err := os.ReadDir(captureDir)
+	require.NoError(t, err)
+	assert.Empty(t, leftovers)
+}
+
 func TestClaudeHelpProbeUsesExistingWorkingDirectory(t *testing.T) {
 	skipIfWindows(t)
 

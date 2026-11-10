@@ -144,9 +144,7 @@ func claudeHelpFlags(ctx context.Context, command string) (map[string]bool, erro
 			return cached.(map[string]bool), nil
 		}
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
-	configureCapabilityProbe(ctx, cmd)
-	output, err := cmd.CombinedOutput()
+	output, err := claudeHelpOutput(ctx, command)
 	if err != nil {
 		return nil, fmt.Errorf("check %s --help: %w", command, err)
 	}

@@ -51,6 +51,6 @@ func TestClaudeGoalReviewSuppressesRepositoryHooks(t *testing.T) {
 	snapshot := Snapshot{Source: "superpowers", Stage: "spec", Artifacts: []Artifact{{Kind: "spec", Path: "spec.md", Content: "# Feature\n"}}}
 	_, err = Run(ctx, agent.NewClaudeAgent(binary).WithModel("synthetic@"+server.URL), root, snapshot, io.Discard)
 	require.Error(t, err, "the synthetic provider deliberately rejects credentials")
-	assert.NotEmpty(t, received, "Claude must reach the local provider so startup isolation is exercised")
+	assert.NotEmpty(t, received, "Claude must reach the local provider so startup isolation is exercised; invocation error: %v", err)
 	assert.NoFileExists(t, filepath.Join(root, "hook-ran"), "goal critique must not execute repository lifecycle hooks")
 }

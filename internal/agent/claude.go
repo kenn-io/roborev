@@ -259,14 +259,39 @@ func (a *ClaudeAgent) buildPlanningArgs(includeEffort bool) []string {
 	return append(args, "--permission-mode", "plan")
 }
 
+// claudeHelpOutput captures help in a regular file. Native Claude CLI versions
+// can exit before flushing piped help output, hiding flags later in the text.
+func claudeHelpOutput(ctx context.Context, command string) ([]byte, error) {
+	capture, err := os.CreateTemp("", "roborev-claude-help-*")
+	if err != nil {
+		return nil, fmt.Errorf("create claude help capture: %w", err)
+	}
+	defer func() {
+		_ = capture.Close()
+		_ = os.Remove(capture.Name())
+	}()
+
+	cmd := exec.CommandContext(ctx, command, "--help")
+	configureCapabilityProbe(ctx, cmd)
+	cmd.Stdout = capture
+	cmd.Stderr = capture
+	runErr := cmd.Run()
+	if _, err := capture.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek claude help capture: %w", err)
+	}
+	output, err := io.ReadAll(capture)
+	if err != nil {
+		return nil, fmt.Errorf("read claude help capture: %w", err)
+	}
+	return output, runErr
+}
+
 func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, error) {
 	cacheKey := capabilityCacheKey(command)
 	if cached, ok := claudeDangerousSupport.Load(cacheKey); ok {
 		return cached.(bool), nil
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
-	configureCapabilityProbe(ctx, cmd)
-	output, err := cmd.CombinedOutput()
+	output, err := claudeHelpOutput(ctx, command)
 	supported := strings.Contains(string(output), claudeDangerousFlag)
 	if err != nil && !supported {
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
@@ -280,9 +305,7 @@ func claudeSupportsEffortFlag(ctx context.Context, command string) bool {
 	if cached, ok := claudeEffortSupport.Load(cacheKey); ok {
 		return cached.(bool)
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
-	configureCapabilityProbe(ctx, cmd)
-	output, _ := cmd.CombinedOutput()
+	output, _ := claudeHelpOutput(ctx, command)
 	supported := strings.Contains(string(output), claudeEffortFlag)
 	claudeEffortSupport.Store(cacheKey, supported)
 	return supported
@@ -299,9 +322,7 @@ func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
 	if cached, ok := claudeToolsSupport.Load(cacheKey); ok {
 		return cached.(bool)
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
-	configureCapabilityProbe(ctx, cmd)
-	output, err := cmd.CombinedOutput()
+	output, err := claudeHelpOutput(ctx, command)
 	if err != nil {
 		// Don't cache transient failures.
 		return false
@@ -316,9 +337,7 @@ func claudeSupportsBareFlag(ctx context.Context, command string) bool {
 	if cached, ok := claudeBareSupport.Load(cacheKey); ok {
 		return cached.(bool)
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
-	configureCapabilityProbe(ctx, cmd)
-	output, err := cmd.CombinedOutput()
+	output, err := claudeHelpOutput(ctx, command)
 	if err != nil {
 		return false
 	}
