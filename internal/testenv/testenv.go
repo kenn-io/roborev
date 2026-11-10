@@ -4,14 +4,12 @@
 package testenv
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -122,6 +120,30 @@ func unsetAgentConfigDirEnv() func() {
 	}
 }
 
+// goFileValue follows Go's user-file precedence, including empty values.
+func goFileValue(key, goenv, root string) string {
+	var files []string
+	if goenv != "" && goenv != "off" {
+		files = append(files, goenv)
+	}
+	if root != "" {
+		files = append(files, filepath.Join(root, "go.env"))
+	}
+	for _, file := range files {
+		data, _ := os.ReadFile(file)
+		value, found := "", false
+		for line := range strings.SplitSeq(string(data), "\n") {
+			if v, ok := strings.CutPrefix(line, key+"="); ok {
+				value, found = v, true
+			}
+		}
+		if found {
+			return value
+		}
+	}
+	return ""
+}
+
 // configureGitForTests restores every changed variable before fixture removal.
 func configureGitForTests(tmpDir string) (restore func(), err error) {
 	var restores []func()
@@ -151,7 +173,13 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 	}
 	// Preserve Go's defaults before replacing the home and XDG config paths.
 	home, _ := os.UserHomeDir()
+	cache, _ := os.UserCacheDir()
 	config, _ := os.UserConfigDir()
+	root := os.Getenv("GOROOT")
+	if root == "" {
+		// The runtime identifies the test binary's toolchain even when PATH uses a shim.
+		root = runtime.GOROOT() //nolint:staticcheck
+	}
 	goenv := os.Getenv("GOENV")
 	if goenv == "" && config != "" {
 		goenv = filepath.Join(config, "go", "env")
@@ -159,18 +187,11 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 			return
 		}
 	}
-	// TestMain has no caller context. Go is optional for test binaries that
-	// don't build subprocesses, so leave its paths alone if it is unavailable.
-	cmd := exec.CommandContext(context.Background(), "go", "env", "-json", "GOPATH", "GOCACHE")
-	if output, runErr := cmd.Output(); runErr == nil {
-		var paths map[string]string
-		if json.Unmarshal(output, &paths) == nil {
-			for _, key := range []string{"GOPATH", "GOCACHE"} {
-				if os.Getenv(key) == "" && paths[key] != "" {
-					if err = set(key, paths[key]); err != nil {
-						return
-					}
-				}
+	for _, entry := range [][3]string{{"GOPATH", home, "go"}, {"GOCACHE", cache, "go-build"}} {
+		path := filepath.Join(entry[1], entry[2])
+		if os.Getenv(entry[0]) == "" && entry[1] != "" && goFileValue(entry[0], goenv, root) == "" && (entry[0] != "GOPATH" || path != root) {
+			if err = set(entry[0], path); err != nil {
+				return
 			}
 		}
 	}

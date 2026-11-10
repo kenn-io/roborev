@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -70,6 +71,29 @@ func TestConfigureGitForTestsStandalone(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 }
 
+func TestConfigureGitForTestsDoesNotRunGo(t *testing.T) {
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	binary, err := os.ReadFile(exe)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	name := "go"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), binary, 0o755))
+	t.Setenv("PATH", dir)
+	marker := filepath.Join(t.TempDir(), "started")
+	t.Setenv("ROBOREV_TEST_STALLED_GO", marker)
+	t.Setenv("GOPATH", "")
+	t.Setenv("GOCACHE", "")
+	restore, err := configureGitForTests(t.TempDir())
+	require.NoError(t, err)
+	defer restore()
+	_, err = os.Stat(marker)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestConfigureGitForTestsMissingHome(t *testing.T) {
 	if os.Getenv("ROBOREV_TEST_MISSING_HOME") == "1" {
 		restore, err := configureGitForTests(t.TempDir())
@@ -92,7 +116,7 @@ func TestConfigureGitForTestsMissingHome(t *testing.T) {
 func TestConfigureGitForTestsGoEnv(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	require.NoError(t, err)
-	for _, mode := range []string{"default", "long line", "off", "toolchain defaults"} {
+	for _, mode := range []string{"default", "long line", "off", "toolchain defaults", "empty user value"} {
 		t.Run(mode, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
@@ -110,13 +134,17 @@ func TestConfigureGitForTestsGoEnv(t *testing.T) {
 			if mode == "off" {
 				goenv = "off"
 			}
-			if mode == "toolchain defaults" {
+			if mode == "toolchain defaults" || mode == "empty user value" {
 				root := t.TempDir()
 				config := "GOPATH=" + filepath.Join(t.TempDir(), "go") + "\nGOCACHE=" + filepath.Join(t.TempDir(), "cache") + "\n"
 				require.NoError(t, os.WriteFile(filepath.Join(root, "go.env"), []byte(config), 0o600))
 				t.Setenv("GOROOT", root)
 				t.Setenv("GOTOOLCHAIN", "local")
-				goenv = "off"
+				if mode == "toolchain defaults" {
+					goenv = "off"
+				} else {
+					require.NoError(t, os.WriteFile(goenv, []byte("GOPATH=\nGOCACHE=\n"), 0o600))
+				}
 			}
 			t.Setenv("GOENV", goenv)
 			if mode == "default" {
