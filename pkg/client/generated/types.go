@@ -4451,7 +4451,7 @@ type StructuredReviewFinding struct {
 	Kind *string `json:"kind,omitempty"`
 
 	// Location Where the problem is, or null when the finding has no location. Derived from file, start_line, and end_line when file is set; otherwise free text.
-	Location *string `json:"location" validate:"required"`
+	Location *string `json:"location" validate:"-"`
 	Problem  string  `json:"problem" validate:"required"`
 
 	// Severity One of critical, high, medium, or low.

@@ -1221,12 +1221,13 @@ func exportDocumentValidator(t *testing.T) *jsonschema.Resolved {
 }
 
 // exportTestCheckedDocument is a combined review after the CI checker kept
-// one finding and dropped another. One verdict has no reason.
+// one finding and dropped another. One verdict has no reason, and the dropped
+// finding has no location.
 const exportTestCheckedDocument = `{"schema_version":3,"summary":"1 finding.","verdict":"fail","source_labels":["codex"],"findings":[` +
 	`{"severity":"high","kind":"defect","topic":null,"confidence":0.9,"problem":"Saves lose data.","fix":"Flush before rename.","file":"save.go","start_line":10,"end_line":12,"location":"save.go:10-12","sources":[1]}],` +
 	`"check":{"status":"completed","findings":[` +
 	`{"outcome":"kept","finding":{"severity":"high","kind":"defect","topic":null,"confidence":0.9,"problem":"Saves lose data.","fix":"Flush before rename.","file":"save.go","start_line":10,"end_line":12,"location":"save.go:10-12","sources":[1]},"verdicts":[{"keep":true,"evidence":"go test ./save: FAIL"}]},` +
-	`{"outcome":"dropped","finding":{"severity":"medium","kind":"defect","topic":null,"confidence":0.6,"problem":"Build breaks.","fix":"Add the import.","file":"build.go","start_line":3,"end_line":3,"location":"build.go:3","sources":[1]},"verdicts":[{"keep":false,"evidence":"go build ./...: ok","reason":"The import exists."}]}]}}`
+	`{"outcome":"dropped","finding":{"severity":"medium","kind":"defect","topic":null,"confidence":0.6,"problem":"Build breaks.","fix":"Add the import.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1]},"verdicts":[{"keep":false,"evidence":"go build ./...: ok","reason":"The import exists."}]}]}}`
 
 func TestExportReviewsCheckedDocumentMatchesSchema(t *testing.T) {
 	t.Parallel()
