@@ -55,7 +55,7 @@ with the same authentication as other native job operations; they are not
 exposed through the remote browser API.
 
 This option requires an explicitly named foreground panel. It cannot be combined
-with `source`, `custom_prompt`, `review_prompt`, or a goal review. It does not
-supply panel policy: the panel's normal configuration still applies. Without
-`hold_synthesis`, panels synthesize automatically as before, including CI and
-post-commit panels.
+with `source`, `custom_prompt`, `review_prompt`, an insights job, or a goal
+review. It does not supply panel policy: the panel's normal configuration still
+applies. Without `hold_synthesis`, panels synthesize automatically as before,
+including CI and post-commit panels.

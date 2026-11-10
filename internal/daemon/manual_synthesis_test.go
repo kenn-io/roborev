@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
@@ -158,4 +160,36 @@ func TestHoldSynthesisRequiresExplicitPanel(t *testing.T) {
 		}))
 		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	}
+}
+
+func TestHoldSynthesisRejectsInsightsWithoutCreatingJob(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repoDir := filepath.Join(tmpDir, "repo")
+	testutil.InitTestGitRepo(t, repoDir)
+	mainRoot, err := gitpkg.GetMainRepoRoot(repoDir)
+	require.NoError(t, err)
+	repo, err := db.GetOrCreateRepo(mainRoot)
+	require.NoError(t, err)
+	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "aaa111", "main", storage.JobTypeReview, failingInsightsOutput("Included finding"))
+	countJobs := func() int {
+		var n int
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM review_jobs`).Scan(&n))
+		return n
+	}
+	before := countJobs()
+
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath:      repoDir,
+		GitRef:        "insights",
+		Branch:        "main",
+		Agent:         "test",
+		JobType:       storage.JobTypeInsights,
+		Since:         time.Now().Add(-24 * time.Hour).Format(time.RFC3339),
+		Panel:         "trio",
+		HoldSynthesis: true,
+	}))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Equal(t, before, countJobs())
 }

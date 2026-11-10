@@ -3257,6 +3257,11 @@ func (s *Server) humaEnqueue(
 
 	merged := config.MergeReviewConfigFromConfig(repoCfg, cfg)
 	panelName := selectPanelForTarget(descriptor, req, merged)
+	// Stored-prompt targets, such as insights jobs, build their prompt after
+	// the upfront check and never run as panels, so the hold would be ignored.
+	if req.HoldSynthesis && panelName == "" {
+		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "hold_synthesis requires an explicitly named foreground review panel"})
+	}
 	if panelName != "" {
 		return s.enqueuePanelRun(ctx, panelRunInputs{
 			descriptor:     descriptor,
