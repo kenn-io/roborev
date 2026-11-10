@@ -29,7 +29,12 @@ func RunIsolatedMain(m *testing.M) int {
 	}
 	defer cleanupTempDir()
 
-	configureGitForTests(tmpDir)
+	restoreGit, err := configureGitForTests(tmpDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to configure git: %v\n", err)
+		return 1
+	}
+	defer restoreGit()
 
 	restoreDataDir := setDataDirEnv(tmpDir)
 	defer restoreDataDir()
@@ -112,31 +117,51 @@ func unsetAgentConfigDirEnv() func() {
 	}
 }
 
-func configureGitForTests(tmpDir string) {
-	// Prevent global/system git config from leaking into tests.
-	// Without this, commit.gpgsign=true in global config triggers
-	// gpg-agent/pinentry during test commits.
-	//
-	// Point GIT_CONFIG_GLOBAL at an empty regular file rather than os.DevNull.
-	// On Windows os.DevNull is "NUL" (the null device), and Git-for-Windows
-	// fails with "fatal: unable to access 'NUL': Invalid argument" when told to
-	// read its global config from that device — which broke essentially every
-	// git invocation in the suite on Windows (notably Windows-on-ARM). An empty
-	// file is a valid, no-op global config on every platform. On Unix
-	// /dev/null happens to work, but the empty file is correct everywhere.
-	emptyGlobalConfig := filepath.Join(tmpDir, "gitconfig-global")
-	if f, err := os.OpenFile(emptyGlobalConfig, os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-		_ = f.Close()
+// configureGitForTests restores every changed variable before fixture removal.
+func configureGitForTests(tmpDir string) (restore func(), err error) {
+	var restores []func()
+	restore = func() {
+		for i := len(restores) - 1; i >= 0; i-- {
+			restores[i]()
+		}
 	}
-	_ = os.Setenv("GIT_CONFIG_GLOBAL", emptyGlobalConfig)
-	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	// Git also reads the default global ignore file from XDG_CONFIG_HOME
-	// independently of GIT_CONFIG_GLOBAL. Keep that out of the user's real
-	// ~/.config so personal excludes cannot change test behavior.
-	xdgConfigHome := filepath.Join(tmpDir, "xdg-config")
-	_ = os.MkdirAll(xdgConfigHome, 0o755)
-	_ = os.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
-	// Never allow git to prompt for input (passwords, passphrases, etc).
-	// If something unexpected tries to prompt, fail fast instead of blocking.
-	_ = os.Setenv("GIT_TERMINAL_PROMPT", "0")
+	defer func() {
+		if err != nil {
+			restore()
+		}
+	}()
+	set := func(key, value string) error {
+		old, exists := os.LookupEnv(key)
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+		restores = append(restores, func() {
+			if exists {
+				_ = os.Setenv(key, old)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+		return nil
+	}
+	// Git-for-Windows cannot read NUL as a config file. Use an empty regular
+	// file on every platform, including commands whose runners strip GIT_*.
+	global := filepath.Join(tmpDir, "gitconfig-global")
+	if err = os.WriteFile(global, nil, 0o644); err != nil {
+		return
+	}
+	xdg := filepath.Join(tmpDir, "xdg-config")
+	if err = os.MkdirAll(xdg, 0o755); err != nil {
+		return
+	}
+	for _, entry := range [][2]string{
+		{"GIT_CONFIG_GLOBAL", global}, {"GIT_CONFIG_NOSYSTEM", "1"},
+		{"XDG_CONFIG_HOME", xdg}, {"GIT_TERMINAL_PROMPT", "0"},
+	} {
+		if err = set(entry[0], entry[1]); err != nil {
+			return
+		}
+	}
+	err = installGitLauncher(tmpDir, global, set)
+	return
 }
