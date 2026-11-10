@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -121,8 +122,8 @@ func unsetAgentConfigDirEnv() func() {
 func configureGitForTests(tmpDir string) (restore func(), err error) {
 	var restores []func()
 	restore = func() {
-		for i := len(restores) - 1; i >= 0; i-- {
-			restores[i]()
+		for _, restore := range slices.Backward(restores) {
+			restore()
 		}
 	}
 	defer func() {
@@ -155,8 +156,10 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 		return
 	}
 	for _, entry := range [][2]string{
-		{"GIT_CONFIG_GLOBAL", global}, {"GIT_CONFIG_NOSYSTEM", "1"},
-		{"XDG_CONFIG_HOME", xdg}, {"GIT_TERMINAL_PROMPT", "0"},
+		{"GIT_CONFIG_GLOBAL", global},
+		{"GIT_CONFIG_NOSYSTEM", "1"},
+		{"XDG_CONFIG_HOME", xdg},
+		{"GIT_TERMINAL_PROMPT", "0"},
 	} {
 		if err = set(entry[0], entry[1]); err != nil {
 			return

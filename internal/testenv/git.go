@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 )
 
 // Metadata belongs to the exact executable, so a copy used as a native hook
@@ -49,10 +50,11 @@ func init() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "read fixture Git metadata: %v\n", err)
-		os.Exit(1)
+		syscall.Exit(1)
 	}
 	// This launcher is a helper process with no caller context.
-	os.Exit(forwardFixtureGit(context.Background(), metadata))
+	// Only recognized launchers bypass test/race runtime finalization.
+	syscall.Exit(forwardFixtureGit(context.Background(), metadata))
 }
 
 func forwardFixtureGit(ctx context.Context, metadata gitFixtureMetadata) int {
@@ -62,16 +64,7 @@ func forwardFixtureGit(ctx context.Context, metadata gitFixtureMetadata) int {
 		_ = os.Setenv("GIT_CONFIG_GLOBAL", metadata.Global)
 	}
 	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	cmd := exec.CommandContext(ctx, metadata.RealGit, os.Args[1:]...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			return exit.ExitCode()
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	return 0
+	return runFixtureGit(ctx, metadata.RealGit)
 }
 
 func installGitLauncher(tmpDir, global string, set func(string, string) error) error {
@@ -110,8 +103,12 @@ func installGitLauncher(tmpDir, global string, set func(string, string) error) e
 	if err := os.WriteFile(launcher, data, 0o755); err != nil {
 		return err
 	}
-	metadata := gitFixtureMetadata{RealGit: realGit, Global: global,
-		Home: os.Getenv("HOME"), UserProfile: os.Getenv("USERPROFILE")}
+	metadata := gitFixtureMetadata{
+		RealGit:     realGit,
+		Global:      global,
+		Home:        os.Getenv("HOME"),
+		UserProfile: os.Getenv("USERPROFILE"),
+	}
 	encoded, err := json.Marshal(metadata)
 	if err != nil {
 		return err

@@ -2,6 +2,7 @@ package testenv
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,11 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	gitcmd "go.kenn.io/kit/git/cmd"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gitcmd "go.kenn.io/kit/git/cmd"
 )
 
 // The recorder stands in for real Git, after the native launcher has forwarded.
@@ -127,7 +128,8 @@ func TestGitFixtureRestoration(t *testing.T) {
 	restore()
 	for _, key := range keys {
 		text, exists := os.LookupEnv(key)
-		assert.Equal(before[key], value{text, exists}, key)
+		restored := value{text, exists}
+		assert.Equal(before[key], restored, key)
 	}
 	cleanup()
 	assert.NoDirExists(dir)
@@ -158,4 +160,73 @@ func TestGitFixtureMalformedMetadata(t *testing.T) {
 		assert.Equal(t, 1, exit.ExitCode())
 		assert.Contains(t, string(output), "read fixture Git metadata:")
 	}
+}
+
+// A controlled external child holds both output pipes until its stdin gate opens.
+func gitFixtureWaitingChild(dir string) int {
+	if err := os.WriteFile(filepath.Join(dir, "ready"), nil, 0o600); err != nil {
+		return 1
+	}
+	var gate [1]byte
+	if _, err := io.ReadFull(os.Stdin, gate[:]); err != nil {
+		return 0
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mutation"), nil, 0o600); err != nil {
+		return 1
+	}
+	return 0
+}
+
+func TestGitFixtureCancellation(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, installGitLauncher(dir, os.Getenv("GIT_CONFIG_GLOBAL"), func(key, value string) error { t.Setenv(key, value); return nil }))
+	launcher, err := exec.LookPath("git")
+	require.NoError(t, err)
+	metadata, err := readGitFixtureMetadata(launcher)
+	require.NoError(t, err)
+	metadata.RealGit, err = os.Executable()
+	require.NoError(t, err)
+	encoded, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(launcher+gitFixtureMetadataSuffix, encoded, 0o600))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, launcher, "fixture-waiting-child", dir)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	gate, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	done := make(chan error, 1)
+	waited := make(chan struct{})
+	go func() {
+		done <- cmd.Wait()
+		close(waited)
+	}()
+	t.Cleanup(func() {
+		// EOF also releases a child if cancellation dispatch regresses before readiness.
+		_ = gate.Close()
+		cancel()
+		<-waited
+	})
+	// External process readiness and pipe closure cannot use synctest virtual time.
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(filepath.Join(dir, "ready"))
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond)
+	cancel()
+	// This watchdog detects a surviving child retaining the command's pipes.
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		require.NoError(t, context.DeadlineExceeded, "fixture Git child retained pipes after cancellation")
+	}
+	_, err = gate.Write([]byte{1})
+	require.Error(t, err, "terminated child must close its stdin gate")
+	// Give an incorrectly surviving external child an opportunity to open its gate.
+	assert.Never(t, func() bool {
+		_, err := os.Stat(filepath.Join(dir, "mutation"))
+		return err == nil
+	}, 200*time.Millisecond, 10*time.Millisecond)
 }
