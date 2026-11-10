@@ -365,27 +365,6 @@ exit 1
 	assert.Equal(t, "readonly", result)
 }
 
-// assertArgsContainContiguous checks that want appears as a contiguous subsequence of args.
-func assertArgsContainContiguous(t *testing.T, args, want []string) {
-	t.Helper()
-	if len(want) == 0 {
-		return
-	}
-	for i := 0; i+len(want) <= len(args); i++ {
-		match := true
-		for j := range want {
-			if args[i+j] != want[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return
-		}
-	}
-	require.Failf(t, "contiguous subsequence missing", "args %v does not contain contiguous subsequence %v", args, want)
-}
-
 func TestGrokClassifyArgs(t *testing.T) {
 	a := NewGrokAgent("grok").WithModel("grok-4.5").WithReasoning(ReasoningFast).(*GrokAgent)
 	schema := jsontext.Value(`{"type":"object"}`)

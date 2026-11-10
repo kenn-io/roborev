@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,19 @@ func readMockEnv(t *testing.T, path string) []string {
 		return nil
 	}
 	return strings.Split(trimmed, "\n")
+}
+
+// assertArgsContainContiguous checks that want appears as a contiguous subsequence of args.
+func assertArgsContainContiguous(t *testing.T, args, want []string) {
+	t.Helper()
+	require.Condition(t, func() bool {
+		for i := 0; i+len(want) <= len(args); i++ {
+			if slices.Equal(args[i:i+len(want)], want) {
+				return true
+			}
+		}
+		return false
+	}, "args %v does not contain contiguous subsequence %v", args, want)
 }
 
 // assertContainsArg checks that args contains target, failing with a descriptive message.

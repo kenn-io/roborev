@@ -44,8 +44,7 @@ func TestOpenCodeReviewModelFlag(t *testing.T) {
 
 			assertArgsContainContiguous(t, args, []string{"--format", "json"})
 			if tt.wantFlag {
-				assert.Contains(t, args, "--model")
-				assert.Contains(t, args, tt.wantModel)
+				assertArgsContainContiguous(t, args, []string{"--model", tt.wantModel})
 			} else {
 				assert.NotContains(t, args, "--model")
 			}
@@ -62,7 +61,7 @@ func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
 
 	assert.Equal(t, strings.TrimSpace(stdin), prompt)
 
-	assert.NotContains(t, args, prompt)
+	assert.NotContains(t, strings.Join(args, "\x00"), prompt)
 }
 
 func TestOpenCodeReviewParsesJSONStream(t *testing.T) {
@@ -358,8 +357,7 @@ func TestOpenCodeReviewSessionFlag(t *testing.T) {
 		return out, argsStr, stdinStr
 	}()
 
-	assert.Contains(t, args, "--session")
-	assert.Contains(t, args, "ses_123")
+	assertArgsContainContiguous(t, args, []string{"--session", "ses_123"})
 }
 
 func readFileOrFatal(t *testing.T, path string) []byte {

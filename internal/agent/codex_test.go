@@ -457,8 +457,7 @@ func TestCodexReviewPassesThreadSourceWhenSupported(t *testing.T) {
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
-	assertContainsArg(t, args, "--thread-source")
-	assertContainsArg(t, args, "roborev")
+	assertArgsContainContiguous(t, args, []string{"--thread-source", "roborev"})
 }
 
 func TestCodexReviewOmitsIgnoreUserConfigWhenUnsupported(t *testing.T) {

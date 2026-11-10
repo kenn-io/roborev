@@ -151,10 +151,8 @@ func TestPiReviewSessionFlag(t *testing.T) {
 	assert.Equal(t, "ok", result)
 
 	args := readMockArgs(t, mock.ArgsFile)
-	assertContainsArg(t, args, "--session")
-	assertContainsArg(t, args, sessionPath)
-	assertContainsArg(t, args, "--mode")
-	assertContainsArg(t, args, "json")
+	assertArgsContainContiguous(t, args, []string{"--session", sessionPath})
+	assertArgsContainContiguous(t, args, []string{"--mode", "json"})
 }
 
 func TestPiCommandLineOmitsResolvedSessionPath(t *testing.T) {

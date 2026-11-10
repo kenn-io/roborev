@@ -56,7 +56,7 @@ func TestKiloReviewPipesPromptViaStdin(t *testing.T) {
 	_, args, stdin := runKiloMockReview(t, "", prompt, nil)
 	assert.Equal(t, prompt, strings.TrimSpace(stdin), "stdin content = %q, want %q", stdin, prompt)
 
-	assert.NotContains(t, args, prompt)
+	assert.NotContains(t, strings.Join(args, "\x00"), prompt)
 }
 
 func TestKiloReviewSessionFlag(t *testing.T) {

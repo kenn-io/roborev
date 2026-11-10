@@ -96,9 +96,7 @@ func TestClaudeBuildArgs(t *testing.T) {
 		assertArgsContainContiguous(t, args, []string{"--tools", "Read,Glob,Grep"})
 		assertArgsContainContiguous(t, args, []string{"--disallowedTools", "mcp__*"})
 
-		assertTools(t, args,
-			[]string{"Read", "Glob", "Grep"},
-			[]string{"Edit", "Write", "Bash"})
+		assertArgsContainContiguous(t, args, []string{"--allowedTools", "Read,Glob,Grep"})
 	})
 
 	t.Run("AgenticMode", func(t *testing.T) {
