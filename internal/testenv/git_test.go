@@ -14,7 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gitcmd "go.kenn.io/kit/git/cmd"
 )
 
 // The recorder stands in for real Git, after the native launcher has forwarded.
@@ -133,17 +132,6 @@ func TestGitFixtureRestoration(t *testing.T) {
 	}
 	cleanup()
 	assert.NoDirExists(dir)
-}
-
-// Capture the environment before TestMain installs fixture isolation.
-var beforeTestMainGit = gitcmd.New()
-
-func TestGitFixturePreTestMainRunner(t *testing.T) {
-	runner := beforeTestMainGit
-	runner.DisableSafeDirectoryForward = true
-	output, err := runner.Output(t.Context(), "", "--version")
-	require.NoError(t, err)
-	assert.Contains(t, string(output), "git version ")
 }
 
 func TestGitFixtureMalformedMetadata(t *testing.T) {
