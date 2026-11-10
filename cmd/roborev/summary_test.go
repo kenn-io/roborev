@@ -161,7 +161,7 @@ func TestSummaryFindingValidationBeforeDaemon(t *testing.T) {
 }
 
 func TestPrintFindingSummary(t *testing.T) {
-	assert := assert.New(t)
+	a := assert.New(t)
 	cmd := summaryCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -178,30 +178,29 @@ func TestPrintFindingSummary(t *testing.T) {
 		}},
 	}
 	printSummary(cmd, storage.Summary{CI: &storage.CISummary{TotalPanels: 1}, Findings: &f})
-	assert.Contains(out.String(), "CI Run Health")
-	assert.NotContains(out.String(), "No review data")
-	assert.Contains(out.String(), "2/3")
-	assert.Contains(out.String(), "n<5")
-	assert.Contains(out.String(), "1/1")
-	assert.Equal(1, strings.Count(out.String(), "(1/2 priced)"))
-	assert.Equal(2, strings.Count(out.String(), "≥$3.00"))
+	a.Contains(out.String(), "CI Run Health")
+	a.NotContains(out.String(), "No review data")
+	a.Contains(out.String(), "2/3")
+	a.Contains(out.String(), "n<5")
+	a.Contains(out.String(), "1/1")
+	a.Equal(1, strings.Count(out.String(), "(1/2 priced)"))
+	a.Equal(2, strings.Count(out.String(), "≥$3.00"))
 	footer := "Review costs can appear in multiple severity rows; do not add them."
-	assert.Contains(out.String(), footer)
+	a.Contains(out.String(), footer)
 	out.Reset()
 	f.Rows[0].Cost.JobsWithCost = 0
-	f.Rows[0].CostPerPositive = nil
 	printFindingSummary(cmd, &f)
-	assert.Contains(out.String(), "≥$3.00 (0/2 priced)")
-	assert.Equal(2, strings.Count(out.String(), "≥$3.00"))
-	assert.Equal(1, strings.Count(out.String(), "(0/2 priced)"))
-	assert.Contains(out.String(), footer)
+	a.Contains(out.String(), "≥$3.00 (0/2 priced)")
+	a.Equal(2, strings.Count(out.String(), "≥$3.00"))
+	a.Equal(1, strings.Count(out.String(), "(0/2 priced)"))
+	a.Contains(out.String(), footer)
 	out.Reset()
 	f.Rows[0].Cost.TotalUSD = 0
 	f.Rows[0].CostPerPositive = nil
 	printFindingSummary(cmd, &f)
-	assert.NotContains(out.String(), "Retained spend")
-	assert.NotContains(out.String(), "Cost/positive")
-	assert.NotContains(out.String(), footer)
+	a.NotContains(out.String(), "Retained spend")
+	a.NotContains(out.String(), "Cost/positive")
+	a.NotContains(out.String(), footer)
 
 	const definitionHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	for _, tc := range []struct {
@@ -221,14 +220,14 @@ func TestPrintFindingSummary(t *testing.T) {
 			cmd.SetOut(&out)
 			f := storage.FindingStats{GroupBy: "arm", Rows: []storage.FindingStatsRow{{Key: tc.key, Cost: storage.CostAggregate{TotalUSD: 3, JobsTotal: 2, JobsWithCost: 1}}}}
 			printFindingSummary(cmd, &f)
-			assert.Contains(out.String(), "  "+tc.want+" ")
-			assert.NotContains(out.String(), definitionHash)
-			assert.NotContains(out.String(), footer)
+			a.Contains(out.String(), "  "+tc.want+" ")
+			a.NotContains(out.String(), definitionHash)
+			a.NotContains(out.String(), footer)
 
 			out.Reset()
 			f.GroupBy = "model"
 			printFindingSummary(cmd, &f)
-			assert.Contains(out.String(), "  "+tc.key+" ")
+			a.Contains(out.String(), "  "+tc.key+" ")
 		})
 	}
 }
