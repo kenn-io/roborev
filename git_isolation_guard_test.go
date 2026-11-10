@@ -63,7 +63,7 @@ func TestGitUsingTestPackagesUseIsolatedTestMain(t *testing.T) {
 		}
 
 		imports := importAliases(file)
-		if testFileCallsIsolatedMain(file, relDir, imports["go.kenn.io/roborev/internal/testenv"]) {
+		if testFileCallsIsolatedMain(file, imports["go.kenn.io/roborev/internal/testenv"]) {
 			pkg.hasIsolatedTestMain = true
 		}
 		pkg.gitEvidence = append(pkg.gitEvidence, testFileGitUsage(
@@ -175,9 +175,8 @@ func defaultImportName(importPath string) string {
 	return after
 }
 
-func testFileCallsIsolatedMain(file *ast.File, relDir string, testenvAliases map[string]bool) bool {
-	samePackage := filepath.ToSlash(relDir) == "internal/testenv" && file.Name.Name == "testenv"
-	if len(testenvAliases) == 0 && !samePackage {
+func testFileCallsIsolatedMain(file *ast.File, testenvAliases map[string]bool) bool {
+	if len(testenvAliases) == 0 {
 		return false
 	}
 	for _, decl := range file.Decls {
@@ -190,10 +189,6 @@ func testFileCallsIsolatedMain(file *ast.File, relDir string, testenvAliases map
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true
-			}
-			if ident, ok := call.Fun.(*ast.Ident); ok && samePackage && ident.Name == "RunIsolatedMain" {
-				found = true
-				return false
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
 			if !ok || sel.Sel.Name != "RunIsolatedMain" {
@@ -285,25 +280,5 @@ func testutilGitHelper(name string) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func TestTestFileCallsIsolatedMain(t *testing.T) {
-	for _, tc := range []struct {
-		name, dir, source string
-		want              bool
-	}{
-		{"same package", "internal/testenv", "package testenv; func TestMain() { RunIsolatedMain(nil) }", true},
-		{"other directory", "internal/other", "package testenv; func TestMain() { RunIsolatedMain(nil) }", false},
-		{"external package", "internal/testenv", "package testenv_test; func TestMain() { RunIsolatedMain(nil) }", false},
-		{"missing isolation", "internal/testenv", "package testenv; func TestMain() {}", false},
-		{"outside TestMain", "internal/testenv", "package testenv; func helper() { RunIsolatedMain(nil) }", false},
-		{"import alias", "internal/other", `package other; import fixture "go.kenn.io/roborev/internal/testenv"; func TestMain() { fixture.RunIsolatedMain(nil) }`, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			file, err := parser.ParseFile(token.NewFileSet(), "fixture_test.go", tc.source, 0)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, testFileCallsIsolatedMain(file, tc.dir, importAliases(file)["go.kenn.io/roborev/internal/testenv"]))
-		})
 	}
 }

@@ -574,9 +574,26 @@ func TestGitFixtureHostileHome(t *testing.T) {
 	t.Setenv("ROBOREV_TEST_HOSTILE_HOME", "1")
 	exe, err := os.Executable()
 	require.NoError(t, err)
-	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestGitFixtureHostileHome$", "-test.v")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", out)
+	t.Run("hostile home", func(t *testing.T) {
+		cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestGitFixtureHostileHome$", "-test.v")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", out)
+	})
+	t.Run("standalone without go", func(t *testing.T) {
+		gitPath, err := exec.LookPath("git")
+		require.NoError(t, err)
+		path := filepath.Dir(gitPath)
+		if runtime.GOOS == "windows" {
+			path += string(os.PathListSeparator) + filepath.Join(os.Getenv("SystemRoot"), "System32")
+		}
+		t.Setenv("PATH", path)
+		_, err = exec.LookPath("go")
+		require.Error(t, err)
+		cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestGitFixtureHostileHome$", "-test.v")
+		cmd.Dir = t.TempDir()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", out)
+	})
 }
 
 func TestGetHooksPath(t *testing.T) {

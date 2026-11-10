@@ -1,13 +1,15 @@
 // Package testenv provides environment isolation helpers for tests.
-// Its Git launcher leaf package has no dependency on application packages.
+// This package intentionally has no dependencies on other internal packages
+// to avoid import cycles.
 package testenv
 
 import (
-	"context"
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -30,8 +32,7 @@ func RunIsolatedMain(m *testing.M) int {
 	}
 	defer cleanupTempDir()
 
-	// TestMain has no caller context; setup owns this root until it returns.
-	restoreGit, err := configureGitForTests(context.Background(), tmpDir)
+	restoreGit, err := configureGitForTests(tmpDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to configure git: %v\n", err)
 		return 1
@@ -120,7 +121,7 @@ func unsetAgentConfigDirEnv() func() {
 }
 
 // configureGitForTests restores every changed variable before fixture removal.
-func configureGitForTests(ctx context.Context, tmpDir string) (restore func(), err error) {
+func configureGitForTests(tmpDir string) (restore func(), err error) {
 	var restores []func()
 	restore = func() {
 		for _, restore := range slices.Backward(restores) {
@@ -146,9 +147,60 @@ func configureGitForTests(ctx context.Context, tmpDir string) (restore func(), e
 		})
 		return nil
 	}
-	// Git-for-Windows cannot read NUL as a config file. Use an empty regular
-	// file on every platform, including commands whose runners strip GIT_*.
-	global := filepath.Join(tmpDir, "gitconfig-global")
+	// Preserve Go's defaults before replacing the home and XDG config paths.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	goenv := os.Getenv("GOENV")
+	if goenv == "" {
+		goenv = filepath.Join(config, "go", "env")
+		if err = set("GOENV", goenv); err != nil {
+			return
+		}
+	}
+	goConfig := make(map[string]string)
+	if goenv != "off" {
+		if f, openErr := os.Open(goenv); openErr == nil {
+			scanner := bufio.NewScanner(f)
+			for scanner.Scan() {
+				key, value, ok := strings.Cut(scanner.Text(), "=")
+				if ok {
+					goConfig[key] = value
+				}
+			}
+			_ = f.Close()
+		}
+	}
+	goPath := os.Getenv("GOPATH")
+	if goPath == "" {
+		goPath = goConfig["GOPATH"]
+	}
+	if goPath == "" {
+		goPath = filepath.Join(home, "go")
+	}
+	for _, entry := range [][2]string{
+		{"GOPATH", goPath},
+		{"GOMODCACHE", filepath.Join(filepath.SplitList(goPath)[0], "pkg", "mod")},
+		{"GOCACHE", filepath.Join(cache, "go-build")},
+	} {
+		if os.Getenv(entry[0]) == "" && goConfig[entry[0]] == "" {
+			if err = set(entry[0], entry[1]); err != nil {
+				return
+			}
+		}
+	}
+	// Git-for-Windows cannot read NUL as a config file. A regular file also
+	// works for runners that strip GIT_CONFIG_GLOBAL.
+	global := filepath.Join(tmpDir, ".gitconfig")
 	if err = os.WriteFile(global, nil, 0o644); err != nil {
 		return
 	}
@@ -157,6 +209,8 @@ func configureGitForTests(ctx context.Context, tmpDir string) (restore func(), e
 		return
 	}
 	for _, entry := range [][2]string{
+		{"HOME", tmpDir},
+		{"USERPROFILE", tmpDir},
 		{"GIT_CONFIG_GLOBAL", global},
 		{"GIT_CONFIG_NOSYSTEM", "1"},
 		{"XDG_CONFIG_HOME", xdg},
@@ -166,6 +220,5 @@ func configureGitForTests(ctx context.Context, tmpDir string) (restore func(), e
 			return
 		}
 	}
-	err = installGitLauncher(ctx, tmpDir, global, set)
 	return
 }
