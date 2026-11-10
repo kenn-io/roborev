@@ -387,15 +387,8 @@ func RecoverInsightsBaseline(storedPrompt string) *InsightsBaseline {
 	if json.Unmarshal([]byte(body), &fields) != nil {
 		return nil
 	}
-	// Struct decoding accepts case-insensitive keys, but the raw containers
-	// below use exact keys. Require canonical casing so both decodes select
-	// the same containers, even when an envelope includes conflicting aliases.
-	for name := range fields {
-		for _, container := range []string{"total", "rows", "tier_coverage", "kata"} {
-			if name != container && strings.EqualFold(name, container) {
-				return nil
-			}
-		}
+	if !canonicalInsightsKeys(fields, "logical_reviews", "structured_reviews", "total", "rows", "tier_coverage", "kata") {
+		return nil
 	}
 	for _, name := range []string{"logical_reviews", "structured_reviews", "total"} {
 		if len(fields[name]) == 0 || string(fields[name]) == "null" {
@@ -404,6 +397,9 @@ func RecoverInsightsBaseline(storedPrompt string) *InsightsBaseline {
 	}
 	var counts map[string]json.RawMessage
 	if json.Unmarshal(fields["total"], &counts) != nil {
+		return nil
+	}
+	if !canonicalInsightsKeys(counts, "findings", "labeled", "positive", "negative", "excluded", "unlabeled") {
 		return nil
 	}
 	for _, name := range []string{"findings", "labeled", "positive", "negative", "excluded", "unlabeled"} {
@@ -415,18 +411,24 @@ func RecoverInsightsBaseline(storedPrompt string) *InsightsBaseline {
 	if json.Unmarshal([]byte(body), &baseline) != nil || baseline.TimeBasis != "finished_at" || baseline.Since.IsZero() || baseline.AsOf.IsZero() || baseline.AsOf.Before(baseline.Since) {
 		return nil
 	}
-	recoverFindingReasons(fields["total"], &baseline.Total)
+	if !recoverFindingReasons(fields["total"], &baseline.Total) {
+		return nil
+	}
 	var rows []json.RawMessage
 	if json.Unmarshal(fields["rows"], &rows) == nil {
 		for i, raw := range rows {
-			recoverFindingReasons(raw, &baseline.Rows[i].FindingOutcomeCounts)
+			if !recoverFindingReasons(raw, &baseline.Rows[i].FindingOutcomeCounts) {
+				return nil
+			}
 		}
 	}
 	var tiers map[string]json.RawMessage
 	if json.Unmarshal(fields["tier_coverage"], &tiers) == nil {
 		for tier, raw := range tiers {
 			counts := baseline.TierCoverage[tier]
-			recoverFindingReasons(raw, &counts)
+			if !recoverFindingReasons(raw, &counts) {
+				return nil
+			}
 			baseline.TierCoverage[tier] = counts
 		}
 	}
@@ -437,13 +439,31 @@ func RecoverInsightsBaseline(storedPrompt string) *InsightsBaseline {
 	return &InsightsBaseline{FindingStats: &baseline, kataRecorded: recorded}
 }
 
-func recoverFindingReasons(raw json.RawMessage, counts *storage.FindingOutcomeCounts) {
+// Struct decoding folds key casing; raw map lookups do not. Guard only names
+// read by exact-key recovery below, so both decodes use the same values. Other
+// fields (including inner reason counters) use the typed decoder alone.
+func canonicalInsightsKeys(fields map[string]json.RawMessage, names ...string) bool {
+	for key := range fields {
+		for _, name := range names {
+			if key != name && strings.EqualFold(key, name) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func recoverFindingReasons(raw json.RawMessage, counts *storage.FindingOutcomeCounts) bool {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
-		return
+		return false
+	}
+	if !canonicalInsightsKeys(fields, "refute_reasons") {
+		return false
 	}
 	if reason := fields["refute_reasons"]; len(reason) == 0 || string(reason) == "null" {
 		// Historical negatives were retained R assertions without a classification.
 		counts.RefuteReasons = storage.RefuteReasonCounts{Unspecified: counts.Negative, Absent: counts.Negative}
 	}
+	return true
 }

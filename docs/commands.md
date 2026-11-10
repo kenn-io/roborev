@@ -1222,14 +1222,11 @@ Insights also reads the latest completed analysis for the same repository and
 exact branch scope. An analysis without `--branch` matches only prior analyses
 across all branches. When section 5 can be recovered, the agent checks exact
 inclusion against the complete current guidelines and distinguishes equivalent
-wording. Stored measured counts and windows are supplied when available.
-Recovery rejects noncanonical casing of stored `total`, `rows`, `tier_coverage`,
-and `kata` container keys, so conflicting containers cannot supply baseline
-measurements. Historical baselines without refute reasons retain unspecified
-reasons; missing K coverage remains unavailable. Missing baselines, overlapping
-or otherwise noncomparable periods, incomplete coverage, and missing pattern
-denominators mean `insufficient comparable evidence`. Changes of one or two
-occurrences are `within noise`, a heuristic. A decrease establishes neither
+wording. Stored measured counts and windows are supplied when available;
+malformed stored baselines are treated as unavailable. Missing baselines,
+overlapping or otherwise noncomparable periods, incomplete coverage, and missing
+pattern denominators mean `insufficient comparable evidence`. Changes of one or
+two occurrences are `within noise`, a heuristic. A decrease establishes neither
 causation nor the date a guideline was adopted.
 
 If no failing reviews match the time window and branch filter, insights still

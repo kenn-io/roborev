@@ -324,13 +324,9 @@ func TestRecoverInsightsBaselineRejectsCaseCollidingContainers(t *testing.T) {
 		name       string
 		containers string
 	}{
-		{"rows null", `"rows":[` + counts + `],"Rows":null`},
 		{"rows empty", `"rows":[` + counts + `],"ROWS":[]`},
-		{"rows shorter", `"rows":[` + counts + `,` + counts + `],"Rows":[` + counts + `]`},
 		{"rows same length", `"rows":[` + counts + `],"Rows":[{"negative":2}]`},
-		{"rows reversed keys", `"Rows":[],"rows":[` + counts + `]`},
 		{"tier coverage null", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":null`},
-		{"tier coverage reversed keys", `"Tier_Coverage":null,"tier_coverage":{"R":` + counts + `}`},
 		{"tier coverage merged", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":{"K":` + counts + `}`},
 		{"tier coverage overwritten", `"tier_coverage":{"R":` + counts + `},"Tier_Coverage":{"R":{"negative":2}}`},
 		{"total", `"Total":{"negative":2}`},
@@ -342,6 +338,54 @@ func TestRecoverInsightsBaselineRejectsCaseCollidingContainers(t *testing.T) {
 			require.NotPanics(t, func() { baseline = RecoverInsightsBaseline(stored) })
 			assert.Nil(t, baseline)
 		})
+	}
+}
+
+func TestRecoverInsightsBaselineRejectsNoncanonicalKeys(t *testing.T) {
+	for _, scope := range []struct {
+		name string
+		keys []string
+	}{
+		{"envelope", []string{"logical_reviews", "structured_reviews", "total", "rows", "tier_coverage", "kata"}},
+		{"counts", []string{"findings", "labeled", "positive", "negative", "excluded", "unlabeled"}},
+		{"total reasons", []string{"refute_reasons"}},
+		{"row reasons", []string{"refute_reasons"}},
+		{"tier reasons", []string{"refute_reasons"}},
+	} {
+		for _, key := range scope.keys {
+			for _, collision := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/collision=%t", scope.name, key, collision), func(t *testing.T) {
+					cell := func() map[string]any {
+						return map[string]any{"findings": 1, "labeled": 1, "positive": 0, "negative": 1, "excluded": 0, "unlabeled": 0, "refute_reasons": map[string]int{"false_positive": 1}}
+					}
+					total, row, tier := cell(), cell(), cell()
+					row["key"] = "high"
+					fields := map[string]any{"since": "2026-01-01T00:00:00Z", "as_of": "2026-01-02T00:00:00Z", "time_basis": "finished_at", "logical_reviews": 1, "structured_reviews": 1, "total": total, "rows": []any{row}, "tier_coverage": map[string]any{"R": tier}, "kata": map[string]any{"state": "available"}}
+					target := fields
+					switch scope.name {
+					case "counts", "total reasons":
+						target = total
+					case "row reasons":
+						target = row
+					case "tier reasons":
+						target = tier
+					}
+					aliasValue := target[key]
+					if key == "refute_reasons" {
+						aliasValue = map[string]int{"unspecified": 1}
+					} else if _, numeric := aliasValue.(int); numeric {
+						aliasValue = 9
+					}
+					target[strings.ToUpper(key)] = aliasValue
+					if !collision {
+						delete(target, key)
+					}
+					encoded, err := json.Marshal(fields)
+					require.NoError(t, err)
+					assert.Nil(t, RecoverInsightsBaseline(measuredStart+string(encoded)+measuredEnd))
+				})
+			}
+		}
 	}
 }
 
