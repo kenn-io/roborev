@@ -37,6 +37,7 @@ if [[ "$DOCS_TEST_MODE" == producer-failure ]]; then
 fi
 if [[ "$DOCS_TEST_MODE" == padding ]]; then
   dd if=/dev/zero bs=1048576 count=8 2>/dev/null
+  echo 'fixture padding completed' >&2
 fi
 `
 				extractor := `
@@ -47,7 +48,6 @@ fi
 exec "$DOCS_TEST_TAR" "$@"
 `
 				env := append(os.Environ(),
-					"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 					"DOCS_TEST_TAR="+bashPath(t, realTar),
 					"DOCS_TEST_MODE="+mode,
 				)
@@ -106,7 +106,12 @@ printf 'zensical reached\n'
 					args = []string{"serve"}
 				}
 				scriptPath := installAssetScript(t, repo, scriptRel)
-				cmd := exec.CommandContext(t.Context(), "bash", append([]string{bashPath(t, scriptPath)}, args...)...)
+				// Git for Windows prepends its tools when Bash starts, so put
+				// the fixture wrappers first from inside the running shell.
+				cmd := exec.CommandContext(t.Context(), "bash", append([]string{
+					"-c", `export PATH="$1:$PATH"; shift; exec bash "$@"`,
+					"docs-archive-test", bashPath(t, bin), bashPath(t, scriptPath),
+				}, args...)...)
 				cmd.Dir = repo
 				cmd.Env = env
 				output, err := cmd.CombinedOutput()
@@ -126,6 +131,7 @@ printf 'zensical reached\n'
 					return
 				}
 				require.NoError(t, err, string(output))
+				assert.Contains(t, string(output), "fixture padding completed")
 				if flow == "hydrate" {
 					for path, want := range map[string]string{
 						"static/logo.svg": "static asset\n", "generated/tui-hero.svg": "generated asset\n",
