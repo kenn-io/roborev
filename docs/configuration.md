@@ -2284,10 +2284,12 @@ zero, or negative values also fall back to `10s`.
 
 Usage indexing can lag behind job completion. The daemon retries fresh misses
 and periodically revisits terminal jobs from the past week that still lack a
-recorded price. Each lookup can start an `agentsview` process or send an HTTP
-request, so a job that stays unpriced is rechecked with backoff: the wait starts
-at one minute and doubles after each miss. The daemon stores the backoff in
-SQLite, so it continues after a restart.
+recorded price. With AgentsView v0.47.0 or later, a successful periodic page
+uses one `session usage-batch` process. A failed batch falls back to individual
+lookups. Fresh retries, older CLIs, and configured HTTP endpoints also use
+individual lookups. A job that stays unpriced is rechecked with backoff: the
+wait starts at one minute and doubles after each miss. The daemon stores the
+backoff in SQLite, so it continues after a restart.
 
 The daemon stops looking up a job when the provider reports the same session
 with no token or cost data on two lookups in a row, and the later lookup comes
