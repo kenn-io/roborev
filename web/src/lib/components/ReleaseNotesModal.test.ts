@@ -1,7 +1,15 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import ReleaseNotesModal from "./ReleaseNotesModal.svelte";
+
+const rendererLoaded = vi.hoisted(() => Promise.withResolvers<void>());
+
+vi.mock("@kenn-io/roborev-ui/review-content", async (importOriginal) => {
+  const module = await importOriginal();
+  rendererLoaded.resolve();
+  return module;
+});
 
 describe("ReleaseNotesModal", () => {
   it("shows recent releases and switches the selected notes", async () => {
@@ -34,6 +42,7 @@ describe("ReleaseNotesModal", () => {
       ],
     });
 
+    await rendererLoaded.promise;
     expect(await screen.findByText("Latest notes")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy release notes as Markdown" }),
