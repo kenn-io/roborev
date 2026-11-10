@@ -27,6 +27,7 @@ jobs:
       changed: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.go == 'true' }}
       lint: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.lint == 'true' }}
       web: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.web == 'true' }}
+      release-commands: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.release-commands == 'true' }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -83,6 +84,18 @@ jobs:
               - 'Makefile'
               - '.goreleaser.yaml'
               - '.github/workflows/ci.yml'
+            release-commands:
+              - 'README.md'
+              - 'scripts/install.sh'
+              - 'scripts/install.ps1'
+              - '.github/workflows/release-commands.yml'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/actions.lock'
+
+  release-commands:
+    needs: go-changes
+    if: needs.go-changes.outputs.release-commands == 'true'
+    uses: ./.github/workflows/release-commands.yml
 
   api:
     needs: go-changes

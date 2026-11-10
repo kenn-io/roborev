@@ -126,7 +126,11 @@ closing the loop.
 CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, Grok Build, and ZCode
 harnesses
 and adds optional hooks after configured turn, commit, or failed-review
-thresholds are met. Reminders name exact review IDs, invoke the bundled
+thresholds are met.
+
+<!-- release-commands: expected-failure -->
+
+Reminders name exact review IDs, invoke the bundled
 `roborev-fix` skill, and never run `roborev fix --open`. Hook installation
 updates bundled skills for every supported profile. Hermes delivers queued
 post-tool reminders at `Stop`; Cursor records the same events but emits no control
