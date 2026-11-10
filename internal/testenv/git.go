@@ -27,7 +27,8 @@ func buildGitLauncher(ctx context.Context) ([]byte, error) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	executable := filepath.Join(dir, "gitfixture")
-	cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-race=false", "-cover=false", "-coverpkg=", "-o", executable,
+	// Even an empty -coverpkg enables coverage; disable it after clearing packages.
+	cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-race=false", "-coverpkg=", "-cover=false", "-o", executable,
 		"go.kenn.io/roborev/internal/testenv/gitfixture/cmd/gitfixture")
 	// Preserve the selected toolchain and GOFLAGS; disable CGO only for this helper.
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")

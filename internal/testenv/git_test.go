@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,6 +255,24 @@ func TestGitFixtureNestedSetupWithoutGo(t *testing.T) {
 	cmd.Dir = t.TempDir()
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
+}
+
+// A helper with coverage instrumentation emits a startup warning without GOCOVERDIR.
+func TestGitFixtureWithoutCoverageEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	global := filepath.Join(dir, "global")
+	require.NoError(t, os.WriteFile(global, []byte("[fixture]\nmarker = clean-output\n"), 0o600))
+	require.NoError(t, installGitLauncher(t.Context(), dir, global, func(key, value string) error { t.Setenv(key, value); return nil }))
+	cmd := exec.CommandContext(t.Context(), "git", "config", "--global", "--get", "fixture.marker")
+	for _, entry := range withoutGitEnvironment() {
+		if !strings.HasPrefix(entry, "GOCOVERDIR=") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	// Include stderr so helper startup diagnostics cannot hide behind Git's success.
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	assert.Equal(t, "clean-output\n", string(output))
 }
 
 func withoutGitEnvironment() []string {
