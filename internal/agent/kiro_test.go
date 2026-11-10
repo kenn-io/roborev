@@ -239,17 +239,10 @@ func TestKiroPassesPromptAsArg(t *testing.T) {
 	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", prompt, nil)
 	require.NoError(t, err, "Review failed")
 
-	args, err := os.ReadFile(mock.ArgsFile)
-	require.NoError(t, err, "read args capture")
-	if !strings.Contains(string(args), prompt) {
-		assert.Contains(t, string(args), prompt, "expected prompt in args, got: %s", string(args))
-	}
-	if !strings.Contains(string(args), "--no-interactive") {
-		assert.Contains(t, string(args), "--no-interactive", "expected --no-interactive in args, got: %s", string(args))
-	}
-	if !strings.Contains(string(args), " -- ") {
-		assert.Contains(t, string(args), " -- ", "expected -- separator before prompt, got: %s", string(args))
-	}
+	args := readMockArgs(t, mock.ArgsFile)
+	assert.Contains(t, args, prompt)
+	assert.Contains(t, args, "--no-interactive")
+	assertArgsContainContiguous(t, args, []string{"--", prompt})
 }
 
 func TestKiroReviewAgenticMode(t *testing.T) {

@@ -9,7 +9,30 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestMockAgentCLIArgvBoundaries(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+	}{
+		{name: "joined", args: []string{"--tools Read"}},
+		{name: "split", args: []string{"--tools", "Read"}},
+		{name: "whitespace and empty", args: []string{"", " path with spaces ", "\t", "line one\nline two\n", ""}},
+		{name: "empty argument", args: []string{""}},
+		{name: "no arguments", args: []string{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true})
+			out, err := exec.CommandContext(t.Context(), mock.CmdPath, tt.args...).CombinedOutput()
+			require.NoError(t, err, "%s", out)
+			assert.Equal(t, tt.args, readMockArgs(t, mock.ArgsFile))
+		})
+	}
+}
 
 // writeTempCommand writes script to a temporary executable file and returns
 // its path. The file is cleaned up when the test finishes.
@@ -93,19 +116,21 @@ type MockCLIOpts struct {
 // MockCLIResult holds paths to the mock command and any capture files.
 type MockCLIResult struct {
 	CmdPath   string
-	ArgsFile  string
+	ArgsFile  string // NUL-terminated arguments; empty when invoked without arguments.
 	StdinFile string
 	EnvFile   string
 }
 
-// readMockArgs reads the captured arguments from a mock CLI's ArgsFile and splits them into a slice.
+// readMockArgs decodes the NUL-terminated argument vector from a mock CLI.
 func readMockArgs(t *testing.T, path string) []string {
 	t.Helper()
 	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read args file %s: %v", path, err)
+	require.NoError(t, err)
+	if len(content) == 0 {
+		return []string{}
 	}
-	return strings.Split(strings.TrimSpace(string(content)), " ")
+	require.Equal(t, byte(0), content[len(content)-1], "argument capture must end with NUL")
+	return strings.Split(string(content[:len(content)-1]), "\x00")
 }
 
 // readMockEnv reads the captured env from a mock CLI's EnvFile.
@@ -161,7 +186,7 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 
 	if opts.CaptureArgs {
 		result.ArgsFile = filepath.Join(tmpDir, "args.txt")
-		fmt.Fprintf(&script, "echo \"$@\" > %q\n", result.ArgsFile)
+		fmt.Fprintf(&script, "{ for arg do printf '%%s\\0' \"$arg\"; done; } > %q\n", result.ArgsFile)
 	}
 
 	if opts.CaptureStdin {

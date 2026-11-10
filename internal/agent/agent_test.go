@@ -646,11 +646,8 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 			_, err := agent.Review(t.Context(), t.TempDir(), "head", "prompt", nil)
 			require.NoError(t, err)
 
-			argsBytes, err := os.ReadFile(mock.ArgsFile)
-			require.NoError(t, err)
-			args := string(argsBytes)
-
-			assertArgsContain(t, args, tt.modelFlag, tt.testModel)
+			args := readMockArgs(t, mock.ArgsFile)
+			assertArgsContainContiguous(t, args, []string{tt.modelFlag, tt.testModel})
 		})
 	}
 }

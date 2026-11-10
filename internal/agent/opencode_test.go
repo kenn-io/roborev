@@ -41,14 +41,13 @@ func TestOpenCodeReviewModelFlag(t *testing.T) {
 			_, args, _ := runMockOpenCodeReview(
 				t, tt.model, "review this", nil,
 			)
-			args = strings.TrimSpace(args)
 
-			assertContains(t, args, "--format json")
+			assertArgsContainContiguous(t, args, []string{"--format", "json"})
 			if tt.wantFlag {
-				assertContains(t, args, "--model")
-				assertContains(t, args, tt.wantModel)
+				assert.Contains(t, args, "--model")
+				assert.Contains(t, args, tt.wantModel)
 			} else {
-				assertNotContains(t, args, "--model")
+				assert.NotContains(t, args, "--model")
 			}
 		})
 	}
@@ -63,7 +62,7 @@ func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
 
 	assert.Equal(t, strings.TrimSpace(stdin), prompt)
 
-	assertNotContains(t, args, prompt)
+	assert.NotContains(t, args, prompt)
 }
 
 func TestOpenCodeReviewParsesJSONStream(t *testing.T) {
@@ -281,7 +280,7 @@ type reviewTestOpts struct {
 	SessionID string
 }
 
-func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, string, error) {
+func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, []string, string, error) {
 	t.Helper()
 
 	if opts.Prompt == "" {
@@ -303,21 +302,22 @@ func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, strin
 		"HEAD", opts.Prompt, opts.Writer,
 	)
 
-	var argsBytes, stdinBytes []byte
+	var args []string
+	var stdinBytes []byte
 	if opts.MockOpts.CaptureArgs {
-		argsBytes = readFileOrFatal(t, mock.ArgsFile)
+		args = readMockArgs(t, mock.ArgsFile)
 	}
 	if opts.MockOpts.CaptureStdin {
 		stdinBytes = readFileOrFatal(t, mock.StdinFile)
 	}
 
-	return out, string(argsBytes), string(stdinBytes), err
+	return out, args, string(stdinBytes), err
 }
 
 func runMockOpenCodeReview(
 	t *testing.T, model, prompt string,
 	stdoutLines []string,
-) (output, args, stdin string) {
+) (output string, args []string, stdin string) {
 	t.Helper()
 
 	if stdoutLines == nil {
@@ -344,7 +344,7 @@ func TestOpenCodeReviewSessionFlag(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
-	_, args, _ := func() (string, string, string) {
+	_, args, _ := func() (string, []string, string) {
 		out, argsStr, stdinStr, err := executeReviewTest(t, reviewTestOpts{
 			MockOpts: MockCLIOpts{
 				CaptureArgs:  true,
@@ -358,8 +358,8 @@ func TestOpenCodeReviewSessionFlag(t *testing.T) {
 		return out, argsStr, stdinStr
 	}()
 
-	assertContains(t, args, "--session")
-	assertContains(t, args, "ses_123")
+	assert.Contains(t, args, "--session")
+	assert.Contains(t, args, "ses_123")
 }
 
 func readFileOrFatal(t *testing.T, path string) []byte {
