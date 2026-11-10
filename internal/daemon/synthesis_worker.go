@@ -168,9 +168,10 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 // execution config there, which ciACPRepoConfig reads.
 type synthesisJobConfig struct {
 	ciACPExecutionConfig
-	Instructions  string         `json:"instructions,omitempty"`
-	Check         *ciCheckConfig `json:"check,omitzero"`
-	HoldSynthesis bool           `json:"hold_synthesis,omitzero"`
+	Instructions  string                  `json:"instructions,omitempty"`
+	Check         *ciCheckConfig          `json:"check,omitzero"`
+	HoldSynthesis bool                    `json:"hold_synthesis,omitzero"`
+	Supplied      *suppliedReviewSnapshot `json:"supplied,omitzero"`
 }
 
 func synthesisExperimentConfig(snapshot string) (string, error) {
@@ -203,9 +204,9 @@ func restoreSynthesisExperimentConfig(frozen, snapshot string) (string, error) {
 }
 
 // encode returns "" when nothing is set, so a synthesis job without
-// instructions, a checker, a hold, or an ACP snapshot stores no config.
+// instructions, a checker, a hold, supplied settings, or an ACP snapshot stores no config.
 func (c synthesisJobConfig) encode() (string, error) {
-	if c.Instructions == "" && len(c.ACP) == 0 && c.Check == nil && !c.HoldSynthesis {
+	if c.Instructions == "" && len(c.ACP) == 0 && c.Check == nil && !c.HoldSynthesis && c.Supplied == nil {
 		return "", nil
 	}
 	raw, err := json.Marshal(c, json.Deterministic(true))
@@ -472,9 +473,20 @@ func (wp *WorkerPool) runSynthesisAgent(
 	agentOutput = sessionWriter
 
 	cfg := wp.cfgGetter.Config()
+	var tools *config.ReviewToolPolicy
+	if hasSuppliedReviewSettings(job) {
+		snapshot, err := readSuppliedReviewSnapshot(job)
+		if err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, err.Error())
+			return reviewpkg.SynthesisDocument{}, agentName, "", err
+		}
+		tools = snapshot.Tools
+	}
 	doc, err := reviewpkg.RunSynthesisAgent(ctx, a, reviews, prompt, job.MinSeverity, agentOutput, reviewpkg.SynthesisHooks{
-		ConfigRepoPath: resolveEffectiveRepoPath(workerID, job),
-		GlobalConfig:   cfg,
+		ConfigRepoPath:   resolveEffectiveRepoPath(workerID, job),
+		GlobalConfig:     cfg,
+		IgnoreRepoConfig: hasSuppliedReviewSettings(job),
+		Tools:            tools,
 		// Mark the agent invoked only once it is about to run, so a checkout
 		// failure below is never miscounted as an agent run.
 		BeforeInvoke: func() { wp.markAgentInvoked(workerID, job, a) },

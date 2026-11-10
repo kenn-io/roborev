@@ -32,6 +32,52 @@ func hasSuppliedReviewSettings(job *storage.ReviewJob) bool {
 	return job.Source == storage.JobSourceReviewPrompt && job.PanelMemberConfigJSON != ""
 }
 
+func readSuppliedReviewSnapshot(job *storage.ReviewJob) (suppliedReviewSnapshot, error) {
+	if job.IsSynthesisJob() {
+		cfg, err := synthesisConfig(job)
+		if err != nil {
+			return suppliedReviewSnapshot{}, err
+		}
+		if cfg.Supplied == nil {
+			return suppliedReviewSnapshot{}, fmt.Errorf("supplied synthesis settings are missing")
+		}
+		return *cfg.Supplied, nil
+	}
+	var snapshot suppliedReviewSnapshot
+	err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &snapshot)
+	return snapshot, err
+}
+
+func snapshotSuppliedReviewSettings(opts *storage.EnqueueOpts, settings SuppliedReviewSettings) error {
+	plan, err := experimentPlanForJob(*opts)
+	if err != nil {
+		return err
+	}
+	snapshot, err := json.Marshal(suppliedReviewSnapshot{SuppliedReviewSettings: settings, Execution: plan})
+	if err != nil {
+		return err
+	}
+	opts.PanelMemberConfigJSON = string(snapshot)
+	return nil
+}
+
+// A panel rerun starts with its original choices, even after a member or
+// synthesis switched to a backup during the previous run.
+func restoreSuppliedPanelExecution(opts *storage.EnqueueOpts, job *storage.ReviewJob) error {
+	if !hasSuppliedReviewSettings(job) {
+		return nil
+	}
+	snapshot, err := readSuppliedReviewSnapshot(job)
+	if err != nil {
+		return err
+	}
+	plan := snapshot.Execution
+	opts.Agent, opts.Model, opts.Provider, opts.Reasoning = plan.Agent, plan.Model, plan.Provider, plan.Reasoning
+	opts.BackupAgent, opts.BackupModel = plan.BackupAgent, plan.BackupModel
+	opts.MinSeverity, opts.ReviewType = plan.MinSeverity, plan.ReviewType
+	return nil
+}
+
 func validateSuppliedReviewSettings(req *EnqueueRequest) error {
 	if req.ReviewSettings == nil {
 		return nil
@@ -102,8 +148,8 @@ func suppliedReviewRerunOpts(job *storage.ReviewJob, cfg *config.Config, selecte
 	if strings.TrimSpace(selectedAgent) != "" {
 		return storage.ReenqueueOpts{}, fmt.Errorf("supplied review settings cannot change agents on rerun; enqueue a new review")
 	}
-	var snapshot suppliedReviewSnapshot
-	if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &snapshot); err != nil {
+	snapshot, err := readSuppliedReviewSnapshot(job)
+	if err != nil {
 		return storage.ReenqueueOpts{}, fmt.Errorf("decode supplied review settings: %w", err)
 	}
 	plan := snapshot.Execution

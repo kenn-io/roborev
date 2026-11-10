@@ -32,6 +32,9 @@ with `custom_prompt`, dirty input, `agentic`, a named panel, `source`,
 `job_type`, or goal/analysis inputs. An empty `panel` or `"none"` is accepted.
 The stored job has source `review_prompt`.
 
+For several reviewers with separate supplied prompts and settings, use the
+[supplied panel API](manual-panel-synthesis.md#supply-a-panel-through-the-api).
+
 Automatic retries and manual reruns keep the supplied prompt and resolved
 revision, including reruns of jobs imported through sync. Post-rewrite commit
 remapping leaves these jobs at their original revision, even when a rebase

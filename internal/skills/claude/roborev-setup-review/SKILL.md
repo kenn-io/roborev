@@ -176,6 +176,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | A reviewer on trial | `non_voting = true` on the subagent |
 | A reviewer that may flake | `allow_failure = true` and `timeout` on the subagent |
 | A combined review that checks each finding against the material, or labels findings for whoever fixes them | `synthesis_instructions` on the panel; see <https://roborev.io/docs/advanced/subagent-review-panels/#synthesis-instructions> |
+| Automation supplies every reviewer’s prompt and settings without editing repository policy | `POST /api/panel/enqueue`; optional `hold_synthesis` waits for `POST /api/panel/synthesize`. See <https://roborev.io/docs/automation/manual-panel-synthesis/#supply-a-panel-through-the-api> |
 
 For a small panel that checks findings before keeping them, use the
 [precise panel recipe](https://roborev.io/docs/advanced/subagent-review-panels/#precise-panel-recipe).

@@ -180,6 +180,9 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID uuid.UUID) (*Re
 				fmt.Sprintf("load member dirty files: %v", filesErr))
 		}
 		memberOpts[i] = panelRerunMemberOpts(members[i], runUUID, diff, dirtyFiles, source)
+		if err := restoreSuppliedPanelExecution(&memberOpts[i], &members[i]); err != nil {
+			return nil, huma.Error500InternalServerError("restore supplied member settings", err)
+		}
 	}
 
 	synthDiff, err := s.db.GetJobDiffContent(job.ID)
@@ -193,6 +196,9 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID uuid.UUID) (*Re
 			fmt.Sprintf("load synthesis dirty files: %v", err))
 	}
 	synthOpts := panelRerunSynthesisOpts(job, runUUID, synthDiff, synthDirtyFiles, source)
+	if err := restoreSuppliedPanelExecution(&synthOpts, job); err != nil {
+		return nil, huma.Error500InternalServerError("restore supplied synthesis settings", err)
+	}
 	jobUUID := uuid.Nil()
 	if job.UUID != nil {
 		jobUUID = *job.UUID
@@ -251,13 +257,13 @@ func (s *Server) panelRerunSource(job *storage.ReviewJob) (string, error) {
 // panelRerunMemberOpts clones one member job into fresh EnqueueOpts for a new
 // run. It copies the full frozen target (commit/diff/patch/severity/worktree),
 // the resolved agent/model/provider/reasoning/review_type, the stored Prompt
-// only for prompt-native job types, and the member's panel identity
+// for prompt-native jobs and supplied reviews, and the member's panel identity
 // (name/index/config), reassigning only the run UUID. Review/range/dirty prompts
-// are rebuilt by the worker so reruns do not reuse stale prebuilt prompts. diff
+// without supplied inputs are rebuilt by the worker. diff
 // is the member's stored dirty diff (empty for commit/range targets).
 func panelRerunMemberOpts(m storage.ReviewJob, runUUID uuid.UUID, diff string, dirtyFiles []string, source string) storage.EnqueueOpts {
 	prompt := ""
-	if m.UsesStoredPrompt() {
+	if m.UsesStoredPrompt() || m.Source == storage.JobSourceReviewPrompt {
 		prompt = m.Prompt
 	}
 	return storage.EnqueueOpts{
@@ -277,7 +283,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID uuid.UUID, diff string, d
 		DiffContent:           diff,
 		DirtyFiles:            dirtyFiles,
 		Prompt:                prompt,
-		PromptPrebuilt:        false,
+		PromptPrebuilt:        m.Source == storage.JobSourceReviewPrompt,
 		Source:                source,
 		OutputPrefix:          m.OutputPrefix,
 		Agentic:               m.Agentic,

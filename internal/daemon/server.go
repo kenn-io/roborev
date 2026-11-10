@@ -3442,15 +3442,9 @@ func (s *Server) enqueueSingleAgent(
 	if in.req.ReviewSettings != nil {
 		o.BackupAgent, o.BackupModel = execution.BackupAgent, execution.BackupModel
 		// Even an empty severity is supplied policy, not an invitation to resolve local defaults.
-		plan, err := experimentPlanForJob(o)
-		if err != nil {
+		if err := snapshotSuppliedReviewSettings(&o, *in.req.ReviewSettings); err != nil {
 			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		}
-		snapshot, err := json.Marshal(suppliedReviewSnapshot{SuppliedReviewSettings: *in.req.ReviewSettings, Execution: plan})
-		if err != nil {
-			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-		}
-		o.PanelMemberConfigJSON = string(snapshot)
 	}
 	if in.experiment != nil {
 		o.BackupAgent = execution.BackupAgent
