@@ -39,12 +39,10 @@ func TestKiloReviewModelFlag(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			_, args, _ := runKiloMockReview(t, tt.model, "review this", nil)
-			args = strings.TrimSpace(args)
 			if tt.wantFlag {
-				assertContains(t, args, "--model")
-				assertContains(t, args, tt.wantModel)
+				assertArgsContainContiguous(t, args, []string{"--model", tt.wantModel})
 			} else {
-				assertNotContains(t, args, "--model")
+				assert.NotContains(t, args, "--model")
 			}
 		})
 	}
@@ -58,7 +56,7 @@ func TestKiloReviewPipesPromptViaStdin(t *testing.T) {
 	_, args, stdin := runKiloMockReview(t, "", prompt, nil)
 	assert.Equal(t, prompt, strings.TrimSpace(stdin), "stdin content = %q, want %q", stdin, prompt)
 
-	assertNotContains(t, args, prompt)
+	assert.NotContains(t, args, prompt)
 }
 
 func TestKiloReviewSessionFlag(t *testing.T) {
@@ -75,11 +73,8 @@ func TestKiloReviewSessionFlag(t *testing.T) {
 	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 	require.NoError(t, err)
 
-	argsBytes, err := os.ReadFile(mock.ArgsFile)
-	require.NoError(t, err)
-	args := string(argsBytes)
-	assertContains(t, args, "--session")
-	assertContains(t, args, "ses_123")
+	args := readMockArgs(t, mock.ArgsFile)
+	assertArgsContainContiguous(t, args, []string{"--session", "ses_123"})
 }
 
 func TestKiloReviewExtractsTextFromJSONL(t *testing.T) {
@@ -242,7 +237,7 @@ func kiloTextEvent(text string) string {
 
 func runKiloMockReview(
 	t *testing.T, model, prompt string, stdoutLines []string,
-) (output, args, stdin string) {
+) (output string, args []string, stdin string) {
 	t.Helper()
 
 	if stdoutLines == nil {
@@ -265,11 +260,10 @@ func runKiloMockReview(
 	)
 	require.NoError(t, err, "Review failed: %v")
 
-	argsBytes, err := os.ReadFile(mock.ArgsFile)
-	require.NoError(t, err, "failed to read args file: %v")
+	args = readMockArgs(t, mock.ArgsFile)
 
 	stdinBytes, err := os.ReadFile(mock.StdinFile)
 	require.NoError(t, err, "failed to read stdin file: %v")
 
-	return out, string(argsBytes), string(stdinBytes)
+	return out, args, string(stdinBytes)
 }

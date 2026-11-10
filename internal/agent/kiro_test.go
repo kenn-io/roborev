@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"os"
 	"strings"
 	"testing"
 
@@ -240,7 +239,6 @@ func TestKiroPassesPromptAsArg(t *testing.T) {
 	require.NoError(t, err, "Review failed")
 
 	args := readMockArgs(t, mock.ArgsFile)
-	assert.Contains(t, args, prompt)
 	assert.Contains(t, args, "--no-interactive")
 	assertArgsContainContiguous(t, args, []string{"--", prompt})
 }
@@ -259,11 +257,8 @@ func TestKiroReviewAgenticMode(t *testing.T) {
 	_, err := a2.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 	require.NoError(t, err, "Review failed")
 
-	args, err := os.ReadFile(mock.ArgsFile)
-	require.NoError(t, err, "read args capture")
-	if !strings.Contains(string(args), "--trust-all-tools") {
-		assert.Contains(t, string(args), "--trust-all-tools", "expected --trust-all-tools in args, got: %s", string(args))
-	}
+	args := readMockArgs(t, mock.ArgsFile)
+	assert.Contains(t, args, "--trust-all-tools")
 }
 
 func TestKiroReviewAgenticModeFromGlobal(t *testing.T) {
@@ -278,11 +273,8 @@ func TestKiroReviewAgenticModeFromGlobal(t *testing.T) {
 	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 	require.NoError(t, err, "Review failed")
 
-	args, err := os.ReadFile(mock.ArgsFile)
-	require.NoError(t, err, "read args capture")
-	if !strings.Contains(string(args), "--trust-all-tools") {
-		require.Contains(t, string(args), "--trust-all-tools", "expected --trust-all-tools when global unsafe enabled, got: %s", strings.TrimSpace(string(args)))
-	}
+	args := readMockArgs(t, mock.ArgsFile)
+	require.Contains(t, args, "--trust-all-tools")
 }
 
 func TestKiroReviewStderrFallback(t *testing.T) {
