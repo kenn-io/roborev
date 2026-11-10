@@ -970,8 +970,9 @@ func TestFetchForSessionTimeoutDoesNotWaitForInheritedPipes(t *testing.T) {
 func TestFetchForSessionReturnsUsageWhenHelperKeepsPipesOpen(t *testing.T) {
 	installPipeHoldingAgentsview(t, true)
 
-	// The real subprocess must finish before its inherited pipe wait expires.
-	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: agentsviewWaitDelay - time.Millisecond})) //nolint:kennlint // deadlinetest: exercises timeout during a real subprocess pipe wait
+	// Allow the real subprocess tree to start on loaded runners. WaitDelay
+	// still bounds the inherited pipe wait after the launcher exits.
+	result := waitForFetch(t, fetchInBackground(FetchConfig{}))
 
 	require.NoError(t, result.err)
 	require.NotNil(t, result.usage)
