@@ -213,6 +213,7 @@ export * from "./sessionStateStopCountsSincePrompt";
 export * from "./sessionStateWorktreeLineageKeys";
 export * from "./sessionUsagePayload";
 export * from "./shutdownOutputBody";
+export * from "./startPanelSynthesisInputBody";
 export * from "./streamEventsParams";
 export * from "./structuredReviewDocument";
 export * from "./structuredReviewFinding";

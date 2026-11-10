@@ -3006,6 +3006,10 @@ func (s *Server) humaEnqueue(
 	ctx context.Context, input *EnqueueInput,
 ) (*RawJSONOutput, error) {
 	req := input.Body
+	if req.HoldSynthesis && (req.Panel == "" || req.Panel == "none" || req.Source != "" ||
+		req.CustomPrompt != "" || req.ReviewPrompt != "" || req.ReviewType == config.ReviewTypeGoal) {
+		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "hold_synthesis requires an explicitly named foreground review panel"})
+	}
 	if err := validateSuppliedReviewSettings(&req); err != nil {
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 	}

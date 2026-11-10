@@ -40,6 +40,8 @@ type ImportLegacyReviewBody = ImportLegacyReviewInputBody
 
 type ScanTokenUsageBody = ScanTokenUsageInputBody
 
+type StartPanelSynthesisBody = StartPanelSynthesisInputBody
+
 type SchedulePostCommitBody = PostCommitScheduleRequest
 
 type RebuttalBody = RebuttalRequest

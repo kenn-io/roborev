@@ -1329,6 +1329,7 @@ type EnqueueRequest struct {
 	DiffContent       *string                 `json:"diff_content,omitempty"`
 	DirtyFiles        []string                `json:"dirty_files,omitempty"`
 	GitRef            *string                 `json:"git_ref,omitempty"`
+	HoldSynthesis     *bool                   `json:"hold_synthesis,omitempty"`
 	JobType           *string                 `json:"job_type,omitempty"`
 	MinSeverity       *string                 `json:"min_severity,omitempty"`
 	Model             *string                 `json:"model,omitempty"`
@@ -4237,6 +4238,27 @@ type ShutdownOutputBody struct {
 
 func (s ShutdownOutputBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type StartPanelSynthesisInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// PanelRunUUID The held panel to synthesize after its voting members finish
+	PanelRunUUID uuid.UUID `json:"panel_run_uuid" validate:"required"`
+}
+
+func (s StartPanelSynthesisInputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.PanelRunUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PanelRunUUID", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 // StructuredReviewDocument The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.

@@ -1537,6 +1537,8 @@ components:
           type: array
         git_ref:
           type: string
+        hold_synthesis:
+          type: boolean
         job_type:
           type: string
         min_severity:
@@ -4630,6 +4632,23 @@ components:
       required:
         - status
       type: object
+    StartPanelSynthesisInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/StartPanelSynthesisInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        panel_run_uuid:
+          description: The held panel to synthesize after its voting members finish
+          format: uuid
+          type: string
+      required:
+        - panel_run_uuid
+      type: object
     StructuredReviewDocument:
       additionalProperties: false
       description: The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.
@@ -6611,6 +6630,31 @@ paths:
       summary: Backfill legacy review verdicts
       tags:
         - maintenance
+  /api/panel/synthesize:
+    post:
+      operationId: start-panel-synthesis
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartPanelSynthesisInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewJob"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Start a held panel's synthesis after its voting members finish
+      tags:
+        - jobs
   /api/ping:
     get:
       operationId: ping
