@@ -7,8 +7,7 @@ import (
 	"path/filepath"
 )
 
-// Metadata belongs to the exact executable, so a copy used as a native hook
-// continues its normal hook dispatch without inheriting launcher identity.
+// Metadata identifies the real Git and fixture config for a canonical executable.
 type Metadata struct {
 	RealGit     string
 	Global      string

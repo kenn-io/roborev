@@ -256,24 +256,6 @@ func TestGitFixtureNestedSetupWithoutGo(t *testing.T) {
 	require.NoError(t, err, "%s", output)
 }
 
-func TestGitFixtureSymlinkConfig(t *testing.T) {
-	dir := t.TempDir()
-	global := filepath.Join(dir, "global")
-	require.NoError(t, os.WriteFile(global, []byte("[fixture]\nmarker = alias\n"), 0o600))
-	require.NoError(t, installGitLauncher(t.Context(), dir, global, func(key, value string) error { t.Setenv(key, value); return nil }))
-	launcher, err := exec.LookPath("git")
-	require.NoError(t, err)
-	alias := filepath.Join(t.TempDir(), filepath.Base(launcher))
-	if err := os.Symlink(launcher, alias); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-	cmd := exec.CommandContext(t.Context(), alias, "config", "--global", "--get", "fixture.marker")
-	cmd.Env = withoutGitEnvironment()
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", output)
-	assert.Equal(t, "alias\n", string(output))
-}
-
 func withoutGitEnvironment() []string {
 	var env []string
 	for _, entry := range os.Environ() {

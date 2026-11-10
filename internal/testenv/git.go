@@ -25,7 +25,7 @@ func buildGitLauncher(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	executable := filepath.Join(dir, "gitfixture")
 	cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-race=false", "-cover=false", "-coverpkg=", "-o", executable,
 		"go.kenn.io/roborev/internal/testenv/gitfixture/cmd/gitfixture")
