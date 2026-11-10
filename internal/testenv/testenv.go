@@ -4,10 +4,10 @@
 package testenv
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -148,52 +148,60 @@ func configureGitForTests(tmpDir string) (restore func(), err error) {
 		return nil
 	}
 	// Preserve Go's defaults before replacing the home and XDG config paths.
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return
-	}
-	config, err := os.UserConfigDir()
-	if err != nil {
-		return
-	}
+	home, _ := os.UserHomeDir()
+	cache, _ := os.UserCacheDir()
+	config, _ := os.UserConfigDir()
 	goenv := os.Getenv("GOENV")
-	if goenv == "" {
+	if goenv == "" && config != "" {
 		goenv = filepath.Join(config, "go", "env")
 		if err = set("GOENV", goenv); err != nil {
 			return
 		}
 	}
 	goConfig := make(map[string]string)
-	if goenv != "off" {
-		if f, openErr := os.Open(goenv); openErr == nil {
-			scanner := bufio.NewScanner(f)
-			for scanner.Scan() {
-				key, value, ok := strings.Cut(scanner.Text(), "=")
-				if ok {
+	if goenv != "" && goenv != "off" {
+		if data, readErr := os.ReadFile(goenv); readErr == nil {
+			for line := range strings.SplitSeq(string(data), "\n") {
+				if key, value, ok := strings.Cut(line, "="); ok && key != "" && key[0] >= 'A' && key[0] <= 'Z' {
 					goConfig[key] = value
 				}
 			}
-			_ = f.Close()
 		}
 	}
-	goPath := os.Getenv("GOPATH")
-	if goPath == "" {
-		goPath = goConfig["GOPATH"]
-	}
-	if goPath == "" {
-		goPath = filepath.Join(home, "go")
-	}
-	for _, entry := range [][2]string{
-		{"GOPATH", goPath},
-		{"GOMODCACHE", filepath.Join(filepath.SplitList(goPath)[0], "pkg", "mod")},
-		{"GOCACHE", filepath.Join(cache, "go-build")},
+	for _, entry := range [][3]string{
+		{"GOPATH", home, "go"},
+		{"GOCACHE", cache, "go-build"},
 	} {
-		if os.Getenv(entry[0]) == "" && goConfig[entry[0]] == "" {
-			if err = set(entry[0], entry[1]); err != nil {
+		if entry[1] != "" && os.Getenv(entry[0]) == "" && goConfig[entry[0]] == "" {
+			if err = set(entry[0], filepath.Join(entry[1], entry[2])); err != nil {
+				return
+			}
+		}
+	}
+	// Mise selects tools and trusts config from these directories before it
+	// reads its own configuration. Keep their original locations across HOME.
+	for _, entry := range [][3]string{
+		{"MISE_CONFIG_DIR", "XDG_CONFIG_HOME", ".config"},
+		{"MISE_DATA_DIR", "XDG_DATA_HOME", ".local/share"},
+		{"MISE_STATE_DIR", "XDG_STATE_HOME", ".local/state"},
+		{"MISE_CACHE_DIR", "XDG_CACHE_HOME", ".cache"},
+	} {
+		base := os.Getenv(entry[1])
+		if base == "" {
+			base = home
+			switch {
+			case runtime.GOOS == "windows" && entry[0] == "MISE_DATA_DIR":
+				base = os.Getenv("LOCALAPPDATA")
+			case runtime.GOOS == "windows" && entry[0] == "MISE_CACHE_DIR":
+				base = os.Getenv("TEMP")
+			case runtime.GOOS == "darwin" && entry[0] == "MISE_CACHE_DIR" && base != "":
+				base = filepath.Join(base, "Library", "Caches")
+			case base != "":
+				base = filepath.Join(base, entry[2])
+			}
+		}
+		if base != "" && os.Getenv(entry[0]) == "" {
+			if err = set(entry[0], filepath.Join(base, "mise")); err != nil {
 				return
 			}
 		}

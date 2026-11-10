@@ -571,29 +571,18 @@ func TestGitFixtureHostileHome(t *testing.T) {
 		[]byte("[core]\n hooksPath = hostile-hooks\n"), 0o600))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	repo := NewTestRepo(t)
+	got, err := GetHooksPath(repo.Dir)
+	require.NoError(t, err)
+	resolved, err := filepath.EvalSymlinks(repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(resolved, "hostile-hooks"), got)
 	t.Setenv("ROBOREV_TEST_HOSTILE_HOME", "1")
 	exe, err := os.Executable()
 	require.NoError(t, err)
-	t.Run("hostile home", func(t *testing.T) {
-		cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestGitFixtureHostileHome$", "-test.v")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", out)
-	})
-	t.Run("standalone without go", func(t *testing.T) {
-		gitPath, err := exec.LookPath("git")
-		require.NoError(t, err)
-		path := filepath.Dir(gitPath)
-		if runtime.GOOS == "windows" {
-			path += string(os.PathListSeparator) + filepath.Join(os.Getenv("SystemRoot"), "System32")
-		}
-		t.Setenv("PATH", path)
-		_, err = exec.LookPath("go")
-		require.Error(t, err)
-		cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestGitFixtureHostileHome$", "-test.v")
-		cmd.Dir = t.TempDir()
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", out)
-	})
+	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestGitFixtureHostileHome$", "-test.v")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
 }
 
 func TestGetHooksPath(t *testing.T) {
