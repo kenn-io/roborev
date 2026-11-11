@@ -199,7 +199,7 @@ type experimentReportUnit struct {
 type experimentReportJob struct {
 	ref                                                                                          ExperimentComponentReference
 	status, member, structured, jobType, reviewType, analysisType, source, jobError, minSeverity string
-	configuredAgent, synthesisConfig                                                             string
+	configuredAgent, synthesisConfig, reviewAgent                                                string
 	memberIndex                                                                                  int
 	nonVoting, invoked, eligible, priced                                                         bool
 	started, finished                                                                            time.Time
@@ -293,6 +293,18 @@ func (db *DB) GetExperimentReport(ctx context.Context, id string, opts Experimen
 		if err = loadExperimentUnit(ctx, tx, u); err != nil {
 			return nil, err
 		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	for i := range units {
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		u := &units[i]
+		if u.arm != "default" && u.arm != "experiment" {
+			continue
+		}
 		aggregateExperimentUnit(u)
 		if !u.attributed || u.subject == "" {
 			r.Integrity.IncompleteUnits++
@@ -311,8 +323,8 @@ func (db *DB) GetExperimentReport(ctx context.Context, id string, opts Experimen
 	r.Allocation = experimentAllocation(r.Default.Subjects, r.Experiment.Subjects, r.Ratio)
 	var labels findingOutcomes = rebuttalFindingOutcomes{}
 	r.Labels = labels.coverage()
-	r.Metrics = buildExperimentComparisons(units, r)
-	if err = tx.Commit(); err != nil {
+	r.Metrics, err = buildExperimentComparisons(ctx, units, r)
+	if err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -341,7 +353,7 @@ func loadExperimentUnit(ctx context.Context, q *sql.Tx, u *experimentReportUnit)
         COALESCE(r.structured_output,''), COALESCE(j.job_type,''),
         COALESCE(j.review_type,''), COALESCE(j.analysis_type,''),
         COALESCE(j.source,''), COALESCE(j.error,''), COALESCE(j.min_severity,''),
-        COALESCE(j.token_usage,''), COALESCE(j.agent,''), COALESCE(j.panel_member_config_json,'')
+        COALESCE(j.token_usage,''), COALESCE(j.agent,''), COALESCE(j.panel_member_config_json,''), COALESCE(r.agent,'')
  FROM review_jobs j LEFT JOIN reviews r ON r.job_id=j.id
  WHERE `+condition+` ORDER BY j.id`, u.uuid)
 	if err != nil {
@@ -351,7 +363,7 @@ func loadExperimentUnit(ctx context.Context, q *sql.Tx, u *experimentReportUnit)
 	for rows.Next() {
 		var j experimentReportJob
 		var start, finish, usage string
-		if err = rows.Scan(&j.ref.JobID, &j.ref.JobUUID, &j.ref.Role, &j.ref.Agent, &j.ref.Provider, &j.ref.SessionID, &j.status, &j.member, &j.memberIndex, &j.nonVoting, &j.invoked, &j.eligible, &j.priced, &j.dollars, &start, &finish, &j.structured, &j.jobType, &j.reviewType, &j.analysisType, &j.source, &j.jobError, &j.minSeverity, &usage, &j.configuredAgent, &j.synthesisConfig); err != nil {
+		if err = rows.Scan(&j.ref.JobID, &j.ref.JobUUID, &j.ref.Role, &j.ref.Agent, &j.ref.Provider, &j.ref.SessionID, &j.status, &j.member, &j.memberIndex, &j.nonVoting, &j.invoked, &j.eligible, &j.priced, &j.dollars, &start, &finish, &j.structured, &j.jobType, &j.reviewType, &j.analysisType, &j.source, &j.jobError, &j.minSeverity, &usage, &j.configuredAgent, &j.synthesisConfig, &j.reviewAgent); err != nil {
 			return err
 		}
 		var identifiers struct {
@@ -378,6 +390,10 @@ func loadExperimentUnit(ctx context.Context, q *sql.Tx, u *experimentReportUnit)
 // The checker preserves source labels; one source with no instructions is the
 // passthrough path. Old checked results without enough evidence stay unknown.
 func synthesisExecutorEvidence(j experimentReportJob) (compare, known bool) {
+	// An invoked failed or canceled attempt has no reliable executor identity.
+	if j.reviewAgent == "" || (j.status != "done" && j.status != "applied" && j.status != "rebased") {
+		return false, false
+	}
 	var cfg struct {
 		Instructions string         `json:"instructions"`
 		Check        jsontext.Value `json:"check"`

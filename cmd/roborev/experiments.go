@@ -72,6 +72,10 @@ Comparisons are exploratory and unadjusted; no overall winner is declared.`,
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
+				var problem generated.ErrorModel
+				if json.UnmarshalRead(resp.Body, &problem) == nil && problem.Detail != nil && strings.TrimSpace(*problem.Detail) != "" {
+					return fmt.Errorf("daemon returned %s: %s", resp.Status, *problem.Detail)
+				}
 				return fmt.Errorf("daemon returned %s", resp.Status)
 			}
 			var report storage.ExperimentReport

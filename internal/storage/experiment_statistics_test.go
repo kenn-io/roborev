@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"math"
 	"slices"
 	"testing"
@@ -21,7 +22,7 @@ func TestExperimentComparisonExactPermutation(t *testing.T) {
 			for i := range e {
 				e[i] = 1
 			}
-			got := compareExperimentSubjects(d, e)
+			got := compareExperimentSubjectsForTest(t, d, e)
 			assert := assert.New(t)
 			assert.InDelta(tt.p, got.PValue, 1e-12)
 			assert.InDelta(1.0, got.Delta, 1e-12)
@@ -38,12 +39,12 @@ func TestExperimentComparisonExactPermutation(t *testing.T) {
 
 func TestExperimentComparisonDegenerate(t *testing.T) {
 	t.Parallel()
-	got := compareExperimentSubjects([]float64{2, 2, 2, 2}, []float64{2, 2, 2, 2})
+	got := compareExperimentSubjectsForTest(t, []float64{2, 2, 2, 2}, []float64{2, 2, 2, 2})
 	assert.InDelta(t, 0.0, got.Delta, 1e-12)
 	assert.InDelta(t, 1.0, got.PValue, 1e-12)
 	assert.Equal(t, [2]float64{0, 0}, got.Interval)
 	assert.InDelta(t, 0.0, got.Threshold, 1e-12)
-	got = compareExperimentSubjects([]float64{0, 1, 2, 3, 4, 5, 6, 7}, []float64{8, 9, 10, 11, 12, 13, 14, 15})
+	got = compareExperimentSubjectsForTest(t, []float64{0, 1, 2, 3, 4, 5, 6, 7}, []float64{8, 9, 10, 11, 12, 13, 14, 15})
 	assert.True(t, got.Approximate)
 	assert.Equal(t, 4096, got.Permutations)
 	assert.GreaterOrEqual(t, got.PValue, 1.0/4097)
@@ -107,14 +108,14 @@ func FuzzExperimentComparison(f *testing.F) {
 				e[i-n] = value
 			}
 		}
-		got := compareExperimentSubjects(d, e)
+		got := compareExperimentSubjectsForTest(t, d, e)
 		require.False(t, math.IsNaN(got.PValue))
 		assert.GreaterOrEqual(t, got.PValue, 0.0)
 		assert.LessOrEqual(t, got.PValue, 1.0)
 		slices.Reverse(d)
 		slices.Reverse(e)
-		assert.Equal(t, got, compareExperimentSubjects(d, e))
-		swapped := compareExperimentSubjects(e, d)
+		assert.Equal(t, got, compareExperimentSubjectsForTest(t, d, e))
+		swapped := compareExperimentSubjectsForTest(t, e, d)
 		assert.InDelta(t, -got.Delta, swapped.Delta, 1e-10)
 		assert.InDelta(t, got.PValue, swapped.PValue, 1e-10)
 		for i := range d {
@@ -123,7 +124,7 @@ func FuzzExperimentComparison(f *testing.F) {
 		for i := range e {
 			e[i] *= 2
 		}
-		scaled := compareExperimentSubjects(d, e)
+		scaled := compareExperimentSubjectsForTest(t, d, e)
 		assert.InDelta(t, got.Delta*2, scaled.Delta, 1e-10)
 		assert.InDelta(t, got.Threshold*2, scaled.Threshold, 1e-10)
 		assert.InDelta(t, got.Interval[0]*2, scaled.Interval[0], 1e-10)
@@ -136,7 +137,21 @@ func FuzzExperimentComparison(f *testing.F) {
 // distributions, yielding [1,1] here despite substantial subject variation.
 func TestExperimentComparisonIndependentBootstrap(t *testing.T) {
 	t.Parallel()
-	got := compareExperimentSubjects([]float64{0, 1, 2, 3}, []float64{1, 2, 3, 4})
+	got := compareExperimentSubjectsForTest(t, []float64{0, 1, 2, 3}, []float64{1, 2, 3, 4})
 	assert.Less(t, got.Interval[0], 0.0)
 	assert.Greater(t, got.Interval[1], 1.0)
+}
+
+func compareExperimentSubjectsForTest(t *testing.T, defaults, experimental []float64) experimentInference {
+	t.Helper()
+	result, err := compareExperimentSubjects(t.Context(), defaults, experimental)
+	require.NoError(t, err)
+	return result
+}
+
+func TestExperimentComparisonCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := compareExperimentSubjects(ctx, []float64{1}, []float64{2})
+	require.ErrorIs(t, err, context.Canceled)
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -36,7 +37,10 @@ func experimentMean(values []float64) float64 {
 	return mean
 }
 
-func compareExperimentSubjects(defaults, experimental []float64) experimentInference {
+func compareExperimentSubjects(ctx context.Context, defaults, experimental []float64) (experimentInference, error) {
+	if err := ctx.Err(); err != nil {
+		return experimentInference{}, err
+	}
 	defaults = slices.Clone(defaults)
 	experimental = slices.Clone(experimental)
 	slices.Sort(defaults)
@@ -59,6 +63,9 @@ func compareExperimentSubjects(defaults, experimental []float64) experimentInfer
 		left, right := make([]float64, 0, small), make([]float64, 0, len(pooled)-small)
 		j := 0
 		for i, v := range pooled {
+			if ctx.Err() != nil {
+				return 0
+			}
 			if j < len(chosen) && chosen[j] == i {
 				left = append(left, v)
 				j++
@@ -76,11 +83,17 @@ func compareExperimentSubjects(defaults, experimental []float64) experimentInfer
 		chosen := make([]int, small)
 		var enumerate func(int, int)
 		enumerate = func(depth, start int) {
+			if ctx.Err() != nil {
+				return
+			}
 			if depth == small {
 				differences = append(differences, math.Abs(difference(chosen)))
 				return
 			}
 			for i := start; i <= len(pooled)-(small-depth); i++ {
+				if ctx.Err() != nil {
+					return
+				}
 				chosen[depth] = i
 				enumerate(depth+1, i+1)
 			}
@@ -90,10 +103,16 @@ func compareExperimentSubjects(defaults, experimental []float64) experimentInfer
 		result.Approximate = true
 		rng := rand.New(rand.NewPCG(0x726f626f, 0x726576))
 		for range experimentResamples {
+			if err := ctx.Err(); err != nil {
+				return experimentInference{}, err
+			}
 			indices := rng.Perm(len(pooled))[:small]
 			slices.Sort(indices)
 			differences = append(differences, math.Abs(difference(indices)))
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return experimentInference{}, err
 	}
 	result.Permutations = len(differences)
 	extreme := 0
@@ -119,23 +138,32 @@ func compareExperimentSubjects(defaults, experimental []float64) experimentInfer
 	resampleMean := func(values []float64, rng *rand.Rand) float64 {
 		sample := make([]float64, len(values))
 		for i := range sample {
+			if ctx.Err() != nil {
+				return 0
+			}
 			sample[i] = values[rng.IntN(len(values))]
 		}
 		slices.Sort(sample)
 		return experimentMean(sample)
 	}
 	for i := range bootstrap {
+		if err := ctx.Err(); err != nil {
+			return experimentInference{}, err
+		}
 		bootstrap[i] = resampleMean(experimental, experimentRNG) - resampleMean(defaults, defaultRNG)
 	}
 	slices.Sort(bootstrap)
 	result.Interval = [2]float64{percentileSorted(bootstrap, .025), percentileSorted(bootstrap, .975)}
-	return result
+	return result, ctx.Err()
 }
 
-func experimentMetricSubjects(units []experimentReportUnit, arm, metric string) (ExperimentMetricValue, []float64) {
+func experimentMetricSubjects(ctx context.Context, units []experimentReportUnit, arm, metric string) (ExperimentMetricValue, []float64, error) {
 	groups := map[string][]float64{}
 	result := ExperimentMetricValue{}
 	for _, u := range units {
+		if err := ctx.Err(); err != nil {
+			return result, nil, err
+		}
 		if u.arm != arm {
 			continue
 		}
@@ -149,6 +177,9 @@ func experimentMetricSubjects(units []experimentReportUnit, arm, metric string) 
 	}
 	values := make([]float64, 0, len(groups))
 	for _, observations := range groups {
+		if err := ctx.Err(); err != nil {
+			return result, nil, err
+		}
 		slices.Sort(observations)
 		value := experimentMean(observations)
 		switch metric {
@@ -168,7 +199,7 @@ func experimentMetricSubjects(units []experimentReportUnit, arm, metric string) 
 		result.Coverage = new(float64(result.Units) / float64(result.ExpectedUnits))
 	}
 	result.Complete = result.ExpectedUnits > 0 && result.Units == result.ExpectedUnits
-	return result, values
+	return result, values, ctx.Err()
 }
 
 func gateExperimentComparison(m *ExperimentMetricComparison, minSubjects int, integrity bool, integrityReason string, reliabilityWorse bool) {
@@ -221,7 +252,7 @@ func gateExperimentComparison(m *ExperimentMetricComparison, minSubjects int, in
 	}
 }
 
-func buildExperimentComparisons(units []experimentReportUnit, r *ExperimentReport) []ExperimentMetricComparison {
+func buildExperimentComparisons(ctx context.Context, units []experimentReportUnit, r *ExperimentReport) ([]ExperimentMetricComparison, error) {
 	metrics := make([]ExperimentMetricComparison, 0, len(experimentReportMetrics))
 	integrity := r.Integrity.Complete
 	reason := r.Integrity.Reason
@@ -230,14 +261,27 @@ func buildExperimentComparisons(units []experimentReportUnit, r *ExperimentRepor
 		reason = "Allocation ratio endpoints cannot support a two-arm comparison."
 	}
 	for _, name := range experimentReportMetrics {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		m := ExperimentMetricComparison{Metric: name}
 		var defaults, experimental []float64
-		m.Default, defaults = experimentMetricSubjects(units, "default", name)
-		m.Experiment, experimental = experimentMetricSubjects(units, "experiment", name)
+		var err error
+		m.Default, defaults, err = experimentMetricSubjects(ctx, units, "default", name)
+		if err != nil {
+			return nil, err
+		}
+		m.Experiment, experimental, err = experimentMetricSubjects(ctx, units, "experiment", name)
+		if err != nil {
+			return nil, err
+		}
 		// Resolve integrity and coverage before doing numerical inference.
 		gateExperimentComparison(&m, r.MinSubjects, integrity, reason, false)
 		if m.State != "not enough data" {
-			result := compareExperimentSubjects(defaults, experimental)
+			result, err := compareExperimentSubjects(ctx, defaults, experimental)
+			if err != nil {
+				return nil, err
+			}
 			m.Delta = new(result.Delta)
 			m.Interval = &ExperimentInterval{Low: result.Interval[0], High: result.Interval[1]}
 			m.PValue = new(result.PValue)
@@ -265,7 +309,7 @@ func buildExperimentComparisons(units []experimentReportUnit, r *ExperimentRepor
 			}
 		}
 	}
-	return metrics
+	return metrics, ctx.Err()
 }
 
 func experimentAllocation(defaults, experimental int, ratio *float64) ExperimentAllocation {

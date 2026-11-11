@@ -799,12 +799,11 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 // terminal row cost-eligible. Mirrors SaveJobSessionID.
 func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
 	// This compatibility wrapper has no caller context yet.
-	return db.MarkJobAgentInvokedAs(context.Background(), jobID, workerID, "", "", cmdLine)
+	return db.MarkJobAgentInvokedContext(context.Background(), jobID, workerID, cmdLine)
 }
 
-// MarkJobAgentInvokedAs also persists the selected executor and its model.
-// An empty executor preserves the stored configuration for existing callers.
-func (db *DB) MarkJobAgentInvokedAs(ctx context.Context, jobID int64, workerID, executor, model, cmdLine string) error {
+// MarkJobAgentInvokedContext marks the current attempt using the caller context.
+func (db *DB) MarkJobAgentInvokedContext(ctx context.Context, jobID int64, workerID, cmdLine string) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
@@ -823,11 +822,9 @@ func (db *DB) MarkJobAgentInvokedAs(ctx context.Context, jobID int64, workerID, 
 	}()
 
 	result, err := conn.ExecContext(ctx,
-		`UPDATE review_jobs SET command_line = ?, agent_invoked = 1,
-		 model = CASE WHEN ? != '' THEN ? ELSE model END,
-		 agent = COALESCE(NULLIF(?, ''), agent), synced_at = NULL
+		`UPDATE review_jobs SET command_line = ?, agent_invoked = 1
 		 WHERE id = ? AND status = 'running' AND worker_id = ?`,
-		cmdLine, executor, nullString(model), executor, jobID, workerID)
+		cmdLine, jobID, workerID)
 	if err != nil {
 		return err
 	}

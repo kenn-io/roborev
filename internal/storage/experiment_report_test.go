@@ -611,3 +611,25 @@ func TestExperimentReportCheckedSynthesisAttribution(t *testing.T) {
 		})
 	}
 }
+
+func TestExperimentReportFailedSynthesisExecutorUnavailable(t *testing.T) {
+	db, repo := setupDBAndRepo(t, "failed-synthesis")
+	run := testUUID("failed-synthesis")
+	members, synth, err := db.EnqueuePanelRun(
+		[]EnqueueOpts{{RepoID: repo.ID, GitRef: "topic", Agent: "test", PanelRunUUID: &run, PanelMemberName: "voter"}},
+		EnqueueOpts{RepoID: repo.ID, GitRef: "topic", Agent: "planned", PanelRunUUID: &run, Experiment: reportAssignment("default", "subject", `{"Members":[{"Agent":"test","PanelMemberName":"voter"}],"Synthesis":{"Agent":"planned"}}`)},
+	)
+	require.NoError(t, err)
+	reportFinish(t, db, members[0].ID, "done", new(1.0), `{"schema_version":3,"summary":"clean","verdict":"pass","findings":[]}`)
+	reportFinish(t, db, synth.ID, "failed", new(2.0), "")
+	r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
+	require.NoError(t, err)
+	metric := reportMetric(t, r, "off_plan_rate")
+	assert.Nil(t, metric.Default.Value)
+	assert.False(t, metric.Default.Complete)
+	require.NotNil(t, r.Default.Cost.RecordedUSD)
+	assert.InDelta(t, 3, *r.Default.Cost.RecordedUSD, 1e-12)
+	failure := reportMetric(t, r, "job_failure_rate")
+	require.NotNil(t, failure.Default.Value)
+	assert.Greater(t, *failure.Default.Value, 0.0)
+}

@@ -72,8 +72,10 @@ func TestExperimentsReport(t *testing.T) {
 		{name: "zero since", args: []string{"--since", "0001-01-01T00:00:00Z"}, status: 200, since: "0001-01-01T00:00:00Z"},
 		{name: "offset zero until", args: []string{"--until", "0001-01-01T01:00:00+01:00"}, status: 200, until: "0001-01-01T01:00:00+01:00"},
 		{name: "json bounds", args: []string{"--json", "--since", "2026-01-01T02:00:00+02:00", "--until", "2026-01-03T00:00:00Z", "--min-subjects", "2"}, status: 200, since: "2026-01-01T02:00:00+02:00", until: "2026-01-03T00:00:00Z", minimum: "2"},
-		{name: "unknown", status: 404, body: `{"detail":"unknown experiment"}`, wantError: "404 Not Found"},
-		{name: "invalid daemon request", status: 400, body: `{"detail":"invalid cohort"}`, wantError: "400 Bad Request"},
+		{name: "unknown", status: 404, body: `{"detail":"unknown experiment"}`, wantError: "404 Not Found: unknown experiment"},
+		{name: "invalid daemon request", status: 400, body: `{"detail":"invalid cohort"}`, wantError: "400 Bad Request: invalid cohort"},
+		{name: "invalid error body", status: 500, body: `{`, wantError: "500 Internal Server Error"},
+		{name: "empty detail", status: 404, body: `{}`, wantError: "404 Not Found"},
 		{name: "invalid response", status: 200, body: `{`, wantError: "parse response"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
