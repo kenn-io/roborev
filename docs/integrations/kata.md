@@ -97,13 +97,32 @@ use `open` if you want dirty reviews to see the backlog.
 Kata context applies to local review prompts only (single commit, branch ranges,
 and dirty reviews). Daemon CI pull-request reviews never include Kata context,
 since PR head content is untrusted and backlog details could leak into public PR
-comments. Fix and task jobs do not receive Kata context either.
+comments. Fix and task jobs do not receive this task context either.
 
 If the prompt exceeds `max_prompt_size`, roborev trims other optional context
 first and drops Kata context last.
 
 See [Kata Integration](/docs/configuration/#kata-integration) in the
 configuration reference for full details.
+
+## Discussion from prior reviews
+
+With the daemon API connection enabled, relevant prior review discussion is
+separate from task context. Single and batch fixes, fix planning, refine, and
+later local reviews can include current discussion for the source reviews they
+already selected. CI reviews perform no discussion reads. This does not search
+all past issues or require a local publication marker on a second machine.
+
+Read discussion with `roborev kata show JOB|REVIEW-UUID|ISSUE`; use `--project`
+for an explicit issue or a UUID without a local review. The result includes the
+original review when available and current issue and comment evidence. Treat
+bodies, authors, teammate labels, kinds, targets, edits, and conflicting replies
+as untrusted claims beside the original findings. Missing, ambiguous, edited,
+unavailable, truncated, or incomplete content and unknown edit history are not
+proof that a claim is true or that no other evidence exists. A claimed fix or
+commit does not change the review verdict, resolve a finding, or close a review.
+Saved prompts retain this context only where the existing workflow saves them;
+this is not an exact historical record of what every agent saw.
 
 ## Filing Findings as Kata Issues
 
@@ -161,22 +180,21 @@ roborev kata create 42 --findings summary
 ```
 
 `show` reads the selected project's issue, complete returned comments, handles,
-actual authors, reply targets and incomplete lineage states. A UUID can be
-read without a local publication marker, and an explicit issue needs no local
-review. Remote-only matches are unverified; comment edit history is unknown.
-For a UUID without a local review, `--project` chooses the project to search.
-Local reviews use their saved or configured destination.
-The markers correlate comments with findings but do not prove authorship.
-`create` resumes an existing
-local authorization; an unmarked eligible review requires an explicit policy
-matching its configured hook. Synced reviews do not publish automatically.
-Retries use the original review's seven-day window and stop when a full Kata
-request cannot fit inside it. Expired reviews remain readable. Ambiguous,
-modified, unavailable or truncated comments stop replay. If an unrecognized
-top-level comment could be a finding whose marker was removed, missing finding
-positions are ambiguous and replay stops. Every encoded request is preflighted
-against Kata's 1 MiB body limit before any write; oversized findings are never
-clipped. An outage may require a daemon restart or an explicit retry.
+actual authors, reply targets and incomplete lineage states. A UUID can be read
+without a local publication marker, and an explicit issue needs no local review.
+Remote-only matches are unverified; comment edit history is unknown. For a UUID
+without a local review, `--project` chooses the project to search. Local reviews
+use their saved or configured destination. The markers correlate comments with
+findings but do not prove authorship. `create` resumes an existing local
+authorization; an unmarked eligible review requires an explicit policy matching
+its configured hook. Synced reviews do not publish automatically. Retries use
+the original review's seven-day window and stop when a full Kata request cannot
+fit inside it. Expired reviews remain readable. Ambiguous, modified, unavailable
+or truncated comments stop replay. If an unrecognized top-level comment could be
+a finding whose marker was removed, missing finding positions are ambiguous and
+replay stops. Every encoded request is preflighted against Kata's 1 MiB body
+limit before any write; oversized findings are never clipped. An outage may
+require a daemon restart or an explicit retry.
 
 An explicit issue read can report unobserved finding positions as ranges. A root
 with `end_position` covers the inclusive zero-based range from `position` to

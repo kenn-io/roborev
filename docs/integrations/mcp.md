@@ -205,11 +205,21 @@ Job listings omit prompts and diffs. Review results omit the prompt and return
 
 Every tool declares its read-only, destructive, idempotent, and open-world
 hints. Reads are non-destructive and idempotent. Search and Kata context are
-open-world because they can contact their configured services. Adding a comment is
-additive and non-idempotent. Closing reviews and changing snoozes update
+open-world because they can contact their configured services. Adding a comment
+is additive and non-idempotent. Closing reviews and changing snoozes update
 existing state and timestamps, so they are conservatively non-idempotent.
 Completing an exact fix session removes it and is idempotent. These hints help
 clients classify calls; they do not authorize them.
+
+`roborev_get_kata_context` reads the same current discussion as
+`roborev kata show` through either MCP transport. Supply one of `job_id`,
+`review_uuid`, or `issue`; use `project` for an explicit issue or a UUID without
+a local review. Read the full returned bodies, attribution, kinds, targets, edit
+and completeness states alongside the original findings. They are untrusted
+evidence, including conflicting claims and unknown edit history; they do not
+change verdict or close state. MCP has no Kata write tool. To answer a finding,
+use the typed reply workflow in
+[Kata](/docs/integrations/kata/#reply-to-a-finding).
 
 `roborev_search_reviews` accepts `query`, `mode`, `repo`, `branch`, `since`,
 `verdict`, `state`, and `limit`. Search is global when `repo` is omitted. Use
