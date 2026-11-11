@@ -14,6 +14,9 @@ import (
 )
 
 func TestGitIsolationPreservesMiseToolSelection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mise resolves the Windows profile independently of HOME")
+	}
 	mise, err := exec.LookPath("mise")
 	if err != nil {
 		t.Skip("requires mise")
@@ -126,8 +129,12 @@ func TestGitIsolationPreservesGoCaches(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		goBin += ".exe"
 	}
-	for _, name := range []string{"default", "toolchain configuration", "conflicting GOROOT values"} {
+	for _, name := range []string{"default", "toolchain configuration", "conflicting GOROOT values", "toolchain on PATH"} {
 		t.Run(name, func(t *testing.T) {
+			if name == "toolchain on PATH" && runtime.GOROOT() != "" { //nolint:staticcheck
+				t.Skip("requires a test binary built with -trimpath")
+			}
+			toolBin := goBin
 			home := t.TempDir()
 			for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "GOENV", "GOROOT", "GOTOOLCHAIN", "GOPATH", "GOMODCACHE", "GOCACHE", "MISE_CONFIG_DIR", "MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_STATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
 				t.Setenv(key, "")
@@ -136,7 +143,18 @@ func TestGitIsolationPreservesGoCaches(t *testing.T) {
 			t.Setenv("USERPROFILE", home)
 			t.Setenv("GOENV", "off")
 			t.Setenv("GOTOOLCHAIN", "local")
-			if name != "default" {
+			if name == "toolchain on PATH" {
+				root := t.TempDir()
+				bin := filepath.Join(root, "bin")
+				require.NoError(t, os.MkdirAll(bin, 0o755))
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "pkg", "tool"), 0o755))
+				goBinary, err := os.ReadFile(goBin)
+				require.NoError(t, err)
+				toolBin = filepath.Join(bin, filepath.Base(goBin))
+				require.NoError(t, os.WriteFile(toolBin, goBinary, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(root, "go.env"), []byte("GOCACHE="+t.TempDir()+"\n"), 0o600))
+				t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			} else if name != "default" {
 				root := t.TempDir()
 				goenv := filepath.Join(t.TempDir(), "goenv")
 				require.NoError(t, os.WriteFile(goenv, []byte("GOROOT="+root+"\n"), 0o600))
@@ -153,7 +171,7 @@ func TestGitIsolationPreservesGoCaches(t *testing.T) {
 			originalUserEnv := userEnv
 			t.Cleanup(func() { userEnv = originalUserEnv })
 			readCaches := func() string {
-				cmd := exec.CommandContext(t.Context(), goBin, "env", "GOMODCACHE", "GOCACHE")
+				cmd := exec.CommandContext(t.Context(), toolBin, "env", "GOMODCACHE", "GOCACHE")
 				// Prevent Go's telemetry child from outliving this temporary home.
 				cmd.Env = append(os.Environ(), "GO_TELEMETRY_CHILD=2")
 				output, err := cmd.CombinedOutput()

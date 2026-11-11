@@ -6,6 +6,8 @@ package testenv
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -170,10 +172,25 @@ func configureGitForTests(tmpDir string) {
 		// PATH may resolve a version-manager shim rather than the toolchain.
 		root = runtime.GOROOT() //nolint:staticcheck
 	}
+	if root == "" {
+		// A trimpath test binary has no runtime GOROOT; go test puts Go first on PATH.
+		if goBin, err := exec.LookPath("go"); err == nil {
+			candidate := filepath.Dir(filepath.Dir(goBin))
+			if info, err := os.Stat(filepath.Join(candidate, "pkg", "tool")); err == nil && info.IsDir() {
+				root = candidate
+			}
+		}
+	}
 	for _, entry := range [][3]string{{"GOPATH", home, "go"}, {"GOCACHE", cache, "go-build"}} {
 		path := filepath.Join(entry[1], entry[2])
 		if os.Getenv(entry[0]) == "" && entry[1] != "" && goFileValue(entry[0], goenv, root) == "" && (entry[0] != "GOPATH" || path != root) {
 			_ = os.Setenv(entry[0], path)
+		}
+	}
+	miseHome := home
+	if runtime.GOOS == "windows" {
+		if u, err := user.Current(); err == nil {
+			miseHome = u.HomeDir
 		}
 	}
 	// Mise selects tools and trusts config from these directories before it
@@ -186,7 +203,7 @@ func configureGitForTests(tmpDir string) {
 	} {
 		base := os.Getenv(entry[1])
 		if base == "" {
-			base = home
+			base = miseHome
 			switch {
 			case runtime.GOOS == "windows" && entry[0] == "MISE_DATA_DIR":
 				base = os.Getenv("LOCALAPPDATA")
