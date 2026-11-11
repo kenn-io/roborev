@@ -80,3 +80,39 @@ func (db *DB) setDaemonBoolState(key string, enabled bool, label string) error {
 	}
 	return nil
 }
+
+// BeginInterruptShutdown closes the claim gate and snapshots running attempts
+// atomically, so a failed snapshot cannot leave claims blocked.
+func (db *DB) BeginInterruptShutdown(ctx context.Context) ([]int64, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO daemon_state (key, value, updated_at) VALUES (?, 'true', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, shutdownDrainingStateKey)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM review_jobs WHERE status = 'running' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}

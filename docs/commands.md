@@ -1432,6 +1432,7 @@ not start or restart a local daemon on its behalf.
 roborev daemon start             # Start background daemon
 roborev daemon stop              # Stop daemon
 roborev daemon restart           # Restart daemon
+roborev daemon restart --running=interrupt # Requeue running reviews and restart
 roborev daemon status            # Show daemon, web UI, and queue status
 roborev daemon run               # Run in foreground
 roborev daemon pause                    # Pause queue processing
@@ -1450,6 +1451,12 @@ roborev hook uninstall           # Remove hook
 |------|-------------|
 | `--json` | Emit daemon, web UI, and queue status as JSON. Includes the canonical browser origin as `web_url` (with `web_disabled_reason` set to `config` or `missing-web-assets` when the browser listener is not running), active snoozes under `daemon.active_snoozes`, and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
+
+Restart waits for running reviews by default. Use `--running=interrupt` to
+requeue active reviews, wait for shutdown, and start the replacement. Those
+reviews start fresh without consuming a retry. If Ctrl-C interrupts a waiting
+restart, rerun it with `--running=interrupt` while the daemon is draining.
+Older daemons may not support interruption; use `--running=wait` for them.
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,
@@ -1481,12 +1488,6 @@ Daemon shutdown also stops workers from claiming new jobs. If work is active,
 restart reports that it is waiting, lets running jobs and worker finalization
 finish without a timeout, and only then starts the replacement daemon. On macOS,
 `daemon restart` restarts an owned daemon through its LaunchAgent.
-
-Use `roborev daemon restart --running=interrupt` to interrupt active reviews,
-wait for their workers to unwind, and requeue the same jobs without consuming a
-retry. Use `--running=abort` to refuse the restart if reviews are running; it
-requires one identifiable live daemon. Both policies require a daemon that
-supports coordinated draining. For older daemons, use `--running=wait`.
 
 !!! tip "Broken post-commit hook?"
 

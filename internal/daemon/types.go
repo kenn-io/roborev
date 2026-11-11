@@ -750,6 +750,13 @@ type PingOutput struct {
 	Body PingInfo
 }
 
+// InterruptShutdownInput binds interruption to the daemon discovered by the client.
+type InterruptShutdownInput struct {
+	Body struct {
+		ExpectedPID int `json:"expected_pid" minimum:"1"`
+	}
+}
+
 // ShutdownOutput is the response for POST /api/shutdown.
 type ShutdownOutput struct {
 	Body struct {

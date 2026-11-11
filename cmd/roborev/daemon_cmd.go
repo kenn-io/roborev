@@ -170,18 +170,24 @@ func daemonCmd() *cobra.Command {
 		},
 	})
 
-	var restartRunning string
+	var runningPolicy string
 	restartCmd := &cobra.Command{
 		Use:   "restart",
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			policy, err := parseRunningReviewPolicy(restartRunning)
-			if err != nil {
-				return err
+			if runningPolicy != "wait" && runningPolicy != "interrupt" {
+				return fmt.Errorf("invalid --running value %q (use wait or interrupt)", runningPolicy)
 			}
 			var owner *daemonService
 			var runtimes []*daemon.RuntimeInfo
 			stop := daemonStop
+			drain := drainManagedDaemon
+			if runningPolicy == "interrupt" {
+				drain = daemon.InterruptDaemon
+				stop = func() error {
+					return stopDaemonRuntimesWithMessage(listAllRuntimes, drain, os.Stderr, "Interrupting running reviews and waiting for daemon shutdown...")
+				}
+			}
 			var release func()
 			if restartThroughService {
 				var err error
@@ -192,20 +198,12 @@ func daemonCmd() *cobra.Command {
 				if release != nil {
 					defer release()
 				}
-				stop = func() error { return stopDaemonSnapshot(runtimes, drainManagedDaemon, os.Stderr) }
-			}
-			if policy == policyInterrupt || policy == policyAbort {
-				if !restartThroughService {
-					runtimes, err = listAllRuntimes()
-					if err != nil && !os.IsNotExist(err) {
-						return err
+				if runningPolicy == "interrupt" {
+					stop = func() error {
+						return stopDaemonSnapshotWithMessage(runtimes, drain, os.Stderr, "Interrupting running reviews and waiting for daemon shutdown...")
 					}
-				}
-				if policy == policyAbort && (len(runtimes) != 1 || runtimes[0].PID <= 0 || runtimes[0].Stale()) {
-					return errors.New("--running=abort requires one identifiable live daemon")
-				}
-				stop = func() error {
-					return stopRestartSnapshot(cmd.Context(), runtimes, policy, os.Stderr)
+				} else {
+					stop = func() error { return stopDaemonSnapshot(runtimes, drain, os.Stderr) }
 				}
 			}
 			wasRunning := true
@@ -229,7 +227,7 @@ func daemonCmd() *cobra.Command {
 			return nil
 		},
 	}
-	restartCmd.Flags().StringVar(&restartRunning, "running", "wait", "handling for running reviews: wait, interrupt, or abort")
+	restartCmd.Flags().StringVar(&runningPolicy, "running", "wait", "how to handle running reviews: wait or interrupt")
 	cmd.AddCommand(restartCmd)
 
 	cmd.AddCommand(statusCmd())

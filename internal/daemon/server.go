@@ -4239,6 +4239,39 @@ func (s *Server) humaShutdown(
 	return resp, nil
 }
 
+// humaInterruptShutdown targets only the process the caller discovered.
+func (s *Server) humaInterruptShutdown(ctx context.Context, input *InterruptShutdownInput) (*ShutdownOutput, error) {
+	if input.Body.ExpectedPID != os.Getpid() {
+		return nil, huma.Error412PreconditionFailed("daemon PID changed")
+	}
+	s.shutdownDrainMu.Lock()
+	defer s.shutdownDrainMu.Unlock()
+	if s.updateDrain != nil {
+		return nil, huma.Error409Conflict("update drain is active or recovering")
+	}
+	s.workerPool.attemptTransitionsMu.Lock()
+	defer s.workerPool.attemptTransitionsMu.Unlock()
+	// Complete the committed handoff even when the requesting client disconnects.
+	ctx = context.WithoutCancel(ctx)
+	var ids []int64
+	var err error
+	if s.shutdownDraining {
+		ids, err = s.db.ListRunningJobIDs()
+	} else {
+		ids, err = s.db.BeginInterruptShutdown(ctx)
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError(fmt.Sprintf("prepare interrupt shutdown: %v", err))
+	}
+	s.workerPool.interruptJobsForUpdateLocked(ids)
+	s.shutdownDraining = true
+	s.workerPool.BeginStop()
+	s.RequestShutdown()
+	resp := &ShutdownOutput{}
+	resp.Body.Status = "shutting down"
+	return resp, nil
+}
+
 func (s *Server) beginShutdownDrain() error {
 	s.shutdownDrainMu.Lock()
 	defer s.shutdownDrainMu.Unlock()

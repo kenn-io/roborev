@@ -2500,6 +2500,16 @@ func (i Input) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(i))
 }
 
+type InterruptShutdownInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	ExpectedPid int64   `json:"expected_pid" validate:"gte=1"`
+}
+
+func (i InterruptShutdownInputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
 type JobIDRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`

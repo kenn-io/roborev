@@ -21,6 +21,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 const (
@@ -660,6 +661,15 @@ func isLoopbackAddr(addr string) bool {
 // Returns nil if the daemon is no longer running.
 // Only removes runtime file if the daemon is confirmed dead.
 func KillDaemon(info *RuntimeInfo) error {
+	return killDaemon(info, false)
+}
+
+// InterruptDaemon stops the discovered daemon and requeues its active attempts.
+func InterruptDaemon(info *RuntimeInfo) error {
+	return killDaemon(info, true)
+}
+
+func killDaemon(info *RuntimeInfo, interrupt bool) error {
 	if info == nil {
 		return nil
 	}
@@ -680,7 +690,7 @@ func KillDaemon(info *RuntimeInfo) error {
 	// may start a replacement daemon on the same endpoint immediately.
 	confirmedDead := func() bool {
 		if info.PID > 0 {
-			return !isProcessAlive(info.PID)
+			return info.hasStaleProcess()
 		}
 		alive, err := ProbeDaemonAlive(ep)
 		return !alive && !IsDaemonAccessError(err)
@@ -721,6 +731,9 @@ func KillDaemon(info *RuntimeInfo) error {
 			probeErr = err
 		}
 	}
+	if interrupt && !selected && len(answeredByOther) > 0 && !confirmedDead() {
+		return fmt.Errorf("daemon endpoint belongs to a different process; interrupt shutdown was not sent")
+	}
 	if !selected && info.PID > 0 {
 		if identity == processUnknown {
 			if len(answeredByOther) == 0 {
@@ -755,6 +768,10 @@ func KillDaemon(info *RuntimeInfo) error {
 		return nil
 	}
 
+	if interrupt && info.PID <= 0 {
+		return fmt.Errorf("cannot interrupt a daemon without a recorded PID; use --running=wait")
+	}
+
 	// Request graceful shutdown within one shared preparation budget. Once the
 	// daemon accepts the request, wait without a deadline for the exact process
 	// so running reviews still have unlimited time to finish.
@@ -763,7 +780,7 @@ func KillDaemon(info *RuntimeInfo) error {
 			context.Background(), shutdownCleanupTimeout,
 		)
 		defer cancelShutdownCleanup()
-		if err := requestGracefulDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead); err != nil {
+		if err := requestDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead, info.PID, interrupt); err != nil {
 			return err
 		}
 		waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
@@ -778,12 +795,23 @@ func requestGracefulDaemonShutdown(
 	ep DaemonEndpoint,
 	confirmedDead func() bool,
 ) error {
+	return requestDaemonShutdown(ctx, ep, confirmedDead, 0, false)
+}
+
+func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead func() bool, pid int, interrupt bool) error {
 	client := ep.APIClient(0)
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		if confirmedDead() {
 			return struct{}{}, nil
 		}
-		resp, err := client.ShutdownRaw(ctx)
+		var resp *http.Response
+		var err error
+		if interrupt {
+			body := []byte(fmt.Sprintf(`{"expected_pid":%d}`, pid))
+			resp, err = client.InterruptShutdownRaw(ctx, nil, roborevclient.WithBody(body))
+		} else {
+			resp, err = client.ShutdownRaw(ctx)
+		}
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
@@ -791,6 +819,9 @@ func requestGracefulDaemonShutdown(
 			}
 			if resp.StatusCode == http.StatusUnauthorized {
 				return struct{}{}, backoff.Permanent(ErrDaemonAccessDenied)
+			}
+			if interrupt && resp.StatusCode == http.StatusNotFound {
+				return struct{}{}, backoff.Permanent(fmt.Errorf("daemon does not support interrupt shutdown; use --running=wait"))
 			}
 			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
 			if resp.StatusCode < http.StatusInternalServerError {
