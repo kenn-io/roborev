@@ -1154,9 +1154,9 @@ component coverage in both arms. Run `roborev backfill-tokens` when stored usage
 is missing; a provider may still lack prices. Off-plan attribution detects
 final-agent changes, not changed models or earlier retries.
 
-Finding labels and refuted-review lists are unavailable: current rebuttals lack
-durable finding identity and the original-review version needed to deduplicate
-labels. Their coverage and labeled metrics remain `null` in JSON. Closing a
+New rebuttals return a review-version token, but finding labels and refuted-review
+lists remain unavailable because rebuttals lack stable finding identity. Their
+coverage and labeled metrics remain `null` in JSON. Closing a
 review does not confirm its findings. More findings or fail verdicts do not
 demonstrate greater correctness.
 

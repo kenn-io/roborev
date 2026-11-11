@@ -181,7 +181,7 @@ type findingOutcomes interface {
 type rebuttalFindingOutcomes struct{}
 
 func (rebuttalFindingOutcomes) coverage() ExperimentLabelCoverage {
-	return ExperimentLabelCoverage{Reason: "Rebuttals have no durable finding identity or original-review version; finding labels and refuted-review lists are unavailable."}
+	return ExperimentLabelCoverage{Reason: "Rebuttals lack stable finding identity. New rebuttals return a review-version token, but finding labels and refuted-review lists remain unavailable."}
 }
 
 type experimentReportUnit struct {
