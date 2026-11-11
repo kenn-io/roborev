@@ -498,6 +498,114 @@ func TestKataCheckoutHonorsCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+type kataConfigFunc func() *config.Config
+
+func (f kataConfigFunc) Config() *config.Config { return f() }
+
+func TestKataPreparedAttemptChecksInputs(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "prepared-review", "worker")
+	cfg := kataConnectionConfig(fake)
+	priority := 2
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews", Labels: []string{"one"}, Priority: &priority}}
+	seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: "reviews", Policy: "comments"}
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
+	p := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+	attempt := &kataPreparedAttempt{}
+	record, review, _, client, project, prepared, err := p.current(t.Context(), job.ID, attempt)
+	require.NoError(t, err)
+	client.CloseIdleConnections()
+	_, _, _, client, _, again, err := p.current(t.Context(), job.ID, attempt)
+	require.NoError(t, err)
+	client.CloseIdleConnections()
+	assert.Same(t, prepared, again)
+	originalTime := review.CreatedAt.UTC().Format(time.RFC3339Nano)
+	changedDoc := doc
+	changedDoc.Summary = "changed"
+	changedRaw, err := json.Marshal(changedDoc)
+	require.NoError(t, err)
+	for _, change := range []struct {
+		name           string
+		apply, restore func()
+	}{
+		{"teammate", func() { cfg.Integrations.Kata.Teammate = "other" }, func() { cfg.Integrations.Kata.Teammate = "roborev" }},
+		{"label mutation", func() { cfg.Hooks[0].Labels[0] = "other" }, func() { cfg.Hooks[0].Labels[0] = "one" }},
+		{"priority mutation", func() { priority = 3 }, func() { priority = 2 }},
+		{"policy", func() { cfg.Hooks[0].Findings = "summary" }, func() { cfg.Hooks[0].Findings = "comments" }},
+		{"hook removed", func() { cfg.Hooks[0].Event = "review.failed" }, func() { cfg.Hooks[0].Event = "review.completed" }},
+		{"project", func() { cfg.Hooks[0].Project = "other" }, func() { cfg.Hooks[0].Project = "reviews" }},
+		{"endpoint", func() { cfg.Integrations.Kata.Endpoint = "https://other.example.test" }, func() { cfg.Integrations.Kata.Endpoint = fake.URL() }},
+		{"completion", func() {
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, review.CreatedAt.Add(time.Second).UTC().Format(time.RFC3339Nano), job.ID)
+			require.NoError(t, err)
+		}, func() {
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, originalTime, job.ID)
+			require.NoError(t, err)
+		}},
+		{"source", func() {
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(changedRaw), job.ID)
+			require.NoError(t, err)
+		}, func() {
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(raw), job.ID)
+			require.NoError(t, err)
+		}},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			change.apply()
+			defer change.restore()
+			_, _, _, _, _, _, err := p.current(t.Context(), job.ID, attempt)
+			require.Error(t, err)
+		})
+	}
+	// Recheck inputs after the pre-write read, inside the attempt lock.
+	for _, change := range []struct {
+		name           string
+		apply, restore func()
+	}{
+		{"priority", func() { priority = 4 }, func() { priority = 2 }},
+		{"labels", func() { cfg.Hooks[0].Labels[0] = "other" }, func() { cfg.Hooks[0].Labels[0] = "one" }},
+		{"teammate", func() { cfg.Integrations.Kata.Teammate = "other" }, func() { cfg.Integrations.Kata.Teammate = "roborev" }},
+		{"completion", func() {
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, review.CreatedAt.Add(time.Second).UTC().Format(time.RFC3339Nano), job.ID)
+			require.NoError(t, err)
+		}, func() {
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, originalTime, job.ID)
+			require.NoError(t, err)
+		}},
+		{"source", func() {
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(changedRaw), job.ID)
+			require.NoError(t, err)
+		}, func() {
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(raw), job.ID)
+			require.NoError(t, err)
+		}},
+	} {
+		t.Run("locked/"+change.name, func(t *testing.T) {
+			calls := 0
+			p.cfg = kataConfigFunc(func() *config.Config {
+				calls++
+				if calls == 2 {
+					change.apply()
+				}
+				return cfg
+			})
+			defer change.restore()
+			sent := false
+			err := p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+				sent = true
+				return nil
+			})
+			require.Error(t, err)
+			assert.False(t, sent)
+		})
+	}
+
+}
+
 func TestKataPublicationDeadlineAppliesToEveryPost(t *testing.T) {
 	fake := katafake.New(t)
 	tc := newWorkerTestContext(t, 1)
@@ -510,7 +618,8 @@ func TestKataPublicationDeadlineAppliesToEveryPost(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
 	p := newKataPublisher(tc.DB, NewStaticConfig(cfg))
-	record, review, _, client, project, publication, err := p.current(t.Context(), job.ID)
+	attempt := &kataPreparedAttempt{}
+	record, review, _, client, project, publication, err := p.current(t.Context(), job.ID, attempt)
 	require.NoError(t, err)
 	client.CloseIdleConnections()
 	boundary := review.CreatedAt.Add(7*24*time.Hour - kata.DefaultRequestTimeout)
@@ -519,7 +628,7 @@ func TestKataPublicationDeadlineAppliesToEveryPost(t *testing.T) {
 			for _, delta := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
 				p.now = func() time.Time { return boundary.Add(delta) }
 				sent := false
-				err := p.post(t.Context(), job.ID, record, review, project, publication, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+				err := p.post(t.Context(), job.ID, record, review, project, publication, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
 					sent = true
 					return nil
 				})
@@ -620,4 +729,58 @@ func TestPassingKataReviewDoesNotSchedulePublication(t *testing.T) {
 	_, err := publisher.Publish(t.Context(), job.ID)
 	require.ErrorContains(t, err, "no local publication authorization")
 	assert.Empty(t, fake.AllRequests())
+}
+
+func TestKataPublicationRechecksRemoteAfterRoot(t *testing.T) {
+	for _, change := range []string{"edited", "duplicate", "closed", "truncated"} {
+		t.Run(change, func(t *testing.T) {
+			fake := katafake.New(t)
+			tc := newWorkerTestContext(t, 1)
+			job := tc.createAndClaimJob(t, "remote-changed", "worker")
+			cfg := kataConnectionConfig(fake)
+			cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+			seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: "reviews", Policy: "comments"}
+			doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "first", Fix: "fix"}, {Severity: "high", Problem: "second", Fix: "fix"}}}
+			raw, err := json.Marshal(doc)
+			require.NoError(t, err)
+			require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
+			review, err := tc.DB.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+			require.NoError(t, err)
+			issue := fake.AddIssue(7, "remote", "findings", "body")
+			issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": record.ReviewUUID.String(), "roborev.document_hash": record.DocumentHash, "roborev.policy": "comments", "roborev.completed_at": review.CreatedAt.UTC().Format(time.RFC3339Nano), "roborev.finding_count": 2}
+			posts := 0
+			fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+				if change == "truncated" && posts > 0 && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/"+issue.Out.UID) {
+					fake.Reply(w, map[string]any{"issue": issue.Out, "comments": issue.Comments, "comments_truncated": true})
+					return true
+				}
+				if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/comments") {
+					return false
+				}
+				posts++
+				var req gen.CommentRequestBody
+				if !assert.NoError(t, json.UnmarshalRead(r.Body, &req)) {
+					return true
+				}
+				body := req.Body
+				issue.Comments = append(issue.Comments, gen.CommentOut{UID: "root-1", Handle: new("c:first"), Body: body, Author: "service"})
+				switch change {
+				case "edited":
+					issue.Comments[0].Body = "edited"
+				case "duplicate":
+					fake.AddIssue(7, "duplicate", "findings", "body").Out.Metadata = issue.Out.Metadata
+				case "closed":
+					issue.Out.Status = "closed"
+				}
+				fake.Reply(w, map[string]any{"issue": map[string]any{"uid": issue.Out.UID}, "comment": map[string]any{"uid": "root-1", "body": body}})
+				return true
+			}
+			publisher := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+			_, err = publisher.Publish(t.Context(), job.ID)
+			require.Error(t, err)
+			assert.Equal(t, 1, posts)
+		})
+	}
 }

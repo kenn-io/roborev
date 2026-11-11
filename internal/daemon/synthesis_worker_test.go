@@ -1538,8 +1538,8 @@ func TestSynthesisNeutralFramingUsesVotingMembers(t *testing.T) {
 }
 
 func TestKataMarkerCapturedBySynthesisBranches(t *testing.T) {
-	for _, useAgent := range []bool{false, true} {
-		t.Run(fmt.Sprintf("agent=%t", useAgent), func(t *testing.T) {
+	for _, tcCase := range []struct{ useAgent, ci bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		t.Run(fmt.Sprintf("agent=%t/ci=%t", tcCase.useAgent, tcCase.ci), func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			cfg := config.DefaultConfig()
 			cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.test"}
@@ -1553,18 +1553,35 @@ func TestKataMarkerCapturedBySynthesisBranches(t *testing.T) {
 			}})
 			run, members, _ := enqueuePanelRun(t, tc, "kata-marker-panel", []memberSpec{{name: "m0", agent: member}, {name: "m1", agent: member}})
 			setSynthesisAgent(t, tc, run, synthAgent)
-			if useAgent {
+			if tcCase.useAgent {
 				setSynthesisInstructions(t, tc, run, "Summarize findings.")
 			}
 			completeMember(t, tc, members[0].ID, member, "High: nil map write in alpha.go:3")
 			failMember(t, tc, members[1].ID)
 			synth := releaseAndClaimSynthesis(t, tc, run)
+			if tcCase.ci {
+				synth.Source = storage.JobSourceCI
+			}
+			_, events := tc.Broadcaster.Subscribe("")
 			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 			tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+			seen := false
+			for len(events) > 0 {
+				event := <-events
+				if event.JobID == synth.ID {
+					assert.Equal(t, tcCase.ci, event.SuppressKataHooks)
+					seen = seen || event.Type == "review.completed"
+				}
+			}
+			assert.True(t, seen)
 			record, err := tc.DB.GetKataPublication(t.Context(), synth.ID)
 			require.NoError(t, err)
-			require.NotNil(t, record.Marker)
-			assert.Equal(t, "comments", record.Marker.Policy)
+			if tcCase.ci {
+				assert.Nil(t, record.Marker)
+			} else {
+				require.NotNil(t, record.Marker)
+				assert.Equal(t, "comments", record.Marker.Policy)
+			}
 		})
 	}
 }

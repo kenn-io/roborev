@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 	"uuid"
@@ -38,6 +39,24 @@ type kataPublisher struct {
 	mu    sync.Mutex
 	locks map[uuid.UUID]*kataPublicationLock
 	now   func() time.Time
+}
+
+// kataPreparedAttempt owns immutable copies of the inputs to one sealed
+// request set. Remote observations and destination resolution are never cached.
+type kataPreparedAttempt struct {
+	publication      *kata.Publication
+	reviewID         uuid.UUID
+	hash             string
+	completed        time.Time
+	policy, teammate string
+	options          kata.PublicationOptions
+}
+
+func (a *kataPreparedAttempt) matches(record *storage.KataPublicationRecord, review *storage.Review, selection *kataSelection, teammate string) bool {
+	return a.publication != nil && review.UUID != nil && *review.UUID == a.reviewID &&
+		record.ReviewUUID == a.reviewID && record.DocumentHash == a.hash &&
+		review.CreatedAt.Equal(a.completed) && selection.seed.Policy == a.policy && teammate == a.teammate &&
+		slices.Equal(selection.options.Labels, a.options.Labels) && sameKataPriority(selection.options.Priority, a.options.Priority)
 }
 
 type kataPublicationLock struct {
@@ -106,7 +125,7 @@ func (p *kataPublisher) Inspect(ctx context.Context, jobID int64) (*KataPublicat
 	return p.inspectPublication(ctx, record)
 }
 
-func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.KataPublicationRecord, *storage.Review, *kataSelection, *kata.APIClient, kata.PublicationProject, *kata.Publication, error) {
+func (p *kataPublisher) current(ctx context.Context, jobID int64, attempt *kataPreparedAttempt) (*storage.KataPublicationRecord, *storage.Review, *kataSelection, *kata.APIClient, kata.PublicationProject, *kata.Publication, error) {
 	var zero kata.PublicationProject
 	record, err := p.db.GetKataPublication(ctx, jobID)
 	if err != nil {
@@ -153,14 +172,26 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 	if err != nil || hash != record.DocumentHash {
 		return nil, nil, nil, nil, zero, nil, storage.ErrReviewChanged
 	}
-	doc, err := structuredreview.Decode(raw)
-	if err != nil {
-		return nil, nil, nil, nil, zero, nil, err
+	if attempt.publication == nil {
+		doc, err := structuredreview.Decode(raw)
+		if err != nil {
+			return nil, nil, nil, nil, zero, nil, err
+		}
+		teammate := cfg.Integrations.Kata.ResolvedTeammate()
+		publication, err := kata.PreparePublicationWithOptions(record.ReviewUUID, record.DocumentHash, review.CreatedAt, doc, selection.seed.Policy, teammate, selection.options)
+		if err != nil {
+			return nil, nil, nil, nil, zero, nil, err
+		}
+		attempt.publication, attempt.reviewID, attempt.hash, attempt.completed = publication, record.ReviewUUID, record.DocumentHash, review.CreatedAt
+		attempt.policy, attempt.teammate = selection.seed.Policy, teammate
+		attempt.options.Labels = slices.Clone(selection.options.Labels)
+		if selection.options.Priority != nil {
+			attempt.options.Priority = new(*selection.options.Priority)
+		}
+	} else if !attempt.matches(record, review, selection, cfg.Integrations.Kata.ResolvedTeammate()) {
+		return nil, nil, nil, nil, zero, nil, errors.New("kata publication destination or request changed")
 	}
-	publication, err := kata.PreparePublicationWithOptions(record.ReviewUUID, record.DocumentHash, review.CreatedAt, doc, selection.seed.Policy, cfg.Integrations.Kata.ResolvedTeammate(), selection.options)
-	if err != nil {
-		return nil, nil, nil, nil, zero, nil, err
-	}
+	publication := attempt.publication
 	if record.Marker != nil && ((record.Marker.ProjectUID != "" && record.Marker.ProjectUID != project.UID) || (record.Marker.RequestFingerprint != "" && record.Marker.RequestFingerprint != publication.Fingerprint)) {
 		return nil, nil, nil, nil, zero, nil, errors.New("kata publication destination or request changed")
 	}
@@ -168,7 +199,8 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 }
 
 func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationStatus, error) {
-	record, review, _, client, project, publication, err := p.current(ctx, jobID)
+	attempt := &kataPreparedAttempt{}
+	record, review, _, client, project, publication, err := p.current(ctx, jobID, attempt)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +223,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 			return status, errors.New("multiple Kata publication issues")
 		}
 		if len(candidates) == 0 {
-			err = p.post(ctx, jobID, record, review, project, publication, func(ctx context.Context, c *kata.APIClient, dest kata.PublicationProject, pub *kata.Publication) error {
+			err = p.post(ctx, jobID, record, review, project, publication, attempt, func(ctx context.Context, c *kata.APIClient, dest kata.PublicationProject, pub *kata.Publication) error {
 				_, err := c.CreatePublicationIssue(ctx, dest, pub)
 				return err
 			})
@@ -199,7 +231,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 				return status, err
 			}
 			client.CloseIdleConnections()
-			record, review, _, client, project, publication, err = p.current(ctx, jobID)
+			record, review, _, client, project, publication, err = p.current(ctx, jobID, attempt)
 			if err != nil {
 				return status, err
 			}
@@ -252,7 +284,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 		if issue.Issue.ClosedAt != nil || issue.Issue.Status == "closed" {
 			return status, errors.New("closed Kata issue has missing roots")
 		}
-		err = p.post(ctx, jobID, record, review, project, publication, func(ctx context.Context, c *kata.APIClient, dest kata.PublicationProject, pub *kata.Publication) error {
+		err = p.post(ctx, jobID, record, review, project, publication, attempt, func(ctx context.Context, c *kata.APIClient, dest kata.PublicationProject, pub *kata.Publication) error {
 			_, err := c.CreatePublicationRoot(ctx, dest, issue.Issue.UID, pub, missing)
 			return err
 		})
@@ -260,19 +292,19 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 			return status, err
 		}
 		client.CloseIdleConnections()
-		record, review, _, client, project, publication, err = p.current(ctx, jobID)
+		record, review, _, client, project, publication, err = p.current(ctx, jobID, attempt)
 		if err != nil {
 			return status, err
 		}
 	}
 }
 
-func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.KataPublicationRecord, review *storage.Review, project kata.PublicationProject, publication *kata.Publication, send func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error) error {
+func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.KataPublicationRecord, review *storage.Review, project kata.PublicationProject, publication *kata.Publication, attempt *kataPreparedAttempt, send func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error) error {
 	deadline := review.CreatedAt.Add(7 * 24 * time.Hour)
 	if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
 		return errors.New("kata publication window expired")
 	}
-	current, _, _, client, dest, prepared, err := p.current(ctx, jobID)
+	current, _, _, client, dest, prepared, err := p.current(ctx, jobID, attempt)
 	if err != nil {
 		return err
 	}
@@ -305,7 +337,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		if err != nil {
 			return err
 		}
-		if locked.Marker == nil || locked.Marker.KataPublicationSeed != current.Marker.KataPublicationSeed || locked.Marker.ProjectUID != dest.UID || locked.Marker.RequestFingerprint != prepared.Fingerprint {
+		if locked.Marker == nil || locked.Marker.Version != 1 || (locked.Marker.State != "pending" && locked.Marker.State != "complete") || locked.Marker.DocumentHash != locked.DocumentHash || locked.Marker.KataPublicationSeed != current.Marker.KataPublicationSeed || locked.Marker.ProjectUID != dest.UID || locked.Marker.RequestFingerprint != prepared.Fingerprint {
 			return storage.ErrReviewChanged
 		}
 		cfg := p.cfg.Config()
@@ -326,21 +358,22 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		if selection.resolvedUID != "" && selection.resolvedUID != dest.UID {
 			return errors.New("kata publication destination changed")
 		}
-		raw, err := json.Marshal(review.StructuredOutput)
+		latestReview, err := p.db.GetReviewByJobIDContext(ctx, jobID)
 		if err != nil {
 			return err
 		}
-		doc, err := structuredreview.Decode(raw)
+		latestSource, err := json.Marshal(latestReview.StructuredOutput)
 		if err != nil {
 			return err
 		}
-		latest, err := kata.PreparePublicationWithOptions(locked.ReviewUUID, locked.DocumentHash, review.CreatedAt, doc, selection.seed.Policy, cfg.Integrations.Kata.ResolvedTeammate(), selection.options)
+		latestHash, err := storage.KataDocumentHash(latestSource)
 		if err != nil {
 			return err
 		}
-		if latest.Fingerprint != locked.Marker.RequestFingerprint {
+		if locked.JobID != jobID || latestReview.Job == nil || latestReview.Job.ID != jobID || latestHash != attempt.hash || !attempt.matches(locked, latestReview, selection, cfg.Integrations.Kata.ResolvedTeammate()) {
 			return errors.New("kata publication request changed")
 		}
+
 		if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
 			return errors.New("kata publication window expired")
 		}

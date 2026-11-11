@@ -218,12 +218,8 @@ func (hr *HookRunner) handleEvent(event Event) {
 		}
 
 		if hook.Type == "kata" {
-			if hr.publisher != nil {
-				// Queued legacy hooks must still drain after publication cancellation.
-				job, err := hr.publisher.db.GetJobByIDContext(context.WithoutCancel(hr.publicationCtx), event.JobID)
-				if err != nil || job.IsCIReview() || job.PanelRole == storage.PanelRoleMember || job.Source == storage.JobSourceRebuttal {
-					continue
-				}
+			if event.SuppressKataHooks {
+				continue
 			}
 			if hook.Findings != "" {
 				if hr.publisher != nil && event.Type == "review.completed" && event.Verdict == "F" && !publicationScheduled {

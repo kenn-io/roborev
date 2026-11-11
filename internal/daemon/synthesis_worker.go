@@ -419,6 +419,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		Branch:            job.HookBranch(),
 		Agent:             agentName,
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
+		SuppressKataHooks: suppressKataHooks(job),
 		Verdict:           string(verdict),
 		Findings:          output,
 	})
@@ -458,6 +459,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		Branch:            job.HookBranch(),
 		Agent:             agentName,
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
+		SuppressKataHooks: suppressKataHooks(job),
 	})
 
 	cfg := wp.cfgGetter.Config()

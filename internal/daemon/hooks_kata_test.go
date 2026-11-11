@@ -136,6 +136,7 @@ func TestLegacyKataHookEligibility(t *testing.T) {
 							event.Verdict = "" // The worker clears rebuttal verdicts.
 						}
 						assert.Equal(t, tc.suppressed, event.SuppressHooks)
+						assert.Equal(t, !tc.eligible, event.SuppressKataHooks)
 						env.Broadcaster.Broadcast(event)
 						runner.WaitUntilIdle()
 						if tc.eligible {
@@ -157,6 +158,33 @@ func TestLegacyKataHookEligibility(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLegacyKataEventSurvivesMissingJob(t *testing.T) {
+	for _, failure := range []string{"deleted", "closed database"} {
+		for _, eventType := range []string{"review.completed", "review.failed"} {
+			t.Run(failure+"/"+eventType, func(t *testing.T) {
+				env := newWorkerTestContext(t, 1)
+				job := env.createAndClaimJob(t, "queued-hook", "worker")
+				event := eventForJob(eventType, job, job.ID)
+				event.Verdict, event.Findings, event.Error = "F", "finding", "failed"
+				if failure == "deleted" {
+					require.NoError(t, env.DB.DeleteRepoContext(t.Context(), env.Repo.ID, true))
+				} else {
+					require.NoError(t, env.DB.Close())
+				}
+				cfg := config.DefaultConfig()
+				cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Project: "reviews"}}
+				fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+				runner := NewHookRunner(NewStaticConfig(cfg), env.Broadcaster, log.New(io.Discard, "", 0), env.DB)
+				t.Cleanup(runner.Stop)
+				runner.newKataClient = func(string) kata.Client { return fake }
+				env.Broadcaster.Broadcast(event)
+				runner.WaitUntilIdle()
+				require.Len(t, fake.CreateReqs, 1)
+			})
+		}
 	}
 }
 

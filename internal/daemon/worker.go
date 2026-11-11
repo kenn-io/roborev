@@ -1464,6 +1464,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Agent:             agentName,
 		WorktreePath:      eventWorktreePath,
 		SuppressHooks:     suppressJobHooks(job),
+		SuppressKataHooks: suppressKataHooks(job),
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 	})
 
@@ -1877,6 +1878,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			Findings:          output,
 			WorktreePath:      eventWorktreePath,
 			SuppressHooks:     suppressJobHooks(job),
+			SuppressKataHooks: suppressKataHooks(job),
 			SuppressRepoHooks: hasSuppliedReviewSettings(job),
 		})
 	})
@@ -1902,6 +1904,7 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 				Agent:             agentName,
 				WorktreePath:      eventWorktreePath,
 				SuppressHooks:     suppressJobHooks(job),
+				SuppressKataHooks: suppressKataHooks(job),
 				SuppressRepoHooks: hasSuppliedReviewSettings(job),
 			})
 		}
@@ -2395,6 +2398,7 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		Error:             errorMsg,
 		WorktreePath:      wtPath,
 		SuppressHooks:     suppressJobHooks(job),
+		SuppressKataHooks: suppressKataHooks(job),
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 	})
 	// broadcastFailed is the terminal-failure chokepoint (never reached on
