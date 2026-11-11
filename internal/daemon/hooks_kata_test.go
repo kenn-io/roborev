@@ -1,13 +1,16 @@
 package daemon
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,27 +94,68 @@ func TestRunKataHookCreatesAndLogs(t *testing.T) {
 	assert.Contains(t, buf.String(), "created issue new1")
 }
 
-func TestLegacyKataHooksRetainCIAndPanelMembers(t *testing.T) {
-	for _, tc := range []struct{ name, source, role string }{
-		{"ci", storage.JobSourceCI, ""},
-		{"panel", "", storage.PanelRoleMember},
-		{"rebuttal", storage.JobSourceRebuttal, ""},
+func TestLegacyKataHookEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, role, ciBase, jobType string
+		eligible, suppressed                bool
+	}{
+		{"standalone", "", "", "", storage.JobTypeReview, true, false},
+		{"synthesis", "", storage.PanelRoleSynthesis, "", storage.JobTypeSynthesis, true, false},
+		{"ci source", storage.JobSourceCI, "", "", storage.JobTypeReview, false, false},
+		{"ci base", "", "", "main", storage.JobTypeReview, false, false},
+		{"ci synthesis", storage.JobSourceCI, storage.PanelRoleSynthesis, "", storage.JobTypeSynthesis, false, false},
+		{"panel member", "", storage.PanelRoleMember, "", storage.JobTypeReview, false, false},
+		{"rebuttal", storage.JobSourceRebuttal, "", "", storage.JobTypeReview, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newWorkerTestContext(t, 1)
 			job := env.createAndClaimJob(t, "legacy-"+tc.name, "worker")
-			_, err := env.DB.ExecContext(t.Context(), `UPDATE review_jobs SET source = ?, panel_role = ? WHERE id = ?`, tc.source, tc.role, job.ID)
+			_, err := env.DB.ExecContext(t.Context(), `UPDATE review_jobs SET source = ?, panel_role = ?, ci_base_branch = ?, job_type = ? WHERE id = ?`, tc.source, tc.role, tc.ciBase, tc.jobType, job.ID)
 			require.NoError(t, err)
-			cfg := config.DefaultConfig() // API integration remains disabled.
-			cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Project: "reviews"}}
-			fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
-			runner := NewHookRunner(NewStaticConfig(cfg), env.Broadcaster, log.New(io.Discard, "", 0), env.DB)
-			t.Cleanup(runner.Stop)
-			runner.newKataClient = func(string) kata.Client { return fake }
-			env.Broadcaster.Broadcast(Event{Type: "review.completed", Verdict: "F", JobID: job.ID, Findings: "finding"})
-			runner.WaitUntilIdle()
-			require.Len(t, fake.CreateReqs, 1)
-			assert.Contains(t, fake.CreateReqs[0].Body, "finding")
+			job, err = env.DB.GetJobByIDContext(t.Context(), job.ID)
+			require.NoError(t, err)
+			for _, apiEnabled := range []bool{false, true} {
+				for _, eventType := range []string{"review.completed", "review.failed"} {
+					t.Run(fmt.Sprintf("api=%t/%s", apiEnabled, eventType), func(t *testing.T) {
+						var webhooks atomic.Int32
+						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+							webhooks.Add(1)
+							w.WriteHeader(http.StatusNoContent)
+						}))
+						t.Cleanup(server.Close)
+						cfg := config.DefaultConfig()
+						cfg.Integrations.Kata.Enabled = apiEnabled
+						cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Project: "reviews"}, {Type: "webhook", Event: "review.*", URL: server.URL}}
+						fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+						runner := NewHookRunner(NewStaticConfig(cfg), env.Broadcaster, log.New(io.Discard, "", 0), env.DB)
+						t.Cleanup(runner.Stop)
+						runner.newKataClient = func(string) kata.Client { return fake }
+						event := eventForJob(eventType, job, job.ID)
+						event.Verdict, event.Findings, event.Error = "F", "finding", "failed"
+						if tc.suppressed {
+							event.Verdict = "" // The worker clears rebuttal verdicts.
+						}
+						assert.Equal(t, tc.suppressed, event.SuppressHooks)
+						env.Broadcaster.Broadcast(event)
+						runner.WaitUntilIdle()
+						if tc.eligible {
+							require.Len(t, fake.CreateReqs, 1)
+							if eventType == "review.completed" {
+								assert.Contains(t, fake.CreateReqs[0].Body, "finding")
+							} else {
+								assert.Contains(t, fake.CreateReqs[0].Body, "failed")
+							}
+						} else {
+							assert.Empty(t, fake.CreateReqs)
+						}
+						if tc.suppressed {
+							assert.Zero(t, webhooks.Load())
+						} else {
+							assert.EqualValues(t, 1, webhooks.Load(), "other hook types still run")
+						}
+					})
+				}
+			}
 		})
 	}
 }
