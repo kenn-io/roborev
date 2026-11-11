@@ -346,7 +346,7 @@ jobs:
             else error("missing run/pass evidence for Kata through daemon") end
           ' gotestsum/kata-daemon.json
 
-      - name: Test typed replies with pinned and current Kata (Linux)
+      - name: Test replies and feedback with pinned and current Kata (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           set -o pipefail
@@ -358,14 +358,15 @@ jobs:
             result="gotestsum/kata-real-$producer.json"
             go tool gotestsum --format pkgname-and-test-fails --format-icons text \
               --jsonfile "$result" \
-              --packages "./internal/kata ./cmd/roborev" \
+              --packages "./internal/kata ./cmd/roborev ./internal/daemon" \
               -- -timeout 15m -race -count=1 -tags integration,kata \
-              -run '^(TestTypedReplyRealKataLostReceiptAndRetry|TestKataTypedReplyThroughDaemonE2E)$'
+              -run '^(TestTypedReplyRealKataLostReceiptAndRetry|TestKataTypedReplyThroughDaemonE2E|TestKataFeedbackAcrossMachinesE2E)$'
 
-            # Require both named tests to run and pass for each producer.
+            # Require all named tests to run and pass for each producer.
             for pair in \
               'go.kenn.io/roborev/internal/kata/TestTypedReplyRealKataLostReceiptAndRetry' \
-              'go.kenn.io/roborev/cmd/roborev/TestKataTypedReplyThroughDaemonE2E'; do
+              'go.kenn.io/roborev/cmd/roborev/TestKataTypedReplyThroughDaemonE2E' \
+              'go.kenn.io/roborev/internal/daemon/TestKataFeedbackAcrossMachinesE2E'; do
               jq -ser --arg pkg "${pair%/*}" --arg test "${pair##*/}" '
                 [ .[] | select(.Package == $pkg and .Test == $test) | .Action ] |
                 if index("run") != null and index("pass") != null and index("skip") == null
