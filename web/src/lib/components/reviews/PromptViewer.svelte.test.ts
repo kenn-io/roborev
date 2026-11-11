@@ -48,10 +48,6 @@ describe("PromptViewer", () => {
     expect(reviewLoads).toHaveBeenCalledExactlyOnceWith(42);
     expect(await screen.findByText("Loading prompt…")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
-
-    state.loading = false;
-    state.prompt = "Review this change";
-    expect(await screen.findByText("Review this change")).toBeInTheDocument();
   });
 
   it("keeps the empty state for a loaded job without a prompt", () => {

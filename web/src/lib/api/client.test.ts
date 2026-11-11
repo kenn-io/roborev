@@ -18,36 +18,54 @@ afterEach(() => {
 });
 
 describe("native Roborev client", () => {
-  test("retries a network failure at the fetch boundary", async () => {
-    vi.useFakeTimers();
-    try {
-      const fetchMock = vi
-        .fn()
-        .mockRejectedValueOnce(new TypeError("offline"))
-        .mockResolvedValue(Response.json({ jobs: [] }));
-      const request = Effect.runPromise(
-        executeRoborevRequest("jobs", (signal) =>
-          roborevFetch("/api/jobs", {
-            signal,
-            roborevTransport: { baseUrl: "/", fetch: fetchMock },
-          }),
-        ).pipe(retryIdempotentRead),
-      );
-      await vi.runAllTimersAsync();
-      expect(await request).toEqual({ jobs: [] });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+  test.each(["fetch", "body", "persistent"])(
+    "handles a %s network failure",
+    async (kind) => {
+      vi.useFakeTimers();
+      try {
+        const fetchMock = vi.fn();
+        if (kind === "fetch")
+          fetchMock
+            .mockRejectedValueOnce(new TypeError("offline"))
+            .mockResolvedValue(Response.json({ jobs: [] }));
+        else if (kind === "body") {
+          const broken = new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new TypeError("connection lost"));
+              },
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+          fetchMock
+            .mockResolvedValueOnce(broken)
+            .mockResolvedValue(Response.json({ jobs: [] }));
+        } else fetchMock.mockRejectedValue(new TypeError("offline"));
+        const result = Effect.runPromise(
+          executeRoborevRequest("jobs", (signal) =>
+            roborevFetch("/api/jobs", {
+              signal,
+              roborevTransport: { baseUrl: "/", fetch: fetchMock },
+            }),
+          ).pipe(retryIdempotentRead, Effect.exit),
+        );
+        await vi.runAllTimersAsync();
+        const exit = await result;
+        if (kind === "persistent") expect(exit._tag).toBe("Failure");
+        else
+          expect(exit).toMatchObject({ _tag: "Success", value: { jobs: [] } });
+        expect(fetchMock).toHaveBeenCalledTimes(kind === "persistent" ? 3 : 2);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   test.each([
     new TypeError("bad access"),
-    new SyntaxError("bad JSON"),
     new DOMException("aborted", "AbortError"),
     new Error("invalid request"),
     "unexpected",
-    new Response(null, { status: 503 }),
   ])("does not retry a non-transport failure", async (failure) => {
     const request = vi.fn().mockRejectedValue(failure);
     const result = await Effect.runPromise(
@@ -60,11 +78,17 @@ describe("native Roborev client", () => {
     expect(request).toHaveBeenCalledOnce();
   });
 
-  test("stops after two retries when the network stays unavailable", async () => {
-    vi.useFakeTimers();
-    try {
-      const fetchMock = vi.fn().mockRejectedValue(new TypeError("offline"));
-      const result = Effect.runPromise(
+  test.each(["malformed JSON", "HTTP 503"])(
+    "does not retry %s from fetch",
+    async (kind) => {
+      const response =
+        kind === "HTTP 503"
+          ? new Response(null, { status: 503 })
+          : new Response("{", {
+              headers: { "Content-Type": "application/json" },
+            });
+      const fetchMock = vi.fn().mockResolvedValue(response);
+      const result = await Effect.runPromise(
         executeRoborevRequest("jobs", (signal) =>
           roborevFetch("/api/jobs", {
             signal,
@@ -72,78 +96,10 @@ describe("native Roborev client", () => {
           }),
         ).pipe(retryIdempotentRead, Effect.exit),
       );
-      await vi.runAllTimersAsync();
-      expect((await result)._tag).toBe("Failure");
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("retries a failed response body read", async () => {
-    vi.useFakeTimers();
-    try {
-      const broken = new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.error(new TypeError("connection lost"));
-          },
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(broken)
-        .mockResolvedValue(Response.json({ jobs: [] }));
-      const result = Effect.runPromise(
-        executeRoborevRequest("jobs", (signal) =>
-          roborevFetch("/api/jobs", {
-            signal,
-            roborevTransport: { baseUrl: "/", fetch: fetchMock },
-          }),
-        ).pipe(retryIdempotentRead),
-      );
-      await vi.runAllTimersAsync();
-      expect(await result).toEqual({ jobs: [] });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("does not retry malformed JSON from a successful response", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        new Response("{", { headers: { "Content-Type": "application/json" } }),
-      );
-    const result = await Effect.runPromise(
-      executeRoborevRequest("jobs", (signal) =>
-        roborevFetch("/api/jobs", {
-          signal,
-          roborevTransport: { baseUrl: "/", fetch: fetchMock },
-        }),
-      ).pipe(retryIdempotentRead, Effect.exit),
-    );
-    expect(result._tag).toBe("Failure");
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  test("does not retry an HTTP 503 response", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(null, { status: 503 }));
-    const result = await Effect.runPromise(
-      executeRoborevRequest("jobs", (signal) =>
-        roborevFetch("/api/jobs", {
-          signal,
-          roborevTransport: { baseUrl: "/", fetch: fetchMock },
-        }),
-      ).pipe(retryIdempotentRead, Effect.exit),
-    );
-    expect(result._tag).toBe("Failure");
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
+      expect(result._tag).toBe("Failure");
+      expect(fetchMock).toHaveBeenCalledOnce();
+    },
+  );
 
   beforeEach(() => {
     sessionStorage.clear();

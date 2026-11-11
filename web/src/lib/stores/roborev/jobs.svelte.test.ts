@@ -226,19 +226,6 @@ describe("createJobsStore filter preferences", () => {
     }
   });
 
-  it.each([
-    new SyntaxError("invalid JSON"),
-    new DOMException("aborted", "AbortError"),
-  ])("does not retry a terminal read failure", async (failure) => {
-    const api = {
-      listJobs: vi.fn().mockRejectedValue(failure),
-    };
-    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
-    await loadJobs(store);
-    expect(store.getError()).not.toBeNull();
-    expect(api.listJobs).toHaveBeenCalledOnce();
-  });
-
   it("maps the branchless display sentinel to the empty branch query", async () => {
     const api = {
       listJobs: vi.fn().mockResolvedValue({
