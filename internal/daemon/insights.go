@@ -195,10 +195,15 @@ func compareInsightsCompletion(a, b *storage.ReviewJob) int {
 
 func currentInsightsReview(review *storage.Review, since, asOf time.Time) (prompt.InsightsReview, bool) {
 	j := review.Job
-	if j == nil || j.Status != storage.JobStatusDone || j.FinishedAt == nil || j.FinishedAt.Before(since) || j.FinishedAt.After(asOf) || j.Verdict == nil || *j.Verdict != "F" {
+	// The candidate query identifies code reviews, including legacy rows
+	// whose diff is not loaded. Use the verdict of the joined review version.
+	verdict := review.Verdict()
+	if j == nil || j.Status != storage.JobStatusDone || j.FinishedAt == nil || j.FinishedAt.Before(since) || j.FinishedAt.After(asOf) ||
+		j.Error != "" || review.Output == "" || verdict != storage.VerdictFail {
 		return prompt.InsightsReview{}, false
 	}
 	entry := prompt.InsightsReviewFromJob(*j, review.Output, nil, review.Closed)
+	entry.Verdict = string(verdict)
 	if review.UUID != nil {
 		entry.ReviewUUID = review.UUID.String()
 	}

@@ -385,6 +385,12 @@ func TestBuildInsightsPromptMeasuredWindow(t *testing.T) {
 	require.NoError(t, err)
 	since := time.Now().Add(-24 * time.Hour)
 	included := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "included", "main", storage.JobTypeReview, failingInsightsOutput("Current finding"))
+	// Older synced reviews can have a stored diff as their only review signal.
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type='', commit_id=NULL WHERE id=?`, included.ID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO job_content (job_id, diff_content) VALUES (?, zstd_compress('snapshot diff'))
+		ON CONFLICT(job_id) DO UPDATE SET diff_content=excluded.diff_content`, included.ID)
+	require.NoError(t, err)
 	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "passing", "main", storage.JobTypeReview, "No findings.")
 	future := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "future", "main", storage.JobTypeReview, failingInsightsOutput("FUTURE FINDING"))
 	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at=? WHERE id=?`, time.Now().Add(time.Hour).Format(time.RFC3339), future.ID)
@@ -399,6 +405,7 @@ func TestBuildInsightsPromptMeasuredWindow(t *testing.T) {
 	assert.Contains(text, `"logical_reviews": 2`)
 	assert.Contains(text, `"labeled": 0`)
 	assert.Contains(text, `"closed_reviews": 1`)
+	assert.Contains(text, fmt.Sprintf("### Review 1 (Job #%d)", included.ID))
 	assert.NotContains(text, "FUTURE FINDING")
 }
 
@@ -507,9 +514,12 @@ func TestInsightsReviewSnapshotRejectsRerun(t *testing.T) {
 	asOf := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	since := asOf.Add(-24 * time.Hour)
 	finished := asOf.Add(-time.Hour)
-	verdict := "F"
+	verdict := 0
 	version := uuid.MustParse("00000000-0000-4000-8000-000000000010")
-	review := &storage.Review{JobID: 1, UUID: &version, Output: "Current finding", Job: &storage.ReviewJob{ID: 1, JobType: storage.JobTypeReview, Status: storage.JobStatusDone, FinishedAt: &finished, Verdict: &verdict}}
+	review := &storage.Review{
+		JobID: 1, UUID: &version, Output: "Current finding", VerdictBool: &verdict,
+		Job: &storage.ReviewJob{ID: 1, JobType: storage.JobTypeReview, Status: storage.JobStatusDone, FinishedAt: &finished},
+	}
 	entry, ok := currentInsightsReview(review, since, asOf)
 	require.True(t, ok)
 	assert.Equal(t, version.String(), entry.ReviewUUID)
@@ -522,7 +532,7 @@ func TestInsightsReviewSnapshotRejectsRerun(t *testing.T) {
 	_, ok = currentInsightsReview(review, since, asOf)
 	assert.False(t, ok)
 	review.Job.Status = storage.JobStatusDone
-	verdict = "P"
+	verdict = 1
 	_, ok = currentInsightsReview(review, since, asOf)
 	assert.False(t, ok)
 }

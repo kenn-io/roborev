@@ -175,8 +175,7 @@ func findingStats(q querier, opts SummaryOptions, groupBy string) (*FindingStats
 		TierCoverage:     map[string]FindingOutcomeCounts{"R": {}},
 	}
 	conditions := `j.status='done' AND j.finished_at IS NOT NULL AND COALESCE(j.panel_role,'')!='member'
- AND (j.job_type IN ('review','range','dirty','synthesis') OR (COALESCE(j.job_type,'')='' AND (j.commit_id IS NOT NULL OR j.git_ref='dirty' OR instr(j.git_ref,'..')>0
- OR EXISTS (SELECT 1 FROM job_content legacy_content WHERE legacy_content.job_id=j.id AND legacy_content.diff_content IS NOT NULL))))
+ AND ` + logicalCodeReviewJobSQL + `
  AND julianday(j.finished_at)>=julianday(?) AND julianday(j.finished_at)<=julianday(?)`
 	args := []any{opts.Since.UTC().Format(time.RFC3339Nano), opts.AsOf.UTC().Format(time.RFC3339Nano)}
 	if opts.RepoPath != "" {

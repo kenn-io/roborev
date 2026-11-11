@@ -2155,6 +2155,12 @@ func findingCountsDiffContentExpr(includeFindings bool) string {
 			THEN ` + jobDiffExpr + ` ELSE NULL END`
 }
 
+// logicalCodeReviewJobSQL is shared by finding outcomes and insights excerpts.
+// The legacy diff check reads presence without loading the diff payload.
+const logicalCodeReviewJobSQL = `(j.job_type IN ('review','range','dirty','synthesis')
+ OR (COALESCE(j.job_type,'')='' AND (j.commit_id IS NOT NULL OR j.git_ref='dirty' OR instr(j.git_ref,'..')>0
+ OR EXISTS (SELECT 1 FROM job_content legacy_content WHERE legacy_content.job_id=j.id AND legacy_content.diff_content IS NOT NULL))))`
+
 func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, enqueueOrder bool) (string, []any) {
 	var args []any
 	var conditions []string
@@ -2180,9 +2186,9 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 			"j.finished_at IS NOT NULL",
 			"datetime(j.finished_at) BETWEEN datetime(?) AND datetime(?)",
 			"julianday(j.finished_at) BETWEEN julianday(?) AND julianday(?)",
-			"rv.verdict_bool = 0 AND "+jobVerdictSortExpr(false)+" = 'F'",
-			"(j.job_type IN ('"+strings.Join([]string{JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeSynthesis}, "', '")+"') OR "+
-				"(COALESCE(j.job_type, '') = '' AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty' OR instr(j.git_ref, '..') > 0)))")
+			"rv.verdict_bool = 0",
+			"COALESCE(j.error, '') = ''",
+			logicalCodeReviewJobSQL)
 		since := o.failedReviewsSince.Format(time.RFC3339Nano)
 		asOf := o.failedReviewsAsOf.Format(time.RFC3339Nano)
 		args = append(args, since, asOf, since, asOf)
