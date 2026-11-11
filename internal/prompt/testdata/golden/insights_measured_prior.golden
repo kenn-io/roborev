@@ -95,8 +95,14 @@ Version-matched finding evidence for fetched reviews (complete findings, includi
     "Index": 0,
     "Finding": {
       "severity": "",
+      "kind": null,
+      "topic": null,
+      "confidence": null,
       "problem": "",
       "fix": "",
+      "file": null,
+      "start_line": null,
+      "end_line": null,
       "location": null
     },
     "Outcome": "confirmed",
