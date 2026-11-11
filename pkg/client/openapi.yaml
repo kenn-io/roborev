@@ -1583,6 +1583,38 @@ components:
         - skipped
         - reason
       type: object
+    EnqueueSuppliedPanelInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/EnqueueSuppliedPanelInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        git_ref:
+          description: Commit or range resolved once for every reviewer and synthesis
+          minLength: 1
+          type: string
+        hold_synthesis:
+          type: boolean
+        members:
+          items:
+            $ref: "#/components/schemas/SuppliedPanelMember"
+          minItems: 1
+          type: array
+        repo_path:
+          minLength: 1
+          type: string
+        synthesis:
+          $ref: "#/components/schemas/SuppliedPanelSynthesis"
+      required:
+        - repo_path
+        - git_ref
+        - members
+        - synthesis
+      type: object
     ErrorDetail:
       additionalProperties: false
       properties:
@@ -2931,6 +2963,13 @@ components:
     PanelEnqueueResponse:
       additionalProperties: false
       properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/PanelEnqueueResponse.json
+          format: uri
+          readOnly: true
+          type: string
         agent:
           type: string
         agentic:
@@ -4792,6 +4831,59 @@ components:
         - failures
         - cost
       type: object
+    SuppliedPanelMember:
+      additionalProperties: false
+      properties:
+        agent:
+          minLength: 1
+          type: string
+        min_severity:
+          type: string
+        model:
+          type: string
+        name:
+          minLength: 1
+          type: string
+        provider:
+          type: string
+        reasoning:
+          type: string
+        review_prompt:
+          minLength: 1
+          type: string
+        review_settings:
+          $ref: "#/components/schemas/SuppliedReviewSettings"
+        review_type:
+          type: string
+      required:
+        - name
+        - review_prompt
+        - review_settings
+        - agent
+      type: object
+    SuppliedPanelSynthesis:
+      additionalProperties: false
+      properties:
+        agent:
+          minLength: 1
+          type: string
+        backup_agent:
+          type: string
+        backup_model:
+          type: string
+        instructions:
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        reasoning:
+          type: string
+        tools:
+          $ref: "#/components/schemas/ReviewToolPolicy"
+      required:
+        - agent
+      type: object
     SuppliedReviewSettings:
       additionalProperties: false
       properties:
@@ -6630,6 +6722,37 @@ paths:
       summary: Backfill legacy review verdicts
       tags:
         - maintenance
+  /api/panel/enqueue:
+    post:
+      operationId: enqueue-supplied-panel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnqueueSuppliedPanelInputBody"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PanelEnqueueResponse"
+          description: HTTP 201 response
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 400 response
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 500 response
+      summary: Review a committed revision with caller-supplied panel prompts and policy
+      tags:
+        - jobs
   /api/panel/synthesize:
     post:
       operationId: start-panel-synthesis

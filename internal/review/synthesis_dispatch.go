@@ -34,8 +34,10 @@ func (e *SynthesisCheckoutError) Unwrap() error { return e.Err }
 type SynthesisHooks struct {
 	// ConfigRepoPath is the fallback for checkouts that do not provide their
 	// own configuration path.
-	ConfigRepoPath string
-	GlobalConfig   *config.Config
+	ConfigRepoPath   string
+	GlobalConfig     *config.Config
+	IgnoreRepoConfig bool
+	Tools            *config.ReviewToolPolicy
 	// BeforeInvoke runs once, immediately before the agent is called. The
 	// daemon uses it to record that an agent actually ran, so it must fire
 	// after any checkout preparation that could still fail.
@@ -89,6 +91,7 @@ func RunSynthesisAgent(
 	builder := promptpkg.NewBuilderWithConfig(nil, hooks.GlobalConfig).ForRepo(configRepoPath, 0)
 	prepared, err := builder.Prepare(prompt, promptpkg.SnapshotTarget{
 		RepoPath: checkout.RepoPath, ConfigRepoPath: configRepoPath,
+		IgnoreRepoConfig: hooks.IgnoreRepoConfig,
 	})
 	if err != nil {
 		return SynthesisDocument{}, &SynthesisCheckoutError{Err: err}
@@ -97,6 +100,14 @@ func RunSynthesisAgent(
 		defer prepared.Cleanup()
 	}
 	prompt = prepared.Prompt
+	a, cleanup, err := agent.PrepareReviewToolPolicy(a, hooks.Tools, hooks.GlobalConfig)
+	if err != nil {
+		return SynthesisDocument{}, err
+	}
+	defer cleanup()
+	if err := agent.CheckStrictReviewPrepared(hooks.Tools, a); err != nil {
+		return SynthesisDocument{}, err
+	}
 
 	invoke()
 	output, err := invokeReview(ctx, a, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)

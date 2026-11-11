@@ -6,6 +6,8 @@ import type { FindingCounts } from "./findingCounts";
 import type { PanelSummary } from "./panelSummary";
 
 export interface PanelEnqueueResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   agent: string;
   agentic: boolean;
   analysis_commit_sha?: string;

@@ -474,6 +474,20 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"jobs"}
 		})
 
+	huma.Post(api, "/api/panel/enqueue", s.humaEnqueueSuppliedPanel,
+		func(o *huma.Operation) {
+			o.OperationID = "enqueue-supplied-panel"
+			o.Summary = "Review a committed revision with caller-supplied panel prompts and policy"
+			o.Tags = []string{"jobs"}
+			o.DefaultStatus = 201
+			o.MaxBodyBytes = -1
+			o.Responses = jsonResponses(map[string]*huma.Schema{
+				"201": jsonSchema(api, PanelEnqueueResponse{}),
+				"400": errorSchema,
+				"500": errorSchema,
+			})
+		})
+
 	huma.Post(api, "/api/panel/synthesize", s.humaStartPanelSynthesis,
 		func(o *huma.Operation) {
 			o.OperationID = "start-panel-synthesis"

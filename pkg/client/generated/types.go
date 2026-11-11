@@ -1374,6 +1374,50 @@ func (e EnqueueSkippedResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
+type EnqueueSuppliedPanelInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// GitRef Commit or range resolved once for every reviewer and synthesis
+	GitRef        string                 `json:"git_ref" validate:"required,min=1"`
+	HoldSynthesis *bool                  `json:"hold_synthesis,omitempty"`
+	Members       []SuppliedPanelMember  `json:"members" validate:"required"`
+	RepoPath      string                 `json:"repo_path" validate:"required,min=1"`
+	Synthesis     SuppliedPanelSynthesis `json:"synthesis"`
+}
+
+func (e EnqueueSuppliedPanelInputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.GitRef, "required,min=1"); err != nil {
+		errors = errors.Append("GitRef", err)
+	}
+	if err := typesValidator.Var(e.Members, "required"); err != nil {
+		errors = errors.Append("Members", err)
+	}
+	if e.Members != nil && len(e.Members) < 1 {
+		errors = errors.Add("Members", fmt.Sprintf("must have at least 1 items, got %d", len(e.Members)))
+	}
+	for i, item := range e.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.RepoPath, "required,min=1"); err != nil {
+		errors = errors.Append("RepoPath", err)
+	}
+	if v, ok := any(e.Synthesis).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Synthesis", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ErrorDetail struct {
 	// Location Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'
 	Location *string `json:"location,omitempty"`
@@ -2865,6 +2909,8 @@ type OverviewStats struct {
 }
 
 type PanelEnqueueResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema                *string                `json:"$schema,omitempty"`
 	Agent                 string                 `json:"agent" validate:"required"`
 	Agentic               bool                   `json:"agentic"`
 	AnalysisCommitSha     *string                `json:"analysis_commit_sha,omitempty"`
@@ -4415,6 +4461,69 @@ func (s Summary) Validate() error {
 	if v, ok := any(s.Verdicts).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Verdicts", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SuppliedPanelMember struct {
+	Agent          string                 `json:"agent" validate:"required,min=1"`
+	MinSeverity    *string                `json:"min_severity,omitempty"`
+	Model          *string                `json:"model,omitempty"`
+	Name           string                 `json:"name" validate:"required,min=1"`
+	Provider       *string                `json:"provider,omitempty"`
+	Reasoning      *string                `json:"reasoning,omitempty"`
+	ReviewPrompt   string                 `json:"review_prompt" validate:"required,min=1"`
+	ReviewSettings SuppliedReviewSettings `json:"review_settings"`
+	ReviewType     *string                `json:"review_type,omitempty"`
+}
+
+func (s SuppliedPanelMember) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Agent, "required,min=1"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if err := typesValidator.Var(s.Name, "required,min=1"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if err := typesValidator.Var(s.ReviewPrompt, "required,min=1"); err != nil {
+		errors = errors.Append("ReviewPrompt", err)
+	}
+	if v, ok := any(s.ReviewSettings).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewSettings", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SuppliedPanelSynthesis struct {
+	Agent        string            `json:"agent" validate:"required,min=1"`
+	BackupAgent  *string           `json:"backup_agent,omitempty"`
+	BackupModel  *string           `json:"backup_model,omitempty"`
+	Instructions *string           `json:"instructions,omitempty"`
+	Model        *string           `json:"model,omitempty"`
+	Provider     *string           `json:"provider,omitempty"`
+	Reasoning    *string           `json:"reasoning,omitempty"`
+	Tools        *ReviewToolPolicy `json:"tools,omitempty"`
+}
+
+func (s SuppliedPanelSynthesis) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Agent, "required,min=1"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if s.Tools != nil {
+		if v, ok := any(s.Tools).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Tools", err)
+			}
 		}
 	}
 	if len(errors) == 0 {

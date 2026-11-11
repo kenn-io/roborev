@@ -32,6 +32,9 @@ with `custom_prompt`, dirty input, `agentic`, a named panel, `source`,
 `job_type`, or goal/analysis inputs. An empty `panel` or `"none"` is accepted.
 The stored job has source `review_prompt`.
 
+For several reviewers with separate supplied prompts and settings, use the
+[supplied panel API](manual-panel-synthesis.md#supply-a-panel-through-the-api).
+
 Automatic retries and manual reruns keep the supplied prompt and resolved
 revision, including reruns of jobs imported through sync. Post-rewrite commit
 remapping leaves these jobs at their original revision, even when a rebase
@@ -82,12 +85,13 @@ and has these semantics:
 
 An empty `review_settings: {}` is meaningful: it opts out of repository policy
 with all the defaults above. It does not inherit local exclusions or review-type
-tool settings. `min_severity` comes only from the request; omitting it retains
-all findings. Agent, model, and reasoning defaults resolve from the daemon's
-configuration at enqueue time. The resolved choices and supplied settings remain
-with the job through retries, sync, and reruns. Rerunning after backup failover
-restores the original choice. To change the agent or policy, enqueue a new job.
-Automatic budget routing does not substitute another agent for these jobs.
+tool settings or repository hooks. Global daemon hooks still run. `min_severity`
+comes only from the request; omitting it retains all findings. Agent, model, and
+reasoning defaults resolve from the daemon's configuration at enqueue time. The
+resolved choices and supplied settings remain with the job through retries,
+sync, and reruns. Rerunning after backup failover restores the original choice.
+To change the agent or policy, enqueue a new job. Automatic budget routing does
+not substitute another agent for these jobs.
 
 Repository configuration cannot suppress these requests through branch or commit
 exclusions. A malformed `.roborev.toml` does not block enqueue or rerun.
