@@ -11,8 +11,7 @@ import (
 	"uuid"
 )
 
-// ErrReviewChanged means a guarded rebuttal mutation targeted an earlier
-// review version than the one currently stored for the job.
+// ErrReviewChanged means a guarded operation targeted an earlier review.
 var ErrReviewChanged = errors.New("review changed since rebuttal was queued")
 
 // GetReviewByJobID finds a review by its job ID
