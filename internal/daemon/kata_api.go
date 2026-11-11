@@ -321,14 +321,7 @@ func kataIssueFromPublication(destination kata.PublicationProject, destinationID
 	if selectedRoots != nil {
 		roots = *selectedRoots
 	}
-	for _, root := range roots {
-		item := KataRoot{Position: root.Position, EndPosition: root.EndPosition, State: root.State}
-		if root.Comment != nil {
-			comment := kataComment(*root.Comment)
-			item.Comment = &comment
-		}
-		result.Roots = append(result.Roots, item)
-	}
+	result.Roots = kataPublicationBody(&KataPublicationStatus{Roots: roots}).Roots
 	kataIssueLineage(&result, destination, full, roots)
 	return result
 }
