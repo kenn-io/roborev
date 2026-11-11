@@ -40,14 +40,16 @@ type SynthesisHooks struct {
 	Tools            *config.ReviewToolPolicy
 	// BeforeInvoke runs once, immediately before the agent is called. The
 	// daemon uses it to record that an agent actually ran, so it must fire
-	// after any checkout preparation that could still fail.
-	BeforeInvoke func()
+	// after any checkout preparation that could still fail. An error prevents
+	// the invocation.
+	BeforeInvoke func(context.Context) error
 	// Checkout resolves where read-capable agents run, including when
 	// oversized synthesis inputs need repo-local files.
 	Checkout func() (SynthesisCheckout, error)
 }
 
 // RunSynthesisAgent combines complete reviews and validates source references.
+// The returned text preserves the adapter response even when validation fails.
 // It uses the same prompt preparation and read-capable invocation as ordinary reviews.
 func RunSynthesisAgent(
 	ctx context.Context,
@@ -56,13 +58,7 @@ func RunSynthesisAgent(
 	prompt, minSeverity string,
 	out io.Writer,
 	hooks SynthesisHooks,
-) (SynthesisDocument, error) {
-	invoke := func() {
-		if hooks.BeforeInvoke != nil {
-			hooks.BeforeInvoke()
-		}
-	}
-
+) (SynthesisDocument, string, error) {
 	resolveCheckout := func() (SynthesisCheckout, error) {
 		if hooks.Checkout == nil {
 			return SynthesisCheckout{}, nil
@@ -79,7 +75,7 @@ func RunSynthesisAgent(
 
 	checkout, err := resolveCheckout()
 	if err != nil {
-		return SynthesisDocument{}, err
+		return SynthesisDocument{}, "", err
 	}
 	if checkout.Cleanup != nil {
 		defer checkout.Cleanup()
@@ -94,7 +90,7 @@ func RunSynthesisAgent(
 		IgnoreRepoConfig: hooks.IgnoreRepoConfig,
 	})
 	if err != nil {
-		return SynthesisDocument{}, &SynthesisCheckoutError{Err: err}
+		return SynthesisDocument{}, "", &SynthesisCheckoutError{Err: err}
 	}
 	if prepared.Cleanup != nil {
 		defer prepared.Cleanup()
@@ -102,21 +98,25 @@ func RunSynthesisAgent(
 	prompt = prepared.Prompt
 	a, cleanup, err := agent.PrepareReviewToolPolicy(a, hooks.Tools, hooks.GlobalConfig)
 	if err != nil {
-		return SynthesisDocument{}, err
+		return SynthesisDocument{}, "", err
 	}
 	defer cleanup()
 	if err := agent.CheckStrictReviewPrepared(hooks.Tools, a); err != nil {
-		return SynthesisDocument{}, err
+		return SynthesisDocument{}, "", err
 	}
 
-	invoke()
+	if hooks.BeforeInvoke != nil {
+		if err := hooks.BeforeInvoke(ctx); err != nil {
+			return SynthesisDocument{}, "", err
+		}
+	}
 	output, err := invokeReview(ctx, a, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
 	doc, err := decodeSynthesisResult(a, reviews, jsontext.Value(output), err)
 	if err != nil {
-		return SynthesisDocument{}, err
+		return SynthesisDocument{}, output, err
 	}
 	settleFindings(ctx, checkout.RepoPath, checkout.GitRef, &doc)
-	return doc, nil
+	return doc, output, nil
 }
 
 func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.Value, err error) (SynthesisDocument, error) {
