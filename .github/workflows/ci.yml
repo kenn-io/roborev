@@ -352,7 +352,7 @@ jobs:
           set -o pipefail
           # Install only the producer version required by this checkout.
           kata_version="$(go mod edit -json | jq -er '[.Require[] | select(.Path == "go.kenn.io/kata") | .Version] | if length == 1 then .[0] else error("missing Kata module pin") end')"
-          GOBIN="$RUNNER_TEMP/kata-bin" go install "go.kenn.io/kata/cmd/kata@$kata_version"
+          GOBIN="$RUNNER_TEMP/kata-bin" kit-retry 3 5 go install "go.kenn.io/kata/cmd/kata@$kata_version"
           test -x "$RUNNER_TEMP/kata-bin/kata"
           export PATH="$RUNNER_TEMP/kata-bin:$PATH"
 
