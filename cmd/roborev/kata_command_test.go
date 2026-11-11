@@ -247,7 +247,7 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 		root.SetArgs(args)
 		err := root.Execute()
 		require.ErrorContains(t, err, code)
-		assert.ErrorContains(t, err, "synthetic producer error")
+		require.ErrorContains(t, err, "synthetic producer error")
 	}
 	producerError.Store("")
 	for _, tc := range []struct {
