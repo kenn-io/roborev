@@ -14,8 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 )
 
 var jobLogOpenRetryInterval = 5 * time.Second
@@ -99,6 +101,25 @@ func ResolveJobLogIdentity(job *storage.ReviewJob) (JobLogIdentity, error) {
 	identity.Agent = recordedAgent
 	identity.Recorded = true
 	return identity, nil
+}
+
+// parseJobLogUsage reads token usage from a job's log in the event format of
+// the agent that wrote it. jobAgent is the job row's agent, used when the log
+// does not record which agent owns it.
+func parseJobLogUsage(jobID int64, jobAgent string) (*tokens.Usage, error) {
+	agentName := jobAgent
+	if recorded, err := JobLogAgent(jobID); err == nil &&
+		recorded != storage.AutoDesignAgentSentinel {
+		agentName = recorded
+	}
+	return tokens.ParseJobLogUsageFile(agent.CanonicalName(agentName), JobLogPath(jobID))
+}
+
+// logUsageReplacesProvider reports whether log usage already prices several
+// provider sessions. A provider lookup covers one session, so merging its total
+// would replace the sum with one session's share.
+func logUsageReplacesProvider(logUsage *tokens.Usage) bool {
+	return logUsage != nil && logUsage.HasCost && logUsage.ExpectedProviderSessions > 1
 }
 
 func jobLogAppendMarkerPath(jobID int64) string {

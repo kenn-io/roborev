@@ -1112,9 +1112,22 @@ with a message instead of queuing a job.
 
 ## Token Usage
 
-Token usage is tracked automatically for completed jobs when the local
-`agentsview` CLI or a usage server is configured. Usage appears in the TUI
-review header and `roborev job show` output (e.g. `118.0k ctx · 28.8k out`).
+Token usage is tracked automatically for completed jobs. Usage appears in the
+TUI review header and `roborev job show` output (e.g. `118.0k ctx · 28.8k out`).
+roborev reads it from two places:
+
+- **The job log.** Codex and Claude Code write their own usage into the per-job
+    log, so these jobs need no other tool. Codex logs token counts. Claude Code
+    logs input, cache read, cache write, and output tokens plus the CLI's own
+    cost figure, summed over every model the run used. If a `claude_code_cmd`
+    wrapper runs the CLI more than once in a job, each run is counted once and
+    the job records their total.
+- **A usage provider.** The local `agentsview` CLI or a configured usage server
+    adds peak context size and a cost estimate, and supplies usage for agents
+    that do not log it. When a provider reports a price, that price replaces the
+    logged one. A job that ran the Claude CLI more than once keeps its logged
+    total, because a provider lookup covers a single session.
+
 When supported, roborev uses `session usage --no-sync` to read archived usage,
 including subagents, without synchronizing source transcripts. Run AgentsView's
 watcher or synchronize separately to keep the archive current. On older CLIs,
@@ -1169,10 +1182,12 @@ roborev storage backfill-tokens --dry-run   # Preview without writing
 | `--dry-run` | Preview candidates without fetching or storing data |
 
 The backfill scans eligible terminal jobs that need token or price data. This
-includes failed, canceled, and skipped jobs when an agent ran. Jobs whose
-session files have been deleted are skipped. Sessions reused by more than one
-started job are also skipped because their cumulative usage cannot be assigned
-safely to one job.
+includes failed, canceled, and skipped jobs when an agent ran. Codex and Claude
+Code jobs are filled from their job logs while those logs still exist, with or
+without a usage provider. Jobs whose session files have been deleted are skipped
+unless the job log supplies the data. Sessions reused by more than one started
+job are also skipped because their cumulative usage cannot be assigned safely to
+one job.
 
 ## CI Review
 

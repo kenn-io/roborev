@@ -134,7 +134,7 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 		var logUsage *tokens.Usage
 		currentLog, logErr := JobLogIsCurrentAttempt(job.ID, job.StartedAt)
 		if logErr == nil && currentLog {
-			logUsage, logErr = tokens.ParseCodexUsageFile(JobLogPath(job.ID))
+			logUsage, logErr = parseJobLogUsage(job.ID, job.Agent)
 		}
 		if logErr != nil {
 			log.Printf("job %d: parse job log: %v", job.ID, logErr)
@@ -144,7 +144,7 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 		var fetchErr error
 		var providerSessionIDs []string
 		expectedProviderSessions := 0
-		if hasCandidate {
+		if hasCandidate && !logUsageReplacesProvider(logUsage) {
 			providerSessionIDs, expectedProviderSessions = backfill.TokenUsageProviderSessions(candidate)
 			if expectedProviderSessions <= len(providerSessionIDs) {
 				phaseUsages := make([]*tokens.Usage, 0, expectedProviderSessions)
