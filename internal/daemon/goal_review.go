@@ -171,7 +171,13 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 		}
 		wp.captureSessionlessUsage(workerID, job, a.Name())
 	}()
-	findings, err := runner(ctx, a, root, snapshot, prepared, io.MultiWriter(jobLog, outputWriter))
+	var logOutput io.Writer = jobLog
+	if a.Name() == "pi" {
+		piLog := &piJobLogSink{out: jobLog}
+		logOutput = piLog
+		defer piLog.Flush()
+	}
+	findings, err := runner(ctx, a, root, snapshot, prepared, io.MultiWriter(logOutput, outputWriter))
 	if ctx.Err() != nil {
 		// ctx has ended; this lookup decides how to report that.
 		if current, getErr := wp.db.GetJobByIDContext(context.WithoutCancel(ctx), job.ID); getErr == nil && current.Status == storage.JobStatusCanceled {

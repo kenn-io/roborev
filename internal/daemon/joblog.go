@@ -3,14 +3,14 @@ package daemon
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -514,164 +514,81 @@ func (w *jobLogWriter) flushBufferLocked(buf *bytes.Buffer) error {
 	return nil
 }
 
-// piJobLogSink frames Pi events before writing them to the persistent log.
-// Other consumers continue to receive the original stream.
+// piJobLogSink compacts repeated usage only in stored Pi events. Live and
+// invocation streams retain the producer's original bytes.
 type piJobLogSink struct {
 	out       io.Writer
 	pending   []byte
 	assistant bool
-	usage     any
+	usage     jsontext.Value
 }
 
 func (w *piJobLogSink) Write(p []byte) (int, error) {
 	w.pending = append(w.pending, p...)
+	var completed bytes.Buffer
 	for {
 		i := bytes.IndexByte(w.pending, '\n')
 		if i < 0 {
 			break
 		}
-		line := w.pending[:i+1]
-		if _, err := w.out.Write(w.compact(line)); err != nil {
+		completed.Write(w.compact(w.pending[:i+1]))
+		w.pending = w.pending[i+1:]
+	}
+	if completed.Len() > 0 {
+		if _, err := w.out.Write(completed.Bytes()); err != nil {
 			return 0, err
 		}
-		w.pending = w.pending[i+1:]
 	}
 	return len(p), nil
 }
 
+// Flush preserves an incomplete record on normal completion or interruption.
 func (w *piJobLogSink) Flush() {
 	if len(w.pending) != 0 {
 		_, _ = w.out.Write(w.pending)
 	}
 	w.pending = nil
-	w.assistant = false
-	w.usage = nil
 }
 
 func (w *piJobLogSink) compact(line []byte) []byte {
-	// Capture member offsets so removal leaves all other bytes untouched.
-	dec := json.NewDecoder(bytes.NewReader(line))
-	dec.UseNumber()
-	if !json.Valid(line) {
-		w.assistant = false
-		w.usage = nil
-		return line
-	}
-	tok, err := dec.Token()
-	if err != nil || tok != json.Delim('{') {
-		w.assistant = false
-		w.usage = nil
-		return line
-	}
-	fields := make(map[string]json.RawMessage)
-	var usageStart, usageEnd int
-	for dec.More() {
-		start := int(dec.InputOffset())
-		key, err := dec.Token()
-		if err != nil {
-			w.assistant = false
-			w.usage = nil
-			return line
-		}
-		name, ok := key.(string)
-		if !ok {
-			w.assistant = false
-			w.usage = nil
-			return line
-		}
-		if _, exists := fields[name]; exists {
-			w.assistant = false
-			w.usage = nil
-			return line
-		}
-		var value json.RawMessage
-		if dec.Decode(&value) != nil {
-			w.assistant = false
-			w.usage = nil
-			return line
-		}
-		fields[name] = value
-		if name == "usage" {
-			usageStart, usageEnd = start, int(dec.InputOffset())
-		}
-	}
-	var typ string
-	if json.Unmarshal(fields["type"], &typ) != nil {
-		w.assistant = false
-		w.usage = nil
-		return line
-	}
-	switch typ {
-	case "message_start":
-		var message struct {
+	var ev struct {
+		Type    string `json:"type"`
+		Message struct {
 			Role string `json:"role"`
-		}
-		_ = json.Unmarshal(fields["message"], &message)
-		w.assistant, w.usage = message.Role == "assistant", nil
-	case "message_update":
-		if !w.assistant {
-			return line
-		}
-		var event struct {
+		} `json:"message"`
+		Event struct {
 			Type string `json:"type"`
-		}
-		if json.Unmarshal(fields["assistantMessageEvent"], &event) != nil || event.Type == "" {
-			w.assistant = false
-			w.usage = nil
+		} `json:"assistantMessageEvent"`
+		Usage jsontext.Value `json:"usage"`
+	}
+	err := json.Unmarshal(line, &ev)
+	if err != nil || ev.Type != "message_update" {
+		w.assistant = err == nil && ev.Type == "message_start" && ev.Message.Role == "assistant"
+		w.usage = nil
+		return line
+	}
+	if !w.assistant || len(ev.Usage) == 0 {
+		return line
+	}
+	delta := ev.Usage.Kind() == '{' && (ev.Event.Type == "text_delta" ||
+		ev.Event.Type == "thinking_delta" || ev.Event.Type == "toolcall_delta")
+	same := bytes.Equal(ev.Usage, w.usage)
+	if delta && same {
+		var fields map[string]jsontext.Value
+		if json.Unmarshal(line, &fields) != nil {
 			return line
 		}
-		raw, ok := fields["usage"]
-		if !ok {
-			w.usage = nil
+		delete(fields, "usage")
+		out, err := json.Marshal(fields, json.Deterministic(true))
+		if err != nil {
 			return line
 		}
-		var usage any
-		ud := json.NewDecoder(bytes.NewReader(raw))
-		ud.UseNumber()
-		if ud.Decode(&usage) != nil {
-			w.usage = nil
-			return line
-		}
-		if _, ok := usage.(map[string]any); !ok {
-			w.usage = nil
-			return line
-		}
-		delta := event.Type == "text_delta" || event.Type == "thinking_delta" || event.Type == "toolcall_delta"
-		if !delta {
-			switch event.Type {
-			case "start", "text_start", "text_end", "thinking_start", "thinking_end", "toolcall_start", "toolcall_end":
-			default:
-				w.assistant, w.usage = false, nil
-				return line
-			}
-		}
-		if delta && w.usage != nil && reflect.DeepEqual(w.usage, usage) {
-			// If usage is first, remove the following comma; otherwise remove the preceding comma.
-			start := usageStart
-			for start < usageEnd && (line[start] == ' ' || line[start] == '\t' || line[start] == '\r' || line[start] == '\n') {
-				start++
-			}
-			if line[start] != ',' {
-				end := usageEnd
-				for end < len(line) && (line[end] == ' ' || line[end] == '\t' || line[end] == '\r' || line[end] == '\n') {
-					end++
-				}
-				if end >= len(line) || line[end] != ',' {
-					return line
-				}
-				return append(append([]byte{}, line[:usageStart]...), line[end+1:]...)
-			}
-			return append(append([]byte{}, line[:usageStart]...), line[usageEnd:]...)
-		}
-		if delta {
-			w.usage = usage
-		} else if !reflect.DeepEqual(w.usage, usage) {
-			w.usage = nil
-		}
-	case "message_end":
-		w.assistant, w.usage = false, nil
-	default:
-		w.assistant, w.usage = false, nil
+		return append(out, line[bytes.LastIndexByte(line, '}')+1:]...)
+	}
+	if delta {
+		w.usage = ev.Usage
+	} else if !same {
+		w.usage = nil
 	}
 	return line
 }

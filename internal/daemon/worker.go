@@ -1475,7 +1475,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.outputBuffers.CloseJob(job.ID)
 	}()
 
-	// Tee raw agent output to a per-job log file on disk. The writer retries
+	// Store agent output in a per-job log file on disk. The writer retries
 	// transient filesystem failures so resource pressure does not permanently
 	// disable logging for the rest of the job.
 	var jobLog *jobLogWriter
@@ -1497,7 +1497,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	displayOutput := io.MultiWriter(jobLog, outputWriter)
 	var logOutput io.Writer = jobLog
 	var piLog *piJobLogSink
-	if agentName == "pi" && !job.IsTaskJob() && !job.IsFixJob() && job.Source != storage.JobSourceRebuttal {
+	if a.Name() == "pi" {
 		piLog = &piJobLogSink{out: jobLog}
 		logOutput = piLog
 		defer piLog.Flush()
@@ -1686,7 +1686,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		)
 		if err == nil {
 			// Render for readers without treating review text as provider events.
-			sessionWriter.Flush()
 			if piLog != nil {
 				piLog.Flush()
 			}

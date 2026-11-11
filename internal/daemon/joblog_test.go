@@ -672,7 +672,7 @@ func TestParseJobIDFromLogName(t *testing.T) {
 func TestPiJobLogSink(t *testing.T) {
 	start := `{"type":"message_start","message":{"role":"assistant"}}` + "\n"
 	delta := func(kind, usage string) string {
-		return `{"type":"message_update","assistantMessageEvent":{"type":"` + kind + `","delta":"x"},"usage":` + usage + `}` + "\r\n"
+		return `{"type":"message_update","usage":` + usage + `,"assistantMessageEvent":{"type":"` + kind + `","delta":"x"}}` + "\r\n"
 	}
 	a := `{"input":1,"cost":{"total":0.000001},"extra":7}`
 	b := `{"input":2,"cost":{"total":0.000002},"extra":7}`
@@ -692,7 +692,7 @@ func TestPiJobLogSink(t *testing.T) {
 		require.NoError(t, err)
 	}
 	sink.Flush()
-	wantRepeat := `{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"x"}}` + "\r\n"
+	wantRepeat := `{"assistantMessageEvent":{"type":"thinking_delta","delta":"x"},"type":"message_update"}` + "\r\n"
 	assert.Equal(t, start+first+wantRepeat+changed+reverted+nondelta+afterChange+fragment, stored.String())
 	assert.Equal(t, input, live.String())
 	assert.Equal(t, input, invocation.String())
@@ -702,7 +702,7 @@ func TestPiJobLogSink(t *testing.T) {
 func TestPiJobLogSinkBoundariesAndPassThrough(t *testing.T) {
 	start := `{"type":"message_start","message":{"role":"assistant"}}` + "\n"
 	delta := `{"usage":{"input":12345678901234567890},"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}` + "\n"
-	withoutUsage := `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}` + "\n"
+	withoutUsage := `{"assistantMessageEvent":{"type":"text_delta","delta":"x"},"type":"message_update"}` + "\n"
 	end := `{"type":"message_end","message":{"role":"assistant","usage":{"input":12345678901234567890}}}` + "\n"
 	malformed := "not json\n"
 	older := `{"type":"message_update","message":{"usage":{"input":1}}}` + "\n"
@@ -734,8 +734,30 @@ func TestPiJobLogSinkPromotedAppend(t *testing.T) {
 	require.NoError(t, w.Close())
 	got, err := os.ReadFile(JobLogPath(291))
 	require.NoError(t, err)
-	assert.Equal(t, original+input+`{"type":"message_update","assistantMessageEvent":{"type":"text_delta"}}`+"\n", string(got))
+	assert.Equal(t, original+input+`{"assistantMessageEvent":{"type":"text_delta"},"type":"message_update"}`+"\n", string(got))
 	identity, err := JobLogAgent(291)
 	require.NoError(t, err)
 	assert.Equal(t, "other", identity)
+}
+
+// countingPiLogWriter records writes to the persistent sink.
+type countingPiLogWriter struct {
+	bytes.Buffer
+	writes int
+}
+
+func (w *countingPiLogWriter) Write(p []byte) (int, error) {
+	w.writes++
+	return w.Buffer.Write(p)
+}
+
+func TestPiJobLogSinkBatchesRecords(t *testing.T) {
+	var stored countingPiLogWriter
+	sink := &piJobLogSink{out: &stored}
+	_, err := io.WriteString(sink, "one\ntwo\npartial")
+	require.NoError(t, err)
+	assert.Equal(t, 1, stored.writes)
+	assert.Equal(t, "one\ntwo\n", stored.String())
+	sink.Flush()
+	assert.Equal(t, "one\ntwo\npartial", stored.String())
 }
