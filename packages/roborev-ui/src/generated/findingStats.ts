@@ -6,6 +6,7 @@ import type { FindingOutcomeCounts } from "./findingOutcomeCounts";
 import type { FindingStatsRow } from "./findingStatsRow";
 import type { FindingStatsTierCoverage } from "./findingStatsTierCoverage";
 import type { FindingStatsTierLabeled } from "./findingStatsTierLabeled";
+import type { MemberStats } from "./memberStats";
 import type { RebuttalCoverage } from "./rebuttalCoverage";
 
 export interface FindingStats {
@@ -16,6 +17,7 @@ export interface FindingStats {
   invalid_documents: number;
   legacy_documents: number;
   logical_reviews: number;
+  members?: MemberStats;
   min_samples: number;
   missing_documents: number;
   rebuttals: RebuttalCoverage;
