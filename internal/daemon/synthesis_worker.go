@@ -94,7 +94,7 @@ func (wp *WorkerPool) processSynthesisJob(
 		wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{review: single}, doc, cfg.Check)
 	default:
 		if allMembersPassed(results, succeeded) && !anyRetainedFindings(succeeded) {
-			wp.completeSynthesisDocument(workerID, job, structuredreview.Document{
+			wp.completeSynthesisDocument(ctx, workerID, job, structuredreview.Document{
 				SchemaVersion: structuredreview.SchemaVersion, Summary: "No issues found.",
 				Verdict: structuredreview.VerdictPass, Findings: []structuredreview.Finding{},
 			})
@@ -347,7 +347,7 @@ type synthesisResult struct {
 // cancel race, and broadcasts review.completed. The done-path mirrors
 // processJob's tail.
 func (wp *WorkerPool) completeSynthesisContext(
-	workerID string, job *storage.ReviewJob, res synthesisResult,
+	ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
 	var tokenUsage *sessionTokenUsage
 	if res.captureUsage || res.checkerUsage != nil {
@@ -359,15 +359,16 @@ func (wp *WorkerPool) completeSynthesisContext(
 		tokenUsage = &collected
 	}
 	wp.runAttemptTransition(workerID, job, func() {
-		wp.completeSynthesisLocked(workerID, job, res, tokenUsage)
+		wp.completeSynthesisLocked(ctx, workerID, job, res, tokenUsage)
 	})
 }
 
 func (wp *WorkerPool) completeSynthesisLocked(
-	workerID string, job *storage.ReviewJob, res synthesisResult, tokenUsage *sessionTokenUsage,
+	ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult, tokenUsage *sessionTokenUsage,
 ) {
 	agentName, output := res.review.Agent, res.review.Output
-	completeErr := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
+	checkout := resolveEffectiveRepoPath(workerID, job)
+	completeErr := wp.completeReviewResult(ctx, workerID, job, checkout, agentName, storage.ReviewCompletion{
 		Output: output, Verdict: res.review.Verdict, StructuredOutput: res.review.StructuredOutput, MinSeverity: res.review.MinSeverity,
 	})
 	if completeErr != nil {
@@ -412,6 +413,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		JobID:             job.ID,
 		JobUUID:           job.UUID,
 		Repo:              job.RepoPath,
+		WorktreePath:      checkout,
 		RepoName:          job.RepoName,
 		SHA:               job.GitRef,
 		Branch:            job.HookBranch(),
@@ -695,13 +697,13 @@ func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {
 	return agent.CanonicalName(selectedAgent) == agent.CanonicalName(resolvedConfigured.Name())
 }
 
-func (wp *WorkerPool) completeSynthesisDocument(workerID string, job *storage.ReviewJob, doc structuredreview.Document) {
+func (wp *WorkerPool) completeSynthesisDocument(ctx context.Context, workerID string, job *storage.ReviewJob, doc structuredreview.Document) {
 	result, err := synthesisDocumentResult(job, doc)
 	if err != nil {
 		wp.failSynthesisWithoutReviewContext(context.Background(), workerID, job, err.Error())
 		return
 	}
-	wp.completeSynthesisContext(workerID, job, synthesisResult{review: result})
+	wp.completeSynthesisContext(ctx, workerID, job, synthesisResult{review: result})
 }
 
 func synthesisDocumentResult(job *storage.ReviewJob, doc structuredreview.Document) (reviewpkg.ReviewResult, error) {

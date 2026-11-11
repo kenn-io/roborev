@@ -1783,8 +1783,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			}
 		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
 			agentReview.Verdict != storage.VerdictUnknown {
-			if err := wp.db.CompleteJobResult(
-				job.ID, agentName, storage.ReviewCompletion{
+			if err := wp.completeReviewResult(
+				ctx, workerID, job, checkout.resolvedConfigRepoPath(), agentName, storage.ReviewCompletion{
 					Output:           output,
 					Verdict:          agentReview.Verdict,
 					StructuredOutput: agentReview.StructuredOutput,
@@ -1795,7 +1795,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
 				return
 			}
-		} else if err := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
+		} else if err := wp.completeReviewResult(ctx, workerID, job, checkout.resolvedConfigRepoPath(), agentName, storage.ReviewCompletion{
 			Output:       output,
 			FileCoverage: fileCoverage,
 		}); err != nil {

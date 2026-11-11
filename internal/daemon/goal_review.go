@@ -202,7 +202,7 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	}
 	completed := false
 	wp.runAttemptTransition(workerID, job, func() {
-		if err := wp.db.CompleteJobResult(job.ID, a.Name(), storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)}); err != nil {
+		if err := wp.completeReviewResult(ctx, workerID, job, "", a.Name(), storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)}); err != nil {
 			log.Printf("[%s] store goal review: %v", workerID, err)
 			return
 		}
