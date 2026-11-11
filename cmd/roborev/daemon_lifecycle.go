@@ -634,8 +634,10 @@ func stopDaemon() error {
 	return stopDaemonRuntimes(listAllRuntimes, daemon.KillDaemon, os.Stderr)
 }
 
+const daemonShutdownWaitMessage = "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first..."
+
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
-	return stopDaemonRuntimesWithMessage(list, drain, out, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
+	return stopDaemonRuntimesWithMessage(list, drain, out, daemonShutdownWaitMessage)
 }
 
 func stopDaemonRuntimesWithMessage(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer, message string) error {
@@ -652,7 +654,7 @@ func stopDaemonRuntimesWithMessage(list func() ([]*daemon.RuntimeInfo, error), d
 }
 
 func stopDaemonSnapshot(runtimes []*daemon.RuntimeInfo, drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
-	return stopDaemonSnapshotWithMessage(runtimes, drain, out, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
+	return stopDaemonSnapshotWithMessage(runtimes, drain, out, daemonShutdownWaitMessage)
 }
 
 func stopDaemonSnapshotWithMessage(runtimes []*daemon.RuntimeInfo, drain func(*daemon.RuntimeInfo) error, out io.Writer, message string) error {

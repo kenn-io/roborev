@@ -185,10 +185,12 @@ func daemonCmd() *cobra.Command {
 			var runtimes []*daemon.RuntimeInfo
 			stop := daemonStop
 			drain := drainManagedDaemon
+			message := daemonShutdownWaitMessage
 			if runningPolicy == "interrupt" {
 				drain = interruptDaemon
+				message = "Interrupting running reviews and waiting for daemon shutdown..."
 				stop = func() error {
-					return stopDaemonRuntimesWithMessage(listAllRuntimes, drain, os.Stderr, "Interrupting running reviews and waiting for daemon shutdown...")
+					return stopDaemonRuntimesWithMessage(listAllRuntimes, drain, os.Stderr, message)
 				}
 			}
 			var release func()
@@ -201,12 +203,8 @@ func daemonCmd() *cobra.Command {
 				if release != nil {
 					defer release()
 				}
-				if runningPolicy == "interrupt" {
-					stop = func() error {
-						return stopDaemonSnapshotWithMessage(runtimes, drain, os.Stderr, "Interrupting running reviews and waiting for daemon shutdown...")
-					}
-				} else {
-					stop = func() error { return stopDaemonSnapshot(runtimes, drain, os.Stderr) }
+				stop = func() error {
+					return stopDaemonSnapshotWithMessage(runtimes, drain, os.Stderr, message)
 				}
 			}
 			wasRunning := true

@@ -796,6 +796,9 @@ func (s *Server) stopOnce0() error {
 
 	// Stop worker pool
 	s.workerPool.Stop()
+	if err := s.workerPool.RetryFailedUpdateRequeues(); err != nil {
+		log.Printf("Warning: failed to retry interrupted job requeues: %v", err)
+	}
 
 	// Stop search reconciliation after workers can no longer emit review events.
 	s.stopSearch()

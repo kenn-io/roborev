@@ -1456,7 +1456,8 @@ Restart waits for running reviews by default. Use `--running=interrupt` to
 requeue active reviews, wait for shutdown, and start the replacement. Those
 reviews start fresh without consuming a retry. If Ctrl-C interrupts a waiting
 restart, rerun it with `--running=interrupt` while the daemon is draining.
-Older daemons may not support interruption; use `--running=wait` for them.
+Older daemons do not support interruption; restart them with the default
+`--running=wait`.
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,
