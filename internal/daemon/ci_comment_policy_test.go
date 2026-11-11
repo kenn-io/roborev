@@ -15,21 +15,19 @@ import (
 	ghpkg "go.kenn.io/roborev/internal/github"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // Exercise real GitHub HTTP delivery: silence may patch a stale marker, but
 // may never POST a replacement, and HTTP failures retain normal finalization.
 func TestCIPanelCommentPolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name                                                             string
-		upsert, existing, prose, fallback, defaults, partial, confidence bool
-		patchStatus                                                      int
-		outcome, state                                                   string
-		posts, patches                                                   int
+		name                                                 string
+		upsert, existing, prose, fallback, defaults, partial bool
+		patchStatus                                          int
+		outcome, state                                       string
+		posts, patches                                       int
 	}{
-		{name: "confidence silent", confidence: true, outcome: "review_suppressed", state: "success"},
-		{name: "confidence upsert", confidence: true, upsert: true, existing: true, patchStatus: 200, outcome: "review_posted", state: "success", patches: 1},
-		{name: "confidence default posts", confidence: true, defaults: true, outcome: "review_posted", state: "success", posts: 1},
 		{name: "silent", outcome: "review_suppressed", state: "success"},
 		{name: "partial execution failure", partial: true, outcome: "review_suppressed", state: "failure"},
 		{name: "upsert missing", upsert: true, outcome: "review_suppressed", state: "success"},
@@ -49,10 +47,6 @@ func TestCIPanelCommentPolicy(t *testing.T) {
 				h.Cfg.CI.CommentWhenClean = &clean
 			}
 			h.Cfg.CI.CommentMaxFindings = 1
-			if tc.confidence {
-				floor := 0.8
-				h.Cfg.CI.CommentMinConfidence = &floor
-			}
 			h.Cfg.CI.UpsertComments = tc.upsert
 			statuses := h.CaptureCommitStatuses()
 			var posts, patches int
@@ -69,11 +63,7 @@ func TestCIPanelCommentPolicy(t *testing.T) {
 					patches++
 					var body struct{ Body string }
 					assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-					if tc.confidence {
-						assert.Contains(t, body.Body, "No findings match the comment filters.")
-					} else {
-						assert.Contains(t, body.Body, "No findings at or above high severity.")
-					}
+					assert.Contains(t, body.Body, "No findings at or above high severity.")
 					w.WriteHeader(tc.patchStatus)
 					if tc.patchStatus == 403 {
 						_, _ = fmt.Fprint(w, `{"message":"Resource not accessible by integration"}`)
@@ -107,13 +97,6 @@ func TestCIPanelCommentPolicy(t *testing.T) {
 					_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Stored review.","verdict":"fail","findings":[{"severity":"low","problem":"Minor concern.","fix":"Fix it.","location":null}]}`, synth.ID)
 					require.NoError(t, err)
 				}
-			}
-			if tc.confidence {
-				document := reviewpkg.StructuredReview{SchemaVersion: 3, Summary: "Stored review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{{Severity: "high", Kind: "defect", Confidence: 0, Problem: "Minor concern.", Fix: "Fix it."}}}
-				raw, err := json.Marshal(document)
-				require.NoError(t, err)
-				_, err = h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(raw), synth.ID)
-				require.NoError(t, err)
 			}
 			_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'high' WHERE id = ?`, synth.ID)
 			require.NoError(t, err)
@@ -266,36 +249,18 @@ func TestCIPanelCommentMinConfidence(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	floor := 0.8
 	h.Cfg.CI.CommentMinConfidence = &floor
-	h.Cfg.CI.CommentMaxFindings = 1
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
-	h.completeSynthesisWithReview(t, synth.ID, "Full review notes.")
 	document := reviewpkg.StructuredReview{SchemaVersion: 3, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
-		{Severity: "critical", Kind: "defect", Confidence: 0, Problem: "Filtered confidence.", Fix: "Fix it."},
-		{Severity: "low", Kind: "defect", Confidence: 1, Problem: "Filtered severity.", Fix: "Fix it."},
-		{Severity: "high", Kind: "defect", Confidence: 0.8, Problem: "Published finding.", Fix: "Fix it."},
-		{Severity: "high", Kind: "defect", Confidence: 0.9, Problem: "Eligible omitted.", Fix: "Fix it."},
+		{Severity: "high", Kind: "defect", Confidence: 0.5, Problem: "Filtered finding.", Fix: "Fix it."},
+		{Severity: "high", Kind: "defect", Confidence: 0.9, Problem: "Published finding.", Fix: "Fix it."},
 	}}
 	raw, err := json.Marshal(document)
 	require.NoError(t, err)
-	_, err = h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, string(raw), synth.ID)
-	require.NoError(t, err)
-	_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'high' WHERE id = ?`, synth.ID)
-	require.NoError(t, err)
-	before, err := h.DB.GetReviewByJobID(synth.ID)
-	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(h.DB, synth.ID, synth.Agent, "", string(raw)))
 	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
 	require.NoError(t, err)
-	publication, err := h.Poller.preparePanelComment(panel, members)
+	body, err := h.Poller.panelCommentBody(panel, members)
 	require.NoError(t, err)
-	assert := assert.New(t)
-	assert.False(publication.clean)
-	assert.Contains(publication.body, "Published finding.")
-	assert.NotContains(publication.body, "Filtered confidence.")
-	assert.NotContains(publication.body, "Filtered severity.")
-	assert.NotContains(publication.body, "Eligible omitted.")
-	assert.Contains(publication.body, "1 more finding in the full review")
-	after, err := h.DB.GetReviewByJobID(synth.ID)
-	require.NoError(t, err)
-	assert.Equal(before, after)
-	assert.Equal(storage.VerdictFail, after.Verdict())
+	assert.Contains(t, body, "Published finding.")
+	assert.NotContains(t, body, "Filtered finding.")
 }

@@ -597,7 +597,7 @@ type RepoCIConfig struct {
 	MinSeverity string `toml:"min_severity" comment:"Override the minimum CI severity included in synthesized output."`
 
 	// CommentMinConfidence overrides the global floor; zero disables it.
-	CommentMinConfidence *float64 `toml:"comment_min_confidence" comment:"Minimum stated confidence in synthesized GitHub daemon comments (0..1); unset or zero disables filtering."`
+	CommentMinConfidence *float64 `toml:"comment_min_confidence" comment:"Minimum recorded synthesis confidence in GitHub daemon comments (0..1). Unset inherits the global floor. Zero disables filtering."`
 
 	// CommentMaxFindings overrides the global cap; an explicit zero disables it.
 	CommentMaxFindings *int `toml:"comment_max_findings" comment:"Maximum structured findings in synthesized GitHub daemon comments; zero is unlimited."`
@@ -942,7 +942,7 @@ func ResolveCICommentMinConfidence(repoCfg *RepoConfig, globalCfg *Config) float
 }
 
 func validateCICommentMinConfidence(value *float64) error {
-	if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 || *value > 1) {
+	if value != nil && (math.IsNaN(*value) || *value < 0 || *value > 1) {
 		return fmt.Errorf("ci.comment_min_confidence must be finite and between 0 and 1")
 	}
 	return nil

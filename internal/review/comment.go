@@ -28,7 +28,7 @@ type CommentConfig struct {
 // so formatting receives only findings selected by PrepareComment.
 type PreparedComment struct {
 	minSeverity         string
-	minConfidence       float64
+	confidenceFiltered  bool
 	legacy              bool
 	structured          bool
 	verbatim            *string
@@ -48,7 +48,8 @@ type commentFinding struct {
 // PrepareComment ingests structured or prose review data and applies the
 // supplied publication policy. It never changes the review or its findings.
 func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
-	comment := PreparedComment{minConfidence: cfg.MinConfidence, minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
+	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
+	threshold := config.SeverityRank(comment.minSeverity)
 	doc := r.Structured
 	if doc == nil && len(r.StructuredOutput) > 0 {
 		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
@@ -60,14 +61,18 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		r.Output = doc.Legacy.Markdown
 		doc = nil
 	}
-	var findings []commentFinding
 	if doc != nil {
 		comment.structured = true
 		for _, finding := range doc.Findings {
-			if finding.Kind != "" && finding.Confidence < cfg.MinConfidence {
+			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold {
 				continue
 			}
-			findings = append(findings, commentFinding{
+			// Stored findings carry kind and confidence together.
+			if finding.Kind != "" && finding.Confidence < cfg.MinConfidence {
+				comment.confidenceFiltered = true
+				continue
+			}
+			comment.findings = append(comment.findings, commentFinding{
 				severity: finding.Severity, problem: finding.Problem,
 				fix: finding.Fix, location: finding.Location,
 			})
@@ -80,24 +85,21 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 			r.Output = strings.TrimLeft(r.Output, "\r\n")
 		}
 		// With no display filter, prose passes through exactly as authored.
-		if config.SeverityRank(comment.minSeverity) <= config.SeverityRank("low") {
+		if threshold <= config.SeverityRank("low") {
 			comment.verbatim = &r.Output
 			return comment
 		}
 		labelled := false
 		for _, block := range splitProseFindings(r.Output) {
 			labelled = labelled || block.severity != ""
-			findings = append(findings, commentFinding{severity: block.severity, markdown: block.text})
+			if block.severity == "" || config.SeverityRank(block.severity) >= threshold {
+				comment.findings = append(comment.findings, commentFinding{severity: block.severity, markdown: block.text})
+			}
 		}
 		if !labelled {
 			comment.verbatim = &r.Output
+			comment.findings = nil
 			return comment
-		}
-	}
-	threshold := config.SeverityRank(comment.minSeverity)
-	for _, finding := range findings {
-		if finding.severity == "" || config.SeverityRank(finding.severity) >= threshold {
-			comment.findings = append(comment.findings, finding)
 		}
 	}
 	if comment.structured {
@@ -125,7 +127,7 @@ func FormatComment(comment PreparedComment) string {
 		return *comment.verbatim
 	}
 	if len(comment.findings) == 0 {
-		if comment.structured && comment.minConfidence > 0 {
+		if comment.confidenceFiltered {
 			return "**Verdict:** No findings match the comment filters.\n"
 		}
 		if comment.minSeverity != "" && comment.minSeverity != "low" {

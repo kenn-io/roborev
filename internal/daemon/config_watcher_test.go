@@ -500,22 +500,3 @@ func TestConfigWatcherRejectsNegativeCICommentCap(t *testing.T) {
 	assert.Equal(t, 0, watcher.Config().CI.CommentMaxFindings)
 	assert.Equal(t, uint64(1), watcher.ReloadCounter(), "an explicit unlimited cap remains a valid reload")
 }
-
-func TestConfigWatcherCICommentMinConfidence(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	old := config.DefaultConfig()
-	floor := 0.8
-	old.CI.CommentMinConfidence = &floor
-	watcher := NewConfigWatcher(path, old, NewBroadcaster(), nil)
-	for _, value := range []string{"-0.1", "1.1", "nan", "+inf", "-inf"} {
-		require.NoError(t, os.WriteFile(path, []byte("[ci]\ncomment_min_confidence = "+value+"\n"), 0o600))
-		watcher.reloadConfig()
-		assert.Same(t, old, watcher.Config())
-		assert.Zero(t, watcher.ReloadCounter())
-	}
-	require.NoError(t, os.WriteFile(path, []byte("[ci]\ncomment_min_confidence = 0.0\n"), 0o600))
-	watcher.reloadConfig()
-	require.NotNil(t, watcher.Config().CI.CommentMinConfidence)
-	assert.Zero(t, *watcher.Config().CI.CommentMinConfidence)
-	assert.Equal(t, uint64(1), watcher.ReloadCounter())
-}

@@ -768,22 +768,25 @@ long finding requires comment truncation. Prose is not capped because it cannot
 be ranked reliably.
 
 Set `comment_min_confidence` to a finite number from `0` to `1` to hide
-structured findings below that confidence. Findings at the floor remain visible.
-Findings without stated confidence remain visible; an explicitly stated zero is
-filtered normally. Unset disables filtering. Invalid floors are rejected when
-loading, saving, or reloading configuration. When confidence filtering leaves no
-findings, the comment says "No findings match the comment filters." Confidence
-does not filter prose.
+structured findings whose recorded synthesis confidence falls below that floor.
+Findings at the floor and findings with no stored score remain visible. An
+explicit score of zero is compared normally. Synthesis is instructed to use
+`0.5` when no source scored a finding, so a floor above `0.5` can hide it. An
+unset global floor disables filtering. Invalid floors are rejected when loading,
+saving, or reloading configuration. If confidence removes a finding that passed
+the severity filter and no findings remain, the comment says "No findings match
+the comment filters." Confidence does not filter prose.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
-synthesis has no findings after filtering. Severity-parsed prose is also silent
-when no labelled findings or unlabelled blocks survive. Verbatim prose and
-legacy Markdown remain publishable, even if their text says the review is clean.
-Roborev does not infer cleanliness from text or the stored verdict. With
-`upsert_comments = true`, silent reviews update an existing marker comment to
-the no-findings line. Missing or deleted comments are successful no-ops; cleanup
-never creates a replacement. Permission and transient delivery errors keep the
-normal error and retry behavior.
+synthesis has no findings after filtering, even if the stored review has
+findings. Severity-parsed prose is also silent when no labelled findings or
+unlabelled blocks survive. Verbatim prose and legacy Markdown remain
+publishable, even if their text says the review is clean. Roborev does not infer
+cleanliness from text or the stored verdict. With `upsert_comments = true`,
+silent reviews update an existing marker comment to the no-findings line.
+Missing or deleted comments are successful no-ops; cleanup never creates a
+replacement. Permission and transient delivery errors keep the normal error and
+retry behavior.
 
 All three settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
 explicit repo cap of `0` restores unlimited findings; a confidence floor of `0`
@@ -1076,7 +1079,7 @@ set, it takes priority over the matrix fields for that repo.
 | `reviews` | table | global `reviews` | Granular agent-to-review-type map (overrides `agents` and `review_types`; empty table disables reviews) |
 | `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
-| `comment_min_confidence` | float | global `comment_min_confidence` | Minimum stated confidence in synthesized GitHub daemon comments; finite `0`–`1`, `0` disables filtering |
+| `comment_min_confidence` | float | global `comment_min_confidence` | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Zero disables filtering. |
 | `comment_max_findings` | int | global `comment_max_findings` | Maximum structured findings in synthesized GitHub daemon comments; `0` restores unlimited |
 | `comment_when_clean` | bool | global `comment_when_clean` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
@@ -1117,7 +1120,7 @@ set, it takes priority over the matrix fields for that repo.
 | `rewrite` | bool | `false` | Rewrite checked findings in plain words; requires `check` |
 | `check_model` | string | | Model override for the checker. Global only |
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
-| `comment_min_confidence` | float | unset | Minimum stated confidence in synthesized GitHub daemon comments; finite `0`–`1`, unset disables filtering |
+| `comment_min_confidence` | float | unset | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Unset disables filtering. |
 | `comment_max_findings` | int | `0` | Maximum structured findings in synthesized GitHub daemon comments; `0` is unlimited |
 | `comment_when_clean` | bool | `true` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
