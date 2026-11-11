@@ -134,7 +134,7 @@ func TestExperimentReportSuccessUnavailableLabelGuard(t *testing.T) {
 	assert.Equal(t, "not enough data", r.Success.State)
 	require.Len(t, r.Success.Guards, 1)
 	assert.Equal(t, "not enough data", r.Success.Guards[0].State)
-	assert.Contains(t, r.Success.Guards[0].Reason, "durable finding identity")
+	assert.Contains(t, r.Success.Guards[0].Reason, "stable finding identity")
 }
 
 func TestExperimentReportSuccessUnavailableLabelPrimary(t *testing.T) {
@@ -144,7 +144,7 @@ func TestExperimentReportSuccessUnavailableLabelPrimary(t *testing.T) {
 	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "not enough data", r.Success.State)
-	assert.Contains(t, r.Success.Reason, "durable finding identity")
+	assert.Contains(t, r.Success.Reason, "stable finding identity")
 }
 
 func TestExperimentReportSuccessZeroRelativeBaseline(t *testing.T) {
