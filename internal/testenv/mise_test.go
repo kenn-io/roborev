@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -67,8 +69,14 @@ func TestGitIsolationPreservesMiseDirectories(t *testing.T) {
 }
 
 func TestGitIsolationPreservesGoCaches(t *testing.T) {
-	goBin, err := exec.LookPath("go")
-	require.NoError(t, err)
+	cmd := exec.CommandContext(t.Context(), "go", "env", "GOROOT")
+	cmd.Env = append(os.Environ(), "GO_TELEMETRY_CHILD=2")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	goBin := filepath.Join(strings.TrimSpace(string(output)), "bin", "go")
+	if runtime.GOOS == "windows" {
+		goBin += ".exe"
+	}
 	for _, configured := range []bool{false, true} {
 		name := "default"
 		if configured {
@@ -95,6 +103,8 @@ func TestGitIsolationPreservesGoCaches(t *testing.T) {
 			t.Cleanup(func() { userEnv = originalUserEnv })
 			readCaches := func() string {
 				cmd := exec.CommandContext(t.Context(), goBin, "env", "GOMODCACHE", "GOCACHE")
+				// Prevent Go's telemetry child from outliving this temporary home.
+				cmd.Env = append(os.Environ(), "GO_TELEMETRY_CHILD=2")
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, "%s", output)
 				return string(output)

@@ -102,6 +102,7 @@ func unsetAgentConfigDirEnv() func() {
 		if !has {
 			continue
 		}
+		userAgentEnv = append(userAgentEnv, key+"="+orig)
 		_ = os.Unsetenv(key)
 		restores = append(restores, func() {
 			_ = os.Setenv(key, orig)
@@ -114,7 +115,7 @@ func unsetAgentConfigDirEnv() func() {
 	}
 }
 
-var userEnv []string
+var userEnv, userAgentEnv []string
 
 func goFileValue(key, goenv, root string) string {
 	var files []string
@@ -142,6 +143,11 @@ func goFileValue(key, goenv, root string) string {
 // UserEnv restores the original home and config paths for tool subprocesses.
 func UserEnv() []string {
 	return append(os.Environ(), userEnv...)
+}
+
+// UserAgentEnv returns the original paths needed by an authenticated adapter.
+func UserAgentEnv() []string {
+	return append(append([]string(nil), userEnv...), userAgentEnv...)
 }
 
 func configureGitForTests(tmpDir string) {
