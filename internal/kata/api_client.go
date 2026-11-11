@@ -88,6 +88,7 @@ type APIClient struct {
 	noWorkspace    bool
 	workspaceAlias *ProjectAlias
 	defaultProject string
+	endpoint       string
 }
 
 var _ Client = (*APIClient)(nil)
@@ -119,7 +120,7 @@ func NewAPIClient(workdir string, cfg config.KataIntegrationConfig, opts ...APIO
 	}
 	return &APIClient{
 		tr: tr, workdir: workdir, noWorkspace: settings.noWorkspace, workspaceAlias: settings.workspaceAlias,
-		defaultProject: strings.TrimSpace(cfg.DefaultProject),
+		defaultProject: strings.TrimSpace(cfg.DefaultProject), endpoint: normalizedPublicationEndpoint(endpoint),
 	}, nil
 }
 
@@ -339,21 +340,29 @@ func (c *APIClient) ListProject(ctx context.Context, project string, opts ListOp
 		}
 		return issuesFromAPI(page.Issues), nil
 	}
+	issues, err := c.listAllIssuePages(ctx, path, query, false)
+	if err != nil {
+		return nil, err
+	}
+	return issuesFromAPI(issues), nil
+}
+
+func (c *APIClient) listAllIssuePages(ctx context.Context, path string, query url.Values, strict bool) ([]gen.IssueOut, error) {
 	// Cursors need a stable order and a page size: without a limit Kata returns
 	// every issue in one page and no cursor. Every page is read, so the page
 	// size never drops an issue.
 	query.Set("sort", "oldest")
 	query.Set("limit", strconv.Itoa(apiDefaultListLimit))
-	var out []Issue
+	var out []gen.IssueOut
 	seen := map[string]bool{}
 	for {
 		page, err := c.listPage(ctx, path, query)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, issuesFromAPI(page.Issues)...)
+		out = append(out, page.Issues...)
 		if page.NextCursor == nil || *page.NextCursor == "" {
-			if !page.Complete {
+			if !page.Complete || (strict && page.Truncated) {
 				return nil, fmt.Errorf("%w: the issue list ended without a complete page", ErrInvalidResponse)
 			}
 			return out, nil

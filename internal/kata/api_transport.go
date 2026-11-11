@@ -153,7 +153,7 @@ func (t *transport) closeIdleConnections() {
 func (t *transport) do(ctx context.Context, method, path string, query url.Values, body any, header http.Header, out any, success ...int) (http.Header, error) {
 	var reader io.Reader
 	if body != nil {
-		encoded, err := json.Marshal(body, json.Deterministic(true))
+		encoded, err := encodeRequest(body)
 		if err != nil {
 			return nil, fmt.Errorf("encode kata request: %w", err)
 		}
@@ -217,6 +217,12 @@ func (t *transport) do(ctx context.Context, method, path string, query url.Value
 		return nil, fmt.Errorf("%w: trailing response data", ErrInvalidResponse)
 	}
 	return resp.Header.Clone(), nil
+}
+
+// encodeRequest is shared with publication preflight so size and replay
+// fingerprints are calculated from exactly the bytes sent on the wire.
+func encodeRequest(body any) ([]byte, error) {
+	return json.Marshal(body, json.Deterministic(true))
 }
 
 // readAPIError classifies a failed reply and keeps Kata's error code and
