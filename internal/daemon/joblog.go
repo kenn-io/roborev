@@ -515,8 +515,9 @@ func (w *jobLogWriter) flushBufferLocked(buf *bytes.Buffer) error {
 	return nil
 }
 
-// piJobLogSink compacts repeated usage only in stored Pi events. Live and
-// invocation streams retain the producer's original bytes.
+// piJobLogSink keeps compaction state for one output stream. The Pi adapter
+// serializes writes to that stream. It compacts repeated usage in stored Pi
+// events. Live and invocation streams retain the producer's original bytes.
 type piJobLogSink struct {
 	out       io.Writer
 	pending   []byte
@@ -524,7 +525,8 @@ type piJobLogSink struct {
 	usage     jsontext.Value
 }
 
-// newPiInvocationLogWriter keeps state within one actual agent invocation.
+// newPiInvocationLogWriter creates separate compaction state for each output
+// stream.
 func newPiInvocationLogWriter(name string, out io.Writer) io.Writer {
 	if name == "pi" {
 		return &piJobLogSink{out: out}

@@ -33,7 +33,8 @@ progress lines (tool calls, agent text). Non-JSON logs are
 printed as-is.
 
 Use --raw to print the exact stored log bytes unchanged. Stored Pi logs may omit
-repeated usage from message deltas.
+repeated identical cumulative usage from message deltas. Changed and final usage
+remain in the stored log. Live output retains the original bytes.
 
 Examples:
   roborev log 42          # Human-friendly rendered output
