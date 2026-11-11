@@ -440,7 +440,7 @@ func (m model) renderTasksHelpOverlay(b *strings.Builder) string {
 		"",
 		"  Workflow",
 		"    1. Press F on a failing review to trigger a background fix",
-		"    2. The agent fixes a temporary copy, leaving your files unchanged",
+		"    2. The agent runs in an isolated worktree (your files are untouched)",
 		"    3. When status shows 'ready', press A to apply and commit the patch",
 		"    4. If the patch is stale (code changed since), press R to re-run",
 		"",
