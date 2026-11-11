@@ -51,7 +51,7 @@ func TestFindingSummarySynthesisShortcutsKeepMemberSpendOnce(t *testing.T) {
 				if i == 1 {
 					usage = `{"has_cost":true}`
 				}
-				_, err := tc.DB.Exec("UPDATE review_jobs SET started_at=enqueued_at,agent_invoked=1,token_usage=? WHERE id=?", usage, member.ID)
+				_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET started_at=enqueued_at,agent_invoked=1,token_usage=? WHERE id=?", usage, member.ID)
 				require.NoError(t, err)
 			}
 			synth := releaseAndClaimSynthesis(t, tc, run)
@@ -124,7 +124,7 @@ func TestMemberFindingSummarySynthesisPositionParity(t *testing.T) {
 		completeMember(t, tc, member.ID, member.Agent, "High: member finding")
 	}
 	for i, reviewType := range []string{"security", "performance"} {
-		_, err := tc.DB.Exec("UPDATE review_jobs SET review_type = ? WHERE id = ?", reviewType, members[i+1].ID)
+		_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET review_type = ? WHERE id = ?", reviewType, members[i+1].ID)
 		require.NoError(t, err)
 	}
 	rows, err := tc.DB.GetPanelMemberReviews(run)
