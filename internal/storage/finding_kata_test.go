@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -237,7 +238,7 @@ func TestFindingKataPreservesDiscussionAndLocalEvidence(t *testing.T) {
 	a.Equal(1, stats.TierCoverage["R"].Positive)
 	a.Equal(1, stats.TierCoverage["K"].Negative)
 	a.Equal(1, stats.Total.RefuteReasons.RiskAccepted)
-	a.Equal(2.0, stats.Cost.TotalUSD)
+	a.InDelta(2.0, stats.Cost.TotalUSD, 0.0001)
 	input.Findings[0].Replies[0].Evidence = "invalid current edit"
 	input.Findings[0].Replies[0].Edited = true
 	stats.ApplyKata([]FindingKataReview{input})

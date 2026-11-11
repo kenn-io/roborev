@@ -228,7 +228,12 @@ func TestPrintFindingSummaryReasons(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	reasons := storage.RefuteReasonCounts{FalsePositive: 1, Spurious: 2, RiskAccepted: 3, Unspecified: 4}
-	f := storage.FindingStats{GroupBy: "severity", Kata: storage.FindingKataCoverage{State: "unavailable", Eligible: 10, Unavailable: 10}, Total: storage.FindingOutcomeCounts{Negative: 10, RefuteReasons: reasons}, Rows: []storage.FindingStatsRow{{Key: "high", FindingOutcomeCounts: storage.FindingOutcomeCounts{Negative: 10, RefuteReasons: reasons}}}}
+	f := storage.FindingStats{
+		GroupBy: "severity",
+		Kata:    storage.FindingKataCoverage{State: "unavailable", Eligible: 10, Unavailable: 10},
+		Total:   storage.FindingOutcomeCounts{Negative: 10, RefuteReasons: reasons},
+		Rows:    []storage.FindingStatsRow{{Key: "high", Negative: 10, RefuteReasons: reasons}},
+	}
 	printFindingSummary(cmd, &f)
 	assert.Contains(t, out.String(), "false-positive: 1 | spurious: 2 | risk-accepted: 3 | unspecified: 4")
 	assert.Contains(t, out.String(), "K coverage (unavailable): 0/10 mapped, 0/10 readable")
