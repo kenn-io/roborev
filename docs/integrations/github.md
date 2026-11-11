@@ -910,9 +910,16 @@ that start TCP loopback servers cannot run in this sandbox; the checker keeps
 findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
-Missing or duplicate verdicts keep the finding. The job log records the
-verdicts. If every finding drops, the stored review says "No issues found." A
-checker failure or timeout posts the original review unchanged.
+Missing or duplicate verdicts keep the finding. If every finding drops, the
+stored review says "No issues found." A checker failure or timeout posts the
+original review unchanged.
+
+The stored review document records the check in its `check` member: whether the
+checker completed or failed, and for every finding it received, whether the
+finding was kept or dropped, with the checker's evidence and reason. Sync,
+`roborev export reviews`, and the API carry this record; the posted PR comment
+does not. See the [review document format](/docs/commands/#exporting-reviews).
+The job log also records each verdict.
 
 ## Rewriting checked findings
 

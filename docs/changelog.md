@@ -34,6 +34,18 @@ All notable changes to roborev, grouped by minor release.
     and export cursor resets keep exit 3.
 - Report daemon startup failure when its child exits, with the startup log and a
     diagnostic command, instead of waiting for the readiness timeout.
+- Read the CI checker's results as data. A checked review's document has a
+    `check` member that says whether checking completed or failed and, for each
+    finding, whether it was kept or dropped, with the checker's evidence and
+    reason. Dropped findings keep their full text. See the
+    [review document format](/docs/commands/#exporting-reviews). Older releases
+    reject these documents: a machine on an older release that shares a
+    PostgreSQL mirror with a checking CI host stops pulling reviews and comments
+    at the first checked review, and Go programs that decode documents with an
+    older `pkg/structuredreview` fail on them. Upgrade those machines and
+    programs before or with the CI host.
+- The generated Go client's `Validate` accepts review findings whose `location`
+    is `null`, as the API documents.
 
 ## 0.74.0
 

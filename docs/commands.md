@@ -492,6 +492,7 @@ A `document` has these members:
 | `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. Omitted when the review stated none, as in some converted historical reviews. The exported top-level `verdict` comes from the findings, not from this value |
 | `findings` | array | Zero or more findings |
 | `source_labels` | array of strings | Only on combined panel reviews. Names the member reviews that findings cite |
+| `check` | object | Only when the [CI checker](/docs/integrations/github/#checking-findings-before-posting) ran on the review. Records what it kept and dropped, and why |
 
 Each finding has `severity` (`critical`, `high`, `medium`, or `low`), `problem`,
 `fix`, and `location`. `location` is always present and is `null` when the
@@ -514,6 +515,28 @@ reviews:
 When `file` is set, `location` is derived from `file`, `start_line`, and
 `end_line`, for example `internal/foo.go:12-14`. Otherwise `location` is free
 text, such as a goal review's `Kata abc123`, or `null`.
+
+A `check` has these members:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `status` | string | `completed` when the checker returned verdicts. `failed` when it ran but failed or timed out, so the review was stored unchecked |
+| `findings` | array | One entry per finding the checker received, in that order. Empty when `status` is `failed` |
+
+Each entry in `check.findings` has these members:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `outcome` | string | `kept` when the finding stayed in the review. `dropped` when the checker refuted it and roborev removed it from `findings` |
+| `finding` | object | The finding as the checker received it, in the same form as a member of `findings` |
+| `verdicts` | array | Every verdict the checker returned for this finding. Each has `keep` (boolean), `evidence` (the command it ran and its output, or what refutes the finding), and `reason` (one sentence). A member the checker left blank is omitted |
+
+A finding drops only when exactly one verdict has `keep` set to `false` and both
+`evidence` and `reason` set. Every other finding is kept, including one with no
+verdict. Kept entries appear in the same order as `findings`, so the second kept
+entry is the second finding. A rewrite can change the wording of a kept finding
+in `findings`; `check.findings` keeps the text the checker tried. The Markdown
+in `content` does not include the check.
 
 Other Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to read a
 `document`. `structuredreview.Decode` validates it, and `Document.Markdown("")`
