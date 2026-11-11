@@ -8,10 +8,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/quick"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 
 	"go.kenn.io/roborev/internal/agentguide"
 	"go.kenn.io/roborev/internal/storage"
@@ -31,12 +31,14 @@ func TestIsBuiltinInstructionLegacy(t *testing.T) {
 }
 
 func TestIsBuiltinInstructionLegacyWhitespaceProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		text := hegel.Draw(ht, hegel.SampledFrom(legacyDefaultInstructions))
-		ws := hegel.Draw(ht, hegel.SampledFrom([]string{" ", "\n", "\r\n", "\t", "  \n  "}))
+	property := func(textIndex, whitespaceIndex uint8) bool {
+		text := legacyDefaultInstructions[int(textIndex)%len(legacyDefaultInstructions)]
+		whitespace := []string{" ", "\n", "\r\n", "\t", "  \n  "}
+		ws := whitespace[int(whitespaceIndex)%len(whitespace)]
 		rewrapped := ws + strings.Join(strings.Fields(text), ws) + ws
-		assert.True(ht, IsBuiltinInstruction(rewrapped))
-	})
+		return assert.True(t, IsBuiltinInstruction(rewrapped), "instruction=%q whitespace=%q", text, ws)
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
 
 func TestBuildPromptReasonLegacyUsesCurrentInstruction(t *testing.T) {
