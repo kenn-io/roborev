@@ -256,6 +256,11 @@ func TestCIPanelCommentMinConfidence(t *testing.T) {
 	}}
 	raw, err := json.Marshal(document)
 	require.NoError(t, err)
+	require.NoError(t, h.DB.MaybeReleasePanelSynthesisContext(t.Context(), panel.PanelRunUUID))
+	claimed, err := h.DB.ClaimJobContext(t.Context(), "fixture-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, synth.ID, claimed.ID)
 	require.NoError(t, testutil.CompleteReviewFixture(h.DB, synth.ID, synth.Agent, "", string(raw)))
 	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
 	require.NoError(t, err)
