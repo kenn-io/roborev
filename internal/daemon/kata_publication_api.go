@@ -45,17 +45,18 @@ type KataComment struct {
 	Reply              *gen.CommentLink  `json:"reply,omitempty"`
 	Backlinks          []gen.CommentLink `json:"backlinks,omitempty"`
 	BacklinksTruncated *bool             `json:"backlinks_truncated,omitempty"`
-	UID                string            `json:"uid"`
-	Handle             *string           `json:"handle,omitempty"`
-	Body               string            `json:"body"`
-	Author             string            `json:"author"`
-	Teammate           *string           `json:"teammate,omitempty"`
-	ReplyToUID         *string           `json:"reply_to_uid,omitempty"`
-	ReplyKind          *string           `json:"reply_kind,omitempty"`
-	EditedAt           *time.Time        `json:"edited_at,omitempty"`
-	RootUID            string            `json:"root_uid,omitempty"`
-	Lineage            string            `json:"lineage,omitempty"`
-	History            string            `json:"history,omitempty"`
+
+	UID         string     `json:"uid"`
+	Handle      *string    `json:"handle,omitempty"`
+	Body        string     `json:"body"`
+	Author      string     `json:"author"`
+	Teammate    *string    `json:"teammate,omitempty"`
+	ReplyToUID  *string    `json:"reply_to_uid,omitempty"`
+	ReplyKind   *string    `json:"reply_kind,omitempty"`
+	EditedAt    *time.Time `json:"edited_at,omitempty"`
+	RootUID     string     `json:"root_uid,omitempty"`
+	Lineage     string     `json:"lineage,omitempty"`
+	History     string     `json:"history,omitempty"`
 }
 type KataRoot struct {
 	Position    int          `json:"position"`
