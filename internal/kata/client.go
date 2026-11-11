@@ -100,6 +100,26 @@ func workspaceBinding(workdir string) (Binding, error) {
 	return Binding{Project: selection.name}, err
 }
 
+// WorkspaceBinding resolves the workspace selection for a daemon proxy. It
+// includes the registered alias for committed bindings, while local overrides
+// keep selecting their project name directly.
+func WorkspaceBinding(ctx context.Context, workdir string) (Binding, error) {
+	selection, err := discoverWorkspace(workdir)
+	if err != nil {
+		return Binding{}, err
+	}
+	binding := Binding{Project: selection.name}
+	if selection.local {
+		return binding, nil
+	}
+	alias, err := workspaceAlias(ctx, selection)
+	if err != nil {
+		return Binding{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
+	}
+	binding.Alias = &ProjectAlias{Identity: alias.Identity, Kind: alias.Kind}
+	return binding, nil
+}
+
 type workspaceProject struct {
 	name, root, gitRoot string
 	local               bool

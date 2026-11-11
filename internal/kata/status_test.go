@@ -147,3 +147,21 @@ func TestEvaluateConstructionFailures(t *testing.T) {
 		})
 	}
 }
+
+// Typed replies are stored from API schema 0.28.0, and only a ready
+// connection reports support for them.
+func TestStatusSupportsRepliesFromSchema0_28(t *testing.T) {
+	for _, tc := range []struct {
+		state  State
+		schema string
+		want   bool
+	}{
+		{StateReady, "0.21.0", false},
+		{StateReady, "0.27.9", false},
+		{StateReady, "0.28.0", true},
+		{StateIncompatible, "0.28.0", false},
+		{StateProjectNotFound, "0.28.0", false},
+	} {
+		assert.Equal(t, tc.want, Status{State: tc.state, APISchemaVersion: tc.schema}.SupportsReplies(), "%s %q", tc.state, tc.schema)
+	}
+}
