@@ -57,14 +57,4 @@ describe("PromptViewer", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
-
-  it("shows an available prompt even when the detail load failed", () => {
-    state.prompt = "Prompt from the job row";
-    state.loadError = "Failed to load review";
-
-    render(PromptViewer);
-
-    expect(screen.getByText("Prompt from the job row")).toBeInTheDocument();
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
 });

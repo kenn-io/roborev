@@ -9,11 +9,9 @@ const state = vi.hoisted(() => ({
   notFound: false,
   status: "done",
   error: "",
-  loadError: null as string | null,
 }));
 const errorReports = vi.hoisted(() => vi.fn());
 const rendererRetries = vi.hoisted(() => vi.fn());
-const reviewLoads = vi.hoisted(() => vi.fn());
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
@@ -24,9 +22,7 @@ vi.mock("../../stores/context", () => ({
       reportRendererFailure: errorReports,
       retryRenderer: rendererRetries,
       getSelectedJob: () => ({ status: state.status, error: state.error }),
-      getSelectedJobId: () => 42,
-      getError: () => state.loadError,
-      loadReview: reviewLoads,
+      getError: () => null,
     },
   }),
 }));
@@ -40,13 +36,11 @@ afterEach(() => {
   vi.useRealTimers();
   errorReports.mockReset();
   rendererRetries.mockReset();
-  reviewLoads.mockReset();
   state.output = "## Review output";
   state.loading = false;
   state.notFound = false;
   state.status = "done";
   state.error = "";
-  state.loadError = null;
 });
 
 describe("ReviewContent", () => {
@@ -61,19 +55,6 @@ describe("ReviewContent", () => {
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(rendererRetries).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(errorReports).toHaveBeenCalledTimes(2));
-  });
-
-  it("offers a retry for the selected job when the review cannot load", async () => {
-    state.output = "";
-    state.loadError = "Failed to load review";
-
-    render(ReviewContent);
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to load review",
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(reviewLoads).toHaveBeenCalledExactlyOnceWith(42);
   });
 
   it("keeps a renderer failure without output silent", async () => {

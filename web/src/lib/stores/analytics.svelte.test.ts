@@ -1,4 +1,4 @@
-import { roborevFetch } from "../api/generated-fetch";
+import { offlineRead } from "../testing/network";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AnalyticsSnapshot } from "../api/generated/models";
@@ -250,63 +250,52 @@ describe("analytics store request ownership", () => {
     store.dispose();
   });
 
-  it.each([true, false])(
-    "keeps a same-query snapshot during retries (recovers: %s)",
-    async (recovers) => {
-      const loader = vi
-        .fn<AnalyticsLoader>()
-        .mockResolvedValueOnce(snapshot(4));
-      if (recovers)
-        loader
-          .mockImplementationOnce(() =>
-            roborevFetch("/api/test", {
-              roborevTransport: {
-                baseUrl: "/",
-                fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
-              },
-            }),
-          )
-          .mockResolvedValue(snapshot(5));
-      else
-        loader.mockImplementation(() =>
-          roborevFetch("/api/test", {
-            roborevTransport: {
-              baseUrl: "/",
-              fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
-            },
-          }),
-        );
-      const store = createAnalyticsStore({ loader });
-      await store.refresh();
-      vi.useFakeTimers();
-      try {
-        const refresh = store.refresh();
-        await vi.advanceTimersByTimeAsync(0);
-        expect(store.getSnapshot()?.summary.reviews.total).toBe(4);
-        expect(store.isLoading()).toBe(true);
-        expect(store.isStale()).toBe(false);
-        expect(store.getError()).toBeNull();
-        await vi.runAllTimersAsync();
-        await refresh;
-        expect(store.getSnapshot()?.summary.reviews.total).toBe(
-          recovers ? 5 : 4,
-        );
-        expect(store.isStale()).toBe(!recovers);
-        expect(store.getError()).toBe(recovers ? null : "offline");
-      } finally {
-        store.dispose();
-        vi.useRealTimers();
-      }
-    },
-  );
+  it("retains a same-query snapshot as stale when refresh fails", async () => {
+    const loader = vi
+      .fn<AnalyticsLoader>()
+      .mockResolvedValueOnce(snapshot(4))
+      .mockRejectedValueOnce(new Error("offline"));
+    const store = createAnalyticsStore({ loader });
+
+    await store.refresh();
+    await store.refresh();
+
+    expect(store.getSnapshot()?.summary.reviews.total).toBe(4);
+    expect(store.isStale()).toBe(true);
+    expect(store.getError()).toBe("offline");
+    store.dispose();
+  });
+
+  it("keeps a same-query snapshot while a lost refresh recovers", async () => {
+    const loader = vi
+      .fn<AnalyticsLoader>()
+      .mockResolvedValueOnce(snapshot(4))
+      .mockImplementationOnce(offlineRead)
+      .mockResolvedValue(snapshot(5));
+    const store = createAnalyticsStore({ loader });
+    await store.refresh();
+    vi.useFakeTimers();
+    try {
+      const refresh = store.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot()?.summary.reviews.total).toBe(4);
+      expect(store.isLoading()).toBe(true);
+      expect(store.isStale()).toBe(false);
+      await vi.runAllTimersAsync();
+      await refresh;
+      expect(store.getSnapshot()?.summary.reviews.total).toBe(5);
+      expect(store.getError()).toBeNull();
+    } finally {
+      store.dispose();
+      vi.useRealTimers();
+    }
+  });
 
   it("never displays the old snapshot under failed new filters", async () => {
     const loader = vi
       .fn<AnalyticsLoader>()
       .mockResolvedValueOnce(snapshot(30))
-      .mockRejectedValue(
-        Response.json({ detail: "request failed" }, { status: 503 }),
-      );
+      .mockRejectedValueOnce(new Error("request failed"));
     const store = createAnalyticsStore({ loader });
 
     await store.refresh();

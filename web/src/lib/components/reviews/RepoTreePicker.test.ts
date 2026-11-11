@@ -1,4 +1,4 @@
-import { roborevFetch } from "../../api/generated-fetch";
+import { offlineRead } from "../../testing/network";
 import {
   cleanup,
   fireEvent,
@@ -154,6 +154,7 @@ describe("RepoTreePicker", () => {
     );
 
     expect(screen.getByText("Loading...")).toBeTruthy();
+    expect(screen.queryByText("No branches")).toBeNull();
 
     projectABranches.resolve({
       branches: [{ name: "stale-a", count: 1 }],
@@ -190,7 +191,7 @@ describe("RepoTreePicker", () => {
           branches: [{ name: "project-a-main", count: 1 }],
         });
       }
-      return Promise.reject(new Response("unavailable", { status: 500 }));
+      return Promise.reject(new TypeError("branch lookup failed"));
     });
     render(RepoTreePicker);
 
@@ -209,14 +210,7 @@ describe("RepoTreePicker", () => {
   it("recovers a branch list after a brief connection failure", async () => {
     vi.useFakeTimers();
     repoApi.listBranches
-      .mockImplementationOnce(() =>
-        roborevFetch("/api/test", {
-          roborevTransport: {
-            baseUrl: "/",
-            fetch: vi.fn().mockRejectedValue(new TypeError("connection reset")),
-          },
-        }),
-      )
+      .mockImplementationOnce(offlineRead)
       .mockResolvedValue({ branches: [{ name: "main", count: 3 }] });
     render(RepoTreePicker);
     await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));

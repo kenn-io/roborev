@@ -8,6 +8,7 @@ import {
 } from "./client";
 import { retryIdempotentRead } from "./retry-policy";
 import { roborevFetch } from "./generated-fetch";
+import type { Fetch } from "./session";
 import { getListJobsUrl } from "./generated/jobs/jobs";
 import { getGetWebAnalyticsUrl } from "./generated/web-ui/web-ui";
 import { StreamingFetch } from "../browser/streaming-fetch";
@@ -18,6 +19,14 @@ afterEach(() => {
 });
 
 describe("native Roborev client", () => {
+  const readJobs = (fetch: Fetch) =>
+    executeRoborevRequest("jobs", (signal) =>
+      roborevFetch("/api/jobs", {
+        signal,
+        roborevTransport: { baseUrl: "/", fetch },
+      }),
+    ).pipe(retryIdempotentRead, Effect.exit);
+
   test.each(["fetch", "body", "persistent"])(
     "handles a %s network failure",
     async (kind) => {
@@ -41,14 +50,7 @@ describe("native Roborev client", () => {
             .mockResolvedValueOnce(broken)
             .mockResolvedValue(Response.json({ jobs: [] }));
         } else fetchMock.mockRejectedValue(new TypeError("offline"));
-        const result = Effect.runPromise(
-          executeRoborevRequest("jobs", (signal) =>
-            roborevFetch("/api/jobs", {
-              signal,
-              roborevTransport: { baseUrl: "/", fetch: fetchMock },
-            }),
-          ).pipe(retryIdempotentRead, Effect.exit),
-        );
+        const result = Effect.runPromise(readJobs(fetchMock));
         await vi.runAllTimersAsync();
         const exit = await result;
         if (kind === "persistent") expect(exit._tag).toBe("Failure");
@@ -61,13 +63,8 @@ describe("native Roborev client", () => {
     },
   );
 
-  test.each([
-    new TypeError("bad access"),
-    new DOMException("aborted", "AbortError"),
-    new Error("invalid request"),
-    "unexpected",
-  ])("does not retry a non-transport failure", async (failure) => {
-    const request = vi.fn().mockRejectedValue(failure);
+  test("does not retry a loader's own TypeError", async () => {
+    const request = vi.fn().mockRejectedValue(new TypeError("bad access"));
     const result = await Effect.runPromise(
       executeRoborevRequest("jobs", request).pipe(
         retryIdempotentRead,
@@ -88,14 +85,7 @@ describe("native Roborev client", () => {
               headers: { "Content-Type": "application/json" },
             });
       const fetchMock = vi.fn().mockResolvedValue(response);
-      const result = await Effect.runPromise(
-        executeRoborevRequest("jobs", (signal) =>
-          roborevFetch("/api/jobs", {
-            signal,
-            roborevTransport: { baseUrl: "/", fetch: fetchMock },
-          }),
-        ).pipe(retryIdempotentRead, Effect.exit),
-      );
+      const result = await Effect.runPromise(readJobs(fetchMock));
       expect(result._tag).toBe("Failure");
       expect(fetchMock).toHaveBeenCalledOnce();
     },

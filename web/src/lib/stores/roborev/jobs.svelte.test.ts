@@ -1,4 +1,4 @@
-import { roborevFetch } from "../../api/generated-fetch";
+import { offlineRead } from "../../testing/network";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnedAppRuntime } from "../../runtime/runtime";
@@ -157,7 +157,7 @@ describe("submitted search telemetry", () => {
       }),
     };
     if (kind === "failed")
-      api.listJobs.mockRejectedValue(new Response(null, { status: 503 }));
+      api.listJobs.mockRejectedValue(new Error("request failed"));
     const store = createJobsStore({ api: api as never, navigate: vi.fn() });
     if (kind === "preview") store.setFilter("search", "feature/search");
     else store.submitSearch(value);
@@ -202,14 +202,7 @@ describe("createJobsStore filter preferences", () => {
     const api = {
       listJobs: vi
         .fn()
-        .mockImplementationOnce(() =>
-          roborevFetch("/api/test", {
-            roborevTransport: {
-              baseUrl: "/",
-              fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
-            },
-          }),
-        )
+        .mockImplementationOnce(offlineRead)
         .mockResolvedValue({ jobs: [makeJob(1)] }),
     };
     const store = createJobsStore({ api: api as never, navigate: vi.fn() });
@@ -619,7 +612,7 @@ describe("createJobsStore sorting", () => {
         if (typed.sort === "id") {
           sortRequests += 1;
           if (sortRequests === 1) await firstSortReply.promise;
-          else throw new Response(null, { status: 503 });
+          else throw new Error("daemon unavailable");
         }
         return sorted.listJobs(query);
       }),
@@ -668,7 +661,7 @@ describe("createJobsStore sorting", () => {
               await firstSortReply.promise;
             } else {
               await rerunReload.promise;
-              if (reload === "fails") throw new Response(null, { status: 503 });
+              if (reload === "fails") throw new Error("daemon unavailable");
             }
           }
           return sorted.listJobs(query);
@@ -734,7 +727,7 @@ describe("createJobsStore sorting", () => {
     const api = {
       listJobs: vi.fn().mockImplementation(async (query) => {
         if ((query as { sort?: string }).sort === "id" && failSort) {
-          throw new Response(null, { status: 503 });
+          throw new Error("daemon unavailable");
         }
         return sorted.listJobs(query);
       }),
@@ -1082,7 +1075,7 @@ describe("createJobsStore event stream", () => {
 
     const pending: Array<{
       resolve: (value: JobsResponse) => void;
-      reject: (reason: unknown) => void;
+      reject: (reason: Error) => void;
     }> = [];
     const api = {
       listJobs: vi.fn(
@@ -1119,7 +1112,7 @@ describe("createJobsStore event stream", () => {
     });
     await vi.waitFor(() => expect(store.getJobs()).toHaveLength(1));
 
-    pending[1]?.reject(new Response(null, { status: 503 }));
+    pending[1]?.reject(new Error("request failed"));
     await olderLoad;
 
     expect(store.getError()).toBeNull();
@@ -1535,7 +1528,7 @@ describe("createJobsStore event stream", () => {
       listJobs: vi.fn().mockImplementation(async () => {
         reconciliationRound += 1;
         if (reconciliationRound <= 2) {
-          throw new Response(null, { status: 503 });
+          throw new TypeError("authority unavailable");
         }
         return {
           jobs: [],

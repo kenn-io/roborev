@@ -359,7 +359,7 @@ describe("JobTable infinite scroll", () => {
     let failPages = true;
     const api = mountTable(async (query) => {
       if (isPageRequest(query) && failPages) {
-        throw new Response(null, { status: 503 });
+        throw new Error("daemon unavailable");
       }
       return serve(query);
     });
@@ -385,7 +385,7 @@ describe("JobTable infinite scroll", () => {
     const serve = pagedJobs(10, 2);
     let failList = false;
     const api = mountTable(async (query) => {
-      if (!isPageRequest(query) && failList) throw new SyntaxError("");
+      if (!isPageRequest(query) && failList) throw new Error("");
       return serve(query);
     });
     await vi.waitFor(() => expect(renderedRows()).toBe(10));
@@ -540,7 +540,7 @@ describe("JobTable sort reload", () => {
     let failSort = true;
     mountTable(async (query) => {
       if (query.sort === "id" && failSort) {
-        throw new Response(null, { status: 503 });
+        throw new Error("daemon unavailable");
       }
       return serveBySort(query);
     });

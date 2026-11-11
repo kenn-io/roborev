@@ -67,6 +67,13 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
     function* (jobId: number) {
+      const jobRead = executeRoborevRequest(
+        "GET Roborev review job",
+        (signal) =>
+          api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
+            signal,
+          }),
+      );
       const result = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
@@ -104,17 +111,18 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                   ),
             ),
           ),
-          job: executeRoborevRequest("GET Roborev review job", (signal) =>
-            api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
-              signal,
-            }),
-          ).pipe(retryIdempotentRead, Effect.result),
+          job: Effect.result(jobRead),
         },
         { concurrency: "unbounded" },
       );
 
       if (Option.isNone(result.review)) {
-        const job = yield* Effect.fromResult(result.job);
+        let first = true;
+        const job = yield* Effect.suspend(() => {
+          if (!first) return jobRead;
+          first = false;
+          return Effect.fromResult(result.job);
+        }).pipe(retryIdempotentRead);
         return {
           review: null,
           selectedJob: job.jobs?.[0] ?? null,

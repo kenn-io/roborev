@@ -1,4 +1,4 @@
-import { roborevFetch } from "../../api/generated-fetch";
+import { offlineRead } from "../../testing/network";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnedAppRuntime } from "../../runtime/runtime";
@@ -58,14 +58,7 @@ describe("Roborev request cancellation", () => {
   it("retries review and comment reads before displaying them", async () => {
     const getReview = vi
       .fn()
-      .mockImplementationOnce(() =>
-        roborevFetch("/api/test", {
-          roborevTransport: {
-            baseUrl: "/",
-            fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
-          },
-        }),
-      )
+      .mockImplementationOnce(offlineRead)
       .mockResolvedValue({
         id: 7,
         job_id: 42,
@@ -74,14 +67,7 @@ describe("Roborev request cancellation", () => {
       });
     const getReviewProjection = vi
       .fn()
-      .mockImplementationOnce(() =>
-        roborevFetch("/api/test", {
-          roborevTransport: {
-            baseUrl: "/",
-            fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
-          },
-        }),
-      )
+      .mockImplementationOnce(offlineRead)
       .mockResolvedValue({
         responses: [{ id: 1, responder: "web", response: "comment" }],
       });
@@ -264,53 +250,82 @@ describe("Roborev request cancellation", () => {
     expect(store.getResponses()).toEqual([response]);
   });
 
-  it.each(["http", "network"])(
-    "offers recovery when the review is missing and the job read fails: %s",
-    async (failure) => {
-      const listJobs = vi.fn();
-      const failures = failure === "network" ? 3 : 1;
-      for (let i = 0; i < failures; i++) {
-        if (failure === "http")
-          listJobs.mockRejectedValueOnce(new Response(null, { status: 503 }));
-        else
-          listJobs.mockImplementationOnce(() =>
-            roborevFetch("/api/test", {
-              roborevTransport: {
-                baseUrl: "/",
-                fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
-              },
-            }),
-          );
-      }
-      listJobs.mockResolvedValue({
+  it("offers recovery when the review is missing and the job read fails", async () => {
+    const listJobs = vi
+      .fn()
+      .mockImplementationOnce(offlineRead)
+      .mockImplementationOnce(offlineRead)
+      .mockImplementationOnce(offlineRead)
+      .mockResolvedValue({
         jobs: [{ id: 42, status: "queued", prompt: "queued prompt" }],
       });
-      const store = reviewStore({
-        getReview: vi
-          .fn()
-          .mockRejectedValue(new Response(null, { status: 404 })),
-        getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
-        listJobs,
-      } as never);
-      vi.useFakeTimers();
-      try {
-        store.setSelectedJobId(42);
-        store.loadReview(42);
-        await vi.runAllTimersAsync();
-        expect(store.getError()).toBe("Failed to load review");
-        expect(listJobs).toHaveBeenCalledTimes(failures);
-        store.loadReview(42);
-        await vi.runAllTimersAsync();
-        expect(store.getError()).toBeNull();
-        expect(store.getPrompt()).toBe("queued prompt");
-        expect(store.getSelectedJob()?.status).toBe("queued");
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
+    const store = reviewStore({
+      getReview: vi.fn().mockRejectedValue(new Response(null, { status: 404 })),
+      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
+      listJobs,
+    } as never);
+    vi.useFakeTimers();
+    try {
+      store.setSelectedJobId(42);
+      store.loadReview(42);
+      await vi.runAllTimersAsync();
+      expect(store.getError()).toBe("Failed to load review");
+      expect(listJobs).toHaveBeenCalledTimes(3);
+      store.loadReview(42);
+      await vi.runAllTimersAsync();
+      expect(store.getError()).toBeNull();
+      expect(store.getPrompt()).toBe("queued prompt");
+      expect(store.getSelectedJob()?.status).toBe("queued");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-  it("shows an existing review when its optional job lookup fails", async () => {
+  it("recovers a required job read when the review is missing", async () => {
+    const listJobs = vi
+      .fn()
+      .mockImplementationOnce(offlineRead)
+      .mockResolvedValue({
+        jobs: [{ id: 42, status: "queued", prompt: "queued prompt" }],
+      });
+    const store = reviewStore({
+      getReview: vi.fn().mockRejectedValue(new Response(null, { status: 404 })),
+      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
+      listJobs,
+    } as never);
+    vi.useFakeTimers();
+    try {
+      store.setSelectedJobId(42);
+      store.loadReview(42);
+      await vi.runAllTimersAsync();
+      expect(listJobs).toHaveBeenCalledTimes(2);
+      expect(store.getPrompt()).toBe("queued prompt");
+      expect(store.getSelectedJob()?.status).toBe("queued");
+      expect(store.getError()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports an HTTP failure for a required job read", async () => {
+    const listJobs = vi
+      .fn()
+      .mockRejectedValue(new Response(null, { status: 503 }));
+    const store = reviewStore({
+      getReview: vi.fn().mockRejectedValue(new Response(null, { status: 404 })),
+      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
+      listJobs,
+    } as never);
+    store.setSelectedJobId(42);
+    store.loadReview(42);
+    await vi.waitFor(() =>
+      expect(store.getError()).toBe("Failed to load review"),
+    );
+    expect(listJobs).toHaveBeenCalledOnce();
+  });
+
+  it("shows an existing review without retrying its optional job lookup", async () => {
+    const listJobs = vi.fn().mockImplementation(offlineRead);
     const store = reviewStore({
       getReview: vi
         .fn()
@@ -319,7 +334,36 @@ describe("Roborev request cancellation", () => {
           job_id: 42,
           output: "review output",
           closed: false,
+          job: { id: 42, status: "done" },
         }),
+      getReviewProjection: vi
+        .fn()
+        .mockResolvedValue({ responses: [{ id: 1, response: "comment" }] }),
+      listJobs,
+    } as never);
+    vi.useFakeTimers();
+    try {
+      store.setSelectedJobId(42);
+      store.loadReview(42);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getReview()?.output).toBe("review output");
+      expect(store.getResponses()[0]?.response).toBe("comment");
+      expect(store.getSelectedJob()?.status).toBe("done");
+      expect(store.isLoading()).toBe(false);
+      expect(listJobs).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows an existing review when its optional job lookup fails", async () => {
+    const store = reviewStore({
+      getReview: vi.fn().mockResolvedValue({
+        id: 1,
+        job_id: 42,
+        output: "review output",
+        closed: false,
+      }),
       getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
       listJobs: vi.fn().mockRejectedValue(new Response(null, { status: 503 })),
     } as never);
@@ -541,7 +585,7 @@ describe("review close reporting", () => {
       const onError = vi.fn();
       const getReview = vi.fn(async () => {
         if (submitted && action.includes("refresh failure"))
-          throw new Response(null, { status: 503 });
+          throw new Error("refresh failed");
         return { id: 1, job_id: 42, output: "review", closed };
       });
       const store = reviewStore(
@@ -588,7 +632,7 @@ describe("review close reporting", () => {
 it("reports a review load failure once per selection without a toast", async () => {
   const onError = vi.fn();
   const getReview = vi.fn(async () => {
-    throw new Response(null, { status: 503 });
+    throw new Error("load failed");
   });
   const store = reviewStore(
     {

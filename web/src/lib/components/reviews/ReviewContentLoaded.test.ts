@@ -1,6 +1,6 @@
-import { cleanup, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { tick } from "svelte";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import ReviewContent from "./ReviewContent.svelte";
 
@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   status: "failed",
   loaded: Promise.withResolvers<void>(),
 }));
+const reviewLoads = vi.hoisted(() => vi.fn());
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
@@ -21,6 +22,7 @@ vi.mock("../../stores/context", () => ({
       getSelectedJob: () => ({ status: state.status, error: state.error }),
       getSelectedJobId: () => 42,
       getError: () => state.loadError,
+      loadReview: reviewLoads,
     },
   }),
 }));
@@ -38,7 +40,7 @@ afterEach(() => {
   state.status = "failed";
 });
 
-function stubIdleCallback(): void {
+beforeEach(() => {
   vi.stubGlobal(
     "requestIdleCallback",
     (callback: IdleRequestCallback): number => {
@@ -47,10 +49,9 @@ function stubIdleCallback(): void {
     },
   );
   vi.stubGlobal("cancelIdleCallback", vi.fn());
-}
+});
 
 it("keeps the failure reason visible after the rich renderer loads", async () => {
-  stubIdleCallback();
   render(ReviewContent);
 
   await state.loaded.promise;
@@ -59,8 +60,7 @@ it("keeps the failure reason visible after the rich renderer loads", async () =>
   expect(screen.getByRole("alert")).toHaveTextContent(state.error);
 });
 
-it("shows a review load failure instead of the loaded renderer", async () => {
-  stubIdleCallback();
+it("offers a retry instead of the loaded renderer when the review cannot load", async () => {
   state.loadError = "Failed to load review";
   state.output = "Existing review output";
   state.status = "done";
@@ -69,4 +69,6 @@ it("shows a review load failure instead of the loaded renderer", async () => {
   await vi.dynamicImportSettled();
   await tick();
   expect(screen.getByRole("alert")).toHaveTextContent("Failed to load review");
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(reviewLoads).toHaveBeenCalledExactlyOnceWith(42);
 });
