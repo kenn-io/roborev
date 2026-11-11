@@ -1170,3 +1170,11 @@ func verifyComment(t *testing.T, actual Response, expectedUser, expectedMsg stri
 	assert.Equal(t, expectedUser, actual.Responder)
 	assert.Equal(t, expectedMsg, actual.Response)
 }
+
+func TestGetReviewByJobIDContextCancellation(t *testing.T) {
+	db := openTestDB(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := db.GetReviewByJobIDContext(ctx, 1)
+	require.ErrorIs(t, err, context.Canceled)
+}

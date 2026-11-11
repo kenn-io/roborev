@@ -111,7 +111,7 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 	if err != nil {
 		return nil, nil, nil, nil, zero, nil, err
 	}
-	review, err := p.db.GetReviewByJobID(jobID)
+	review, err := p.db.GetReviewByJobIDContext(ctx, jobID)
 	if err != nil {
 		return nil, nil, nil, nil, zero, nil, err
 	}
@@ -291,6 +291,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 	if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
 		return errors.New("Kata publication window expired")
 	}
+	checkout := resolveEffectiveRepoPath("kata", review.Job)
 	postCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	return p.db.RunKataPublication(postCtx, record.ReviewUUID, record.DocumentHash, func(ctx context.Context) error {
@@ -309,7 +310,10 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		if err != nil {
 			return err
 		}
-		selection, err := selectKataPublication(ctx, cfg, job, resolveEffectiveRepoPath("kata", job))
+		if job.RepoPath != review.Job.RepoPath || job.WorktreePath != review.Job.WorktreePath {
+			return storage.ErrReviewChanged
+		}
+		selection, err := selectKataPublication(ctx, cfg, job, checkout)
 		if err != nil {
 			return err
 		}
@@ -352,7 +356,7 @@ func (p *kataPublisher) Authorize(ctx context.Context, jobID int64, policy strin
 		return err
 	}
 	defer unlock()
-	review, err := p.db.GetReviewByJobID(jobID)
+	review, err := p.db.GetReviewByJobIDContext(ctx, jobID)
 	if err != nil {
 		return err
 	}
@@ -375,7 +379,7 @@ func (p *kataPublisher) Authorize(ctx context.Context, jobID int64, policy strin
 // inspectUnmarked discovers correlation on a machine that did not authorize
 // the write; it never creates a marker or sends a POST.
 func (p *kataPublisher) inspectUnmarked(ctx context.Context, record *storage.KataPublicationRecord) (*KataPublicationStatus, error) {
-	review, err := p.db.GetReviewByJobID(record.JobID)
+	review, err := p.db.GetReviewByJobIDContext(ctx, record.JobID)
 	if err != nil {
 		return nil, err
 	}
