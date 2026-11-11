@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -535,6 +536,75 @@ func TestExperimentReportTerminalOutputCoverage(t *testing.T) {
 					assert.Nil(metric.RandomizationThreshold)
 				})
 			}
+		})
+	}
+}
+
+func TestExperimentReportPartialSessionCost(t *testing.T) {
+	t.Parallel()
+	for _, cost := range []float64{0, 2.5} {
+		t.Run(fmt.Sprint(cost), func(t *testing.T) {
+			db, repo := setupDBAndRepo(t, "partial-session-cost")
+			job := reportJob(t, db, repo.ID, "default", "default-subject", new(cost))
+			reportJob(t, db, repo.ID, "experiment", "experiment-subject", new(1.0))
+			usage, err := json.Marshal(map[string]any{"has_cost": true, "cost_usd": cost, "expected_provider_sessions": 2, "provider_session_ids": []string{"one"}})
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET token_usage=? WHERE id=?`, string(usage), job.ID)
+			require.NoError(t, err)
+			r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{MinSubjects: 1})
+			require.NoError(t, err)
+			assert.Equal(t, 1, r.Default.Cost.EligibleComponents)
+			assert.Zero(t, r.Default.Cost.PricedComponents)
+			assert.False(t, r.Default.Cost.Complete)
+			require.NotNil(t, r.Default.Cost.RecordedUSD)
+			assert.InDelta(t, cost, *r.Default.Cost.RecordedUSD, 1e-12)
+			require.Len(t, r.Default.CostliestUnits, 1)
+			assert.InDelta(t, cost, r.Default.CostliestUnits[0].RecordedUSD, 1e-12)
+			assert.False(t, r.Default.CostliestUnits[0].Complete)
+			metric := reportMetric(t, r, "cost_per_review")
+			assert.Nil(t, metric.Default.Value)
+			assert.Equal(t, "not enough data", metric.State)
+			assert.Nil(t, metric.Delta)
+		})
+	}
+}
+
+func TestExperimentReportCheckedSynthesisAttribution(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, config, labels, executor string
+		want                           *float64
+	}{
+		{"checked passthrough", `{"check":{}}`, `["voter"]`, "test", new(0.0)},
+		{"one source with instructions", `{"check":{},"instructions":"combine"}`, `["voter"]`, "backup", new(.5)},
+		{"multiple sources", `{"check":{}}`, `["voter","other"]`, "backup", new(.5)},
+		{"historical unknown", `{"check":{}}`, `[]`, "backup", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, repo := setupDBAndRepo(t, "checked-synthesis")
+			run := testUUID(tc.name)
+			members, synth, err := db.EnqueuePanelRun(
+				[]EnqueueOpts{{RepoID: repo.ID, GitRef: "topic", Agent: "test", PanelRunUUID: &run, PanelMemberName: "voter"}},
+				EnqueueOpts{RepoID: repo.ID, GitRef: "topic", Agent: "planned", PanelRunUUID: &run, PanelMemberConfigJSON: tc.config, Experiment: reportAssignment("default", "subject", `{"Members":[{"Agent":"test","PanelMemberName":"voter"}],"Synthesis":{"Agent":"planned"}}`)},
+			)
+			require.NoError(t, err)
+			clean := `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[],"source_labels":` + tc.labels + `}`
+			reportFinish(t, db, members[0].ID, "done", new(1.0), clean)
+			reportFinish(t, db, synth.ID, "done", new(2.0), clean)
+			_, err = db.ExecContext(t.Context(), `UPDATE reviews SET agent=? WHERE job_id=?`, tc.executor, synth.ID)
+			require.NoError(t, err)
+			r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
+			require.NoError(t, err)
+			metric := reportMetric(t, r, "off_plan_rate")
+			if tc.want == nil {
+				assert.Nil(t, metric.Default.Value)
+				assert.False(t, metric.Default.Complete)
+			} else {
+				require.NotNil(t, metric.Default.Value)
+				assert.InDelta(t, *tc.want, *metric.Default.Value, 1e-12)
+			}
+			require.NotNil(t, r.Default.Cost.RecordedUSD)
+			assert.InDelta(t, 3, *r.Default.Cost.RecordedUSD, 1e-12)
 		})
 	}
 }

@@ -199,11 +199,12 @@ type experimentReportUnit struct {
 type experimentReportJob struct {
 	ref                                                                                          ExperimentComponentReference
 	status, member, structured, jobType, reviewType, analysisType, source, jobError, minSeverity string
+	configuredAgent, synthesisConfig                                                             string
 	memberIndex                                                                                  int
 	nonVoting, invoked, eligible, priced                                                         bool
 	started, finished                                                                            time.Time
 	finishedWholeSecond                                                                          bool
-	dollars                                                                                      float64
+	dollars                                                                                      sql.NullFloat64
 }
 
 // These deliberately narrow projections read the persisted daemon plan without
@@ -333,14 +334,14 @@ func loadExperimentUnit(ctx context.Context, q *sql.Tx, u *experimentReportUnit)
         COALESCE(j.non_voting,0),
         CASE WHEN `+experimentAgentInvoked+` THEN 1 ELSE 0 END,
         CASE WHEN `+costEligible+` THEN 1 ELSE 0 END,
-        CASE WHEN `+costEligible+` AND `+hasCost+` THEN 1 ELSE 0 END,
+        CASE WHEN `+costEligible+` AND `+costComplete+` THEN 1 ELSE 0 END,
         CASE WHEN `+costEligible+` AND `+hasCost+`
-             THEN json_extract(j.token_usage,'$.cost_usd') ELSE 0 END,
+             THEN json_extract(j.token_usage,'$.cost_usd') ELSE NULL END,
         COALESCE(j.started_at,''), COALESCE(j.finished_at,''),
         COALESCE(r.structured_output,''), COALESCE(j.job_type,''),
         COALESCE(j.review_type,''), COALESCE(j.analysis_type,''),
         COALESCE(j.source,''), COALESCE(j.error,''), COALESCE(j.min_severity,''),
-        COALESCE(j.token_usage,'')
+        COALESCE(j.token_usage,''), COALESCE(j.agent,''), COALESCE(j.panel_member_config_json,'')
  FROM review_jobs j LEFT JOIN reviews r ON r.job_id=j.id
  WHERE `+condition+` ORDER BY j.id`, u.uuid)
 	if err != nil {
@@ -350,7 +351,7 @@ func loadExperimentUnit(ctx context.Context, q *sql.Tx, u *experimentReportUnit)
 	for rows.Next() {
 		var j experimentReportJob
 		var start, finish, usage string
-		if err = rows.Scan(&j.ref.JobID, &j.ref.JobUUID, &j.ref.Role, &j.ref.Agent, &j.ref.Provider, &j.ref.SessionID, &j.status, &j.member, &j.memberIndex, &j.nonVoting, &j.invoked, &j.eligible, &j.priced, &j.dollars, &start, &finish, &j.structured, &j.jobType, &j.reviewType, &j.analysisType, &j.source, &j.jobError, &j.minSeverity, &usage); err != nil {
+		if err = rows.Scan(&j.ref.JobID, &j.ref.JobUUID, &j.ref.Role, &j.ref.Agent, &j.ref.Provider, &j.ref.SessionID, &j.status, &j.member, &j.memberIndex, &j.nonVoting, &j.invoked, &j.eligible, &j.priced, &j.dollars, &start, &finish, &j.structured, &j.jobType, &j.reviewType, &j.analysisType, &j.source, &j.jobError, &j.minSeverity, &usage, &j.configuredAgent, &j.synthesisConfig); err != nil {
 			return err
 		}
 		var identifiers struct {
@@ -364,13 +365,40 @@ func loadExperimentUnit(ctx context.Context, q *sql.Tx, u *experimentReportUnit)
 		j.started = parseSQLiteTime(start)
 		j.finished = parseSQLiteTime(finish)
 		j.finishedWholeSecond = finish != "" && !strings.ContainsAny(finish, ".,")
-		if math.IsNaN(j.dollars) || math.IsInf(j.dollars, 0) {
+		if j.dollars.Valid && (math.IsNaN(j.dollars.Float64) || math.IsInf(j.dollars.Float64, 0)) {
 			j.priced = false
-			j.dollars = 0
+			j.dollars.Valid = false
 		}
 		u.jobs = append(u.jobs, j)
 	}
 	return rows.Err()
+}
+
+// synthesisExecutorEvidence separates a checker-only invocation from synthesis.
+// The checker preserves source labels; one source with no instructions is the
+// passthrough path. Old checked results without enough evidence stay unknown.
+func synthesisExecutorEvidence(j experimentReportJob, plan experimentReportJobPlan) (compare, known bool) {
+	var cfg struct {
+		Instructions string         `json:"instructions"`
+		Check        jsontext.Value `json:"check"`
+	}
+	if j.synthesisConfig != "" && json.Unmarshal([]byte(j.synthesisConfig), &cfg) != nil {
+		return false, false
+	}
+	if len(cfg.Check) == 0 || string(cfg.Check) == "null" {
+		return true, true
+	}
+	if j.configuredAgent != "" && plan.Agent != "" && agentname.Canonical(j.configuredAgent) != agentname.Canonical(plan.Agent) {
+		return true, true
+	}
+	doc, err := structuredreview.Decode(jsontext.Value(j.structured))
+	if err != nil || len(doc.SourceLabels) == 0 {
+		return false, false
+	}
+	if len(doc.SourceLabels) == 1 && cfg.Instructions == "" {
+		return false, true
+	}
+	return true, true
 }
 
 func experimentTerminal(status string) bool {
@@ -424,7 +452,9 @@ func aggregateExperimentUnit(u *experimentReportUnit) {
 	var firstVoting time.Time
 	failures := 0
 	invoked, deviations := 0, 0
+	offPlanUnknown := false
 	dollars := 0.0
+	recorded := false
 	for i, j := range u.jobs {
 		key := "job"
 		if u.kind == ReviewUnitPanel {
@@ -451,9 +481,20 @@ func aggregateExperimentUnit(u *experimentReportUnit) {
 			failures++
 		}
 		if j.invoked {
-			invoked++
-			if ok && plan.Agent != "" && agentname.Canonical(j.ref.Agent) != agentname.Canonical(plan.Agent) {
-				deviations++
+			compare, known := true, true
+			if j.ref.Role == "synthesis" {
+				compare, known = synthesisExecutorEvidence(j, plan)
+				if !compare && known {
+					u.jobs[i].ref.Agent = j.configuredAgent
+				}
+			}
+			if !known {
+				offPlanUnknown = true
+			} else if compare {
+				invoked++
+				if ok && plan.Agent != "" && agentname.Canonical(j.ref.Agent) != agentname.Canonical(plan.Agent) {
+					deviations++
+				}
 			}
 		}
 		if j.eligible {
@@ -461,7 +502,10 @@ func aggregateExperimentUnit(u *experimentReportUnit) {
 		}
 		if j.priced {
 			u.cost.PricedComponents++
-			dollars += j.dollars
+		}
+		if j.dollars.Valid {
+			recorded = true
+			dollars += j.dollars.Float64
 		}
 		if (u.kind == ReviewUnitJob || (j.ref.Role == "member" && !j.nonVoting)) && !j.started.IsZero() && (firstVoting.IsZero() || j.started.Before(firstVoting)) {
 			firstVoting = j.started
@@ -479,7 +523,7 @@ func aggregateExperimentUnit(u *experimentReportUnit) {
 		}
 	}
 	u.cost.Complete = u.attributed && u.terminal && u.cost.EligibleComponents > 0 && u.cost.EligibleComponents == u.cost.PricedComponents
-	if u.cost.PricedComponents > 0 {
+	if recorded {
 		u.cost.RecordedUSD = new(dollars)
 	}
 	u.expected["cost_per_review"] = true
@@ -493,9 +537,9 @@ func aggregateExperimentUnit(u *experimentReportUnit) {
 		// count as execution failures, while skipped jobs remain nonfailures.
 		u.values["job_failure_rate"] = float64(failures) / float64(len(u.jobs))
 	}
-	u.expected["off_plan_rate"] = invoked > 0 || !u.attributed || !u.terminal
+	u.expected["off_plan_rate"] = invoked > 0 || offPlanUnknown || !u.attributed || !u.terminal
 	// Off-plan is also a component fraction within a complete review unit.
-	if invoked > 0 && u.attributed && u.terminal {
+	if invoked > 0 && !offPlanUnknown && u.attributed && u.terminal {
 		u.values["off_plan_rate"] = float64(deviations) / float64(invoked)
 	}
 	if u.canonical < 0 {
@@ -540,6 +584,7 @@ func aggregateExperimentArm(units []experimentReportUnit, arm string) Experiment
 	a := ExperimentArmReport{CostliestUnits: []ExperimentCostliestUnit{}}
 	subjects := map[string]bool{}
 	recorded := 0.0
+	hasRecorded := false
 	for _, u := range units {
 		if u.arm != arm {
 			continue
@@ -595,6 +640,7 @@ func aggregateExperimentArm(units []experimentReportUnit, arm string) Experiment
 		a.Cost.PricedComponents += u.cost.PricedComponents
 		a.Cost.CompleteUnits += u.cost.CompleteUnits
 		if u.cost.RecordedUSD != nil {
+			hasRecorded = true
 			recorded += *u.cost.RecordedUSD
 			candidate := ExperimentCostliestUnit{Kind: u.kind, UUID: u.uuid, RecordedUSD: *u.cost.RecordedUSD, Complete: u.cost.Complete, Components: []ExperimentComponentReference{}}
 			for _, j := range u.jobs {
@@ -609,7 +655,7 @@ func aggregateExperimentArm(units []experimentReportUnit, arm string) Experiment
 	}
 	a.Subjects = len(subjects)
 	a.Cost.Complete = a.ReviewUnits > 0 && a.Cost.CompleteUnits == a.ReviewUnits
-	if a.Cost.PricedComponents > 0 {
+	if hasRecorded {
 		a.Cost.RecordedUSD = new(recorded)
 	}
 	if !a.Cost.Complete {
