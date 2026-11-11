@@ -56,6 +56,11 @@ func kataCmd() *cobra.Command {
 				response, err = api.KataPublication(cmd.Context(), &generated.KataPublicationRequestOptions{Query: query})
 			}
 			if err != nil {
+				if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Detail != nil {
+					detail := sanitizeSearchSingleLine(*problem.Detail)
+					problem.Detail = &detail
+					err = problem
+				}
 				if !write {
 					classified := client.ClassifyKataContextError(err)
 					if errors.Is(classified, client.ErrKataAuthentication) || errors.Is(classified, client.ErrKataAccess) || errors.Is(classified, context.Canceled) || errors.Is(classified, context.DeadlineExceeded) {
@@ -71,63 +76,67 @@ func kataCmd() *cobra.Command {
 				return daemonRequestError("Kata publication", err)
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Status: %s", response.State)
+			fmt.Fprintf(out, "Status: %s", sanitizeSearchSingleLine(response.State))
 			if response.Expired {
 				fmt.Fprint(out, " (expired)")
 			}
 			fmt.Fprintln(out)
 			if response.IssueUID != nil {
-				fmt.Fprintf(out, "Issue: %s (%s)\n", deref(response.IssueShortID), deref(response.IssueUID))
+				fmt.Fprintf(out, "Issue: %s (%s)\n", sanitizeSearchSingleLine(deref(response.IssueShortID)), sanitizeSearchSingleLine(deref(response.IssueUID)))
 			}
 			if response.Project != nil && *response.Project != "" {
-				fmt.Fprintf(out, "Project: %s\n", *response.Project)
+				fmt.Fprintf(out, "Project: %s\n", sanitizeSearchSingleLine(*response.Project))
 			}
 			if response.DestinationID != nil {
-				fmt.Fprintf(out, "Destination: %s\n", *response.DestinationID)
+				fmt.Fprintf(out, "Destination: %s\n", sanitizeSearchSingleLine(*response.DestinationID))
 			}
 			if response.SourceOutput != nil && *response.SourceOutput != "" {
-				fmt.Fprintf(out, "\nOriginal review:\n%s\n", *response.SourceOutput)
+				fmt.Fprintf(out, "\nOriginal review:\n%s\n", sanitizeSearchExcerpt(*response.SourceOutput))
 			}
 			if response.Issue != nil {
-				fmt.Fprintf(out, "\nIssue: %s\n%s\n", response.Issue.Title, response.Issue.Body)
+				fmt.Fprintf(out, "\nIssue: %s\n%s\n", sanitizeSearchSingleLine(response.Issue.Title), sanitizeSearchExcerpt(response.Issue.Body))
 			}
 			for _, root := range response.Roots {
 				handle := ""
 				if root.Comment != nil {
-					handle = deref(root.Comment.Handle)
+					handle = sanitizeSearchSingleLine(deref(root.Comment.Handle))
 				}
 				if root.EndPosition != nil {
-					fmt.Fprintf(out, "Findings %d-%d: %s", root.Position+1, *root.EndPosition+1, root.State)
+					fmt.Fprintf(out, "Findings %d-%d: %s", root.Position+1, *root.EndPosition+1, sanitizeSearchSingleLine(root.State))
 				} else {
-					fmt.Fprintf(out, "Finding %d: %s", root.Position+1, root.State)
+					fmt.Fprintf(out, "Finding %d: %s", root.Position+1, sanitizeSearchSingleLine(root.State))
 				}
 				if handle != "" {
 					fmt.Fprintf(out, " %s", handle)
 				}
 				if root.Comment != nil {
-					fmt.Fprintf(out, " (author: %s; UID: %s)", root.Comment.Author, root.Comment.UID)
+					fmt.Fprintf(out, " (author: %s; UID: %s)", sanitizeSearchSingleLine(root.Comment.Author), sanitizeSearchSingleLine(root.Comment.UID))
 				}
 				fmt.Fprintln(out)
 			}
 			for _, comment := range response.Comments {
-				fmt.Fprintf(out, "\nComment %s (%s; %s) by %s", deref(comment.Handle), comment.UID, deref(comment.ReplyKind), comment.Author)
+				label := "Comment"
 				if comment.ReplyToUID != nil {
-					fmt.Fprintf(out, " to %s", *comment.ReplyToUID)
+					label = "Reply"
+				}
+				fmt.Fprintf(out, "\n%s %s (%s; %s) by %s", label, sanitizeSearchSingleLine(deref(comment.Handle)), sanitizeSearchSingleLine(comment.UID), sanitizeSearchSingleLine(deref(comment.ReplyKind)), sanitizeSearchSingleLine(comment.Author))
+				if comment.ReplyToUID != nil {
+					fmt.Fprintf(out, " to %s", sanitizeSearchSingleLine(*comment.ReplyToUID))
 				}
 				if comment.Teammate != nil {
-					fmt.Fprintf(out, " (%s)", *comment.Teammate)
+					fmt.Fprintf(out, " (%s)", sanitizeSearchSingleLine(*comment.Teammate))
 				}
 				if comment.Lineage != nil {
-					fmt.Fprintf(out, "; lineage: %s", *comment.Lineage)
+					fmt.Fprintf(out, "; lineage: %s", sanitizeSearchSingleLine(*comment.Lineage))
 				}
 				if comment.EditedAt != nil {
 					fmt.Fprint(out, " [edited]")
 				}
 				fmt.Fprint(out, "; edit history: unknown")
-				fmt.Fprintf(out, ":\n%s\n", comment.Body)
+				fmt.Fprintf(out, ":\n%s\n", sanitizeSearchExcerpt(comment.Body))
 			}
 			if response.Message != nil && strings.TrimSpace(*response.Message) != "" {
-				return fmt.Errorf("publication incomplete: %s", *response.Message)
+				return fmt.Errorf("publication incomplete: %s", sanitizeSearchSingleLine(*response.Message))
 			}
 			return nil
 		}
