@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -43,7 +44,8 @@ type SuppliedPanelSynthesis struct {
 }
 
 type EnqueueSuppliedPanelInput struct {
-	Body struct {
+	RawBody []byte
+	Body    struct {
 		RequestID     *uuid.UUID             `json:"request_id,omitempty" doc:"Retry an identical submission with this ID to recover its original panel"`
 		RepoPath      string                 `json:"repo_path" minLength:"1"`
 		GitRef        string                 `json:"git_ref" minLength:"1" doc:"Commit or range resolved once for every reviewer and synthesis"`
@@ -60,9 +62,10 @@ func (s *Server) humaEnqueueSuppliedPanel(ctx context.Context, input *EnqueueSup
 		if *req.RequestID == uuid.Nil() {
 			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "request_id must be a nonzero UUID"})
 		}
-		data, err := json.Marshal(req, json.Deterministic(true))
-		if err != nil {
-			return nil, err
+		// Hash the wire input so changes to Go fields or JSON tags cannot strand a receipt.
+		data := jsontext.Value(input.RawBody)
+		if err := data.Canonicalize(); err != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: fmt.Sprintf("invalid request JSON: %v", err)})
 		}
 		request = storage.PanelEnqueueRequest{ID: *req.RequestID, Hash: fmt.Sprintf("%x", sha256.Sum256(data))}
 		job, found, err := s.db.GetPanelEnqueueRequest(ctx, request)

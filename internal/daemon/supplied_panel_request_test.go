@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -184,4 +185,44 @@ func TestSuppliedPanelRequestGeneratedClientRecoversLostResponse(t *testing.T) {
 	job, err = db.ClaimJob(testWorkerID)
 	require.NoError(t, err)
 	assert.Nil(t, job, "replay must not queue another member or release held synthesis")
+}
+
+func TestSuppliedPanelRequestUsesWireFingerprint(t *testing.T) {
+	server, db, _, body := panelRequestFixture(t)
+	t.Chdir(body["repo_path"].(string))
+	body["repo_path"], body["git_ref"] = ".", "HEAD"
+	requestID, err := uuid.Parse("4b84f986-3e48-4cee-9131-99d747c02ea5") //nolint:forbidigo // UUID from the fixed JSON wire fixture below.
+	require.NoError(t, err)
+	body["request_id"] = requestID
+	// This wire fixture and its SHA-256 are independent of the server's Go types,
+	// including their field order and JSON omission tags.
+	const canonical = `{"git_ref":"HEAD","hold_synthesis":true,"members":[{"agent":"test","name":"reviewer","review_prompt":"Review this commit.","review_settings":{}}],"repo_path":".","request_id":"4b84f986-3e48-4cee-9131-99d747c02ea5","synthesis":{"agent":"test"}}`
+	first := postPanelRequest(t, server, body)
+	require.Equal(t, http.StatusCreated, first.Code, first.Body.String())
+	var accepted PanelEnqueueResponse
+	testutil.DecodeJSON(t, first, &accepted)
+	var storedHash string
+	require.NoError(t, db.QueryRowContext(t.Context(),
+		"SELECT request_hash FROM panel_enqueue_requests WHERE request_id = ?", body["request_id"]).Scan(&storedHash))
+	assert.Equal(t, "2ff51d127c4f82fd58caeb51776ff1de0d12c2533b38bb9f06a8fe419d5f0562", storedHash,
+		"the persisted fingerprint must not change when server structs change")
+
+	// Property order, whitespace and equivalent string escapes do not change
+	// the caller's input. This body bypasses the Go request serializer entirely.
+	wire := strings.ReplaceAll(canonical, "Review this commit.", `Review this \u0063ommit.`)
+	retry := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/panel/enqueue", strings.NewReader("\n"+wire+"\n"))
+	req.Header.Set("Content-Type", "application/json")
+	server.httpServer.Handler.ServeHTTP(retry, req)
+	require.Equal(t, http.StatusCreated, retry.Code, retry.Body.String())
+	var replay PanelEnqueueResponse
+	testutil.DecodeJSON(t, retry, &replay)
+	assert.Equal(t, accepted.PanelRunUUID, replay.PanelRunUUID)
+	assert.Equal(t, accepted.MemberJobIDs, replay.MemberJobIDs)
+
+	// Rebuilding the request with an explicit default is different wire input,
+	// even though the current server would execute it the same way.
+	body["members"].([]any)[0].(map[string]any)["review_settings"] = map[string]any{"binary_evidence": false}
+	conflict := postPanelRequest(t, server, body)
+	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
 }

@@ -10,7 +10,8 @@ import (
 var ErrPanelRequestConflict = errors.New("request_id was already used with different panel input")
 
 // PanelEnqueueRequest identifies one caller submission independently of its
-// resolved revision and execution defaults. Hash covers the decoded API input.
+// resolved revision and execution defaults. Hash covers the RFC 8785 canonical
+// JSON request body, independently of the server's request types.
 type PanelEnqueueRequest struct {
 	ID   uuid.UUID
 	Hash string
