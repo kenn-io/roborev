@@ -14,4 +14,5 @@ export interface KataResponseRequest {
   kind: string;
   project: string;
   target_uid: string;
+  teammate: string;
 }

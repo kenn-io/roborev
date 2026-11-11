@@ -29,6 +29,7 @@ export interface KataIssue {
   publication_envelope?: PublicationEnvelope;
   qualified_id: string;
   related?: KataLinkPeer[];
+  reply_teammate?: string;
   roots?: KataRoot[];
   short_id: string;
   status: string;

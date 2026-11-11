@@ -464,6 +464,9 @@ func TestKataInspectionReadsOversizedUnmarkedPublication(t *testing.T) {
 
 func TestKataResponseRejectsInvalidRequestsBeforeWriting(t *testing.T) {
 	server, fake := kataAPIServer(t)
+	invalidEvidence := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: "reviews", DestinationID: "destination", Teammate: "roborev", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "confirm", Body: "short", IdempotencyKey: "key"})
+	assert.Equal(t, http.StatusBadRequest, invalidEvidence.Code)
+	assert.Empty(t, fake.AllRequests())
 	for _, request := range []KataResponseRequest{
 		{},
 		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "reply", Body: "text", IdempotencyKey: "key"},
@@ -510,7 +513,7 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	full := decodeKata[KataIssue](t, read)
 	body := strings.Repeat("e", 40)
-	posted := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, IssueUID: full.UID, TargetUID: prior.UID, Kind: "refute", Body: body, IdempotencyKey: "Exact-Key"})
+	posted := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "refute", Body: body, IdempotencyKey: "Exact-Key"})
 	require.Equal(t, http.StatusOK, posted.Code, posted.Body.String())
 	receipt := decodeKata[KataReplyReceipt](t, posted)
 	require.NoError(t, requestErr)
@@ -529,6 +532,26 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	require.Len(t, full.Comments, 3)
 	assert.Equal(t, body, full.Comments[2].Body)
 	assert.Equal(t, prior.UID, *full.Comments[2].ReplyToUID)
+	// The successful response may have been lost. A fresh read after a teammate
+	// change must not turn the same key into a different producer request.
+	server.configWatcher.cfgMu.Lock()
+	server.configWatcher.cfg.Integrations.Kata.Teammate = "new-teammate"
+	server.configWatcher.reloadCounter++
+	server.configWatcher.cfgMu.Unlock()
+	read = kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"other"}})
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	updated := decodeKata[KataIssue](t, read)
+	beforeChangeRetry := len(fake.AllRequests())
+	retry := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: updated.Project, DestinationID: updated.DestinationID, Generation: updated.Generation, Teammate: full.ReplyTeammate, IssueUID: updated.UID, TargetUID: prior.UID, Kind: "refute", Body: body, IdempotencyKey: "Exact-Key"})
+	assert.Equal(t, http.StatusConflict, retry.Code, retry.Body.String())
+	assert.Len(t, fake.AllRequests(), beforeChangeRetry)
+	server.configWatcher.cfgMu.Lock()
+	server.configWatcher.cfg.Integrations.Kata.Teammate = "roborev"
+	server.configWatcher.reloadCounter++
+	server.configWatcher.cfgMu.Unlock()
+	read = kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"other"}})
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	full = decodeKata[KataIssue](t, read)
 	// A reload after the full read but before the final write invalidates the tuple.
 	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/") {
@@ -539,7 +562,7 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 		return false
 	}
 	before := len(fake.AllRequests())
-	stale := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, IssueUID: full.UID, TargetUID: prior.UID, Kind: "reply", Body: "another reply", IdempotencyKey: "other-key"})
+	stale := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "reply", Body: "another reply", IdempotencyKey: "other-key"})
 	assert.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
 	for _, request := range fake.AllRequests()[before:] {
 		assert.NotEqual(t, http.MethodPost, request.Method)
@@ -560,7 +583,7 @@ func TestKataResponseRejectsDestinationChangesAtBarrier(t *testing.T) {
 			read := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"reviews"}})
 			require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 			full := decodeKata[KataIssue](t, read)
-			request := KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, IssueUID: full.UID, TargetUID: target, Kind: "reply", Body: "evidence", IdempotencyKey: "Exact-Key"}
+			request := KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: target, Kind: "reply", Body: "evidence", IdempotencyKey: "Exact-Key"}
 			entered, resume := make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			fake.Override = func(_ http.ResponseWriter, r *http.Request) bool {

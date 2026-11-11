@@ -2630,6 +2630,7 @@ type KataIssue struct {
 	PublicationEnvelope *PublicationEnvelope `json:"publication_envelope,omitempty"`
 	QualifiedID         string               `json:"qualified_id" validate:"required"`
 	Related             []KataLinkPeer       `json:"related,omitempty"`
+	ReplyTeammate       *string              `json:"reply_teammate,omitempty"`
 	Roots               []KataRoot           `json:"roots,omitempty"`
 	ShortID             string               `json:"short_id" validate:"required"`
 	Status              string               `json:"status" validate:"required"`
@@ -2826,11 +2827,13 @@ func (k KataPublicationRequest) Validate() error {
 
 type KataReplyReceipt struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema   *string `json:"$schema,omitempty"`
-	Author   string  `json:"author" validate:"required"`
-	Changed  bool    `json:"changed"`
-	Teammate string  `json:"teammate" validate:"required"`
-	UID      string  `json:"uid" validate:"required"`
+	Schema   *string    `json:"$schema,omitempty"`
+	Author   string     `json:"author" validate:"required"`
+	Body     string     `json:"body" validate:"required"`
+	Changed  bool       `json:"changed"`
+	EditedAt *time.Time `json:"edited_at,omitempty"`
+	Teammate string     `json:"teammate" validate:"required"`
+	UID      string     `json:"uid" validate:"required"`
 }
 
 func (k KataReplyReceipt) Validate() error {
@@ -2848,6 +2851,7 @@ type KataResponseRequest struct {
 	Kind           string  `json:"kind" validate:"required"`
 	Project        string  `json:"project" validate:"required"`
 	TargetUID      string  `json:"target_uid" validate:"required"`
+	Teammate       string  `json:"teammate" validate:"required"`
 }
 
 func (k KataResponseRequest) Validate() error {

@@ -6,7 +6,9 @@ export interface KataReplyReceipt {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   author: string;
+  body: string;
   changed: boolean;
+  edited_at?: string;
   teammate: string;
   uid: string;
 }

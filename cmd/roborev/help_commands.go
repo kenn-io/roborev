@@ -31,7 +31,8 @@ kata show, especially when a hook selected a different project. Choose one of
 --reply, --confirm, --refute or --supersede; confirm and refute require at
 least 40 normalized Unicode characters. The original message is sent unchanged.
 Keep the printed retry command and exact idempotency key if the result is
-uncertain. Kata reports the actual author and configured teammate.`, example: `  roborev kata comment ISSUE_UID --project PROJECT --destination-id DESTINATION_ID --reply TARGET_UID --idempotency-key my-reply-key -m 'Evidence for this finding'`},
+uncertain. It preserves the expected teammate; a change stops the retry. Kata
+reports the actual author and teammate, and an edited replay shows current text.`, example: `  roborev kata comment ISSUE_UID --project PROJECT --destination-id DESTINATION_ID --reply TARGET_UID --idempotency-key my-reply-key -m 'Evidence for this finding'`},
 	"search": {long: `Search completed review history by words or meaning. Use --lexical for
 keyword matches, --semantic for meaning, or --hybrid for both. Filters narrow
 repository, branch, verdict and time. --agent prints concise result rows;

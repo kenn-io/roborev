@@ -2698,6 +2698,8 @@ components:
           items:
             $ref: "#/components/schemas/KataLinkPeer"
           type: array
+        reply_teammate:
+          type: string
         roots:
           items:
             $ref: "#/components/schemas/KataRoot"
@@ -2835,8 +2837,13 @@ components:
           type: string
         author:
           type: string
+        body:
+          type: string
         changed:
           type: boolean
+        edited_at:
+          format: date-time
+          type: string
         teammate:
           type: string
         uid:
@@ -2846,6 +2853,7 @@ components:
         - author
         - teammate
         - changed
+        - body
       type: object
     KataResponseRequest:
       additionalProperties: false
@@ -2875,6 +2883,8 @@ components:
           type: string
         target_uid:
           type: string
+        teammate:
+          type: string
       required:
         - project
         - destination_id
@@ -2884,6 +2894,7 @@ components:
         - kind
         - body
         - idempotency_key
+        - teammate
       type: object
     KataRoot:
       additionalProperties: false

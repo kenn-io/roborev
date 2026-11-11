@@ -161,7 +161,8 @@ func TestKataTypedReplyThroughDaemonE2E(t *testing.T) {
 	require.NotNil(t, full.DestinationID)
 	assert.Contains(t, first, *full.DestinationID)
 	assert.Contains(t, first, roots[0].Comment.UID)
-	args = []string{"--server", proxy.URL, "kata", "comment", created.Issue.UID, "--project", project.Name, "--destination-id", *full.DestinationID, "--reply", roots[0].Comment.UID, "--idempotency-key", "Typed-Reply-Key", "-m", "Evidence with 'quotes' and\nnewlines."}
+	assert.Contains(t, first, "--expected-teammate ")
+	args = []string{"--server", proxy.URL, "kata", "comment", created.Issue.UID, "--project", project.Name, "--destination-id", *full.DestinationID, "--expected-teammate", "roborev", "--reply", roots[0].Comment.UID, "--idempotency-key", "Typed-Reply-Key", "-m", "Evidence with 'quotes' and\nnewlines."}
 	replay, err := run()
 	require.NoError(t, err)
 	assert.Contains(t, replay, "Author: roborev")

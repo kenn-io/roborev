@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -18,15 +19,18 @@ type KataResponseRequest struct {
 	Kind           string `json:"kind"`
 	Body           string `json:"body"`
 	IdempotencyKey string `json:"idempotency_key"`
+	Teammate       string `json:"teammate"`
 }
 
 type KataResponseInput struct{ Body KataResponseRequest }
 
 type KataReplyReceipt struct {
-	UID      string `json:"uid"`
-	Author   string `json:"author"`
-	Teammate string `json:"teammate"`
-	Changed  bool   `json:"changed"`
+	UID      string     `json:"uid"`
+	Author   string     `json:"author"`
+	Teammate string     `json:"teammate"`
+	Changed  bool       `json:"changed"`
+	Body     string     `json:"body"`
+	EditedAt *time.Time `json:"edited_at,omitempty"`
 }
 
 type KataResponseOutput struct{ Body KataReplyReceipt }
@@ -42,6 +46,9 @@ func (s *Server) humaKataResponse(ctx context.Context, in *KataResponseInput) (*
 	cfg, generation := s.configWatcher.kataSnapshot()
 	if generation != req.Generation {
 		return nil, huma.Error409Conflict("Kata configuration changed; read the destination again")
+	}
+	if req.Teammate != cfg.ResolvedTeammate() {
+		return nil, huma.Error409Conflict("Kata teammate changed; inspect the thread before retrying")
 	}
 	client, err := kataProxyClientFor(cfg, nil)
 	if err != nil {
@@ -81,5 +88,5 @@ func (s *Server) humaKataResponse(ctx context.Context, in *KataResponseInput) (*
 	if receipt.Comment.Teammate == nil {
 		return nil, huma.Error502BadGateway("invalid Kata comment receipt")
 	}
-	return &KataResponseOutput{Body: KataReplyReceipt{UID: receipt.Comment.UID, Author: receipt.Comment.Author, Teammate: *receipt.Comment.Teammate, Changed: receipt.Changed}}, nil
+	return &KataResponseOutput{Body: KataReplyReceipt{UID: receipt.Comment.UID, Author: receipt.Comment.Author, Teammate: *receipt.Comment.Teammate, Changed: receipt.Changed, Body: receipt.Comment.Body, EditedAt: receipt.Comment.EditedAt}}, nil
 }

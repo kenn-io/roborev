@@ -613,7 +613,7 @@ func (c *APIClient) Comment(ctx context.Context, project PublicationProject, iss
 		return out, err
 	}
 	comment := out.Comment
-	if !strings.EqualFold(out.Issue.UID, issueUID) || out.Issue.ProjectID != project.ID || (out.Issue.ProjectUID != nil && *out.Issue.ProjectUID != project.UID) || out.Issue.ID <= 0 || comment.IssueID != out.Issue.ID || comment.UID == "" || comment.Author == "" || comment.Body != body || comment.EditedAt != nil || comment.ReplyToUID == nil || *comment.ReplyToUID != target || comment.ReplyKind == nil || *comment.ReplyKind != kind || comment.Teammate == nil || *comment.Teammate != teammate {
+	if !strings.EqualFold(out.Issue.UID, issueUID) || out.Issue.ProjectID != project.ID || (out.Issue.ProjectUID != nil && *out.Issue.ProjectUID != project.UID) || out.Issue.ID <= 0 || comment.IssueID != out.Issue.ID || comment.UID == "" || comment.Author == "" || (out.Changed && (comment.Body != body || comment.EditedAt != nil)) || (!out.Changed && comment.Body != body && comment.EditedAt == nil) || comment.ReplyToUID == nil || *comment.ReplyToUID != target || comment.ReplyKind == nil || *comment.ReplyKind != kind || comment.Teammate == nil || *comment.Teammate != teammate {
 		return gen.CommentResponseBody{}, fmt.Errorf("%w: comment receipt mismatch", ErrInvalidResponse)
 	}
 	return out, nil

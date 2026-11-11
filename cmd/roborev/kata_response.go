@@ -19,7 +19,7 @@ import (
 )
 
 func kataResponseCmd() *cobra.Command {
-	var project, destination, key, body string
+	var project, destination, key, body, teammate string
 	kinds := map[string]*string{}
 	cmd := &cobra.Command{Use: "comment ISSUE", Short: "Reply to a published Kata finding", Args: cobra.ExactArgs(1)}
 	for _, kind := range []string{"reply", "confirm", "refute", "supersede"} {
@@ -31,6 +31,7 @@ func kataResponseCmd() *cobra.Command {
 	cmd.Flags().StringVar(&project, "project", "", "Kata project")
 	cmd.Flags().StringVar(&destination, "destination-id", "", "expected destination from show or a previous attempt")
 	cmd.Flags().StringVar(&key, "idempotency-key", "", "opaque key for retrying this reply")
+	cmd.Flags().StringVar(&teammate, "expected-teammate", "", "expected teammate from a previous attempt")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		kind, target := "", ""
 		for name, value := range kinds {
@@ -46,9 +47,6 @@ func kataResponseCmd() *cobra.Command {
 		}
 		if !cmd.Flags().Changed("idempotency-key") {
 			key = uuid.New().String()
-		}
-		if err := kata.ValidateReply(kind, body, key); err != nil {
-			return validationErr(cmd, err)
 		}
 		ref := args[0]
 		if name, _, qualified := strings.Cut(ref, "#"); qualified && project != "" && name != project {
@@ -78,12 +76,16 @@ func kataResponseCmd() *cobra.Command {
 		if err != nil {
 			return kataResponseError("read Kata issue", err)
 		}
-		if issue.UID == nil || issue.IssueID == nil || issue.ProjectID == nil || issue.Project == nil || issue.ProjectUID == nil || issue.DestinationID == nil || issue.CommentsComplete == nil || !*issue.CommentsComplete || issue.PublicationEnvelope == nil {
+		if issue.UID == nil || issue.IssueID == nil || issue.ProjectID == nil || issue.Project == nil || issue.ProjectUID == nil || issue.DestinationID == nil || issue.ReplyTeammate == nil || *issue.ReplyTeammate == "" || issue.CommentsComplete == nil || !*issue.CommentsComplete || issue.PublicationEnvelope == nil {
 			return errors.New("kata issue lacks complete publication identity or comments")
 		}
 		if destination != "" && destination != *issue.DestinationID {
 			return errors.New("kata destination changed")
 		}
+		if cmd.Flags().Changed("expected-teammate") && teammate != *issue.ReplyTeammate {
+			return errors.New("kata teammate changed; inspect the thread before retrying")
+		}
+		teammate = *issue.ReplyTeammate
 		env := issue.PublicationEnvelope
 		metadata := map[string]any{"roborev.version": env.Version, "roborev.review_uuid": env.ReviewUUID.String(), "roborev.document_hash": env.DocumentHash, "roborev.policy": env.Policy, "roborev.completed_at": env.CompletedAt.Format(time.RFC3339Nano), "roborev.finding_count": env.FindingCount}
 		full := kata.PublicationIssue{Issue: katagen.ShowIssueOut{UID: *issue.UID, ID: *issue.IssueID, ProjectID: *issue.ProjectID, Metadata: metadata}}
@@ -94,8 +96,8 @@ func kataResponseCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		retry := fmt.Sprintf("roborev --server %s kata comment %s --project %s --destination-id %s --%s %s --idempotency-key %s -m %s", daemon.ShellEscape(ep.ConfigAddr()), daemon.ShellEscape(*issue.UID), daemon.ShellEscape(*issue.Project), daemon.ShellEscape(*issue.DestinationID), kind, daemon.ShellEscape(selected), daemon.ShellEscape(key), daemon.ShellEscape(body))
-		instructions := fmt.Sprintf("Issue: %s\nTarget: %s\nKind: %s\nKey: %s\nDestination: %s\nProject: %s\nRetry: %s\n", *issue.UID, selected, kind, key, *issue.DestinationID, *issue.Project, retry)
+		retry := fmt.Sprintf("roborev --server %s kata comment %s --project %s --destination-id %s --expected-teammate %s --%s %s --idempotency-key %s -m %s", daemon.ShellEscape(ep.ConfigAddr()), daemon.ShellEscape(*issue.UID), daemon.ShellEscape(*issue.Project), daemon.ShellEscape(*issue.DestinationID), daemon.ShellEscape(teammate), kind, daemon.ShellEscape(selected), daemon.ShellEscape(key), daemon.ShellEscape(body))
+		instructions := fmt.Sprintf("Issue: %s\nTarget: %s\nKind: %s\nKey: %s\nDestination: %s\nProject: %s\nTeammate: %s\nRetry: %s\n", *issue.UID, selected, kind, key, *issue.DestinationID, *issue.Project, teammate, retry)
 		n, err := io.WriteString(cmd.OutOrStdout(), instructions)
 		if err == nil && n != len(instructions) {
 			err = io.ErrShortWrite
@@ -103,12 +105,15 @@ func kataResponseCmd() *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("write retry instructions: %w", err)
 		}
-		request := generated.KataResponseRequest{Project: *issue.Project, DestinationID: *issue.DestinationID, Generation: issue.Generation, IssueUID: *issue.UID, TargetUID: selected, Kind: kind, Body: body, IdempotencyKey: key}
+		request := generated.KataResponseRequest{Project: *issue.Project, DestinationID: *issue.DestinationID, Generation: issue.Generation, IssueUID: *issue.UID, TargetUID: selected, Kind: kind, Body: body, IdempotencyKey: key, Teammate: teammate}
 		receipt, err := api.KataResponse(cmd.Context(), &generated.KataResponseRequestOptions{Body: &request})
 		if err != nil {
 			return kataResponseError("send Kata reply", err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Comment: %s\nAuthor: %s\nTeammate: %s\nChanged: %t\n", receipt.UID, receipt.Author, receipt.Teammate, receipt.Changed)
+		if err == nil && receipt.EditedAt != nil {
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current body (edited):\n%s\n", receipt.Body)
+		}
 		return err
 	}
 	return cmd

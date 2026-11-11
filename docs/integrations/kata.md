@@ -315,14 +315,17 @@ supersede is an explanatory assertion. The original message is sent unchanged.
 Use the displayed project and destination ID on the initial reply, especially
 when a hook selected a project other than the current workspace or default.
 The destination ID checks that the reply still goes to the destination shown.
-Roborev prints the destination, full target UID, key, and a retry command before
-sending. Keep that command if the outcome is uncertain. It retries the same
-body, destination, kind, and key; inspect the thread before using a new key
-after Kata's seven-day deduplication window.
+Roborev prints the destination, full target UID, teammate, key, and a retry
+command before sending. Keep that command if the outcome is uncertain. It
+retries the same body, destination, target, kind, teammate, and key; a changed
+teammate stops the retry. Kata checks the authenticated actor as part of the
+keyed request, so a changed actor can cause an idempotency mismatch. Inspect
+the thread before using a new key after Kata's seven-day deduplication window.
 
 Kata returns the actual author and the configured teammate. Use native Kata to
 write under your own identity. Summary publication only limits automatic
 finding disclosure; an explicit reply sends the text you supply. Duplicate,
 idempotency mismatch, closed issue, missing or ambiguous target, unsupported
 server, and connection failures are errors. An exact replay can return
-`Changed: false`.
+`Changed: false`. If the reply was edited after it was created, the replay
+reports its current edited body.

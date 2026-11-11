@@ -56,6 +56,7 @@ type KataIssue struct {
 	Teammate         *string                   `json:"teammate,omitempty"`
 	Project          string                    `json:"project,omitempty"`
 	Generation       uint64                    `json:"generation"`
+	ReplyTeammate    string                    `json:"reply_teammate,omitempty"`
 	ProjectID        int64                     `json:"project_id,omitempty"`
 	IssueID          int64                     `json:"issue_id,omitempty"`
 	ProjectUID       string                    `json:"project_uid,omitempty"`
@@ -288,6 +289,7 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	result.ProjectID = destination.ID
 	result.Project = destination.Name
 	result.Generation = generation
+	result.ReplyTeammate = cfg.ResolvedTeammate()
 	result.Author, result.Teammate = full.Issue.Author, full.Issue.Teammate
 	result.ProjectUID = destination.UID
 	result.DestinationID = kataDestinationID(client.PublicationEndpoint(), destination.UID)

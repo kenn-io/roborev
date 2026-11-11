@@ -5,6 +5,7 @@ package kata_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -206,13 +207,22 @@ func TestTypedReplyRealKataLostReceiptAndRetry(t *testing.T) {
 	selected, err := kata.ResolvePublicationTarget(project, shown, target)
 	require.NoError(t, err)
 	assert.Equal(t, target, selected)
+	editURL := fmt.Sprintf("http://kata/api/v1/projects/%d/issues/%s/comments/%s", project.ID, created.Issue.UID, shown.Comments[3].UID)
+	edit, err := http.NewRequestWithContext(ctx, http.MethodPatch, editURL, strings.NewReader(`{"actor":"roborev","body":"Edited evidence"}`))
+	require.NoError(t, err)
+	edit.Header.Set("Content-Type", "application/json")
+	edited, err := (&http.Client{Transport: tr}).Do(edit)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, edited.StatusCode)
+	require.NoError(t, edited.Body.Close())
 	receipt, err := c.Comment(ctx, project, created.Issue.UID, target, "refute", body, key, "roborev")
 	require.NoError(t, err)
 	assert.False(t, receipt.Changed)
 	assert.Equal(t, "roborev", receipt.Comment.Author)
 	require.NotNil(t, receipt.Comment.Teammate)
 	assert.Equal(t, "roborev", *receipt.Comment.Teammate)
-	assert.Equal(t, body, receipt.Comment.Body)
+	assert.Equal(t, "Edited evidence", receipt.Comment.Body)
+	assert.NotNil(t, receipt.Comment.EditedAt)
 	require.NotNil(t, receipt.Comment.ReplyToUID)
 	assert.Equal(t, target, *receipt.Comment.ReplyToUID)
 	for _, change := range []struct{ name, target, kind, body string }{
@@ -233,6 +243,6 @@ func TestTypedReplyRealKataLostReceiptAndRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, shown.Comments, 4)
 	assert.Equal(t, receipt.Comment.UID, shown.Comments[3].UID)
-	assert.Equal(t, body, shown.Comments[3].Body)
+	assert.Equal(t, "Edited evidence", shown.Comments[3].Body)
 	assert.Equal(t, "roborev", shown.Comments[3].Author)
 }

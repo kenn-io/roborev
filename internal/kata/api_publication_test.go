@@ -655,18 +655,42 @@ func TestTypedCommentRejectsCorruptReceipts(t *testing.T) {
 			c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
 			project, err := c.ResolvePublicationProject(t.Context(), "")
 			require.NoError(t, err)
-			f.Override = func(w http.ResponseWriter, r *http.Request) bool {
-				if r.Method != http.MethodPost {
-					return false
+			for _, changed := range []bool{true, false} {
+				if !changed && tc.name == "edited" {
+					continue // An edited unchanged receipt is a valid replay.
 				}
-				issue := map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID, "project_uid": project.UID}
-				comment := map[string]any{"uid": "reply-uid", "issue_id": 11, "body": "evidence", "author": "actual", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": "reply"}
-				tc.corrupt(issue, comment)
-				f.Reply(w, map[string]any{"changed": false, "issue": issue, "comment": comment})
-				return true
+				f.Override = func(w http.ResponseWriter, r *http.Request) bool {
+					if r.Method != http.MethodPost {
+						return false
+					}
+					issue := map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID, "project_uid": project.UID}
+					comment := map[string]any{"uid": "reply-uid", "issue_id": 11, "body": "evidence", "author": "actual", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": "reply"}
+					tc.corrupt(issue, comment)
+					f.Reply(w, map[string]any{"changed": changed, "issue": issue, "comment": comment})
+					return true
+				}
+				_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "evidence", "opaque-key", "reviewer")
+				require.ErrorIs(t, err, ErrInvalidResponse, "changed=%t", changed)
 			}
-			_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "evidence", "opaque-key", "reviewer")
-			require.ErrorIs(t, err, ErrInvalidResponse)
 		})
 	}
+}
+
+func TestTypedCommentEditedReplay(t *testing.T) {
+	f := katafake.New(t)
+	c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
+	project, err := c.ResolvePublicationProject(t.Context(), "")
+	require.NoError(t, err)
+	f.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPost {
+			return false
+		}
+		f.Reply(w, map[string]any{"changed": false, "issue": map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID}, "comment": map[string]any{"uid": "reply-uid", "issue_id": 11, "body": "edited evidence", "edited_at": "2026-01-02T03:04:05Z", "author": "actual", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": "reply"}})
+		return true
+	}
+	receipt, err := c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "original evidence", "opaque-key", "reviewer")
+	require.NoError(t, err)
+	assert.False(t, receipt.Changed)
+	assert.Equal(t, "edited evidence", receipt.Comment.Body)
+	assert.NotNil(t, receipt.Comment.EditedAt)
 }
