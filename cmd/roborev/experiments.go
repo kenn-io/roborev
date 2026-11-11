@@ -141,7 +141,8 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 		out.WriteString("Finding labels and refuted-review lists are unavailable because rebuttals do not identify individual findings.\n")
 		seenReasons[report.Labels.Reason] = true
 	}
-	if (!report.Default.Cost.Complete && report.Default.ReviewUnits > 0) || (!report.Experiment.Cost.Complete && report.Experiment.ReviewUnits > 0) {
+	incompleteCost := (!report.Default.Cost.Complete && report.Default.ReviewUnits > 0) || (!report.Experiment.Cost.Complete && report.Experiment.ReviewUnits > 0)
+	if incompleteCost {
 		out.WriteString("Cost comparison requires full coverage in both arms. Run roborev backfill-tokens for missing usage; prices may remain unavailable.\n")
 	}
 	out.WriteString("\nMetrics (experiment minus default; costs in USD, durations in seconds, rates as fractions):\n")
@@ -158,7 +159,8 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 				metric.Interval.Low, metric.Interval.High, experimentReportNumber(metric.PValue),
 				experimentReportNumber(metric.RandomizationThreshold), method, metric.Permutations)
 		}
-		if metric.Reason != "" && metric.Reason != "Exploratory, unadjusted comparison." && !seenReasons[metric.Reason] {
+		costCoverageReason := incompleteCost && metric.Metric == "cost_per_review" && metric.Reason == "Required metric coverage is incomplete."
+		if metric.Reason != "" && metric.Reason != "Exploratory, unadjusted comparison." && !costCoverageReason && !seenReasons[metric.Reason] {
 			fmt.Fprintf(&out, "  %s\n", metric.Reason)
 			seenReasons[metric.Reason] = true
 		}

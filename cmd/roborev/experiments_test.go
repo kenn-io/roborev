@@ -198,6 +198,12 @@ func TestFormatExperimentReport(t *testing.T) {
 	assert.Contains(out, "latest retained attempts")
 	assert.Contains(out, "exploratory, unadjusted")
 
+	// The shared cost notice replaces only the cost metric's generic reason.
+	report.Metrics[0].Reason = "Required metric coverage is incomplete."
+	out = formatExperimentReport(report)
+	assert.Contains(out, "Cost comparison requires full coverage in both arms.")
+	assert.NotContains(out, "Required metric coverage is incomplete.")
+
 	// Shared explanations appear once while each metric retains its status.
 	report.Metrics = append(report.Metrics,
 		storage.ExperimentMetricComparison{Metric: "confirmed_per_review", State: "not enough data", Reason: report.Labels.Reason},
