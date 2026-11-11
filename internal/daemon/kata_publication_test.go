@@ -624,7 +624,6 @@ func TestKataPreparedAttemptChecksInputs(t *testing.T) {
 			assert.False(t, sent)
 		})
 	}
-
 }
 
 func TestKataPublicationDeadlineAppliesToEveryPost(t *testing.T) {
