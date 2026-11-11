@@ -226,7 +226,7 @@ func (hr *HookRunner) handleEvent(event Event) {
 				}
 			}
 			if hook.Findings != "" {
-				if hr.publisher != nil && event.Type == "review.completed" && !publicationScheduled {
+				if hr.publisher != nil && event.Type == "review.completed" && event.Verdict == "F" && !publicationScheduled {
 					publicationScheduled = true
 					fired++
 					hr.wg.Add(1)

@@ -292,3 +292,35 @@ func TestKataBothReviewPullPathsWaitForPublication(t *testing.T) {
 		})
 	}
 }
+
+func TestKataDocumentHashPreservesStoredSchema(t *testing.T) {
+	first := []byte(`{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":"a.go:3"}]}`)
+	reordered := []byte(`{ "findings": [{"location":"a.go:3", "fix":"f", "problem":"p", "severity":"low"}], "summary":"s", "schema_version":1 }`)
+	a, err := KataDocumentHash(first)
+	require.NoError(t, err)
+	b, err := KataDocumentHash(reordered)
+	require.NoError(t, err)
+	assert.Equal(t, a, b)
+	other, err := KataDocumentHash([]byte(`{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null}]}`))
+	require.NoError(t, err)
+	assert.NotEqual(t, a, other)
+	_, err = KataDocumentHash([]byte(`{"schema_version":1`))
+	require.Error(t, err)
+}
+
+func TestPendingKataPublicationsSkipsExpired(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/kata-expiry", "kata-expiry")
+	claimJob(t, env.db, "worker")
+	seed := kataTestSeed()
+	require.NoError(t, env.db.CompleteJobResult(env.job.ID, "test", ReviewCompletion{StructuredOutput: reviewFixtureJSON("FAIL: finding"), KataPublication: &seed}))
+	_, err := env.db.ExecContext(t.Context(), `UPDATE reviews SET created_at = datetime('now', '-8 days') WHERE job_id = ?`, env.job.ID)
+	require.NoError(t, err)
+	pending, err := env.db.PendingKataPublications(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+	_, err = env.db.ExecContext(t.Context(), `UPDATE reviews SET created_at = datetime('now', '-6 days') WHERE job_id = ?`, env.job.ID)
+	require.NoError(t, err)
+	pending, err = env.db.PendingKataPublications(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+}

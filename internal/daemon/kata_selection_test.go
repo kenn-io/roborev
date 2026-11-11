@@ -111,3 +111,19 @@ func TestKataCompletionCapturesUnknownVerdictFallback(t *testing.T) {
 	require.NotNil(t, record.Marker)
 	assert.Equal(t, "comments", record.Marker.Policy)
 }
+
+func TestKataInspectionProjectRequiresUnambiguousExplicitProject(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "other"}, {Type: "kata", Event: "review.completed", Findings: "summary", Project: "other"}}
+	job := &storage.ReviewJob{JobType: storage.JobTypeReview}
+	name, err := kataInspectionProject(cfg, job, "")
+	require.NoError(t, err)
+	assert.Equal(t, "other", name)
+	cfg.Hooks[1].Project = "different"
+	_, err = kataInspectionProject(cfg, job, "")
+	require.ErrorContains(t, err, "ambiguous")
+	cfg.Hooks = nil
+	name, err = kataInspectionProject(cfg, job, "")
+	require.NoError(t, err)
+	assert.Empty(t, name)
+}

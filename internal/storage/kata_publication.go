@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"uuid"
@@ -48,12 +49,11 @@ type KataPublicationRecord struct {
 // KataDocumentHash hashes the canonical structured review, independently of
 // JSON whitespace and field order. It is shared by capture and replay guards.
 func KataDocumentHash(raw []byte) (string, error) {
-	doc, err := structuredreview.Decode(raw)
-	if err != nil {
+	if _, err := structuredreview.Decode(raw); err != nil {
 		return "", err
 	}
-	canonical, err := json.Marshal(doc)
-	if err != nil {
+	canonical := jsontext.Value(append([]byte(nil), raw...))
+	if err := canonical.Canonicalize(); err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(canonical)
@@ -104,7 +104,7 @@ func (db *DB) GetKataPublicationByUUID(ctx context.Context, id uuid.UUID) (*Kata
 
 // PendingKataPublications lists local authorizations to consider at startup.
 func (db *DB) PendingKataPublications(ctx context.Context) ([]KataPublicationRecord, error) {
-	rows, err := db.QueryContext(ctx, `SELECT job_id, uuid, COALESCE(structured_output, ''), kata_publication FROM reviews WHERE kata_publication IS NOT NULL AND json_extract(kata_publication, '$.state') = 'pending' ORDER BY id`)
+	rows, err := db.QueryContext(ctx, `SELECT job_id, uuid, COALESCE(structured_output, ''), kata_publication FROM reviews WHERE kata_publication IS NOT NULL AND json_extract(kata_publication, '$.state') = 'pending' AND julianday(created_at) > julianday('now', '-7 days', '+5 seconds') ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}

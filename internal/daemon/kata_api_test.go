@@ -208,6 +208,13 @@ func TestKataIssueShowsOneIssue(t *testing.T) {
 	issue := decodeKata[KataIssue](t, w)
 	assert.Equal(t, "reviews#aaa1", issue.QualifiedID)
 	assert.Equal(t, "the body", issue.Body)
+	var reads int
+	for _, request := range fake.AllRequests() {
+		if request.Method == http.MethodGet && request.Path == "/api/v1/projects/7/issues/aaa1" {
+			reads++
+		}
+	}
+	assert.Equal(t, 1, reads)
 
 	issue = decodeKata[KataIssue](t, kataGet(t, server, "/api/kata/issue", url.Values{"ref": {"bbb2"}, "project": {"other"}}))
 	assert.Equal(t, "other#bbb2", issue.QualifiedID)
@@ -330,6 +337,33 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	assert.Equal(t, "summary", got.Policy)
 	require.Len(t, got.Roots, 1)
 	assert.Equal(t, "service", got.Roots[0].Comment.Author)
+	// An explicit hook project wins over the default for an unmarked reader.
+	other := fake.AddIssue(8, "other-issue", "findings", "body", "roborev")
+	other.Out.Metadata = issue.Out.Metadata
+	other.Comments = issue.Comments
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "summary", Project: "other"}}
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got = decodeKata[KataPublicationBody](t, w)
+	assert.Equal(t, "other", got.Project)
+	assert.Equal(t, "complete", got.State)
+
+	// Expired manual create still performs read-only discovery, even with no hook.
+	cfg.Hooks = nil
+	completed := time.Now().UTC().Add(-8 * 24 * time.Hour).Truncate(time.Second)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, completed.Format(time.RFC3339), job.ID)
+	require.NoError(t, err)
+	issue.Out.Metadata["roborev.completed_at"] = completed.Format(time.RFC3339Nano)
+	before := len(fake.AllRequests())
+	expired := kataPost(t, server, "/api/kata/publication", KataPublicationRequest{JobID: job.ID})
+	require.Equal(t, http.StatusOK, expired.Code, expired.Body.String())
+	expiredBody := decodeKata[KataPublicationBody](t, expired)
+	assert.True(t, expiredBody.Expired)
+	assert.Equal(t, "complete", expiredBody.State)
+	assert.Contains(t, expiredBody.Message, "expired")
+	for _, request := range fake.AllRequests()[before:] {
+		assert.NotEqual(t, http.MethodPost, request.Method)
+	}
 	after, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Nil(t, after.Marker)

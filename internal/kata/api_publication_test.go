@@ -276,6 +276,12 @@ func TestReadRemotePublicationEnvelopeAndRoots(t *testing.T) {
 	assert.Equal(t, "edited", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}})[0].State)
 	assert.Equal(t, "ambiguous", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment, comment}})[0].State)
 	assert.Equal(t, "truncated", ReadPublicationRoots(envelope, PublicationIssue{Truncated: true})[0].State)
+	comment.Body = "marker removed"
+	now := time.Now()
+	comment.EditedAt = &now
+	assert.Equal(t, "ambiguous", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}})[0].State)
+	assert.Equal(t, "missing", ReadPublicationRoots(envelope, PublicationIssue{})[0].State)
+
 	for _, key := range []string{publicationVersionKey, publicationReviewKey, publicationHashKey, publicationPolicyKey, publicationTimeKey, publicationCountKey} {
 		metadata := make(map[string]any, len(p.issue.Metadata))
 		for k, v := range p.issue.Metadata {

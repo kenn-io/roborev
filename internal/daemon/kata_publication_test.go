@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -135,6 +137,48 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "complete", record.Marker.State)
+	// Reading uses the saved selection even after write authorization changes.
+	cfg.Hooks[0].Findings = "summary"
+	cfg.Hooks[0].Labels = []string{"changed"}
+	cfg.Integrations.Kata.Teammate = "different"
+	observed, err := publisher.Inspect(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "complete", observed.State)
+	cfg.Hooks = nil
+	cfg.Integrations.Kata.Teammate = "different"
+	observed, err = publisher.Inspect(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "complete", observed.State)
+	assert.Equal(t, "service", observed.Roots[0].Comment.Author)
+	// Expiry does not suppress read-back of the pinned project.
+	review, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	completed := review.CreatedAt.Add(-8 * 24 * time.Hour)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, completed.Format(time.RFC3339Nano), job.ID)
+	require.NoError(t, err)
+	issue.Out.Metadata["roborev.completed_at"] = completed.UTC().Format(time.RFC3339Nano)
+	observed, err = publisher.Inspect(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "complete", observed.State)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, review.CreatedAt.UTC().Format(time.RFC3339Nano), job.ID)
+	require.NoError(t, err)
+	issue.Out.Metadata["roborev.completed_at"] = review.CreatedAt.UTC().Format(time.RFC3339Nano)
+	_, err = publisher.Publish(t.Context(), job.ID)
+	require.Error(t, err)
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+	cfg.Integrations.Kata.Teammate = "roborev"
+	// An edited root with a removed marker must never be mistaken for a
+	// never-delivered root and posted again.
+	issue.Comments[0].Body = "edited content without a marker"
+	now := time.Now()
+	issue.Comments[0].EditedAt = &now
+	before := len(fake.AllRequests())
+	observed, err = publisher.Publish(t.Context(), job.ID)
+	require.ErrorContains(t, err, "ambiguous")
+	require.Equal(t, "ambiguous", observed.Roots[0].State)
+	for _, req := range fake.AllRequests()[before:] {
+		assert.NotEqual(t, http.MethodPost, req.Method)
+	}
 }
 
 func TestKataRecoveryStopsInFlightAttempt(t *testing.T) {
@@ -239,4 +283,24 @@ func TestKataCheckoutValidatesLinkedAndForeignWorktrees(t *testing.T) {
 	got, err = kataCheckout(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, WorktreePath: foreign.TmpDir})
 	require.NoError(t, err)
 	assert.Equal(t, tc.TmpDir, got)
+}
+
+func TestPassingKataReviewDoesNotSchedulePublication(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "passing-review", "worker")
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: testutil.ReviewFixtureJSON("No issues found.")}))
+	cfg := kataConnectionConfig(fake)
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+	var logs bytes.Buffer
+	runner := NewHookRunner(NewStaticConfig(cfg), tc.Broadcaster, log.New(&logs, "", 0), tc.DB)
+	t.Cleanup(runner.Stop)
+	tc.Broadcaster.Broadcast(Event{Type: "review.completed", Verdict: "P", JobID: job.ID})
+	runner.WaitUntilIdle()
+	assert.Empty(t, fake.AllRequests())
+	assert.NotContains(t, logs.String(), "authorization")
+	publisher := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+	_, err := publisher.Publish(t.Context(), job.ID)
+	require.ErrorContains(t, err, "no local publication authorization")
+	assert.Empty(t, fake.AllRequests())
 }

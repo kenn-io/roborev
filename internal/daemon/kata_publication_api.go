@@ -125,6 +125,17 @@ func (s *Server) humaKataPublish(ctx context.Context, in *KataPublishInput) (*Ka
 	if err != nil {
 		return nil, huma.Error409Conflict(err.Error())
 	}
+	review, err := s.db.GetReviewByJobIDContext(ctx, req.JobID)
+	if err != nil {
+		return nil, huma.Error404NotFound("review not found")
+	}
+	if !time.Now().Add(kata.DefaultRequestTimeout).Before(review.CreatedAt.Add(7 * 24 * time.Hour)) {
+		status, inspectErr := s.hookRunner.publisher.Inspect(ctx, req.JobID)
+		if inspectErr == nil {
+			inspectErr = errors.New("Kata publication window expired")
+		}
+		return s.publicationResult(ctx, req.JobID, status, inspectErr)
+	}
 	policy := ""
 	if record.Marker == nil {
 		if req.Findings == "" {

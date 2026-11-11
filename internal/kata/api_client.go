@@ -441,18 +441,22 @@ func (c *APIClient) Show(ctx context.Context, ref string) (Issue, error) {
 	if !strings.EqualFold(shown.Issue.ShortID, id) && !strings.EqualFold(shown.Issue.UID, id) {
 		return Issue{}, fmt.Errorf("%w: Kata returned a different issue than %q", ErrInvalidResponse, id)
 	}
+	return mapShownIssue(project, shown.Issue, shown.Labels, shown.Links)
+}
+
+func mapShownIssue(project string, issue gen.ShowIssueOut, labels []gen.IssueLabel, links []gen.LinkOut) (Issue, error) {
 	iss := Issue{
-		ShortID: shown.Issue.ShortID, QualifiedID: project + "#" + shown.Issue.ShortID, Title: shown.Issue.Title,
-		Body: shown.Issue.Body, Status: shown.Issue.Status,
+		ShortID: issue.ShortID, QualifiedID: project + "#" + issue.ShortID, Title: issue.Title,
+		Body: issue.Body, Status: issue.Status,
 	}
-	edges := make([]linkEdge, 0, len(shown.Links))
-	for _, link := range shown.Links {
+	edges := make([]linkEdge, 0, len(links))
+	for _, link := range links {
 		edges = append(edges, linkEdge{Type: link.Type, From: *peerFromAPI(&link.From), To: *peerFromAPI(&link.To)})
 	}
 	if err := attachLinks(&iss, iss.QualifiedID, edges); err != nil {
 		return Issue{}, fmt.Errorf("%w: %w", ErrInvalidResponse, err)
 	}
-	for _, label := range shown.Labels {
+	for _, label := range labels {
 		if label.Label != "" {
 			iss.Labels = append(iss.Labels, label.Label)
 		}

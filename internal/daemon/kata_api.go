@@ -247,19 +247,21 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if err != nil {
 		return nil, err
 	}
-	issue, err := client.Show(ctx, ref)
-	if err != nil {
-		return nil, kataProxyError(err)
-	}
-	result := kataIssueFromClient(issue)
 	projectName := project
 	issueRef := ref
 	if named, rest, qualified := strings.Cut(ref, "#"); qualified {
+		if named == "" {
+			return nil, huma.Error400BadRequest("empty project in issue reference")
+		}
 		projectName, issueRef = named, rest
 	}
 	destination, err := client.ResolvePublicationProject(ctx, projectName)
-	if errors.Is(err, kata.ErrIncompatible) {
-		return &KataIssueOutput{Body: result}, nil
+	if errors.Is(err, kata.ErrIncompatible) || errors.Is(err, kata.ErrProjectNotFound) {
+		issue, showErr := client.Show(ctx, ref)
+		if showErr != nil {
+			return nil, kataProxyError(showErr)
+		}
+		return &KataIssueOutput{Body: kataIssueFromClient(issue)}, nil
 	}
 	if err != nil {
 		return nil, kataProxyError(err)
@@ -268,6 +270,7 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if err != nil {
 		return nil, kataProxyError(err)
 	}
+	result := kataIssueFromClient(full.Legacy)
 	result.UID = full.Issue.UID
 	result.Author, result.Teammate = full.Issue.Author, full.Issue.Teammate
 	result.ProjectUID = destination.UID

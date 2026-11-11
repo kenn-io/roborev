@@ -72,6 +72,7 @@ type PublicationRoot struct {
 // true when Kata omitted comments or explicitly reported a truncated result.
 type PublicationIssue struct {
 	Issue     gen.ShowIssueOut
+	Legacy    Issue
 	Comments  []gen.CommentOut
 	Truncated bool
 }
@@ -165,6 +166,8 @@ func (c *APIClient) ShowPublicationIssue(ctx context.Context, project Publicatio
 	var response struct {
 		Issue             gen.ShowIssueOut `json:"issue"`
 		Comments          jsontext.Value   `json:"comments"`
+		Labels            []gen.IssueLabel `json:"labels"`
+		Links             []gen.LinkOut    `json:"links"`
 		CommentsTruncated *bool            `json:"comments_truncated"`
 	}
 	if _, err := c.tr.do(ctx, http.MethodGet, path+"/"+ref, nil, nil, nil, &response, http.StatusOK); err != nil {
@@ -173,7 +176,11 @@ func (c *APIClient) ShowPublicationIssue(ctx context.Context, project Publicatio
 	if response.Issue.UID == "" || (!strings.EqualFold(response.Issue.UID, ref) && !strings.EqualFold(response.Issue.ShortID, ref)) || response.Issue.ProjectID != project.ID {
 		return PublicationIssue{}, fmt.Errorf("%w: issue identity mismatch", ErrInvalidResponse)
 	}
-	out := PublicationIssue{Issue: response.Issue, Truncated: response.Comments.Kind() != jsontext.KindBeginArray || (response.CommentsTruncated != nil && *response.CommentsTruncated)}
+	legacy, err := mapShownIssue(project.Name, response.Issue, response.Labels, response.Links)
+	if err != nil {
+		return PublicationIssue{}, err
+	}
+	out := PublicationIssue{Issue: response.Issue, Legacy: legacy, Truncated: response.Comments.Kind() != jsontext.KindBeginArray || (response.CommentsTruncated != nil && *response.CommentsTruncated)}
 	if response.Comments.Kind() == jsontext.KindBeginArray {
 		if err := json.Unmarshal(response.Comments, &out.Comments); err != nil {
 			return PublicationIssue{}, fmt.Errorf("%w: invalid comments", ErrInvalidResponse)
@@ -387,6 +394,26 @@ func ReadPublicationEnvelope(metadata map[string]any) (PublicationEnvelope, erro
 // Correlation is untrusted and does not establish the comment's author.
 func ReadPublicationRoots(envelope PublicationEnvelope, issue PublicationIssue) []PublicationRoot {
 	roots := make([]PublicationRoot, envelope.FindingCount)
+	// A top-level comment without a recognizable position may be a root whose
+	// marker was removed. No receipt or prose can identify it safely; prevent
+	// replay for every otherwise-missing position until a person resolves it.
+	uncorrelated := false
+	for _, comment := range issue.Comments {
+		if comment.ReplyToUID != nil {
+			continue
+		}
+		correlated := false
+		for i := range roots {
+			prefix := fmt.Sprintf("<!-- roborev:v1 review=%s position=%d ", envelope.ReviewUUID, i)
+			if strings.Contains(comment.Body, prefix) {
+				correlated = true
+				break
+			}
+		}
+		if !correlated {
+			uncorrelated = true
+		}
+	}
 	for i := range roots {
 		roots[i] = PublicationRoot{Position: i, State: "missing"}
 		prefix := fmt.Sprintf("<!-- roborev:v1 review=%s position=%d ", envelope.ReviewUUID, i)
@@ -420,6 +447,8 @@ func ReadPublicationRoots(envelope PublicationEnvelope, issue PublicationIssue) 
 			}
 		case issue.Truncated:
 			roots[i].State = "truncated"
+		case uncorrelated:
+			roots[i].State = "ambiguous"
 		}
 	}
 	return roots

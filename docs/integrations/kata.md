@@ -163,10 +163,11 @@ local authorization; an unmarked eligible review requires an explicit policy
 matching its configured hook. Synced reviews do not publish automatically.
 Retries use the original review's seven-day window and stop when a full Kata
 request cannot fit inside it. Expired reviews remain readable. Ambiguous,
-modified, unavailable or truncated comments stop replay. Every encoded request
-is preflighted against Kata's 1 MiB body limit before any write; oversized
-findings are never clipped. An outage may require a daemon restart or an
-explicit retry.
+modified, unavailable or truncated comments stop replay. If an unrecognized
+top-level comment could be a finding whose marker was removed, missing finding
+positions are ambiguous and replay stops. Every encoded request is preflighted
+against Kata's 1 MiB body limit before any write; oversized findings are never
+clipped. An outage may require a daemon restart or an explicit retry.
 
 See [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration)
 in the review hooks guide for hook fields and event patterns.

@@ -28,15 +28,9 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 	default:
 		return nil, nil
 	}
-	hooks := append([]config.HookConfig(nil), cfg.Hooks...)
-	if checkout != "" && !hasSuppliedReviewSettings(job) {
-		rc, err := config.LoadRepoConfig(checkout)
-		if err != nil {
-			return nil, err
-		}
-		if rc != nil {
-			hooks = append(hooks, rc.Hooks...)
-		}
+	hooks, err := kataPublicationHooks(cfg, job, checkout)
+	if err != nil {
+		return nil, err
 	}
 	endpoint, err := kata.NormalizePublicationEndpoint(cfg.Integrations.Kata.Endpoint)
 	if err != nil {
@@ -73,6 +67,44 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 			return nil, errors.New("conflicting Kata publication hooks")
 		}
 		selected = &candidate
+	}
+	return selected, nil
+}
+
+// kataPublicationHooks applies the same supplied-review suppression to reads
+// and writes. Reading chooses a project without conferring authorization.
+func kataPublicationHooks(cfg *config.Config, job *storage.ReviewJob, checkout string) ([]config.HookConfig, error) {
+	hooks := append([]config.HookConfig(nil), cfg.Hooks...)
+	if checkout != "" && !hasSuppliedReviewSettings(job) {
+		rc, err := config.LoadRepoConfig(checkout)
+		if err != nil {
+			return nil, err
+		}
+		if rc != nil {
+			hooks = append(hooks, rc.Hooks...)
+		}
+	}
+	return hooks, nil
+}
+
+func kataInspectionProject(cfg *config.Config, job *storage.ReviewJob, checkout string) (string, error) {
+	hooks, err := kataPublicationHooks(cfg, job, checkout)
+	if err != nil {
+		return "", err
+	}
+	var selected string
+	for _, hook := range hooks {
+		if hook.Type != "kata" || (hook.Findings != "comments" && hook.Findings != "summary") || !matchEvent(hook.Event, "review.completed") || !matchBranch(hook.Branches, job.HookBranch()) {
+			continue
+		}
+		name := strings.TrimSpace(hook.Project)
+		if name == "" {
+			continue
+		}
+		if selected != "" && selected != name {
+			return "", errors.New("ambiguous Kata publication projects")
+		}
+		selected = name
 	}
 	return selected, nil
 }

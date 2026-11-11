@@ -89,6 +89,9 @@ func (p *kataPublisher) Publish(ctx context.Context, jobID int64) (*KataPublicat
 		return nil, err
 	}
 	defer unlock()
+	if record.Marker == nil {
+		return nil, errors.New("review has no local publication authorization")
+	}
 	return p.run(ctx, jobID, true)
 }
 
@@ -104,10 +107,7 @@ func (p *kataPublisher) Inspect(ctx context.Context, jobID int64) (*KataPublicat
 		return nil, err
 	}
 	defer unlock()
-	if record.Marker == nil {
-		return p.inspectUnmarked(ctx, record)
-	}
-	return p.run(ctx, jobID, false)
+	return p.inspectPublication(ctx, record)
 }
 
 func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.KataPublicationRecord, *storage.Review, *kataSelection, *kata.APIClient, kata.PublicationProject, *kata.Publication, error) {
@@ -396,9 +396,9 @@ func (p *kataPublisher) Authorize(ctx context.Context, jobID int64, policy strin
 	return p.db.AuthorizeKataPublication(ctx, record, selection.seed)
 }
 
-// inspectUnmarked discovers correlation on a machine that did not authorize
-// the write; it never creates a marker or sends a POST.
-func (p *kataPublisher) inspectUnmarked(ctx context.Context, record *storage.KataPublicationRecord) (*KataPublicationStatus, error) {
+// inspectPublication reads only the selected destination. It does not require
+// the authorization or request fingerprint that govern subsequent writes.
+func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.KataPublicationRecord) (*KataPublicationStatus, error) {
 	review, err := p.db.GetReviewByJobIDContext(ctx, record.JobID)
 	if err != nil {
 		return nil, err
@@ -414,14 +414,48 @@ func (p *kataPublisher) inspectUnmarked(ctx context.Context, record *storage.Kat
 	if err != nil {
 		return nil, err
 	}
-	client, err := kata.NewAPIClient(checkout, cfg.Integrations.Kata)
+	var seed *storage.KataPublicationSeed
+	if record.Marker != nil {
+		if record.Marker.Version != 1 || record.Marker.DocumentHash != record.DocumentHash {
+			return nil, storage.ErrReviewChanged
+		}
+		endpoint, err := kata.NormalizePublicationEndpoint(cfg.Integrations.Kata.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		if endpoint != record.Marker.Endpoint {
+			return nil, errors.New("Kata publication destination changed")
+		}
+		seed = &record.Marker.KataPublicationSeed
+	} else {
+		name, err := kataInspectionProject(cfg, review.Job, checkout)
+		if err != nil {
+			return nil, err
+		}
+		if name != "" {
+			seed = &storage.KataPublicationSeed{Project: name}
+		}
+	}
+	var client *kata.APIClient
+	var name string
+	if seed == nil {
+		client, err = kata.NewAPIClient(checkout, cfg.Integrations.Kata)
+	} else if seed.AliasKind != "" {
+		client, err = kata.NewAPIClient("", cfg.Integrations.Kata, kata.WithWorkspaceAlias(kata.ProjectAlias{Kind: seed.AliasKind, Identity: seed.AliasIdentity}))
+	} else {
+		name = seed.Project
+		client, err = kata.NewAPIClient("", cfg.Integrations.Kata, kata.WithoutWorkspace())
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer client.CloseIdleConnections()
-	project, err := client.ResolvePublicationProject(ctx, "")
+	project, err := client.ResolvePublicationProject(ctx, name)
 	if err != nil {
 		return nil, err
+	}
+	if record.Marker != nil && record.Marker.ProjectUID != "" && record.Marker.ProjectUID != project.UID {
+		return nil, errors.New("Kata publication destination changed")
 	}
 	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing"}
 	candidates, err := client.SearchPublicationIssues(ctx, project, record.ReviewUUID)
@@ -432,28 +466,19 @@ func (p *kataPublisher) inspectUnmarked(ctx context.Context, record *storage.Kat
 		status.State = "ambiguous"
 		return status, errors.New("multiple Kata publication issues")
 	}
-	policy, ok := candidates[0].Metadata["roborev.policy"].(string)
-	if !ok {
-		status.State = "ambiguous"
-		return status, errors.New("Kata issue has no publication policy")
-	}
 	raw, err := json.Marshal(review.StructuredOutput)
 	if err != nil {
 		return status, err
-	}
-	hash, err := storage.KataDocumentHash(raw)
-	if err != nil || hash != record.DocumentHash {
-		return status, storage.ErrReviewChanged
 	}
 	doc, err := structuredreview.Decode(raw)
 	if err != nil {
 		return status, err
 	}
-	pub, err := kata.PreparePublication(record.ReviewUUID, record.DocumentHash, review.CreatedAt, doc, policy, cfg.Integrations.Kata.ResolvedTeammate())
-	if err != nil {
-		return status, err
+	matches := func(metadata map[string]any) bool {
+		envelope, err := kata.ReadPublicationEnvelope(metadata)
+		return err == nil && envelope.ReviewUUID == record.ReviewUUID && envelope.DocumentHash == record.DocumentHash && envelope.CompletedAt.Equal(review.CreatedAt) && envelope.FindingCount == len(doc.Findings) && (record.Marker == nil || envelope.Policy == record.Marker.Policy)
 	}
-	if !pub.MatchesIssueEnvelope(candidates[0].Metadata) {
+	if !matches(candidates[0].Metadata) {
 		status.State = "ambiguous"
 		return status, errors.New("Kata issue metadata differs")
 	}
@@ -461,11 +486,12 @@ func (p *kataPublisher) inspectUnmarked(ctx context.Context, record *storage.Kat
 	if err != nil {
 		return status, err
 	}
-	if !pub.MatchesIssueEnvelope(issue.Issue.Metadata) {
+	if !matches(issue.Issue.Metadata) {
 		status.State = "ambiguous"
 		return status, errors.New("Kata issue metadata changed")
 	}
-	status.Issue, status.Roots = &issue, pub.Roots(issue)
+	envelope, _ := kata.ReadPublicationEnvelope(issue.Issue.Metadata)
+	status.Issue, status.Roots = &issue, kata.ReadPublicationRoots(envelope, issue)
 	status.State = "complete"
 	if issue.Truncated {
 		status.State = "truncated"
