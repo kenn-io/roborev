@@ -280,7 +280,7 @@ func TestDoctorKataStatusFromAnOldDaemonIsUnknown(t *testing.T) {
 	defer ts.Close()
 	ep, err := daemon.ParseEndpoint(ts.URL)
 	require.NoError(t, err)
-	got, err := newDoctorDaemon(ep).KataStatus(context.Background(), kata.Binding{})
+	got, err := newDoctorDaemon(ep).KataStatus(t.Context(), kata.Binding{})
 	require.Error(t, err)
 	assert.Nil(t, got)
 }

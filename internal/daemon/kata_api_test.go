@@ -38,7 +38,7 @@ func kataGet(t *testing.T, server *Server, path string, query url.Values) *httpt
 		target += "?" + query.Encode()
 	}
 	w := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
 	return w
 }
 
@@ -158,7 +158,7 @@ func TestKataStatusStates(t *testing.T) {
 	})
 	t.Run("unreachable", func(t *testing.T) {
 		server, _ := kataAPIServer(t)
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		addr := listener.Addr().String()
 		require.NoError(t, listener.Close())

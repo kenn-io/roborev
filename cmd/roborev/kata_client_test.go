@@ -102,7 +102,7 @@ func TestKataClientUsesTheDaemonsConnection(t *testing.T) {
 	fake.AddIssue(8, "bbb2", "In other", "")
 	ep := kataDaemon(t, enabledKata(fake))
 	var probes atomic.Int32
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("unbound repository reads the daemon's default project", func(t *testing.T) {
 		c := newKataClientAt(bindRepo(t, ""), config.DefaultConfig(), fixedEndpoint(ep, &probes))
@@ -233,11 +233,11 @@ func TestKataClientProbesOnFirstUse(t *testing.T) {
 	var probes atomic.Int32
 	c := newKataClientAt(bindRepo(t, "reviews"), config.DefaultConfig(), fixedEndpoint(ep, &probes))
 	assert.Zero(t, probes.Load(), "building a client contacts nothing; most commands never use Kata")
-	_, err := c.Binding(context.Background())
+	_, err := c.Binding(t.Context())
 	require.NoError(t, err)
-	_, err = c.List(context.Background(), kata.ListOpts{})
+	_, err = c.List(t.Context(), kata.ListOpts{})
 	require.NoError(t, err)
-	_, err = c.List(context.Background(), kata.ListOpts{})
+	_, err = c.List(t.Context(), kata.ListOpts{})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, probes.Load(), "the daemon is asked once per client")
 }
@@ -247,14 +247,14 @@ func TestKataClientKeepsTheCLIWhenTheConnectionIsOff(t *testing.T) {
 	t.Run("daemon reachable and off", func(t *testing.T) {
 		ep := kataDaemon(t, config.KataIntegrationConfig{})
 		c := newKataClientAt(bindRepo(t, "p"), config.DefaultConfig(), fixedEndpoint(ep, &probes))
-		_, isCLI := c.(*lazyKataClient).resolve(context.Background()).(*kata.CLIClient)
+		_, isCLI := c.(*lazyKataClient).resolve(t.Context()).(*kata.CLIClient)
 		assert.True(t, isCLI)
 	})
 	t.Run("no daemon", func(t *testing.T) {
 		c := newKataClientAt(bindRepo(t, "p"), config.DefaultConfig(), func() (daemon.DaemonEndpoint, error) {
 			return daemon.DaemonEndpoint{}, os.ErrNotExist
 		})
-		_, isCLI := c.(*lazyKataClient).resolve(context.Background()).(*kata.CLIClient)
+		_, isCLI := c.(*lazyKataClient).resolve(t.Context()).(*kata.CLIClient)
 		assert.True(t, isCLI, "today's behavior when nothing enables the connection")
 	})
 	t.Run("nil config", func(t *testing.T) {

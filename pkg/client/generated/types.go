@@ -2713,6 +2713,9 @@ type KataIssuesOutputBody struct {
 
 func (k KataIssuesOutputBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(k.Issues, "required"); err != nil {
+		errors = errors.Append("Issues", err)
+	}
 	for i, item := range k.Issues {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
