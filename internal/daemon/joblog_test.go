@@ -668,3 +668,74 @@ func TestParseJobIDFromLogName(t *testing.T) {
 		})
 	}
 }
+
+func TestPiJobLogSink(t *testing.T) {
+	start := `{"type":"message_start","message":{"role":"assistant"}}` + "\n"
+	delta := func(kind, usage string) string {
+		return `{"type":"message_update","assistantMessageEvent":{"type":"` + kind + `","delta":"x"},"usage":` + usage + `}` + "\r\n"
+	}
+	a := `{"input":1,"cost":{"total":0.000001},"extra":7}`
+	b := `{"input":2,"cost":{"total":0.000002},"extra":7}`
+	first := delta("text_delta", a)
+	repeated := delta("thinking_delta", a)
+	changed := delta("toolcall_delta", b)
+	reverted := delta("text_delta", a)
+	nondelta := delta("text_end", b)
+	afterChange := delta("text_delta", a)
+	fragment := `{"type":"unfinished"`
+	input := start + first + repeated + changed + reverted + nondelta + afterChange + fragment
+	var stored, live, invocation bytes.Buffer
+	sink := &piJobLogSink{out: &stored}
+	stream := io.MultiWriter(&invocation, sink, &live)
+	for _, part := range []string{input[:17], input[17:111], input[111:]} {
+		_, err := io.WriteString(stream, part)
+		require.NoError(t, err)
+	}
+	sink.Flush()
+	wantRepeat := `{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"x"}}` + "\r\n"
+	assert.Equal(t, start+first+wantRepeat+changed+reverted+nondelta+afterChange+fragment, stored.String())
+	assert.Equal(t, input, live.String())
+	assert.Equal(t, input, invocation.String())
+	assert.Less(t, stored.Len(), len(input))
+}
+
+func TestPiJobLogSinkBoundariesAndPassThrough(t *testing.T) {
+	start := `{"type":"message_start","message":{"role":"assistant"}}` + "\n"
+	delta := `{"usage":{"input":12345678901234567890},"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}` + "\n"
+	withoutUsage := `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}` + "\n"
+	end := `{"type":"message_end","message":{"role":"assistant","usage":{"input":12345678901234567890}}}` + "\n"
+	malformed := "not json\n"
+	older := `{"type":"message_update","message":{"usage":{"input":1}}}` + "\n"
+	input := start + delta + delta + end + start + delta + malformed + delta + older
+	var stored bytes.Buffer
+	sink := &piJobLogSink{out: &stored}
+	_, err := io.WriteString(sink, input)
+	require.NoError(t, err)
+	sink.Flush()
+	assert.Equal(t, start+delta+withoutUsage+end+start+delta+malformed+delta+older, stored.String())
+}
+
+func TestPiJobLogSinkPromotedAppend(t *testing.T) {
+	setupTestEnv(t)
+	original := "non-pi producer bytes\n"
+	w := newAgentJobLogWriter(291, "other")
+	_, err := io.WriteString(w, original)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	w = newAppendingJobLogWriter(291)
+	sink := &piJobLogSink{out: w}
+	start := `{"type":"message_start","message":{"role":"assistant"}}` + "\n"
+	delta := `{"type":"message_update","assistantMessageEvent":{"type":"text_delta"},"usage":{"input":1}}` + "\n"
+	input := start + delta
+	_, err = io.WriteString(sink, input+delta)
+	require.NoError(t, err)
+	sink.Flush()
+	require.NoError(t, w.Close())
+	got, err := os.ReadFile(JobLogPath(291))
+	require.NoError(t, err)
+	assert.Equal(t, original+input+`{"type":"message_update","assistantMessageEvent":{"type":"text_delta"}}`+"\n", string(got))
+	identity, err := JobLogAgent(291)
+	require.NoError(t, err)
+	assert.Equal(t, "other", identity)
+}

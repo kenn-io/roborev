@@ -713,16 +713,18 @@ roborev job log clean --days 3       # Remove logs older than 3 days
 
 | Flag | Description |
 |------|-------------|
-| `--raw` | Print raw NDJSON without formatting |
+| `--raw` | Print exact stored bytes without formatting |
 | `--path` | Print the log file path instead of contents |
 
 Job logs are persisted to `~/.roborev/logs/jobs/` so agent output remains
 available after daemon restarts. By default, `roborev job log` renders NDJSON
 into compact, human-readable progress lines showing tool calls and agent text.
 It requests the log and its stored metadata through the daemon API to select
-that renderer. Use `--raw` for the original NDJSON when scripting, debugging, or
-reading an orphaned log file. For a daemon using a custom database, select that
-daemon with `--server`; the CLI does not open SQLite.
+that renderer. Use `--raw` for the exact stored bytes when scripting, debugging,
+or reading an orphaned log file. Ordinary Pi review logs omit repeated identical
+cumulative usage from message deltas; usage changes and the last observed usage
+remain. For a daemon using a custom database, select that daemon with
+`--server`; the CLI does not open SQLite.
 
 To remove old logs automatically, set
 [`job_log_retention_days`](/docs/configuration/#stored-prompts-and-retention).

@@ -1495,7 +1495,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}()
 	displayOutput := io.MultiWriter(jobLog, outputWriter)
-	agentOutput := displayOutput
+	var logOutput io.Writer = jobLog
+	var piLog *piJobLogSink
+	if agentName == "pi" && !job.IsTaskJob() && !job.IsFixJob() && job.Source != storage.JobSourceRebuttal {
+		piLog = &piJobLogSink{out: jobLog}
+		logOutput = piLog
+		defer piLog.Flush()
+	}
+	agentOutput := io.MultiWriter(logOutput, outputWriter)
 	var planningUsageCapture *tokens.CodexUsageCaptureWriter
 	var implementationUsageCapture *tokens.CodexUsageCaptureWriter
 	var planningSessionWriter *agent.SessionCaptureWriter
@@ -1503,7 +1510,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if planningPrompt != "" {
 		planningUsageCapture = tokens.NewCodexUsageCaptureWriter()
 		implementationUsageCapture = tokens.NewCodexUsageCaptureWriter()
-		agentOutput = io.MultiWriter(jobLog, outputWriter, implementationUsageCapture)
+		agentOutput = io.MultiWriter(logOutput, outputWriter, implementationUsageCapture)
 	}
 	var invocationStream invocationOutput
 	if hasSuppliedReviewSettings(job) {
@@ -1679,6 +1686,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		)
 		if err == nil {
 			// Render for readers without treating review text as provider events.
+			sessionWriter.Flush()
+			if piLog != nil {
+				piLog.Flush()
+			}
 			_, _ = fmt.Fprintln(displayOutput, agentReview.Output)
 		}
 	}

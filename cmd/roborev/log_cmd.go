@@ -32,7 +32,7 @@ By default, JSONL agent output is rendered as human-readable
 progress lines (tool calls, agent text). Non-JSON logs are
 printed as-is.
 
-Use --raw to print the original log bytes unchanged.
+Use --raw to print the exact stored log bytes unchanged.
 
 Examples:
   roborev log 42          # Human-friendly rendered output
