@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/shlex"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -120,7 +121,8 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	rootBody := fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, review, digest)
 	rootUID := "01AAAAAAAAAAAAAAAAAAABC123"
 	var posts atomic.Int64
-	var posted, selectedProject, producerError atomic.Value
+	var posted, selectedProject, producerError, prePostOutput atomic.Value
+	var output bytes.Buffer
 	producerError.Store("")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -133,6 +135,7 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 			selectedProject.Store(r.URL.Query().Get("project"))
 			_ = json.NewEncoder(w).Encode(map[string]any{"uid": "issue-uid", "issue_id": 2, "project_id": 7, "project": "other", "project_uid": "project-uid", "destination_id": "destination", "reply_teammate": "roborev", "generation": 3, "short_id": "abc1", "qualified_id": "other#abc1", "title": "issue", "body": "body", "status": "open", "labels": []string{}, "comments_complete": true, "metadata": map[string]any{"roborev.version": 1, "roborev.review_uuid": review}, "publication_envelope": map[string]any{"version": 1, "review_uuid": review, "document_hash": strings.Repeat("a", 64), "policy": "summary", "completed_at": "2026-01-02T03:04:05Z", "finding_count": 1}, "comments": []any{map[string]any{"uid": rootUID, "handle": "c:abc123", "issue_id": 2, "body": rootBody, "author": "service"}}})
 		case "/api/kata/response":
+			prePostOutput.Store(output.String())
 			posts.Add(1)
 			var data map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&data)
@@ -149,7 +152,7 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 				fmt.Fprintf(w, `{"status":%d,"detail":%q}`, status, "Kata "+code+": synthetic producer error")
 				return
 			}
-			fmt.Fprint(w, `{"uid":"reply-uid","author":"actual-author","teammate":"roborev","changed":false,"body":"edited evidence","edited_at":"2026-01-02T03:04:05Z"}`)
+			fmt.Fprint(w, `{"uid":"reply-uid","author":"actual\u001b[2J-author","teammate":"roborev","changed":false,"body":"edited\u001b[2J evidence\r\n\tsecond\u0000 line","edited_at":"2026-01-02T03:04:05Z"}`)
 		}
 	}))
 	defer server.Close()
@@ -171,8 +174,8 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	}
 	require.Equal(t, "other", fields["Project"])
 	require.Equal(t, "destination", fields["Destination"])
-	args := []string{"--server", server.URL, "kata", "comment", "issue-uid", "--project", fields["Project"], "--destination-id", fields["Destination"], "--reply", rootUID, "--idempotency-key", "Case-Key", "-m", "It's evidence"}
-	var output bytes.Buffer
+	key, body := "Case-'Key", "It's evidence\n\twith 'quotes'"
+	args := []string{"--server", server.URL, "kata", "comment", "issue-uid", "--project", fields["Project"], "--destination-id", fields["Destination"], "--reply", rootUID, "--idempotency-key", key, "-m", body}
 	staleArgs := append([]string(nil), args...)
 	staleArgs[8] = "changed-destination"
 	stale := newRootCmd()
@@ -195,6 +198,7 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 		require.ErrorContains(t, root.Execute(), "write retry instructions")
 		assert.Zero(t, posts.Load())
 	}
+	output.Reset()
 	root := newRootCmd()
 	root.SetOut(&output)
 	root.SetErr(&output)
@@ -205,14 +209,24 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	assert.Contains(t, output.String(), "Retry: roborev --server '"+strings.TrimPrefix(server.URL, "http://")+"'")
 	assert.Contains(t, output.String(), "actual-author")
 	assert.Contains(t, output.String(), "--expected-teammate ")
-	assert.Contains(t, output.String(), "Current body (edited):\nedited evidence")
+	assert.Contains(t, output.String(), "Current body (edited):\nedited evidence\n\tsecond line")
+	assert.NotContains(t, output.String(), "\x1b")
+	assert.NotContains(t, output.String(), "\r")
+	assert.NotContains(t, output.String(), "\x00")
+	instructions, ok := prePostOutput.Load().(string)
+	require.True(t, ok)
+	_, retry, ok := strings.Cut(instructions, "Retry: ")
+	require.True(t, ok)
+	retryArgs, err := shlex.Split(strings.TrimSuffix(retry, "\n"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"roborev", "--server", strings.TrimPrefix(server.URL, "http://"), "kata", "comment", "issue-uid", "--project", "other", "--destination-id", "destination", "--expected-teammate", "roborev", "--reply", rootUID, "--idempotency-key", key, "-m", body}, retryArgs)
 	payload, ok := posted.Load().(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, rootUID, payload["target_uid"])
 	assert.Equal(t, "other", payload["project"])
 	assert.Equal(t, "destination", payload["destination_id"])
-	assert.Equal(t, "It's evidence", payload["body"])
-	assert.Equal(t, "Case-Key", payload["idempotency_key"])
+	assert.Equal(t, body, payload["body"])
+	assert.Equal(t, key, payload["idempotency_key"])
 	assert.Equal(t, "roborev", payload["teammate"])
 	for _, code := range []string{"validation", "comment_not_found", "duplicate_reply", "idempotency_mismatch", "issue_closed"} {
 		producerError.Store(code)

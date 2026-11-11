@@ -114,9 +114,9 @@ func kataResponseCmd() *cobra.Command {
 		if err != nil {
 			return kataResponseError("send Kata reply", err)
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Comment: %s\nAuthor: %s\nTeammate: %s\nChanged: %t\n", receipt.UID, receipt.Author, receipt.Teammate, receipt.Changed)
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Comment: %s\nAuthor: %s\nTeammate: %s\nChanged: %t\n", receipt.UID, sanitizeSearchSingleLine(receipt.Author), receipt.Teammate, receipt.Changed)
 		if err == nil && receipt.EditedAt != nil {
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current body (edited):\n%s\n", receipt.Body)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current body (edited):\n%s\n", sanitizeSearchExcerpt(receipt.Body))
 		}
 		return err
 	}
