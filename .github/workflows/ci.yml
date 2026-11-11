@@ -99,7 +99,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
 
       - uses: actions/setup-node@v7.1.0
         with:
@@ -130,7 +130,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
 
       - name: Check for breaking API contract changes
         env:
@@ -152,7 +152,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
 
       - uses: actions/setup-node@v7.1.0
         with:
@@ -277,7 +277,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
 
       - name: Restore Go caches
@@ -429,7 +429,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
 
       - name: Restore Go caches
@@ -480,7 +480,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
 
       - name: Restore Go caches
@@ -554,7 +554,7 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
 
       - name: Restore Go caches
@@ -604,7 +604,7 @@ jobs:
         id: setup_go
         if: needs.go-changes.outputs.changed == 'true'
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
 
       - name: Resolve pinned golangci-lint version
         if: needs.go-changes.outputs.changed == 'true'

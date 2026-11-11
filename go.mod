@@ -1,6 +1,6 @@
 module go.kenn.io/roborev
 
-go 1.27.3
+go 1.27.4
 
 require (
 	charm.land/bubbletea/v2 v2.1.1
