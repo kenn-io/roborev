@@ -134,6 +134,8 @@ func TestInstallPreservesConfigSymlinkAndMode(t *testing.T) {
 	target := filepath.Join(dir, "shared.json")
 	path := filepath.Join(dir, "mcp.json")
 	require.NoError(t, os.WriteFile(target, []byte(`{"theme":"dark"}`), 0o640))
+	// File creation applies umask; this fixture exercises preservation of 0640.
+	require.NoError(t, os.Chmod(target, 0o640))
 	require.NoError(t, os.Symlink(target, path))
 	_, err := Install(Options{Agent: skills.AgentDroid, ConfigPath: path})
 	require.NoError(t, err)
