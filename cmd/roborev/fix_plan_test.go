@@ -458,3 +458,49 @@ func TestFixPlanCompletePromptTransport(t *testing.T) {
 	}
 	assert.Empty(t, repo.Run("status", "--porcelain"))
 }
+
+func TestUnplannedFixCompletePromptTransport(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("batch=%t", batch), func(t *testing.T) {
+			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
+			require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte("max_prompt_size = 1000\n"), 0o600))
+			repo.Run("add", ".roborev.toml")
+			repo.Run("commit", "-m", "Set prompt transport threshold")
+			findings := "High: cancellation not checked " + strings.Repeat("context ", 500)
+			ts, _ := newMockServer(t, MockServerOpts{ReviewOutput: findings, OnJobs: func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test"}}})
+			}})
+			patchServerAddr(t, ts.URL)
+			var path string
+			calls := 0
+			a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, p string, _ io.Writer) (string, error) {
+				calls++
+				const prefix = "Read the complete task prompt from "
+				require.True(t, strings.HasPrefix(p, prefix))
+				quoted, _, _ := strings.Cut(strings.TrimPrefix(p, prefix), " and carry out")
+				var err error
+				path, err = strconv.Unquote(quoted)
+				require.NoError(t, err)
+				rel, err := filepath.Rel(dir, path)
+				require.NoError(t, err)
+				assert.True(t, filepath.IsLocal(rel))
+				body, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Contains(t, string(body), findings)
+				return "No changes required", nil
+			}}
+			cmd, _ := newTestCmd(t)
+			tracker := &fixSessionTracker{base: a, out: io.Discard}
+			if batch {
+				roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+				require.NoError(t, processFixBatch(t.Context(), cmd, roots, []int64{7}, 0, fixOptions{}, tracker))
+			} else {
+				require.NoError(t, fixSingleJob(cmd, repo.Dir, 7, fixOptions{}, tracker))
+			}
+			assert.Equal(t, 1, calls)
+			_, err := os.Stat(path)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			assert.Empty(t, repo.Run("status", "--porcelain"))
+		})
+	}
+}
