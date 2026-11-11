@@ -640,18 +640,14 @@ func (hr *HookRunner) startKataRecovery() {
 
 func (hr *HookRunner) publishKata(jobID int64) {
 	defer hr.wg.Done()
-	ctx, cancel := context.WithTimeout(hr.publicationCtx, 30*time.Second)
-	defer cancel()
-	if _, err := hr.publisher.Publish(ctx, jobID); err != nil {
+	if _, err := hr.publisher.Publish(hr.publicationCtx, jobID); err != nil {
 		hr.logger.Printf("Kata publication for job %d: %v", jobID, err)
 	}
 }
 
 func (hr *HookRunner) recoverKataPublications() {
 	defer hr.wg.Done()
-	ctx, cancel := context.WithTimeout(hr.publicationCtx, 30*time.Second)
-	records, err := hr.publisher.db.PendingKataPublications(ctx)
-	cancel()
+	records, err := hr.publisher.db.PendingKataPublications(hr.publicationCtx)
 	if err != nil {
 		hr.logger.Printf("Kata publication recovery: %v", err)
 		return
@@ -660,9 +656,7 @@ func (hr *HookRunner) recoverKataPublications() {
 		if hr.publicationCtx.Err() != nil {
 			return
 		}
-		attempt, stop := context.WithTimeout(hr.publicationCtx, 30*time.Second)
-		_, err := hr.publisher.Publish(attempt, record.JobID)
-		stop()
+		_, err := hr.publisher.Publish(hr.publicationCtx, record.JobID)
 		if err != nil {
 			hr.logger.Printf("Kata publication recovery for job %d: %v", record.JobID, err)
 		}
@@ -680,14 +674,7 @@ type kataManualResult struct {
 	err    error
 }
 
-// PublishKata registers a manual attempt with the runner's shutdown lifecycle.
-func (hr *HookRunner) PublishKata(ctx context.Context, jobID int64) (*KataPublicationStatus, error) {
-	return hr.publishKataManual(ctx, jobID, "")
-}
-
 func (hr *HookRunner) publishKataManual(ctx context.Context, jobID int64, policy string) (*KataPublicationStatus, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	if hr.publisher == nil {
 		return nil, errors.New("kata publisher unavailable")
 	}
@@ -711,7 +698,7 @@ func (hr *HookRunner) publishKataManual(ctx context.Context, jobID int64, policy
 
 func (hr *HookRunner) runManualKata(req kataManualRequest) {
 	defer hr.wg.Done()
-	ctx, cancel := context.WithTimeout(req.ctx, 30*time.Second)
+	ctx, cancel := context.WithCancel(req.ctx)
 	stop := context.AfterFunc(hr.publicationCtx, cancel)
 	defer stop()
 	defer cancel()

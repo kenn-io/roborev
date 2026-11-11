@@ -103,13 +103,7 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 }
 
 func resolveKataSelection(ctx context.Context, cfg config.KataIntegrationConfig, seed storage.KataPublicationSeed) (string, error) {
-	opts := []kata.APIOption{kata.WithoutWorkspace()}
-	name := seed.Project
-	if seed.AliasKind != "" {
-		opts = []kata.APIOption{kata.WithWorkspaceAlias(kata.ProjectAlias{Kind: seed.AliasKind, Identity: seed.AliasIdentity})}
-		name = ""
-	}
-	client, err := kata.NewAPIClient("", cfg, opts...)
+	client, name, err := kataSelectionClient(cfg, seed)
 	if err != nil {
 		return "", err
 	}
@@ -119,6 +113,17 @@ func resolveKataSelection(ctx context.Context, cfg config.KataIntegrationConfig,
 		return "", err
 	}
 	return project.UID, nil
+}
+
+func kataSelectionClient(cfg config.KataIntegrationConfig, seed storage.KataPublicationSeed) (*kata.APIClient, string, error) {
+	opts := []kata.APIOption{kata.WithoutWorkspace()}
+	name := seed.Project
+	if seed.AliasKind != "" {
+		opts = []kata.APIOption{kata.WithWorkspaceAlias(kata.ProjectAlias{Kind: seed.AliasKind, Identity: seed.AliasIdentity})}
+		name = ""
+	}
+	client, err := kata.NewAPIClient("", cfg, opts...)
+	return client, name, err
 }
 
 // kataPublicationHooks applies the same supplied-review suppression to reads

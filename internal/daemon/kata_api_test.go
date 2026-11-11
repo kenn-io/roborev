@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	katagen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -337,6 +339,31 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	assert.Equal(t, "summary", got.Policy)
 	require.Len(t, got.Roots, 1)
 	assert.Equal(t, "service", got.Roots[0].Comment.Author)
+	// A replacement can carry a valid digest of its own body without matching
+	// the original review. Its identity and attribution remain visible.
+	replacement := "Finding 1 from a different review."
+	replacementDigest := sha256.Sum256([]byte(replacement))
+	issue.Comments[0].UID = "replacement-uid"
+	issue.Comments[0].Body = fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", replacement, record.ReviewUUID, replacementDigest)
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got = decodeKata[KataPublicationBody](t, w)
+	assert.Equal(t, "partial", got.State)
+	require.Len(t, got.Roots, 1)
+	assert.Equal(t, "edited", got.Roots[0].State)
+	assert.Equal(t, "replacement-uid", got.Roots[0].Comment.UID)
+	assert.Equal(t, "service", got.Roots[0].Comment.Author)
+	issue.Comments[0].UID = "root-uid"
+	issue.Comments[0].Body = marker
+	issue.Out.Metadata["roborev.completed_at"] = review.CreatedAt.In(time.FixedZone("offset", 3600)).Format(time.RFC3339Nano)
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "complete", decodeKata[KataPublicationBody](t, w).State)
+	issue.Out.Metadata["roborev.version"] = 2
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "ambiguous", decodeKata[KataPublicationBody](t, w).State)
+	issue.Out.Metadata["roborev.version"] = 1
 	// An explicit hook project wins over the default for an unmarked reader.
 	other := fake.AddIssue(8, "other-issue", "findings", "body", "roborev")
 	other.Out.Metadata = issue.Out.Metadata
@@ -369,5 +396,40 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	assert.Nil(t, after.Marker)
 	for _, req := range fake.AllRequests() {
 		assert.NotEqual(t, http.MethodPost, req.Method)
+	}
+}
+
+func TestKataInspectionReadsOversizedUnmarkedPublication(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "large-review", "worker")
+	finding := structuredreview.Finding{Severity: "high", Problem: strings.Repeat("x", kata.PublicationMaxRequestBytes), Fix: "fix"}
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{finding}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail}))
+	review, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	issue := fake.AddIssue(7, "large", "findings", "body")
+	issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": record.ReviewUUID.String(), "roborev.document_hash": record.DocumentHash, "roborev.policy": "comments", "roborev.completed_at": review.CreatedAt.UTC().Format(time.RFC3339Nano), "roborev.finding_count": 1}
+	text := (structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "Review finding.", Findings: []structuredreview.Finding{finding}}).MarkdownFrom("", 1)
+	digest := sha256.Sum256([]byte(text))
+	body := fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, record.ReviewUUID, digest)
+	issue.Comments = []katagen.CommentOut{{UID: "root-uid", Handle: new("c:root"), Body: body, Author: "service"}}
+	server := newServerWithLogs(tc.DB, kataConnectionConfig(fake), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = server.Close() })
+	w := kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got := decodeKata[KataPublicationBody](t, w)
+	assert.Equal(t, "complete", got.State)
+	_, err = kata.PreparePublication(record.ReviewUUID, record.DocumentHash, review.CreatedAt, doc, "comments", "reviewer")
+	require.ErrorIs(t, err, kata.ErrRequestRejected)
+	after, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Nil(t, after.Marker)
+	for _, request := range fake.AllRequests() {
+		assert.NotEqual(t, http.MethodPost, request.Method)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,60 @@ func TestPublicationFindingPositions(t *testing.T) {
 			assert.Contains(t, p.roots[0].Body, "Finding 1 from a roborev review.")
 			assert.Contains(t, p.roots[1].Body, "Finding 2 from a roborev review.")
 			assert.NotContains(t, p.roots[1].Body, "second problem")
+		}
+	}
+}
+
+func TestPublicationV1WireFormat(t *testing.T) {
+	for _, tc := range []struct{ policy, text, digest, fingerprint string }{
+		{"comments", "## Summary\n\nReview finding.\n\n## Findings\n\n### 1. High\n\n**Location:** private/path.go:4\n\n**Problem:** private problem\n\n**Fix:** private fix\n\n**Reported by:** private source\n", "1b90257dc41b56c574ad0bad6a45a244d63c48c02baaaf3c713182719067caae", "1be12e340183d64d5068ca910fdd125b89559fef1cf0cd48fbe0a3bbbd580585"},
+		{"summary", "Finding 1 from a roborev review.", "ebb986cabac1ebbb091268e8f7b596661315b2ba0836dd699eaca7c336f5b566", "a9bc0b71b949611c192fbbf34e54a83a8f3b7f09fa374d50c5f5d8badf9ad014"},
+	} {
+		t.Run(tc.policy, func(t *testing.T) {
+			p := publicationFixture(t, tc.policy)
+			body := tc.text + "\n\n<!-- roborev:v1 review=11111111-1111-4111-8111-111111111111 position=0 digest=" + tc.digest + " -->"
+			assert.Equal(t, body, p.roots[0].Body)
+			issue, err := encodeRequest(p.issue)
+			require.NoError(t, err)
+			expectedIssue := `{"actor":"roborev","body":"A roborev review reported findings. Each finding has a separate comment.","force_new":true,"labels":["roborev"],"metadata":{"roborev.completed_at":"2026-01-02T03:04:05Z","roborev.document_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","roborev.finding_count":1,"roborev.policy":"` + tc.policy + `","roborev.review_uuid":"11111111-1111-4111-8111-111111111111","roborev.version":1},"title":"Roborev review findings"}`
+			assert.Equal(t, expectedIssue, string(issue))
+			root, err := encodeRequest(p.roots[0])
+			require.NoError(t, err)
+			assert.Equal(t, `{"actor":"roborev","body":`+strconv.Quote(body)+`,"teammate":"reviewer"}`, string(root))
+			assert.Equal(t, tc.fingerprint, p.Fingerprint)
+			key, err := p.RootKey(0)
+			require.NoError(t, err)
+			assert.Equal(t, "roborev:review:11111111-1111-4111-8111-111111111111:0:"+tc.digest, key)
+		})
+	}
+}
+
+func TestPublicationSourceInspectionCannotWrite(t *testing.T) {
+	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", SourceLabels: []string{"source"}, Findings: []structuredreview.Finding{
+		{Severity: "high", Problem: "first", Fix: "fix"},
+		{Severity: "medium", Problem: strings.Repeat("x", PublicationMaxRequestBytes), Fix: "fix", Sources: []int{1}},
+	}}
+	project := PublicationProject{ID: 7, Name: "reviews", UID: "project-uid"}
+	client := &APIClient{}
+	for _, policy := range []string{"comments", "summary"} {
+		source, err := PublicationFromSource(id, strings.Repeat("a", 64), at, doc, policy)
+		require.NoError(t, err)
+		assert.False(t, source.ready())
+		_, err = client.CreatePublicationIssue(t.Context(), project, source)
+		require.ErrorContains(t, err, "not preflighted")
+		_, err = client.CreatePublicationRoot(t.Context(), project, "issue-uid", source, 1)
+		require.ErrorContains(t, err, "not preflighted")
+		text := "replacement"
+		comment := gen.CommentOut{UID: "replacement-uid", Handle: new("c:replacement"), Author: "actual", Body: text + "\n\n" + publicationMarker(id, 1, publicationDigest([]byte(text)))}
+		roots := source.Roots(PublicationIssue{Comments: []gen.CommentOut{comment}})
+		require.Len(t, roots, 2)
+		assert.Equal(t, "edited", roots[1].State)
+		assert.Equal(t, "actual", roots[1].Comment.Author)
+		if policy == "comments" {
+			_, err = PreparePublication(id, strings.Repeat("a", 64), at, doc, policy, "reviewer")
+			require.ErrorIs(t, err, ErrRequestRejected)
 		}
 	}
 }

@@ -78,8 +78,6 @@ func (p *kataPublisher) lock(ctx context.Context, id uuid.UUID) (func(), error) 
 // Publish is the shared recovery/manual entry point. A missing marker never
 // authorizes a write; callers can use Inspect to discover a synced review.
 func (p *kataPublisher) Publish(ctx context.Context, jobID int64) (*KataPublicationStatus, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	record, err := p.db.GetKataPublication(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -92,12 +90,10 @@ func (p *kataPublisher) Publish(ctx context.Context, jobID int64) (*KataPublicat
 	if record.Marker == nil {
 		return nil, errors.New("review has no local publication authorization")
 	}
-	return p.run(ctx, jobID, true)
+	return p.run(ctx, jobID)
 }
 
 func (p *kataPublisher) Inspect(ctx context.Context, jobID int64) (*KataPublicationStatus, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	record, err := p.db.GetKataPublication(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -138,13 +134,7 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 	if record.Marker != nil && (record.Marker.Version != 1 || (record.Marker.State != "pending" && record.Marker.State != "complete") || (record.Marker.ProjectUID == "") != (record.Marker.RequestFingerprint == "") || record.Marker.KataPublicationSeed != selection.seed || record.Marker.DocumentHash != record.DocumentHash) {
 		return nil, nil, nil, nil, zero, nil, errors.New("kata publication authorization changed")
 	}
-	opts := []kata.APIOption{kata.WithoutWorkspace()}
-	name := selection.seed.Project
-	if selection.seed.AliasKind != "" {
-		opts = []kata.APIOption{kata.WithWorkspaceAlias(kata.ProjectAlias{Kind: selection.seed.AliasKind, Identity: selection.seed.AliasIdentity})}
-		name = ""
-	}
-	client, err := kata.NewAPIClient("", cfg.Integrations.Kata, opts...)
+	client, name, err := kataSelectionClient(cfg.Integrations.Kata, selection.seed)
 	if err != nil {
 		return nil, nil, nil, nil, zero, nil, err
 	}
@@ -177,7 +167,7 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 	return record, review, selection, client, project, publication, nil
 }
 
-func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*KataPublicationStatus, error) {
+func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationStatus, error) {
 	record, review, _, client, project, publication, err := p.current(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -188,7 +178,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 		}
 	}()
 	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing"}
-	if write && record.Marker == nil {
+	if record.Marker == nil {
 		return status, errors.New("review has no local publication authorization")
 	}
 	for {
@@ -201,9 +191,6 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 			return status, errors.New("multiple Kata publication issues")
 		}
 		if len(candidates) == 0 {
-			if !write {
-				return status, nil
-			}
 			err = p.post(ctx, jobID, record, review, project, publication, func(ctx context.Context, c *kata.APIClient, dest kata.PublicationProject, pub *kata.Publication) error {
 				_, err := c.CreatePublicationIssue(ctx, dest, pub)
 				return err
@@ -251,7 +238,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 			}
 		}
 		if missing < 0 {
-			if write && record.Marker != nil && record.Marker.State != "complete" {
+			if record.Marker != nil && record.Marker.State != "complete" {
 				next := *record.Marker
 				next.ProjectUID = project.UID
 				next.RequestFingerprint = publication.Fingerprint
@@ -260,9 +247,6 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 					return status, err
 				}
 			}
-			return status, nil
-		}
-		if !write {
 			return status, nil
 		}
 		if issue.Issue.ClosedAt != nil || issue.Issue.Status == "closed" {
@@ -367,8 +351,6 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 // Authorize creates the local authorization for an explicitly requested,
 // eligible failing review. It never replaces an existing marker.
 func (p *kataPublisher) Authorize(ctx context.Context, jobID int64, policy string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	record, err := p.db.GetKataPublication(ctx, jobID)
 	if err != nil {
 		return err
@@ -497,7 +479,11 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		return status, errors.New("kata issue metadata changed")
 	}
 	envelope, _ := kata.ReadPublicationEnvelope(issue.Issue.Metadata)
-	status.Issue, status.Roots = &issue, kata.ReadPublicationRoots(envelope, issue)
+	expected, err := kata.PublicationFromSource(record.ReviewUUID, record.DocumentHash, review.CreatedAt, doc, envelope.Policy)
+	if err != nil {
+		return status, err
+	}
+	status.Issue, status.Roots = &issue, expected.Roots(issue)
 	status.State = "complete"
 	if issue.Truncated {
 		status.State = "truncated"

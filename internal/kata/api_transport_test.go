@@ -191,6 +191,28 @@ func TestTransportPreservesCallerCancellationWhileReadingBody(t *testing.T) {
 	})
 }
 
+func TestTransportAllowsManyIndividuallyBoundedRequests(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			select {
+			case <-time.After(4 * time.Second):
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Header: make(http.Header)}, nil
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+		})}
+		tr := transportFor(t, "https://kata.example.com", "k", func(o *transportOptions) { o.HTTPClient = client })
+		start := time.Now()
+		for range 8 {
+			var out pong
+			_, err := tr.do(t.Context(), http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
+			require.NoError(t, err)
+			assert.True(t, out.OK)
+		}
+		assert.Equal(t, 32*time.Second, time.Since(start))
+	})
+}
+
 func TestTransportClassifiesStatuses(t *testing.T) {
 	for status, want := range map[int]error{
 		http.StatusUnauthorized:        ErrAuthenticationRequired,

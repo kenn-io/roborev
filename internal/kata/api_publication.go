@@ -47,8 +47,8 @@ type PublicationProject struct {
 	UID  string
 }
 
-// Publication is the deterministic, preflighted set of requests for one review.
-// Its request bodies are private so they cannot change after preflight.
+// Publication holds deterministic expected requests for one review. Only a
+// preflighted publication can write; its request bodies remain private.
 type Publication struct {
 	ReviewUUID   uuid.UUID
 	DocumentHash string
@@ -214,33 +214,23 @@ func PreparePublication(id uuid.UUID, hash string, completed time.Time, doc stru
 
 // PreparePublicationWithOptions includes the selected hook options in the preflight fingerprint.
 func PreparePublicationWithOptions(id uuid.UUID, hash string, completed time.Time, doc structuredreview.Document, policy, teammate string, options PublicationOptions) (*Publication, error) {
-	if id == uuid.Nil() || len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" || completed.IsZero() || doc.Legacy != nil || (policy != "comments" && policy != "summary") {
-		return nil, fmt.Errorf("%w: invalid publication identity or policy", ErrRequestRejected)
+	p, err := PublicationFromSource(id, hash, completed, doc, policy)
+	if err != nil {
+		return nil, err
 	}
 	if err := config.ValidateKataTeammate(teammate); err != nil {
 		return nil, fmt.Errorf("%w: invalid teammate", ErrRequestRejected)
 	}
-	p := &Publication{ReviewUUID: id, reviewID: id, DocumentHash: hash, Policy: policy, CompletedAt: completed.UTC()}
-	body := "A roborev review reported findings. Each finding has a separate comment."
-	p.issue = gen.CreateIssueRequestBody{Actor: new(WriteActor), Title: "Roborev review findings", Body: &body, Labels: []string{RoborevLabel}, ForceNew: new(true), Metadata: map[string]any{
-		publicationVersionKey: 1, publicationReviewKey: id.String(), publicationHashKey: hash,
-		publicationPolicyKey: policy, publicationTimeKey: p.CompletedAt.Format(time.RFC3339Nano), publicationCountKey: len(doc.Findings),
-	}}
+	p.issue.Actor = new(WriteActor)
 	labels := append([]string{RoborevLabel}, options.Labels...)
 	slices.Sort(labels)
 	p.issue.Labels = slices.Compact(labels)
 	if options.Priority != nil {
 		p.issue.Priority = new(int64(*options.Priority))
 	}
-	for i, finding := range doc.Findings {
-		text := fmt.Sprintf("Finding %d from a roborev review.", i+1)
-		if policy == "comments" {
-			one := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "Review finding.", Findings: []structuredreview.Finding{finding}, SourceLabels: doc.SourceLabels}
-			text = one.MarkdownFrom("", i+1)
-		}
-		digest := publicationDigest([]byte(text))
-		p.digests = append(p.digests, digest)
-		p.roots = append(p.roots, gen.CommentRequestBody{Actor: new(WriteActor), Teammate: &teammate, Body: text + "\n\n" + publicationMarker(id, i, digest)})
+	for i := range p.roots {
+		p.roots[i].Actor = new(WriteActor)
+		p.roots[i].Teammate = &teammate
 	}
 	h := sha256.New()
 	requests := []any{p.issue}
@@ -260,6 +250,31 @@ func PreparePublicationWithOptions(id uuid.UUID, hash string, completed time.Tim
 	}
 	p.Fingerprint = hex.EncodeToString(h.Sum(nil))
 	p.fingerprint = p.Fingerprint
+	return p, nil
+}
+
+// PublicationFromSource constructs expected roots for inspection without
+// authorizing or preflighting writes.
+func PublicationFromSource(id uuid.UUID, hash string, completed time.Time, doc structuredreview.Document, policy string) (*Publication, error) {
+	if id == uuid.Nil() || len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" || completed.IsZero() || doc.Legacy != nil || (policy != "comments" && policy != "summary") {
+		return nil, fmt.Errorf("%w: invalid publication identity or policy", ErrRequestRejected)
+	}
+	p := &Publication{ReviewUUID: id, reviewID: id, DocumentHash: hash, Policy: policy, CompletedAt: completed.UTC()}
+	body := "A roborev review reported findings. Each finding has a separate comment."
+	p.issue = gen.CreateIssueRequestBody{Title: "Roborev review findings", Body: &body, Labels: []string{RoborevLabel}, ForceNew: new(true), Metadata: map[string]any{
+		publicationVersionKey: 1, publicationReviewKey: id.String(), publicationHashKey: hash,
+		publicationPolicyKey: policy, publicationTimeKey: p.CompletedAt.Format(time.RFC3339Nano), publicationCountKey: len(doc.Findings),
+	}}
+	for i, finding := range doc.Findings {
+		text := fmt.Sprintf("Finding %d from a roborev review.", i+1)
+		if policy == "comments" {
+			one := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "Review finding.", Findings: []structuredreview.Finding{finding}, SourceLabels: doc.SourceLabels}
+			text = one.MarkdownFrom("", i+1)
+		}
+		digest := publicationDigest([]byte(text))
+		p.digests = append(p.digests, digest)
+		p.roots = append(p.roots, gen.CommentRequestBody{Body: text + "\n\n" + publicationMarker(id, i, digest)})
+	}
 	return p, nil
 }
 

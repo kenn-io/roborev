@@ -3,14 +3,18 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -83,8 +87,14 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
 	var issue *katafake.Issue
+	started := make(chan struct{})
+	var startOnce sync.Once
+	var watchStartup atomic.Bool
 	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method != http.MethodPost {
+			if watchStartup.Load() && r.URL.Path == "/api/v1/health" {
+				startOnce.Do(func() { close(started) })
+			}
 			return false
 		}
 		if issue == nil {
@@ -123,6 +133,25 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 	cfg.Integrations.Kata.APIKey = "rotated-token"
 	_, err = publisher.Publish(t.Context(), job.ID)
 	require.Error(t, err)
+	// A fresh runner's startup pass recovers the accepted root whose response
+	// was lost. The fake uses a socket, so wait for its request barrier.
+	runner := NewHookRunner(NewStaticConfig(cfg), tc.Broadcaster, log.New(io.Discard, "", 0), tc.DB)
+	t.Cleanup(runner.Stop)
+	watchStartup.Store(true)
+	runner.startKataRecovery()
+	waitStarted := func() error {
+		select {
+		case <-started:
+			return nil
+		case <-time.After(10 * time.Second):
+			return errors.New("startup request did not arrive")
+		}
+	}
+	require.NoError(t, waitStarted())
+	runner.WaitUntilIdle()
+	recovered, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "complete", recovered.Marker.State)
 	status, err := publisher.Publish(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "complete", status.State)
@@ -151,6 +180,19 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "complete", observed.State)
 	assert.Equal(t, "service", observed.Roots[0].Comment.Author)
+	original := issue.Comments[0]
+	saved, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	replacement := "different finding"
+	digest := sha256.Sum256([]byte(replacement))
+	issue.Comments[0].UID = "replacement-uid"
+	issue.Comments[0].Body = fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", replacement, saved.ReviewUUID, digest)
+	observed, err = publisher.Inspect(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "partial", observed.State)
+	assert.Equal(t, "edited", observed.Roots[0].State)
+	assert.Equal(t, "replacement-uid", observed.Roots[0].Comment.UID)
+	issue.Comments[0] = original
 	// Expiry does not suppress read-back of the pinned project.
 	review, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
@@ -267,6 +309,56 @@ func TestKataPublicationDeadlineAppliesToEveryPost(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKataPublicationExpiresBetweenRoots(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "expiry-between-roots", "worker")
+	cfg := kataConnectionConfig(fake)
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+	seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: "reviews", Policy: "comments"}
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "first", Fix: "fix"}, {Severity: "high", Problem: "second", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
+	review, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	issue := fake.AddIssue(7, "expiry", "findings", "body")
+	issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": record.ReviewUUID.String(), "roborev.document_hash": record.DocumentHash, "roborev.policy": "comments", "roborev.completed_at": review.CreatedAt.UTC().Format(time.RFC3339Nano), "roborev.finding_count": 2}
+	var firstSent atomic.Bool
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/comments") {
+			return false
+		}
+		var req gen.CommentRequestBody
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &req)) {
+			return true
+		}
+		issue.Comments = append(issue.Comments, gen.CommentOut{UID: "first-root", Handle: new("c:first"), Body: req.Body, Author: "service"})
+		firstSent.Store(true)
+		fake.Reply(w, map[string]any{"issue": map[string]any{"uid": issue.Out.UID}, "comment": map[string]any{"uid": "first-root", "body": req.Body}})
+		return true
+	}
+	p := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+	p.now = func() time.Time {
+		if firstSent.Load() {
+			return review.CreatedAt.Add(7*24*time.Hour - kata.DefaultRequestTimeout)
+		}
+		return review.CreatedAt
+	}
+	_, err = p.Publish(t.Context(), job.ID)
+	require.ErrorContains(t, err, "expired")
+	require.Len(t, issue.Comments, 1)
+	var posts int
+	for _, request := range fake.AllRequests() {
+		if request.Method == http.MethodPost {
+			posts++
+		}
+	}
+	assert.Equal(t, 1, posts)
 }
 
 func TestKataCheckoutValidatesLinkedAndForeignWorktrees(t *testing.T) {
