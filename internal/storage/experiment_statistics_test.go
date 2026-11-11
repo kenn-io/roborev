@@ -150,6 +150,7 @@ func compareExperimentSubjectsForTest(t *testing.T, defaults, experimental []flo
 }
 
 func TestExperimentComparisonCanceled(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err := compareExperimentSubjects(ctx, []float64{1}, []float64{2})

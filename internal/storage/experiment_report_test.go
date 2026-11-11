@@ -613,6 +613,7 @@ func TestExperimentReportCheckedSynthesisAttribution(t *testing.T) {
 }
 
 func TestExperimentReportFailedSynthesisExecutorUnavailable(t *testing.T) {
+	t.Parallel()
 	db, repo := setupDBAndRepo(t, "failed-synthesis")
 	run := testUUID("failed-synthesis")
 	members, synth, err := db.EnqueuePanelRun(
