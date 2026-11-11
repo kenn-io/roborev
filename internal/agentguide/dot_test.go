@@ -48,7 +48,7 @@ func TestLintDOTRejects(t *testing.T) {
 		"box branches":      {"act -> end;", "act -> end; act -> ok;", "branch"},
 		"no exit":           {"act -> end;", "act -> end; end -> ok;", "exit"},
 		"template":          {"Act  on it", "{{.Job}}", "{{"},
-		"subgraph":          {"node [shape=box];", "node [shape=box]; subgraph x {}", "statement"},
+		"subgraph":          {"node [shape=box];", "node [shape=box]; subgraph x {};", "unsupported statement"},
 		"closing brace":     {"\n}\n~~~", "\n~~~", "}"},
 		"duplicate":         {"end [", "act [label=\"Duplicate\"]; end [", "act"},
 		"shape":             {"shape=diamond", "shape=egg", "shape"},
