@@ -200,6 +200,9 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 			out := unavailableKataContext(err)
 			if review, readErr := s.db.GetReviewByJobIDContext(ctx, jobID); readErr == nil && (id == uuid.Nil() || (review.UUID != nil && *review.UUID == id)) {
 				out.Body.SourceOutput, out.Body.SourceDocument = review.Output, review.StructuredOutput
+			} else if record, _ := s.db.GetKataPublication(ctx, jobID); record != nil && record.DocumentHash == "" && (id == uuid.Nil() || record.ReviewUUID == id) {
+				// Invalid legacy documents cannot hydrate, but their raw source is still evidence.
+				out.Body.SourceOutput = record.SourceOutput
 			}
 			if ctx.Err() != nil {
 				return nil, kataReadError(ctx.Err())

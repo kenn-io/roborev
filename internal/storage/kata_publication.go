@@ -41,6 +41,7 @@ type KataPublicationRecord struct {
 	JobID        int64
 	ReviewUUID   uuid.UUID
 	DocumentHash string
+	SourceOutput string
 	Marker       *KataPublication
 	document     string
 	markerJSON   sql.NullString
@@ -74,7 +75,7 @@ func newKataPublication(seed KataPublicationSeed, raw []byte) (string, error) {
 
 func scanKataPublication(scanner interface{ Scan(...any) error }) (*KataPublicationRecord, error) {
 	var record KataPublicationRecord
-	if err := scanner.Scan(&record.JobID, &record.ReviewUUID, &record.document, &record.markerJSON); err != nil {
+	if err := scanner.Scan(&record.JobID, &record.ReviewUUID, &record.document, &record.markerJSON, &record.SourceOutput); err != nil {
 		return nil, err
 	}
 	var err error
@@ -96,17 +97,17 @@ func scanKataPublication(scanner interface{ Scan(...any) error }) (*KataPublicat
 
 // GetKataPublication returns the current review for a job, even without a marker.
 func (db *DB) GetKataPublication(ctx context.Context, jobID int64) (*KataPublicationRecord, error) {
-	return scanKataPublication(db.QueryRowContext(ctx, `SELECT job_id, uuid, COALESCE(structured_output, ''), kata_publication FROM reviews WHERE job_id = ?`, jobID))
+	return scanKataPublication(db.QueryRowContext(ctx, `SELECT job_id, uuid, COALESCE(structured_output, ''), kata_publication, output FROM reviews WHERE job_id = ?`, jobID))
 }
 
 // GetKataPublicationByUUID returns the current review bearing this UUID.
 func (db *DB) GetKataPublicationByUUID(ctx context.Context, id uuid.UUID) (*KataPublicationRecord, error) {
-	return scanKataPublication(db.QueryRowContext(ctx, `SELECT job_id, uuid, COALESCE(structured_output, ''), kata_publication FROM reviews WHERE uuid = ?`, id))
+	return scanKataPublication(db.QueryRowContext(ctx, `SELECT job_id, uuid, COALESCE(structured_output, ''), kata_publication, output FROM reviews WHERE uuid = ?`, id))
 }
 
 // PendingKataPublications lists local authorizations to consider at startup.
 func (db *DB) PendingKataPublications(ctx context.Context) ([]KataPublicationRecord, error) {
-	rows, err := db.QueryContext(ctx, `SELECT job_id, uuid, COALESCE(structured_output, ''), kata_publication FROM reviews WHERE kata_publication IS NOT NULL AND json_extract(kata_publication, '$.state') = 'pending' AND julianday(created_at) > julianday('now', '-7 days', '+5 seconds') ORDER BY id`)
+	rows, err := db.QueryContext(ctx, `SELECT job_id, uuid, COALESCE(structured_output, ''), kata_publication, output FROM reviews WHERE kata_publication IS NOT NULL AND json_extract(kata_publication, '$.state') = 'pending' AND julianday(created_at) > julianday('now', '-7 days', '+5 seconds') ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}

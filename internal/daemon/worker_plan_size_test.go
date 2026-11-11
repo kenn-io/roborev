@@ -250,9 +250,9 @@ func TestWorkerKataHistoryAtAgentBoundary(t *testing.T) {
 			if mode == "authentication" || mode == "access" || mode == "canceled" {
 				assert.Equal(t, 1, reads)
 				assert.Zero(t, calls)
-				failed, err := tc.DB.GetJobByID(job.ID)
-				require.NoError(t, err)
-				assert.Contains(t, failed.Error, "Kata context")
+				retried := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+				assert.Equal(t, 1, retried.RetryCount)
+				assert.Empty(t, retried.Error)
 			} else {
 				assert.Equal(t, 1, calls)
 				if mode == "dirty" {
