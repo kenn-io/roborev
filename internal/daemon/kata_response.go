@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/roborev/internal/kata"
 )
 
@@ -18,13 +19,16 @@ type KataResponseRequest struct {
 	Body           string `json:"body"`
 	IdempotencyKey string `json:"idempotency_key"`
 }
+
 type KataResponseInput struct{ Body KataResponseRequest }
+
 type KataReplyReceipt struct {
 	UID      string `json:"uid"`
 	Author   string `json:"author"`
 	Teammate string `json:"teammate"`
 	Changed  bool   `json:"changed"`
 }
+
 type KataResponseOutput struct{ Body KataReplyReceipt }
 
 func (s *Server) humaKataResponse(ctx context.Context, in *KataResponseInput) (*KataResponseOutput, error) {

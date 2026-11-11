@@ -509,7 +509,7 @@ func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue
 	}
 	envelope, err := ReadPublicationEnvelope(issue.Issue.Metadata)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrRequestRejected, err)
+		return "", fmt.Errorf("%w: %w", ErrRequestRejected, err)
 	}
 	roots := ReadPublicationRoots(envelope, issue)
 	byUID := make(map[string]gen.CommentOut, len(issue.Comments))

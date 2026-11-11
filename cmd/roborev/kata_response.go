@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	katagen "go.kenn.io/kata/pkg/client/generated"
+
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/pkg/client/generated"
@@ -78,10 +79,10 @@ func kataResponseCmd() *cobra.Command {
 			return kataResponseError("read Kata issue", err)
 		}
 		if issue.UID == nil || issue.IssueID == nil || issue.ProjectID == nil || issue.Project == nil || issue.ProjectUID == nil || issue.DestinationID == nil || issue.CommentsComplete == nil || !*issue.CommentsComplete || issue.PublicationEnvelope == nil {
-			return errors.New("Kata issue lacks complete publication identity or comments")
+			return errors.New("kata issue lacks complete publication identity or comments")
 		}
 		if destination != "" && destination != *issue.DestinationID {
-			return errors.New("Kata destination changed")
+			return errors.New("kata destination changed")
 		}
 		env := issue.PublicationEnvelope
 		metadata := map[string]any{"roborev.version": env.Version, "roborev.review_uuid": env.ReviewUUID.String(), "roborev.document_hash": env.DocumentHash, "roborev.policy": env.Policy, "roborev.completed_at": env.CompletedAt.Format(time.RFC3339Nano), "roborev.finding_count": env.FindingCount}
