@@ -1963,8 +1963,8 @@ type BinaryChange struct {
 
 // ChangedBinaryFiles lists the binary files a commit or range changes, using
 // the same refs and pathspec as the review diff. Symlinks and submodules are
-// not files and are skipped. A single merge commit reports no files because
-// its combined diff has no single old side.
+// not files and are skipped. A single merge commit is compared with its first
+// parent, including changes introduced by conflict resolution.
 func ChangedBinaryFiles(ctx context.Context, repoPath, gitRef string, extraExcludes ...string) ([]BinaryChange, error) {
 	flags := []string{"--raw", "--numstat", "--no-renames", "--no-abbrev", "-z", "--"}
 	var args []string
@@ -1976,9 +1976,7 @@ func ChangedBinaryFiles(ctx context.Context, repoPath, gitRef string, extraExclu
 		args = append([]string{"show", gitRef, "--format=", "--diff-merges=first-parent"}, flags...)
 	}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
-	cmd := newGitCmdContext(ctx, args...)
-	cmd.Dir = repoPath
-	out, err := gitOutput(cmd)
+	out, err := reviewDiffOutput(ctx, repoPath, args)
 	if err != nil {
 		return nil, fmt.Errorf("git diff binary files: %w", err)
 	}
