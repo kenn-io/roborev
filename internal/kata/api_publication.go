@@ -65,9 +65,10 @@ type Publication struct {
 // PublicationRoot describes one expected root's observed state. Correlation
 // markers are untrusted and do not prove authorship.
 type PublicationRoot struct {
-	Position int
-	State    string // complete, missing, edited, ambiguous, unavailable, truncated
-	Comment  *gen.CommentOut
+	Position    int
+	EndPosition *int   // inclusive end for a run of unobserved positions
+	State       string // complete, missing, edited, ambiguous, unavailable, truncated
+	Comment     *gen.CommentOut
 }
 
 // PublicationIssue contains the full unfiltered issue response. Truncated is
@@ -318,7 +319,19 @@ func (p *Publication) Roots(issue PublicationIssue) []PublicationRoot {
 	if err != nil {
 		return nil
 	}
-	roots := ReadPublicationRoots(envelope, issue)
+	sparse := ReadPublicationRoots(envelope, issue)
+	roots := make([]PublicationRoot, 0, len(p.roots))
+	for _, root := range sparse {
+		end := root.Position
+		if root.EndPosition != nil {
+			end = *root.EndPosition
+		}
+		for pos := root.Position; pos <= end; pos++ {
+			item := root
+			item.Position, item.EndPosition = pos, nil
+			roots = append(roots, item)
+		}
+	}
 	for i := range roots {
 		if roots[i].Comment != nil && roots[i].State == "complete" && roots[i].Comment.Body != p.roots[i].Body {
 			roots[i].State = "edited"
@@ -411,63 +424,87 @@ func ReadPublicationEnvelope(metadata map[string]any) (PublicationEnvelope, erro
 // ReadPublicationRoots verifies markers and current bodies without a local review.
 // Correlation is untrusted and does not establish the comment's author.
 func ReadPublicationRoots(envelope PublicationEnvelope, issue PublicationIssue) []PublicationRoot {
-	roots := make([]PublicationRoot, envelope.FindingCount)
-	// A top-level comment without a recognizable position may be a root whose
-	// marker was removed. No receipt or prose can identify it safely; prevent
-	// replay for every otherwise-missing position until a person resolves it.
+	// Only observed markers consume space. Ranges cover the rest, regardless
+	// of how large the untrusted finding count is.
+	candidates := make(map[int][]gen.CommentOut)
 	uncorrelated := false
+	prefix := fmt.Sprintf("<!-- roborev:v1 review=%s position=", envelope.ReviewUUID)
 	for _, comment := range issue.Comments {
 		if comment.ReplyToUID != nil {
 			continue
 		}
-		correlated := false
-		for i := range roots {
-			prefix := fmt.Sprintf("<!-- roborev:v1 review=%s position=%d ", envelope.ReviewUUID, i)
-			if strings.Contains(comment.Body, prefix) {
-				correlated = true
+		remaining := comment.Body
+		seen := make(map[int]bool)
+		for {
+			_, suffix, found := strings.Cut(remaining, prefix)
+			if !found {
 				break
 			}
+			remaining = suffix
+			positionText, _, hasSpace := strings.Cut(suffix, " ")
+			position, err := strconv.Atoi(positionText)
+			if hasSpace && err == nil && position >= 0 && position < envelope.FindingCount && strconv.Itoa(position) == positionText && !seen[position] {
+				candidates[position] = append(candidates[position], comment)
+				seen[position] = true
+			}
 		}
-		if !correlated {
+		if len(seen) == 0 {
 			uncorrelated = true
 		}
 	}
-	for i := range roots {
-		roots[i] = PublicationRoot{Position: i, State: "missing"}
-		prefix := fmt.Sprintf("<!-- roborev:v1 review=%s position=%d ", envelope.ReviewUUID, i)
-		var candidates []gen.CommentOut
-		for _, comment := range issue.Comments {
-			if comment.ReplyToUID == nil && strings.Contains(comment.Body, prefix) {
-				candidates = append(candidates, comment)
-			}
+	positions := make([]int, 0, len(candidates))
+	for position := range candidates {
+		positions = append(positions, position)
+	}
+	slices.Sort(positions)
+	missingState := "missing"
+	if issue.Truncated {
+		missingState = "truncated"
+	} else if uncorrelated {
+		missingState = "ambiguous"
+	}
+	var roots []PublicationRoot
+	addMissing := func(start, end int) {
+		if start > end {
+			return
 		}
-		switch {
-		case len(candidates) > 1:
-			roots[i].State = "ambiguous"
-		case len(candidates) == 1:
-			comment := candidates[0]
-			roots[i].Comment = &comment
-			markerAt := strings.LastIndex(comment.Body, "\n\n"+prefix)
+		root := PublicationRoot{Position: start, State: missingState}
+		if end > start {
+			root.EndPosition = new(end)
+		}
+		roots = append(roots, root)
+	}
+	next := 0
+	for _, position := range positions {
+		addMissing(next, position-1)
+		root := PublicationRoot{Position: position}
+		comments := candidates[position]
+		if len(comments) > 1 {
+			root.State = "ambiguous"
+		} else {
+			comment := comments[0]
+			root.Comment = &comment
+			markerPrefix := fmt.Sprintf("%s%d ", prefix, position)
+			markerAt := strings.LastIndex(comment.Body, "\n\n"+markerPrefix)
 			valid := false
 			if markerAt >= 0 {
 				text := comment.Body[:markerAt]
-				valid = comment.Body[markerAt+2:] == publicationMarker(envelope.ReviewUUID, i, publicationDigest([]byte(text)))
+				valid = comment.Body[markerAt+2:] == publicationMarker(envelope.ReviewUUID, position, publicationDigest([]byte(text)))
 			}
 			switch {
 			case !valid || comment.EditedAt != nil:
-				roots[i].State = "edited"
+				root.State = "edited"
 			case comment.UID == "" || comment.Handle == nil || *comment.Handle == "":
-				roots[i].State = "unavailable"
+				root.State = "unavailable"
 			case issue.Truncated:
-				roots[i].State = "truncated"
+				root.State = "truncated"
 			default:
-				roots[i].State = "complete"
+				root.State = "complete"
 			}
-		case issue.Truncated:
-			roots[i].State = "truncated"
-		case uncorrelated:
-			roots[i].State = "ambiguous"
 		}
+		roots = append(roots, root)
+		next = position + 1
 	}
+	addMissing(next, envelope.FindingCount-1)
 	return roots
 }

@@ -362,6 +362,51 @@ func TestReadRemotePublicationEnvelopeAndRoots(t *testing.T) {
 	assert.Equal(t, "ambiguous", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}})[0].State)
 	assert.Equal(t, "missing", ReadPublicationRoots(envelope, PublicationIssue{})[0].State)
 
+	// A remote count can be arbitrarily large; only observed positions and
+	// missing ranges are materialized.
+	envelope.FindingCount = int(^uint(0) >> 1)
+	comment = gen.CommentOut{UID: "comment-uid", Handle: new("c:one"), Body: p.roots[0].Body}
+	roots = ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}})
+	require.Len(t, roots, 2)
+	assert.Equal(t, "complete", roots[0].State)
+	assert.Equal(t, 1, roots[1].Position)
+	require.NotNil(t, roots[1].EndPosition)
+	assert.Equal(t, envelope.FindingCount-1, *roots[1].EndPosition)
+	assert.Equal(t, "missing", roots[1].State)
+	envelope.FindingCount = 3
+	roots = ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}})
+	require.Len(t, roots, 2)
+	assert.Equal(t, 2, *roots[1].EndPosition)
+	assert.Equal(t, "truncated", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}, Truncated: true})[1].State)
+	lastText := "last finding"
+	last := gen.CommentOut{UID: "last", Handle: new("c:last"), Body: lastText + "\n\n" + publicationMarker(envelope.ReviewUUID, 2, publicationDigest([]byte(lastText)))}
+	roots = ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{last}})
+	require.Len(t, roots, 2)
+	assert.Equal(t, 0, roots[0].Position)
+	require.NotNil(t, roots[0].EndPosition)
+	assert.Equal(t, 1, *roots[0].EndPosition)
+	assert.Equal(t, "missing", roots[0].State)
+	assert.Equal(t, 2, roots[1].Position)
+	assert.Equal(t, "complete", roots[1].State)
+	roots = ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{last, {Body: "marker removed"}}})
+	assert.Equal(t, "ambiguous", roots[0].State)
+
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Findings: []structuredreview.Finding{{Severity: "high", Problem: "one", Fix: "fix"}, {Severity: "high", Problem: "two", Fix: "fix"}, {Severity: "high", Problem: "three", Fix: "fix"}}}
+	source, err := PublicationFromSource(p.ReviewUUID, p.DocumentHash, p.CompletedAt, doc, "comments")
+	require.NoError(t, err)
+	localRoots := source.Roots(PublicationIssue{})
+	require.Len(t, localRoots, 3)
+	for i, root := range localRoots {
+		assert.Equal(t, i, root.Position)
+		assert.Equal(t, "missing", root.State)
+		assert.Nil(t, root.EndPosition)
+	}
+	localRoots = source.Roots(PublicationIssue{Comments: []gen.CommentOut{{UID: "second", Handle: new("c:second"), Body: source.roots[1].Body}}})
+	require.Len(t, localRoots, 3)
+	assert.Equal(t, "missing", localRoots[0].State)
+	assert.Equal(t, "complete", localRoots[1].State)
+	assert.Equal(t, "missing", localRoots[2].State)
+
 	for _, key := range []string{publicationVersionKey, publicationReviewKey, publicationHashKey, publicationPolicyKey, publicationTimeKey, publicationCountKey} {
 		metadata := maps.Clone(p.issue.Metadata)
 		delete(metadata, key)

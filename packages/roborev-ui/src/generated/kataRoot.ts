@@ -5,6 +5,7 @@ import type { KataComment } from "./kataComment";
 
 export interface KataRoot {
   comment?: KataComment;
+  end_position?: number;
   position: number;
   state: string;
 }

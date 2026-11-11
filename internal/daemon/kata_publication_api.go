@@ -23,9 +23,10 @@ type KataComment struct {
 	EditedAt   *time.Time `json:"edited_at,omitempty"`
 }
 type KataRoot struct {
-	Position int          `json:"position"`
-	State    string       `json:"state"`
-	Comment  *KataComment `json:"comment,omitempty"`
+	Position    int          `json:"position"`
+	EndPosition *int         `json:"end_position,omitempty"`
+	State       string       `json:"state"`
+	Comment     *KataComment `json:"comment,omitempty"`
 }
 type KataPublicationBody struct {
 	ReviewUUID    string        `json:"review_uuid"`
@@ -73,7 +74,7 @@ func kataPublicationBody(status *KataPublicationStatus) KataPublicationBody {
 		}
 	}
 	for _, root := range status.Roots {
-		r := KataRoot{Position: root.Position, State: root.State}
+		r := KataRoot{Position: root.Position, EndPosition: root.EndPosition, State: root.State}
 		if root.Comment != nil {
 			c := kataComment(*root.Comment)
 			r.Comment = &c

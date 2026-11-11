@@ -2863,6 +2863,9 @@ components:
       properties:
         comment:
           $ref: "#/components/schemas/KataComment"
+        end_position:
+          format: int64
+          type: integer
         position:
           format: int64
           type: integer

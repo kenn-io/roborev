@@ -48,6 +48,9 @@ func (tr kataLatencyTransport) RoundTrip(r *http.Request) (*http.Response, error
 		return nil, r.Context().Err()
 	}
 	response := httptest.NewRecorder()
+	if r.Body == nil {
+		r.Body = http.NoBody
+	}
 	tr.handler.ServeHTTP(response, r)
 	return response.Result(), nil
 }
@@ -369,6 +372,7 @@ func TestKataStartupRecoversDroppedWriteResponses(t *testing.T) {
 	var watchStartup atomic.Bool
 	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method != http.MethodPost {
+			w.Header().Set("Connection", "close") // Avoid transport retries after an accepted, dropped response.
 			if r.URL.Path == "/api/v1/health" && watchStartup.Swap(false) {
 				select {
 				case started <- struct{}{}:
@@ -403,7 +407,9 @@ func TestKataStartupRecoversDroppedWriteResponses(t *testing.T) {
 	publisher := newKataPublisher(tc.DB, NewStaticConfig(cfg))
 	_, err = publisher.Publish(t.Context(), job.ID)
 	require.Error(t, err)
-	for range 2 {
+	require.NotNil(t, issue)
+	require.Empty(t, issue.Comments)
+	for attempt := range 2 {
 		watchStartup.Store(true)
 		runner := NewHookRunner(NewStaticConfig(cfg), tc.Broadcaster, log.New(io.Discard, "", 0), tc.DB)
 		var stopOnce sync.Once
@@ -422,6 +428,12 @@ func TestKataStartupRecoversDroppedWriteResponses(t *testing.T) {
 		require.NoError(t, wait())
 		runner.WaitUntilIdle()
 		stop()
+		record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+		require.NoError(t, err)
+		if attempt == 0 {
+			require.Equal(t, "pending", record.Marker.State)
+			require.Len(t, issue.Comments, 1)
+		}
 	}
 	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)

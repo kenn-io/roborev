@@ -309,6 +309,22 @@ func TestKataIssueFullCommentsAndAttribution(t *testing.T) {
 	assert.Equal(t, "root-uid", *got.Comments[1].ReplyToUID)
 }
 
+func TestKataIssueHugeUntrustedFindingCount(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	issue := fake.AddIssue(7, "large-count", "title", "body")
+	count := 1 << 30
+	issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": testUUID("remote-review").String(), "roborev.document_hash": strings.Repeat("a", 64), "roborev.policy": "comments", "roborev.completed_at": time.Now().UTC().Format(time.RFC3339Nano), "roborev.finding_count": count}
+	w := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {"large-count"}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got := decodeKata[KataIssue](t, w)
+	require.NotNil(t, got.Envelope)
+	assert.Equal(t, count, got.Envelope.FindingCount)
+	require.Len(t, got.Roots, 1)
+	assert.Equal(t, "missing", got.Roots[0].State)
+	require.NotNil(t, got.Roots[0].EndPosition)
+	assert.Equal(t, count-1, *got.Roots[0].EndPosition)
+}
+
 func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	fake := katafake.New(t)
 	tc := newWorkerTestContext(t, 1)

@@ -283,7 +283,7 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if envelope, err := kata.ReadPublicationEnvelope(full.Issue.Metadata); err == nil {
 		result.Envelope = &envelope
 		for _, root := range kata.ReadPublicationRoots(envelope, full) {
-			item := KataRoot{Position: root.Position, State: root.State}
+			item := KataRoot{Position: root.Position, EndPosition: root.EndPosition, State: root.State}
 			if root.Comment != nil {
 				comment := kataComment(*root.Comment)
 				item.Comment = &comment

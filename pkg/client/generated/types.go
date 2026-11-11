@@ -2860,9 +2860,10 @@ func (k KataPublicationRequest) Validate() error {
 }
 
 type KataRoot struct {
-	Comment  *KataComment `json:"comment,omitempty"`
-	Position int64        `json:"position"`
-	State    string       `json:"state" validate:"required"`
+	Comment     *KataComment `json:"comment,omitempty"`
+	EndPosition *int64       `json:"end_position,omitempty"`
+	Position    int64        `json:"position"`
+	State       string       `json:"state" validate:"required"`
 }
 
 func (k KataRoot) Validate() error {

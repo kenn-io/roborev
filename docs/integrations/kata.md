@@ -169,6 +169,11 @@ positions are ambiguous and replay stops. Every encoded request is preflighted
 against Kata's 1 MiB body limit before any write; oversized findings are never
 clipped. An outage may require a daemon restart or an explicit retry.
 
+An explicit issue read can report unobserved finding positions as ranges. A root
+with `end_position` covers the inclusive zero-based range from `position` to
+`end_position`; roots with observed comments remain individual entries. These
+remote markers and counts are untrusted correlation data.
+
 See [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration)
 in the review hooks guide for hook fields and event patterns.
 

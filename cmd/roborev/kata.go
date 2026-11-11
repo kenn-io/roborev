@@ -66,7 +66,11 @@ func kataCmd() *cobra.Command {
 				if root.Comment != nil {
 					handle = deref(root.Comment.Handle)
 				}
-				fmt.Fprintf(out, "Finding %d: %s", root.Position+1, root.State)
+				if root.EndPosition != nil {
+					fmt.Fprintf(out, "Findings %d-%d: %s", root.Position+1, *root.EndPosition+1, root.State)
+				} else {
+					fmt.Fprintf(out, "Finding %d: %s", root.Position+1, root.State)
+				}
 				if handle != "" {
 					fmt.Fprintf(out, " %s", handle)
 				}
