@@ -54,6 +54,41 @@ function abortingRequest() {
 }
 
 describe("Roborev request cancellation", () => {
+  it("retries review and comment reads before displaying them", async () => {
+    const getReview = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({
+        id: 7,
+        job_id: 42,
+        output: "review output",
+        closed: false,
+      });
+    const getReviewProjection = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({
+        responses: [{ id: 1, responder: "web", response: "comment" }],
+      });
+    const listJobs = vi.fn().mockResolvedValue({ jobs: [] });
+    const store = reviewStore({
+      getReview,
+      getReviewProjection,
+      listJobs,
+    } as never);
+    vi.useFakeTimers();
+    try {
+      store.setSelectedJobId(42);
+      store.loadReview(42);
+      await vi.runAllTimersAsync();
+      expect(store.getReview()?.output).toBe("review output");
+      expect(store.getResponses()[0]?.response).toBe("comment");
+      expect(store.getError()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("aborts stale review transport when another job becomes authoritative", async () => {
     const staleSignals: AbortSignal[] = [];
     const request = <A>(value: A) =>
@@ -424,7 +459,7 @@ describe("review close reporting", () => {
       const onError = vi.fn();
       const getReview = vi.fn(async () => {
         if (submitted && action.includes("refresh failure"))
-          throw new Error("refresh failed");
+          throw new Response(null, { status: 503 });
         return { id: 1, job_id: 42, output: "review", closed };
       });
       const store = reviewStore(
@@ -470,7 +505,7 @@ describe("review close reporting", () => {
 
 it("reports a shown review load failure once per selection", async () => {
   const getReview = vi.fn(async () => {
-    throw new Error("load failed");
+    throw new Response(null, { status: 503 });
   });
   const store = reviewStore({
     getReview,

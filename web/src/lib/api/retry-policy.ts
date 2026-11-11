@@ -20,7 +20,13 @@ export function isTransientFailure(
     typeof failure === "object" &&
     failure !== null &&
     "_tag" in failure &&
-    failure._tag === "TransientTransportError"
+    failure._tag === "TransientTransportError" &&
+    "cause" in failure &&
+    !(failure.cause instanceof SyntaxError) &&
+    !(
+      failure.cause instanceof DOMException &&
+      failure.cause.name === "AbortError"
+    )
   );
 }
 

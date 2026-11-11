@@ -3,6 +3,7 @@ import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
+import { retryIdempotentRead } from "../../api/retry-policy";
 import { addComment as addCommentRequest } from "../../api/generated/comments/comments";
 import { listJobs as listJobsRequest } from "../../api/generated/jobs/jobs";
 import type {
@@ -71,6 +72,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
             api.getReview({ job_id: jobId }, { signal }),
           ).pipe(
+            retryIdempotentRead,
             Effect.map(Option.some),
             Effect.catchTag("RoborevHTTPError", (cause) =>
               cause.status === 404
@@ -88,6 +90,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             "GET Roborev review projection",
             (signal) => api.getReviewProjection({ job_id: jobId }, { signal }),
           ).pipe(
+            retryIdempotentRead,
             Effect.map(Option.some),
             Effect.catchTag("RoborevHTTPError", (cause) =>
               cause.status === 404
@@ -105,7 +108,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
               signal,
             }),
-          ).pipe(Effect.option),
+          ).pipe(retryIdempotentRead, Effect.option),
         },
         { concurrency: "unbounded" },
       );

@@ -211,9 +211,11 @@ Agent and model filters apply to attempt metrics. Logical-review metrics retain
 their review-based population rather than silently changing meaning.
 
 Analytics refresh when the page opens, when its filters change, when the browser
-regains focus, or when **Refresh** is selected. If a refresh for the current
-filters fails, the page labels the existing snapshot as stale and offers a
-retry. It never displays results from old filters under a new filter selection.
+regains focus, or when **Refresh** is selected. The browser retries brief
+connection failures when loading jobs, reviews, branches, or analytics. If a
+refresh for the current filters fails, the page labels the existing snapshot as
+stale and offers a retry. It never displays results from old filters under a new
+filter selection.
 
 ## Private Network Access
 

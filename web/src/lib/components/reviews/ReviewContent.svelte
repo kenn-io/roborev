@@ -14,6 +14,7 @@
   const stores = getReviewStores();
   const output = $derived(stores.roborevReview?.getOutput() ?? "");
   const selectedJob = $derived(stores.roborevReview?.getSelectedJob());
+  const loadFailure = $derived(stores.roborevReview?.getError());
   const failed = $derived(selectedJob?.status === "failed");
   const failureReason = $derived(
     selectedJob?.error?.trim() ||
@@ -48,6 +49,10 @@
   function reportRendererFailure(): void {
     stores.roborevReview?.reportRendererFailure();
   }
+  function retryReview(): void {
+    const jobId = stores.roborevReview?.getSelectedJobId();
+    if (jobId !== undefined) stores.roborevReview?.loadReview(jobId);
+  }
   function retryRenderer(): void {
     stores.roborevReview?.retryRenderer();
     void loadRichReviewContent();
@@ -72,6 +77,7 @@
       RichReviewContent &&
       output &&
       !stores.roborevReview?.isLoading() &&
+      !loadFailure &&
       !failed &&
       !pending
         ? stores.roborevReview?.getReview()?.job_id
@@ -85,6 +91,11 @@
 
 {#if stores.roborevReview?.isLoading()}
   <div class="review-state">Loading review…</div>
+{:else if loadFailure}
+  <div class="review-state" role="alert">
+    <p>{loadFailure}</p>
+    <button type="button" onclick={retryReview}>Retry</button>
+  </div>
 {:else if failed}
   <div class="review-state review-failure" role="alert">
     <strong>Review failed</strong>

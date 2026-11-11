@@ -156,7 +156,7 @@ describe("submitted search telemetry", () => {
       }),
     };
     if (kind === "failed")
-      api.listJobs.mockRejectedValue(new Error("request failed"));
+      api.listJobs.mockRejectedValue(new Response(null, { status: 503 }));
     const store = createJobsStore({ api: api as never, navigate: vi.fn() });
     if (kind === "preview") store.setFilter("search", "feature/search");
     else store.submitSearch(value);
@@ -197,6 +197,37 @@ describe("submitted search telemetry", () => {
 });
 
 describe("createJobsStore filter preferences", () => {
+  it("retries a lost list request and shows the recovered jobs", async () => {
+    const api = {
+      listJobs: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValue({ jobs: [makeJob(1)] }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    vi.useFakeTimers();
+    try {
+      const load = loadJobs(store);
+      await vi.runAllTimersAsync();
+      await load;
+      expect(store.getJobs()).toEqual([makeJob(1)]);
+      expect(store.getError()).toBeNull();
+      expect(api.listJobs).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry an invalid response", async () => {
+    const api = {
+      listJobs: vi.fn().mockRejectedValue(new SyntaxError("invalid JSON")),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+    expect(store.getError()).not.toBeNull();
+    expect(api.listJobs).toHaveBeenCalledOnce();
+  });
+
   it("maps the branchless display sentinel to the empty branch query", async () => {
     const api = {
       listJobs: vi.fn().mockResolvedValue({
@@ -590,7 +621,7 @@ describe("createJobsStore sorting", () => {
         if (typed.sort === "id") {
           sortRequests += 1;
           if (sortRequests === 1) await firstSortReply.promise;
-          else throw new Error("daemon unavailable");
+          else throw new Response(null, { status: 503 });
         }
         return sorted.listJobs(query);
       }),
@@ -639,7 +670,7 @@ describe("createJobsStore sorting", () => {
               await firstSortReply.promise;
             } else {
               await rerunReload.promise;
-              if (reload === "fails") throw new Error("daemon unavailable");
+              if (reload === "fails") throw new Response(null, { status: 503 });
             }
           }
           return sorted.listJobs(query);
@@ -705,7 +736,7 @@ describe("createJobsStore sorting", () => {
     const api = {
       listJobs: vi.fn().mockImplementation(async (query) => {
         if ((query as { sort?: string }).sort === "id" && failSort) {
-          throw new Error("daemon unavailable");
+          throw new Response(null, { status: 503 });
         }
         return sorted.listJobs(query);
       }),
@@ -1053,7 +1084,7 @@ describe("createJobsStore event stream", () => {
 
     const pending: Array<{
       resolve: (value: JobsResponse) => void;
-      reject: (reason: Error) => void;
+      reject: (reason: unknown) => void;
     }> = [];
     const api = {
       listJobs: vi.fn(
@@ -1090,7 +1121,7 @@ describe("createJobsStore event stream", () => {
     });
     await vi.waitFor(() => expect(store.getJobs()).toHaveLength(1));
 
-    pending[1]?.reject(new Error("request failed"));
+    pending[1]?.reject(new Response(null, { status: 503 }));
     await olderLoad;
 
     expect(store.getError()).toBeNull();
@@ -1506,7 +1537,7 @@ describe("createJobsStore event stream", () => {
       listJobs: vi.fn().mockImplementation(async () => {
         reconciliationRound += 1;
         if (reconciliationRound <= 2) {
-          throw new TypeError("authority unavailable");
+          throw new Response(null, { status: 503 });
         }
         return {
           jobs: [],

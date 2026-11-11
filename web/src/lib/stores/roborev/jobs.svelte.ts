@@ -1,6 +1,7 @@
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest, RoborevStreamError } from "../../api/client";
+import { retryIdempotentRead } from "../../api/retry-policy";
 import {
   cancelJob as cancelJobRequest,
   listJobs,
@@ -290,6 +291,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
         signal,
       }),
     ).pipe(
+      retryIdempotentRead,
       Effect.catchTag("RoborevHTTPError", (cause) =>
         Effect.fail(
           RoborevResponseError.make({
@@ -468,6 +470,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
             "load more Roborev jobs",
             (signal) => api.listJobs(query, { signal }),
           ).pipe(
+            retryIdempotentRead,
             Effect.catchTag("RoborevHTTPError", (cause) =>
               Effect.fail(
                 RoborevResponseError.make({

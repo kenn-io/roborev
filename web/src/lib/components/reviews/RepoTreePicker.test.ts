@@ -84,6 +84,7 @@ describe("RepoTreePicker", () => {
 
   afterEach(async () => {
     cleanup();
+    vi.useRealTimers();
     state.jobs = null;
     repoApi.listBranches.mockReset();
     repoApi.listRepos.mockReset();
@@ -189,7 +190,7 @@ describe("RepoTreePicker", () => {
           branches: [{ name: "project-a-main", count: 1 }],
         });
       }
-      return Promise.reject(new TypeError("branch lookup failed"));
+      return Promise.reject(new Response("unavailable", { status: 500 }));
     });
     render(RepoTreePicker);
 
@@ -201,8 +202,74 @@ describe("RepoTreePicker", () => {
     await screen.findByText("project-a-main");
     await fireEvent.click(expandButtons[1]);
 
-    await screen.findByText("No branches");
+    await screen.findByText("Could not load branches.");
     expect(screen.queryByText("project-a-main")).toBeNull();
+    expect(screen.queryByText("No branches")).toBeNull();
+  });
+
+  it("recovers a branch list after a brief connection failure", async () => {
+    vi.useFakeTimers();
+    repoApi.listBranches
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValue({ branches: [{ name: "main", count: 3 }] });
+    render(RepoTreePicker);
+
+    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(screen.getByTitle("Show branches"));
+    expect(screen.getByText("Loading...")).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(repoApi.listBranches).toHaveBeenCalledTimes(2);
+  });
+
+  it("reloads the expanded repository after automatic retries are exhausted", async () => {
+    vi.useFakeTimers();
+    repoApi.listBranches
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValue({ branches: [{ name: "main", count: 3 }] });
+    render(RepoTreePicker);
+
+    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(screen.getByTitle("Show branches"));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(repoApi.listBranches).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load branches.",
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(repoApi.listBranches).toHaveBeenCalledTimes(4);
+  });
+
+  it("reports an HTTP failure without retrying and keeps true empty results distinct", async () => {
+    vi.useFakeTimers();
+    repoApi.listBranches
+      .mockRejectedValueOnce(new Response("unavailable", { status: 500 }))
+      .mockResolvedValue({ branches: [] });
+    render(RepoTreePicker);
+
+    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(screen.getByTitle("Show branches"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(repoApi.listBranches).toHaveBeenCalledOnce();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load branches.",
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText("No branches")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
   it("distinguishes duplicate checkouts and searches their paths", async () => {
     repoApi.listRepos.mockResolvedValue({

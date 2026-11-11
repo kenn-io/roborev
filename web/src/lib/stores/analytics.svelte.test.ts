@@ -178,6 +178,26 @@ describe("analytics store URL filters", () => {
 });
 
 describe("analytics store request ownership", () => {
+  it("recovers a transient failure without losing the current snapshot", async () => {
+    const loader = vi
+      .fn<AnalyticsLoader>()
+      .mockResolvedValueOnce(snapshot(4))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(snapshot(5));
+    const store = createAnalyticsStore({ loader });
+    await store.refresh();
+    vi.useFakeTimers();
+    try {
+      const refresh = store.refresh();
+      await vi.runAllTimersAsync();
+      await refresh;
+      expect(store.getSnapshot()?.summary.reviews.total).toBe(5);
+      expect(store.getError()).toBeNull();
+    } finally {
+      store.dispose();
+      vi.useRealTimers();
+    }
+  });
   it("passes cancellation to generated analytics requests", async () => {
     const requests: Request[] = [];
     globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
@@ -253,7 +273,7 @@ describe("analytics store request ownership", () => {
     const loader = vi
       .fn<AnalyticsLoader>()
       .mockResolvedValueOnce(snapshot(4))
-      .mockRejectedValueOnce(new Error("offline"));
+      .mockRejectedValue(new Error("offline"));
     const store = createAnalyticsStore({ loader });
 
     await store.refresh();
@@ -269,7 +289,7 @@ describe("analytics store request ownership", () => {
     const loader = vi
       .fn<AnalyticsLoader>()
       .mockResolvedValueOnce(snapshot(30))
-      .mockRejectedValueOnce(new Error("request failed"));
+      .mockRejectedValue(new Error("request failed"));
     const store = createAnalyticsStore({ loader });
 
     await store.refresh();

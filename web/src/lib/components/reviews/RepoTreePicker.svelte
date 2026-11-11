@@ -5,6 +5,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { getAppRuntime } from "../../runtime/context";
   import { executeRoborevRequest } from "../../api/client";
+  import { retryIdempotentRead } from "../../api/retry-policy";
   import { listBranches, listRepos } from "../../api/generated/repos/repos";
   import { getReviewStores } from "../../stores/context";
   import type {
@@ -28,6 +29,7 @@
   let expandedRepo = $state<string | undefined>(undefined);
   let branches = $state.raw<BranchWithCount[]>([]);
   let loadingBranches = $state(false);
+  let branchError = $state(false);
   let pickerRef = $state<HTMLDivElement>();
   let branchGeneration = 0;
 
@@ -114,12 +116,12 @@
   }
 
   function toggleRepo(rootPath: string): void {
-    branchGeneration += 1;
-    const generation = branchGeneration;
-    branches = [];
     if (expandedRepo === rootPath) {
+      branchGeneration += 1;
+      branches = [];
       expandedRepo = undefined;
       loadingBranches = false;
+      branchError = false;
       runtime.runCommand(
         Effect.gen(function* () {
           const workflow = yield* RoborevWorkflow;
@@ -133,15 +135,25 @@
       );
       return;
     }
+    loadBranches(rootPath);
+  }
+
+  function loadBranches(rootPath: string): void {
+    branchGeneration += 1;
+    const generation = branchGeneration;
+    branches = [];
     expandedRepo = rootPath;
     loadingBranches = true;
+    branchError = false;
     runtime.runCommand(
       Effect.gen(function* () {
         const workflow = yield* RoborevWorkflow;
         yield* workflow.catalog(
           branchesOwner,
-          executeRoborevRequest("list Roborev branches", (signal) =>
-            listBranches({ repo: [rootPath] }, { signal }),
+          retryIdempotentRead(
+            executeRoborevRequest("list Roborev branches", (signal) =>
+              listBranches({ repo: [rootPath] }, { signal }),
+            ),
           ).pipe(
             Effect.catchTag("RoborevHTTPError", (cause) =>
               Effect.fail(
@@ -162,7 +174,16 @@
                 }
               }),
             ),
-            Effect.catch(() => Effect.void),
+            Effect.catch(() =>
+              Effect.sync(() => {
+                if (
+                  branchGeneration === generation &&
+                  expandedRepo === rootPath
+                ) {
+                  branchError = true;
+                }
+              }),
+            ),
             Effect.ensuring(
               Effect.sync(() => {
                 if (
@@ -339,6 +360,16 @@
               <div class="branches">
                 {#if loadingBranches}
                   <span class="branch-loading">Loading...</span>
+                {:else if branchError}
+                  <div class="branch-error" role="alert">
+                    <span>Could not load branches.</span>
+                    <button
+                      type="button"
+                      onclick={() => loadBranches(repo.root_path)}
+                    >
+                      Retry
+                    </button>
+                  </div>
                 {:else}
                   {#each branches as branch (branch.name)}
                     <button
@@ -534,6 +565,30 @@
     padding: 6px 10px;
     font-size: var(--font-size-xs);
     color: var(--text-muted);
+  }
+
+  .branch-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 10px;
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+
+  .branch-error button {
+    padding: 2px 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+  }
+
+  .branch-error button:hover {
+    background: var(--bg-surface-hover);
   }
 
   .count {
