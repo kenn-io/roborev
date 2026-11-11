@@ -77,11 +77,7 @@ func TestGitIsolationPreservesGoCaches(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		goBin += ".exe"
 	}
-	for _, configured := range []bool{false, true} {
-		name := "default"
-		if configured {
-			name = "toolchain configuration"
-		}
+	for _, name := range []string{"default", "toolchain configuration", "conflicting GOROOT values"} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "GOENV", "GOROOT", "GOTOOLCHAIN", "GOPATH", "GOMODCACHE", "GOCACHE", "MISE_CONFIG_DIR", "MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_STATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
@@ -91,13 +87,19 @@ func TestGitIsolationPreservesGoCaches(t *testing.T) {
 			t.Setenv("USERPROFILE", home)
 			t.Setenv("GOENV", "off")
 			t.Setenv("GOTOOLCHAIN", "local")
-			if configured {
+			if name != "default" {
 				root := t.TempDir()
 				goenv := filepath.Join(t.TempDir(), "goenv")
 				require.NoError(t, os.WriteFile(goenv, []byte("GOROOT="+root+"\n"), 0o600))
 				data := "GOPATH=" + t.TempDir() + "\nGOCACHE=" + t.TempDir() + "\n"
 				require.NoError(t, os.WriteFile(filepath.Join(root, "go.env"), []byte(data), 0o600))
 				t.Setenv("GOENV", goenv)
+				if name == "conflicting GOROOT values" {
+					envRoot := t.TempDir()
+					require.NoError(t, os.WriteFile(filepath.Join(envRoot, "go.env"), []byte(data), 0o600))
+					require.NoError(t, os.WriteFile(filepath.Join(root, "go.env"), nil, 0o600))
+					t.Setenv("GOROOT", envRoot)
+				}
 			}
 			originalUserEnv := userEnv
 			t.Cleanup(func() { userEnv = originalUserEnv })
