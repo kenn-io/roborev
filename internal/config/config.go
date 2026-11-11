@@ -100,6 +100,7 @@ type HookConfig struct {
 	Command  string   `toml:"command"`              // shell command with {var} templates
 	Type     string   `toml:"type"`                 // "beads", "kata", or "webhook"; empty or "command" runs Command
 	URL      string   `toml:"url" sensitive:"true"` // webhook destination URL when Type is "webhook"
+	Findings string   `toml:"findings"`             // kata: "comments" or "summary" enables structured publication
 	Project  string   `toml:"project"`              // kata: project name (defaults to .kata.toml binding)
 	Labels   []string `toml:"labels"`               // kata: extra labels (roborev is always added)
 	Priority *int     `toml:"priority"`             // kata: issue priority (0..4); nil = kata default
@@ -646,6 +647,7 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 		return err
 	}
 	var review ReviewConfig
+	var hooks []HookConfig
 	switch typed := cfg.(type) {
 	case *Config:
 		for identity, project := range typed.Projects {
@@ -662,8 +664,15 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 			}
 		}
 		review = typed.Review
+		hooks = typed.Hooks
 	case *RepoConfig:
 		review = typed.Review
+		hooks = typed.Hooks
+	}
+	for i, hook := range hooks {
+		if hook.Findings != "" && (hook.Type != "kata" || (hook.Findings != "comments" && hook.Findings != "summary")) {
+			return fmt.Errorf("hooks.%d.findings: expected comments or summary on a kata hook", i)
+		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(review.Panels)) {
 		if _, err := NormalizeReasoning(review.Panels[name].SynthesisReasoning); err != nil {

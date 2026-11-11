@@ -191,6 +191,11 @@ func (hr *HookRunner) handleEvent(event Event) {
 		}
 
 		if hook.Type == "kata" {
+			// Structured publications require the guarded publisher. Never route
+			// them through the legacy hook, which posts different content.
+			if hook.Findings != "" {
+				continue
+			}
 			fired++
 			hr.wg.Add(1)
 			go hr.runKataHook(hook, event, effectiveRepo)

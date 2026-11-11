@@ -243,3 +243,20 @@ func TestPublicationPostsUsePreflightedBodiesAndServerAttribution(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, rootKey, posts[1].Header.Get("Idempotency-Key"))
 }
+
+func TestPublicationOptionsFingerprint(t *testing.T) {
+	t.Parallel()
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	prepare := func(opts PublicationOptions) *Publication {
+		p, err := PreparePublicationWithOptions(id, strings.Repeat("a", 64), at, doc, "comments", "reviewer", opts)
+		require.NoError(t, err)
+		return p
+	}
+	first := prepare(PublicationOptions{Labels: []string{"z", "a", "z"}, Priority: new(1)})
+	equivalent := prepare(PublicationOptions{Labels: []string{"a", "z"}, Priority: new(1)})
+	assert.Equal(t, first.Fingerprint, equivalent.Fingerprint)
+	assert.NotEqual(t, first.Fingerprint, prepare(PublicationOptions{Labels: []string{"a", "z"}, Priority: new(2)}).Fingerprint)
+	assert.NotEqual(t, first.Fingerprint, prepare(PublicationOptions{Labels: []string{"a"}, Priority: new(1)}).Fingerprint)
+}

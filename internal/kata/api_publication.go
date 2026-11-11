@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -193,7 +194,17 @@ func publicationMarker(id uuid.UUID, position int, digest string) string {
 // PreparePublication renders every request and preflights the exact encoded
 // bodies before any issue or comment can be posted. Summary mode includes no
 // review text, paths, source labels, diagnostics, or fixes.
+type PublicationOptions struct {
+	Labels   []string
+	Priority *int
+}
+
 func PreparePublication(id uuid.UUID, hash string, completed time.Time, doc structuredreview.Document, policy, teammate string) (*Publication, error) {
+	return PreparePublicationWithOptions(id, hash, completed, doc, policy, teammate, PublicationOptions{})
+}
+
+// PreparePublicationWithOptions includes the selected hook options in the preflight fingerprint.
+func PreparePublicationWithOptions(id uuid.UUID, hash string, completed time.Time, doc structuredreview.Document, policy, teammate string, options PublicationOptions) (*Publication, error) {
 	if id == uuid.Nil() || len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" || completed.IsZero() || doc.Legacy != nil || (policy != "comments" && policy != "summary") {
 		return nil, fmt.Errorf("%w: invalid publication identity or policy", ErrRequestRejected)
 	}
@@ -206,6 +217,12 @@ func PreparePublication(id uuid.UUID, hash string, completed time.Time, doc stru
 		publicationVersionKey: 1, publicationReviewKey: id.String(), publicationHashKey: hash,
 		publicationPolicyKey: policy, publicationTimeKey: p.CompletedAt.Format(time.RFC3339Nano), publicationCountKey: len(doc.Findings),
 	}}
+	labels := append([]string{RoborevLabel}, options.Labels...)
+	slices.Sort(labels)
+	p.issue.Labels = slices.Compact(labels)
+	if options.Priority != nil {
+		p.issue.Priority = new(int64(*options.Priority))
+	}
 	for i, finding := range doc.Findings {
 		text := fmt.Sprintf("Finding %d from a roborev review.", i+1)
 		if policy == "comments" {
