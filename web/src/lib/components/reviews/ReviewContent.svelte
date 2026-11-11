@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { Component } from "svelte";
+  import { Button } from "@kenn-io/kit-ui";
   import { getReviewStores } from "../../stores/context";
 
   type RichReviewContentComponent = Component<{
@@ -92,9 +93,9 @@
 {#if stores.roborevReview?.isLoading()}
   <div class="review-state">Loading review…</div>
 {:else if loadFailure}
-  <div class="review-state" role="alert">
+  <div class="review-state review-retry" role="alert">
     <p>{loadFailure}</p>
-    <button type="button" onclick={retryReview}>Retry</button>
+    <Button size="sm" onclick={retryReview} label="Retry" />
   </div>
 {:else if failed}
   <div class="review-state review-failure" role="alert">
@@ -108,9 +109,13 @@
     {pending}
   />
 {:else if loadError && output}
-  <div class="review-state" role="alert" {@attach reportRendererFailure}>
+  <div
+    class="review-state review-retry"
+    role="alert"
+    {@attach reportRendererFailure}
+  >
     <p>Could not display the review.</p>
-    <button type="button" onclick={retryRenderer}>Retry</button>
+    <Button size="sm" onclick={retryRenderer} label="Retry" />
   </div>
 {:else if pending}
   <div class="review-state">Review in progress…</div>
@@ -128,26 +133,24 @@
     color: var(--text-muted);
   }
 
-  .review-state p {
-    margin: 0 0 var(--space-3);
+  /* The message and its Retry share one row so the error is no taller than
+   * the empty state it replaces; otherwise the comment box below is pushed
+   * under the dock footer at the default drawer height. */
+  .review-retry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .review-retry p {
+    margin: 0;
   }
 
   .review-failure p {
     margin: var(--space-2) 0 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-
-  .review-state button {
-    padding: 5px 10px;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    cursor: pointer;
-  }
-
-  .review-state button:hover {
-    background: var(--bg-surface-hover);
   }
 </style>
