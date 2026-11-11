@@ -1,3 +1,4 @@
+import { roborevFetch } from "../../api/generated-fetch";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnedAppRuntime } from "../../runtime/runtime";
@@ -57,7 +58,14 @@ describe("Roborev request cancellation", () => {
   it("retries review and comment reads before displaying them", async () => {
     const getReview = vi
       .fn()
-      .mockRejectedValueOnce(new Error("offline"))
+      .mockImplementationOnce(() =>
+        roborevFetch("/api/test", {
+          roborevTransport: {
+            baseUrl: "/",
+            fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
+          },
+        }),
+      )
       .mockResolvedValue({
         id: 7,
         job_id: 42,
@@ -66,7 +74,14 @@ describe("Roborev request cancellation", () => {
       });
     const getReviewProjection = vi
       .fn()
-      .mockRejectedValueOnce(new Error("offline"))
+      .mockImplementationOnce(() =>
+        roborevFetch("/api/test", {
+          roborevTransport: {
+            baseUrl: "/",
+            fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
+          },
+        }),
+      )
       .mockResolvedValue({
         responses: [{ id: 1, responder: "web", response: "comment" }],
       });
@@ -503,7 +518,7 @@ describe("review close reporting", () => {
   );
 });
 
-it("reports a shown review load failure once per selection", async () => {
+it("reports a review load failure once per selection without a toast", async () => {
   const onError = vi.fn();
   const getReview = vi.fn(async () => {
     throw new Response(null, { status: 503 });

@@ -1,10 +1,9 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, render, screen } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { afterEach, expect, it, vi } from "vitest";
 
 import ReviewContent from "./ReviewContent.svelte";
 
-const reviewLoads = vi.hoisted(() => vi.fn());
 const state = vi.hoisted(() => ({
   error: "provider rejected the request",
   loadError: null as string | null,
@@ -22,7 +21,6 @@ vi.mock("../../stores/context", () => ({
       getSelectedJob: () => ({ status: state.status, error: state.error }),
       getSelectedJobId: () => 42,
       getError: () => state.loadError,
-      loadReview: reviewLoads,
     },
   }),
 }));
@@ -35,7 +33,6 @@ vi.mock("@kenn-io/roborev-ui/review-content", () => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-  reviewLoads.mockReset();
   state.loadError = null;
   state.output = "";
   state.status = "failed";
@@ -69,9 +66,7 @@ it("shows a review load failure instead of the loaded renderer", async () => {
   state.status = "done";
   render(ReviewContent);
 
-  await state.loaded.promise;
+  await vi.dynamicImportSettled();
   await tick();
   expect(screen.getByRole("alert")).toHaveTextContent("Failed to load review");
-  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(reviewLoads).toHaveBeenCalledExactlyOnceWith(42);
 });

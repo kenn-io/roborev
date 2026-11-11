@@ -1,3 +1,4 @@
+import { roborevFetch } from "../../api/generated-fetch";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnedAppRuntime } from "../../runtime/runtime";
@@ -201,7 +202,14 @@ describe("createJobsStore filter preferences", () => {
     const api = {
       listJobs: vi
         .fn()
-        .mockRejectedValueOnce(new Error("offline"))
+        .mockImplementationOnce(() =>
+          roborevFetch("/api/test", {
+            roborevTransport: {
+              baseUrl: "/",
+              fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
+            },
+          }),
+        )
         .mockResolvedValue({ jobs: [makeJob(1)] }),
     };
     const store = createJobsStore({ api: api as never, navigate: vi.fn() });

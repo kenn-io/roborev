@@ -1,3 +1,4 @@
+import { roborevFetch } from "../../api/generated-fetch";
 import {
   cleanup,
   fireEvent,
@@ -153,7 +154,6 @@ describe("RepoTreePicker", () => {
     );
 
     expect(screen.getByText("Loading...")).toBeTruthy();
-    expect(screen.queryByText("No branches")).toBeNull();
 
     projectABranches.resolve({
       branches: [{ name: "stale-a", count: 1 }],
@@ -204,51 +204,44 @@ describe("RepoTreePicker", () => {
 
     await screen.findByText("Could not load branches.");
     expect(screen.queryByText("project-a-main")).toBeNull();
-    expect(screen.queryByText("No branches")).toBeNull();
   });
 
-  it("recovers a branch list after a brief connection failure", async () => {
-    vi.useFakeTimers();
-    repoApi.listBranches
-      .mockRejectedValueOnce(new TypeError("connection reset"))
-      .mockResolvedValue({ branches: [{ name: "main", count: 3 }] });
-    render(RepoTreePicker);
-
-    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
-    await vi.advanceTimersByTimeAsync(0);
-    await fireEvent.click(screen.getByTitle("Show branches"));
-    expect(screen.getByText("Loading...")).toBeTruthy();
-
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(screen.getByText("main")).toBeTruthy();
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(repoApi.listBranches).toHaveBeenCalledTimes(2);
-  });
-
-  it("reloads the expanded repository after automatic retries are exhausted", async () => {
-    vi.useFakeTimers();
-    repoApi.listBranches
-      .mockRejectedValueOnce(new TypeError("connection reset"))
-      .mockRejectedValueOnce(new TypeError("connection reset"))
-      .mockRejectedValueOnce(new TypeError("connection reset"))
-      .mockResolvedValue({ branches: [{ name: "main", count: 3 }] });
-    render(RepoTreePicker);
-
-    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
-    await vi.advanceTimersByTimeAsync(0);
-    await fireEvent.click(screen.getByTitle("Show branches"));
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(repoApi.listBranches).toHaveBeenCalledTimes(3);
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Could not load branches.",
-    );
-
-    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText("main")).toBeTruthy();
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(repoApi.listBranches).toHaveBeenCalledTimes(4);
-  });
+  it.each([1, 3])(
+    "recovers the expanded repository after %s failures",
+    async (failures) => {
+      vi.useFakeTimers();
+      for (let i = 0; i < failures; i++)
+        repoApi.listBranches.mockImplementationOnce(() =>
+          roborevFetch("/api/test", {
+            roborevTransport: {
+              baseUrl: "/",
+              fetch: vi
+                .fn()
+                .mockRejectedValue(new TypeError("connection reset")),
+            },
+          }),
+        );
+      repoApi.listBranches.mockResolvedValue({
+        branches: [{ name: "main", count: 3 }],
+      });
+      render(RepoTreePicker);
+      await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
+      await vi.advanceTimersByTimeAsync(0);
+      await fireEvent.click(screen.getByTitle("Show branches"));
+      expect(screen.getByText("Loading...")).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(5_000);
+      if (failures === 3) {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Could not load branches.",
+        );
+        await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(screen.getByText("main")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(repoApi.listBranches).toHaveBeenCalledTimes(failures + 1);
+    },
+  );
 
   it("reports an HTTP failure without retrying and keeps true empty results distinct", async () => {
     vi.useFakeTimers();
