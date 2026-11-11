@@ -167,6 +167,31 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "complete", record.Marker.State)
+	// Unsupported local and remote versions must stop an attempted write.
+	marker := *record.Marker
+	marker.Version = 2
+	unsupported, err := json.Marshal(marker)
+	require.NoError(t, err)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET kata_publication = ? WHERE job_id = ?`, string(unsupported), job.ID)
+	require.NoError(t, err)
+	beforeVersion := len(fake.AllRequests())
+	_, err = publisher.Publish(t.Context(), job.ID)
+	require.Error(t, err)
+	for _, req := range fake.AllRequests()[beforeVersion:] {
+		assert.NotEqual(t, http.MethodPost, req.Method)
+	}
+	originalMarker, err := json.Marshal(record.Marker)
+	require.NoError(t, err)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET kata_publication = ? WHERE job_id = ?`, string(originalMarker), job.ID)
+	require.NoError(t, err)
+	issue.Out.Metadata["roborev.version"] = 2
+	beforeVersion = len(fake.AllRequests())
+	_, err = publisher.Publish(t.Context(), job.ID)
+	require.Error(t, err)
+	for _, req := range fake.AllRequests()[beforeVersion:] {
+		assert.NotEqual(t, http.MethodPost, req.Method)
+	}
+	issue.Out.Metadata["roborev.version"] = 1
 	// Reading uses the saved selection even after write authorization changes.
 	cfg.Hooks[0].Findings = "summary"
 	cfg.Hooks[0].Labels = []string{"changed"}
@@ -222,6 +247,89 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 	for _, req := range fake.AllRequests()[before:] {
 		assert.NotEqual(t, http.MethodPost, req.Method)
 	}
+}
+
+func TestKataStartupRecoversDroppedWriteResponses(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "dropped-response-review", "worker")
+	cfg := kataConnectionConfig(fake)
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+	seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: "reviews", Policy: "comments"}
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
+	var issue *katafake.Issue
+	started := make(chan struct{}, 2)
+	var watchStartup atomic.Bool
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPost {
+			if r.URL.Path == "/api/v1/health" && watchStartup.Swap(false) {
+				select {
+				case started <- struct{}{}:
+				default:
+				}
+			}
+			return false
+		}
+		if issue == nil {
+			var req gen.CreateIssueRequestBody
+			if err := json.UnmarshalRead(r.Body, &req); err != nil {
+				fake.Fail(w, 400, "bad_request", "bad request")
+				return true
+			}
+			issue = fake.AddIssue(7, "synthetic", req.Title, *req.Body, req.Labels...)
+			issue.Out.Metadata = req.Metadata
+		} else {
+			var req gen.CommentRequestBody
+			if err := json.UnmarshalRead(r.Body, &req); err != nil {
+				fake.Fail(w, 400, "bad_request", "bad request")
+				return true
+			}
+			issue.Comments = append(issue.Comments, gen.CommentOut{UID: "synthetic-comment", Handle: new("c:synthetic"), Body: req.Body, Author: "service"})
+		}
+		// Accept the write but drop the response on the fake server's socket.
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if assert.NoError(t, err) {
+			_ = conn.Close()
+		}
+		return true
+	}
+	publisher := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+	_, err = publisher.Publish(t.Context(), job.ID)
+	require.Error(t, err)
+	for range 2 {
+		watchStartup.Store(true)
+		runner := NewHookRunner(NewStaticConfig(cfg), tc.Broadcaster, log.New(io.Discard, "", 0), tc.DB)
+		var stopOnce sync.Once
+		stop := func() { stopOnce.Do(runner.Stop) }
+		t.Cleanup(stop)
+		runner.startKataRecovery()
+		// The fake server uses a socket, so wait for its startup request.
+		wait := func() error {
+			select {
+			case <-started:
+				return nil
+			case <-time.After(10 * time.Second):
+				return errors.New("startup request did not arrive")
+			}
+		}
+		require.NoError(t, wait())
+		runner.WaitUntilIdle()
+		stop()
+	}
+	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "complete", record.Marker.State)
+	require.Len(t, issue.Comments, 1)
+	var posts int
+	for _, req := range fake.AllRequests() {
+		if req.Method == http.MethodPost {
+			posts++
+		}
+	}
+	assert.Equal(t, 2, posts)
 }
 
 func TestKataRecoveryStopsInFlightAttempt(t *testing.T) {

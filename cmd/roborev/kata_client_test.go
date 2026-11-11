@@ -98,11 +98,24 @@ func kataShimMarker(t *testing.T) string {
 func TestKataClientUsesTheDaemonsConnection(t *testing.T) {
 	marker := kataShimMarker(t)
 	fake := katafake.New(t)
-	fake.AddIssue(7, "aaa1", "In reviews", "the body", "bug")
+	issue := fake.AddIssue(7, "aaa1", "In reviews", "the body", "bug")
+	issue.Out.Metadata = map[string]any{"text": "value", "number": 42, "nested": map[string]any{"enabled": true}}
 	fake.AddIssue(8, "bbb2", "In other", "")
 	ep := kataDaemon(t, enabledKata(fake))
 	var probes atomic.Int32
 	ctx := t.Context()
+	direct, err := kata.NewAPIClient("", enabledKata(fake), kata.WithoutWorkspace())
+	require.NoError(t, err)
+	t.Cleanup(direct.CloseIdleConnections)
+	project, err := direct.ResolvePublicationProject(ctx, "reviews")
+	require.NoError(t, err)
+	full, err := direct.ShowPublicationIssue(ctx, project, "aaa1")
+	require.NoError(t, err)
+	assert.Equal(t, "value", full.Issue.Metadata["text"])
+	assert.EqualValues(t, 42, full.Issue.Metadata["number"])
+	result, err := ep.APIClient(0).KataShowIssue(ctx, &generated.KataShowIssueRequestOptions{Query: &generated.KataShowIssueQuery{Ref: "aaa1", Project: new("reviews")}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"text":"value","number":42,"nested":{"enabled":true}}`, string(result.Metadata))
 
 	t.Run("unbound repository reads the daemon's default project", func(t *testing.T) {
 		c := newKataClientAt(bindRepo(t, ""), config.DefaultConfig(), fixedEndpoint(ep, &probes))

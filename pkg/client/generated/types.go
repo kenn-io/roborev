@@ -2662,7 +2662,7 @@ type KataIssue struct {
 	CommentsComplete    *bool                `json:"comments_complete,omitempty"`
 	DestinationID       *string              `json:"destination_id,omitempty"`
 	Labels              []string             `json:"labels" validate:"required"`
-	Metadata            map[string]struct{}  `json:"metadata,omitempty"`
+	Metadata            jsontext.Value       `json:"metadata,omitempty"`
 	Parent              *KataLinkPeer        `json:"parent,omitempty"`
 	ProjectUID          *string              `json:"project_uid,omitempty"`
 	PublicationEnvelope *PublicationEnvelope `json:"publication_envelope,omitempty"`
@@ -2704,6 +2704,11 @@ func (k KataIssue) Validate() error {
 	}
 	if err := typesValidator.Var(k.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
+	}
+	if v, ok := any(k.Metadata).(runtime.Validator); ok && v != nil {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Metadata", err)
+		}
 	}
 	if k.Parent != nil {
 		if v, ok := any(k.Parent).(runtime.Validator); ok {

@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/kata/katatest"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func TestKataCreateRequestFailed(t *testing.T) {
@@ -88,6 +89,31 @@ func TestRunKataHookCreatesAndLogs(t *testing.T) {
 
 	require.Len(t, fake.CreateReqs, 1)
 	assert.Contains(t, buf.String(), "created issue new1")
+}
+
+func TestLegacyKataHooksRetainCIAndPanelMembers(t *testing.T) {
+	for _, tc := range []struct{ name, source, role string }{
+		{"ci", storage.JobSourceCI, ""},
+		{"panel", "", storage.PanelRoleMember},
+		{"rebuttal", storage.JobSourceRebuttal, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newWorkerTestContext(t, 1)
+			job := env.createAndClaimJob(t, "legacy-"+tc.name, "worker")
+			_, err := env.DB.ExecContext(t.Context(), `UPDATE review_jobs SET source = ?, panel_role = ? WHERE id = ?`, tc.source, tc.role, job.ID)
+			require.NoError(t, err)
+			cfg := config.DefaultConfig() // API integration remains disabled.
+			cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Project: "reviews"}}
+			fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+			runner := NewHookRunner(NewStaticConfig(cfg), env.Broadcaster, log.New(io.Discard, "", 0), env.DB)
+			t.Cleanup(runner.Stop)
+			runner.newKataClient = func(string) kata.Client { return fake }
+			env.Broadcaster.Broadcast(Event{Type: "review.completed", Verdict: "F", JobID: job.ID, Findings: "finding"})
+			runner.WaitUntilIdle()
+			require.Len(t, fake.CreateReqs, 1)
+			assert.Contains(t, fake.CreateReqs[0].Body, "finding")
+		})
+	}
 }
 
 func TestRunKataHookLogsNoBinding(t *testing.T) {
