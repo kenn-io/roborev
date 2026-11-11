@@ -264,6 +264,73 @@ describe("Roborev request cancellation", () => {
     expect(store.getResponses()).toEqual([response]);
   });
 
+  it.each(["http", "network"])(
+    "offers recovery when the review is missing and the job read fails: %s",
+    async (failure) => {
+      const listJobs = vi.fn();
+      const failures = failure === "network" ? 3 : 1;
+      for (let i = 0; i < failures; i++) {
+        if (failure === "http")
+          listJobs.mockRejectedValueOnce(new Response(null, { status: 503 }));
+        else
+          listJobs.mockImplementationOnce(() =>
+            roborevFetch("/api/test", {
+              roborevTransport: {
+                baseUrl: "/",
+                fetch: vi.fn().mockRejectedValue(new TypeError("offline")),
+              },
+            }),
+          );
+      }
+      listJobs.mockResolvedValue({
+        jobs: [{ id: 42, status: "queued", prompt: "queued prompt" }],
+      });
+      const store = reviewStore({
+        getReview: vi
+          .fn()
+          .mockRejectedValue(new Response(null, { status: 404 })),
+        getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
+        listJobs,
+      } as never);
+      vi.useFakeTimers();
+      try {
+        store.setSelectedJobId(42);
+        store.loadReview(42);
+        await vi.runAllTimersAsync();
+        expect(store.getError()).toBe("Failed to load review");
+        expect(listJobs).toHaveBeenCalledTimes(failures);
+        store.loadReview(42);
+        await vi.runAllTimersAsync();
+        expect(store.getError()).toBeNull();
+        expect(store.getPrompt()).toBe("queued prompt");
+        expect(store.getSelectedJob()?.status).toBe("queued");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("shows an existing review when its optional job lookup fails", async () => {
+    const store = reviewStore({
+      getReview: vi
+        .fn()
+        .mockResolvedValue({
+          id: 1,
+          job_id: 42,
+          output: "review output",
+          closed: false,
+        }),
+      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
+      listJobs: vi.fn().mockRejectedValue(new Response(null, { status: 503 })),
+    } as never);
+    store.setSelectedJobId(42);
+    store.loadReview(42);
+    await vi.waitFor(() =>
+      expect(store.getReview()?.output).toBe("review output"),
+    );
+    expect(store.getError()).toBeNull();
+  });
+
   it("aborts stale job-list transport when a newer list becomes authoritative", async () => {
     const staleSignals: AbortSignal[] = [];
     let calls = 0;

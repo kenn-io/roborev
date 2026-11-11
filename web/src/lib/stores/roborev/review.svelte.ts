@@ -108,17 +108,16 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
               signal,
             }),
-          ).pipe(retryIdempotentRead, Effect.option),
+          ).pipe(retryIdempotentRead, Effect.result),
         },
         { concurrency: "unbounded" },
       );
 
       if (Option.isNone(result.review)) {
+        const job = yield* Effect.fromResult(result.job);
         return {
           review: null,
-          selectedJob: Option.isSome(result.job)
-            ? (result.job.value.jobs?.[0] ?? null)
-            : null,
+          selectedJob: job.jobs?.[0] ?? null,
           responses: Option.isSome(result.projection)
             ? result.projection.value.responses
             : [],
@@ -135,8 +134,9 @@ export function createReviewStore(opts: ReviewStoreOptions) {
         );
       }
       const fetchedReview = result.review.value;
-      const fetchedJob = Option.isSome(result.job)
-        ? (result.job.value.jobs?.[0] ?? fetchedReview.job ?? null)
+      const job = yield* Effect.option(Effect.fromResult(result.job));
+      const fetchedJob = Option.isSome(job)
+        ? (job.value.jobs?.[0] ?? fetchedReview.job ?? null)
         : (fetchedReview.job ?? null);
       return {
         review: fetchedReview,
