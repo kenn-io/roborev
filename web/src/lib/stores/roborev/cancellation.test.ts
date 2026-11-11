@@ -504,20 +504,25 @@ describe("review close reporting", () => {
 });
 
 it("reports a shown review load failure once per selection", async () => {
+  const onError = vi.fn();
   const getReview = vi.fn(async () => {
     throw new Response(null, { status: 503 });
   });
-  const store = reviewStore({
-    getReview,
-    getReviewProjection: vi.fn(async () => ({ responses: [] })),
-    listJobs: vi.fn(async () => ({ jobs: [] })),
-  } as never);
+  const store = reviewStore(
+    {
+      getReview,
+      getReviewProjection: vi.fn(async () => ({ responses: [] })),
+      listJobs: vi.fn(async () => ({ jobs: [] })),
+    } as never,
+    onError,
+  );
   store.setSelectedJobId(42);
   store.loadReview(42);
   await vi.waitFor(() =>
     expect(store.getError()).toBe("Failed to load review"),
   );
   expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_viewed");
+  expect(onError).not.toHaveBeenCalled();
   // Event-driven reloads show the same failure again.
   store.loadReview(42);
   await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(2));

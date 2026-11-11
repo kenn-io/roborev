@@ -66,6 +66,8 @@ closed review, `no` for an open review, and `--` when no closed state is
 available. Panel member rows show `--` because the synthesis row owns the
 panel's closed state.
 
+If loading branches or a review fails, use **Retry** in the affected view.
+
 Ref search previews results as you type. Press Enter to submit the current text
 immediately, without waiting for the preview delay.
 

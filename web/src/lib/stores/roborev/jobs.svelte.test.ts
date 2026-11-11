@@ -218,9 +218,12 @@ describe("createJobsStore filter preferences", () => {
     }
   });
 
-  it("does not retry an invalid response", async () => {
+  it.each([
+    new SyntaxError("invalid JSON"),
+    new DOMException("aborted", "AbortError"),
+  ])("does not retry a terminal read failure", async (failure) => {
     const api = {
-      listJobs: vi.fn().mockRejectedValue(new SyntaxError("invalid JSON")),
+      listJobs: vi.fn().mockRejectedValue(failure),
     };
     const store = createJobsStore({ api: api as never, navigate: vi.fn() });
     await loadJobs(store);

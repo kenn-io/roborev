@@ -8,16 +8,18 @@ const reviewLoads = vi.hoisted(() => vi.fn());
 const state = vi.hoisted(() => ({
   error: "provider rejected the request",
   loadError: null as string | null,
+  output: "",
+  status: "failed",
   loaded: Promise.withResolvers<void>(),
 }));
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
     roborevReview: {
-      getOutput: () => "",
+      getOutput: () => state.output,
       isLoading: () => false,
       isReviewNotFound: () => true,
-      getSelectedJob: () => ({ status: "failed", error: state.error }),
+      getSelectedJob: () => ({ status: state.status, error: state.error }),
       getSelectedJobId: () => 42,
       getError: () => state.loadError,
       loadReview: reviewLoads,
@@ -25,10 +27,9 @@ vi.mock("../../stores/context", () => ({
   }),
 }));
 
-vi.mock("@kenn-io/roborev-ui/review-content", async (importOriginal) => {
-  const module = await importOriginal();
+vi.mock("@kenn-io/roborev-ui/review-content", () => {
   state.loaded.resolve();
-  return module;
+  return { default: () => {} };
 });
 
 afterEach(() => {
@@ -36,6 +37,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   reviewLoads.mockReset();
   state.loadError = null;
+  state.output = "";
+  state.status = "failed";
 });
 
 function stubIdleCallback(): void {
@@ -62,6 +65,8 @@ it("keeps the failure reason visible after the rich renderer loads", async () =>
 it("shows a review load failure instead of the loaded renderer", async () => {
   stubIdleCallback();
   state.loadError = "Failed to load review";
+  state.output = "Existing review output";
+  state.status = "done";
   render(ReviewContent);
 
   await state.loaded.promise;

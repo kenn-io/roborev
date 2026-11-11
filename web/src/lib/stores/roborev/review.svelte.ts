@@ -179,6 +179,15 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       Effect.tap((authority) => publishReviewAuthority(jobId, authority)),
     );
 
+  function showLoadFailure(jobId: number): void {
+    if (selectedJobId !== jobId) return;
+    storeError = "Failed to load review";
+    if (loadFailureReportedJobId !== jobId) {
+      loadFailureReportedJobId = jobId;
+      reportErrorShown("review_viewed");
+    }
+  }
+
   const loadReviewEffect = (jobId: number) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
@@ -197,17 +206,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           const authority = yield* fetchReviewAuthority(jobId);
           yield* publishReviewAuthority(jobId, authority);
         }).pipe(
-          Effect.catch(() =>
-            Effect.sync(() => {
-              if (selectedJobId !== jobId) return;
-              storeError = "Failed to load review";
-              if (loadFailureReportedJobId !== jobId) {
-                loadFailureReportedJobId = jobId;
-                reportErrorShown("review_viewed");
-              }
-              opts.onError?.("Failed to load review");
-            }),
-          ),
+          Effect.catch(() => Effect.sync(() => showLoadFailure(jobId))),
           Effect.ensuring(
             Effect.sync(() => {
               if (selectedJobId !== undefined && selectedJobId !== jobId)
@@ -223,7 +222,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     opts.runtime.runCommand(loadReviewEffect(jobId), {
       operation: "load Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
-      onFailure: () => opts.onError?.("Failed to load review"),
+      onFailure: () => showLoadFailure(jobId),
     });
   }
 

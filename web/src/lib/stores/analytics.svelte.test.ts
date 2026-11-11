@@ -277,7 +277,16 @@ describe("analytics store request ownership", () => {
     const store = createAnalyticsStore({ loader });
 
     await store.refresh();
-    await store.refresh();
+    vi.useFakeTimers();
+    const refresh = store.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()?.summary.reviews.total).toBe(4);
+    expect(store.isLoading()).toBe(true);
+    expect(store.isStale()).toBe(false);
+    expect(store.getError()).toBeNull();
+    await vi.runAllTimersAsync();
+    await refresh;
+    vi.useRealTimers();
 
     expect(store.getSnapshot()?.summary.reviews.total).toBe(4);
     expect(store.isStale()).toBe(true);

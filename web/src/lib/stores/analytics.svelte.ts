@@ -1,10 +1,6 @@
 import { appPath } from "../base-path";
 import { Effect } from "effect";
-import {
-  executeRoborevRequest,
-  normalizeRoborevHTTPError,
-  RoborevHTTPError,
-} from "../api/client";
+import { executeRoborevRequest, RoborevHTTPError } from "../api/client";
 import { TransientTransportError } from "../api/effect-errors";
 import { retryIdempotentRead } from "../api/retry-policy";
 import {
@@ -72,9 +68,7 @@ const BUCKET_ORDER: Record<Exclude<AnalyticsBucket, "auto">, number> = {
 };
 
 const loadGeneratedAnalytics: AnalyticsLoader = (query, signal) =>
-  getWebAnalytics(query, { signal }).catch((cause: unknown) =>
-    normalizeRoborevHTTPError("load Roborev analytics", cause),
-  );
+  getWebAnalytics(query, { signal });
 
 export function createAnalyticsStore(options: AnalyticsStoreOptions) {
   const loader = options.loader ?? loadGeneratedAnalytics;
