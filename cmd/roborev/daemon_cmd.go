@@ -228,7 +228,7 @@ func daemonCmd() *cobra.Command {
 			return nil
 		},
 	}
-	restartCmd.Flags().StringVar(&runningPolicy, "running", "wait", "how to handle running reviews: wait or interrupt")
+	restartCmd.Flags().StringVar(&runningPolicy, "running", "wait", "how to handle running jobs: wait or interrupt")
 	cmd.AddCommand(restartCmd)
 
 	cmd.AddCommand(statusCmd())
