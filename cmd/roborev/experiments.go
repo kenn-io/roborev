@@ -31,6 +31,7 @@ func experimentsReportCmd() *cobra.Command {
 
 Time bounds select assignment cohorts, not historical snapshots of results.
 Comparisons are exploratory and unadjusted; no overall winner is declared.`,
+		Example: "  roborev experiments report review-session-v1",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if minSubjects <= 0 {
 				return fmt.Errorf("min-subjects must be a positive integer")

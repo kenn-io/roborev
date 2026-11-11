@@ -798,13 +798,13 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 // marker onto a row a new attempt now owns — that would wrongly make the
 // terminal row cost-eligible. Mirrors SaveJobSessionID.
 func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
-	return db.MarkJobAgentInvokedAs(jobID, workerID, "", "", cmdLine)
+	// This compatibility wrapper has no caller context yet.
+	return db.MarkJobAgentInvokedAs(context.Background(), jobID, workerID, "", "", cmdLine)
 }
 
 // MarkJobAgentInvokedAs also persists the selected executor and its model.
 // An empty executor preserves the stored configuration for existing callers.
-func (db *DB) MarkJobAgentInvokedAs(jobID int64, workerID, executor, model, cmdLine string) error {
-	ctx := context.Background()
+func (db *DB) MarkJobAgentInvokedAs(ctx context.Context, jobID int64, workerID, executor, model, cmdLine string) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err

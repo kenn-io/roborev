@@ -409,13 +409,15 @@ func TestSynthesisAvailabilityFallbackExperimentReport(t *testing.T) {
 			require.NoError(t, err)
 			opts.RepoID, opts.GitRef = wc.Repo.ID, sha
 			memberOpts := []storage.EnqueueOpts{{RepoID: wc.Repo.ID, GitRef: sha, Agent: "test", PanelRunUUID: &run, PanelMemberName: "voter"}}
-			opts.Experiment, err = storageAssignmentForExperiment(&config.ExperimentAssignment{ID: "synthesis-v1", DefinitionHash: "definition", DefinitionJSON: `{"ratio":0.5}`, Arm: config.ExperimentArmExperimental, SubjectHash: "topic"}, experimentPlanForPanel(memberOpts, opts))
+			plan, err := experimentPlanForPanel(memberOpts, opts)
+			require.NoError(t, err)
+			opts.Experiment, err = storageAssignmentForExperiment(&config.ExperimentAssignment{ID: "synthesis-v1", DefinitionHash: "definition", DefinitionJSON: `{"ratio":0.5}`, Arm: config.ExperimentArmExperimental, SubjectHash: "topic"}, plan)
 			require.NoError(t, err)
 			members, synth, err := wc.DB.EnqueuePanelRun(memberOpts, opts)
 			require.NoError(t, err)
 			completeMember(t, wc, members[0].ID, "test", "No issues found.")
 			job := releaseAndClaimSynthesis(t, wc, run)
-			doc, selected, _, err := wc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt")
+			doc, selected, _, err := wc.Pool.runSynthesisAgent(t.Context(), testWorkerID, job, nil, "prompt")
 			require.NoError(t, err)
 			require.Equal(t, tc.selected, selected)
 			stored, err := wc.DB.GetJobByID(synth.ID)

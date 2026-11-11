@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -218,7 +220,7 @@ type experimentReportPanelPlan struct {
 
 // GetExperimentReport reads attribution and current retained attempts in one
 // database snapshot. Retries can replace earlier status, timing and spend.
-func (db *DB) GetExperimentReport(id string, opts ExperimentReportOptions) (*ExperimentReport, error) {
+func (db *DB) GetExperimentReport(ctx context.Context, id string, opts ExperimentReportOptions) (*ExperimentReport, error) {
 	hasSince := opts.SinceProvided || !opts.Since.IsZero()
 	hasUntil := opts.UntilProvided || !opts.Until.IsZero()
 	if opts.MinSubjects < 0 || (hasSince && hasUntil && opts.Since.After(opts.Until)) {
@@ -227,7 +229,7 @@ func (db *DB) GetExperimentReport(id string, opts ExperimentReportOptions) (*Exp
 	if opts.MinSubjects == 0 {
 		opts.MinSubjects = 4
 	}
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +241,7 @@ func (db *DB) GetExperimentReport(id string, opts ExperimentReportOptions) (*Exp
 	if hasUntil {
 		r.Until = new(opts.Until.UTC())
 	}
-	if err = tx.QueryRow(`SELECT definition_hash,definition_json FROM experiment_definitions WHERE experiment_id=?`, id).Scan(&r.DefinitionHash, &r.definitionJSON); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT definition_hash,definition_json FROM experiment_definitions WHERE experiment_id=?`, id).Scan(&r.DefinitionHash, &r.definitionJSON); err != nil {
 		return nil, err
 	}
 	var definition struct {
@@ -251,7 +253,7 @@ func (db *DB) GetExperimentReport(id string, opts ExperimentReportOptions) (*Exp
 		r.Integrity.Complete = false
 		r.Integrity.Reason = "Stored experiment definition has no valid allocation ratio."
 	}
-	rows, err := tx.Query(`SELECT review_unit_kind,review_unit_uuid,arm,subject_hash,effective_config_json,assigned_at FROM experiment_assignments WHERE experiment_id=? ORDER BY subject_hash,review_unit_kind,review_unit_uuid`, id)
+	rows, err := tx.QueryContext(ctx, `SELECT review_unit_kind,review_unit_uuid,arm,subject_hash,effective_config_json,assigned_at FROM experiment_assignments WHERE experiment_id=? ORDER BY subject_hash,review_unit_kind,review_unit_uuid`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +289,7 @@ func (db *DB) GetExperimentReport(id string, opts ExperimentReportOptions) (*Exp
 			conflicts[u.subject] = true
 		}
 		subjects[u.subject] = u.arm
-		if err = loadExperimentUnit(tx, u); err != nil {
+		if err = loadExperimentUnit(ctx, tx, u); err != nil {
 			return nil, err
 		}
 		aggregateExperimentUnit(u)
@@ -317,14 +319,14 @@ func (db *DB) GetExperimentReport(id string, opts ExperimentReportOptions) (*Exp
 
 const experimentAgentInvoked = "j.agent_invoked=1 OR (" + agentRanByUsage + ")"
 
-func loadExperimentUnit(q querier, u *experimentReportUnit) error {
+func loadExperimentUnit(ctx context.Context, q *sql.Tx, u *experimentReportUnit) error {
 	condition := "j.uuid=?"
 	if u.kind == ReviewUnitPanel {
 		condition = "j.panel_run_uuid=?"
 	} else if u.kind != ReviewUnitJob {
 		return nil
 	}
-	rows, err := q.Query(`
+	rows, err := q.QueryContext(ctx, `
  SELECT j.id, COALESCE(j.uuid,''), COALESCE(j.panel_role,''), CASE WHEN `+experimentAgentInvoked+` THEN COALESCE(NULLIF(r.agent,''),j.agent) ELSE j.agent END,
         COALESCE(j.provider,''), COALESCE(j.session_id,''), j.status,
         COALESCE(j.panel_member_name,''), COALESCE(j.panel_member_index,0),

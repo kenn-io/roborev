@@ -54,8 +54,8 @@ type GetExperimentReportOutput struct {
 	Body *storage.ExperimentReport
 }
 
-func (s *Server) humaGetExperimentReport(_ context.Context, input *GetExperimentReportInput) (*GetExperimentReportOutput, error) {
-	report, err := s.db.GetExperimentReport(input.ID, input.options)
+func (s *Server) humaGetExperimentReport(ctx context.Context, input *GetExperimentReportInput) (*GetExperimentReportOutput, error) {
+	report, err := s.db.GetExperimentReport(ctx, input.ID, input.options)
 	switch {
 	case errors.Is(err, storage.ErrInvalidExperimentReportOptions):
 		return nil, huma.Error400BadRequest("since must not be after until")

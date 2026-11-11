@@ -73,7 +73,7 @@ func TestExperimentReportSubsecondCompletion(t *testing.T) {
 				case "canceled":
 					require.NoError(t, db.CancelJob(job.ID))
 				}
-				r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+				r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 				require.NoError(t, err)
 				for _, name := range []string{"duration_p50_seconds", "duration_p90_seconds"} {
 					metric := reportMetric(t, r, name)
@@ -101,7 +101,7 @@ func TestExperimentReportLegacyDurationResolution(t *testing.T) {
 			job := reportJob(t, db, repo.ID, "default", "topic", new(1.0))
 			_, err := db.Exec(`UPDATE review_jobs SET started_at='2026-01-01T00:00:00.250000000Z', finished_at=? WHERE id=?`, tc.finish, job.ID)
 			require.NoError(t, err)
-			r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+			r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 			require.NoError(t, err)
 			metric := reportMetric(t, r, "duration_p50_seconds")
 			assert.Equal(t, tc.available, metric.Default.Complete)
@@ -129,7 +129,7 @@ func TestExperimentReportSubjectWeighting(t *testing.T) {
 		_, err := db.Exec(`UPDATE review_jobs SET finished_at=? WHERE id=?`, time.Date(2026, 1, 1, 0, 0, tc.seconds, 0, time.UTC).Format(time.RFC3339), job.ID)
 		require.NoError(t, err)
 	}
-	r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert := assert.New(t)
 	assert.Equal(2, r.Default.Subjects)
@@ -202,7 +202,7 @@ func TestExperimentReportPanelCompleteness(t *testing.T) {
 				review, err := db.GetReviewByJobID(synth.ID)
 				require.NoError(t, err)
 				require.Equal(t, executor, review.Agent)
-				r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+				r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 				require.NoError(t, err)
 				offPlan := reportMetric(t, r, "off_plan_rate")
 				require.NotNil(t, offPlan.Default.Value)
@@ -254,7 +254,7 @@ func TestExperimentReportPanelCompleteness(t *testing.T) {
 				reportFinish(t, db, control[1].ID, "done", new(2.0), "")
 				reportFinish(t, db, canonical.ID, "done", new(3.0), clean)
 			}
-			r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+			r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 			require.NoError(t, err)
 			assert := assert.New(t)
 			if mode == "missing synthesis" {
@@ -317,7 +317,7 @@ func TestExperimentReportMissingData(t *testing.T) {
 			reportFinish(t, db, job.ID, status, nil, "")
 		}
 	}
-	r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert := assert.New(t)
 	assert.Equal(6, r.Default.ReviewUnits)
@@ -337,7 +337,8 @@ func TestExperimentReportMissingData(t *testing.T) {
 	assert.Equal(2, reportMetric(t, r, "findings_high_per_review").Default.Units)
 	assert.Equal(2, reportMetric(t, r, "fail_verdict_rate").Default.Units)
 	assert.Nil(reportMetric(t, r, "refuted_per_100").Default.Value)
-	assert.Contains(r.Labels.Reason, "durable")
+	assert.Contains(r.Labels.Reason, "stable finding identity")
+	assert.Contains(r.Labels.Reason, "review-version token")
 	assert.False(r.Integrity.Complete)
 	b, err := json.Marshal(r)
 	require.NoError(t, err)
@@ -378,7 +379,7 @@ func TestExperimentReportCohortBounds(t *testing.T) {
 			if id == "" {
 				id = "report-v1"
 			}
-			r, err := db.GetExperimentReport(id, tc.opts)
+			r, err := db.GetExperimentReport(t.Context(), id, tc.opts)
 			if tc.wantError != nil {
 				require.ErrorIs(t, err, tc.wantError)
 				return
@@ -400,7 +401,7 @@ func TestExperimentReportPendingAndUnreadableOutputs(t *testing.T) {
 	reportJob(t, db, repo.ID, "default", "a", new(1.0))
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "pending", Agent: "test", Experiment: reportAssignment("default", "pending", `{"Agent":"test"}`)})
 	require.NoError(t, err)
-	r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	m := reportMetric(t, r, "findings_high_per_review")
 	assert.Equal(t, 2, m.Default.ExpectedUnits)
@@ -412,7 +413,7 @@ func TestExperimentReportPendingAndUnreadableOutputs(t *testing.T) {
 	reportFinish(t, db, job.ID, "done", new(1.0), `{"schema_version":2,"summary":"clean","verdict":"pass","findings":[]}`)
 	_, err = db.Exec(`UPDATE review_jobs SET error='unreadable result' WHERE id=?`, job.ID)
 	require.NoError(t, err)
-	r, err = db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+	r, err = db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	m = reportMetric(t, r, "findings_high_per_review")
 	assert.Equal(t, 2, m.Default.ExpectedUnits)
@@ -436,7 +437,7 @@ func TestExperimentReportReliabilityGate(t *testing.T) {
 					reportJob(t, db, repo.ID, "experiment", subject, new(2.0))
 				}
 			}
-			r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+			r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 			require.NoError(t, err)
 			failure := reportMetric(t, r, "job_failure_rate")
 			cost := reportMetric(t, r, "cost_per_review")
@@ -456,7 +457,7 @@ func TestExperimentReportConflictingSubjects(t *testing.T) {
 	db, repo := setupDBAndRepo(t, "conflict")
 	reportJob(t, db, repo.ID, "default", "same", new(1.0))
 	reportJob(t, db, repo.ID, "experiment", "same", new(2.0))
-	r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{MinSubjects: 1})
+	r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{MinSubjects: 1})
 	require.NoError(t, err)
 	assert.False(t, r.Integrity.Complete)
 	assert.Equal(t, 1, r.Integrity.ConflictingSubjects)
@@ -495,7 +496,7 @@ func TestExperimentReportTerminalOutputCoverage(t *testing.T) {
 					require.Equal(t, wantVerdict, stored.Verdict())
 				}
 			}
-			known, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+			known, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 			require.NoError(t, err)
 			verdicts := reportMetric(t, known, "fail_verdict_rate")
 			require.NotNil(t, verdicts.Default.Value)
@@ -512,7 +513,7 @@ func TestExperimentReportTerminalOutputCoverage(t *testing.T) {
 					reportFinish(t, db, job.ID, status, new(1.0), "")
 				}
 			}
-			r, err := db.GetExperimentReport("report-v1", ExperimentReportOptions{})
+			r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 			require.NoError(t, err)
 			assert.Equal(t, "no detectable difference", reportMetric(t, r, "job_failure_rate").State)
 			for _, name := range []string{"fail_verdict_rate", "findings_critical_per_review", "findings_high_per_review", "findings_medium_per_review", "findings_low_per_review"} {
