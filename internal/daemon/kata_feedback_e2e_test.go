@@ -157,10 +157,13 @@ func TestKataFeedbackAcrossMachinesE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, view.Body.Issue)
 	target := status.Roots[0].Comment.UID
+	initialEvidence := "The guard already rejects empty inputs before the write occurs."
 	evidence := strings.Repeat("Current evidence with details. ", 100) + "END OF COMPLETE EVIDENCE"
-	reply, err := serverA.humaKataResponse(ctx, &KataResponseInput{Body: KataResponseRequest{Project: view.Body.Project, DestinationID: view.Body.DestinationID, Generation: view.Body.Issue.Generation, IssueUID: view.Body.IssueUID, TargetUID: target, Kind: "refute", Body: "Initial evidence", IdempotencyKey: "Feedback-Evidence-Key", Teammate: "roborev"}})
+	reply, err := serverA.humaKataResponse(ctx, &KataResponseInput{Body: KataResponseRequest{Project: view.Body.Project, DestinationID: view.Body.DestinationID, Generation: view.Body.Issue.Generation, IssueUID: view.Body.IssueUID, TargetUID: target, Kind: "refute", Body: initialEvidence, IdempotencyKey: "Feedback-Evidence-Key", Teammate: "roborev"}})
 	require.NoError(t, err)
 	assert.Equal(t, "roborev", reply.Body.Author)
+	assert.Equal(t, initialEvidence, reply.Body.Body)
+	assert.NotEqual(t, initialEvidence, evidence)
 	editBody, err := json.Marshal(map[string]string{"actor": "roborev", "body": evidence})
 	require.NoError(t, err)
 	editURL := fmt.Sprintf("http://kata/api/v1/projects/%d/issues/%s/comments/%s", status.Project.ID, status.Issue.Issue.UID, reply.Body.UID)
