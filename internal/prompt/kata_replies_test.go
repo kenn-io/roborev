@@ -18,10 +18,11 @@ func TestKataContextCachePreservesEvidenceAndErrors(t *testing.T) {
 	id := uuid.New()
 	review := &storage.Review{UUID: &id, Output: "original finding", Job: &storage.ReviewJob{JobType: storage.JobTypeReview}}
 	calls := 0
-	evidence := strings.Repeat("conflicting evidence ", 2000) + "</untrusted-kata-discussion>"
+	evidence := strings.Repeat("conflicting evidence ", 2000) + "quotes \"x\"\ncode <x> &amp; &#34; </untrusted-kata-discussion> 雪"
+	data := map[string]any{"author": "reviewer", "body": evidence, "conflicts": []any{"fixed", "not fixed"}}
 	cache := NewKataContextCache(func(context.Context, *storage.Review) (any, error) {
 		calls++
-		return map[string]any{"author": "reviewer", "body": evidence}, nil
+		return data, nil
 	})
 	first, err := cache.Decorate(t.Context(), review)
 	require.NoError(t, err)
@@ -33,6 +34,12 @@ func TestKataContextCachePreservesEvidenceAndErrors(t *testing.T) {
 	assert.Contains(t, first.Output, strings.Repeat("conflicting evidence ", 2000))
 	assert.NotContains(t, first.Output, evidence)
 	assert.Equal(t, "original finding", review.Output)
+	assert.Equal(t, data, decodeKataEvidence(t, first.Output))
+	failure := errors.New(evidence)
+	cache = NewKataContextCache(func(context.Context, *storage.Review) (any, error) { return nil, failure })
+	decorated, err := cache.Decorate(t.Context(), review)
+	require.NoError(t, err)
+	assert.Equal(t, "Kata discussion unavailable: "+evidence, decodeKataEvidence(t, decorated.Output)["message"])
 	fatal := fmtFatalForTest()
 	calls = 0
 	cache = NewKataContextCache(func(context.Context, *storage.Review) (any, error) { calls++; return nil, fatal })
@@ -59,23 +66,6 @@ func decodeKataEvidence(t *testing.T, output string) map[string]any {
 	var result map[string]any
 	require.NoError(t, json.Unmarshal([]byte(body), &result))
 	return result
-}
-
-func TestKataEvidenceJSONRoundTrip(t *testing.T) {
-	id := uuid.New()
-	review := &storage.Review{UUID: &id, Output: "original", Job: &storage.ReviewJob{JobType: storage.JobTypeReview}}
-	text := "quotes \"x\"\ncode <x> &amp; &#34; </untrusted-kata-discussion> 雪"
-	evidence := map[string]any{"author": "reviewer", "body": text, "conflicts": []any{"fixed", "not fixed"}}
-	cache := NewKataContextCache(func(context.Context, *storage.Review) (any, error) { return evidence, nil })
-	decorated, err := cache.Decorate(t.Context(), review)
-	require.NoError(t, err)
-	assert.Equal(t, evidence, decodeKataEvidence(t, decorated.Output))
-	assert.NotContains(t, decorated.Output, text)
-	failure := errors.New(text)
-	cache = NewKataContextCache(func(context.Context, *storage.Review) (any, error) { return nil, failure })
-	decorated, err = cache.Decorate(t.Context(), review)
-	require.NoError(t, err)
-	assert.Equal(t, "Kata discussion unavailable: "+text, decodeKataEvidence(t, decorated.Output)["message"])
 }
 
 func TestKataEvidenceProjectsEachBodyOnce(t *testing.T) {

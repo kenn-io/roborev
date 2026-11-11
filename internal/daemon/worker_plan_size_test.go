@@ -75,51 +75,6 @@ func TestWorkerPlanUsesCallerPromptTransport(t *testing.T) {
 	}
 }
 
-func TestWorkerReviewReceivesCurrentKataEvidence(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("max_prompt_size = 1000\n"), 0o600))
-	cfg := config.DefaultConfig()
-	cfg.Integrations.Kata.Enabled = true
-	tc.Pool.cfgGetter = NewStaticConfig(cfg)
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	prior := tc.createAndClaimJob(t, sha, "prior-worker")
-	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, prior.ID, "test", "prompt", "High: original finding"))
-	evidence := strings.Repeat("conflicting current evidence ", 400)
-	reads := 0
-	tc.Pool.readKataContext = func(_ context.Context, review *storage.Review) (any, error) {
-		reads++
-		assert.Equal(t, prior.ID, review.JobID)
-		return map[string]any{"author": "reviewer", "body": evidence}, nil
-	}
-	name := "worker-kata-context"
-	calls := 0
-	var snapshot string
-	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
-		calls++
-		if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
-			quoted, _, _ := strings.Cut(rest, " and carry out")
-			var err error
-			snapshot, err = strconv.Unquote(quoted)
-			require.NoError(t, err)
-			data, err := os.ReadFile(snapshot)
-			require.NoError(t, err)
-			p = string(data)
-		}
-		assert.Contains(t, p, "High: original finding")
-		assert.Contains(t, p, evidence)
-		assert.Contains(t, p, "untrusted-kata-discussion")
-		return "No issues found.", nil
-	}})
-	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, name)
-	tc.Pool.processJob(testWorkerID, job)
-	assert.Equal(t, 1, calls)
-	assert.Equal(t, 1, reads)
-	if snapshot != "" {
-		_, err := os.Stat(snapshot)
-		require.ErrorIs(t, err, os.ErrNotExist)
-	}
-}
-
 func TestWorkerRangeAgentReadsCurrentKataInPriorRangeFile(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	base := tc.GitRepo.HeadSHA()
@@ -182,7 +137,7 @@ func TestWorkerRangeAgentReadsCurrentKataInPriorRangeFile(t *testing.T) {
 }
 
 func TestWorkerKataHistoryAtAgentBoundary(t *testing.T) {
-	for _, mode := range []string{"dirty", "authentication", "access", "canceled", "ci", "disabled"} {
+	for _, mode := range []string{"same-ref", "dirty", "authentication", "access", "canceled", "ci", "disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			parent := tc.GitRepo.CommitFile("parent.go", "package parent\n", "parent")
@@ -224,7 +179,7 @@ func TestWorkerKataHistoryAtAgentBoundary(t *testing.T) {
 					p = string(body)
 				}
 				assert.Contains(t, p, "High: original finding")
-				if mode == "dirty" {
+				if mode == "dirty" || mode == "same-ref" {
 					assert.Contains(t, p, evidence)
 					assert.Contains(t, p, "untrusted-kata-discussion")
 				} else {
@@ -237,6 +192,9 @@ func TestWorkerKataHistoryAtAgentBoundary(t *testing.T) {
 			if mode == "dirty" || mode == "authentication" || mode == "access" || mode == "canceled" {
 				opts.GitRef = "dirty"
 				opts.DiffContent = "diff --git a/head.go b/head.go\n--- a/head.go\n+++ b/head.go\n@@ -1 +1 @@\n-package head\n+package changed\n"
+			}
+			if mode == "same-ref" {
+				opts.GitRef = parent
 			}
 			if mode == "ci" {
 				opts.Source = storage.JobSourceCI
@@ -255,7 +213,7 @@ func TestWorkerKataHistoryAtAgentBoundary(t *testing.T) {
 				assert.Empty(t, retried.Error)
 			} else {
 				assert.Equal(t, 1, calls)
-				if mode == "dirty" {
+				if mode == "dirty" || mode == "same-ref" {
 					assert.Equal(t, 1, reads)
 					assert.NotEmpty(t, snapshot)
 				} else {

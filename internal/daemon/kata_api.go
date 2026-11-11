@@ -322,15 +322,11 @@ func kataIssueFromPublication(destination kata.PublicationProject, destinationID
 		roots = *selectedRoots
 	}
 	result.Roots = kataPublicationBody(&KataPublicationStatus{Roots: roots}).Roots
-	kataIssueLineage(&result, destination, full, roots)
-	return result
-}
-
-func kataIssueLineage(result *KataIssue, project kata.PublicationProject, full kata.PublicationIssue, roots []kata.PublicationRoot) {
-	states := kata.PublicationLineage(project, full, roots)
+	states := kata.PublicationLineage(destination, full, roots)
 	for i := range result.Comments {
 		result.Comments[i].RootUID = states[i].RootUID
 		result.Comments[i].Lineage = states[i].State
 		result.Comments[i].History = "unknown"
 	}
+	return result
 }

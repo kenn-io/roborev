@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestFixPlanFlags(t *testing.T) {
@@ -460,6 +462,16 @@ func TestFixPlanCompletePromptTransport(t *testing.T) {
 	assert.Empty(t, repo.Run("status", "--porcelain"))
 }
 
+func kataPromptFixture(t *testing.T, finding string) (storage.StructuredOutput, string) {
+	t.Helper()
+	raw := testutil.ReviewFixtureJSON(finding)
+	var document storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &document))
+	hash, err := storage.KataDocumentHash(raw)
+	require.NoError(t, err)
+	return document, hash
+}
+
 func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode        string
@@ -482,6 +494,7 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 			repo.Run("commit", "-m", "Set prompt transport threshold")
 			id := uuid.New()
 			finding := "High: original finding " + strings.Repeat("source context ", 200)
+			document, hash := kataPromptFixture(t, finding)
 			evidence := strings.Repeat("conflicting attributed evidence ", 200)
 			reads := 0
 			ts, state := newMockServer(t, MockServerOpts{
@@ -489,7 +502,7 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
 				},
 				OnReview: func(w http.ResponseWriter, _ *http.Request) {
-					writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: finding, VerdictBool: new(0)})
+					writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: finding, StructuredOutput: document, VerdictBool: new(0)})
 				},
 				OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
 					writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
@@ -516,7 +529,7 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 					comment := map[string]any{"uid": "reply", "author": "reviewer", "body": evidence}
 					comments := []any{comment}
 					roots := []any{map[string]any{"position": 0, "state": "complete", "comment": comment}}
-					writeJSON(w, map[string]any{"state": "partial", "review_uuid": id.String(), "document_hash": "hash", "source_output": "duplicate source marker", "roots": roots, "comments": comments, "issue": map[string]any{"title": "issue title", "body": "issue body", "comments": comments, "roots": roots}})
+					writeJSON(w, map[string]any{"state": "partial", "review_uuid": id.String(), "document_hash": hash, "source_document": document, "source_output": "duplicate source marker", "roots": roots, "comments": comments, "issue": map[string]any{"title": "issue title", "body": "issue body", "comments": comments, "roots": roots}})
 				},
 			})
 			patchServerAddr(t, ts.URL)

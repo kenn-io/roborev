@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -287,9 +286,7 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 			if lookupErr == nil && record.DocumentHash == full.Envelope.DocumentHash {
 				review, readErr := s.db.GetReviewByJobIDContext(ctx, record.JobID)
 				if readErr == nil && review.UUID != nil && *review.UUID == record.ReviewUUID {
-					raw, marshalErr := json.Marshal(review.StructuredOutput)
-					hash, hashErr := storage.KataDocumentHash(raw)
-					if marshalErr == nil && hashErr == nil && hash == record.DocumentHash {
+					if prompt.ValidateKataContextSource(review, review.StructuredOutput, record.DocumentHash) == nil {
 						body.SourceOutput, body.SourceDocument = review.Output, review.StructuredOutput
 					} else {
 						body.Message = "local source changed during inspection"
