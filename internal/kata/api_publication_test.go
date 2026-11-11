@@ -502,6 +502,27 @@ func TestResolvePublicationTarget(t *testing.T) {
 	selected, err = ResolvePublicationTarget(project, issue, root.UID)
 	require.NoError(t, err)
 	assert.Equal(t, root.UID, selected)
+	for _, tc := range []struct {
+		uids         []string
+		target, want string
+		wantErr      error
+	}{
+		{[]string{root.UID, reply.UID}, strings.ToLower(reply.UID), reply.UID, nil},
+		{[]string{root.UID, reply.UID}, "C:dEf456", reply.UID, nil},
+		{[]string{root.UID, reply.UID}, "c:ef456", "", ErrNotFound},
+		{[]string{root.UID, reply.UID}, "missing", "", ErrNotFound},
+		{[]string{root.UID, ""}, root.UID, "", ErrInvalidResponse},
+		{[]string{root.UID, strings.ToLower(root.UID)}, root.UID, "", ErrInvalidResponse},
+		{[]string{reply.UID, "01CCCCCCCCCCCCCCCCCCDEF456"}, "c:def456", "", ErrConflict},
+	} {
+		got, selectErr := SelectPublicationTarget(tc.uids, tc.target)
+		assert.Equal(t, tc.want, got)
+		if tc.wantErr != nil {
+			require.ErrorIs(t, selectErr, tc.wantErr)
+		} else {
+			require.NoError(t, selectErr)
+		}
+	}
 	cases := []struct {
 		name   string
 		mutate func(*PublicationIssue)

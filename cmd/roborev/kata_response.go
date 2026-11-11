@@ -7,11 +7,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 	"uuid"
 
 	"github.com/spf13/cobra"
-	katagen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/kata"
@@ -76,7 +74,7 @@ func kataResponseCmd() *cobra.Command {
 		if err != nil {
 			return kataResponseError("read Kata issue", err)
 		}
-		if issue.UID == nil || issue.IssueID == nil || issue.ProjectID == nil || issue.Project == nil || issue.ProjectUID == nil || issue.DestinationID == nil || issue.ReplyTeammate == nil || *issue.ReplyTeammate == "" || issue.CommentsComplete == nil || !*issue.CommentsComplete || issue.PublicationEnvelope == nil {
+		if issue.UID == nil || *issue.UID == "" || issue.Project == nil || *issue.Project == "" || issue.DestinationID == nil || *issue.DestinationID == "" || issue.ReplyTeammate == nil || *issue.ReplyTeammate == "" || issue.CommentsComplete == nil || !*issue.CommentsComplete {
 			return errors.New("kata issue lacks complete publication identity or comments")
 		}
 		if destination != "" && destination != *issue.DestinationID {
@@ -86,13 +84,11 @@ func kataResponseCmd() *cobra.Command {
 			return errors.New("kata teammate changed; inspect the thread before retrying")
 		}
 		teammate = *issue.ReplyTeammate
-		env := issue.PublicationEnvelope
-		metadata := map[string]any{"roborev.version": env.Version, "roborev.review_uuid": env.ReviewUUID.String(), "roborev.document_hash": env.DocumentHash, "roborev.policy": env.Policy, "roborev.completed_at": env.CompletedAt.Format(time.RFC3339Nano), "roborev.finding_count": env.FindingCount}
-		full := kata.PublicationIssue{Issue: katagen.ShowIssueOut{UID: *issue.UID, ID: *issue.IssueID, ProjectID: *issue.ProjectID, Metadata: metadata}}
-		for _, c := range issue.Comments {
-			full.Comments = append(full.Comments, katagen.CommentOut{UID: c.UID, Handle: c.Handle, Body: c.Body, Author: c.Author, EditedAt: c.EditedAt, IssueID: c.IssueID, IssueUID: c.IssueUID, ProjectID: c.ProjectID, ProjectUID: c.ProjectUID, ProjectName: c.ProjectName, ReplyToUID: c.ReplyToUID, ReplyKind: c.ReplyKind})
+		uids := make([]string, 0, len(issue.Comments))
+		for _, comment := range issue.Comments {
+			uids = append(uids, comment.UID)
 		}
-		selected, err := kata.ResolvePublicationTarget(kata.PublicationProject{ID: full.Issue.ProjectID, Name: *issue.Project, UID: *issue.ProjectUID}, full, target)
+		selected, err := kata.SelectPublicationTarget(uids, target)
 		if err != nil {
 			return err
 		}

@@ -371,6 +371,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 	huma.Post(api, "/api/kata/response", s.humaKataResponse,
 		func(o *huma.Operation) {
 			o.OperationID = "kata-response"
+			o.MaxBodyBytes = -1
 			o.Summary = "Reply to a Kata finding"
 			o.Tags = []string{"kata"}
 			o.Errors = []int{400, 404, 409, 502}

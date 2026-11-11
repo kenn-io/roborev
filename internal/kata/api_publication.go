@@ -500,6 +500,35 @@ func ReadPublicationRoots(envelope PublicationEnvelope, issue PublicationIssue) 
 	return roots
 }
 
+// SelectPublicationTarget resolves a full UID or an unambiguous c: suffix
+// within one complete issue comment list, preserving the returned UID's case.
+func SelectPublicationTarget(uids []string, target string) (string, error) {
+	seen := make(map[string]bool, len(uids))
+	var selected string
+	var matches int
+	for _, uid := range uids {
+		if uid == "" {
+			return "", fmt.Errorf("%w: comment missing UID", ErrInvalidResponse)
+		}
+		key := strings.ToLower(uid)
+		if seen[key] {
+			return "", fmt.Errorf("%w: duplicate comment UID", ErrInvalidResponse)
+		}
+		seen[key] = true
+		if strings.EqualFold(uid, target) || (len(target) >= 8 && strings.EqualFold(target[:2], "c:") && strings.HasSuffix(key, strings.ToLower(target[2:]))) {
+			matches++
+			selected = uid
+		}
+	}
+	if matches > 1 {
+		return "", fmt.Errorf("%w: ambiguous target comment", ErrConflict)
+	}
+	if selected == "" {
+		return "", fmt.Errorf("%w: target comment not found", ErrNotFound)
+	}
+	return selected, nil
+}
+
 // ResolvePublicationTarget selects a comment in a verified finding thread in
 // the complete issue. Correlation markers do not establish author trust.
 func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue, target string) (string, error) {
@@ -512,29 +541,17 @@ func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue
 	}
 	roots := ReadPublicationRoots(envelope, issue)
 	byUID := make(map[string]gen.CommentOut, len(issue.Comments))
-	var matches []gen.CommentOut
+	uids := make([]string, 0, len(issue.Comments))
 	for _, comment := range issue.Comments {
-		if comment.UID == "" {
-			return "", fmt.Errorf("%w: comment missing UID", ErrInvalidResponse)
-		}
-		key := strings.ToLower(comment.UID)
-		if _, exists := byUID[key]; exists {
-			return "", fmt.Errorf("%w: duplicate comment UID", ErrInvalidResponse)
-		}
-		byUID[key] = comment
-		if strings.EqualFold(comment.UID, target) || (len(target) >= 8 && strings.EqualFold(target[:2], "c:") && strings.HasSuffix(key, strings.ToLower(target[2:]))) {
-			matches = append(matches, comment)
-		}
+		uids = append(uids, comment.UID)
+		byUID[strings.ToLower(comment.UID)] = comment
 	}
-	if len(matches) == 0 {
-		return "", fmt.Errorf("%w: target comment not found", ErrNotFound)
+	selected, err := SelectPublicationTarget(uids, target)
+	if err != nil {
+		return "", err
 	}
-	if len(matches) != 1 {
-		return "", fmt.Errorf("%w: ambiguous target comment", ErrConflict)
-	}
-	selected := matches[0].UID
 	seen := make(map[string]bool)
-	current := matches[0]
+	current := byUID[strings.ToLower(selected)]
 	for {
 		key := strings.ToLower(current.UID)
 		if seen[key] {
