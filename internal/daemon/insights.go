@@ -153,8 +153,15 @@ func (s *Server) fetchPriorInsights(ctx context.Context, repoRoot, branch string
 		return nil, nil
 	}
 	baseline := prompt.RecoverInsightsBaseline(job.Prompt)
-	if baseline != nil && (baseline.RepoPath != filepath.ToSlash(repoRoot) || baseline.Branch != branch || baseline.AsOf.After(*latest.FinishedAt)) {
-		baseline = nil
+	if baseline != nil {
+		baselineAsOf := baseline.AsOf
+		if !strings.ContainsAny(job.FinishedAtRaw, ".,") {
+			// Older completions stored whole seconds, losing the fractional part.
+			baselineAsOf = baselineAsOf.Truncate(time.Second)
+		}
+		if baseline.RepoPath != filepath.ToSlash(repoRoot) || baseline.Branch != branch || baselineAsOf.After(*job.FinishedAt) {
+			baseline = nil
+		}
 	}
 	return &prompt.InsightsPrior{
 		JobID: latest.ID, CompletedAt: *latest.FinishedAt,
