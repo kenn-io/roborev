@@ -243,6 +243,7 @@ func TestExperimentReportSuccessUnconfiguredOmitted(t *testing.T) {
 }
 
 func TestExperimentSuccessRejectsUnknownStoredFields(t *testing.T) {
+	t.Parallel()
 	r := &ExperimentReport{definitionJSON: `{"future_definition_field":true,"success":{"metric":"cost_per_review","direction":"lower","min_effect":"0","future_success_field":true}}`}
 	result := evaluateExperimentSuccess(r)
 	require.NotNil(t, result)
