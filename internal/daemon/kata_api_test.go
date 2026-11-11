@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/mcpserver"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -455,6 +456,55 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	assert.Contains(t, decodeKata[KataPublicationBody](t, w).Message, "ambiguous Kata publication projects")
 	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}, "project": {"reviews"}})
 	assert.Equal(t, "reviews", decodeKata[KataPublicationBody](t, w).Project)
+
+	// Sync may replace a document without changing the review UUID.
+	cfg.Hooks = nil
+	doc.Summary = "newer structured review"
+	doc.Findings[0].Problem = "newer finding"
+	rawB, err := json.Marshal(doc)
+	require.NoError(t, err)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(rawB), job.ID)
+	require.NoError(t, err)
+	reviewB, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	recordB, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, *review.UUID, *reviewB.UUID)
+	assert.NotEqual(t, record.DocumentHash, recordB.DocumentHash)
+	assert.NoError(t, prompt.ValidateKataContextSource(reviewB, reviewB.StructuredOutput, recordB.DocumentHash))
+	assert.Error(t, prompt.ValidateKataContextSource(reviewB, reviewB.StructuredOutput, record.DocumentHash))
+	assert.Error(t, prompt.ValidateKataContextSource(reviewB, review.StructuredOutput, recordB.DocumentHash))
+	issue.Out.Metadata["roborev.document_hash"] = recordB.DocumentHash
+	issue.Comments = append(issue.Comments, katagen.CommentOut{UID: "new-reply", IssueID: issue.Out.ID, ReplyToUID: new("root-uid"), Author: "teammate", Body: "new version claim"})
+	review.Job, reviewB.Job = job, job
+	cache := prompt.NewKataContextCache(server.readKataPromptContext)
+	beforeA := len(fake.AllRequests())
+	selectedA, err := cache.Decorate(t.Context(), review)
+	require.NoError(t, err)
+	require.NotEmpty(t, review.Output)
+	assert.Contains(t, selectedA.Output, review.Output)
+	assert.Contains(t, selectedA.Output, "Kata discussion unavailable")
+	assert.NotContains(t, selectedA.Output, "new version claim")
+	afterA := len(fake.AllRequests())
+	assert.Greater(t, afterA, beforeA)
+	selectedB, err := cache.Decorate(t.Context(), reviewB)
+	require.NoError(t, err)
+	assert.Contains(t, selectedB.Output, reviewB.Output)
+	assert.Contains(t, selectedB.Output, "new version claim")
+	assert.Contains(t, selectedB.Output, "teammate")
+	afterB := len(fake.AllRequests())
+	assert.Greater(t, afterB, afterA)
+	againA, err := cache.Decorate(t.Context(), review)
+	require.NoError(t, err)
+	againB, err := cache.Decorate(t.Context(), reviewB)
+	require.NoError(t, err)
+	assert.Equal(t, selectedA.Output, againA.Output)
+	assert.Equal(t, selectedB.Output, againB.Output)
+	assert.Len(t, fake.AllRequests(), afterB)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(raw), job.ID)
+	require.NoError(t, err)
+	issue.Out.Metadata["roborev.document_hash"] = record.DocumentHash
+	issue.Comments = issue.Comments[:1]
 
 	// Expired manual create still performs read-only discovery, even with no hook.
 	cfg.Hooks = nil

@@ -31,6 +31,11 @@ func (s *Server) readKataPromptContext(ctx context.Context, review *storage.Revi
 		}
 		return nil, err
 	}
+	if out.Body.State != "unavailable" || out.Body.DocumentHash != "" {
+		if err := prompt.ValidateKataContextSource(review, out.Body.SourceDocument, out.Body.DocumentHash); err != nil {
+			return nil, err
+		}
+	}
 	if out.Body.State == "missing" {
 		return nil, nil
 	}

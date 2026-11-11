@@ -40,6 +40,11 @@ func newKataPromptCache() *prompt.KataContextCache {
 		if err != nil {
 			return nil, classifyKataPromptError(err)
 		}
+		if result.State != "unavailable" || result.DocumentHash != "" {
+			if err := prompt.ValidateKataContextSource(review, result.SourceDocument, result.DocumentHash); err != nil {
+				return nil, err
+			}
+		}
 		if result.State == "missing" {
 			return nil, nil
 		}
