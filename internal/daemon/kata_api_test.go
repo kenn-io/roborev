@@ -471,9 +471,9 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, *review.UUID, *reviewB.UUID)
 	assert.NotEqual(t, record.DocumentHash, recordB.DocumentHash)
-	assert.NoError(t, prompt.ValidateKataContextSource(reviewB, reviewB.StructuredOutput, recordB.DocumentHash))
-	assert.Error(t, prompt.ValidateKataContextSource(reviewB, reviewB.StructuredOutput, record.DocumentHash))
-	assert.Error(t, prompt.ValidateKataContextSource(reviewB, review.StructuredOutput, recordB.DocumentHash))
+	require.NoError(t, prompt.ValidateKataContextSource(reviewB, reviewB.StructuredOutput, recordB.DocumentHash))
+	require.Error(t, prompt.ValidateKataContextSource(reviewB, reviewB.StructuredOutput, record.DocumentHash))
+	require.Error(t, prompt.ValidateKataContextSource(reviewB, review.StructuredOutput, recordB.DocumentHash))
 	issue.Out.Metadata["roborev.document_hash"] = recordB.DocumentHash
 	issue.Comments = append(issue.Comments, katagen.CommentOut{UID: "new-reply", IssueID: issue.Out.ID, ReplyToUID: new("root-uid"), Author: "teammate", Body: "new version claim"})
 	review.Job, reviewB.Job = job, job
