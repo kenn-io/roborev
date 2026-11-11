@@ -43,14 +43,14 @@ func TestFindingSummaryAndInsightsKata(t *testing.T) {
 		assert.Equal(t, source, got)
 		return findingSummaryResult(got), nil
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/summary?findings=true&all=true", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/summary?findings=true&all=true", nil)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), `"risk_accepted":1`)
 	assert.Contains(t, w.Body.String(), `"state":"available"`)
 	assert.EqualValues(t, 1, calls.Load())
-	prompt, _, err := s.buildInsightsPrompt(context.Background(), sourceRepo(t, s, source), "main", time.Now().Add(-time.Hour))
+	prompt, _, err := s.buildInsightsPrompt(t.Context(), sourceRepo(t, s, source), "main", time.Now().Add(-time.Hour))
 	require.NoError(t, err)
 	assert.Contains(t, prompt, `"Reason": "risk-accepted"`)
 	assert.Contains(t, prompt, `"Author": "reviewer"`)
@@ -59,7 +59,7 @@ func TestFindingSummaryAndInsightsKata(t *testing.T) {
 
 func sourceRepo(t *testing.T, s *Server, source storage.FindingKataSource) string {
 	t.Helper()
-	job, err := s.db.GetJobByID(source.JobID)
+	job, err := s.db.GetJobByIDContext(t.Context(), source.JobID)
 	require.NoError(t, err)
 	return job.RepoPath
 }
@@ -77,12 +77,12 @@ func TestFindingSummaryKataUnavailableAndRerun(t *testing.T) {
 				case "access":
 					return storage.FindingKataReview{}, ErrFindingKataAccessDenied
 				case "rerun":
-					_, err := db.Exec("UPDATE review_jobs SET status='queued' WHERE id=?", source.JobID)
+					_, err := db.ExecContext(ctx, "UPDATE review_jobs SET status='queued' WHERE id=?", source.JobID)
 					if err != nil {
 						return storage.FindingKataReview{}, err
 					}
 				case "document changed":
-					_, err := db.Exec("UPDATE reviews SET structured_output=structured_output || ' ' WHERE job_id=?", source.JobID)
+					_, err := db.ExecContext(ctx, "UPDATE reviews SET structured_output=structured_output || ' ' WHERE job_id=?", source.JobID)
 					if err != nil {
 						return storage.FindingKataReview{}, err
 					}
@@ -93,13 +93,13 @@ func TestFindingSummaryKataUnavailableAndRerun(t *testing.T) {
 			case "nil":
 				s.findingKataReader = nil
 			case "CI":
-				_, err := db.Exec("UPDATE review_jobs SET source='ci' WHERE id=?", source.JobID)
+				_, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET source='ci' WHERE id=?", source.JobID)
 				require.NoError(t, err)
 			case "passing":
-				_, err := db.Exec("UPDATE reviews SET verdict_bool=1 WHERE job_id=?", source.JobID)
+				_, err := db.ExecContext(t.Context(), "UPDATE reviews SET verdict_bool=1 WHERE job_id=?", source.JobID)
 				require.NoError(t, err)
 			}
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if mode == "cancel" {
 				cancel()
@@ -141,7 +141,7 @@ func TestFindingKataReadBudget(t *testing.T) {
 			return storage.FindingKataReview{}, ctx.Err()
 		}
 		started := time.Now()
-		results, err := readFindingKata(context.Background(), sources, reader)
+		results, err := readFindingKata(t.Context(), sources, reader)
 		require.NoError(t, err)
 		a := assert.New(t)
 		a.Equal(2*time.Second, time.Since(started))
@@ -177,7 +177,7 @@ func TestHumaFindingSummaryOptions(t *testing.T) {
 
 func TestFindingKataReadBindsRequestedSource(t *testing.T) {
 	source := storage.FindingKataSource{JobID: 1, ReviewUUID: "source-a", Document: "document-a"}
-	results, err := readFindingKata(context.Background(), []storage.FindingKataSource{source}, func(ctx context.Context, s storage.FindingKataSource) (storage.FindingKataReview, error) {
+	results, err := readFindingKata(t.Context(), []storage.FindingKataSource{source}, func(ctx context.Context, s storage.FindingKataSource) (storage.FindingKataReview, error) {
 		return storage.FindingKataReview{Source: storage.FindingKataSource{JobID: 2, ReviewUUID: "source-b", Document: "document-b"}, Complete: true}, nil
 	})
 	require.NoError(t, err)

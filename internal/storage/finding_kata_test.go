@@ -32,6 +32,8 @@ func kataReply(uid, kind, reason string) FindingKataReply {
 }
 
 func TestFindingKataReasons(t *testing.T) {
+	t.Parallel()
+
 	for _, reason := range []string{"false-positive", "spurious", "risk-accepted", "unspecified"} {
 		t.Run(reason, func(t *testing.T) {
 			_, stats, input := kataFixture(t)
@@ -67,6 +69,8 @@ func TestFindingKataReasons(t *testing.T) {
 }
 
 func TestFindingKataCurrentAssertions(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name               string
 		change             func(*FindingKataReview)
@@ -140,6 +144,8 @@ func TestFindingKataCurrentAssertions(t *testing.T) {
 }
 
 func TestFindingKataFallback(t *testing.T) {
+	t.Parallel()
+
 	for _, mode := range []string{"unavailable", "incomplete", "stale", "unmapped", "no assertions"} {
 		t.Run(mode, func(t *testing.T) {
 			db, stats, input := kataFixture(t)
@@ -208,6 +214,8 @@ func FuzzFindingKataPermutation(f *testing.F) {
 }
 
 func TestFindingKataPreservesDiscussionAndLocalEvidence(t *testing.T) {
+	t.Parallel()
+
 	db, stats, input := kataFixture(t)
 	e := stats.Evidence[0]
 	statsLabel(t, db, e.JobID, e.ReviewUUID, "optional operation can fail", "confirmed", "2026-10-20 12:00:00")
@@ -263,6 +271,8 @@ func TestFindingKataPreservesDiscussionAndLocalEvidence(t *testing.T) {
 }
 
 func TestFindingKataActorAndCoverage(t *testing.T) {
+	t.Parallel()
+
 	_, stats, input := kataFixture(t)
 	other := kataReply("reply-b", "confirm", "")
 	other.Teammate = "another-worker"
