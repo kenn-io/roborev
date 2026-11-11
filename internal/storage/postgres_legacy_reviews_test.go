@@ -369,3 +369,113 @@ func TestIntegrationLegacyMigrationBatches(t *testing.T) { //nolint:paralleltest
 	require.NoError(t, err)
 	assert.Len(t, exported, 205)
 }
+
+func TestIntegrationLegacyMaintenanceDoesNotBlockSync(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	for range 101 {
+		insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+	}
+	_, err := pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
+	require.NoError(t, err)
+	var locked uuid.UUID
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 100 LIMIT 1`).Scan(&locked))
+	tx, err := pool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+	_, err = tx.Exec(ctx, `SELECT uuid FROM reviews WHERE uuid = $1 FOR UPDATE`, locked)
+	require.NoError(t, err)
+
+	db := env.openDB("maintenance.db")
+	worker := startSyncWorker(t, db, env.pgURL, "maintenance-test", "100ms")
+	// PostgreSQL's lock wait and checkpoint are external to synctest.
+	waitCondition(t, 10*time.Second, "maintenance blocked after checkpoint", func() (bool, error) {
+		var stored string
+		if err := pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored); err != nil {
+			return false, err
+		}
+		var state legacyReviewScanState
+		if err := json.Unmarshal([]byte(stored), &state); err != nil {
+			return false, err
+		}
+		var blocked bool
+		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE OF r%')`).Scan(&blocked)
+		return state.Run != nil && state.Run.After != nil && blocked, err
+	})
+	repo, err := db.GetOrCreateRepo(env.TmpDir, "git@example.test:synthetic/repo.git")
+	require.NoError(t, err)
+	_, review := createCompletedReview(t, db, repo.ID, "abc123def456", "Author", "Subject", "prompt", "output")
+	require.NotNil(t, review.UUID)
+	// A later scheduled pass must push while maintenance is still blocked.
+	waitCondition(t, 10*time.Second, "scheduled review push", func() (bool, error) {
+		var exists bool
+		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE uuid = $1)`, *review.UUID).Scan(&exists)
+		return exists, err
+	})
+	_, err = worker.SyncNow()
+	require.NoError(t, err)
+	var stored string
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored))
+	var state legacyReviewScanState
+	require.NoError(t, json.Unmarshal([]byte(stored), &state))
+	require.NotNil(t, state.Run)
+	require.NotNil(t, state.Run.After)
+
+	// Cancel the blocked PostgreSQL statement so the next interval retries it.
+	var canceled bool
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE OF r%' LIMIT 1`).Scan(&canceled))
+	require.True(t, canceled)
+	// Wait for the canceled statement to leave its PostgreSQL lock wait.
+	waitCondition(t, 10*time.Second, "maintenance statement canceled", func() (bool, error) {
+		var blocked bool
+		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE OF r%')`).Scan(&blocked)
+		return !blocked, err
+	})
+	require.NoError(t, tx.Rollback(ctx))
+	// PostgreSQL persists completion outside synctest's control.
+	waitCondition(t, 10*time.Second, "maintenance completed", func() (bool, error) {
+		var raw string
+		if err := pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&raw); err != nil {
+			return false, err
+		}
+		var current legacyReviewScanState
+		if err := json.Unmarshal([]byte(raw), &current); err != nil {
+			return false, err
+		}
+		return current.Run == nil && current.Done != nil, nil
+	})
+}
+
+func TestIntegrationLegacyMaintenanceStopsBeforePoolClose(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	id := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+	_, err := pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
+	require.NoError(t, err)
+	tx, err := pool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+	_, err = tx.Exec(ctx, `SELECT uuid FROM reviews WHERE uuid = $1 FOR UPDATE`, id)
+	require.NoError(t, err)
+	worker := startSyncWorker(t, env.openDB("stop-maintenance.db"), env.pgURL, "stop-maintenance", "100ms")
+	// PostgreSQL's lock wait is external to synctest.
+	waitCondition(t, 10*time.Second, "maintenance blocked", func() (bool, error) {
+		var blocked bool
+		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE OF r%')`).Scan(&blocked)
+		return blocked, err
+	})
+	worker.mu.Lock()
+	workerPool := worker.pgPool
+	worker.mu.Unlock()
+	require.NotNil(t, workerPool)
+	worker.Stop()
+	var blocked bool
+	require.NoError(t, tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE OF r%')`).Scan(&blocked))
+	assert.False(t, blocked)
+	_, err = workerPool.Pool().Acquire(ctx)
+	require.Error(t, err)
+}

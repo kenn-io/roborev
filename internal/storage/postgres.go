@@ -535,16 +535,21 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 	}
 	p.ensureSearchVectorsSchema(ctx)
 
+	if currentVersion >= 24 {
+		return nil
+	}
+	if err := p.MaintainLegacyReviews(ctx); err != nil {
+		return err
+	}
+	return p.migrateReviewAttempts(ctx)
+}
+
+// MaintainLegacyReviews archives and restores historical reviews.
+func (p *PgPool) MaintainLegacyReviews(ctx context.Context) error {
 	if err := p.migrateLegacyReviews(ctx); err != nil {
 		return err
 	}
-	if err := p.restoreLegacyReviews(ctx); err != nil {
-		return err
-	}
-	if currentVersion < 24 {
-		return p.migrateReviewAttempts(ctx)
-	}
-	return nil
+	return p.restoreLegacyReviews(ctx)
 }
 
 // GetDatabaseID returns the unique ID for this Postgres database.

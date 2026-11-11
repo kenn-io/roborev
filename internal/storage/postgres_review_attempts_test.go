@@ -80,6 +80,7 @@ func TestPostgresMigrationReviewAttempts(t *testing.T) { //nolint:paralleltest /
 	_, err = pool.Pool().Exec(ctx, `UPDATE legacy_reviews SET resolved_at = NULL WHERE uuid = $1`, archivedReview)
 	require.NoError(t, err)
 	require.NoError(t, pool.EnsureSchema(ctx))
+	require.NoError(t, pool.MaintainLegacyReviews(ctx))
 	var restoredOwner uuid.UUID
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_source_machine_id FROM reviews WHERE uuid = $1`, archivedReview).Scan(&restoredOwner))
 	assert.Equal(defaultTestMachineID, restoredOwner)
