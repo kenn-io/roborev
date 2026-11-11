@@ -166,29 +166,33 @@ func (b *cancellationBody) Read([]byte) (int, error) {
 func (*cancellationBody) Close() error { return nil }
 
 func TestTransportPreservesCallerCancellationWhileReadingBody(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		started := make(chan struct{})
-		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       &cancellationBody{done: r.Context().Done(), started: started},
-			}, nil
-		})}
-		tr := transportFor(t, "https://kata.example.com", "k", func(o *transportOptions) {
-			o.HTTPClient = client
+	for _, status := range []int{http.StatusOK, http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				started := make(chan struct{})
+				client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: status,
+						Body:       &cancellationBody{done: r.Context().Done(), started: started},
+					}, nil
+				})}
+				tr := transportFor(t, "https://kata.example.com", "k", func(o *transportOptions) {
+					o.HTTPClient = client
+				})
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				errC := make(chan error, 1)
+				go func() {
+					var out pong
+					_, err := tr.do(ctx, http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
+					errC <- err
+				}()
+				<-started
+				cancel()
+				require.ErrorIs(t, <-errC, context.Canceled)
+			})
 		})
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		errC := make(chan error, 1)
-		go func() {
-			var out pong
-			_, err := tr.do(ctx, http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
-			errC <- err
-		}()
-		<-started
-		cancel()
-		require.ErrorIs(t, <-errC, context.Canceled)
-	})
+	}
 }
 
 func TestTransportClassifiesStatuses(t *testing.T) {
@@ -216,6 +220,22 @@ func TestTransportClassifiesStatuses(t *testing.T) {
 		_, err := tr.do(t.Context(), http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
 		srv.Close()
 		require.ErrorIs(t, err, want, "status %d", status)
+	}
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status)+" unreadable body", func(t *testing.T) {
+			done := make(chan struct{})
+			close(done)
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: status, Body: &cancellationBody{done: done, started: make(chan struct{})}}, nil
+			})}
+			tr := transportFor(t, "https://kata.example.com", "k", func(o *transportOptions) { o.HTTPClient = client })
+			var out pong
+			_, err := tr.do(t.Context(), http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
+			require.ErrorIs(t, err, ErrAuthenticationRequired)
+			apiErr, ok := AsAPIError(err)
+			require.True(t, ok)
+			assert.Equal(t, status, apiErr.Status)
+		})
 	}
 }
 
