@@ -33,9 +33,10 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 		if r.Method == http.MethodPost {
 			response = strings.Replace(response, `canonical\u001b[2J`, `other-project\u001b[2J`, 1)
 		}
-		if mode == "legacy" {
+		switch mode {
+		case "legacy":
 			response = strings.Replace(response, `"project":"canonical\u001b[2J",`, "", 1)
-		} else if mode == "no-short" {
+		case "no-short":
 			response = strings.Replace(response, `"issue_short_id":"abc1\u001b[2J",`, "", 1)
 		}
 		fmt.Fprint(w, response)

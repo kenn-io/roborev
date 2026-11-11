@@ -684,17 +684,22 @@ func TestKataPreparedAttemptChecksInputs(t *testing.T) {
 		p.cfg = NewStaticConfig(cfg)
 		guardedRepo, err := tc.DB.GetOrCreateRepo(t.TempDir())
 		require.NoError(t, err)
-		synctest.Test(t, func(t *testing.T) {
-			deleted := make(chan error, 1)
-			err := p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
-				go func() { deleted <- tc.DB.DeleteRepoContext(t.Context(), guardedRepo.ID, true) }()
+		err = p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+			// Keep HTTP outside the bubble; only the attempt-lock waiter belongs to it.
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				deleted := make(chan error, 1)
+				go func() { deleted <- tc.DB.DeleteRepoContext(ctx, guardedRepo.ID, true) }()
 				synctest.Wait()
 				assert.Empty(t, deleted, "exclusive mutation must wait for the protected send")
-				return nil
+				cancel()
+				require.ErrorIs(t, <-deleted, context.Canceled)
 			})
-			require.NoError(t, err)
-			require.NoError(t, <-deleted)
+			return nil
 		})
+		require.NoError(t, err)
+		require.NoError(t, tc.DB.DeleteRepoContext(t.Context(), guardedRepo.ID, true))
 	})
 }
 
