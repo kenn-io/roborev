@@ -1043,16 +1043,16 @@ JSON exposes this block as `ci`, omitted when no panels match. See
 
 ### Finding outcomes
 
-`roborev report summary --findings` adds a completion-time snapshot of logical code reviews:
-standalone commit, range and dirty reviews, plus panel synthesis parents. Panel
-members, goal reviews, tasks, fixes, insights and compact jobs are excluded.
-Existing summary fields keep their enqueue-time window. The additive `findings`
-JSON block reports the repository, branch, since, as-of and `finished_at` time
-basis, all raw counts, coverage and nullable rates with a suppression state.
-Zero-finding structured reviews count toward document coverage. Missing,
-invalid, legacy and unable-to-review documents remain in the logical review
-denominator. All structured severities count, including findings below a passing
-review's configured threshold.
+`roborev report summary --findings` adds a completion-time snapshot of logical
+code reviews: standalone commit, range and dirty reviews, plus panel synthesis
+parents. Panel members, goal reviews, tasks, fixes, insights and compact jobs
+are excluded. Existing summary fields keep their enqueue-time window. The
+additive `findings` JSON block reports the repository, branch, since, as-of and
+`finished_at` time basis, all raw counts, coverage and nullable rates with a
+suppression state. Zero-finding structured reviews count toward document
+coverage. Missing, invalid, legacy and unable-to-review documents remain in the
+logical review denominator. All structured severities count, including findings
+below a passing review's configured threshold.
 
 - **Positive / negative (tier R)**: A completed rebuttal assessment confirms or
     refutes one uniquely matched finding in the current review version. This is
