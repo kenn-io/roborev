@@ -1971,6 +1971,7 @@ type listJobsOptions struct {
 	omitPrompt         bool
 	includeFindings    bool
 	failedReviewsSince *time.Time
+	failedReviewsAsOf  time.Time
 }
 
 // selective reports whether a filter can seek jobs through its own index
@@ -1983,11 +1984,14 @@ func (o listJobsOptions) selective(statusFilter, repoFilter string) bool {
 		(o.branch != "" && !o.branchEmpty && !o.branchIncludeEmpty) || o.gitRef != "" || o.panelRun != uuid.Nil()
 }
 
-// WithFailedReviewsSince selects completed review, range, dirty, or synthesis
-// jobs with a failed verdict, finished at or after since at millisecond resolution.
-// Done jobs without a finish time are excluded.
-func WithFailedReviewsSince(since time.Time) ListJobsOption {
-	return func(o *listJobsOptions) { o.failedReviewsSince = &since }
+// WithFailedReviewsInWindow selects completed review, range, dirty, or
+// synthesis jobs with a failed verdict, finished between since and asOf
+// inclusive at millisecond resolution. Done jobs without a finish time are excluded.
+func WithFailedReviewsInWindow(since, asOf time.Time) ListJobsOption {
+	return func(o *listJobsOptions) {
+		o.failedReviewsSince = &since
+		o.failedReviewsAsOf = asOf
+	}
 }
 
 // WithGitRef filters jobs by git ref.
@@ -2174,12 +2178,14 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 		// The indexed probe lets SQLite skip non-failing reviews before the full verdict check.
 		conditions = append(conditions,
 			"j.finished_at IS NOT NULL",
-			"datetime(j.finished_at) >= datetime(?) AND julianday(j.finished_at) >= julianday(?)",
+			"datetime(j.finished_at) BETWEEN datetime(?) AND datetime(?)",
+			"julianday(j.finished_at) BETWEEN julianday(?) AND julianday(?)",
 			"rv.verdict_bool = 0 AND "+jobVerdictSortExpr(false)+" = 'F'",
 			"(j.job_type IN ('"+strings.Join([]string{JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeSynthesis}, "', '")+"') OR "+
 				"(COALESCE(j.job_type, '') = '' AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty' OR instr(j.git_ref, '..') > 0)))")
 		since := o.failedReviewsSince.Format(time.RFC3339Nano)
-		args = append(args, since, since)
+		asOf := o.failedReviewsAsOf.Format(time.RFC3339Nano)
+		args = append(args, since, asOf, since, asOf)
 	}
 
 	// Repo scoping precedence: a single positional repoFilter wins, then a

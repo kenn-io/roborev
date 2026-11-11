@@ -21,6 +21,7 @@ func BenchmarkFetchInsightsReviews(b *testing.B) {
 				require.NoError(b, err)
 				b.Cleanup(func() { require.NoError(b, db.Close()) })
 				since := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+				asOf := since.Add(48 * time.Hour)
 				tx, err := db.BeginTx(b.Context(), nil)
 				require.NoError(b, err)
 				_, err = tx.ExecContext(b.Context(), `INSERT INTO repos (id, root_path, name) VALUES
@@ -79,7 +80,7 @@ func BenchmarkFetchInsightsReviews(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for b.Loop() {
-					reviews, err := server.fetchInsightsReviews("/synthetic/repo", "main", since)
+					reviews, err := server.fetchInsightsReviews("/synthetic/repo", "main", since, asOf)
 					require.NoError(b, err)
 					require.Len(b, reviews, want)
 				}
