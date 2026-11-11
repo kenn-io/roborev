@@ -422,17 +422,17 @@ func TestSynthesisAvailabilityFallbackExperimentReport(t *testing.T) {
 			require.NoError(t, err)
 			members, synth, err := wc.DB.EnqueuePanelRun(memberOpts, opts)
 			require.NoError(t, err)
-			for _, member := range members {
+			for i, member := range members {
 				markMemberRunning(t, wc, member.ID)
 				require.NoError(t, wc.DB.MarkJobAgentInvokedContext(t.Context(), member.ID, testWorkerID, "test"))
-				require.NoError(t, testutil.CompleteReviewFixture(wc.DB, member.ID, "test", "", "No issues found."))
+				output := "No issues found."
+				if i == 0 {
+					output = `{"schema_version":3,"summary":"Found an issue.","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.8,"problem":"A value is lost.","fix":"Preserve the value.","file":"test.txt","start_line":1,"end_line":1}]}`
+				}
+				require.NoError(t, testutil.CompleteReviewFixture(wc.DB, member.ID, "test", "", output))
 			}
 			job := releaseAndClaimSynthesis(t, wc, run)
-			succeeded := []reviewpkg.ReviewResult{
-				{Agent: "test", Status: reviewpkg.ResultDone, Output: "No issues found.", Verdict: storage.VerdictPass},
-				{Agent: "test", Status: reviewpkg.ResultDone, Output: "No issues found.", Verdict: storage.VerdictPass},
-			}
-			wc.Pool.synthesizeSucceededResults(t.Context(), testWorkerID, job, succeeded, false, "", nil)
+			wc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
 			assert.True(t, selectedAgent.reviewCalled)
 			assert.Equal(t, tc.model, selectedAgent.model)
 			stored, err := wc.DB.GetJobByID(synth.ID)
