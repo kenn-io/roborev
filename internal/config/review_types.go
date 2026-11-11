@@ -28,15 +28,11 @@ type ReviewTypeSpec struct {
 	Tools     *ReviewToolPolicy `toml:"tools" comment:"Strict read-only tool policy and exact MCP tools for this review type."`
 	// BinaryEvidence gives reviewers the committed bytes of changed binary
 	// files, such as PDFs and images, that a text diff cannot show.
-	BinaryEvidence *bool `toml:"binary_evidence" comment:"Override the shared binary evidence setting for this review type."`
+	BinaryEvidence bool `toml:"binary_evidence" comment:"Save committed binary files changed by the review for the reviewer to read."`
 }
 
 func (s ReviewTypeSpec) Clone() ReviewTypeSpec {
 	cloned := s
-	if s.BinaryEvidence != nil {
-		value := *s.BinaryEvidence
-		cloned.BinaryEvidence = &value
-	}
 	cloned.Includes = maps.Clone(s.Includes)
 	cloned.Tools = s.Tools.Clone()
 	return cloned

@@ -25,7 +25,6 @@ binary_evidence = true
 
 [review.types.plain]
 template = "rubric.md"
-binary_evidence = false
 `
 
 func TestProcessJobBinaryEvidenceSettings(t *testing.T) {

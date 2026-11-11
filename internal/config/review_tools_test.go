@@ -212,18 +212,19 @@ members = ["checker"]
 func TestResolveReviewSettingsBinaryEvidencePrecedence(t *testing.T) {
 	yes, no := true, false
 	for _, tc := range []struct {
-		name                 string
-		global, repo, custom *bool
-		reviewType           string
-		want                 bool
+		name         string
+		global, repo *bool
+		custom       bool
+		reviewType   string
+		want         bool
 	}{
 		{name: "default off", reviewType: "default"},
 		{name: "global on", global: &yes, reviewType: "default", want: true},
 		{name: "repo off", global: &yes, repo: &no, reviewType: "security"},
 		{name: "repo on", global: &no, repo: &yes, reviewType: "default", want: true},
-		{name: "custom inherits", global: &yes, reviewType: "exhibits", want: true},
-		{name: "custom off", repo: &yes, custom: &no, reviewType: "exhibits"},
-		{name: "custom on", repo: &no, custom: &yes, reviewType: "exhibits", want: true},
+		{name: "custom ignores global", global: &yes, reviewType: "exhibits"},
+		{name: "custom ignores repo", repo: &yes, reviewType: "exhibits"},
+		{name: "custom on", repo: &no, custom: true, reviewType: "exhibits", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			global := &Config{Review: ReviewConfig{BinaryEvidence: tc.global}}

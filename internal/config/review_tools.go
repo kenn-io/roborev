@@ -85,22 +85,23 @@ func CanonicalReviewToolPolicy(p *ReviewToolPolicy) (*ReviewToolPolicy, error) {
 // replaces the type policy as a whole.
 func ResolveReviewSettings(reviewType string, memberTools *ReviewToolPolicy, repoCfg *RepoConfig, globalCfg *Config) (ReviewSettings, error) {
 	var settings ReviewSettings
-	var repoEvidence, globalEvidence, typeEvidence *bool
-	if repoCfg != nil {
-		repoEvidence = repoCfg.Review.BinaryEvidence
-	}
-	if globalCfg != nil {
-		globalEvidence = globalCfg.Review.BinaryEvidence
-	}
-	if !IsBuiltInReviewType(reviewType) {
+	if IsBuiltInReviewType(reviewType) {
+		var repoEvidence, globalEvidence *bool
+		if repoCfg != nil {
+			repoEvidence = repoCfg.Review.BinaryEvidence
+		}
+		if globalCfg != nil {
+			globalEvidence = globalCfg.Review.BinaryEvidence
+		}
+		settings.BinaryEvidence = resolveBool(false, repoEvidence, globalEvidence)
+	} else {
 		resolved, ok := ResolveCustomReviewTypeFromConfig(reviewType, repoCfg, globalCfg)
 		if !ok {
 			return settings, fmt.Errorf("unknown review type %q", reviewType)
 		}
 		settings.Tools = resolved.Spec.Tools
-		typeEvidence = resolved.Spec.BinaryEvidence
+		settings.BinaryEvidence = resolved.Spec.BinaryEvidence
 	}
-	settings.BinaryEvidence = resolveBool(false, typeEvidence, repoEvidence, globalEvidence)
 	if memberTools != nil {
 		settings.Tools = memberTools
 	}

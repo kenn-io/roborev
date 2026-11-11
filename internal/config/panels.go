@@ -54,7 +54,7 @@ type PanelSpec struct {
 // named subagent and panel maps. Present on both Config (global) and
 // RepoConfig (per-repo). ResolveReviewSettings handles binary evidence.
 type ReviewConfig struct {
-	BinaryEvidence *bool                     `toml:"binary_evidence" comment:"Save committed changed binary files for reviewers to read."`
+	BinaryEvidence *bool                     `toml:"binary_evidence" comment:"Save committed changed binary files for built-in reviews to read."`
 	DefaultPanel   string                    `toml:"default_panel"`
 	HookPanel      string                    `toml:"hook_review_panel"`
 	Types          map[string]ReviewTypeSpec `toml:"types"`
