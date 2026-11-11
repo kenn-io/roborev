@@ -153,13 +153,13 @@ func TestTransportPreservesCallerDeadlineBeforeResponse(t *testing.T) {
 // cancellationBody signals only once the transport begins reading the response.
 // A distinct read error ensures do must recover the caller's cancellation.
 type cancellationBody struct {
-	ctx     context.Context
+	done    <-chan struct{}
 	started chan struct{}
 }
 
 func (b *cancellationBody) Read([]byte) (int, error) {
 	close(b.started)
-	<-b.ctx.Done()
+	<-b.done
 	return 0, io.ErrUnexpectedEOF
 }
 
@@ -171,7 +171,7 @@ func TestTransportPreservesCallerCancellationWhileReadingBody(t *testing.T) {
 		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
-				Body:       &cancellationBody{ctx: r.Context(), started: started},
+				Body:       &cancellationBody{done: r.Context().Done(), started: started},
 			}, nil
 		})}
 		tr := transportFor(t, "https://kata.example.com", "k", func(o *transportOptions) {
@@ -281,7 +281,7 @@ func TestTransportDecodesSuccessResponses(t *testing.T) {
 }
 
 func TestTransportReportsAClosedPortAsUnreachable(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := listener.Addr().String()
 	require.NoError(t, listener.Close())
@@ -313,7 +313,7 @@ func serveOnUnixSocket(t *testing.T, dirMode, socketMode os.FileMode, handler ht
 	dir := shortTempDir(t)
 	require.NoError(t, os.Chmod(dir, dirMode))
 	path := filepath.Join(dir, "k.sock")
-	listener, err := net.Listen("unix", path)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", path)
 	require.NoError(t, err)
 	require.NoError(t, os.Chmod(path, socketMode))
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: time.Second}
