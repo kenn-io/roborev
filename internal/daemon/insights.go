@@ -32,7 +32,7 @@ func (s *Server) buildInsightsPrompt(
 		return "", 0, nil
 	}
 
-	measured, err := s.db.GetFindingStats(ctx, storage.SummaryOptions{
+	measured, err := s.findingStats(ctx, storage.SummaryOptions{
 		RepoPath: repoRoot, Branch: branch, Since: since, AsOf: asOf,
 	}, "severity")
 	if err != nil {

@@ -22,7 +22,7 @@ List files, packages or directories with concentrated failures, the number of di
 
 ## 3. Noise Candidates
 
-Use validated refuted assessments as noise evidence. Confirmed findings are counterexamples to suppression. Closure is resolution only; neither closure nor free-text comments label a finding positive or negative. Report counts and provenance, and distinguish superseded and unlabeled findings. Positive means agent-confirmed, not proof that a fix was applied. Superseded and unlabeled findings do not enter the labeled-rate denominator.
+Use validated refutes and their reasons: false-positive supports precision investigation; spurious supports scope investigation; risk-accepted records a real risk and tradeoff, not proof of technical invalidity or a reason to suppress a real bug. Unspecified refutes cannot support a reason-specific claim; they support broad noise analysis. Confirmed findings are suppression counterexamples. Closure is resolution only; free-text comments never label findings. Report counts and provenance. Positive means confirmed, not proof of an applied fix. Superseded and unlabeled findings stay outside the labeled-rate denominator.
 
 ## 4. Guideline Gaps
 
@@ -30,7 +30,7 @@ Describe recurring issues absent from the current guidelines and explain the evi
 
 ## 5. Suggested Guideline Additions
 
-Recommend at most one concrete guideline line, only with at least three distinct review job IDs. Cite those IDs, the occurrence count and, for any relevant cell with at least five labeled findings, its positive / (positive + negative) rate. Respect suppressed or unavailable rates. List confirmed or still-open findings the change would suppress, or say exactly "none found in supplied evidence". Search only the evidence actually supplied, never claim a whole-corpus counterexample search from a partial sample. State the expected effect and a redaction check for private identifiers. Otherwise say exactly "No guideline change recommended" and explain why.
+Recommend at most one concrete guideline line, only with at least three distinct review job IDs. Cite those IDs, the occurrence count and, for any relevant cell with at least five labeled findings, its positive / (positive + negative) confirmed share. Respect suppressed or unavailable rates. List confirmed or still-open findings the change would suppress, or say exactly "none found in supplied evidence". Search only the evidence actually supplied, never claim a whole-corpus counterexample search from a partial sample. State the expected effect and a redaction check for private identifiers. Otherwise say exactly "No guideline change recommended" and explain why.
 
 When prior suggestions are supplied, assess each recoverable suggestion: report exact inclusion against the COMPLETE current guidelines, separately from any equivalent wording you judge adopted. Compare identifiable pattern counts only with usable before/after windows, comparable denominators and sufficient coverage; otherwise say "insufficient comparable evidence". Treat changes of one or two occurrences as "within noise" (a heuristic). Report missing sections, baselines or periods as unavailable. A decrease proves neither causation nor adoption date. Never infer improvement from missing data.
 
@@ -55,7 +55,26 @@ type InsightsPrior struct {
 	JobID       int64
 	CompletedAt time.Time
 	Suggestions string
-	Baseline    *storage.FindingStats
+	Baseline    *InsightsBaseline
+}
+
+// InsightsBaseline retains whether additive historical coverage was recorded.
+// It belongs to prompt recovery, not the summary/storage API.
+type InsightsBaseline struct {
+	*storage.FindingStats
+	kataRecorded bool
+}
+
+func (b *InsightsBaseline) MarshalJSON() ([]byte, error) {
+	if b.kataRecorded {
+		return json.Marshal(b.FindingStats)
+	}
+	// An old envelope has no measured K cohort. Do not serialize numeric zeroes
+	// from the decoder's default struct as historical measurements.
+	return json.Marshal(struct {
+		*storage.FindingStats
+		Kata map[string]string `json:"kata"`
+	}{b.FindingStats, map[string]string{"state": "unavailable"}})
 }
 
 // InsightsReview is a simplified review record for the insights prompt
@@ -351,7 +370,7 @@ func RecoverInsightsSuggestions(output string) string {
 }
 
 // RecoverInsightsBaseline recovers measured context, never guesses it from prose.
-func RecoverInsightsBaseline(storedPrompt string) *storage.FindingStats {
+func RecoverInsightsBaseline(storedPrompt string) *InsightsBaseline {
 	if strings.Count(storedPrompt, measuredStart) != 1 {
 		return nil
 	}
@@ -386,5 +405,35 @@ func RecoverInsightsBaseline(storedPrompt string) *storage.FindingStats {
 	if json.Unmarshal([]byte(body), &baseline) != nil || baseline.TimeBasis != "finished_at" || baseline.Since.IsZero() || baseline.AsOf.IsZero() || baseline.AsOf.Before(baseline.Since) {
 		return nil
 	}
-	return &baseline
+	recoverFindingReasons(fields["total"], &baseline.Total)
+	var rows []json.RawMessage
+	if json.Unmarshal(fields["rows"], &rows) == nil {
+		for i, raw := range rows {
+			recoverFindingReasons(raw, &baseline.Rows[i].FindingOutcomeCounts)
+		}
+	}
+	var tiers map[string]json.RawMessage
+	if json.Unmarshal(fields["tier_coverage"], &tiers) == nil {
+		for tier, raw := range tiers {
+			counts := baseline.TierCoverage[tier]
+			recoverFindingReasons(raw, &counts)
+			baseline.TierCoverage[tier] = counts
+		}
+	}
+	recorded := len(fields["kata"]) > 0 && string(fields["kata"]) != "null"
+	if !recorded {
+		baseline.Kata.State = "unavailable"
+	}
+	return &InsightsBaseline{FindingStats: &baseline, kataRecorded: recorded}
+}
+
+func recoverFindingReasons(raw json.RawMessage, counts *storage.FindingOutcomeCounts) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return
+	}
+	if reason := fields["refute_reasons"]; len(reason) == 0 || string(reason) == "null" {
+		// Historical negatives were retained R assertions without a classification.
+		counts.RefuteReasons = storage.RefuteReasonCounts{Unspecified: counts.Negative, Absent: counts.Negative}
+	}
 }

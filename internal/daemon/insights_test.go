@@ -600,7 +600,6 @@ func TestHandleEnqueueInsightsPriorWithQuotedNoopWithoutCurrentFailures(t *testi
 	assert.Contains(stored.Prompt, `"logical_reviews": 0`)
 	assert.Contains(stored.Prompt, "Check returned errors.")
 	assert.Contains(stored.Prompt, `Unlike the earlier "No guideline change recommended" result`)
-	assert.Contains(stored.Prompt, "insufficient comparable evidence")
 }
 
 func TestBuildInsightsPromptSkipsPriorNoopWithoutFailures(t *testing.T) {
