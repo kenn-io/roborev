@@ -186,13 +186,13 @@ async function exchangeCredentials(
   } catch {
     return {
       state: "error",
-      message: "Could not start your session. Try again.",
+      message: "Could not start your session.",
     };
   }
   if (!isCredentialBody(bodyValue)) {
     return {
       state: "error",
-      message: "Could not start your session. Try again.",
+      message: "Could not start your session.",
     };
   }
   sessionStorage.setItem(sessionKey, bodyValue.session);
