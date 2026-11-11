@@ -17,5 +17,7 @@ export interface EnqueueSuppliedPanelInputBody {
   members: SuppliedPanelMember[];
   /** @minLength 1 */
   repo_path: string;
+  /** Retry an identical submission with this ID to recover its original panel */
+  request_id?: string;
   synthesis: SuppliedPanelSynthesis;
 }

@@ -1607,6 +1607,10 @@ components:
         repo_path:
           minLength: 1
           type: string
+        request_id:
+          description: Retry an identical submission with this ID to recover its original panel
+          format: uuid
+          type: string
         synthesis:
           $ref: "#/components/schemas/SuppliedPanelSynthesis"
       required:
@@ -6744,6 +6748,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: HTTP 400 response
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 409 response
+        "410":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: HTTP 410 response
         "500":
           content:
             application/json:

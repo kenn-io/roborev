@@ -1379,11 +1379,14 @@ type EnqueueSuppliedPanelInputBody struct {
 	Schema *string `json:"$schema,omitempty"`
 
 	// GitRef Commit or range resolved once for every reviewer and synthesis
-	GitRef        string                 `json:"git_ref" validate:"required,min=1"`
-	HoldSynthesis *bool                  `json:"hold_synthesis,omitempty"`
-	Members       []SuppliedPanelMember  `json:"members" validate:"required"`
-	RepoPath      string                 `json:"repo_path" validate:"required,min=1"`
-	Synthesis     SuppliedPanelSynthesis `json:"synthesis"`
+	GitRef        string                `json:"git_ref" validate:"required,min=1"`
+	HoldSynthesis *bool                 `json:"hold_synthesis,omitempty"`
+	Members       []SuppliedPanelMember `json:"members" validate:"required"`
+	RepoPath      string                `json:"repo_path" validate:"required,min=1"`
+
+	// RequestID Retry an identical submission with this ID to recover its original panel
+	RequestID *uuid.UUID             `json:"request_id,omitempty"`
+	Synthesis SuppliedPanelSynthesis `json:"synthesis"`
 }
 
 func (e EnqueueSuppliedPanelInputBody) Validate() error {
@@ -1406,6 +1409,13 @@ func (e EnqueueSuppliedPanelInputBody) Validate() error {
 	}
 	if err := typesValidator.Var(e.RepoPath, "required,min=1"); err != nil {
 		errors = errors.Append("RepoPath", err)
+	}
+	if e.RequestID != nil {
+		if v, ok := any(e.RequestID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RequestID", err)
+			}
+		}
 	}
 	if v, ok := any(e.Synthesis).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {

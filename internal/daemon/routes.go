@@ -484,6 +484,8 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Responses = jsonResponses(map[string]*huma.Schema{
 				"201": jsonSchema(api, PanelEnqueueResponse{}),
 				"400": errorSchema,
+				"409": errorSchema,
+				"410": errorSchema,
 				"500": errorSchema,
 			})
 		})

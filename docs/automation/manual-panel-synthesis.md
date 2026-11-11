@@ -119,8 +119,26 @@ that head; ambiguous branches remain unlabeled. The panel uses the supplied
 policy even if `.roborev.toml` changes or becomes invalid. It does not select
 local panel defaults, experiments, automatic design reviews, reusable sessions,
 or repository hooks. Global daemon hooks still run. Invalid member or synthesis
-settings reject the request before any jobs are queued. Each successful enqueue
-creates a new panel; enqueue requests do not have replay receipts.
+settings reject the request before any jobs are queued.
+
+To retry a submission after a lost response, include a nonzero UUID in
+`request_id`. Save the ID and request body before submitting, then resend the
+same values until the outcome is known. An identical retry returns `201 Created`
+with the original panel UUID and job IDs, plus the synthesis job's current
+state. It does not resolve the revision again, queue more reviews, or release
+held synthesis. Without `request_id`, each successful enqueue creates a new
+panel.
+
+Reusing an ID with different input returns `409 Conflict`. If the original
+panel's jobs have been deleted, the same request returns `410 Gone` without
+recreating them. A deliberate new review needs a new ID.
+
+Receipts survive daemon restarts and repository deletion. They retain only the
+request ID, a hash of the submitted input, and the panel and synthesis job IDs;
+they contain no prompts or review output. Receipts stay in that daemon's
+database and are not synced. Replacing or restoring the database can lose
+receipts, so a request ID does not prevent duplicate work across database resets
+or different daemons.
 
 Retries preserve each member's prompt and settings. Whole-panel reruns create
 new jobs with the original choices, including the primary agent after backup
