@@ -1529,9 +1529,7 @@ func omitAgentHookReviewFlow(data []byte, raw map[string]any) ([]byte, error) {
 	}
 
 	configCopy := make(map[string]any, len(raw))
-	for key, value := range raw {
-		configCopy[key] = value
-	}
+	maps.Copy(configCopy, raw)
 	agentHookCopy := make(map[string]any, len(agentHook)-1)
 	for key, value := range agentHook {
 		if key != "review_flow" {
