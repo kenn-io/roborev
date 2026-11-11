@@ -3,6 +3,7 @@ package main
 // Tests for the show command
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -609,13 +610,14 @@ func TestShowNumericRefFallback(t *testing.T) {
 		jobStatus  int
 		wantOutput string
 		wantError  string
+		wantNote   bool
 		wantCalls  []string
 	}{
 		{name: "commit review takes precedence", args: []string{"12345"}, refStatus: http.StatusOK, wantOutput: "commit review", wantCalls: []string{"sha"}},
-		{name: "missing commit review retries job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusOK, wantOutput: "job review", wantCalls: []string{"sha", "job"}},
-		{name: "missing both identifies job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantError: "no review found for job 12345", wantCalls: []string{"sha", "job"}},
+		{name: "missing commit review retries job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusOK, wantOutput: "job review", wantNote: true, wantCalls: []string{"sha", "job"}},
+		{name: "missing both identifies job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantError: "no review found for job 12345", wantNote: true, wantCalls: []string{"sha", "job"}},
 		{name: "server error does not retry", args: []string{"12345"}, refStatus: http.StatusInternalServerError, wantError: "500", wantCalls: []string{"sha"}},
-		{name: "prompt falls back to stored job", args: []string{"--prompt", "12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantOutput: "stored prompt", wantCalls: []string{"sha", "job", "prompt"}},
+		{name: "prompt falls back to stored job", args: []string{"--prompt", "12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantOutput: "stored prompt", wantNote: true, wantCalls: []string{"sha", "job", "prompt"}},
 		{name: "explicit job skips ref", args: []string{"--job", "12345"}, jobStatus: http.StatusOK, wantOutput: "job review", wantCalls: []string{"job"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -665,8 +667,16 @@ func TestShowNumericRefFallback(t *testing.T) {
 			}))
 			cmd := showCmd()
 			cmd.SetArgs(tc.args)
+			var stderr bytes.Buffer
+			cmd.SetErr(&stderr)
 			var err error
 			output := captureStdout(t, func() { err = cmd.Execute() })
+			note := "note: no review found for commit " + sha[:7] + "; trying job 12345\n"
+			if tc.wantNote {
+				assert.Contains(t, stderr.String(), note)
+			} else {
+				assert.NotContains(t, stderr.String(), "note:")
+			}
 			if tc.wantError != "" {
 				require.ErrorContains(t, err, tc.wantError)
 			} else {

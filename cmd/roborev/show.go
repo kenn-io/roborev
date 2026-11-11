@@ -125,6 +125,7 @@ Job IDs are displayed in review notifications and the TUI.
 
 In a git repo, the argument is first tried as a git ref. A positive numeric
 argument is tried as a job ID if the ref cannot be resolved or has no review.
+When the ref has no review, a note on stderr reports the retry.
 Use --job to force job ID.
 
 Examples:
@@ -245,6 +246,9 @@ Examples:
 			}
 			if resp.StatusCode == http.StatusNotFound && numericRefJobID > 0 {
 				resp.Body.Close()
+				// Say which lookup missed, so a reader of the job review (or of
+				// the job error below) knows the commit was tried first.
+				fmt.Fprintf(cmd.ErrOrStderr(), "note: no review found for commit %s; trying job %s\n", displayRef, numericRefArg)
 				query.Del("sha")
 				query.Set("job_id", numericRefArg)
 				displayRef = "job " + numericRefArg
