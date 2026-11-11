@@ -60,8 +60,20 @@ func kataCmd() *cobra.Command {
 				fmt.Fprint(out, " (expired)")
 			}
 			fmt.Fprintln(out)
+			project := sanitizeSearchSingleLine(deref(response.Project))
 			if response.IssueUID != nil {
-				fmt.Fprintf(out, "Issue: %s (%s)\n", sanitizeSearchSingleLine(deref(response.IssueShortID)), sanitizeSearchSingleLine(deref(response.IssueUID)))
+				shortID := sanitizeSearchSingleLine(deref(response.IssueShortID))
+				if project != "" && shortID != "" {
+					shortID = project + "#" + shortID
+				}
+				if shortID == "" {
+					fmt.Fprintf(out, "Issue: %s\n", sanitizeSearchSingleLine(*response.IssueUID))
+				} else {
+					fmt.Fprintf(out, "Issue: %s (%s)\n", shortID, sanitizeSearchSingleLine(*response.IssueUID))
+				}
+			}
+			if project != "" {
+				fmt.Fprintf(out, "Project: %s\n", project)
 			}
 			if response.DestinationID != nil {
 				fmt.Fprintf(out, "Destination: %s\n", sanitizeSearchSingleLine(*response.DestinationID))
