@@ -37,7 +37,17 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 			_, _ = buf.ReadFrom(r.Body)
 			body = buf.String()
 		}
-		fmt.Fprint(w, `{"review_uuid":"synthetic","document_hash":"hash","state":"partial\u001b[2J","expired":false,"issue_uid":"issue-uid\r","issue_short_id":"abc1\u001b[2J","project":"other","destination_id":"destination\u001b[2J","source_output":"Original 雪\u001b[2J finding\n\tnext\u0000","issue":{"uid":"issue-uid","issue_id":2,"project_id":7,"project":"other","short_id":"abc1","qualified_id":"other#abc1","status":"open","labels":[],"generation":1,"title":"Issue 雪\u001b[2J title\r","body":"Issue body 雪\n\tsecond\u001b[2J line\u0000"},"roots":[{"position":0,"state":"complete\u001b[2J","comment":{"uid":"root-uid\u001b[2J","handle":"c:root\u001b[2J","body":"root","author":"alice\u001b]0;owned\u0007"}}],"comments":[{"uid":"reply-uid","handle":"c:reply\u001b[2J","body":"current reply\n\tsecond line with enough evidence for confirmation\u001b[2J\u0000","author":"bob\u001b[2J","teammate":"reviewer\u001b[2J","reply_to_uid":"root-uid\u001b[2J","reply_kind":"confirm","lineage":"complete\u001b[2J","edited_at":"2026-01-02T03:04:05Z"},{"uid":"unedited-uid","body":"original reply","author":"eve","reply_to_uid":"root-uid"},{"uid":"root-comment","issue_id":2,"body":"root 雪\n\ttext\u001b[2J\u0000","author":"author 雪\u001b[2J"}]}`)
+		response := `{"project":"canonical\u001b[2J","review_uuid":"synthetic","document_hash":"hash","state":"partial\u001b[2J","expired":false,"issue_uid":"issue-uid\r","issue_short_id":"abc1\u001b[2J","destination_id":"destination\u001b[2J","source_output":"Original 雪\u001b[2J finding\n\tnext\u0000","issue":{"uid":"issue-uid","issue_id":2,"project_id":7,"project":"other","short_id":"abc1","qualified_id":"other#abc1","status":"open","labels":[],"generation":1,"title":"Issue 雪\u001b[2J title\r","body":"Issue body 雪\n\tsecond\u001b[2J line\u0000"},"roots":[{"position":0,"state":"complete\u001b[2J","comment":{"uid":"root-uid\u001b[2J","handle":"c:root\u001b[2J","body":"root","author":"alice\u001b]0;owned\u0007"}}],"comments":[{"uid":"reply-uid","handle":"c:reply\u001b[2J","body":"current reply\n\tsecond line with enough evidence for confirmation\u001b[2J\u0000","author":"bob\u001b[2J","teammate":"reviewer\u001b[2J","reply_to_uid":"root-uid\u001b[2J","reply_kind":"confirm\u001b[2J","lineage":"complete\u001b[2J","edited_at":"2026-01-02T03:04:05Z"},{"uid":"unedited-uid","body":"original reply","author":"eve","reply_to_uid":"root-uid"},{"uid":"reply-2","handle":"c:two","body":"disagree","author":"eve","reply_kind":"refute","reply_to_uid":"root-uid"},{"uid":"reply-3","handle":"c:three","body":"plain","author":"sam","reply_to_uid":"root-uid"},{"uid":"root-comment","issue_id":2,"reply_to_uid":"missing-target","reply_kind":"reply","reply":{"uid":"missing-target","kind":"reply","status":"pending"},"backlinks_truncated":true,"backlinks":[{"uid":"foreign-link","kind":"refute","author":"link-author\u001b[2J","teammate":"link-team","issue_uid":"foreign-issue","issue_short_id":"side1","project_uid":"foreign-project","project_id":8,"body":"foreign 雪\n\tlink evidence\u001b[2J","created_at":"2026-01-01T00:00:00Z","edited_at":"2026-01-02T00:00:00Z","target_edited":true}],"body":"root 雪\n\ttext\u001b[2J\u0000","author":"author 雪\u001b[2J"}]}`
+		if r.Method == http.MethodPost {
+			response = strings.Replace(response, `canonical\u001b[2J`, `other-project\u001b[2J`, 1)
+		}
+		switch mode {
+		case "legacy":
+			response = strings.Replace(response, `"project":"canonical\u001b[2J",`, "", 1)
+		case "no-short":
+			response = strings.Replace(response, `"issue_short_id":"abc1\u001b[2J",`, "", 1)
+		}
+		fmt.Fprint(w, response)
 	}))
 	defer server.Close()
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
@@ -63,7 +73,12 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 		assert.Contains(t, output.String(), "Issue: Issue 雪 title\nIssue body 雪\n\tsecond line")
 		assert.Contains(t, output.String(), "Reply c:reply (reply-uid; confirm) by bob to root-uid (reviewer); lineage: complete [edited]; edit history: unknown:\ncurrent reply\n\tsecond line")
 		assert.Contains(t, output.String(), "by eve to root-uid; edit history: unknown:\noriginal reply\n")
-		assert.Contains(t, output.String(), "by author 雪; edit history: unknown:\nroot 雪\n\ttext")
+		assert.Contains(t, output.String(), "Reply c:two (reply-2; refute) by eve to root-uid; edit history: unknown:\ndisagree")
+		assert.Contains(t, output.String(), "Reply c:three (reply-3; ) by sam to root-uid; edit history: unknown:\nplain")
+		assert.Contains(t, output.String(), "by author 雪 to missing-target; edit history: unknown:\nroot 雪\n\ttext")
+		for _, part := range []string{"foreign-link", "refute", "link-author", "link-team", "foreign-issue", "side1", "foreign-project", "foreign 雪\n\tlink evidence", "pending", "truncat"} {
+			assert.Contains(t, strings.ToLower(output.String()), strings.ToLower(part))
+		}
 		assert.NotContains(t, output.String(), "\x1b")
 		assert.NotContains(t, output.String(), "\r")
 		assert.NotContains(t, output.String(), "\x00")

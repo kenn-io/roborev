@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	katagen "go.kenn.io/kata/pkg/client/generated"
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata/katatest"
@@ -182,6 +184,80 @@ func TestKataFeedbackAcrossMachinesE2E(t *testing.T) {
 	assert.Equal(t, reply.Body.UID, editedReceipt.Comment.UID)
 	require.NotNil(t, editedReceipt.Comment.EditedAt)
 
+	// Create a native reply on a different issue pointing to the finding root.
+	producer := &http.Client{Transport: transport}
+	postJSON := func(path string, value any) []byte {
+		body, marshalErr := json.Marshal(value)
+		require.NoError(t, marshalErr)
+		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, "http://kata"+path, strings.NewReader(string(body)))
+		require.NoError(t, requestErr)
+		req.Header.Set("Content-Type", "application/json")
+		resp, requestErr := producer.Do(req)
+		require.NoError(t, requestErr)
+		data, readErr := io.ReadAll(resp.Body)
+		require.NoError(t, readErr)
+		require.NoError(t, resp.Body.Close())
+		require.Contains(t, []int{http.StatusOK, http.StatusCreated}, resp.StatusCode, string(data))
+		return data
+	}
+	issuePath := fmt.Sprintf("/api/v1/projects/%d/issues", status.Project.ID)
+	var foreign katagen.MutationResponseBody
+	require.NoError(t, json.Unmarshal(postJSON(issuePath, map[string]any{"actor": "roborev", "title": "Independent reply issue", "force_new": true}), &foreign))
+	crossBody := "Independent cross-issue evidence about the original finding."
+	var cross katagen.CommentResponseBody
+	require.NoError(t, json.Unmarshal(postJSON(issuePath+"/"+foreign.Issue.UID+"/comments", map[string]any{"actor": "roborev", "teammate": "link-reviewer", "body": crossBody, "reply_to": target, "kind": "reply"}), &cross))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://kata"+issuePath+"/"+status.Issue.Issue.UID, nil)
+	require.NoError(t, err)
+	producerView, err := producer.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, producerView.StatusCode)
+	var native struct {
+		Comments []struct {
+			UID       string                `json:"uid"`
+			Backlinks []katagen.CommentLink `json:"backlinks"`
+		} `json:"comments"`
+	}
+	require.NoError(t, json.NewDecoder(producerView.Body).Decode(&native))
+	require.NoError(t, producerView.Body.Close())
+	var expected []katagen.CommentLink
+	for _, comment := range native.Comments {
+		if comment.UID == target {
+			expected = comment.Backlinks
+		}
+	}
+	require.Len(t, expected, 2)
+	crossIndex := slices.IndexFunc(expected, func(link katagen.CommentLink) bool { return link.UID != nil && *link.UID == cross.Comment.UID })
+	require.NotEqual(t, -1, crossIndex)
+	link := expected[crossIndex]
+	assert.Equal(t, &cross.Comment.UID, link.UID)
+	assert.Equal(t, &crossBody, link.Body)
+	assert.Equal(t, new("roborev"), link.Author)
+	assert.Equal(t, new("link-reviewer"), link.Teammate)
+	assert.Equal(t, "reply", link.Kind)
+	assert.Equal(t, &foreign.Issue.UID, link.IssueUID)
+	assert.Equal(t, &foreign.Issue.ShortID, link.IssueShortID)
+	assert.Equal(t, &status.Project.UID, link.ProjectUID)
+	assert.Equal(t, &status.Project.ID, link.ProjectID)
+	require.NotNil(t, link.CreatedAt)
+	checkLinks := func(data []byte) {
+		var shown struct {
+			Comments []struct {
+				UID       string                `json:"uid"`
+				Backlinks []katagen.CommentLink `json:"backlinks"`
+			} `json:"comments"`
+		}
+		require.NoError(t, json.Unmarshal(data, &shown))
+		found := false
+		for _, comment := range shown.Comments {
+			assert.NotEqual(t, cross.Comment.UID, comment.UID, "foreign reply must not become a local comment")
+			if comment.UID == target {
+				found = true
+				assert.Equal(t, expected, comment.Backlinks)
+			}
+		}
+		assert.True(t, found, "finding target must be present")
+	}
+
 	// Use the same export and pull structures as sync, without PostgreSQL.
 	machine, err := a.DB.GetMachineID()
 	require.NoError(t, err)
@@ -229,6 +305,9 @@ func TestKataFeedbackAcrossMachinesE2E(t *testing.T) {
 	cfgB.FixAgent = "feedback-fix"
 	serverB := newServerWithLogs(b.DB, &cfgB, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { _ = serverB.Close() })
+	shown := kataGet(t, serverB, "/api/kata/publication", url.Values{"job_id": {strconv.FormatInt(parentID, 10)}})
+	require.Equal(t, http.StatusOK, shown.Code, shown.Body.String())
+	checkLinks(shown.Body.Bytes())
 	var paths []string
 	capture := func(p string) string {
 		if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
@@ -267,6 +346,7 @@ func TestKataFeedbackAcrossMachinesE2E(t *testing.T) {
 			Comments []KataComment `json:"comments"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(payload), &discussion))
+		checkLinks([]byte(payload))
 		index := slices.IndexFunc(discussion.Comments, func(c KataComment) bool { return c.UID == reply.Body.UID })
 		require.NotEqual(t, -1, index)
 		found := discussion.Comments[index]

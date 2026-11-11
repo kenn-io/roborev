@@ -526,7 +526,8 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 						writeJSON(w, map[string]any{"state": "unavailable", "message": "review changed", "review_uuid": "", "document_hash": "", "roots": []any{}, "comments": []any{}})
 						return
 					}
-					comment := map[string]any{"uid": "reply", "author": "reviewer", "body": evidence}
+					link := map[string]any{"uid": "foreign-link", "kind": "refute", "author": "foreign-author", "teammate": "foreign-team", "issue_uid": "foreign-issue", "project_uid": "foreign-project", "body": "foreign complete evidence"}
+					comment := map[string]any{"uid": "reply", "author": "reviewer", "body": evidence, "backlinks": []any{link}, "backlinks_truncated": true}
 					comments := []any{comment}
 					roots := []any{map[string]any{"position": 0, "state": "complete", "comment": comment}}
 					writeJSON(w, map[string]any{"state": "partial", "review_uuid": id.String(), "document_hash": hash, "source_document": document, "source_output": "duplicate source marker", "roots": roots, "comments": comments, "issue": map[string]any{"title": "issue title", "body": "issue body", "comments": comments, "roots": roots}})
@@ -557,6 +558,9 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 					assert.Contains(t, p, "issue body")
 					assert.Contains(t, p, "reviewer")
 					assert.Contains(t, p, "untrusted-kata-discussion")
+					for _, part := range []string{"foreign-link", "foreign-author", "foreign-team", "foreign-issue", "foreign-project", "foreign complete evidence", "backlinks_truncated"} {
+						assert.Contains(t, p, part)
+					}
 				case "outage":
 					assert.Contains(t, p, "Kata discussion unavailable")
 				case "replacement":

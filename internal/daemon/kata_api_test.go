@@ -218,14 +218,32 @@ func TestKataIssuesRejectsBadInput(t *testing.T) {
 
 func TestKataIssueShowsOneIssue(t *testing.T) {
 	server, fake := kataAPIServer(t)
-	fake.AddIssue(7, "aaa1", "In reviews", "the body", "bug")
+	local := fake.AddIssue(7, "aaa1", "In reviews", "the body", "bug")
 	fake.AddIssue(8, "bbb2", "In other", "")
+	when := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	link := katagen.CommentLink{UID: new("foreign-reply"), Handle: new("bbb2:abcdef"), Kind: "refute", Author: new("other-author"), Teammate: new("other-teammate"), IssueUID: new("other-issue"), IssueShortID: new("bbb2"), ProjectID: new(int64(8)), ProjectUID: new("other-project"), Body: new("foreign evidence"), CreatedAt: &when, EditedAt: &when, TargetEdited: new(true)}
+	pending := katagen.CommentLink{UID: new("missing-target"), Kind: "reply", Status: new("pending")}
+	local.Comments = []katagen.CommentOut{{UID: "local-root", IssueID: local.Out.ID, Author: "finder", Body: "finding", Backlinks: []katagen.CommentLink{link}, BacklinksTruncated: new(true)}, {UID: "local-reply", IssueID: local.Out.ID, Author: "reviewer", Body: "reply", ReplyToUID: new("missing-target"), ReplyKind: new("reply"), Reply: &pending}}
 
 	w := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {"aaa1"}})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	issue := decodeKata[KataIssue](t, w)
 	assert.Equal(t, "reviews#aaa1", issue.QualifiedID)
 	assert.Equal(t, "the body", issue.Body)
+	var wire struct {
+		Comments []struct {
+			UID                string                `json:"uid"`
+			Reply              *katagen.CommentLink  `json:"reply"`
+			Backlinks          []katagen.CommentLink `json:"backlinks"`
+			BacklinksTruncated *bool                 `json:"backlinks_truncated"`
+		} `json:"comments"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &wire))
+	require.Len(t, wire.Comments, 2)
+	assert.Equal(t, "local-root", wire.Comments[0].UID)
+	assert.Equal(t, []katagen.CommentLink{link}, wire.Comments[0].Backlinks)
+	assert.Equal(t, new(true), wire.Comments[0].BacklinksTruncated)
+	assert.Equal(t, &pending, wire.Comments[1].Reply)
 	var reads int
 	for _, request := range fake.AllRequests() {
 		if request.Method == http.MethodGet && request.Path == "/api/v1/projects/7/issues/aaa1" {
@@ -359,7 +377,8 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	text := "Finding 1 from a roborev review."
 	digest := sha256.Sum256([]byte(text))
 	marker := fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, record.ReviewUUID, digest)
-	issue.Comments = []katagen.CommentOut{{UID: "root-uid", IssueID: issue.Out.ID, Handle: new("c:root"), Body: marker, Author: "service"}}
+	link := katagen.CommentLink{UID: new("linked-reply"), Kind: "reply", Author: new("linked-author"), Teammate: new("linked-team"), IssueUID: new("linked-issue"), IssueShortID: new("other1"), ProjectUID: new("linked-project"), ProjectID: new(int64(8)), Body: new("cross-issue evidence"), CreatedAt: new(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))}
+	issue.Comments = []katagen.CommentOut{{UID: "root-uid", IssueID: issue.Out.ID, Handle: new("c:root"), Body: marker, Author: "service", Backlinks: []katagen.CommentLink{link}, BacklinksTruncated: new(true)}}
 	cfg := kataConnectionConfig(fake)
 	// A synced machine has no local publication hook or marker.
 	server := newServerWithLogs(tc.DB, cfg, "", newTestErrorLog(), newTestActivityLog())
@@ -369,6 +388,16 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	got := decodeKata[KataPublicationBody](t, w)
 	assert.Equal(t, "complete", got.State)
 	assert.Equal(t, "summary", got.Policy)
+	var publicationWire struct {
+		Comments []struct {
+			Backlinks          []katagen.CommentLink `json:"backlinks"`
+			BacklinksTruncated *bool                 `json:"backlinks_truncated"`
+		} `json:"comments"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &publicationWire))
+	require.Len(t, publicationWire.Comments, 1)
+	assert.Equal(t, []katagen.CommentLink{link}, publicationWire.Comments[0].Backlinks)
+	assert.Equal(t, new(true), publicationWire.Comments[0].BacklinksTruncated)
 	require.Len(t, got.Roots, 1)
 	assert.Equal(t, "service", got.Roots[0].Comment.Author)
 	byUUID := kataGet(t, server, "/api/kata/publication", url.Values{"review_uuid": {record.ReviewUUID.String()}})
@@ -443,6 +472,14 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, direct, remote)
 	assert.Equal(t, "reviews", direct["project"])
+	for _, result := range []map[string]any{direct, remote} {
+		encoded, marshalErr := json.Marshal(result)
+		require.NoError(t, marshalErr)
+		require.NoError(t, json.Unmarshal(encoded, &publicationWire))
+		require.Len(t, publicationWire.Comments, 1)
+		assert.Equal(t, []katagen.CommentLink{link}, publicationWire.Comments[0].Backlinks)
+		assert.Equal(t, new(true), publicationWire.Comments[0].BacklinksTruncated)
+	}
 	cfg.Hooks = nil
 	cfg.Integrations.Kata.DefaultProject = "other"
 	w = kataGet(t, server, "/api/kata/publication", url.Values{"review_uuid": {record.ReviewUUID.String()}, "project": {"reviews"}})
