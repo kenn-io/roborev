@@ -588,8 +588,9 @@ func (c *APIClient) postComment(ctx context.Context, path, issueUID string, requ
 	return out, err
 }
 
-// Comment submits a typed response. The caller resolves and validates its target
-// against a complete issue immediately before calling it.
+// Comment submits a typed response. The caller must validate kind, body, and key
+// with ValidateReply and resolve the target against a complete issue immediately
+// before calling it.
 func (c *APIClient) Comment(ctx context.Context, project PublicationProject, issueUID, target, kind, body, key, teammate string) (gen.CommentResponseBody, error) {
 	var out gen.CommentResponseBody
 	path, err := publicationPath(project)
@@ -600,9 +601,6 @@ func (c *APIClient) Comment(ctx context.Context, project PublicationProject, iss
 		return out, err
 	}
 	if err = validatePathSegment(target); err != nil {
-		return out, err
-	}
-	if err = ValidateReply(kind, body, key); err != nil {
 		return out, err
 	}
 	if err = config.ValidateKataTeammate(teammate); err != nil {
