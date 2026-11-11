@@ -208,3 +208,31 @@ members = ["checker"]
 	require.NoError(t, json.Unmarshal(frozen, &decoded))
 	assert.True(t, decoded.BinaryEvidence, "panel members freeze the setting with their config")
 }
+
+func TestResolveReviewSettingsBinaryEvidencePrecedence(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name                 string
+		global, repo, custom *bool
+		reviewType           string
+		want                 bool
+	}{
+		{name: "default off", reviewType: "default"},
+		{name: "global on", global: &yes, reviewType: "default", want: true},
+		{name: "repo off", global: &yes, repo: &no, reviewType: "security"},
+		{name: "repo on", global: &no, repo: &yes, reviewType: "default", want: true},
+		{name: "custom inherits", global: &yes, reviewType: "exhibits", want: true},
+		{name: "custom off", repo: &yes, custom: &no, reviewType: "exhibits"},
+		{name: "custom on", repo: &no, custom: &yes, reviewType: "exhibits", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			global := &Config{Review: ReviewConfig{BinaryEvidence: tc.global}}
+			repo := &RepoConfig{Review: ReviewConfig{BinaryEvidence: tc.repo, Types: map[string]ReviewTypeSpec{
+				"exhibits": {Template: "rubric.md", BinaryEvidence: tc.custom},
+			}}}
+			settings, err := ResolveReviewSettings(tc.reviewType, nil, repo, global)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, settings.BinaryEvidence)
+		})
+	}
+}

@@ -73,9 +73,16 @@ tools. See
 
 ### Binary evidence
 
-A text diff only says that a PDF or image changed. When a rubric needs to read
-those files, for example to check a draft against its exhibits, set
-`binary_evidence = true`:
+A text diff only says that a PDF or image changed. To give built-in and custom
+reviews access to changed binary files, set this in global or repository config:
+
+```toml
+[review]
+binary_evidence = true
+```
+
+The setting defaults to false. A repository value overrides the global value.
+A custom type can override the shared setting, including with `false`:
 
 ```toml
 [review.types.exhibits]
@@ -102,9 +109,9 @@ read the file type:
 `exclude_patterns` applies to the evidence as well as the diff, so a binary file
 that matches it gets no copy.
 
-Only review types that set `binary_evidence` get the section; other panel
-members are unchanged. Reviews of uncommitted changes fail with an error when
-the type sets it. Keep `snapshot_dir` in `.gitignore`; `roborev init` adds it.
+Built-in reviews of uncommitted changes still work with the shared setting, but
+receive no binary evidence. Custom dirty reviews fail when their resolved
+setting enables evidence. Keep `snapshot_dir` in `.gitignore`; `roborev init` adds it.
 Keep committed rubrics outside `snapshot_dir`, because roborev will not write
 snapshots into a directory that holds tracked files.
 

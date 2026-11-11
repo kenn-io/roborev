@@ -168,7 +168,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
 | Failed reviews and findings filed as Kata issues | A `[[hooks]]` entry with `event = "review.*"` and `type = "kata"` |
-| Reviewers that read changed PDFs, scans, or images | `binary_evidence = true` on the type; see <https://roborev.io/docs/advanced/custom-review-types/#binary-evidence> |
+| Reviewers that read changed PDFs, scans, or images | `[review] binary_evidence = true` or an override on the type; see <https://roborev.io/docs/advanced/custom-review-types/#binary-evidence> |
 | A reviewer that looks things up through an outside service | A strict `tools` policy on the type that grants exact MCP tools; see <https://roborev.io/docs/advanced/custom-review-types/#granting-mcp-tools> |
 | Files reviewers should skip | `exclude_patterns` |
 | Reviewers that skip the setup itself, for non-code material | `exclude_patterns = [".roborev.toml", "review-rubrics/"]` |
@@ -219,12 +219,15 @@ Rules that matter:
     text a check needs. If a source can be neither committed nor reached
     through an MCP grant, tell the user the reviewer can check only what the
     repository holds.
-- For PDFs, scans, and images, set `binary_evidence = true` on the type.
+- For PDFs, scans, and images, set `binary_evidence = true` under `[review]`
+    for built-in and custom reviews, or on a custom type for an override.
+    Repository settings override global settings; a type may set `false`.
     Reviews of a commit or range then get a saved copy of each binary file
     those commits add or change. Files the commits do not touch are not
     included, so for a source that stays unchanged, such as an exhibit that
     later drafts cite, also commit an exported text copy beside it. Reviews of
-    uncommitted changes fail when the type sets `binary_evidence`.
+    built-in reviews of uncommitted changes omit evidence; custom dirty
+    reviews fail when their resolved setting enables it.
     `exclude_patterns` removes files from the evidence as well as the diff, so
     never exclude binary files a reviewer must read.
 - The reviewer opens each saved copy with its own tools, so match the agent to

@@ -24,6 +24,27 @@ binary_evidence = true
 template = "rubric.md"
 `
 
+func TestProcessJobBinaryEvidenceBuiltIn(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(tc.GitRepo.GitDir, "info", "attributes"), []byte("*.pdf -diff\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("[review]\nbinary_evidence = true\n"), 0o644))
+	sha := tc.GitRepo.CommitFile("exhibit.pdf", "%PDF\x00committed", "add exhibit")
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+	require.NoError(t, err)
+	agent.RegisterForTest(t, &structuredWorkerTestAgent{
+		name:     "builtin-evidence",
+		result:   jsontext.Value(`{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`),
+		onPrompt: func(_, prompt string) { assert.Contains(t, prompt, "Committed review evidence") },
+	})
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "builtin-evidence", ReviewType: "default"})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	tc.Pool.processJob(testWorkerID, claimed)
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+}
+
 func TestProcessJobBinaryEvidenceOnlyForEnablingType(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	// Git for Windows routes *.pdf through a text converter that rejects these

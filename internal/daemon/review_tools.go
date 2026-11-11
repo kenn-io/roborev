@@ -51,7 +51,8 @@ func reviewJobSettings(job *storage.ReviewJob, configRepoPath string, cfg *confi
 		settings.Tools, err = config.CanonicalReviewToolPolicy(settings.Tools)
 		return settings, err
 	}
-	if job.IsGoalReviewJob() || config.IsBuiltInReviewType(job.ReviewType) {
+	if job.IsGoalReviewJob() || job.Source == storage.JobSourceRebuttal ||
+		(job.IsDirtyJob() && config.IsBuiltInReviewType(job.ReviewType)) {
 		return settings, nil
 	}
 	var repoCfg *config.RepoConfig

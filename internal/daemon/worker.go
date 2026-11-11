@@ -1210,6 +1210,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
 		return
 	}
+	// Shared evidence applies to committed reviews; built-in dirty reviews
+	// continue to review the captured diff without committed attachments.
+	if job.IsDirtyJob() && config.IsBuiltInReviewType(job.ReviewType) {
+		settings.BinaryEvidence = false
+	}
 
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
 	// repository review configuration that it no longer needs.
