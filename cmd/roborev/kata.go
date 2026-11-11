@@ -88,9 +88,12 @@ func kataCmd() *cobra.Command {
 				if comment.ReplyToUID == nil {
 					continue
 				}
-				fmt.Fprintf(out, "Reply %s by %s to %s", sanitizeSearchSingleLine(deref(comment.Handle)), sanitizeSearchSingleLine(comment.Author), sanitizeSearchSingleLine(*comment.ReplyToUID))
+				fmt.Fprintf(out, "Reply %s (%s; %s) by %s to %s", sanitizeSearchSingleLine(deref(comment.Handle)), sanitizeSearchSingleLine(comment.UID), sanitizeSearchSingleLine(deref(comment.ReplyKind)), sanitizeSearchSingleLine(comment.Author), sanitizeSearchSingleLine(*comment.ReplyToUID))
 				if comment.Teammate != nil {
 					fmt.Fprintf(out, " (%s)", sanitizeSearchSingleLine(*comment.Teammate))
+				}
+				if comment.EditedAt != nil {
+					fmt.Fprint(out, " [edited]")
 				}
 				fmt.Fprintf(out, ":\n%s\n", sanitizeSearchExcerpt(comment.Body))
 			}

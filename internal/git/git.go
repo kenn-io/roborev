@@ -1235,19 +1235,23 @@ func isFullObjectID(ref string) bool {
 
 // GetRepoRoot returns the root directory of the git repository
 func GetRepoRoot(path string) (string, error) {
+	return getRepoRootContext(context.Background(), path)
+}
+
+func getRepoRootContext(ctx context.Context, path string) (string, error) {
 	// A linked worktree has a .git file that names its worktree-specific
 	// administrative directory. Prefer that local binding over
 	// --show-toplevel: a shared core.worktree setting can make Git report a
 	// sibling checkout even while HEAD and --git-dir still belong to the
 	// worktree containing path.
-	if root, found, err := linkedWorktreeRoot(path); found {
+	if root, found, err := linkedWorktreeRoot(ctx, path); found {
 		if err != nil {
 			return "", err
 		}
 		return root, nil
 	}
 
-	cmd := newGitCmd("rev-parse", "--show-toplevel")
+	cmd := newGitCmdContext(ctx, "rev-parse", "--show-toplevel")
 	cmd.Dir = path
 
 	out, err := gitOutput(cmd)
@@ -1260,7 +1264,7 @@ func GetRepoRoot(path string) (string, error) {
 	return normalizeMSYSPath(string(out)), nil
 }
 
-func linkedWorktreeRoot(path string) (string, bool, error) {
+func linkedWorktreeRoot(ctx context.Context, path string) (string, bool, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", false, nil
@@ -1286,7 +1290,7 @@ func linkedWorktreeRoot(path string) (string, bool, error) {
 				gitDir = filepath.Join(dir, gitDir)
 			}
 
-			resolved, resolveErr := ResolveGitDir(path)
+			resolved, resolveErr := resolveGitDirContext(ctx, path)
 			if resolveErr != nil {
 				return "", true, resolveErr
 			}
@@ -1314,8 +1318,13 @@ func linkedWorktreeRoot(path string) (string, bool, error) {
 // if the path doesn't exist, isn't a git repo, or belongs to a
 // different repository.
 func ValidateWorktreeForRepo(worktreePath, repoRoot string) bool {
+	return ValidateWorktreeForRepoContext(context.Background(), worktreePath, repoRoot)
+}
+
+// ValidateWorktreeForRepoContext applies the same checkout rule with caller cancellation.
+func ValidateWorktreeForRepoContext(ctx context.Context, worktreePath, repoRoot string) bool {
 	// Verify the path is itself a checkout root (not a subdirectory).
-	toplevel, err := GetRepoRoot(worktreePath)
+	toplevel, err := getRepoRootContext(ctx, worktreePath)
 	if err != nil {
 		return false
 	}
@@ -1323,7 +1332,7 @@ func ValidateWorktreeForRepo(worktreePath, repoRoot string) bool {
 		return false
 	}
 	// Verify the checkout belongs to the same main repository.
-	mainRoot, err := GetMainRepoRoot(worktreePath)
+	mainRoot, err := getMainRepoRootContext(ctx, worktreePath)
 	if err != nil {
 		return false
 	}
@@ -1343,7 +1352,11 @@ func cleanEvalPath(p string) string {
 // repository, correctly handling worktrees and MSYS-style paths on
 // Windows.
 func ResolveGitDir(repoPath string) (string, error) {
-	cmd := newGitCmd("rev-parse", "--git-dir")
+	return resolveGitDirContext(context.Background(), repoPath)
+}
+
+func resolveGitDirContext(ctx context.Context, repoPath string) (string, error) {
+	cmd := newGitCmdContext(ctx, "rev-parse", "--git-dir")
 	cmd.Dir = repoPath
 	out, err := gitOutput(cmd)
 	if err != nil {
@@ -1376,11 +1389,15 @@ func ResolveGitCommonDir(repoPath string) (string, error) {
 // For a regular repository or submodule, this returns the same as GetRepoRoot.
 // For a worktree, this returns the main repository's root path.
 func GetMainRepoRoot(path string) (string, error) {
+	return getMainRepoRootContext(context.Background(), path)
+}
+
+func getMainRepoRootContext(ctx context.Context, path string) (string, error) {
 	// Get both --git-dir and --git-common-dir to detect worktrees
 	// For regular repos: both return ".git" (or absolute path)
 	// For submodules: both return the same path (e.g., "../.git/modules/sub")
 	// For worktrees: --git-dir returns worktree-specific dir, --git-common-dir returns main repo's .git
-	gitDirCmd := newGitCmd("rev-parse", "--git-dir")
+	gitDirCmd := newGitCmdContext(ctx, "rev-parse", "--git-dir")
 	gitDirCmd.Dir = path
 	gitDirOut, err := gitOutput(gitDirCmd)
 	if err != nil {
@@ -1388,7 +1405,7 @@ func GetMainRepoRoot(path string) (string, error) {
 	}
 	gitDir := normalizeMSYSPath(string(gitDirOut))
 
-	commonDirCmd := newGitCmd("rev-parse", "--git-common-dir")
+	commonDirCmd := newGitCmdContext(ctx, "rev-parse", "--git-common-dir")
 	commonDirCmd.Dir = path
 	commonDirOut, err := gitOutput(commonDirCmd)
 	if err != nil {
@@ -1419,10 +1436,10 @@ func GetMainRepoRoot(path string) (string, error) {
 		// stable repo-local path to register and use for config resolution.
 		// Ask git itself rather than reading <commonDir>/config directly, so a
 		// core.bare kept in config.worktree (extensions.worktreeConfig) counts.
-		bareCmd := newGitCmd("--git-dir="+commonDir, "rev-parse", "--is-bare-repository")
+		bareCmd := newGitCmdContext(ctx, "--git-dir="+commonDir, "rev-parse", "--is-bare-repository")
 		bareCmd.Dir = path
 		if out, err := bareCmd.Output(); err == nil && strings.TrimSpace(string(out)) == "true" {
-			return GetRepoRoot(path)
+			return getRepoRootContext(ctx, path)
 		}
 
 		if filepath.Base(commonDir) == ".git" {
@@ -1431,7 +1448,7 @@ func GetMainRepoRoot(path string) (string, error) {
 		}
 
 		// Submodule worktree - read core.worktree from config
-		cmd := newGitCmd("config", "--file", filepath.Join(commonDir, "config"), "core.worktree")
+		cmd := newGitCmdContext(ctx, "config", "--file", filepath.Join(commonDir, "config"), "core.worktree")
 		out, err := gitOutput(cmd)
 		if err != nil {
 			return "", fmt.Errorf("git config core.worktree for submodule worktree: %w", err)
@@ -1444,7 +1461,7 @@ func GetMainRepoRoot(path string) (string, error) {
 	}
 
 	// Regular repo or submodule - use standard resolution
-	return GetRepoRoot(path)
+	return getRepoRootContext(ctx, path)
 }
 
 // ReadFile reads a file at a specific commit

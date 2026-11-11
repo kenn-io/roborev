@@ -358,19 +358,20 @@ func (wp *WorkerPool) completeSynthesisContext(
 		collected.withUnpricedPhase(res.captureUsage, res.checkerUsage)
 		tokenUsage = &collected
 	}
+	checkout := resolveEffectiveRepoPath(workerID, job)
+	seed := wp.prepareKataPublication(ctx, workerID, job, checkout)
 	wp.runAttemptTransition(workerID, job, func() {
-		wp.completeSynthesisLocked(ctx, workerID, job, res, tokenUsage)
+		wp.completeSynthesisLocked(ctx, workerID, job, res, tokenUsage, checkout, seed)
 	})
 }
 
 func (wp *WorkerPool) completeSynthesisLocked(
-	ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult, tokenUsage *sessionTokenUsage,
+	ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult, tokenUsage *sessionTokenUsage, checkout string, seed *storage.KataPublicationSeed,
 ) {
 	agentName, output := res.review.Agent, res.review.Output
-	checkout := resolveEffectiveRepoPath(workerID, job)
-	completeErr := wp.completeReviewResult(ctx, workerID, job, checkout, agentName, storage.ReviewCompletion{
+	completeErr := wp.completeReviewResult(job, agentName, storage.ReviewCompletion{
 		Output: output, Verdict: res.review.Verdict, StructuredOutput: res.review.StructuredOutput, MinSeverity: res.review.MinSeverity,
-	})
+	}, seed)
 	if completeErr != nil {
 		// Leaving the job running would strand the panel with no comment.
 		// Route the storage failure through the ordinary retry/fail path.

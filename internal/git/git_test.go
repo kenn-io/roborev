@@ -3335,6 +3335,17 @@ func TestValidateWorktreeForRepo(t *testing.T) {
 		assert.True(t, ValidateWorktreeForRepo(wt.Dir, repo.Dir))
 	})
 
+	t.Run("linked checkout honors shared core.worktree and cancellation", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		wt := repo.AddWorktree("shared-config")
+		cmd := exec.CommandContext(t.Context(), "git", "-C", repo.Dir, "config", "core.worktree", repo.Dir)
+		require.NoError(t, cmd.Run())
+		assert.True(t, ValidateWorktreeForRepoContext(t.Context(), wt.Dir, repo.Dir))
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		assert.False(t, ValidateWorktreeForRepoContext(ctx, wt.Dir, repo.Dir))
+	})
+
 	t.Run("main repo validates against itself", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 

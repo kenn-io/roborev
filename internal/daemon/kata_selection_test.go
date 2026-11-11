@@ -1,10 +1,14 @@
 package daemon
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +19,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata/katafake"
+	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -197,7 +202,7 @@ func TestKataCompletionCapturesUnknownVerdictFallback(t *testing.T) {
 	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
-	require.NoError(t, tc.Pool.completeReviewResult(t.Context(), "worker", job, tc.TmpDir, "test", storage.ReviewCompletion{Output: string(raw)}))
+	require.NoError(t, tc.Pool.completeReviewResult(job, "test", storage.ReviewCompletion{Output: string(raw)}, tc.Pool.prepareKataPublication(t.Context(), "worker", job, tc.TmpDir)))
 	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)
 	require.NotNil(t, record.Marker)
@@ -219,7 +224,7 @@ func TestKataCompletionKeepsReviewWhenAmbiguousSelectionCannotResolve(t *testing
 	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
-	require.NoError(t, tc.Pool.completeReviewResult(t.Context(), "worker", job, repo.Root, "test", storage.ReviewCompletion{Output: string(raw)}))
+	require.NoError(t, tc.Pool.completeReviewResult(job, "test", storage.ReviewCompletion{Output: string(raw)}, tc.Pool.prepareKataPublication(t.Context(), "worker", job, repo.Root)))
 	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Nil(t, record.Marker)
@@ -239,4 +244,59 @@ func TestKataInspectionProjectRequiresUnambiguousExplicitProject(t *testing.T) {
 	name, err = kataInspectionProject(cfg, job, "")
 	require.NoError(t, err)
 	assert.Empty(t, name)
+}
+
+func TestKataSynthesisSelectionDoesNotHoldAttemptGuard(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "blocked-selection", "worker")
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".kata.toml"), []byte("version = 1\n[project]\nname = \"reviews\"\n"), 0o600))
+	fake := katafake.New(t)
+	cfg := kataConnectionConfig(fake)
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}, {Type: "kata", Event: "review.completed", Findings: "comments"}}
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/projects/resolve" {
+			return false
+		}
+		close(started)
+		<-release
+		fake.Reply(w, gen.ProjectResolveBody{Project: fake.Projects[0]})
+		return true
+	}
+	go func() {
+		defer close(done)
+		tc.Pool.completeSynthesisContext(t.Context(), "worker", job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: "failed", Verdict: storage.VerdictFail, StructuredOutput: testutil.ReviewFixtureJSON("failed")}})
+	}()
+	t.Cleanup(func() { unblock(); <-done })
+	waitStarted := func() error {
+		select {
+		case <-started:
+			return nil
+		case <-time.After(10 * time.Second): // External fake HTTP request.
+			return errors.New("resolver did not start")
+		}
+	}
+	require.NoError(t, waitStarted())
+	locked := tc.Pool.attemptTransitionsMu.TryLock()
+	require.True(t, locked)
+	tc.Pool.attemptTransitionsMu.Unlock()
+	deleted := make(chan error, 1)
+	go func() { deleted <- tc.DB.DeleteRepoContext(context.WithoutCancel(t.Context()), tc.Repo.ID, true) }()
+	waitDeleted := func() error {
+		select {
+		case err := <-deleted:
+			return err
+		case <-time.After(10 * time.Second): // External SQLite attempt lock.
+			return errors.New("repository deletion blocked by resolver")
+		}
+	}
+	require.NoError(t, waitDeleted())
+	unblock()
+	<-done
+	_, err := tc.DB.GetReviewByJobID(job.ID)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }

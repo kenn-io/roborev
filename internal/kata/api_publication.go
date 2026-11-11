@@ -117,23 +117,17 @@ func (c *APIClient) PublicationEndpoint() string { return c.endpoint }
 // ResolvePublicationProject preserves the client's workspace alias selection,
 // and requires the publication-specific API schema and a stable project UID.
 func (c *APIClient) ResolvePublicationProject(ctx context.Context, name string) (PublicationProject, error) {
-	id, selected, info, err := c.selectProject(ctx, name)
+	project, info, err := c.selectProjectObject(ctx, name)
 	if err != nil {
 		return PublicationProject{}, err
 	}
 	if !schemaAtLeast(info.APISchemaVersion, PublicationAPISchemaVersion) {
 		return PublicationProject{}, fmt.Errorf("%w: publication needs API %s", ErrIncompatible, PublicationAPISchemaVersion)
 	}
-	var projects gen.ListProjectsResponseBody
-	if _, err := c.tr.do(ctx, http.MethodGet, "/api/v1/projects", nil, nil, nil, &projects, http.StatusOK); err != nil {
-		return PublicationProject{}, err
+	if project.ID <= 0 || project.Name == "" || !project.Active || project.DeletedAt != nil || project.UID == "" {
+		return PublicationProject{}, fmt.Errorf("%w: project identity changed or has no UID", ErrProjectNotFound)
 	}
-	for _, p := range projects.Projects {
-		if p.ID == id && p.Name == selected && p.Active && p.DeletedAt == nil && p.UID != "" {
-			return PublicationProject{ID: id, Name: p.Name, UID: p.UID}, nil
-		}
-	}
-	return PublicationProject{}, fmt.Errorf("%w: project identity changed or has no UID", ErrProjectNotFound)
+	return PublicationProject{ID: project.ID, Name: project.Name, UID: project.UID}, nil
 }
 
 func publicationPath(project PublicationProject) (string, error) {

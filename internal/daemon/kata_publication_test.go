@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -722,9 +723,16 @@ func TestKataCheckoutValidatesLinkedAndForeignWorktrees(t *testing.T) {
 	t.Cleanup(func() {
 		_ = exec.CommandContext(context.WithoutCancel(t.Context()), "git", "-C", tc.TmpDir, "worktree", "remove", "--force", linked).Run()
 	})
+	out, err = exec.CommandContext(t.Context(), "git", "-C", tc.TmpDir, "config", "core.worktree", tc.TmpDir).CombinedOutput()
+	require.NoError(t, err, "%s", out)
 	got, err := kataCheckout(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, WorktreePath: linked})
 	require.NoError(t, err)
 	assert.Equal(t, linked, got)
+	subdir := filepath.Join(linked, "nested")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	got, err = kataCheckout(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, WorktreePath: subdir})
+	require.NoError(t, err)
+	assert.Equal(t, tc.TmpDir, got)
 	foreign := newWorkerTestContext(t, 1)
 	got, err = kataCheckout(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, WorktreePath: foreign.TmpDir})
 	require.NoError(t, err)

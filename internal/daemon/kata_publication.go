@@ -7,9 +7,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -17,7 +14,6 @@ import (
 
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/kata"
-	"go.kenn.io/roborev/internal/procutil"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
@@ -540,49 +536,8 @@ func kataDestinationID(endpoint, projectUID string) string {
 // kataCheckout validates the caller's worktree using the attempt context, so
 // an unresponsive Git process cannot keep publication alive at shutdown.
 func kataCheckout(ctx context.Context, job *storage.ReviewJob) (string, error) {
-	if job.WorktreePath == "" {
-		return job.RepoPath, nil
-	}
-	gitOutput := func(dir string, args ...string) (string, error) {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		procutil.HideConsole(cmd)
-		cmd.Dir = dir
-		out, err := cmd.Output()
-		return gitpkg.NormalizeMSYSPath(string(out)), err
-	}
-	canonical := func(path string) string {
-		absolute, err := filepath.Abs(path)
-		if err != nil {
-			return filepath.Clean(path)
-		}
-		resolved, err := filepath.EvalSymlinks(absolute)
-		if err == nil {
-			return filepath.Clean(resolved)
-		}
-		return filepath.Clean(absolute)
-	}
-	root, err := gitOutput(job.WorktreePath, "rev-parse", "--show-toplevel")
-	if err == nil {
-		// A linked worktree's .git file identifies its root even when a shared
-		// core.worktree setting makes --show-toplevel point elsewhere.
-		if info, statErr := os.Stat(filepath.Join(job.WorktreePath, ".git")); statErr == nil && !info.IsDir() {
-			root = job.WorktreePath
-		}
-		if canonical(root) == canonical(job.WorktreePath) {
-			common, commonErr := gitOutput(job.WorktreePath, "rev-parse", "--git-common-dir")
-			repoCommon, repoErr := gitOutput(job.RepoPath, "rev-parse", "--git-common-dir")
-			if commonErr == nil && repoErr == nil {
-				if !filepath.IsAbs(common) {
-					common = filepath.Join(job.WorktreePath, common)
-				}
-				if !filepath.IsAbs(repoCommon) {
-					repoCommon = filepath.Join(job.RepoPath, repoCommon)
-				}
-				if canonical(common) == canonical(repoCommon) {
-					return job.WorktreePath, nil
-				}
-			}
-		}
+	if job.WorktreePath != "" && gitpkg.ValidateWorktreeForRepoContext(ctx, job.WorktreePath, job.RepoPath) {
+		return job.WorktreePath, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err

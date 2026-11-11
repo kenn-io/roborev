@@ -211,9 +211,9 @@ func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T
 		"GET /api/v1/projects",
 		"POST /api/v1/projects/resolve",
 		"POST /api/v1/projects/resolve",
-		"POST /api/v1/projects/resolve", "GET /api/v1/projects", "GET /api/v1/projects/8/issues/abc4",
+		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/abc4",
 		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues",
-		"POST /api/v1/projects/resolve", "GET /api/v1/projects", "GET /api/v1/projects/8/issues/abc4",
+		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/abc4",
 	}, paths, "committed aliases resolve canonically")
 
 	fake.Token = "rotated-credential"

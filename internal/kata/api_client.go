@@ -213,23 +213,28 @@ func (c *APIClient) Info(ctx context.Context) (ServerInfo, error) {
 	return info, nil
 }
 
-func (c *APIClient) projectID(ctx context.Context, name string) (int64, error) {
+func (c *APIClient) projectByName(ctx context.Context, name string) (gen.ProjectOut, error) {
 	if name == "" {
-		return 0, ErrNoBinding
+		return gen.ProjectOut{}, ErrNoBinding
 	}
 	var list gen.ListProjectsResponseBody
 	if _, err := c.tr.do(ctx, http.MethodGet, "/api/v1/projects", nil, nil, nil, &list, http.StatusOK); err != nil {
-		return 0, err
+		return gen.ProjectOut{}, err
 	}
 	for _, project := range list.Projects {
 		if project.Name == name && project.Active && project.DeletedAt == nil {
-			return project.ID, nil
+			return project, nil
 		}
 	}
-	return 0, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
+	return gen.ProjectOut{}, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
 }
 
 func (c *APIClient) selectProject(ctx context.Context, project string) (int64, string, ServerInfo, error) {
+	selected, info, err := c.selectProjectObject(ctx, project)
+	return selected.ID, selected.Name, info, err
+}
+
+func (c *APIClient) selectProjectObject(ctx context.Context, project string) (gen.ProjectOut, ServerInfo, error) {
 	var alias *gen.AliasInput
 	if project == "" {
 		switch {
@@ -243,7 +248,7 @@ func (c *APIClient) selectProject(ctx context.Context, project string) (int64, s
 		default:
 			selected, err := discoverWorkspace(c.workdir)
 			if err != nil && !errors.Is(err, ErrNoBinding) {
-				return 0, "", ServerInfo{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
+				return gen.ProjectOut{}, ServerInfo{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
 			}
 			if errors.Is(err, ErrNoBinding) {
 				project = c.defaultProject
@@ -252,7 +257,7 @@ func (c *APIClient) selectProject(ctx context.Context, project string) (int64, s
 				if !selected.local {
 					alias, err = workspaceAlias(ctx, selected)
 					if err != nil {
-						return 0, "", ServerInfo{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
+						return gen.ProjectOut{}, ServerInfo{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
 					}
 				}
 			}
@@ -260,7 +265,7 @@ func (c *APIClient) selectProject(ctx context.Context, project string) (int64, s
 	}
 	info, err := c.Info(ctx)
 	if err != nil {
-		return 0, "", info, err
+		return gen.ProjectOut{}, info, err
 	}
 	if alias != nil {
 		var resolved gen.ProjectResolveBody
@@ -270,18 +275,21 @@ func (c *APIClient) selectProject(ctx context.Context, project string) (int64, s
 			err = fmt.Errorf("%w: %w", ErrProjectNotFound, err)
 		}
 		if err != nil {
-			return 0, "", info, err
+			return gen.ProjectOut{}, info, err
 		}
 		if resolved.Project.ID <= 0 || resolved.Project.Name == "" {
-			return 0, "", info, ErrInvalidResponse
+			return gen.ProjectOut{}, info, ErrInvalidResponse
 		}
 		if !resolved.Project.Active || resolved.Project.DeletedAt != nil {
-			return 0, "", info, ErrProjectNotFound
+			return gen.ProjectOut{}, info, ErrProjectNotFound
 		}
-		return resolved.Project.ID, resolved.Project.Name, info, nil
+		return resolved.Project, info, nil
 	}
-	id, err := c.projectID(ctx, project)
-	return id, project, info, err
+	selected, err := c.projectByName(ctx, project)
+	if err != nil {
+		return gen.ProjectOut{Name: project}, info, err
+	}
+	return selected, info, nil
 }
 
 func (c *APIClient) issuesPath(ctx context.Context, project string) (string, string, ServerInfo, error) {

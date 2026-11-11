@@ -28,7 +28,7 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 			_, _ = buf.ReadFrom(r.Body)
 			body = buf.String()
 		}
-		fmt.Fprint(w, `{"review_uuid":"synthetic","document_hash":"hash","state":"partial\u001b[2J","expired":false,"issue_uid":"issue-uid\r","issue_short_id":"abc1\u001b[2J","destination_id":"destination\u001b[2J","roots":[{"position":0,"state":"complete\u001b[2J","comment":{"uid":"root-uid\u001b[2J","handle":"c:root\u001b[2J","body":"root","author":"alice\u001b]0;owned\u0007"}}],"comments":[{"uid":"reply-uid","handle":"c:reply\u001b[2J","body":"full reply\n\tsecond line\u001b[2J\u0000","author":"bob\u001b[2J","teammate":"reviewer\u001b[2J","reply_to_uid":"root-uid\u001b[2J"}]}`)
+		fmt.Fprint(w, `{"review_uuid":"synthetic","document_hash":"hash","state":"partial\u001b[2J","expired":false,"issue_uid":"issue-uid\r","issue_short_id":"abc1\u001b[2J","destination_id":"destination\u001b[2J","roots":[{"position":0,"state":"complete\u001b[2J","comment":{"uid":"root-uid\u001b[2J","handle":"c:root\u001b[2J","body":"root","author":"alice\u001b]0;owned\u0007"}}],"comments":[{"uid":"reply-uid","reply_kind":"confirm\u001b[2J","edited_at":"2026-01-01T00:00:00Z","handle":"c:reply\u001b[2J","body":"full reply\n\tsecond line\u001b[2J\u0000","author":"bob\u001b[2J","teammate":"reviewer\u001b[2J","reply_to_uid":"root-uid\u001b[2J"},{"uid":"reply-2","handle":"c:two","body":"disagree","author":"eve","reply_kind":"refute","reply_to_uid":"root-uid"},{"uid":"reply-3","handle":"c:three","body":"plain","author":"sam","reply_to_uid":"root-uid"}]}`)
 	}))
 	defer server.Close()
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
@@ -49,7 +49,9 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 		assert.Contains(t, output.String(), "Issue: abc1 (issue-uid)")
 		assert.Contains(t, output.String(), "Destination: destination")
 		assert.Contains(t, output.String(), "(author: alice; UID: root-uid)")
-		assert.Contains(t, output.String(), "Reply c:reply by bob to root-uid (reviewer):\nfull reply\n\tsecond line")
+		assert.Contains(t, output.String(), "Reply c:reply (reply-uid; confirm) by bob to root-uid (reviewer) [edited]:\nfull reply\n\tsecond line")
+		assert.Contains(t, output.String(), "Reply c:two (reply-2; refute) by eve to root-uid:\ndisagree")
+		assert.Contains(t, output.String(), "Reply c:three (reply-3; ) by sam to root-uid:\nplain")
 		assert.NotContains(t, output.String(), "\x1b")
 		assert.NotContains(t, output.String(), "\r")
 		assert.NotContains(t, output.String(), "\x00")

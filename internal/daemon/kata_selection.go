@@ -168,13 +168,18 @@ func sameKataPriority(a, b *int) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
-func (wp *WorkerPool) completeReviewResult(ctx context.Context, workerID string, job *storage.ReviewJob, checkout, agent string, completion storage.ReviewCompletion) error {
+func (wp *WorkerPool) prepareKataPublication(ctx context.Context, workerID string, job *storage.ReviewJob, checkout string) *storage.KataPublicationSeed {
 	selection, err := selectKataPublication(ctx, wp.cfgGetter.Config(), job, checkout)
 	if err != nil {
 		log.Printf("[%s] Kata publication authorization for job %d: %v", workerID, job.ID, err)
 	} else if selection != nil {
-		completion.KataPublication = &selection.seed
+		return &selection.seed
 	}
+	return nil
+}
+
+func (wp *WorkerPool) completeReviewResult(job *storage.ReviewJob, agent string, completion storage.ReviewCompletion, seed *storage.KataPublicationSeed) error {
+	completion.KataPublication = seed
 	if err := wp.db.CompleteJobResult(job.ID, agent, completion); err != nil {
 		return fmt.Errorf("complete review: %w", err)
 	}
