@@ -2519,7 +2519,9 @@ func (wp *WorkerPool) collectTokenUsageForSession(
 	}
 	collected.logUsage = logUsage
 
-	if capturedSession != "" && !collected.wasResumed && !logUsageReplacesProvider(logUsage) {
+	// A log that sums several sessions is stored as it is. When it carries no
+	// cost, reconciliation prices every session it names.
+	if capturedSession != "" && !collected.wasResumed && !logUsageCoversSeveralSessions(logUsage) {
 		fetched, tokenErr := wp.fetchFreshSessionUsage(
 			ctx, wp.fetchTokenUsage, capturedSession,
 		)

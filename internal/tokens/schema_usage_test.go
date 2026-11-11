@@ -86,8 +86,11 @@ func claudeResult(sessionID, field string, models map[string][4]int64) string {
 				`"cacheCreationInputTokens":%d,"costUSD":0.1}`,
 			name, counts[0], counts[1], counts[2], counts[3]))
 	}
-	return fmt.Sprintf(`{"type":"result","session_id":%q,%q:{%s}}`,
-		sessionID, field, strings.Join(entries, ","))
+	session := ""
+	if sessionID != "" {
+		session = fmt.Sprintf(`"session_id":%q,`, sessionID)
+	}
+	return fmt.Sprintf(`{"type":"result",%s%q:{%s}}`, session, field, strings.Join(entries, ","))
 }
 
 func TestParseSchemaUsageClaudeCountsEveryModel(t *testing.T) {
@@ -140,6 +143,20 @@ func TestParseSchemaUsageClaudeCountsEachRunOnce(t *testing.T) {
 			stream: []string{
 				claudeResult("session-b", "model_usage_since_last_result", one),
 				claudeResult("session-a", "modelUsage", two),
+			},
+			want: Usage{
+				InputTokens: 300, OutputTokens: 30, CachedInputTokens: 3000, CacheCreationTokens: 1100,
+				CostUSD: 0.2, HasCost: true, ThreadID: "session-a",
+				ProviderSessionIDs: []string{"session-a", "session-b"}, ExpectedProviderSessions: 2,
+			},
+		},
+		{
+			name: "results that omit the session use the last one named",
+			stream: []string{
+				`{"type":"system","session_id":"session-b"}`,
+				claudeResult("", "modelUsage", one),
+				`{"type":"system","session_id":"session-a"}`,
+				claudeResult("", "modelUsage", two),
 			},
 			want: Usage{
 				InputTokens: 300, OutputTokens: 30, CachedInputTokens: 3000, CacheCreationTokens: 1100,

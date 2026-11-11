@@ -124,6 +124,31 @@ func TestCaptureTokenUsageForSessionUsesClaudeJobLog(t *testing.T) {
 		assert.Zero(lookups)
 	})
 
+	t.Run("unpriced wrapper runs wait for every session's price", func(t *testing.T) {
+		assert := assert.New(t)
+		job := newJob(t, "claude-code")
+		logPath := JobLogPath(job.ID)
+		require.NoError(t, os.WriteFile(logPath, []byte(
+			`{"type":"result","session_id":"session-f","modelUsage":{"model-a":{"inputTokens":100,"outputTokens":10}}}`+"\n"+
+				`{"type":"result","session_id":"session-g","modelUsage":{"model-a":{"inputTokens":100,"outputTokens":10}}}`+"\n",
+		), 0o600))
+		lookups := 0
+		tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+			lookups++
+			return &tokens.Usage{OutputTokens: 10, CostUSD: 0.25, HasCost: true}, nil
+		}
+
+		tc.Pool.captureTokenUsageForSession(t.Context(), testWorkerID, job, "session-g")
+
+		_, usage := storedUsage(t, tc.DB, job.ID)
+		assert.Equal(int64(200), usage.InputTokens)
+		assert.Equal(int64(20), usage.OutputTokens)
+		assert.Equal([]string{"session-f", "session-g"}, usage.ProviderSessionIDs)
+		// One session's price must not stand in for both runs.
+		assert.False(usage.HasCost)
+		assert.Zero(lookups)
+	})
+
 	t.Run("log written by a failover agent", func(t *testing.T) {
 		job := newJob(t, "codex")
 		writeClaudeUsageLog(t, job, "session-e")

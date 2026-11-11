@@ -120,11 +120,14 @@ func ParseSchemaUsage(agentName string, r io.Reader) (*Usage, error) {
 					threadID = event.SessionID
 				}
 				if event.Type == "result" {
-					session := claudeSessions[event.SessionID]
+					// A result that omits its session belongs to the session
+					// the stream last named.
+					sessionID := threadID
+					session := claudeSessions[sessionID]
 					if session == nil {
 						session = &claudeSessionUsage{}
-						claudeSessions[event.SessionID] = session
-						claudeSessionOrder = append(claudeSessionOrder, event.SessionID)
+						claudeSessions[sessionID] = session
+						claudeSessionOrder = append(claudeSessionOrder, sessionID)
 					}
 					switch {
 					case len(event.ModelUsageSinceLast) > 0:

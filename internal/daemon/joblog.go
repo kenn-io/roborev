@@ -115,11 +115,11 @@ func parseJobLogUsage(jobID int64, jobAgent string) (*tokens.Usage, error) {
 	return tokens.ParseJobLogUsageFile(agent.CanonicalName(agentName), JobLogPath(jobID))
 }
 
-// logUsageReplacesProvider reports whether log usage already prices several
-// provider sessions. A provider lookup covers one session, so merging its total
-// would replace the sum with one session's share.
-func logUsageReplacesProvider(logUsage *tokens.Usage) bool {
-	return logUsage != nil && logUsage.HasCost && logUsage.ExpectedProviderSessions > 1
+// logUsageCoversSeveralSessions reports whether log usage sums more than one
+// provider session. A single provider lookup covers one session, so merging
+// its total would replace the sum with one session's share.
+func logUsageCoversSeveralSessions(logUsage *tokens.Usage) bool {
+	return logUsage != nil && logUsage.ExpectedProviderSessions > 1
 }
 
 func jobLogAppendMarkerPath(jobID int64) string {
