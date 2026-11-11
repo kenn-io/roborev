@@ -611,3 +611,47 @@ func TestFixKataAuthenticationStopsBeforeAgent(t *testing.T) {
 	assert.Zero(t, calls)
 	assert.Zero(t, state.Closes())
 }
+
+func TestFixPlannedKataOutageIsSharedAcrossAgentPhases(t *testing.T) {
+	repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
+	id := uuid.New()
+	reads := 0
+	ts, _ := newMockServer(t, MockServerOpts{
+		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
+		},
+		OnReview: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: "High: original finding", VerdictBool: new(0)})
+		},
+		OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
+		},
+		OnKataPublication: func(w http.ResponseWriter, _ *http.Request) {
+			reads++
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"status":503,"detail":"temporary outage"}`)
+		},
+	})
+	patchServerAddr(t, ts.URL)
+	calls := 0
+	a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
+		calls++
+		if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
+			quoted, _, _ := strings.Cut(rest, " and carry out")
+			path, err := strconv.Unquote(quoted)
+			require.NoError(t, err)
+			body, err := os.ReadFile(path)
+			require.NoError(t, err)
+			p = string(body)
+		}
+		assert.Contains(t, p, "High: original finding")
+		assert.Contains(t, p, "Kata discussion unavailable")
+		return "Check the finding", nil
+	}}
+	cmd, _ := newTestCmd(t)
+	err := fixSingleJob(cmd, repo.Dir, 7, fixOptions{plan: true, quiet: true}, &fixSessionTracker{base: a, out: io.Discard})
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, 1, reads)
+}
