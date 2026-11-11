@@ -118,14 +118,16 @@ ID returned by enqueue. Generated Go clients expose `GetJobInvocations` through
 The response contains an `invocations` array in execution order. Each record has
 its own local ID, the job's enqueue time, selected agent/model/reasoning,
 reviewed revision, start and finish times, session ID, adapter output, validated
-review JSON when available, and any error. Retries, backup-agent runs, and
-manual reruns add records; they do not replace earlier outcomes. A failed
-invocation can have partial output and usage even when a later invocation
-completes the review. `raw_output` contains the adapter's returned text, or its
-captured output stream when it returns no text. This preserves partial responses
-that a native adapter rejects before returning a review document. Invalid UTF-8
-bytes in diagnostics are replaced with the Unicode replacement character
-(`U+FFFD`) so they cannot prevent saving the report or retrying the review.
+review JSON when available, and any error. A backup call records its backup
+model. An empty model means no explicit model was passed to the agent. Retries,
+backup-agent runs, and manual reruns add records; they do not replace earlier
+outcomes. A failed invocation can have partial output and usage even when a
+later invocation completes the review. `raw_output` contains the adapter's
+returned text, or its captured output stream when it returns no text. This
+preserves partial responses that a native adapter rejects before returning a
+review document. Invalid UTF-8 bytes in diagnostics are replaced with the
+Unicode replacement character (`U+FFFD`) so they cannot prevent saving the
+report or retrying the review.
 
 `status` is `succeeded`, `failed`, `canceled`, or `unfinished`. An unfinished
 record means the daemon saved the start but has no recorded outcome. It does not

@@ -506,9 +506,12 @@ func (wp *WorkerPool) runSynthesisAgent(
 		// failure below is never miscounted as an agent run.
 		BeforeInvoke: func(ctx context.Context) error {
 			if hasSuppliedReviewSettings(job) {
+				// Keep execution evidence separate from the configuration retained for reruns.
+				invocationJob := *job
+				invocationJob.Model = synthesisSelectedModel(job, agentName)
 				var record storage.ReviewInvocation
 				if wp.runAttemptTransition(workerID, job, func() {
-					record, invocationErr = wp.db.BeginReviewInvocation(ctx, job, agentName)
+					record, invocationErr = wp.db.BeginReviewInvocation(ctx, &invocationJob, agentName)
 				}) {
 					return errSynthesisCanceled
 				}
@@ -645,10 +648,7 @@ func (wp *WorkerPool) configureSynthesisAgentContext(
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 
-	model := job.Model
-	if synthesisSelectedBackupAgent(job, baseAgent.Name()) {
-		model = job.BackupModel
-	}
+	model := synthesisSelectedModel(job, baseAgent.Name())
 
 	// Synthesis reads the repo to verify findings but must never edit it.
 	a := applyCodexReviewSettings(
@@ -663,6 +663,13 @@ func (wp *WorkerPool) configureSynthesisAgentContext(
 
 	agentName := a.Name()
 	return a, agentName, nil
+}
+
+func synthesisSelectedModel(job *storage.ReviewJob, selectedAgent string) string {
+	if synthesisSelectedBackupAgent(job, selectedAgent) {
+		return job.BackupModel
+	}
+	return job.Model
 }
 
 func synthesisSelectedBackupAgent(job *storage.ReviewJob, selectedAgent string) bool {
