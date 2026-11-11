@@ -40,6 +40,13 @@ func readyKata() daemon.KataStatusBody {
 	}
 }
 
+func assertNoKataDoctorChecks(t *testing.T, checks []doctorCheck) {
+	t.Helper()
+	for _, check := range checks {
+		assert.False(t, strings.HasPrefix(check.ID, "integrations.kata"), "%+v", check)
+	}
+}
+
 func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 	ready := readyKata()
 	oldServer := readyKata()
@@ -85,10 +92,10 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 func TestDoctorKataIsQuietWhenNothingEnablesIt(t *testing.T) {
 	off := daemon.KataStatusBody{State: "disabled", Message: "disabled"}
 	env := kataDoctorEnv(config.KataIntegrationConfig{}, off)
-	assert.Empty(t, checkDoctorIntegrations(env))
+	assertNoKataDoctorChecks(t, checkDoctorIntegrations(env))
 
 	env.kata, env.kataErr = nil, assert.AnError // an older daemon: no status at all
-	assert.Empty(t, checkDoctorIntegrations(env))
+	assertNoKataDoctorChecks(t, checkDoctorIntegrations(env))
 }
 
 func TestDoctorKataMismatchBetweenConfigAndDaemon(t *testing.T) {
@@ -111,7 +118,7 @@ func TestDoctorKataWhenTheDaemonCannotBeAsked(t *testing.T) {
 	assert.Contains(t, got.Summary, "checked when the daemon is running")
 
 	env.global.Integrations.Kata.Enabled = false
-	assert.Empty(t, checkDoctorIntegrations(env))
+	assertNoKataDoctorChecks(t, checkDoctorIntegrations(env))
 }
 
 // The daemon talks to Kata itself, so a kata hook does not need the kata CLI.
