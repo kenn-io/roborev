@@ -50,7 +50,7 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 		if hook.Findings != "comments" && hook.Findings != "summary" {
 			return nil, errors.New("invalid Kata findings policy")
 		}
-		candidate := kataSelection{seed: storage.KataPublicationSeed{Endpoint: endpoint, Project: strings.TrimSpace(hook.Project), Policy: hook.Findings}, options: kata.PublicationOptions{Labels: append([]string(nil), hook.Labels...), Priority: hook.Priority}}
+		candidate := kataSelection{seed: storage.KataPublicationSeed{Endpoint: endpoint, Project: strings.TrimSpace(hook.Project), Policy: hook.Findings}, options: kata.PublicationOptions{Labels: append([]string{kata.RoborevLabel}, hook.Labels...), Priority: hook.Priority}}
 		slices.Sort(candidate.options.Labels)
 		candidate.options.Labels = slices.Compact(candidate.options.Labels)
 		if candidate.seed.Project == "" {

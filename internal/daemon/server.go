@@ -201,7 +201,7 @@ func newServerWithLogs(
 	configWatcher := NewConfigWatcher(configPath, cfg, broadcaster, activityLog)
 
 	// Create hook runner to fire hooks on review events
-	hookRunner := NewHookRunner(configWatcher, broadcaster, log.Default())
+	hookRunner := NewHookRunner(configWatcher, broadcaster, log.Default(), db)
 
 	releaseNotesOptions := []github.ClientOptionsFunc{
 		github.WithHTTPClient(&http.Client{Timeout: 10 * time.Second}),
@@ -415,6 +415,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
+	s.hookRunner.startKataRecovery()
 	s.startSearch(ctx)
 	s.startAutoDesignRepoScan()
 
@@ -843,6 +844,7 @@ func (s *Server) stopOnce0() error {
 
 	// Stop hook runner
 	if s.hookRunner != nil {
+		s.hookRunner.cancelPublications()
 		s.hookRunner.WaitUntilIdle()
 		s.hookRunner.Stop()
 	}

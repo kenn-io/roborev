@@ -27,3 +27,17 @@ func TestKataSelectionCoalescesAndRejectsConflicts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, selection)
 }
+
+func TestKataHookFindingsValidation(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Findings: "comments"}}
+	require.NoError(t, cfg.Validate())
+	cfg.Hooks[0].Findings = "summary"
+	require.NoError(t, cfg.Validate())
+	cfg.Hooks[0].Findings = "unexpected"
+	require.ErrorContains(t, cfg.Validate(), "findings")
+	cfg.Hooks[0] = config.HookConfig{Type: "webhook", Findings: "comments"}
+	require.ErrorContains(t, cfg.Validate(), "findings")
+	repo := &config.RepoConfig{Hooks: []config.HookConfig{{Type: "kata", Findings: "unexpected"}}}
+	require.ErrorContains(t, repo.Validate(), "findings")
+}

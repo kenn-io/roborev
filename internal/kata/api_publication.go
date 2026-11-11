@@ -191,14 +191,14 @@ func publicationMarker(id uuid.UUID, position int, digest string) string {
 	return fmt.Sprintf("<!-- roborev:v1 review=%s position=%d digest=%s -->", id, position, digest)
 }
 
-// PreparePublication renders every request and preflights the exact encoded
-// bodies before any issue or comment can be posted. Summary mode includes no
-// review text, paths, source labels, diagnostics, or fixes.
+// PublicationOptions are hook-specific issue settings included in preflight.
 type PublicationOptions struct {
 	Labels   []string
 	Priority *int
 }
 
+// PreparePublication renders and preflights every issue and root request.
+// Summary mode excludes review text, paths, sources, diagnostics, and fixes.
 func PreparePublication(id uuid.UUID, hash string, completed time.Time, doc structuredreview.Document, policy, teammate string) (*Publication, error) {
 	return PreparePublicationWithOptions(id, hash, completed, doc, policy, teammate, PublicationOptions{})
 }
