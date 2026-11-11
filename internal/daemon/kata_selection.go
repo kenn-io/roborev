@@ -19,6 +19,14 @@ type kataSelection struct {
 	resolvedUID string // populated only when different selections required comparison
 }
 
+// sameKataAuthorization treats a registered alias as the selector; its project
+// name is only a hint. Explicit project names remain part of authorization.
+func sameKataAuthorization(a, b storage.KataPublicationSeed) bool {
+	return a.Endpoint == b.Endpoint && a.Policy == b.Policy &&
+		a.AliasKind == b.AliasKind && a.AliasIdentity == b.AliasIdentity &&
+		(a.AliasKind != "" || a.Project == b.Project)
+}
+
 // Single or identical selections stay offline; distinct selections need a
 // server identity check before they can authorize one destination.
 func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage.ReviewJob, checkout string) (*kataSelection, error) {
@@ -72,7 +80,7 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 		if selected.seed.Policy != candidate.seed.Policy || !slices.Equal(selected.options.Labels, candidate.options.Labels) || !sameKataPriority(selected.options.Priority, candidate.options.Priority) {
 			return nil, errors.New("conflicting Kata publication hooks")
 		}
-		if selected.seed == candidate.seed {
+		if sameKataAuthorization(selected.seed, candidate.seed) {
 			continue
 		}
 		if selected.seed.AliasKind == "" && candidate.seed.AliasKind == "" {

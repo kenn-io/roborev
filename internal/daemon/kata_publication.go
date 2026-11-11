@@ -146,7 +146,7 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64, attempt *kataP
 	if selection == nil {
 		return nil, nil, nil, nil, zero, nil, errors.New("kata publication hook is no longer authorized")
 	}
-	if record.Marker != nil && (record.Marker.Version != 1 || (record.Marker.State != "pending" && record.Marker.State != "complete") || (record.Marker.ProjectUID == "") != (record.Marker.RequestFingerprint == "") || record.Marker.KataPublicationSeed != selection.seed || record.Marker.DocumentHash != record.DocumentHash) {
+	if record.Marker != nil && (record.Marker.Version != 1 || (record.Marker.State != "pending" && record.Marker.State != "complete") || (record.Marker.ProjectUID == "") != (record.Marker.RequestFingerprint == "") || !sameKataAuthorization(record.Marker.KataPublicationSeed, selection.seed) || record.Marker.DocumentHash != record.DocumentHash) {
 		return nil, nil, nil, nil, zero, nil, errors.New("kata publication authorization changed")
 	}
 	client, name, err := kataSelectionClient(cfg.Integrations.Kata, selection.seed)
@@ -333,7 +333,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		if err != nil {
 			return err
 		}
-		if locked.Marker == nil || locked.Marker.Version != 1 || (locked.Marker.State != "pending" && locked.Marker.State != "complete") || locked.Marker.DocumentHash != locked.DocumentHash || locked.Marker.KataPublicationSeed != current.Marker.KataPublicationSeed || locked.Marker.ProjectUID != dest.UID || locked.Marker.RequestFingerprint != prepared.Fingerprint {
+		if locked.Marker == nil || locked.Marker.Version != 1 || (locked.Marker.State != "pending" && locked.Marker.State != "complete") || locked.Marker.DocumentHash != locked.DocumentHash || !sameKataAuthorization(locked.Marker.KataPublicationSeed, current.Marker.KataPublicationSeed) || locked.Marker.ProjectUID != dest.UID || locked.Marker.RequestFingerprint != prepared.Fingerprint {
 			return storage.ErrReviewChanged
 		}
 		cfg := p.cfg.Config()
@@ -348,7 +348,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		if err != nil {
 			return err
 		}
-		if selection == nil || selection.seed != locked.Marker.KataPublicationSeed {
+		if selection == nil || !sameKataAuthorization(selection.seed, locked.Marker.KataPublicationSeed) {
 			return errors.New("kata publication authorization changed")
 		}
 		if selection.resolvedUID != "" && selection.resolvedUID != dest.UID {

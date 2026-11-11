@@ -591,6 +591,9 @@ func TestKataPreparedAttemptChecksInputs(t *testing.T) {
 		{"priority", func() { priority = 4 }, func() { priority = 2 }},
 		{"labels", func() { cfg.Hooks[0].Labels[0] = "other" }, func() { cfg.Hooks[0].Labels[0] = "one" }},
 		{"teammate", func() { cfg.Integrations.Kata.Teammate = "other" }, func() { cfg.Integrations.Kata.Teammate = "roborev" }},
+		{"project", func() { cfg.Hooks[0].Project = "other" }, func() { cfg.Hooks[0].Project = "reviews" }},
+		{"endpoint", func() { cfg.Integrations.Kata.Endpoint = "https://other.example.test" }, func() { cfg.Integrations.Kata.Endpoint = fake.URL() }},
+		{"policy", func() { cfg.Hooks[0].Findings = "summary" }, func() { cfg.Hooks[0].Findings = "comments" }},
 		{"completion", func() {
 			_, err = tc.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, review.CreatedAt.Add(time.Second).UTC().Format(time.RFC3339Nano), job.ID)
 			require.NoError(t, err)
@@ -805,6 +808,112 @@ func TestKataPublicationRechecksRemoteAfterRoot(t *testing.T) {
 			_, err = publisher.Publish(t.Context(), job.ID)
 			require.Error(t, err)
 			assert.Equal(t, 1, posts)
+		})
+	}
+}
+
+func TestKataPublicationAliasHintDoesNotChangeAuthorization(t *testing.T) {
+	for _, savedHint := range []string{"old-name", ""} {
+		t.Run(fmt.Sprintf("saved-hint=%q", savedHint), func(t *testing.T) {
+			fake := katafake.New(t)
+			tc := newWorkerTestContext(t, 1)
+			job := tc.createAndClaimJob(t, "alias-hint", "worker")
+			gitRemote := func(args ...string) {
+				t.Helper()
+				cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", tc.TmpDir, "remote"}, args...)...)
+				out, err := cmd.CombinedOutput()
+				require.NoError(t, err, "%s", out)
+			}
+			gitRemote("add", "origin", "https://example.test/org/original.git")
+			writeHint := func(name string) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".kata.toml"), []byte("version = 1\n[project]\nname = \""+name+"\"\n"), 0o600))
+			}
+			writeHint("old-name")
+			binding, err := kata.WorkspaceBinding(t.Context(), tc.TmpDir)
+			require.NoError(t, err)
+			require.NotNil(t, binding.Alias)
+			cfg := kataConnectionConfig(fake)
+			cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments"}}
+			seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: savedHint, AliasKind: binding.Alias.Kind, AliasIdentity: binding.Alias.Identity, Policy: "comments"}
+			doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+			raw, err := json.Marshal(doc)
+			require.NoError(t, err)
+			require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
+			var resolved atomic.Int32
+			fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+				if r.URL.Path != "/api/v1/projects/resolve" {
+					return false
+				}
+				fake.Reply(w, gen.ProjectResolveBody{Project: fake.Projects[resolved.Load()]})
+				return true
+			}
+			p := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+			attempt := &kataPreparedAttempt{}
+			writeHint("renamed")
+			record, review, _, client, project, prepared, err := p.current(t.Context(), job.ID, attempt)
+			require.NoError(t, err)
+			client.CloseIdleConnections()
+			calls := 0
+			p.cfg = kataConfigFunc(func() *config.Config {
+				calls++
+				if calls == 2 {
+					writeHint("renamed-again")
+				}
+				return cfg
+			})
+			sent := false
+			err = p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+				sent = true
+				return nil
+			})
+			require.NoError(t, err)
+			assert.True(t, sent)
+			p.cfg = NewStaticConfig(cfg)
+			resolved.Store(1)
+			_, _, _, _, _, _, err = p.current(t.Context(), job.ID, attempt)
+			require.ErrorContains(t, err, "destination or request changed")
+			sent = false
+			err = p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+				sent = true
+				return nil
+			})
+			require.Error(t, err)
+			assert.False(t, sent)
+			resolved.Store(0)
+			for _, change := range []struct {
+				name           string
+				apply, restore func()
+			}{
+				{"alias identity", func() { gitRemote("set-url", "origin", "https://example.test/org/other.git") }, func() { gitRemote("set-url", "origin", "https://example.test/org/original.git") }},
+				{"alias kind", func() { gitRemote("remove", "origin") }, func() { gitRemote("add", "origin", "https://example.test/org/original.git") }},
+				{"endpoint", func() { cfg.Integrations.Kata.Endpoint = "https://other.example.test" }, func() { cfg.Integrations.Kata.Endpoint = fake.URL() }},
+				{"policy", func() { cfg.Hooks[0].Findings = "summary" }, func() { cfg.Hooks[0].Findings = "comments" }},
+			} {
+				t.Run(change.name, func(t *testing.T) {
+					p.cfg = NewStaticConfig(cfg)
+					change.apply()
+					_, _, _, _, _, _, err = p.current(t.Context(), job.ID, attempt)
+					require.Error(t, err)
+					change.restore()
+					calls := 0
+					p.cfg = kataConfigFunc(func() *config.Config {
+						calls++
+						if calls == 2 {
+							change.apply()
+						}
+						return cfg
+					})
+					defer change.restore()
+					sent := false
+					err := p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+						sent = true
+						return nil
+					})
+					require.Error(t, err)
+					assert.False(t, sent)
+				})
+			}
 		})
 	}
 }
