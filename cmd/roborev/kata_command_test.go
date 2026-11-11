@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -115,6 +116,11 @@ func TestKataShowSelectorQueries(t *testing.T) {
 		root.SetArgs(args)
 		require.NoError(t, root.Execute())
 		assert.Contains(t, query, tc.param)
+		if strings.HasPrefix(tc.param, "review_uuid=") {
+			values, err := url.ParseQuery(query)
+			require.NoError(t, err)
+			assert.Equal(t, tc.selector, values.Get("review_uuid"))
+		}
 		if tc.issue {
 			assert.NotContains(t, query, "job_id=")
 		}

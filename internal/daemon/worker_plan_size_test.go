@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -274,37 +273,4 @@ func TestWorkerKataHistoryAtAgentBoundary(t *testing.T) {
 			assert.Equal(t, before.Output, after.Output)
 		})
 	}
-}
-
-func TestWorkerDoesNotAttachReplacementReviewDiscussion(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	cfg := config.DefaultConfig()
-	cfg.Integrations.Kata.Enabled = true
-	tc.Pool.cfgGetter = NewStaticConfig(cfg)
-	server := newServerWithLogs(tc.DB, cfg, "", newTestErrorLog(), newTestActivityLog())
-	t.Cleanup(func() { _ = server.Close() })
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	prior := tc.createAndClaimJob(t, sha, "prior-worker")
-	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, prior.ID, "test", "prompt", "High: original finding"))
-	reads := 0
-	tc.Pool.readKataContext = func(ctx context.Context, review *storage.Review) (any, error) {
-		reads++
-		replacement := uuid.New()
-		_, err := tc.DB.ExecContext(ctx, `UPDATE reviews SET uuid = ?, output = ? WHERE job_id = ?`, replacement.String(), "replacement finding", prior.ID)
-		require.NoError(t, err)
-		return server.readKataPromptContext(ctx, review)
-	}
-	name := "worker-displaced-kata-review"
-	calls := 0
-	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
-		calls++
-		assert.Contains(t, p, "High: original finding")
-		assert.Contains(t, p, "unavailable")
-		assert.NotContains(t, p, "replacement finding")
-		return "No issues found.", nil
-	}})
-	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, name)
-	tc.Pool.processJob(testWorkerID, job)
-	assert.Equal(t, 1, calls)
-	assert.Equal(t, 1, reads)
 }

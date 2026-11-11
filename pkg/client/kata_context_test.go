@@ -11,9 +11,9 @@ import (
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
-func TestClassifyKataContextError(t *testing.T) {
+func TestKataContextErrorThroughGeneratedClient(t *testing.T) {
 	for _, tc := range []struct {
-		status int64
+		status int
 		want   error
 	}{
 		{http.StatusUnauthorized, ErrKataAuthentication},
@@ -21,19 +21,9 @@ func TestClassifyKataContextError(t *testing.T) {
 		{http.StatusRequestTimeout, context.Canceled},
 		{http.StatusGatewayTimeout, context.DeadlineExceeded},
 	} {
-		err := ClassifyKataContextError(generated.ErrorModel{Status: &tc.status})
-		require.ErrorIs(t, err, tc.want)
-	}
-}
-
-func TestKataContextErrorThroughGeneratedClient(t *testing.T) {
-	for _, tc := range []struct { status int; want error }{
-		{http.StatusUnauthorized, ErrKataAuthentication},
-		{http.StatusForbidden, ErrKataAccess},
-		{http.StatusRequestTimeout, context.Canceled},
-		{http.StatusGatewayTimeout, context.DeadlineExceeded},
-	} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			status := int64(tc.status)
+			require.ErrorIs(t, ClassifyKataContextError(generated.ErrorModel{Status: &status}), tc.want)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(tc.status)
