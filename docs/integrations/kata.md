@@ -22,6 +22,9 @@ The global `[integrations.kata]` settings and API client provide an explicit
 endpoint and credential. Existing review, hook, and goal workflows still use the
 Kata CLI; setting these options does not redirect those workflows yet.
 
+Unix socket endpoints are supported on non-Windows platforms. Windows refuses
+them because it cannot verify the required socket ownership and permissions.
+
 The API client checks the current server and active project before each
 operation. It accepts API schemas from 0.21.0 through 0.28.0, the contract
 pinned by Kata v0.19.0. Unknown newer schemas require compatibility verification
@@ -33,6 +36,9 @@ default. Discovery follows the physical Git boundary when a symlink crosses into
 a different repository. Version-1 names are trimmed; a committed legacy
 `project.identity` can supply the name. Invalid names stop lookup, while an
 empty local name or local legacy identity leaves the committed binding intact.
+An empty committed binding stops lookup rather than selecting a parent project
+or the configured default. Existing CLI-based workflows use the same workspace
+discovery and binding rules.
 
 Implicit API selection uses the workspace's registered Git or local alias and
 returns its current canonical project name. The lookup never registers an alias
