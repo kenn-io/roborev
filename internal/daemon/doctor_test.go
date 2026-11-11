@@ -310,7 +310,7 @@ func TestDoctorAgentsSkipsTheKataCLIWhenTheConnectionIsOn(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"),
 		[]byte("[[hooks]]\nevent = \"review.failed\"\ntype = \"kata\"\n"), 0o600))
 	get := func() DoctorAgentsOutput {
-		req := httptest.NewRequest(http.MethodGet, "/api/doctor/agents?"+url.Values{"repo": {repo}}.Encode(), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/doctor/agents?"+url.Values{"repo": {repo}}.Encode(), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())

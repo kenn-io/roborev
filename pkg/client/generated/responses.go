@@ -786,10 +786,11 @@ type KataCreateIssueResp struct {
 }
 
 type KataStatusResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *KataStatusResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *KataStatusResponse
+	ApplicationProblemPlusJSONDefault *KataStatusErrorResponse
 }
 
 type CleanJobLogsResp struct {
