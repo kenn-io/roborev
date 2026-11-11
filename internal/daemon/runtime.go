@@ -21,7 +21,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
-	roborevclient "go.kenn.io/roborev/pkg/client"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 const (
@@ -690,7 +690,10 @@ func killDaemon(info *RuntimeInfo, interrupt bool) error {
 	// may start a replacement daemon on the same endpoint immediately.
 	confirmedDead := func() bool {
 		if info.PID > 0 {
-			return info.hasStaleProcess()
+			if interrupt {
+				return info.hasStaleProcess()
+			}
+			return !isProcessAlive(info.PID)
 		}
 		alive, err := ProbeDaemonAlive(ep)
 		return !alive && !IsDaemonAccessError(err)
@@ -730,9 +733,6 @@ func killDaemon(info *RuntimeInfo, interrupt bool) error {
 		} else {
 			probeErr = err
 		}
-	}
-	if interrupt && !selected && len(answeredByOther) > 0 && !confirmedDead() {
-		return fmt.Errorf("daemon endpoint belongs to a different process; interrupt shutdown was not sent")
 	}
 	if !selected && info.PID > 0 {
 		if identity == processUnknown {
@@ -807,13 +807,14 @@ func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead
 		var resp *http.Response
 		var err error
 		if interrupt {
-			body := []byte(fmt.Sprintf(`{"expected_pid":%d}`, pid))
-			resp, err = client.InterruptShutdownRaw(ctx, nil, roborevclient.WithBody(body))
+			resp, err = client.InterruptShutdownRaw(ctx, &generated.InterruptShutdownRequestOptions{
+				Body: &generated.InterruptShutdownBody{ExpectedPid: int64(pid)},
+			})
 		} else {
 			resp, err = client.ShutdownRaw(ctx)
 		}
 		if err == nil {
-			resp.Body.Close()
+			defer resp.Body.Close()
 			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 				return struct{}{}, nil
 			}
@@ -824,6 +825,12 @@ func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead
 				return struct{}{}, backoff.Permanent(fmt.Errorf("daemon does not support interrupt shutdown; use --running=wait"))
 			}
 			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
+			if interrupt {
+				var problem generated.ErrorModel
+				if json.UnmarshalRead(resp.Body, &problem) == nil && problem.Detail != nil && *problem.Detail != "" {
+					err = fmt.Errorf("daemon shutdown returned %s: %s", resp.Status, *problem.Detail)
+				}
+			}
 			if resp.StatusCode < http.StatusInternalServerError {
 				return struct{}{}, backoff.Permanent(err)
 			}

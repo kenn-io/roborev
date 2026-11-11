@@ -4251,15 +4251,7 @@ func (s *Server) humaInterruptShutdown(ctx context.Context, input *InterruptShut
 	}
 	s.workerPool.attemptTransitionsMu.Lock()
 	defer s.workerPool.attemptTransitionsMu.Unlock()
-	// Complete the committed handoff even when the requesting client disconnects.
-	ctx = context.WithoutCancel(ctx)
-	var ids []int64
-	var err error
-	if s.shutdownDraining {
-		ids, err = s.db.ListRunningJobIDs()
-	} else {
-		ids, err = s.db.BeginInterruptShutdown(ctx)
-	}
+	ids, err := s.db.BeginInterruptShutdown(ctx)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("prepare interrupt shutdown: %v", err))
 	}

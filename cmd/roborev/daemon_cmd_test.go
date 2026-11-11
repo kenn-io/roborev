@@ -441,3 +441,26 @@ func TestDaemonRestartOnlyStopsValidatedRuntimes(t *testing.T) {
 	assert.Equal(t, 1, listCalls)
 	assertRecoveryLock(t, true)
 }
+
+func TestDaemonRestartRunningPolicy(t *testing.T) {
+	stubDaemonRestartOutput(t)
+	oldList, oldInterrupt := listAllRuntimes, interruptDaemon
+	t.Cleanup(func() { listAllRuntimes, interruptDaemon = oldList, oldInterrupt })
+	info := &daemon.RuntimeInfo{PID: 123}
+	listCalls, interruptCalls, stopCalls := 0, 0, 0
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { listCalls++; return []*daemon.RuntimeInfo{info}, nil }
+	interruptDaemon = func(got *daemon.RuntimeInfo) error { assert.Same(t, info, got); interruptCalls++; return nil }
+	withDaemonCommandDependencies(t, func() error { return nil }, func() error { stopCalls++; return nil }, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
+	for _, args := range [][]string{{"restart", "extra"}, {"restart", "--running=invalid"}} {
+		cmd := daemonCmd()
+		cmd.SetArgs(args)
+		require.Error(t, cmd.ExecuteContext(t.Context()))
+	}
+	assert.Zero(t, listCalls)
+	assert.Zero(t, stopCalls)
+	cmd := daemonCmd()
+	cmd.SetArgs([]string{"restart", "--running=interrupt"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	assert.Equal(t, 1, interruptCalls)
+	assert.Zero(t, stopCalls)
+}

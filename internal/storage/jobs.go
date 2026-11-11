@@ -886,7 +886,12 @@ func (db *DB) RequeueUpdateInterruptedJob(
 // the query. Update preparation calls this after persisting the claim gate, so
 // the result is the complete cutover set.
 func (db *DB) ListRunningJobIDs() ([]int64, error) {
-	rows, err := db.Query(`
+	// This legacy wrapper has no caller context.
+	return listRunningJobIDs(context.Background(), db)
+}
+
+func listRunningJobIDs(ctx context.Context, q querier) ([]int64, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT id FROM review_jobs WHERE status = 'running' ORDER BY id
 	`)
 	if err != nil {

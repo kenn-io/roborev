@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testenv"
 )
 
 func TestInterruptShutdownTargetsRunningAttempts(t *testing.T) {
@@ -25,21 +27,28 @@ func TestInterruptShutdownTargetsRunningAttempts(t *testing.T) {
 			job, err := db.ClaimJob("worker-interrupt")
 			require.NoError(t, err)
 			require.NotNil(t, job)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			server.workerPool.registerRunningJob(job.ID, cancel, time.Time{})
 			if alreadyDraining {
 				require.NoError(t, server.beginShutdownDrain())
 			}
 			response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			// Registration after the snapshot must still observe the interrupt.
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			server.workerPool.registerRunningJob(job.ID, cancel, time.Time{})
-			require.ErrorIs(t, ctx.Err(), context.Canceled)
-			assert.True(t, server.workerPool.handleUpdateInterruption(t.Context(), "worker-interrupt", job))
-			stored, err := db.GetJobByID(job.ID)
+			draining, err := db.IsShutdownDraining()
 			require.NoError(t, err)
-			assert.Equal(t, storage.JobStatusQueued, stored.Status)
-			assert.Equal(t, job.RetryCount, stored.RetryCount)
+			assert.True(t, draining)
+			assert.True(t, server.shutdownDraining)
+			assert.Contains(t, server.workerPool.updateInterruptTargets, job.ID)
+			assert.ErrorIs(t, ctx.Err(), context.Canceled)
+			assert.True(t, server.workerPool.stopped)
+			requested := false
+			select {
+			case <-server.ShutdownRequested():
+				requested = true
+			default:
+			}
+			assert.True(t, requested)
 		})
 	}
 }
@@ -55,58 +64,101 @@ func TestInterruptShutdownRejectsMismatchAndUpdateLease(t *testing.T) {
 	response = postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
 	assert.Equal(t, http.StatusConflict, response.Code)
 	assert.False(t, server.shutdownDraining)
+	draining, err = db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.True(t, draining) // The update lease owns the gate.
 }
 
-func TestInterruptShutdownSnapshotFailureRollsBackGate(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	_, err := db.ExecContext(t.Context(), "DROP TABLE review_jobs")
-	require.NoError(t, err)
+func TestInterruptShutdownDatabaseFailureLeavesGateOpen(t *testing.T) {
+	server, db, dir := newTestServer(t)
+	require.NoError(t, db.Close())
 	response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
 	require.Equal(t, http.StatusInternalServerError, response.Code)
+	reopened, err := storage.Open(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	defer reopened.Close()
+	draining, err := reopened.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.False(t, draining)
+	assert.False(t, server.shutdownDraining)
+}
+
+func TestInterruptShutdownRequest(t *testing.T) {
+	const pid = 123
+	for _, tc := range []struct {
+		name   string
+		status int
+		detail string
+		dead   bool
+		want   string
+	}{
+		{name: "older daemon", status: http.StatusNotFound, want: "--running=wait"},
+		{name: "PID changed", status: http.StatusPreconditionFailed, detail: "daemon PID changed", want: "daemon PID changed"},
+		{name: "update lease", status: http.StatusConflict, detail: "update drain is active or recovering", want: "update drain is active or recovering"},
+		{name: "original exited", status: http.StatusPreconditionFailed, dead: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var dead atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/shutdown/interrupt", r.URL.Path)
+				var body struct {
+					ExpectedPID int `json:"expected_pid"`
+				}
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.Equal(t, pid, body.ExpectedPID)
+				dead.Store(tc.dead)
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(tc.status)
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"detail": tc.detail}))
+			}))
+			defer server.Close()
+			ep, err := ParseEndpoint(server.Listener.Addr().String())
+			require.NoError(t, err)
+			err = requestDaemonShutdown(t.Context(), ep, dead.Load, pid, true)
+			if tc.want == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestInterruptShutdownCanceledRequestDoesNotCloseGate(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	input := &InterruptShutdownInput{}
+	input.Body.ExpectedPID = os.Getpid()
+	_, err := server.humaInterruptShutdown(ctx, input)
+	require.Error(t, err)
 	draining, err := db.IsShutdownDraining()
 	require.NoError(t, err)
 	assert.False(t, draining)
 	assert.False(t, server.shutdownDraining)
 }
 
-func TestInterruptShutdownRequestOlderDaemon(t *testing.T) {
+func TestInterruptDaemonRejectsUnusableRuntime(t *testing.T) {
+	testenv.SetDataDir(t)
+	var shutdowns atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/shutdown/interrupt", r.URL.Path)
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-	ep, err := ParseEndpoint(server.Listener.Addr().String())
-	require.NoError(t, err)
-	err = requestDaemonShutdown(t.Context(), ep, func() bool { return false }, 123, true)
-	require.ErrorContains(t, err, "--running=wait")
-}
-
-func TestInterruptShutdownRequestKeepsOriginalPID(t *testing.T) {
-	const pid = 123
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/shutdown/interrupt", r.URL.Path)
-		var body struct {
-			ExpectedPID int `json:"expected_pid"`
+		if r.URL.Path == "/api/shutdown/interrupt" || r.URL.Path == "/api/shutdown" {
+			shutdowns.Add(1)
 		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		assert.Equal(t, pid, body.ExpectedPID)
-		w.WriteHeader(http.StatusPreconditionFailed)
+		fmt.Fprint(w, `{"ok":true,"service":"roborev","pid":1}`)
 	}))
 	defer server.Close()
-	ep, err := ParseEndpoint(server.Listener.Addr().String())
-	require.NoError(t, err)
-	err = requestDaemonShutdown(t.Context(), ep, func() bool { return false }, pid, true)
-	require.ErrorContains(t, err, "412")
-}
-
-func TestInterruptShutdownRequestAcceptsOriginalExit(t *testing.T) {
-	var dead atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		dead.Store(true)
-		w.WriteHeader(http.StatusPreconditionFailed)
-	}))
-	defer server.Close()
-	ep, err := ParseEndpoint(server.Listener.Addr().String())
-	require.NoError(t, err)
-	require.NoError(t, requestDaemonShutdown(t.Context(), ep, dead.Load, 123, true))
+	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+	t.Run("different process", func(t *testing.T) {
+		runtimePath := filepath.Join(t.TempDir(), "daemon.json")
+		require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
+		err := InterruptDaemon(&RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: server.Listener.Addr().String(), SourcePath: runtimePath})
+		require.NoError(t, err)
+		assert.Zero(t, shutdowns.Load())
+	})
+	t.Run("missing PID", func(t *testing.T) {
+		err := InterruptDaemon(&RuntimeInfo{Network: "tcp", Address: server.Listener.Addr().String()})
+		require.ErrorContains(t, err, "--running=wait")
+		assert.Zero(t, shutdowns.Load())
+	})
 }

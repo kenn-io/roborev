@@ -137,6 +137,8 @@ func runDaemonWithSearch(
 	return errors.Join(startErr, stopErr, closeErr)
 }
 
+var interruptDaemon = daemon.InterruptDaemon
+
 func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -172,8 +174,9 @@ func daemonCmd() *cobra.Command {
 
 	var runningPolicy string
 	restartCmd := &cobra.Command{
-		Use:   "restart",
+		Use:   "restart [flags]",
 		Short: "Restart the daemon",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runningPolicy != "wait" && runningPolicy != "interrupt" {
 				return fmt.Errorf("invalid --running value %q (use wait or interrupt)", runningPolicy)
@@ -183,7 +186,7 @@ func daemonCmd() *cobra.Command {
 			stop := daemonStop
 			drain := drainManagedDaemon
 			if runningPolicy == "interrupt" {
-				drain = daemon.InterruptDaemon
+				drain = interruptDaemon
 				stop = func() error {
 					return stopDaemonRuntimesWithMessage(listAllRuntimes, drain, os.Stderr, "Interrupting running reviews and waiting for daemon shutdown...")
 				}
