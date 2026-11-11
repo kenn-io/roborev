@@ -336,7 +336,7 @@ func TestKataEndpointsMapKataFailures(t *testing.T) {
 
 	fake.Token = ""
 	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
-		if r.URL.Path == "/api/v1/health" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/7/issues" {
 			return false
 		}
 		fake.Fail(w, http.StatusConflict, "idempotency_mismatch", "key reused")
@@ -345,4 +345,11 @@ func TestKataEndpointsMapKataFailures(t *testing.T) {
 	w = kataPost(t, server, "/api/kata/issues", KataCreateRequest{Title: "t", Project: "reviews", IdempotencyKey: "k"})
 	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "idempotency_mismatch", "Kata's error code survives the proxy")
+	var postReached bool
+	for _, r := range fake.Requests() {
+		if r.Method == http.MethodPost && r.Path == "/api/v1/projects/7/issues" {
+			postReached = true
+		}
+	}
+	assert.True(t, postReached, "issue POST reached Kata")
 }
