@@ -969,6 +969,7 @@ roborev report summary --repo /path/to/repo
 roborev report summary --json              # Structured output for scripting
 roborev report summary --findings          # Finding outcomes by severity
 roborev report summary --findings --by agent --min-samples 5
+roborev report summary --findings --by member # Voting member contribution and spend
 ```
 
 | Flag | Description |
@@ -978,7 +979,7 @@ roborev report summary --findings --by agent --min-samples 5
 | `--repo <path>` | Scope to a single repo (default: current repo) |
 | `--all` | Show summary across all repos (mutually exclusive with `--repo`) |
 | `--findings` | Include structured finding outcomes |
-| `--by <group>` | With `--findings`: `severity` (default), `review-type`, `agent`, `model`, or `arm` |
+| `--by <group>` | With `--findings`: `severity` (default), `review-type`, `agent`, `model`, `arm`, or `member` |
 | `--min-samples <n>` | With `--findings`: positive labeled sample threshold for displaying rates (default: `5`) |
 | `--json` | Structured output for scripting |
 
@@ -1094,6 +1095,33 @@ positive finding is unavailable without positive findings. Partial prices show a
 lower bound such as `≥$2.00 (0/1 priced)`. Human cost columns are omitted when
 no row has usable prices. JSON always preserves eligible and priced
 denominators.
+
+### Panel member contribution
+
+`roborev report summary --findings --by member` groups voting members by
+repository identity, panel name and member name. Runs include failed and clean
+executions. Attributed and skipped runs are separate; findings raised count only
+usable structured member reviews, with structured / attributed run coverage.
+Cited counts each synthesis finding once per member. Agreed means another
+distinct source also reported it; solo means only that member did. Repeated
+source indices remain one citation, and duplicate display labels keep their
+positional identities.
+
+The complete ordered source list must match the persisted voting inputs.
+Missing, invalid or mismatched attribution excludes the whole panel run from
+contribution and its spend. Skipped panel/member counts and separate skipped
+spend expose that excluded cohort. Valid all-clean and single-success
+passthrough reviews retain runs and eligible member spend, including failures.
+Advisory members are excluded from this view; whole-panel spend still includes
+them.
+
+Member spend charges each retained eligible execution once. Cost / cited and
+cost / agreed use the same attributable cohort and are unavailable with a zero
+denominator or no usable recorded spend. Partly priced executions contribute
+recorded spend and leave coverage incomplete. Solo negative counts and rates are
+unavailable because panel-parent outcome labels are unavailable; labeled / solo
+coverage stays visible without claiming zero noise. JSON exposes these rows in
+the optional `findings.members` block.
 
 ## Aggregate Cost
 
