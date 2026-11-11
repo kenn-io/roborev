@@ -80,6 +80,9 @@ type repoAPIServer struct {
 	// installRepos answers /installation/repositories, which only a GitHub
 	// App installation token may call; nil refuses it.
 	installRepos []*googlegithub.Repository
+	// installFailure, when set, is the status of the installation listing's
+	// second page.
+	installFailure int
 }
 
 func (s *repoAPIServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +105,15 @@ func (s *repoAPIServer) handler(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusForbidden)
 			assert.NoError(s.t, json.NewEncoder(w).Encode(map[string]any{"message": "requires an installation token"}))
 			return
+		}
+		if s.installFailure != 0 {
+			if r.URL.Query().Get("page") == "2" {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(s.installFailure)
+				assert.NoError(s.t, json.NewEncoder(w).Encode(map[string]any{"message": "unavailable"}))
+				return
+			}
+			w.Header().Set("Link", fmt.Sprintf("<http://%s%s?page=2>; rel=\"next\"", r.Host, r.URL.Path))
 		}
 		assert.NoError(s.t, json.NewEncoder(w).Encode(map[string]any{"total_count": len(s.installRepos), "repositories": s.installRepos}))
 	case r.Method == http.MethodGet && path == "/user/repos":
@@ -218,6 +230,50 @@ func TestListOwnerRepos_ListsPrivateReposThroughAppInstallation(t *testing.T) {
 	repos, err := client.ListOwnerRepos(t.Context(), "jane", 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"jane/app", "jane/private"}, repos)
+}
+
+func TestListOwnerRepos_FailsWhenAppInstallationListingFails(t *testing.T) {
+	api := &repoAPIServer{
+		t: t,
+		userRepos: []*googlegithub.Repository{
+			{FullName: ptr("jane/app"), Owner: &googlegithub.User{Login: ptr("jane")}},
+		},
+		authStatus: http.StatusForbidden,
+		installRepos: []*googlegithub.Repository{
+			{FullName: ptr("jane/private"), Private: ptr(true), Owner: &googlegithub.User{Login: ptr("jane")}},
+		},
+		installFailure: http.StatusServiceUnavailable,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
+
+	client, err := NewClient("", WithBaseURL(srv.URL+"/"))
+	require.NoError(t, err)
+
+	repos, err := client.ListOwnerRepos(t.Context(), "jane", 1000)
+	var responseError *googlegithub.ErrorResponse
+	require.ErrorAs(t, err, &responseError)
+	assert.Equal(t, http.StatusServiceUnavailable, responseError.Response.StatusCode)
+	assert.Nil(t, repos, "a failed page must not return an incomplete repository list")
+}
+
+func TestListOwnerRepos_FailsWhenAuthenticatedListingFails(t *testing.T) {
+	api := &repoAPIServer{
+		t: t,
+		userRepos: []*googlegithub.Repository{
+			{FullName: ptr("jane/app"), Owner: &googlegithub.User{Login: ptr("jane")}},
+		},
+		authStatus: http.StatusUnprocessableEntity,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(api.handler))
+	defer srv.Close()
+
+	client, err := NewClient("", WithBaseURL(srv.URL+"/"))
+	require.NoError(t, err)
+
+	repos, err := client.ListOwnerRepos(t.Context(), "jane", 1000)
+	require.Error(t, err)
+	assert.Nil(t, repos)
 }
 
 func TestEnsureSkippedCheckRunCreatesSkippedConclusionOnce(t *testing.T) {
