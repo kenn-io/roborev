@@ -436,19 +436,11 @@ func (c *Client) listUserRepos(ctx context.Context, owner string, limit int) ([]
 		repos = append(repos, repo)
 	}
 
-	authOpts := &googlegithub.RepositoryListByAuthenticatedUserOptions{
-		Affiliation: "owner,collaborator",
-		Visibility:  "all",
-		PerPage:     min(limit, 100),
-	}
-	for {
-		authPage, resp, err := readGitHub(ctx, "list accessible repositories", func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
-			return c.api.Repositories.ListByAuthenticatedUser(ctx, authOpts)
-		})
-		if err != nil {
-			break
-		}
-		for _, repo := range authPage {
+	// The user listing above returns only public repositories. A user token
+	// adds private ones through /user/repos. A GitHub App installation token
+	// cannot call that endpoint, so it lists the installation's repositories.
+	add := func(page []*googlegithub.Repository) bool {
+		for _, repo := range page {
 			fullName := repo.GetFullName()
 			if repo.GetArchived() || (repo.HasPullRequests != nil && !repo.GetHasPullRequests()) || !strings.EqualFold(strings.TrimSpace(repoOwner(repo)), owner) {
 				continue
@@ -459,14 +451,33 @@ func (c *Client) listUserRepos(ctx context.Context, owner string, limit int) ([]
 			seen[strings.ToLower(fullName)] = struct{}{}
 			repos = append(repos, fullName)
 			if len(repos) >= limit {
-				slices.Sort(repos)
-				return repos[:limit], nil
+				return true
 			}
 		}
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		authOpts.Page = resp.NextPage
+		return false
+	}
+	authOpts := &googlegithub.RepositoryListByAuthenticatedUserOptions{
+		Affiliation: "owner,collaborator",
+		Visibility:  "all",
+		PerPage:     min(limit, 100),
+	}
+	if _, err := pagedRepos(func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
+		return readGitHub(ctx, "list accessible repositories", func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
+			return c.api.Repositories.ListByAuthenticatedUser(ctx, authOpts)
+		})
+	}, func(next int) { authOpts.Page = next }, add); err != nil {
+		// Either listing may be refused for the other kind of token; the
+		// public repositories still count.
+		installOpts := &googlegithub.ListOptions{PerPage: min(limit, 100)}
+		_, _ = pagedRepos(func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
+			return readGitHub(ctx, "list installation repositories", func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
+				list, resp, err := c.api.Apps.ListRepos(ctx, installOpts)
+				if list == nil {
+					return nil, resp, err
+				}
+				return list.Repositories, resp, err
+			})
+		}, func(next int) { installOpts.Page = next }, add)
 	}
 
 	slices.Sort(repos)
@@ -474,6 +485,24 @@ func (c *Client) listUserRepos(ctx context.Context, owner string, limit int) ([]
 		repos = repos[:limit]
 	}
 	return repos, nil
+}
+
+// pagedRepos passes each page to add until add reports the limit is reached
+// or the pages end. It reports whether add reached the limit.
+func pagedRepos(fetch func() ([]*googlegithub.Repository, *googlegithub.Response, error), setPage func(int), add func([]*googlegithub.Repository) bool) (bool, error) {
+	for {
+		page, resp, err := fetch()
+		if err != nil {
+			return false, err
+		}
+		if add(page) {
+			return true, nil
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return false, nil
+		}
+		setPage(resp.NextPage)
+	}
 }
 
 func (c *Client) collectRepos(ctx context.Context, limit int, fetch func() ([]*googlegithub.Repository, *googlegithub.Response, error), setPage func(int)) ([]string, error) {

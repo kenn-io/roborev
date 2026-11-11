@@ -503,6 +503,10 @@ Patterns use Go's `path.Match` syntax (`*` matches any sequence of characters,
 case-insensitive.
 
 Wildcard expansion calls the GitHub API and caches results for one hour.
+For an organization, it lists every repository the token can reach. For a
+personal account, it lists the public repositories plus the private ones the
+token can reach: with a GitHub App, the repositories the app is installed on;
+with a user token, those the user owns or collaborates on.
 Archived repos and repos with pull requests explicitly disabled are excluded.
 Repos remain eligible when the API omits the pull-request setting. If you enable
 pull requests later, the next discovery refresh includes the repo again.
