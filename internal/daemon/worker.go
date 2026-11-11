@@ -59,6 +59,7 @@ type WorkerPool struct {
 	activityLog          *ActivityLog
 	budgetRouter         *BudgetRouter
 	captureSetupFinished func()
+	readKataContext      prompt.KataContextReader
 
 	// workersMu guards numWorkers, liveWorkers, claimCancels, started, and
 	// stopped so a resize never adds to wg after Stop has begun waiting on it.
@@ -795,6 +796,9 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 		builder = builder.WithKataClient(
 			kata.NewFromConfig(checkout.resolvedConfigRepoPath(), cfg),
 		)
+		if cfg.Integrations.Kata.Enabled && !job.UsesStoredPrompt() && wp.readKataContext != nil {
+			builder = builder.WithKataReplies(prompt.NewKataContextCache(wp.readKataContext))
+		}
 	}
 	return builder
 }

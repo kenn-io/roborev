@@ -103,7 +103,7 @@ export const kataListIssues = async (
   });
 };
 
-export const getKataPublicationUrl = (params: KataPublicationParams) => {
+export const getKataPublicationUrl = (params?: KataPublicationParams) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -123,7 +123,7 @@ export const getKataPublicationUrl = (params: KataPublicationParams) => {
  * @summary Inspect finding publication
  */
 export const kataPublication = async (
-  params: KataPublicationParams,
+  params?: KataPublicationParams,
   options?: RequestInit,
 ): Promise<KataPublicationBody> => {
   return roborevFetch<KataPublicationBody>(getKataPublicationUrl(params), {

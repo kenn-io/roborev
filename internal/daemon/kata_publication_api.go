@@ -15,8 +15,27 @@ import (
 	gen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 )
+
+func (s *Server) readKataPromptContext(ctx context.Context, review *storage.Review) (any, error) {
+	if !s.configWatcher.Config().Integrations.Kata.Enabled {
+		return nil, nil
+	}
+	out, err := s.humaKataPublication(ctx, &KataPublicationInput{JobID: review.JobID})
+	if err != nil {
+		var status huma.StatusError
+		if errors.As(err, &status) && (status.GetStatus() == http.StatusUnauthorized || status.GetStatus() == http.StatusForbidden || status.GetStatus() == http.StatusRequestTimeout || status.GetStatus() == http.StatusGatewayTimeout) {
+			return nil, fmt.Errorf("%w: %w", prompt.ErrKataContextFatal, err)
+		}
+		return nil, err
+	}
+	if out.Body.State == "missing" {
+		return nil, nil
+	}
+	return out.Body, nil
+}
 
 type KataComment struct {
 	UID         string     `json:"uid"`

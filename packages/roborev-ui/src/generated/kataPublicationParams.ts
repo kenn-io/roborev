@@ -3,8 +3,8 @@
  */
 
 export type KataPublicationParams = {
-  /**
-   * @minimum 1
-   */
-  job_id: number;
+  job_id?: number;
+  review_uuid?: string;
+  issue?: string;
+  project?: string;
 };

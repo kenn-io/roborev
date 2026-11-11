@@ -123,6 +123,7 @@ export * from "./kataIssuesOutputBody";
 export * from "./kataLinkPeer";
 export * from "./kataListIssuesParams";
 export * from "./kataPublicationBody";
+export * from "./kataPublicationBodySourceDocument";
 export * from "./kataPublicationParams";
 export * from "./kataPublicationRequest";
 export * from "./kataReplyReceipt";

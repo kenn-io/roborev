@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -503,4 +504,110 @@ func TestUnplannedFixCompletePromptTransport(t *testing.T) {
 			assert.Empty(t, repo.Run("status", "--porcelain"))
 		})
 	}
+}
+
+func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		batch, plan, only bool
+	}{
+		{"single", false, false, false}, {"single planned", false, true, false}, {"single plan only", false, true, true},
+		{"batch", true, false, false}, {"batch planned", true, true, false}, {"batch plan only", true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
+			require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte("max_prompt_size = 1000\n"), 0o600))
+			repo.Run("add", ".roborev.toml")
+			repo.Run("commit", "-m", "Set prompt transport threshold")
+			id := uuid.New()
+			evidence := strings.Repeat("conflicting attributed evidence ", 200)
+			reads := 0
+			ts, state := newMockServer(t, MockServerOpts{
+				OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
+				},
+				OnReview: func(w http.ResponseWriter, _ *http.Request) {
+					writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: "High: original finding", VerdictBool: new(0)})
+				},
+				OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
+					writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
+				},
+				OnKataPublication: func(w http.ResponseWriter, _ *http.Request) {
+					reads++
+					writeJSON(w, map[string]any{"state": "partial", "review_uuid": id.String(), "document_hash": "hash", "roots": []any{}, "comments": []any{map[string]any{"uid": "reply", "author": "reviewer", "body": evidence}}})
+				},
+			})
+			patchServerAddr(t, ts.URL)
+			calls := 0
+			var paths []string
+			a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
+				calls++
+				if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
+					quoted, _, _ := strings.Cut(rest, " and carry out")
+					path, err := strconv.Unquote(quoted)
+					require.NoError(t, err)
+					paths = append(paths, path)
+					data, err := os.ReadFile(path)
+					require.NoError(t, err)
+					p = string(data)
+				}
+				assert.Contains(t, p, "High: original finding")
+				assert.Contains(t, p, evidence)
+				assert.Contains(t, p, "reviewer")
+				assert.Contains(t, p, "untrusted-kata-discussion")
+				return "Check the finding", nil
+			}}
+			cmd, _ := newTestCmd(t)
+			tracker := &fixSessionTracker{base: a, out: io.Discard}
+			opts := fixOptions{plan: tc.plan, planOnly: tc.only, quiet: true}
+			if tc.batch {
+				err := processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{7}, 0, opts, tracker)
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, fixSingleJob(cmd, repo.Dir, 7, opts, tracker))
+			}
+			assert.Equal(t, 1, reads)
+			if tc.plan && !tc.only {
+				assert.Equal(t, 2, calls)
+			} else {
+				assert.Equal(t, 1, calls)
+			}
+			if tc.only {
+				assert.Zero(t, state.Closes())
+			}
+			for _, path := range paths {
+				_, err := os.Stat(path)
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+		})
+	}
+}
+
+func TestFixKataAuthenticationStopsBeforeAgent(t *testing.T) {
+	repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
+	id := uuid.New()
+	ts, state := newMockServer(t, MockServerOpts{
+		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview}}})
+		},
+		OnReview: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: "High: original finding", VerdictBool: new(0)})
+		},
+		OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
+		},
+		OnKataPublication: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"status":401,"detail":"authentication required"}`)
+		},
+	})
+	patchServerAddr(t, ts.URL)
+	calls := 0
+	a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) { calls++; return "", nil }}
+	cmd, _ := newTestCmd(t)
+	err := fixSingleJob(cmd, repo.Dir, 7, fixOptions{plan: true}, &fixSessionTracker{base: a, out: io.Discard})
+	require.Error(t, err)
+	assert.Zero(t, calls)
+	assert.Zero(t, state.Closes())
 }

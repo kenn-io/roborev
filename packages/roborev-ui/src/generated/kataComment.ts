@@ -7,8 +7,11 @@ export interface KataComment {
   body: string;
   edited_at?: string;
   handle?: string;
+  history?: string;
+  lineage?: string;
   reply_kind?: string;
   reply_to_uid?: string;
+  root_uid?: string;
   teammate?: string;
   uid: string;
 }

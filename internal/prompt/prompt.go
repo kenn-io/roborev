@@ -91,6 +91,7 @@ type Builder struct {
 	planSkillRoot  string
 	repoID         int64
 	kataClient     kata.Client
+	kataReplies    *KataContextCache
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
@@ -189,6 +190,13 @@ func (b *Builder) WithPullRequest(pr PullRequest) *Builder {
 func (b *Builder) WithKataClient(client kata.Client) *Builder {
 	next := *b
 	next.kataClient = client
+	return &next
+}
+
+// WithKataReplies shares one invocation cache through builder copies.
+func (b *Builder) WithKataReplies(cache *KataContextCache) *Builder {
+	next := *b
+	next.kataReplies = cache
 	return &next
 }
 
@@ -297,7 +305,9 @@ func (b *Builder) BuildWithSnapshotTarget(
 	}()
 
 	var priorReviewsFile string
-	if reviews := b.priorRangeReviewsForRef(gitRef, contextCount); len(reviews) > 0 {
+	if reviews, readErr := b.decoratePriorRange(b.priorRangeReviewsForRef(gitRef, contextCount)); readErr != nil {
+		return result, readErr
+	} else if len(reviews) > 0 {
 		priorReviewsFile, result.Cleanup, err = b.writePriorRangeReviewsSnapshot(reviews, target)
 		if err != nil {
 			return result, err
@@ -663,8 +673,14 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 	// Get previous reviews for context (use HEAD as reference point)
 	if contextCount > 0 && b.db != nil {
 		headSHA, err := gitrepo.Resolve(b.context(), b.repoPath, "HEAD")
+		if b.context().Err() != nil {
+			return "", fmt.Errorf("%w: %w", ErrKataContextFatal, b.context().Err())
+		}
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(headSHA, contextCount)
+			if errors.Is(err, ErrKataContextFatal) {
+				return "", err
+			}
 			if err == nil && len(contexts) > 0 {
 				ctx.optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 			}
@@ -949,13 +965,20 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
 		contexts, err := b.getPreviousReviewContexts(sha, contextCount)
+		if errors.Is(err, ErrKataContextFatal) {
+			return "", err
+		}
 		if err == nil && len(contexts) > 0 {
 			ctx.optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 		}
 	}
 
 	// Include previous review attempts for this same commit (for re-reviews)
-	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
+	attempts, err := b.previousAttemptContexts(sha)
+	if err != nil {
+		return "", err
+	}
+	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(attempts)
 	if files, err := git.DiffPathsCtx(b.context(), b.repoPath, sha, nil); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
 		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, sha, files)
@@ -1011,9 +1034,15 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
 		startSHA, err := git.GetRangeStartCtx(b.context(), b.repoPath, rangeRef)
+		if b.context().Err() != nil {
+			return "", fmt.Errorf("%w: %w", ErrKataContextFatal, b.context().Err())
+		}
 		if err == nil {
 			rangeStart = startSHA
 			contexts, err := b.getPreviousReviewContexts(startSHA, contextCount)
+			if errors.Is(err, ErrKataContextFatal) {
+				return "", err
+			}
 			if err == nil && len(contexts) > 0 {
 				ctx.optional.PreviousReviews = orderedPreviousReviewViews(contexts)
 			}
@@ -1021,7 +1050,11 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	}
 
 	// Include previous review attempts for this same range (for re-reviews)
-	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(rangeRef))
+	attempts, err := b.previousAttemptContexts(rangeRef)
+	if err != nil {
+		return "", err
+	}
+	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(attempts)
 
 	// Get commits in range
 	commits, err := git.GetRangeCommitsCtx(b.context(), b.repoPath, rangeRef)
@@ -1042,7 +1075,11 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 
 	// Include per-commit reviews for commits inside the range so the agent
 	// can avoid re-raising issues that were already surfaced.
-	ctx.optional.InRangeReviews = inRangeReviewViews(b.lookupReviewContexts(commits, true))
+	inRange, err := b.lookupReviewContexts(commits, true)
+	if err != nil {
+		return "", err
+	}
+	ctx.optional.InRangeReviews = inRangeReviewViews(inRange)
 
 	entries := make([]commitRangeEntryView, 0, len(commits))
 	var kataMessages []string
@@ -1357,18 +1394,35 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 	return withReviewMD(fs, readReviewMD)
 }
 
-func (b *Builder) previousAttemptContexts(gitRef string) []reviewAttemptContext {
+func (b *Builder) previousAttemptContexts(gitRef string) ([]reviewAttemptContext, error) {
 	if b.db == nil {
-		return nil
+		return nil, nil
 	}
 
 	reviews, err := b.db.GetAllReviewsForGitRef(gitRef)
+	if b.context().Err() != nil {
+		return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, b.context().Err())
+	}
 	if err != nil || len(reviews) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	attempts := make([]reviewAttemptContext, 0, len(reviews))
 	for _, review := range reviews {
+		if b.kataReplies != nil {
+			full, readErr := b.db.GetReviewByJobIDContext(b.context(), review.JobID)
+			if readErr != nil && b.context().Err() != nil {
+				return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, b.context().Err())
+			}
+			if readErr == nil {
+				review = *full
+				decorated, readErr := b.kataReplies.Decorate(b.context(), &review)
+				if readErr != nil {
+					return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, readErr)
+				}
+				review = *decorated
+			}
+		}
 		attempt := reviewAttemptContext{Review: review}
 		if review.JobID > 0 {
 			responses, err := b.db.GetCommentsForJob(review.JobID)
@@ -1378,7 +1432,7 @@ func (b *Builder) previousAttemptContexts(gitRef string) []reviewAttemptContext 
 		}
 		attempts = append(attempts, attempt)
 	}
-	return attempts
+	return attempts, nil
 }
 
 // getPreviousReviewContexts gets the N commits before the target and looks up their reviews and responses
@@ -1386,27 +1440,40 @@ func (b *Builder) getPreviousReviewContexts(sha string, count int) ([]Historical
 	// Get parent commits from git
 	parentSHAs, err := git.GetParentCommitsCtx(b.context(), b.repoPath, sha, count)
 	if err != nil {
+		if b.context().Err() != nil {
+			return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, b.context().Err())
+		}
 		return nil, fmt.Errorf("get parent commits: %w", err)
 	}
-	return b.lookupReviewContexts(parentSHAs, false), nil
+	return b.lookupReviewContexts(parentSHAs, false)
 }
 
 // lookupReviewContexts looks up reviews and responses for each SHA.
 // When skipMissing is true, SHAs with no stored review are omitted from the
 // result; otherwise a placeholder context (Review nil) is returned for them.
-func (b *Builder) lookupReviewContexts(shas []string, skipMissing bool) []HistoricalReviewContext {
+func (b *Builder) lookupReviewContexts(shas []string, skipMissing bool) ([]HistoricalReviewContext, error) {
 	if b.db == nil {
-		return nil
+		return nil, nil
 	}
 	var contexts []HistoricalReviewContext
 	for _, sha := range shas {
+		if b.context().Err() != nil {
+			return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, b.context().Err())
+		}
 		review, err := b.db.GetReviewByCommitSHA(sha)
 		if err != nil {
+			if b.context().Err() != nil {
+				return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, b.context().Err())
+			}
 			if skipMissing {
 				continue
 			}
 			contexts = append(contexts, HistoricalReviewContext{SHA: sha})
 			continue
+		}
+		review, err = b.kataReplies.Decorate(b.context(), review)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, err)
 		}
 		ctx := HistoricalReviewContext{SHA: sha, Review: review}
 		if review.JobID > 0 {
@@ -1416,7 +1483,7 @@ func (b *Builder) lookupReviewContexts(shas []string, skipMissing bool) []Histor
 		}
 		contexts = append(contexts, ctx)
 	}
-	return contexts
+	return contexts, nil
 }
 
 // BuildSimple constructs a simpler prompt without database context

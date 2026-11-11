@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	katagen "go.kenn.io/kata/pkg/client/generated"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katafake"
@@ -753,5 +756,93 @@ func TestKataContextCancellationClassification(t *testing.T) {
 		var status huma.StatusError
 		require.ErrorAs(t, kataReadError(tc.err), &status)
 		assert.Equal(t, tc.status, status.GetStatus())
+	}
+}
+
+func TestKataEvidenceStoredForWorkerPlanAndImplementation(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("max_prompt_size = 1000\n"), 0o600))
+	job := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), "parent-worker")
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "original finding", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{Output: "High: original finding", StructuredOutput: raw, Verdict: storage.VerdictFail}))
+	review, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	issue := fake.AddIssue(7, "stored", "findings", "body")
+	issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": record.ReviewUUID.String(), "roborev.document_hash": record.DocumentHash, "roborev.policy": "summary", "roborev.completed_at": review.CreatedAt.UTC().Format(time.RFC3339Nano), "roborev.finding_count": 1}
+	evidence := strings.Repeat("conflicting current evidence ", 400)
+	issue.Comments = []katagen.CommentOut{{UID: "orphan", IssueID: issue.Out.ID, Body: evidence, Author: "reviewer", ReplyToUID: new("missing")}}
+	name := "worker-stored-kata-context"
+	calls := 0
+	var snapshots []string
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, path, _, p string, _ io.Writer) (string, error) {
+		calls++
+		if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
+			quoted, _, _ := strings.Cut(rest, " and carry out")
+			file, err := strconv.Unquote(quoted)
+			require.NoError(t, err)
+			snapshots = append(snapshots, file)
+			data, err := os.ReadFile(file)
+			require.NoError(t, err)
+			p = string(data)
+		}
+		assert.Contains(t, p, "original finding")
+		assert.Contains(t, p, evidence)
+		assert.Contains(t, p, "reviewer")
+		if calls == 1 {
+			return "Fix the finding", nil
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(path, "fixed.txt"), []byte("fixed"), 0o600))
+		return "Fixed", nil
+	}})
+	cfg := kataConnectionConfig(fake)
+	cfg.FixAgent = name
+	server := newServerWithLogs(tc.DB, cfg, "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = server.Close() })
+	w := kataPost(t, server, "/api/job/fix", FixJobRequest{ParentJobID: job.ID, PlanFirst: true})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	queued := decodeKata[storage.ReviewJob](t, w)
+	reads := len(fake.AllRequests())
+	require.Positive(t, reads)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, queued.ID, claimed.ID)
+	server.workerPool.processJob(testWorkerID, claimed)
+	assert.Equal(t, 2, calls)
+	assert.Len(t, fake.AllRequests(), reads, "stored prompt execution must not re-read Kata")
+	for _, file := range snapshots {
+		_, err := os.Stat(file)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+}
+
+func TestKataFixEnqueueSkipsDisabledAndCIParents(t *testing.T) {
+	for _, mode := range []string{"disabled", "ci-source", "ci-base"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := setupFixJobFixture(t, "synthetic-repo", "synthetic-ref")
+			fake := katafake.New(t)
+			enableKataConnection(fixture.server, fake)
+			doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+			raw, err := json.Marshal(doc)
+			require.NoError(t, err)
+			_, err = fixture.db.ExecContext(t.Context(), "UPDATE reviews SET structured_output = ? WHERE job_id = ?", string(raw), fixture.reviewJob.ID)
+			require.NoError(t, err)
+			switch mode {
+			case "disabled":
+				fixture.server.configWatcher.Config().Integrations.Kata.Enabled = false
+			case "ci-source":
+				_, err = fixture.db.ExecContext(t.Context(), "UPDATE review_jobs SET source = ? WHERE id = ?", storage.JobSourceCI, fixture.reviewJob.ID)
+			case "ci-base":
+				_, err = fixture.db.ExecContext(t.Context(), "UPDATE review_jobs SET ci_base_branch = ? WHERE id = ?", "main", fixture.reviewJob.ID)
+			}
+			require.NoError(t, err)
+			w := kataPost(t, fixture.server, "/api/job/fix", FixJobRequest{ParentJobID: fixture.reviewJob.ID, PlanFirst: true})
+			require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+			assert.Empty(t, fake.AllRequests())
+		})
 	}
 }

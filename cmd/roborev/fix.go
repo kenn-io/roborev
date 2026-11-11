@@ -1160,6 +1160,11 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	if err != nil {
 		return fmt.Errorf("resolve fix commit metadata: %w", err)
 	}
+	review.Job = job
+	review, err = newKataPromptCache().Decorate(ctx, review)
+	if err != nil {
+		return fmt.Errorf("read Kata discussion: %w", err)
+	}
 
 	// Resolve the agent only after every check above that can return
 	// without invoking it. This keeps no-op paths (verdict P, bad
@@ -1483,6 +1488,14 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 	cfg, err := loadClientConfig()
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", config.GlobalConfigPath(), err)
+	}
+	cache := newKataPromptCache()
+	for i := range entries {
+		entries[i].review.Job = entries[i].job
+		entries[i].review, err = cache.Decorate(ctx, entries[i].review)
+		if err != nil {
+			return fmt.Errorf("read Kata discussion: %w", err)
+		}
 	}
 	metadata, err := config.ResolveFixCommitMetadata(roots.worktreeRoot, cfg)
 	if err != nil {

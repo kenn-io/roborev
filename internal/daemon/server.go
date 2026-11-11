@@ -239,6 +239,7 @@ func newServerWithLogs(
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
+	s.workerPool.readKataContext = s.readKataPromptContext
 	configWatcher.OnReload(func(cfg *config.Config) {
 		s.workerPool.SetMaxWorkers(cfg.MaxWorkers)
 	})
@@ -3842,6 +3843,18 @@ func (s *Server) humaFixJob(
 				http.StatusBadRequest,
 				ErrorResponse{Error: "parent job has no review to fix"},
 			)
+		}
+		if !parentJob.IsCIReview() && parentJob.IsReadableReview() && !parentJob.IsGoalReviewJob() && s.configWatcher.Config().Integrations.Kata.Enabled {
+			review.Job = parentJob
+			cache := prompt.NewKataContextCache(s.readKataPromptContext)
+			review, err = cache.Decorate(ctx, review)
+			if err != nil {
+				var status huma.StatusError
+				if errors.As(err, &status) {
+					return nil, status
+				}
+				return nil, kataReadError(err)
+			}
 		}
 
 		commitID, fallbackSHA := parentJob.LegacyCommentLookupTarget()

@@ -76,9 +76,6 @@ func kataCmd() *cobra.Command {
 				fmt.Fprint(out, " (expired)")
 			}
 			fmt.Fprintln(out)
-			if response.Project != nil {
-				fmt.Fprintf(out, "Project: %s\n", *response.Project)
-			}
 			if response.IssueUID != nil {
 				fmt.Fprintf(out, "Issue: %s (%s)\n", deref(response.IssueShortID), deref(response.IssueUID))
 			}

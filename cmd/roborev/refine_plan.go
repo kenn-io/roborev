@@ -183,6 +183,10 @@ func planRefineReviewAtTarget(
 	review *storage.Review,
 	comments []storage.Response,
 ) (err error) {
+	review, err = newKataPromptCache().Decorate(ctx, review)
+	if err != nil {
+		return fmt.Errorf("read Kata discussion: %w", err)
+	}
 	planningRepoPath := repoPath
 	if opts.allBranches {
 		worktree, createErr := gitworktree.Create(ctx, repoPath, target, gitworktree.Options{

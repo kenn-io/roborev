@@ -17,6 +17,7 @@ import (
 const PriorRangeReviewsFilePathPlaceholder = "/tmp/roborev prior range reviews placeholder"
 
 type priorRangeReview struct {
+	Source   *storage.Review           `xml:"-"`
 	Range    string                    `xml:"range,attr"`
 	Agent    string                    `xml:"agent,attr"`
 	When     string                    `xml:"created-at,attr"`
@@ -66,7 +67,10 @@ func (b *Builder) PreparePriorRangeReviewsSnapshot(reviewPrompt, rangeRef string
 	if !strings.Contains(reviewPrompt, PriorRangeReviewsFilePathPlaceholder) {
 		return SnapshotResult{Prompt: reviewPrompt}, nil
 	}
-	reviews := b.priorRangeReviewsForRef(rangeRef, limit)
+	reviews, err := b.decoratePriorRange(b.priorRangeReviewsForRef(rangeRef, limit))
+	if err != nil {
+		return SnapshotResult{}, err
+	}
 	path, cleanup, err := b.writePriorRangeReviewsSnapshot(reviews, target)
 	if err != nil {
 		return SnapshotResult{}, err
@@ -148,6 +152,7 @@ func (b *Builder) priorRangeReviewViews(
 				continue
 			}
 			view := priorRangeReview{
+				Source: review,
 				Range:  gitrepo.ShortSHA(resolvedStart) + ".." + gitrepo.ShortSHA(resolvedEnd),
 				Agent:  review.Agent,
 				When:   review.CreatedAt.Format("2006-01-02 15:04"),
@@ -174,4 +179,20 @@ func (b *Builder) priorRangeReviewViews(
 		views = append(views, candidate.view)
 	}
 	return views
+}
+
+func (b *Builder) decoratePriorRange(reviews []priorRangeReview) ([]priorRangeReview, error) {
+	if err := b.context().Err(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, err)
+	}
+	for i := range reviews {
+		review, err := b.kataReplies.Decorate(b.context(), reviews[i].Source)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrKataContextFatal, err)
+		}
+		if review != nil {
+			reviews[i].Output = review.Output
+		}
+	}
+	return reviews, nil
 }
