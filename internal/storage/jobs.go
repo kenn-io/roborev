@@ -2624,10 +2624,12 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, 
 
 // UpdateJobBranch sets the branch field for a job that doesn't have one.
 // This is used to backfill the branch when it's derived from git.
-// Only updates if the current branch is NULL or empty.
-// Returns the number of rows affected (0 if branch was already set or job not found, 1 if updated).
+// Only updates missing branches. An empty insights branch is the all-branches scope.
+// Returns the number of rows affected.
 func (db *DB) UpdateJobBranch(jobID int64, branch string) (int64, error) {
-	result, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ? AND (branch IS NULL OR branch = '')`, branch, jobID)
+	result, err := db.Exec(`UPDATE review_jobs SET branch = ?
+		WHERE id = ? AND (branch IS NULL OR branch = '') AND COALESCE(job_type, '') != ?`,
+		branch, jobID, JobTypeInsights)
 	if err != nil {
 		return 0, err
 	}

@@ -110,26 +110,46 @@ func (s *Server) fetchInsightsReviews(
 }
 
 // This runs before the new insights job is enqueued, so there is no current
-// analysis ID to exclude. Exact branch equality is required even for "" (all).
+// analysis ID to exclude.
 func (s *Server) fetchPriorInsights(ctx context.Context, repoRoot, branch string, asOf time.Time) (*prompt.InsightsPrior, error) {
+	repoPath := filepath.ToSlash(repoRoot)
 	options := []storage.ListJobsOption{storage.WithoutPrompt(), storage.WithJobType(storage.JobTypeInsights)}
 	if branch == "" {
 		options = append(options, storage.WithEmptyBranch())
 	} else {
 		options = append(options, storage.WithBranch(branch))
 	}
-	jobs, err := s.db.ListJobs(string(storage.JobStatusDone), filepath.ToSlash(repoRoot), 0, 0, options...)
+	jobs, err := s.db.ListJobs(string(storage.JobStatusDone), repoPath, 0, 0, options...)
 	if err != nil {
 		return nil, fmt.Errorf("list prior insights: %w", err)
 	}
-	var latest *storage.ReviewJob
+	var latest, job *storage.ReviewJob
+	var baseline *storage.FindingStats
 	for i := range jobs {
 		j := &jobs[i]
-		if j.JobType != storage.JobTypeInsights || j.Branch != branch || j.FinishedAt == nil || !j.FinishedAt.Before(asOf) {
+		if j.FinishedAt == nil || !j.FinishedAt.Before(asOf) || (latest != nil && compareInsightsCompletion(j, latest) <= 0) {
 			continue
 		}
-		if latest == nil || compareInsightsCompletion(j, latest) > 0 {
-			latest = j
+		if j.Branch != "(none)" {
+			latest, job, baseline = j, nil, nil
+			continue
+		}
+
+		// Older TUIs backfilled empty scope with "(none)", which is also a
+		// valid branch name. The stored prompt records the scope used to run.
+		candidate, err := s.db.GetJobByIDContext(ctx, j.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get prior insights prompt: %w", err)
+		}
+		if candidate.Status != storage.JobStatusDone || candidate.FinishedAt == nil || !candidate.FinishedAt.Equal(*j.FinishedAt) {
+			continue
+		}
+		scope := prompt.RecoverInsightsBaseline(candidate.Prompt)
+		if scope != nil && scope.RepoPath == repoPath && scope.Branch == branch {
+			latest, job, baseline = j, candidate, scope
 		}
 	}
 	if latest == nil {
@@ -145,21 +165,23 @@ func (s *Server) fetchPriorInsights(ctx context.Context, repoRoot, branch string
 	if review.Job == nil || review.Job.Status != storage.JobStatusDone || review.Job.FinishedAt == nil || !review.Job.FinishedAt.Before(asOf) || !review.Job.FinishedAt.Equal(*latest.FinishedAt) {
 		return nil, nil
 	}
-	job, err := s.db.GetJobByIDContext(ctx, latest.ID)
-	if err != nil {
-		return nil, fmt.Errorf("get prior insights prompt: %w", err)
+	if job == nil {
+		job, err = s.db.GetJobByIDContext(ctx, latest.ID)
+		if err != nil {
+			return nil, fmt.Errorf("get prior insights prompt: %w", err)
+		}
+		baseline = prompt.RecoverInsightsBaseline(job.Prompt)
 	}
 	if job.Status != storage.JobStatusDone || job.FinishedAt == nil || !job.FinishedAt.Equal(*review.Job.FinishedAt) {
 		return nil, nil
 	}
-	baseline := prompt.RecoverInsightsBaseline(job.Prompt)
 	if baseline != nil {
 		baselineAsOf := baseline.AsOf
 		if !strings.ContainsAny(job.FinishedAtRaw, ".,") {
 			// Older completions stored whole seconds, losing the fractional part.
 			baselineAsOf = baselineAsOf.Truncate(time.Second)
 		}
-		if baseline.RepoPath != filepath.ToSlash(repoRoot) || baseline.Branch != branch || baselineAsOf.After(*job.FinishedAt) {
+		if baseline.RepoPath != repoPath || baseline.Branch != branch || baselineAsOf.After(*job.FinishedAt) {
 			baseline = nil
 		}
 	}

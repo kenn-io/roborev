@@ -447,6 +447,39 @@ func TestPriorInsightsCompletionAndScope(t *testing.T) {
 	require.NotNil(t, mainPrior)
 	assert.Equal(t, "EXACT MAIN", mainPrior.Suggestions)
 
+	// The endpoint used by the TUI must preserve an empty insights scope.
+	backfill := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(backfill, testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/update-branch",
+		UpdateJobBranchRequest{JobID: latest.ID, Branch: "(none)"}))
+	require.Equal(t, http.StatusOK, backfill.Code, backfill.Body.String())
+	var update UpdateJobBranchOutput
+	testutil.DecodeJSON(t, backfill, &update.Body)
+	assert.False(t, update.Body.Updated)
+
+	// Simulate the value older TUIs persisted before the endpoint protected it.
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET branch='(none)' WHERE id=?`, latest.ID)
+	require.NoError(t, err)
+	allBaseline := &storage.FindingStats{Since: asOf.Add(-48 * time.Hour), AsOf: asOf.Add(-24 * time.Hour), RepoPath: repo.RootPath, TimeBasis: "finished_at", LogicalReviews: 7}
+	require.NoError(t, db.SaveJobPrompt(latest.ID, prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: allBaseline})))
+	literal := makePrior("(none)", "LITERAL BRANCH", asOf.Add(-time.Minute))
+	literalBaseline := *allBaseline
+	literalBaseline.Branch = "(none)"
+	require.NoError(t, db.SaveJobPrompt(literal.ID, prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: &literalBaseline})))
+	makePrior("(none)", "UNKNOWN SCOPE", asOf.Add(-time.Second))
+
+	prior, err = server.fetchPriorInsights(t.Context(), repo.RootPath, "", asOf)
+	require.NoError(t, err)
+	require.NotNil(t, prior)
+	assert.Equal(t, latest.ID, prior.JobID)
+	assert.Equal(t, "ALL BRANCHES", prior.Suggestions)
+	require.NotNil(t, prior.Baseline)
+	assert.Equal(t, 7, prior.Baseline.LogicalReviews)
+	literalPrior, err := server.fetchPriorInsights(t.Context(), repo.RootPath, "(none)", asOf)
+	require.NoError(t, err)
+	require.NotNil(t, literalPrior)
+	assert.Equal(t, literal.ID, literalPrior.JobID)
+	assert.Equal(t, "LITERAL BRANCH", literalPrior.Suggestions)
+
 	// Baselines are recovered only from complete, scope-matching stored context.
 	baseline := &storage.FindingStats{Since: asOf.Add(-48 * time.Hour), AsOf: asOf.Add(-24 * time.Hour), RepoPath: repo.RootPath, Branch: "main", TimeBasis: "finished_at", LogicalReviews: 7}
 	baselinePrompt := prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: baseline})
