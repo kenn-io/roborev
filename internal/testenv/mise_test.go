@@ -13,6 +13,55 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGitIsolationPreservesMiseToolSelection(t *testing.T) {
+	mise, err := exec.LookPath("mise")
+	if err != nil {
+		t.Skip("requires mise")
+	}
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	work := filepath.Join(root, "work")
+	data := filepath.Join(root, "data")
+	for _, dir := range []string{home, work} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	goName := "go"
+	if runtime.GOOS == "windows" {
+		goName += ".exe"
+	}
+	for _, version := range []string{"1.27.1", "1.27.3"} {
+		dir := filepath.Join(data, "installs", "go", version, "bin")
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, goName), nil, 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(home, "mise.toml"), []byte("[tools]\ngo = \"1.27.1\"\n"), 0o600))
+	systemConfig := filepath.Join(root, "system.toml")
+	require.NoError(t, os.WriteFile(systemConfig, []byte("[tools]\ngo = \"1.27.3\"\n"), 0o600))
+	for key, value := range map[string]string{
+		"HOME": home, "USERPROFILE": home, "MISE_GLOBAL_CONFIG_FILE": "~/mise.toml",
+		"MISE_SYSTEM_CONFIG_FILE": systemConfig, "MISE_DATA_DIR": data,
+		"MISE_CONFIG_DIR": filepath.Join(root, "config"), "MISE_CACHE_DIR": filepath.Join(root, "cache"),
+		"MISE_STATE_DIR": filepath.Join(root, "state"), "MISE_TRUSTED_CONFIG_PATHS": root, "MISE_OFFLINE": "1", "MISE_AUTO_INSTALL": "0",
+	} {
+		t.Setenv(key, value)
+	}
+	originalUserEnv := userEnv
+	t.Cleanup(func() { userEnv = originalUserEnv })
+	selected := func(env []string) string {
+		cmd := exec.CommandContext(t.Context(), mise, "which", "go")
+		cmd.Dir = work
+		cmd.Env = env
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return filepath.Clean(strings.TrimSpace(string(output)))
+	}
+	want := filepath.Join(data, "installs", "go", "1.27.1", "bin", goName)
+	assert.Equal(t, want, selected(nil))
+	configureGitForTests(t.TempDir())
+	assert.Equal(t, filepath.Join(data, "installs", "go", "1.27.3", "bin", goName), selected(nil))
+	assert.Equal(t, want, selected(UserEnv()))
+}
+
 func TestGitIsolationPreservesMiseDirectories(t *testing.T) {
 	mise, err := exec.LookPath("mise")
 	if err != nil {
