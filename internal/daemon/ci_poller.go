@@ -889,7 +889,10 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 
 	// Append one whole-range design member when auto-design warrants it and
 	// no member already covers the design review type (F8, F12).
-	members = p.maybeAppendDesignMember(ctx, members, repo, repoCfg, cfg, mergeBase, pr.HeadRefOid)
+	members, err = p.maybeAppendDesignMember(ctx, members, repo, repoCfg, cfg, mergeBase, pr.HeadRefOid)
+	if err != nil {
+		return false, err
+	}
 
 	memberOpts, synthOpts, err := p.buildPanelOpts(
 		ctx,
@@ -1635,23 +1638,23 @@ func (p *CIPoller) maybeAppendDesignMember(
 	ctx context.Context, members []config.ResolvedMember,
 	repo *storage.Repo, repoCfg *config.RepoConfig, cfg *config.Config,
 	mergeBase, headSHA string,
-) []config.ResolvedMember {
+) ([]config.ResolvedMember, error) {
 	// Only a voting design member provides design coverage; a non-voting
 	// design trial is dropped before synthesis and must not suppress the
 	// automatic design review.
 	for _, m := range members {
 		if m.ReviewType == config.ReviewTypeDesign && !m.NonVoting {
-			return members
+			return members, nil
 		}
 	}
 	if !config.AutoDesignEnabledFromConfig(repoCfg, cfg) {
-		return members
+		return members, nil
 	}
 
 	h := config.AutoDesignHeuristicsFromConfig(repoCfg, cfg)
 	if err := h.Validate(); err != nil {
 		log.Printf("CI poller: invalid auto-design heuristics for %s, skipping design member: %v", repo.RootPath, err)
-		return members
+		return members, nil
 	}
 	hh := autotype.Heuristics(h)
 
@@ -1663,6 +1666,10 @@ func (p *CIPoller) maybeAppendDesignMember(
 	for _, sha := range shas {
 		if !p.commitWarrantsDesign(ctx, repo.RootPath, sha, hh) {
 			continue
+		}
+		settings, err := config.ResolveReviewSettings(config.ReviewTypeDesign, nil, repoCfg, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("resolve automatic design review settings: %w", err)
 		}
 		reasoning := ciReasoning(repoCfg, cfg)
 		designAgent, designModel := resolveCIAutoDesignAgent(repoCfg, cfg)
@@ -1679,17 +1686,18 @@ func (p *CIPoller) maybeAppendDesignMember(
 			)
 		}
 		return append(members, config.ResolvedMember{
-			Name:        "design",
-			Index:       len(members),
-			Agent:       designAgent,
-			Model:       designModel,
-			ReviewType:  config.ReviewTypeDesign,
-			Reasoning:   reasoning,
-			BackupAgent: backupAgent,
-			BackupModel: backupModel,
-		})
+			ReviewSettings: settings,
+			Name:           "design",
+			Index:          len(members),
+			Agent:          designAgent,
+			Model:          designModel,
+			ReviewType:     config.ReviewTypeDesign,
+			Reasoning:      reasoning,
+			BackupAgent:    backupAgent,
+			BackupModel:    backupModel,
+		}), nil
 	}
-	return members
+	return members, nil
 }
 
 // commitWarrantsDesign reports whether a single commit warrants a design review

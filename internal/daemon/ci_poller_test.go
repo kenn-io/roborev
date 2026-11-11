@@ -4282,10 +4282,13 @@ func designMemberCount(members []storage.ReviewJob) int {
 func TestProcessPRCreatesPanelRun(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	globalEvidence := false
+	cfg.Review.BinaryEvidence = &globalEvidence
 	p.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
+		rc.Review.BinaryEvidence = &enabled
 		return ciRepoConfigSource{Config: rc}, nil
 	}
 
@@ -4312,6 +4315,11 @@ func TestProcessPRCreatesPanelRun(t *testing.T) {
 		assert.Equal(storage.PanelRoleMember, m.PanelRole, "member %d role", m.ID)
 		assert.NotEqual(storage.JobTypeClassify, m.JobType, "member %d must not be classify", m.ID)
 		assert.Equal(base+".."+head, m.GitRef, "member %d covers the frozen range", m.ID)
+		if m.ReviewType == config.ReviewTypeDesign {
+			var settings config.ReviewSettings
+			require.NoError(t, json.Unmarshal([]byte(m.PanelMemberConfigJSON), &settings))
+			assert.True(settings.BinaryEvidence, "design member freezes the repository override")
+		}
 	}
 	assert.Equal(1, designMemberCount(members), "exactly one design member")
 }
