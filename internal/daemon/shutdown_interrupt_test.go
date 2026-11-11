@@ -40,7 +40,7 @@ func TestInterruptShutdownTargetsRunningAttempts(t *testing.T) {
 			assert.True(t, draining)
 			assert.True(t, server.shutdownDraining)
 			assert.Contains(t, server.workerPool.updateInterruptTargets, job.ID)
-			assert.ErrorIs(t, ctx.Err(), context.Canceled)
+			require.ErrorIs(t, ctx.Err(), context.Canceled)
 			assert.True(t, server.workerPool.stopped)
 			requested := false
 			select {

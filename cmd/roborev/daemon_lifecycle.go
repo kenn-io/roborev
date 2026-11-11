@@ -653,10 +653,6 @@ func stopDaemonRuntimesWithMessage(list func() ([]*daemon.RuntimeInfo, error), d
 	return stopDaemonSnapshotWithMessage(runtimes, drain, out, message)
 }
 
-func stopDaemonSnapshot(runtimes []*daemon.RuntimeInfo, drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
-	return stopDaemonSnapshotWithMessage(runtimes, drain, out, daemonShutdownWaitMessage)
-}
-
 func stopDaemonSnapshotWithMessage(runtimes []*daemon.RuntimeInfo, drain func(*daemon.RuntimeInfo) error, out io.Writer, message string) error {
 	if len(runtimes) == 0 {
 		return ErrDaemonNotRunning

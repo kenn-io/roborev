@@ -82,7 +82,7 @@ func (db *DB) BeginInterruptShutdown(ctx context.Context) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := setDaemonBoolStateContext(ctx, tx, shutdownDrainingStateKey, true, "shutdown draining"); err != nil {
 		return nil, err
 	}
