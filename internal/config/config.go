@@ -216,6 +216,9 @@ func (c DaemonTLSConfig) Validate() error {
 // the daemon.
 type MCPConfig struct {
 	Enabled bool `toml:"enabled" comment:"Serve the MCP endpoint at /mcp on the daemon API listener. Requires a daemon restart."`
+	// ReviewerTools gives Claude Code and Codex review agents read-only
+	// reviewer tools at /mcp/review, scoped to the job under review.
+	ReviewerTools bool `toml:"reviewer_tools" comment:"Give Claude Code and Codex reviewers read-only tools for this branch's earlier findings, their decisions, and git log and blame. Served at /mcp/review with a per-job token; independent of enabled."`
 }
 
 // ResolvedTimeout returns the HTTP usage lookup timeout.

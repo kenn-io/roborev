@@ -155,6 +155,10 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	a.Equal(storage.JobTypeTask, stored.JobType)
 	a.Equal(&parent.ID, stored.ParentJobID)
 	a.Equal(originalReview.UUID, job.OriginalReviewUUID)
+	version, err := db.RebuttalReviewVersion(t.Context(), job.ID)
+	require.NoError(t, err)
+	a.Equal(&storage.ReviewVersion{ID: originalReview.ID, UUID: *originalReview.UUID}, version,
+		"the rebuttal records which version of the review it re-checks")
 	a.Contains(stored.Prompt, "The guard is missing.")
 	a.Contains(stored.Prompt, "The caller checks it.")
 	a.Contains(stored.Prompt, `non-empty "explanation"`)
