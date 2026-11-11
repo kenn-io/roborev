@@ -80,7 +80,9 @@ func scanKataPublication(scanner interface{ Scan(...any) error }) (*KataPublicat
 	var err error
 	record.DocumentHash, err = KataDocumentHash([]byte(record.document))
 	if err != nil {
-		return nil, fmt.Errorf("hash review document: %w", err)
+		// Preserve the identity so a read can still return the original legacy
+		// review as unavailable without treating it as a publication match.
+		return &record, fmt.Errorf("hash review document: %w", err)
 	}
 	if record.markerJSON.Valid {
 		var marker KataPublication

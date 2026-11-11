@@ -662,6 +662,26 @@ func TestKataPublicationExplicitIssueWithoutLocalReview(t *testing.T) {
 	assert.Equal(t, "unknown", got.Comments[0].History)
 }
 
+func TestKataPublicationLegacyUUIDPreservesSource(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "legacy-review", "worker")
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{Output: "original legacy findings", Verdict: storage.VerdictFail}))
+	review, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, review.UUID)
+	server := newServerWithLogs(tc.DB, kataConnectionConfig(fake), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = server.Close() })
+	byJob := kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	byUUID := kataGet(t, server, "/api/kata/publication", url.Values{"review_uuid": {review.UUID.String()}})
+	require.Equal(t, http.StatusOK, byJob.Code, byJob.Body.String())
+	require.Equal(t, http.StatusOK, byUUID.Code, byUUID.Body.String())
+	got := decodeKata[KataPublicationBody](t, byUUID)
+	assert.Equal(t, decodeKata[KataPublicationBody](t, byJob), got)
+	assert.Equal(t, "unavailable", got.State)
+	assert.Equal(t, "original legacy findings", got.SourceOutput)
+}
+
 func TestKataPublicationAuthenticationIsFatal(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

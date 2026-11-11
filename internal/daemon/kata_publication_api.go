@@ -154,7 +154,7 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 			return nil, huma.Error400BadRequest("invalid review UUID")
 		}
 		record, err := s.db.GetKataPublicationByUUID(ctx, id)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && record == nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, kataReadError(err)
 		}
 		if record != nil {
