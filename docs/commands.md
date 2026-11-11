@@ -703,7 +703,7 @@ panel-era cursors are namespaced and cannot be resumed against each other.
 
 ```bash
 roborev job log 42             # Human-friendly rendered output
-roborev job log --raw 42       # Raw NDJSON bytes
+roborev job log --raw 42       # Stored log bytes
 roborev job log --path 42      # Print the log file path
 roborev --server 127.0.0.1:7373 log 42 # Select a running daemon
 
@@ -723,8 +723,9 @@ It requests the log and its stored metadata through the daemon API to select
 that renderer. Use `--raw` for the exact stored bytes when scripting, debugging,
 or reading an orphaned log file. Stored Pi logs may omit repeated identical
 cumulative usage from message deltas. Changed and final usage remain in the
-stored log. Live output retains the original bytes. For a daemon using a custom
-database, select that daemon with `--server`; the CLI does not open SQLite.
+stored log. Compaction leaves live rendering and invocation capture unchanged.
+For a daemon using a custom database, select that daemon with `--server`; the
+CLI does not open SQLite.
 
 To remove old logs automatically, set
 [`job_log_retention_days`](/docs/configuration/#stored-prompts-and-retention).

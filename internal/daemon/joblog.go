@@ -516,7 +516,7 @@ func (w *jobLogWriter) flushBufferLocked(buf *bytes.Buffer) error {
 
 // piJobLogSink keeps compaction state for one output stream. The Pi adapter
 // serializes writes to that stream. It compacts repeated usage in stored Pi
-// events. Live and invocation streams retain the producer's original bytes.
+// events. Compaction leaves live rendering and invocation capture unchanged.
 type piJobLogSink struct {
 	out       io.Writer
 	pending   []byte
