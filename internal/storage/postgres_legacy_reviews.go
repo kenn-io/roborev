@@ -28,7 +28,7 @@ type legacyReviewScanRun struct {
 	After *uuid.UUID
 }
 
-func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
+func (p *PgPool) migrateLegacyReviews(ctx context.Context, noWait bool) error {
 	if _, err := p.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS legacy_reviews (
  uuid UUID PRIMARY KEY, record JSONB NOT NULL, migration_error TEXT NOT NULL, resolved_at TIMESTAMPTZ)`); err != nil {
 		return err
@@ -53,7 +53,7 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 	}
 	total := 0
 	for {
-		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, state.Run.After, state.Done)
+		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, state.Run.After, state.Done, noWait)
 		if err != nil {
 			return fmt.Errorf("archive historical mirror reviews: %w", err)
 		}
@@ -79,20 +79,24 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 	}
 }
 
-func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID, since *time.Time) (*uuid.UUID, int, error) {
+func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID, since *time.Time, noWait bool) (*uuid.UUID, int, error) {
 	scanned := 0
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return after, scanned, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	lockClause := " FOR UPDATE OF r"
+	if noWait {
+		lockClause += " NOWAIT"
+	}
 	rows, err := tx.Query(ctx, `SELECT r.uuid, r.output, r.structured_output, j.job_type, j.uuid,
  COALESCE(j.min_severity, ''), r.verdict_bool
  FROM reviews r JOIN review_jobs j ON j.uuid = r.job_uuid
  WHERE j.job_type IN ('review','range','dirty','synthesis','compact')
  AND ($1::uuid IS NULL OR r.uuid > $1)
  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
- ORDER BY r.uuid LIMIT $2 FOR UPDATE OF r`, after, legacyReviewBatchSize, since)
+ ORDER BY r.uuid LIMIT $2`+lockClause, after, legacyReviewBatchSize, since)
 	if err != nil {
 		return after, scanned, err
 	}

@@ -443,7 +443,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	w.pullWrote = false
 	defer w.finishSync()
 
-	ctx, cancel := context.WithTimeout(context.Background(), syncPassTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	w.passError = nil
@@ -743,30 +743,19 @@ func (w *SyncWorker) syncLoop(ctx context.Context, stopCh <-chan struct{}, inter
 		}
 	}
 
-	w.mu.Lock()
-	pool := w.pgPool
-	w.mu.Unlock()
-	if pool != nil {
+	if pool, err := w.currentPool(); err == nil {
 		maintCtx, cancel := context.WithCancel(ctx)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			for {
+			_, _ = backoff.Retry(maintCtx, func() (struct{}, error) {
 				passCtx, passCancel := context.WithTimeout(maintCtx, syncPassTimeout)
-				err := pool.MaintainLegacyReviews(passCtx)
-				passCancel()
-				if err == nil || maintCtx.Err() != nil {
-					return
-				}
-				log.Printf("Sync: historical review maintenance paused: %v", err)
-				timer := time.NewTimer(interval)
-				select {
-				case <-maintCtx.Done():
-					timer.Stop()
-					return
-				case <-timer.C:
-				}
-			}
+				defer passCancel()
+				return struct{}{}, pool.maintainLegacyReviews(passCtx, true)
+			}, backoff.WithBackOff(backoff.NewConstantBackOff(interval)), backoff.WithMaxElapsedTime(0),
+				backoff.WithNotify(func(err error, _ time.Duration) {
+					log.Printf("Sync: historical review maintenance paused: %v", err)
+				}))
 		}()
 		defer func() {
 			cancel()

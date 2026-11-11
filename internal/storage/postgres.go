@@ -538,15 +538,16 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 	if currentVersion >= 24 {
 		return nil
 	}
-	if err := p.MaintainLegacyReviews(ctx); err != nil {
+	if err := p.maintainLegacyReviews(ctx, false); err != nil {
 		return err
 	}
 	return p.migrateReviewAttempts(ctx)
 }
 
-// MaintainLegacyReviews archives and restores historical reviews.
-func (p *PgPool) MaintainLegacyReviews(ctx context.Context) error {
-	if err := p.migrateLegacyReviews(ctx); err != nil {
+// maintainLegacyReviews archives and restores historical reviews. Background scans
+// use NOWAIT so a contended row rolls back the whole batch for retry.
+func (p *PgPool) maintainLegacyReviews(ctx context.Context, noWait bool) error {
+	if err := p.migrateLegacyReviews(ctx, noWait); err != nil {
 		return err
 	}
 	return p.restoreLegacyReviews(ctx)
