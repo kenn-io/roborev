@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/quick"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kitagenthook "go.kenn.io/kit/agenthook"
-	"hegel.dev/go/hegel"
 
 	"go.kenn.io/roborev/internal/agentguide"
 	"go.kenn.io/roborev/internal/config"
@@ -163,10 +163,10 @@ func TestCustomInstructionDoesNotLoadRepoReviewFlow(t *testing.T) {
 }
 
 func TestEmptyReviewFlowPreservesReasonProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		reason := hegel.Draw(ht, hegel.Text())
-		assert.Equal(ht, reason, withReviewFlow(reason, config.AgentHookReviewFlow{}))
-	})
+	property := func(reason string) bool {
+		return assert.Equal(t, reason, withReviewFlow(reason, config.AgentHookReviewFlow{}))
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
 
 func TestInvalidRepoReviewFlowPreservesTriggeredReminder(t *testing.T) {

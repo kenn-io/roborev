@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/quick"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 )
 
 const validReviewFlow = `digraph roborev_brief {
@@ -288,9 +288,12 @@ func TestLoadRepoConfigFromRefForAgentHookGuidelinesCancellation(t *testing.T) {
 }
 
 func TestAgentHookReviewFlowFenceRejectionProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		prefix := hegel.Draw(ht, hegel.Text())
-		fence := hegel.Draw(ht, hegel.SampledFrom([]string{"~~~", "```"}))
-		require.ErrorContains(ht, ValidateAgentHookReviewFlow(prefix+fence+validReviewFlow), "fence")
-	})
+	property := func(prefix string, backticks bool) bool {
+		fence := "~~~"
+		if backticks {
+			fence = "```"
+		}
+		return assert.ErrorContains(t, ValidateAgentHookReviewFlow(prefix+fence+validReviewFlow), "fence")
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
