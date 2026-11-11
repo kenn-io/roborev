@@ -239,9 +239,9 @@ be read is reported separately.
 | `project_not_found` | The project does not exist or is not active | Create it, bind the repo, or set `default_project` |
 | `disabled` | The connection is off | Set `enabled = true` to use it |
 
-The connection needs Kata API schema 0.21.0 through 0.28.0. Typed comment replies need
-0.28.0, which Kata v0.19.0 reports. A `ready` connection to an older server is
-shown as ready without typed reply support.
+The connection needs Kata API schema 0.21.0 through 0.28.0. Typed comment
+replies need 0.28.0, which Kata v0.19.0 reports. A `ready` connection to an
+older server is shown as ready without typed reply support.
 
 ## Closing the Loop
 
