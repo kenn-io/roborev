@@ -15,7 +15,7 @@ import (
 
 func readMemberStats(t *testing.T, db *DB) MemberStats {
 	t.Helper()
-	f, err := db.GetFindingStats(SummaryOptions{}, "member")
+	f, err := db.GetFindingStats(t.Context(), SummaryOptions{}, "member")
 	require.NoError(t, err)
 	require.NotNil(t, f.Members)
 	return *f.Members
@@ -79,7 +79,7 @@ func TestMemberStatsContribution(t *testing.T) {
 	a.Nil(first.SoloNegative, "panel parent labels unavailable")
 	a.InDelta(2.0, first.Cost.TotalUSD, 1e-9, "charge execution once, not per finding")
 	a.InDelta(4.0, m.Cost.TotalUSD, 1e-9, "exclude synthesis and observer spend")
-	full, err := db.GetFindingStats(SummaryOptions{}, "member")
+	full, err := db.GetFindingStats(t.Context(), SummaryOptions{}, "member")
 	require.NoError(t, err)
 	a.InDelta(8.0, full.Cost.TotalUSD, 1e-9, "whole-panel spend retains synthesis and advisory work")
 	require.NotNil(t, first.CostPerCited)
