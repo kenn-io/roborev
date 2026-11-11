@@ -377,7 +377,7 @@ func loadExperimentUnit(ctx context.Context, q *sql.Tx, u *experimentReportUnit)
 // synthesisExecutorEvidence separates a checker-only invocation from synthesis.
 // The checker preserves source labels; one source with no instructions is the
 // passthrough path. Old checked results without enough evidence stay unknown.
-func synthesisExecutorEvidence(j experimentReportJob, plan experimentReportJobPlan) (compare, known bool) {
+func synthesisExecutorEvidence(j experimentReportJob) (compare, known bool) {
 	var cfg struct {
 		Instructions string         `json:"instructions"`
 		Check        jsontext.Value `json:"check"`
@@ -386,9 +386,6 @@ func synthesisExecutorEvidence(j experimentReportJob, plan experimentReportJobPl
 		return false, false
 	}
 	if len(cfg.Check) == 0 || string(cfg.Check) == "null" {
-		return true, true
-	}
-	if j.configuredAgent != "" && plan.Agent != "" && agentname.Canonical(j.configuredAgent) != agentname.Canonical(plan.Agent) {
 		return true, true
 	}
 	doc, err := structuredreview.Decode(jsontext.Value(j.structured))
@@ -483,7 +480,7 @@ func aggregateExperimentUnit(u *experimentReportUnit) {
 		if j.invoked {
 			compare, known := true, true
 			if j.ref.Role == "synthesis" {
-				compare, known = synthesisExecutorEvidence(j, plan)
+				compare, known = synthesisExecutorEvidence(j)
 				if !compare && known {
 					u.jobs[i].ref.Agent = j.configuredAgent
 				}

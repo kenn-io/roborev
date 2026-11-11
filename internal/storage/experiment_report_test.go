@@ -572,13 +572,14 @@ func TestExperimentReportPartialSessionCost(t *testing.T) {
 func TestExperimentReportCheckedSynthesisAttribution(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, config, labels, executor string
-		want                           *float64
+		name, config, labels, executor, storedAgent string
+		want                                        *float64
 	}{
-		{"checked passthrough", `{"check":{}}`, `["voter"]`, "test", new(0.0)},
-		{"one source with instructions", `{"check":{},"instructions":"combine"}`, `["voter"]`, "backup", new(.5)},
-		{"multiple sources", `{"check":{}}`, `["voter","other"]`, "backup", new(.5)},
-		{"historical unknown", `{"check":{}}`, `[]`, "backup", nil},
+		{"checked passthrough", `{"check":{}}`, `["voter"]`, "test", "planned", new(0.0)},
+		{"passthrough with rerouted agent", `{"check":{}}`, `["voter"]`, "test", "backup", new(0.0)},
+		{"one source with instructions", `{"check":{},"instructions":"combine"}`, `["voter"]`, "backup", "planned", new(.5)},
+		{"multiple sources", `{"check":{}}`, `["voter","other"]`, "backup", "planned", new(.5)},
+		{"historical unknown", `{"check":{}}`, `[]`, "backup", "backup", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, repo := setupDBAndRepo(t, "checked-synthesis")
@@ -592,6 +593,8 @@ func TestExperimentReportCheckedSynthesisAttribution(t *testing.T) {
 			reportFinish(t, db, members[0].ID, "done", new(1.0), clean)
 			reportFinish(t, db, synth.ID, "done", new(2.0), clean)
 			_, err = db.ExecContext(t.Context(), `UPDATE reviews SET agent=? WHERE job_id=?`, tc.executor, synth.ID)
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET agent=? WHERE id=?`, tc.storedAgent, synth.ID)
 			require.NoError(t, err)
 			r, err := db.GetExperimentReport(t.Context(), "report-v1", ExperimentReportOptions{})
 			require.NoError(t, err)
