@@ -161,6 +161,7 @@ func TestSummaryFindingValidationBeforeDaemon(t *testing.T) {
 }
 
 func TestPrintFindingSummary(t *testing.T) {
+	a := assert.New(t)
 	cmd := summaryCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -169,6 +170,9 @@ func TestPrintFindingSummary(t *testing.T) {
 		MinSamples:        5,
 		LogicalReviews:    3,
 		StructuredReviews: 2,
+		Total:             storage.FindingOutcomeCounts{Labeled: 2, Findings: 4},
+		TierLabeled:       map[string]int{"R": 2},
+		TierCoverage:      map[string]storage.FindingOutcomeCounts{"R": {Labeled: 2, Findings: 3}},
 		Rows: []storage.FindingStatsRow{{
 			Key: "high", Findings: 4, Labeled: 2, Positive: 1, Negative: 1, Unlabeled: 2,
 			RateState: "below_minimum", FailingReviews: 1, ClosedReviews: 1,
@@ -177,22 +181,31 @@ func TestPrintFindingSummary(t *testing.T) {
 		}},
 	}
 	printSummary(cmd, storage.Summary{CI: &storage.CISummary{TotalPanels: 1}, Findings: &f})
-	assert.Contains(t, out.String(), "CI Run Health")
-	assert.NotContains(t, out.String(), "No review data")
-	assert.Contains(t, out.String(), "2/3")
-	assert.Contains(t, out.String(), "n<5")
-	assert.Contains(t, out.String(), "1/1")
-	assert.Contains(t, out.String(), "≥$3.00 (1/2 priced)")
+	a.Contains(out.String(), "CI Run Health")
+	a.NotContains(out.String(), "No review data")
+	a.Contains(out.String(), "Finding outcomes by severity (completed as of ")
+	a.NotContains(out.String(), "finished_at")
+	a.Contains(out.String(), "Structured reviews: 2/3 | Labeled findings: 2/4")
+	a.NotContains(out.String(), "(R:")
+	a.Contains(out.String(), "Local standalone findings labeled by rebuttals: 2/3")
+	a.NotContains(out.String(), "R cohort")
+	a.Contains(out.String(), "n<5")
+	a.Contains(out.String(), "1/1")
+	a.Contains(out.String(), "≥$3.00 (1/2 priced)")
+	a.Equal(1, strings.Count(out.String(), "(1/2 priced)"))
+	a.Equal(2, strings.Count(out.String(), "≥$3.00"))
 	out.Reset()
 	f.Rows[0].Cost.JobsWithCost = 0
 	printFindingSummary(cmd, &f)
-	assert.Equal(t, 2, strings.Count(out.String(), "≥$3.00 (0/2 priced)"), "spend and cost per positive are lower bounds")
+	a.Contains(out.String(), "≥$3.00 (0/2 priced)")
+	a.Equal(1, strings.Count(out.String(), "(0/2 priced)"))
+	a.Equal(2, strings.Count(out.String(), "≥$3.00"), "spend and cost per positive are lower bounds")
 	out.Reset()
 	f.Rows[0].Cost.TotalUSD = 0
 	f.Rows[0].CostPerPositive = nil
 	printFindingSummary(cmd, &f)
-	assert.NotContains(t, out.String(), "Retained spend")
-	assert.NotContains(t, out.String(), "Cost/positive")
+	a.NotContains(out.String(), "Retained spend")
+	a.NotContains(out.String(), "Cost/positive")
 }
 
 func TestSummaryFindingRequest(t *testing.T) {
@@ -241,13 +254,15 @@ func TestPrintMemberFindingSummary(t *testing.T) {
 	cmd := summaryCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	f := storage.FindingStats{GroupBy: "member", Members: &storage.MemberStats{SkippedPanelRuns: 1, SkippedMemberRuns: 2, Rows: []storage.MemberStatsRow{{RepoPath: "/tmp/sample", PanelName: "quality", MemberName: "first", Runs: 3, AttributedRuns: 2, SkippedRuns: 1, StructuredRuns: 1, FindingsRaised: 4, Cited: 3, Agreed: 2, Solo: 1, Cost: storage.CostAggregate{TotalUSD: 2, JobsTotal: 2, JobsWithCost: 1}, SkippedCost: storage.CostAggregate{TotalUSD: 7, JobsTotal: 1, JobsWithCost: 1}, CostPerCited: new(2.0 / 3), CostPerAgreed: new(1.0)}}}}
+	f := storage.FindingStats{GroupBy: "member", Members: &storage.MemberStats{SkippedPanelRuns: 1, SkippedMemberRuns: 2, Rows: []storage.MemberStatsRow{{RepoPath: "/tmp/sample", PanelName: "quality", MemberName: "first", Runs: 4, AttributedRuns: 2, SkippedRuns: 2, StructuredRuns: 1, FindingsRaised: 4, Cited: 3, Agreed: 2, Solo: 1, Cost: storage.CostAggregate{TotalUSD: 2, JobsTotal: 2, JobsWithCost: 1}, SkippedCost: storage.CostAggregate{TotalUSD: 7, JobsTotal: 1, JobsWithCost: 1}, CostPerCited: new(2.0 / 3), CostPerAgreed: new(1.0)}}}}
 	printFindingSummary(cmd, &f)
 	a := assert.New(t)
 	a.Contains(out.String(), "Panel member contribution")
 	a.Contains(out.String(), "quality")
 	a.Contains(out.String(), "first")
-	a.Contains(out.String(), "Structured runs")
+	a.Regexp(`Runs +Attributed +Structured runs +Skipped`, out.String())
+	a.Regexp(`first +4 +2 +1 +2 +4 +3 +2 +1 +≥\$2\.00`, out.String())
+	a.NotContains(out.String(), "Solo labeled")
 	a.Contains(out.String(), "Cost/cited")
 	a.Contains(out.String(), "≥$2.00 (1/2 priced)")
 	a.Contains(out.String(), "1 panel runs, 2 member runs excluded")
@@ -258,9 +273,11 @@ func TestPrintMemberFindingSummary(t *testing.T) {
 	f.Members.Rows[0].SkippedCost.JobsWithCost = 0
 	printFindingSummary(cmd, &f)
 	a.Contains(out.String(), "≥$2.00 (0/2 priced)")
-	a.Contains(out.String(), "≥$0.67 (0/2 priced)")
-	a.Contains(out.String(), "≥$1.00 (0/2 priced)")
+	a.Contains(out.String(), "≥$0.67")
+	a.Contains(out.String(), "≥$1.00")
 	a.Contains(out.String(), "≥$7.00 (0/1 priced)")
+	a.Equal(1, strings.Count(out.String(), "(0/2 priced)"))
+	a.Equal(1, strings.Count(out.String(), "(0/1 priced)"))
 	out.Reset()
 	f.Members.Rows[0].Cost.TotalUSD = 0
 	f.Members.Rows[0].SkippedCost.TotalUSD = 0

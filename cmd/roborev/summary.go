@@ -429,10 +429,10 @@ func formatSince(since time.Time) string {
 
 // printFindingSummary keeps unavailable rates separate from raw counts.
 func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
-	cmd.Printf("Finding outcomes by %s (finished_at; as of %s)\n", f.GroupBy, f.AsOf.UTC().Format(time.RFC3339))
-	cmd.Printf("  Structured reviews: %d/%d | Labeled findings: %d/%d (R: %d)\n", f.StructuredReviews, f.LogicalReviews, f.Total.Labeled, f.Total.Findings, f.TierLabeled["R"])
+	cmd.Printf("Finding outcomes by %s (completed as of %s)\n", f.GroupBy, f.AsOf.UTC().Format(time.RFC3339))
+	cmd.Printf("  Structured reviews: %d/%d | Labeled findings: %d/%d\n", f.StructuredReviews, f.LogicalReviews, f.Total.Labeled, f.Total.Findings)
 	cohort := f.TierCoverage["R"]
-	cmd.Printf("  R cohort labeled findings: %d/%d (local standalone reviews)\n", cohort.Labeled, cohort.Findings)
+	cmd.Printf("  Local standalone findings labeled by rebuttals: %d/%d\n", cohort.Labeled, cohort.Findings)
 	cmd.Printf("  Documents unavailable: %d missing, %d invalid, %d legacy, %d unable to review\n", f.MissingDocuments, f.InvalidDocuments, f.LegacyDocuments, f.UnableDocuments)
 	cmd.Printf("  Rebuttals: %d valid, %d unbound, %d stale, %d unmatched/ambiguous, %d invalid, %d ineligible\n", f.Rebuttals.Valid, f.Rebuttals.Unbound, f.Rebuttals.Stale, f.Rebuttals.Ambiguous, f.Rebuttals.Invalid, f.Rebuttals.Ineligible)
 	cmd.Println("  R confirms/refutes agent assertions; closure is resolution only. K, D and panel R labels unavailable.")
@@ -470,14 +470,7 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 		}
 		fmt.Fprintf(w, "  %s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s", key, r.Findings, r.Labeled, r.Positive, r.Negative, r.Excluded, r.Unlabeled, rate, resolution)
 		if showSpend {
-			spend, per := "-", "-"
-			if r.Cost.HasUsableSpend() {
-				spend = formatFindingSpend(r.Cost, r.Cost.TotalUSD)
-				if r.CostPerPositive != nil {
-					per = formatFindingSpend(r.Cost, *r.CostPerPositive)
-				}
-			}
-			fmt.Fprintf(w, "\t%s\t%s", spend, per)
+			fmt.Fprintf(w, "\t%s\t%s", formatFindingSpend(r.Cost), formatFindingAmount(r.Cost, r.CostPerPositive))
 		}
 		fmt.Fprintln(w)
 	}
@@ -488,11 +481,22 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 	cmd.Println()
 }
 
-func formatFindingSpend(cost storage.CostAggregate, amount float64) string {
-	if cost.Complete {
-		return fmt.Sprintf("~$%.2f", amount)
+func formatFindingSpend(cost storage.CostAggregate) string {
+	amount := formatFindingAmount(cost, &cost.TotalUSD)
+	if cost.HasUsableSpend() && !cost.Complete {
+		return fmt.Sprintf("%s (%d/%d priced)", amount, cost.JobsWithCost, cost.JobsTotal)
 	}
-	return fmt.Sprintf("≥$%.2f (%d/%d priced)", amount, cost.JobsWithCost, cost.JobsTotal)
+	return amount
+}
+
+func formatFindingAmount(cost storage.CostAggregate, amount *float64) string {
+	if amount == nil || !cost.HasUsableSpend() {
+		return "-"
+	}
+	if cost.Complete {
+		return fmt.Sprintf("~$%.2f", *amount)
+	}
+	return fmt.Sprintf("≥$%.2f", *amount)
 }
 
 // printMemberFindingSummary keeps excluded runs and spend separate from the
@@ -507,7 +511,7 @@ func printMemberFindingSummary(cmd *cobra.Command, stats *storage.MemberStats) {
 		showSkippedSpend = showSkippedSpend || row.SkippedCost.HasUsableSpend()
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprint(w, "  Repo\tPanel\tMember\tRuns\tAttributed\tSkipped\tStructured runs\tRaised\tCited\tAgreed\tSolo\tSolo labeled")
+	fmt.Fprint(w, "  Repo\tPanel\tMember\tRuns\tAttributed\tStructured runs\tSkipped\tRaised\tCited\tAgreed\tSolo")
 	if showSpend {
 		fmt.Fprint(w, "\tMember spend\tCost/cited\tCost/agreed")
 	}
@@ -516,22 +520,15 @@ func printMemberFindingSummary(cmd *cobra.Command, stats *storage.MemberStats) {
 	}
 	fmt.Fprintln(w)
 	for _, row := range stats.Rows {
-		fmt.Fprintf(w, "  %s\t%s\t%s\t%d\t%d\t%d\t%d/%d\t%d\t%d\t%d\t%d\t%d/%d (unavailable)", row.RepoPath, row.PanelName, row.MemberName, row.Runs, row.AttributedRuns, row.SkippedRuns, row.StructuredRuns, row.AttributedRuns, row.FindingsRaised, row.Cited, row.Agreed, row.Solo, row.SoloLabeled, row.Solo)
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d", row.RepoPath, row.PanelName, row.MemberName, row.Runs, row.AttributedRuns, row.StructuredRuns, row.SkippedRuns, row.FindingsRaised, row.Cited, row.Agreed, row.Solo)
 		if showSpend {
-			fmt.Fprintf(w, "\t%s\t%s\t%s", formatMemberFindingSpend(row.Cost, new(row.Cost.TotalUSD)), formatMemberFindingSpend(row.Cost, row.CostPerCited), formatMemberFindingSpend(row.Cost, row.CostPerAgreed))
+			fmt.Fprintf(w, "\t%s\t%s\t%s", formatFindingSpend(row.Cost), formatFindingAmount(row.Cost, row.CostPerCited), formatFindingAmount(row.Cost, row.CostPerAgreed))
 		}
 		if showSkippedSpend {
-			fmt.Fprintf(w, "\t%s", formatMemberFindingSpend(row.SkippedCost, new(row.SkippedCost.TotalUSD)))
+			fmt.Fprintf(w, "\t%s", formatFindingSpend(row.SkippedCost))
 		}
 		fmt.Fprintln(w)
 	}
 	_ = w.Flush()
 	cmd.Println()
-}
-
-func formatMemberFindingSpend(cost storage.CostAggregate, value *float64) string {
-	if value == nil || !cost.HasUsableSpend() {
-		return "-"
-	}
-	return formatFindingSpend(cost, *value)
 }

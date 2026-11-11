@@ -1119,9 +1119,9 @@ Member spend charges each retained eligible execution once. Cost / cited and
 cost / agreed use the same attributable cohort and are unavailable with a zero
 denominator or no usable recorded spend. Partly priced executions contribute
 recorded spend and leave coverage incomplete. Solo negative counts and rates are
-unavailable because panel-parent outcome labels are unavailable; labeled / solo
-coverage stays visible without claiming zero noise. JSON exposes these rows in
-the optional `findings.members` block.
+unavailable because panel-parent outcome labels are unavailable. JSON exposes
+these rows, including solo label coverage, in the optional `findings.members`
+block.
 
 ## Aggregate Cost
 
