@@ -239,4 +239,15 @@ func TestFormatExperimentReportSuccess(t *testing.T) {
 	assert.Contains(t, out, "cost_per_review lower by at least 20%")
 	assert.Contains(t, out, "Minimum improvement was not established.")
 	assert.Contains(t, out, "job_failure_rate <= +0: bar met")
+
+	report.Success.Reason = report.Labels.Reason
+	report.Success.Guards = []storage.ExperimentGuardResult{
+		{Guard: "refuted_per_100 <= 0", State: "not enough data", Reason: "refuted_per_100: " + report.Labels.Reason},
+		{Guard: "job_failure_rate <= 0", State: "not enough data", Reason: "Success evaluation is gated."},
+		{Guard: "off_plan_rate <= 0", State: "not enough data", Reason: "Success evaluation is gated."},
+	}
+	out = formatExperimentReport(report)
+	assert.Equal(t, 1, strings.Count(out, "rebuttals do not identify individual findings"))
+	assert.Equal(t, 1, strings.Count(out, "Success evaluation is gated."))
+	assert.Contains(t, out, "off_plan_rate <= 0: not enough data")
 }

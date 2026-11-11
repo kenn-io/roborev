@@ -151,9 +151,23 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 	}
 	if report.Success != nil {
 		bar := report.Success
-		fmt.Fprintf(&out, "Success bar: %s (%s %s by at least %s)\n  %s\n", bar.State, bar.Metric, bar.Direction, bar.MinEffect, bar.Reason)
+		showReason := func(reason string) bool {
+			if reason == "" || seenReasons[reason] || (!report.Labels.Available && report.Labels.Reason != "" && strings.Contains(reason, report.Labels.Reason)) {
+				return false
+			}
+			seenReasons[reason] = true
+			return true
+		}
+		fmt.Fprintf(&out, "Success bar: %s (%s %s by at least %s)\n", bar.State, bar.Metric, bar.Direction, bar.MinEffect)
+		if showReason(bar.Reason) {
+			fmt.Fprintf(&out, "  %s\n", bar.Reason)
+		}
 		for _, guard := range bar.Guards {
-			fmt.Fprintf(&out, "  %s: %s; %s\n", guard.Guard, guard.State, guard.Reason)
+			fmt.Fprintf(&out, "  %s: %s", guard.Guard, guard.State)
+			if showReason(guard.Reason) {
+				fmt.Fprintf(&out, "; %s", guard.Reason)
+			}
+			out.WriteByte('\n')
 		}
 	}
 	out.WriteString("\nMetrics (experiment minus default; costs in USD, durations in seconds, rates as fractions):\n")
