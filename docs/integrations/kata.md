@@ -300,17 +300,21 @@ reproduce and fix them.
 
 ### Reply to a finding
 
-Use `roborev kata show JOB` to see finding roots and stored replies. Reply to a
-root or a reply in that finding's thread:
+Use `roborev kata show JOB` to see the issue UID, canonical project, destination
+ID, finding roots, and stored replies. Edited replies are marked; their displayed
+body is the current text. Reply to a root or a reply in that finding's thread,
+using the displayed issue UID, project, destination ID, and target UID:
 
 ```bash
-roborev kata comment ISSUE --refute c:abcdef -m 'Evidence explaining the finding and the observed behavior.'
+roborev kata comment ISSUE_UID --project PROJECT --destination-id DESTINATION_ID --refute TARGET_UID -m 'Evidence explaining the finding and the observed behavior.'
 ```
 
 Choose one of `--reply`, `--confirm`, `--refute`, or `--supersede`. Confirm and
 refute need at least 40 Unicode characters after whitespace is normalized;
 supersede is an explanatory assertion. The original message is sent unchanged.
-Use `--project` to select a project when the issue reference is not qualified.
+Use the displayed project and destination ID on the initial reply, especially
+when a hook selected a project other than the current workspace or default.
+The destination ID checks that the reply still goes to the destination shown.
 Roborev prints the destination, full target UID, key, and a retry command before
 sending. Keep that command if the outcome is uncertain. It retries the same
 body, destination, kind, and key; inspect the thread before using a new key

@@ -28,7 +28,7 @@ func kataResponseCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&body, "message", "m", "", "reply text or evidence")
 	cmd.Flags().StringVar(&project, "project", "", "Kata project")
-	cmd.Flags().StringVar(&destination, "destination-id", "", "expected destination from a previous attempt")
+	cmd.Flags().StringVar(&destination, "destination-id", "", "expected destination from show or a previous attempt")
 	cmd.Flags().StringVar(&key, "idempotency-key", "", "opaque key for retrying this reply")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		kind, target := "", ""

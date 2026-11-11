@@ -120,14 +120,17 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	rootBody := fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, review, digest)
 	rootUID := "01AAAAAAAAAAAAAAAAAAABC123"
 	var posts atomic.Int64
-	var posted atomic.Value
+	var posted, selectedProject atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/ping":
 			fmt.Fprint(w, `{"ok":true,"service":"roborev","version":"test"}`)
+		case "/api/kata/publication":
+			fmt.Fprintf(w, `{"review_uuid":%q,"document_hash":%q,"state":"complete","expired":false,"issue_uid":"issue-uid","issue_short_id":"abc1","project":"other","destination_id":"destination","roots":[{"position":0,"state":"complete","comment":{"uid":%q,"body":"root","author":"service"}}],"comments":[]}`, review, strings.Repeat("a", 64), rootUID)
 		case "/api/kata/issue":
-			_ = json.NewEncoder(w).Encode(map[string]any{"uid": "issue-uid", "issue_id": 2, "project_id": 7, "project": "reviews", "project_uid": "project-uid", "destination_id": "destination", "generation": 3, "short_id": "abc1", "qualified_id": "reviews#abc1", "title": "issue", "body": "body", "status": "open", "labels": []string{}, "comments_complete": true, "metadata": map[string]any{"roborev.version": 1, "roborev.review_uuid": review}, "publication_envelope": map[string]any{"version": 1, "review_uuid": review, "document_hash": strings.Repeat("a", 64), "policy": "summary", "completed_at": "2026-01-02T03:04:05Z", "finding_count": 1}, "comments": []any{map[string]any{"uid": rootUID, "handle": "c:abc123", "issue_id": 2, "body": rootBody, "author": "service"}}})
+			selectedProject.Store(r.URL.Query().Get("project"))
+			_ = json.NewEncoder(w).Encode(map[string]any{"uid": "issue-uid", "issue_id": 2, "project_id": 7, "project": "other", "project_uid": "project-uid", "destination_id": "destination", "generation": 3, "short_id": "abc1", "qualified_id": "other#abc1", "title": "issue", "body": "body", "status": "open", "labels": []string{}, "comments_complete": true, "metadata": map[string]any{"roborev.version": 1, "roborev.review_uuid": review}, "publication_envelope": map[string]any{"version": 1, "review_uuid": review, "document_hash": strings.Repeat("a", 64), "policy": "summary", "completed_at": "2026-01-02T03:04:05Z", "finding_count": 1}, "comments": []any{map[string]any{"uid": rootUID, "handle": "c:abc123", "issue_id": 2, "body": rootBody, "author": "service"}}})
 		case "/api/kata/response":
 			posts.Add(1)
 			var data map[string]any
@@ -139,8 +142,32 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	defer server.Close()
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
-	args := []string{"--server", server.URL, "kata", "comment", "abc1", "--project", "reviews", "--reply", "c:abc123", "--idempotency-key", "Case-Key", "-m", "It's evidence"}
+	show := newRootCmd()
+	var shown bytes.Buffer
+	show.SetOut(&shown)
+	show.SetErr(&shown)
+	show.SetArgs([]string{"--server", server.URL, "kata", "show", "42"})
+	require.NoError(t, show.Execute())
+	assert.Contains(t, shown.String(), "Issue: abc1 (issue-uid)\n")
+	assert.Contains(t, shown.String(), "UID: "+rootUID)
+	fields := make(map[string]string)
+	for line := range strings.SplitSeq(shown.String(), "\n") {
+		if key, value, ok := strings.Cut(line, ": "); ok {
+			fields[key] = value
+		}
+	}
+	require.Equal(t, "other", fields["Project"])
+	require.Equal(t, "destination", fields["Destination"])
+	args := []string{"--server", server.URL, "kata", "comment", "issue-uid", "--project", fields["Project"], "--destination-id", fields["Destination"], "--reply", rootUID, "--idempotency-key", "Case-Key", "-m", "It's evidence"}
 	var output bytes.Buffer
+	staleArgs := append([]string(nil), args...)
+	staleArgs[8] = "changed-destination"
+	stale := newRootCmd()
+	stale.SetOut(&output)
+	stale.SetErr(&output)
+	stale.SetArgs(staleArgs)
+	require.ErrorContains(t, stale.Execute(), "destination changed")
+	assert.Zero(t, posts.Load())
 	for _, writer := range []io.Writer{shortKataWriter{}, failingKataWriter{}} {
 		root := newRootCmd()
 		root.SetOut(writer)
@@ -155,11 +182,14 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	root.SetArgs(args)
 	require.NoError(t, root.Execute())
 	assert.Equal(t, int64(1), posts.Load())
+	assert.Equal(t, "other", selectedProject.Load())
 	assert.Contains(t, output.String(), "Retry: roborev --server ")
 	assert.Contains(t, output.String(), "actual-author")
 	payload, ok := posted.Load().(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, rootUID, payload["target_uid"])
+	assert.Equal(t, "other", payload["project"])
+	assert.Equal(t, "destination", payload["destination_id"])
 	assert.Equal(t, "It's evidence", payload["body"])
 	assert.Equal(t, "Case-Key", payload["idempotency_key"])
 }
