@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   loadError: null as string | null,
   output: "",
   status: "failed",
+  notFound: true,
   loaded: Promise.withResolvers<void>(),
 }));
 const reviewLoads = vi.hoisted(() => vi.fn());
@@ -18,7 +19,7 @@ vi.mock("../../stores/context", () => ({
     roborevReview: {
       getOutput: () => state.output,
       isLoading: () => false,
-      isReviewNotFound: () => true,
+      isReviewNotFound: () => state.notFound,
       getSelectedJob: () => ({ status: state.status, error: state.error }),
       getSelectedJobId: () => 42,
       getError: () => state.loadError,
@@ -38,6 +39,7 @@ afterEach(() => {
   state.loadError = null;
   state.output = "";
   state.status = "failed";
+  state.notFound = true;
 });
 
 beforeEach(() => {
@@ -60,10 +62,11 @@ it("keeps the failure reason visible after the rich renderer loads", async () =>
   expect(screen.getByRole("alert")).toHaveTextContent(state.error);
 });
 
-it("offers a retry instead of the loaded renderer when the review cannot load", async () => {
+it("shows the load error after the renderer loads", async () => {
   state.loadError = "Failed to load review";
   state.output = "Existing review output";
   state.status = "done";
+  state.notFound = false;
   render(ReviewContent);
 
   await vi.dynamicImportSettled();

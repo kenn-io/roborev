@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SearchInput } from "@kenn-io/kit-ui";
+  import { Button, SearchInput } from "@kenn-io/kit-ui";
   import { Effect } from "effect";
   import { onDestroy, onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -363,12 +363,11 @@
                 {:else if branchError}
                   <div class="branch-error" role="alert">
                     <span>Could not load branches.</span>
-                    <button
-                      type="button"
+                    <Button
+                      size="sm"
                       onclick={() => loadBranches(repo.root_path)}
-                    >
-                      Retry
-                    </button>
+                      label="Retry"
+                    />
                   </div>
                 {:else}
                   {#each branches as branch (branch.name)}
@@ -575,20 +574,6 @@
     padding: 4px 10px;
     font-size: var(--font-size-xs);
     color: var(--text-muted);
-  }
-
-  .branch-error button {
-    padding: 2px 8px;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font-size: var(--font-size-xs);
-    cursor: pointer;
-  }
-
-  .branch-error button:hover {
-    background: var(--bg-surface-hover);
   }
 
   .count {

@@ -321,13 +321,14 @@
     {#if selectedJob}
       <LogViewer jobId={selectedJob.id} jobStatus={selectedJob.status} />
     {:else if loadFailure}
-      <div class="log-retry" role="alert">
-        <p>{loadFailure}</p>
-        <Button size="sm" onclick={retryReview} label="Retry" />
-      </div>
+      {@render loadRetry()}
     {/if}
   {:else if activeTab === "prompt"}
-    <PromptViewer />
+    {#if loadFailure && !stores.roborevReview?.getPrompt()}
+      {@render loadRetry()}
+    {:else}
+      <PromptViewer />
+    {/if}
   {/if}
 
   {#snippet footer()}
@@ -419,6 +420,13 @@
     </div>
   {/snippet}
 </BottomDock>
+
+{#snippet loadRetry()}
+  <div class="load-retry" role="alert">
+    <p>{loadFailure}</p>
+    <Button size="sm" onclick={retryReview} label="Retry" />
+  </div>
+{/snippet}
 
 <style>
   :global(.review-drawer) {
@@ -536,7 +544,7 @@
   }
 
   /* Matches the review tab's error row: message and Retry share one line. */
-  .log-retry {
+  .load-retry {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -547,7 +555,7 @@
     color: var(--text-muted);
   }
 
-  .log-retry p {
+  .load-retry p {
     margin: 0;
   }
 

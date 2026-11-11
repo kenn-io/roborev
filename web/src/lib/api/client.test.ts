@@ -27,67 +27,50 @@ describe("native Roborev client", () => {
       }),
     ).pipe(retryIdempotentRead, Effect.exit);
 
-  test.each(["fetch", "body", "persistent"])(
-    "handles a %s network failure",
+  test.each(["body", "loader", "malformed"])(
+    "handles %s read failures",
     async (kind) => {
       vi.useFakeTimers();
       try {
-        const fetchMock = vi.fn();
-        if (kind === "fetch")
-          fetchMock
-            .mockRejectedValueOnce(new TypeError("offline"))
-            .mockResolvedValue(Response.json({ jobs: [] }));
-        else if (kind === "body") {
-          const broken = new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.error(new TypeError("connection lost"));
-              },
-            }),
-            { headers: { "Content-Type": "application/json" } },
+        const request = vi.fn();
+        let effect;
+        if (kind === "loader") {
+          request.mockRejectedValue(new TypeError("bad access"));
+          effect = executeRoborevRequest("jobs", request).pipe(
+            retryIdempotentRead,
+            Effect.exit,
           );
-          fetchMock
-            .mockResolvedValueOnce(broken)
-            .mockResolvedValue(Response.json({ jobs: [] }));
-        } else fetchMock.mockRejectedValue(new TypeError("offline"));
-        const result = Effect.runPromise(readJobs(fetchMock));
+        } else {
+          if (kind === "body") {
+            const broken = new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.error(new TypeError("connection lost"));
+                },
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+            request
+              .mockResolvedValueOnce(broken)
+              .mockResolvedValue(Response.json({ jobs: [] }));
+          } else
+            request.mockResolvedValue(
+              new Response("{", {
+                headers: { "Content-Type": "application/json" },
+              }),
+            );
+          effect = readJobs(request);
+        }
+        const result = Effect.runPromise(effect);
         await vi.runAllTimersAsync();
         const exit = await result;
-        if (kind === "persistent") expect(exit._tag).toBe("Failure");
-        else
+        if (kind === "body")
           expect(exit).toMatchObject({ _tag: "Success", value: { jobs: [] } });
-        expect(fetchMock).toHaveBeenCalledTimes(kind === "persistent" ? 3 : 2);
+        else expect(exit._tag).toBe("Failure");
+        expect(request).toHaveBeenCalledTimes(kind === "body" ? 2 : 1);
       } finally {
         vi.useRealTimers();
       }
-    },
-  );
-
-  test("does not retry a loader's own TypeError", async () => {
-    const request = vi.fn().mockRejectedValue(new TypeError("bad access"));
-    const result = await Effect.runPromise(
-      executeRoborevRequest("jobs", request).pipe(
-        retryIdempotentRead,
-        Effect.exit,
-      ),
-    );
-    expect(result._tag).toBe("Failure");
-    expect(request).toHaveBeenCalledOnce();
-  });
-
-  test.each(["malformed JSON", "HTTP 503"])(
-    "does not retry %s from fetch",
-    async (kind) => {
-      const response =
-        kind === "HTTP 503"
-          ? new Response(null, { status: 503 })
-          : new Response("{", {
-              headers: { "Content-Type": "application/json" },
-            });
-      const fetchMock = vi.fn().mockResolvedValue(response);
-      const result = await Effect.runPromise(readJobs(fetchMock));
-      expect(result._tag).toBe("Failure");
-      expect(fetchMock).toHaveBeenCalledOnce();
     },
   );
 

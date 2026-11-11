@@ -191,7 +191,7 @@ describe("RepoTreePicker", () => {
           branches: [{ name: "project-a-main", count: 1 }],
         });
       }
-      return Promise.reject(new TypeError("branch lookup failed"));
+      return Promise.reject(new Response(null, { status: 500 }));
     });
     render(RepoTreePicker);
 
@@ -205,6 +205,11 @@ describe("RepoTreePicker", () => {
 
     await screen.findByText("Could not load branches.");
     expect(screen.queryByText("project-a-main")).toBeNull();
+
+    repoApi.listBranches.mockResolvedValue({ branches: [] });
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("No branches");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("recovers a branch list after a brief connection failure", async () => {
@@ -223,26 +228,6 @@ describe("RepoTreePicker", () => {
     expect(repoApi.listBranches).toHaveBeenCalledTimes(2);
   });
 
-  it("reports an HTTP failure without retrying and keeps true empty results distinct", async () => {
-    vi.useFakeTimers();
-    repoApi.listBranches
-      .mockRejectedValueOnce(new Response("unavailable", { status: 500 }))
-      .mockResolvedValue({ branches: [] });
-    render(RepoTreePicker);
-
-    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
-    await vi.advanceTimersByTimeAsync(0);
-    await fireEvent.click(screen.getByTitle("Show branches"));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Could not load branches.",
-    );
-
-    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByText("No branches")).toBeTruthy();
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
   it("distinguishes duplicate checkouts and searches their paths", async () => {
     repoApi.listRepos.mockResolvedValue({
       repos: [

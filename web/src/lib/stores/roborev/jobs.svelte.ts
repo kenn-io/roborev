@@ -811,7 +811,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
 
   const fetchPanelMembersEffect = (runUuid: string) =>
     Effect.gen(function* () {
-      yield* (yield* RoborevWorkflow).panel(opts.owner, runUuid, {
+      const workflow = yield* RoborevWorkflow;
+      yield* workflow.panel(opts.owner, runUuid, {
         onStart: Effect.sync(() => {
           loadingMembers = { ...loadingMembers, [runUuid]: true };
           const startedErrors = { ...panelMemberErrors };

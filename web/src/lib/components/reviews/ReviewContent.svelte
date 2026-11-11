@@ -109,13 +109,9 @@
     {pending}
   />
 {:else if loadError && output}
-  <div
-    class="review-state review-retry"
-    role="alert"
-    {@attach reportRendererFailure}
-  >
+  <div class="review-state" role="alert" {@attach reportRendererFailure}>
     <p>Could not display the review.</p>
-    <Button size="sm" onclick={retryRenderer} label="Retry" />
+    <button type="button" onclick={retryRenderer}>Retry</button>
   </div>
 {:else if pending}
   <div class="review-state">Review in progress…</div>
@@ -131,6 +127,10 @@
     text-align: center;
     font-size: var(--font-size-md);
     color: var(--text-muted);
+  }
+
+  .review-state p {
+    margin: 0 0 var(--space-3);
   }
 
   /* The message and its Retry share one row so the error is no taller than
@@ -152,5 +152,18 @@
     margin: var(--space-2) 0 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+
+  .review-state button {
+    padding: 5px 10px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .review-state button:hover {
+    background: var(--bg-surface-hover);
   }
 </style>
