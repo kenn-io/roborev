@@ -38,7 +38,7 @@ func TestCLIClientE2EIgnoresInheritedKataRouting(t *testing.T) {
 
 func runCLIClientE2E(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	k := katatest.StartReal(t, ctx)
 	repo, env := k.Repo, k.Env
