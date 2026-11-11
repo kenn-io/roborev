@@ -14,8 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/roborev/internal/testenv"
 )
 
 func TestWindowsV056DaemonMigrationRefusesUnsafeReplacement(t *testing.T) {
@@ -35,7 +33,7 @@ func TestWindowsV056DaemonMigrationRefusesUnsafeReplacement(t *testing.T) {
 
 	currentBin := filepath.Join(tmpDir, "roborev-current.exe")
 
-	runMigrationCmd(t, ".", testenv.UserEnv(), "go", "build", "-o", currentBin, ".")
+	runMigrationCmd(t, ".", nil, "go", "build", "-o", currentBin, ".")
 
 	dbPath := filepath.Join(dataDir, "reviews.db")
 	configPath := filepath.Join(dataDir, "config.toml")

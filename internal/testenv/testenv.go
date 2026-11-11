@@ -153,7 +153,7 @@ func UserAgentEnv() []string {
 }
 
 func configureGitForTests(tmpDir string) {
-	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME"} {
+	for _, key := range []string{"HOME", "USERPROFILE"} {
 		userEnv = append(userEnv, key+"="+os.Getenv(key))
 	}
 	home, _ := os.UserHomeDir()

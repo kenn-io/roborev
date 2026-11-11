@@ -21,6 +21,9 @@ func TestGitIsolationPreservesMiseToolSelection(t *testing.T) {
 	if err != nil {
 		t.Skip("requires mise")
 	}
+	for _, key := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "MISE_CONFIG_DIR", "MISE_DATA_DIR", "MISE_CACHE_DIR", "MISE_STATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT", "GOENV", "GOPATH", "GOCACHE", "LOCALAPPDATA", "TEMP"} {
+		t.Setenv(key, "")
+	}
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	work := filepath.Join(root, "work")
@@ -29,9 +32,6 @@ func TestGitIsolationPreservesMiseToolSelection(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir, 0o755))
 	}
 	goName := "go"
-	if runtime.GOOS == "windows" {
-		goName += ".exe"
-	}
 	for _, version := range []string{"1.27.1", "1.27.3"} {
 		dir := filepath.Join(data, "installs", "go", version, "bin")
 		require.NoError(t, os.MkdirAll(dir, 0o755))
