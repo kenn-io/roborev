@@ -49,8 +49,10 @@ type ServerInfo struct {
 type APIOption func(*apiSettings)
 
 type apiSettings struct {
-	timeout    time.Duration
-	httpClient *http.Client
+	timeout        time.Duration
+	httpClient     *http.Client
+	noWorkspace    bool
+	workspaceAlias *ProjectAlias
 }
 
 // WithTimeout sets the per-request deadline.
@@ -60,6 +62,22 @@ func WithTimeout(d time.Duration) APIOption { return func(s *apiSettings) { s.ti
 // Its timeout and redirect policy are overridden.
 func WithHTTPClient(c *http.Client) APIOption { return func(s *apiSettings) { s.httpClient = c } }
 
+// WithoutWorkspace makes the client ignore binding files and the working
+// directory: the project is the one a call names, else the default project. The
+// daemon's proxy endpoints use it, because the daemon's own directory says
+// nothing about the caller's repository.
+func WithoutWorkspace() APIOption { return func(s *apiSettings) { s.noWorkspace = true } }
+
+// WithWorkspaceAlias selects the caller's registered workspace project when a
+// request does not name a project. It is used by daemon proxy requests because
+// the daemon cannot discover the caller's checkout itself.
+func WithWorkspaceAlias(alias ProjectAlias) APIOption {
+	return func(s *apiSettings) {
+		selection := alias
+		s.workspaceAlias = &selection
+	}
+}
+
 // APIClient implements Client over Kata's HTTP API, using the configured
 // connection. Only the daemon builds one: it holds the credential. It resolves
 // a committed workspace alias without registering it; an unbound workspace
@@ -67,6 +85,8 @@ func WithHTTPClient(c *http.Client) APIOption { return func(s *apiSettings) { s.
 type APIClient struct {
 	tr             *transport
 	workdir        string
+	noWorkspace    bool
+	workspaceAlias *ProjectAlias
 	defaultProject string
 }
 
@@ -98,7 +118,7 @@ func NewAPIClient(workdir string, cfg config.KataIntegrationConfig, opts ...APIO
 		return nil, err
 	}
 	return &APIClient{
-		tr: tr, workdir: workdir,
+		tr: tr, workdir: workdir, noWorkspace: settings.noWorkspace, workspaceAlias: settings.workspaceAlias,
 		defaultProject: strings.TrimSpace(cfg.DefaultProject),
 	}, nil
 }
@@ -209,27 +229,39 @@ func (c *APIClient) projectID(ctx context.Context, name string) (int64, error) {
 }
 
 func (c *APIClient) selectProject(ctx context.Context, project string) (int64, string, ServerInfo, error) {
-	var selected workspaceProject
+	var alias *gen.AliasInput
 	if project == "" {
-		var err error
-		selected, err = discoverWorkspace(c.workdir)
-		if err != nil && !errors.Is(err, ErrNoBinding) {
-			return 0, "", ServerInfo{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
-		}
-		project = selected.name
-		if errors.Is(err, ErrNoBinding) {
+		switch {
+		case c.workspaceAlias != nil:
+			alias = &gen.AliasInput{Identity: c.workspaceAlias.Identity, Kind: c.workspaceAlias.Kind}
+		case c.noWorkspace:
+			// The daemon's proxy endpoints use this: the daemon's own
+			// directory says nothing about the caller's repository. The caller
+			// may provide its registered alias with WithWorkspaceAlias.
 			project = c.defaultProject
+		default:
+			selected, err := discoverWorkspace(c.workdir)
+			if err != nil && !errors.Is(err, ErrNoBinding) {
+				return 0, "", ServerInfo{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
+			}
+			if errors.Is(err, ErrNoBinding) {
+				project = c.defaultProject
+			} else {
+				project = selected.name
+				if !selected.local {
+					alias, err = workspaceAlias(ctx, selected)
+					if err != nil {
+						return 0, "", ServerInfo{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
+					}
+				}
+			}
 		}
 	}
 	info, err := c.Info(ctx)
 	if err != nil {
 		return 0, "", info, err
 	}
-	if selected.name != "" && !selected.local {
-		alias, err := workspaceAlias(ctx, selected)
-		if err != nil {
-			return 0, "", info, fmt.Errorf("%w: %w", ErrIncompatible, err)
-		}
+	if alias != nil {
 		var resolved gen.ProjectResolveBody
 		_, err = c.tr.do(ctx, http.MethodPost, "/api/v1/projects/resolve", nil,
 			gen.ResolveProjectRequestBody{Alias: alias}, nil, &resolved, http.StatusOK)
@@ -272,7 +304,13 @@ func (c *APIClient) listPage(ctx context.Context, path string, query url.Values)
 // project. Unlimited reads the complete set, page by page on servers that
 // support cursors.
 func (c *APIClient) List(ctx context.Context, opts ListOpts) ([]Issue, error) {
-	path, _, info, err := c.issuesPath(ctx, "")
+	return c.ListProject(ctx, "", opts)
+}
+
+// ListProject is List for a named project; an empty name selects the bound or
+// default project.
+func (c *APIClient) ListProject(ctx context.Context, project string, opts ListOpts) ([]Issue, error) {
+	path, _, info, err := c.issuesPath(ctx, project)
 	if err != nil {
 		return nil, err
 	}
