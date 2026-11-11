@@ -1297,7 +1297,8 @@ func (db *DB) CompleteFixJob(jobID int64, agent, output, patch string) error {
 // Only updates if job is still in 'running' state (respects cancellation).
 // Review jobs require a JSON document. Prefixes are applied only when rendering.
 func (db *DB) CompleteJob(jobID int64, agent, output string) error {
-	return db.completeJob(jobID, agent, ReviewCompletion{Output: output})
+	_, err := db.completeJob(context.Background(), context.Background(), jobID, agent, ReviewCompletion{Output: output}, nil)
+	return err
 }
 
 // ReviewCompletion is the canonical result persisted for one completed review.
@@ -1316,16 +1317,39 @@ func (db *DB) CompleteJobResult(
 	agent string,
 	result ReviewCompletion,
 ) error {
-	return db.completeJob(jobID, agent, result)
+	_, err := db.completeJob(context.Background(), context.Background(), jobID, agent, result, nil)
+	return err
+}
+
+// CompactSourceIdentity binds a source job to the review version reconciled by compact.
+type CompactSourceIdentity struct {
+	JobID      int64
+	ReviewUUID uuid.UUID
+}
+
+// CompleteCompactJobResult commits the result and matching open source closures
+// together. Busy attempts retry the same result in a fresh transaction. A nil
+// slice means the job was no longer running; a non-nil slice lists changed IDs.
+func (db *DB) CompleteCompactJobResult(ctx context.Context, jobID int64, agent string, result ReviewCompletion, sources []CompactSourceIdentity) ([]int64, error) {
+	if sources == nil {
+		sources = []CompactSourceIdentity{}
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, claimJobRetryWindow)
+	defer cancel()
+	return retryOnSQLiteBusy(operationCtx, claimJobBusyAttempts, claimJobBusyAttemptTimeout, claimJobBusyBackoff, nil, func(attemptCtx context.Context) ([]int64, error) {
+		return db.completeJob(attemptCtx, operationCtx, jobID, agent, result, sources)
+	})
 }
 
 func (db *DB) completeJob(
+	ctx, commitCtx context.Context,
 	jobID int64,
 	agent string,
 	completion ReviewCompletion,
-) error {
+	sources []CompactSourceIdentity,
+) ([]int64, error) {
 	if err := validateStructuredOutputForWrite(completion.StructuredOutput); err != nil {
-		return err
+		return nil, err
 	}
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
@@ -1336,15 +1360,21 @@ func (db *DB) completeJob(
 
 	// Use BEGIN IMMEDIATE to acquire write lock upfront, avoiding deadlocks
 	// when concurrent goroutines (workers, sync) try to upgrade from read to write.
-	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer conn.Close()
+	if _, ok := ctx.Deadline(); ok {
+		restore, err := limitSQLiteBusyTimeout(ctx, conn)
+		if err != nil {
+			return nil, err
+		}
+		defer restore()
+	}
 
 	if err := beginImmediate(ctx, conn); err != nil {
-		return err
+		return nil, err
 	}
 	committed := false
 	defer func() {
@@ -1363,7 +1393,7 @@ func (db *DB) completeJob(
 		completion.MinSeverity = storedThreshold
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
+		return nil, err
 	}
 
 	// Review documents are the only persisted review body. Free-form task
@@ -1375,14 +1405,14 @@ func (db *DB) completeJob(
 		}
 		doc, err := structuredreview.Decode(completion.StructuredOutput)
 		if err != nil {
-			return fmt.Errorf("review JSON document is required; Markdown records are no longer accepted: %w", err)
+			return nil, fmt.Errorf("review JSON document is required; Markdown records are no longer accepted: %w", err)
 		}
 		if doc.Legacy != nil {
-			return fmt.Errorf("new reviews cannot use the legacy document format")
+			return nil, fmt.Errorf("new reviews cannot use the legacy document format")
 		}
 		if jobType == JobTypeSynthesis {
 			if err := doc.RequireSources(len(doc.SourceLabels)); err != nil {
-				return fmt.Errorf("synthesis JSON sources are required: %w", err)
+				return nil, fmt.Errorf("synthesis JSON sources are required: %w", err)
 			}
 		}
 		if completion.Verdict == VerdictUnknown && !doc.UnableToReview() {
@@ -1401,17 +1431,17 @@ func (db *DB) completeJob(
 		WHERE id = ? AND status = 'running'
 	`, preciseTimestampAt(finished), now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Check if we actually updated (job wasn't canceled)
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if rows == 0 {
 		// Job was canceled or in unexpected state, don't store review
-		return nil
+		return nil, nil
 	}
 
 	// Insert review with sync columns. Task and insights output is free-form
@@ -1437,15 +1467,42 @@ func (db *DB) completeJob(
 		nullString(string(completion.StructuredOutput)), reviewedFileCount, excludedFileCount,
 		reviewUUID, machineID, now)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	_, err = conn.ExecContext(ctx, "COMMIT")
+	// A trigger or other database-side change must not remove the result before
+	// its source reviews are closed.
+	if sources != nil {
+		var exists bool
+		if err := conn.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM review_jobs j JOIN reviews r ON r.job_id = j.id WHERE j.id = ? AND j.status = 'done' AND r.uuid = ?)`, jobID, reviewUUID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("compact result disappeared during completion")
+		}
+	}
+
+	closedIDs := make([]int64, 0, len(sources))
+	for _, source := range sources {
+		result, err := conn.ExecContext(ctx, `UPDATE reviews SET closed = 1, updated_by_machine_id = ?, updated_at = ?, synced_at = NULL WHERE job_id = ? AND uuid = ? AND closed = 0`, machineID, preciseTimestampAt(finished), source.JobID, source.ReviewUUID)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if rows > 0 {
+			closedIDs = append(closedIDs, source.JobID)
+		}
+	}
+
+	_, err = conn.ExecContext(commitCtx, "COMMIT")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	committed = true
-	return nil
+	return closedIDs, nil
 }
 
 func validateStructuredOutputForWrite(raw jsontext.Value) error {

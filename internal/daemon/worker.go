@@ -1814,6 +1814,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	completed := false
+	var closedCompactSources []int64
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
@@ -1823,6 +1824,27 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
 				return
 			}
+		} else if compactManifest != nil {
+			sources := make([]storage.CompactSourceIdentity, 0, len(compactEligible))
+			for _, source := range compactEligible {
+				sources = append(sources, storage.CompactSourceIdentity{JobID: source.JobID, ReviewUUID: source.ReviewUUID})
+			}
+			// Completion and its notifications must finish after the review deadline;
+			// the attempt lock and running-status guard still honor cancellation.
+			finalizeCtx := context.WithoutCancel(ctx)
+			var err error
+			closedCompactSources, err = wp.db.CompleteCompactJobResult(finalizeCtx, job.ID, agentName, storage.ReviewCompletion{
+				Output: output, Verdict: agentReview.Verdict, StructuredOutput: agentReview.StructuredOutput,
+				MinSeverity: effectiveMinSeverity, FileCoverage: fileCoverage,
+			}, sources)
+			if err != nil {
+				wp.failNonRetryableJobLocked(workerID, job, agentName, fmt.Sprintf("store compact result: %v", err))
+				return
+			}
+			if closedCompactSources == nil {
+				return // The job was canceled before completion.
+			}
+			completed = true
 		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
 			agentReview.Verdict != storage.VerdictUnknown {
 			if err := wp.db.CompleteJobResult(
@@ -1850,7 +1872,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// running, so a job canceled between agent finish and DB update
 		// must not broadcast review.completed or the batch counters will
 		// over-count successes.
-		{
+		if !completed {
 			j, err := wp.db.GetJobByID(job.ID)
 			if err != nil {
 				log.Printf("[%s] Job %d: failed to verify status: %v", workerID, job.ID, err)
@@ -1861,12 +1883,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				completed = true
 			}
 		}
-
-		// For compact jobs, mark source jobs as closed now that we've
-		// confirmed the compact job completed.
-		if job.JobType == "compact" && completed {
-			if err := wp.closeCompactSources(ctx, workerID, job.ID, compactEligible); err != nil {
-				log.Printf("[%s] Warning: failed to mark compact source jobs for job %d: %v", workerID, job.ID, err)
+		if job.JobType == storage.JobTypeCompact && completed {
+			wp.notifyCompactSourcesClosed(context.WithoutCancel(ctx), workerID, closedCompactSources)
+			if err := DeleteCompactMetadata(job.ID); err != nil {
+				log.Printf("[%s] Warning: failed to delete compact metadata for job %d: %v", workerID, job.ID, err)
 			}
 		}
 
@@ -2912,26 +2932,17 @@ func (wp *WorkerPool) logJobFailed(
 	)
 }
 
-// closeCompactSources runs only after the compact result was persisted and the
-// job confirmed done. The source review version is checked atomically by SQL.
-func (wp *WorkerPool) closeCompactSources(ctx context.Context, workerID string, jobID int64, eligible []review.CompactSource) error {
-	for _, source := range eligible {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := wp.db.MarkReviewClosedByJobIDIfReviewUUID(source.JobID, source.ReviewUUID, true); err != nil {
-			log.Printf("[%s] Compact source %d stayed open: %v", workerID, source.JobID, err)
-			continue
-		}
-		job, err := wp.db.GetJobByIDContext(ctx, source.JobID)
+// notifyCompactSourcesClosed broadcasts only closures committed with the result.
+func (wp *WorkerPool) notifyCompactSourcesClosed(ctx context.Context, workerID string, sourceIDs []int64) {
+	for _, sourceID := range sourceIDs {
+		job, err := wp.db.GetJobByIDContext(ctx, sourceID)
 		if err != nil {
-			return err
+			log.Printf("[%s] Load closed compact source job %d: %v", workerID, sourceID, err)
 		}
-		event := eventForJob("review.closed", job, source.JobID)
+		event := eventForJob("review.closed", job, sourceID)
 		event.SuppressHooks = true
 		wp.broadcaster.Broadcast(event)
 	}
-	return DeleteCompactMetadata(jobID)
 }
 
 func (wp *WorkerPool) logJobStarted(workerID string, job *storage.ReviewJob) {

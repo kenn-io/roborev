@@ -3,7 +3,6 @@
 package daemon
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,9 +11,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestCompactEmptyEligibilityDoesNotCloseSources(t *testing.T) {
+func TestCompactSourceClosureRefreshesSearch(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		setupTestEnv(t)
 		server := newSearchHTTPServer(t, nil)
@@ -25,14 +26,28 @@ func TestCompactEmptyEligibilityDoesNotCloseSources(t *testing.T) {
 		defer server.stopSearch()
 		subscriber, events := server.broadcaster.Subscribe("")
 		defer server.broadcaster.Unsubscribe(subscriber)
-		require.NoError(t, os.WriteFile(compactMetadataPath(900),
-			[]byte(fmt.Sprintf(`{"source_job_ids":[%d,999999]}`, job.ID)), 0o600))
+		source, err := server.db.GetReviewByJobID(job.ID)
+		require.NoError(t, err)
+		require.NotNil(t, source.UUID)
+		compact, err := server.db.EnqueueJob(storage.EnqueueOpts{RepoID: job.RepoID, GitRef: "compact", Agent: "test", JobType: storage.JobTypeCompact})
+		require.NoError(t, err)
+		claimed, err := server.db.ClaimJob("test")
+		require.NoError(t, err)
+		require.Equal(t, compact.ID, claimed.ID)
+		ids, err := server.db.CompleteCompactJobResult(t.Context(), compact.ID, "test", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":3,"summary":"Compact","verdict":"pass","findings":[]}`)}, []storage.CompactSourceIdentity{{JobID: job.ID, ReviewUUID: *source.UUID}})
+		require.NoError(t, err)
+		require.Equal(t, []int64{job.ID}, ids)
 		worker := &WorkerPool{db: server.db, broadcaster: server.broadcaster}
-		require.NoError(t, worker.closeCompactSources(t.Context(), "test", 900, nil))
+		worker.notifyCompactSourcesClosed(t.Context(), "test", ids)
 		synctest.Wait()
-		assert.Empty(t, reconciler.jobs)
+		require.Len(t, reconciler.jobs, 1)
+		assert.Equal(t, job.ID, <-reconciler.jobs)
 		assert.Empty(t, reconciler.wakes)
-		assert.Empty(t, events)
+		require.Len(t, events, 1)
+		event := <-events
+		assert.Equal(t, "review.closed", event.Type)
+		assert.Equal(t, job.ID, event.JobID)
+		assert.True(t, event.SuppressHooks, "automatic bookkeeping must not introduce hook execution")
 	})
 }
 

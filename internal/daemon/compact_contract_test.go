@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -64,7 +65,13 @@ func TestCompactClosureRejectsChangedUUID(t *testing.T) {
 	require.NoError(t, err)
 	subscriber, events := tc.Pool.broadcaster.Subscribe("")
 	defer tc.Pool.broadcaster.Unsubscribe(subscriber)
-	require.NoError(t, tc.Pool.closeCompactSources(t.Context(), testWorkerID, 99, manifest.Sources))
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: "compact-stale", Agent: "test", JobType: storage.JobTypeCompact})
+	require.NoError(t, err)
+	_, err = tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	ids, err := tc.DB.CompleteCompactJobResult(t.Context(), job.ID, "test", storage.ReviewCompletion{StructuredOutput: []byte(`{"schema_version":3,"summary":"Compact","verdict":"pass","findings":[]}`)}, []storage.CompactSourceIdentity{{JobID: source.ID, ReviewUUID: manifest.Sources[0].ReviewUUID}})
+	require.NoError(t, err)
+	tc.Pool.notifyCompactSourcesClosed(t.Context(), testWorkerID, ids)
 	stored, err := tc.DB.GetReviewByJobID(source.ID)
 	require.NoError(t, err)
 	assert.False(t, stored.Closed)
@@ -272,7 +279,7 @@ func TestMarkedCompactUsesCallerCheckout(t *testing.T) {
 }
 
 func TestCompactUnconfirmedCompletionNeverClosesSources(t *testing.T) {
-	for _, failure := range []string{"canceled_noop", "save_failure", "missing_after_save"} {
+	for _, failure := range []string{"canceled_noop", "save_failure", "missing_after_save", "source_close_failure"} {
 		t.Run(failure, func(t *testing.T) {
 			setupTestEnv(t)
 			tc := newWorkerTestContext(t, 1)
@@ -286,6 +293,9 @@ func TestCompactUnconfirmedCompletionNeverClosesSources(t *testing.T) {
 					require.NoError(t, tc.DB.CancelJob(compactID))
 				case "save_failure":
 					_, err := tc.DB.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER compact_save_failure BEFORE INSERT ON reviews WHEN NEW.job_id=%d BEGIN SELECT RAISE(FAIL,'synthetic persistence failure'); END`, compactID))
+					require.NoError(t, err)
+				case "source_close_failure":
+					_, err := tc.DB.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER compact_close_failure BEFORE UPDATE OF closed ON reviews WHEN OLD.job_id=%d BEGIN SELECT RAISE(ABORT,'synthetic closure failure'); END`, source.ID))
 					require.NoError(t, err)
 				case "missing_after_save":
 					_, err := tc.DB.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER compact_missing AFTER INSERT ON reviews WHEN NEW.job_id=%d BEGIN DELETE FROM review_jobs WHERE id=NEW.job_id; END`, compactID))
@@ -305,6 +315,13 @@ func TestCompactUnconfirmedCompletionNeverClosesSources(t *testing.T) {
 			original, err := tc.DB.GetReviewByJobID(source.ID)
 			require.NoError(t, err)
 			assert.False(t, original.Closed)
+			if failure == "source_close_failure" {
+				tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+				_, err = os.Stat(compactMetadataPath(job.ID))
+				require.NoError(t, err)
+				_, err = tc.DB.GetReviewByJobID(job.ID)
+				require.ErrorIs(t, err, sql.ErrNoRows)
+			}
 		})
 	}
 }
