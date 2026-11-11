@@ -566,7 +566,7 @@ func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue
 		return "", fmt.Errorf("%w: ambiguous target comment", ErrConflict)
 	}
 	selected := matches[0].UID
-	_, state := publicationAncestry(project, issue, roots, byUID, matches[0])
+	_, state := newPublicationAncestry(project, issue, roots, byUID).resolve(matches[0])
 	switch state {
 	case "complete":
 		return selected, nil
@@ -581,39 +581,72 @@ func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue
 	}
 }
 
-// publicationAncestry is shared by readback and the stricter reply target
-// resolver. Root identity is correlation, never evidence of author trust.
-func publicationAncestry(project PublicationProject, issue PublicationIssue, roots []PublicationRoot, byUID map[string]gen.CommentOut, current gen.CommentOut) (string, string) {
+// publicationAncestry shares memoized results for one immutable issue read.
+// Root correlation never establishes author trust.
+type publicationAncestry struct {
+	project  PublicationProject
+	issue    PublicationIssue
+	comments map[string]gen.CommentOut
+	roots    map[string]bool
+	memo     map[string]struct{ RootUID, State string }
+}
+
+func newPublicationAncestry(project PublicationProject, issue PublicationIssue, roots []PublicationRoot, comments map[string]gen.CommentOut) *publicationAncestry {
+	a := &publicationAncestry{project: project, issue: issue, comments: comments, roots: make(map[string]bool), memo: make(map[string]struct{ RootUID, State string })}
+	for _, root := range roots {
+		if root.State == "complete" && root.Comment != nil {
+			a.roots[strings.ToLower(root.Comment.UID)] = true
+		}
+	}
+	return a
+}
+
+func (a *publicationAncestry) resolve(current gen.CommentOut) (string, string) {
+	var path []string
 	seen := make(map[string]bool)
+	var root, state string
 	for {
 		key := strings.ToLower(current.UID)
+		if result, ok := a.memo[key]; ok {
+			root, state = result.RootUID, result.State
+			break
+		}
 		if seen[key] {
-			return "", "cycle"
+			state = "cycle"
+			break
 		}
 		seen[key] = true
-		if current.IssueID != issue.Issue.ID || (current.IssueUID != nil && !strings.EqualFold(*current.IssueUID, issue.Issue.UID)) || (current.ProjectID != nil && *current.ProjectID != project.ID) || (current.ProjectUID != nil && *current.ProjectUID != project.UID) || (current.ProjectName != nil && *current.ProjectName != project.Name) {
-			return "", "foreign"
+		path = append(path, key)
+		if current.IssueID != a.issue.Issue.ID || (current.IssueUID != nil && !strings.EqualFold(*current.IssueUID, a.issue.Issue.UID)) || (current.ProjectID != nil && *current.ProjectID != a.project.ID) || (current.ProjectUID != nil && *current.ProjectUID != a.project.UID) || (current.ProjectName != nil && *current.ProjectName != a.project.Name) {
+			state = "foreign"
+			break
 		}
 		if current.ReplyToUID == nil {
-			for _, root := range roots {
-				if root.State == "complete" && root.Comment != nil && strings.EqualFold(root.Comment.UID, current.UID) {
-					return current.UID, "complete"
-				}
+			if a.roots[key] {
+				root, state = current.UID, "complete"
+			} else {
+				state = "unmapped"
 			}
-			return "", "unmapped"
+			break
 		}
-		parent, ok := byUID[strings.ToLower(*current.ReplyToUID)]
+		parent, ok := a.comments[strings.ToLower(*current.ReplyToUID)]
 		if !ok {
-			return "", "orphan"
+			state = "orphan"
+			break
 		}
 		current = parent
 	}
+	for _, key := range path {
+		a.memo[key] = struct{ RootUID, State string }{root, state}
+	}
+	return root, state
 }
 
 // PublicationLineage reports one state for every returned comment in order.
 // Duplicate identities and truncated sets never establish a complete thread.
 func PublicationLineage(project PublicationProject, issue PublicationIssue, roots []PublicationRoot) []struct{ RootUID, State string } {
 	byUID, duplicates := publicationCommentIndex(issue.Comments)
+	ancestry := newPublicationAncestry(project, issue, roots, byUID)
 	out := make([]struct{ RootUID, State string }, len(issue.Comments))
 	for i, c := range issue.Comments {
 		switch {
@@ -622,7 +655,7 @@ func PublicationLineage(project PublicationProject, issue PublicationIssue, root
 		case issue.Truncated:
 			out[i].State = "truncated"
 		default:
-			out[i].RootUID, out[i].State = publicationAncestry(project, issue, roots, byUID, c)
+			out[i].RootUID, out[i].State = ancestry.resolve(c)
 		}
 	}
 	return out

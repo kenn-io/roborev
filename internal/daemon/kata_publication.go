@@ -113,6 +113,12 @@ func (p *kataPublisher) Publish(ctx context.Context, jobID int64) (*KataPublicat
 }
 
 func (p *kataPublisher) Inspect(ctx context.Context, jobID int64) (*KataPublicationStatus, error) {
+	return p.inspectProject(ctx, jobID, "")
+}
+
+var errKataPinnedProject = errors.New("project cannot override a saved publication destination")
+
+func (p *kataPublisher) inspectProject(ctx context.Context, jobID int64, project string) (*KataPublicationStatus, error) {
 	record, err := p.db.GetKataPublication(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -122,7 +128,18 @@ func (p *kataPublisher) Inspect(ctx context.Context, jobID int64) (*KataPublicat
 		return nil, err
 	}
 	defer unlock()
-	return p.inspectPublication(ctx, record)
+	id := record.ReviewUUID
+	record, err = p.db.GetKataPublication(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if record.ReviewUUID != id {
+		return nil, storage.ErrReviewChanged
+	}
+	if record.Marker != nil && strings.TrimSpace(project) != "" {
+		return nil, errKataPinnedProject
+	}
+	return p.inspectPublication(ctx, record, strings.TrimSpace(project))
 }
 
 func (p *kataPublisher) current(ctx context.Context, jobID int64, attempt *kataPreparedAttempt) (*storage.KataPublicationRecord, *storage.Review, *kataSelection, *kata.APIClient, kata.PublicationProject, *kata.Publication, error) {
@@ -432,7 +449,7 @@ func (p *kataPublisher) Authorize(ctx context.Context, jobID int64, policy strin
 
 // inspectPublication reads only the selected destination. It does not require
 // the authorization or request fingerprint that govern subsequent writes.
-func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.KataPublicationRecord) (*KataPublicationStatus, error) {
+func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.KataPublicationRecord, projectOverride string) (*KataPublicationStatus, error) {
 	review, err := p.db.GetReviewByJobIDContext(ctx, record.JobID)
 	if err != nil {
 		return nil, err
@@ -466,9 +483,12 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		}
 		seed = &record.Marker.KataPublicationSeed
 	} else {
-		name, err := kataInspectionProject(cfg, review.Job, checkout)
-		if err != nil {
-			return nil, err
+		name := projectOverride
+		if name == "" {
+			name, err = kataInspectionProject(cfg, review.Job, checkout)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if name != "" {
 			seed = &storage.KataPublicationSeed{Project: name}

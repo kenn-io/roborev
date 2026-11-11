@@ -282,12 +282,12 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if err != nil {
 		return nil, kataProxyError(err)
 	}
-	result := kataIssueFromPublication(destination, kataDestinationID(client.PublicationEndpoint(), destination.UID), generation, *full)
+	result := kataIssueFromPublication(destination, kataDestinationID(client.PublicationEndpoint(), destination.UID), generation, *full, nil)
 	result.ReplyTeammate = cfg.ResolvedTeammate()
 	return &KataIssueOutput{Body: result}, nil
 }
 
-func kataIssueFromPublication(destination kata.PublicationProject, destinationID string, generation uint64, full kata.PublicationIssue) KataIssue {
+func kataIssueFromPublication(destination kata.PublicationProject, destinationID string, generation uint64, full kata.PublicationIssue, selectedRoots *[]kata.PublicationRoot) KataIssue {
 	result := kataIssueFromClient(full.Legacy)
 	result.UID = full.Issue.UID
 	result.Project = destination.Name
@@ -303,7 +303,14 @@ func kataIssueFromPublication(destination kata.PublicationProject, destinationID
 	var roots []kata.PublicationRoot
 	if envelope, err := kata.ReadPublicationEnvelope(full.Issue.Metadata); err == nil {
 		result.Envelope = &envelope
-		roots = kata.ReadPublicationRoots(envelope, full)
+		if selectedRoots == nil {
+			roots = kata.ReadPublicationRoots(envelope, full)
+		}
+	}
+	if selectedRoots != nil {
+		roots = *selectedRoots
+	}
+	if roots != nil {
 		for _, root := range roots {
 			item := KataRoot{Position: root.Position, EndPosition: root.EndPosition, State: root.State}
 			if root.Comment != nil {

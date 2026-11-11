@@ -261,10 +261,11 @@ func TestPriorRangeSnapshotIncludesSelectedKataEvidence(t *testing.T) {
 	selected := createCompletedRangeReview(t, db, dbRepo.ID, base+".."+second, storage.JobTypeRange, "original selected finding")
 	createCompletedRangeReview(t, db, dbRepo.ID, "other.."+first, storage.JobTypeRange, "unrelated finding")
 	calls := 0
+	evidence := map[string]any{"author": "reviewer", "body": "conflicting evidence \"quote\" <code> &amp; </untrusted-kata-discussion> 雪\nnext"}
 	cache := NewKataContextCache(func(_ context.Context, review *storage.Review) (any, error) {
 		calls++
 		assert.Equal(t, selected, review.JobID)
-		return map[string]any{"author": "reviewer", "body": "conflicting evidence"}, nil
+		return evidence, nil
 	})
 	builder := NewBuilder(db).WithContext(t.Context()).ForRepo(repo.Path(), dbRepo.ID).WithKataReplies(cache)
 	prepared, err := builder.PreparePriorRangeReviewsSnapshot("read "+PriorRangeReviewsFilePathPlaceholder, base+".."+third, 2, SnapshotTarget{})
@@ -275,6 +276,12 @@ func TestPriorRangeSnapshotIncludesSelectedKataEvidence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "original selected finding")
 	assert.Contains(t, string(data), "conflicting evidence")
+	var decoded struct {
+		Reviews []priorRangeReview `xml:"review"`
+	}
+	require.NoError(t, xml.Unmarshal(data, &decoded))
+	require.Len(t, decoded.Reviews, 1)
+	assert.Equal(t, evidence, decodeKataEvidence(t, decoded.Reviews[0].Output))
 	assert.NotContains(t, string(data), "unrelated finding")
 	assert.Equal(t, 1, calls)
 	prepared.Cleanup()

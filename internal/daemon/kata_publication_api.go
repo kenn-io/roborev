@@ -130,9 +130,9 @@ func (s *Server) publicationResult(ctx context.Context, id int64, status *KataPu
 	}
 	body := kataPublicationBody(status)
 	if status.Issue != nil {
-		issue := kataIssueFromPublication(status.Project, status.DestinationID, status.Generation, *status.Issue)
+		issue := kataIssueFromPublication(status.Project, status.DestinationID, status.Generation, *status.Issue, &status.Roots)
+		issue.ReplyTeammate = status.ReplyTeammate
 		issue.Roots = body.Roots
-		kataIssueLineage(&issue, status.Project, *status.Issue, status.Roots)
 		body.Comments = issue.Comments
 		body.Issue = &issue
 	}
@@ -181,10 +181,10 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 		}
 	}
 	if jobID > 0 {
-		if in.Project != "" {
-			return nil, huma.Error400BadRequest("project cannot override a local review destination")
+		status, err := s.hookRunner.publisher.inspectProject(ctx, jobID, in.Project)
+		if errors.Is(err, errKataPinnedProject) {
+			return nil, huma.Error400BadRequest(err.Error())
 		}
-		status, err := s.hookRunner.publisher.Inspect(ctx, jobID)
 		if ctx.Err() != nil {
 			return nil, kataReadError(ctx.Err())
 		}
@@ -250,7 +250,8 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 		return &KataPublicationOutput{Body: body}, nil
 	}
 	body.State = "unverified"
-	full := kataIssueFromPublication(project, body.DestinationID, generation, *issue)
+	full := kataIssueFromPublication(project, body.DestinationID, generation, *issue, nil)
+	full.ReplyTeammate = cfg.ResolvedTeammate()
 	body.Issue = &full
 	body.IssueUID, body.IssueShortID, body.IssueAuthor, body.IssueTeammate = full.UID, full.ShortID, full.Author, full.Teammate
 	body.Comments, body.Roots = full.Comments, full.Roots

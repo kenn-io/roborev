@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -657,4 +658,36 @@ func TestPublicationLineageReportsIncompleteThreads(t *testing.T) {
 	for _, state := range PublicationLineage(project, issue, roots) {
 		assert.Equal(t, "truncated", state.State)
 	}
+}
+
+func TestPublicationLineageSharedDeepAncestry(t *testing.T) {
+	project := PublicationProject{ID: 7, UID: "project", Name: "reviews"}
+	root := gen.CommentOut{UID: "Root", IssueID: 9}
+	issue := PublicationIssue{}
+	issue.Issue.ID, issue.Issue.UID, issue.Issue.ProjectID = 9, "issue", 7
+	comments := []gen.CommentOut{root}
+	parent := root.UID
+	for i := range 100 {
+		uid := fmt.Sprintf("node-%03d", i)
+		comments = append(comments, gen.CommentOut{UID: uid, IssueID: 9, ReplyToUID: new(parent)})
+		parent = uid
+	}
+	comments = append(comments, gen.CommentOut{UID: "shared", IssueID: 9, ReplyToUID: new("NODE-050")})
+	slices.Reverse(comments)
+	issue.Comments = comments
+	roots := []PublicationRoot{{State: "complete", Comment: &root}}
+	for _, state := range PublicationLineage(project, issue, roots) {
+		assert.Equal(t, "complete", state.State)
+		assert.Equal(t, "Root", state.RootUID)
+	}
+	roots[0].State = "edited"
+	for _, state := range PublicationLineage(project, issue, roots) {
+		assert.Equal(t, "unmapped", state.State)
+	}
+	issue.Comments = append(issue.Comments, gen.CommentOut{UID: "root", IssueID: 9})
+	for _, state := range PublicationLineage(project, issue, roots) {
+		assert.Equal(t, "ambiguous", state.State)
+	}
+	issue.Comments = []gen.CommentOut{{IssueID: 9}}
+	assert.Equal(t, "ambiguous", PublicationLineage(project, issue, roots)[0].State)
 }

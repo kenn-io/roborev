@@ -357,7 +357,7 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	text := "Finding 1 from a roborev review."
 	digest := sha256.Sum256([]byte(text))
 	marker := fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, record.ReviewUUID, digest)
-	issue.Comments = []katagen.CommentOut{{UID: "root-uid", Handle: new("c:root"), Body: marker, Author: "service"}}
+	issue.Comments = []katagen.CommentOut{{UID: "root-uid", IssueID: issue.Out.ID, Handle: new("c:root"), Body: marker, Author: "service"}}
 	cfg := kataConnectionConfig(fake)
 	// A synced machine has no local publication hook or marker.
 	server := newServerWithLogs(tc.DB, cfg, "", newTestErrorLog(), newTestActivityLog())
@@ -383,6 +383,7 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	replacementDigest := sha256.Sum256([]byte(replacement))
 	issue.Comments[0].UID = "replacement-uid"
 	issue.Comments[0].Body = fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", replacement, record.ReviewUUID, replacementDigest)
+	issue.Comments = append(issue.Comments, katagen.CommentOut{UID: "descendant", IssueID: issue.Out.ID, ReplyToUID: new("replacement-uid"), Body: "claim"})
 	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	got = decodeKata[KataPublicationBody](t, w)
@@ -391,6 +392,9 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	assert.Equal(t, "edited", got.Roots[0].State)
 	assert.Equal(t, "replacement-uid", got.Roots[0].Comment.UID)
 	assert.Equal(t, "service", got.Roots[0].Comment.Author)
+	require.Len(t, got.Comments, 2)
+	assert.Equal(t, "unmapped", got.Comments[1].Lineage)
+	issue.Comments = issue.Comments[:1]
 	issue.Comments[0].UID = "root-uid"
 	issue.Comments[0].Body = marker
 	issue.Out.Metadata["roborev.completed_at"] = review.CreatedAt.In(time.FixedZone("offset", 3600)).Format(time.RFC3339Nano)
@@ -408,13 +412,48 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	// An explicit hook project wins over the default for an unmarked reader.
 	other := fake.AddIssue(8, "other-issue", "findings", "body", "roborev")
 	other.Out.Metadata = issue.Out.Metadata
-	other.Comments = issue.Comments
+	other.Comments = append([]katagen.CommentOut(nil), issue.Comments...)
+	other.Comments[0].IssueID = other.Out.ID
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "summary", Project: "other"}}
 	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	got = decodeKata[KataPublicationBody](t, w)
 	assert.Equal(t, "other", got.Project)
 	assert.Equal(t, "complete", got.State)
+	for _, selector := range []url.Values{{"job_id": {fmt.Sprint(job.ID)}, "project": {"reviews"}}, {"review_uuid": {record.ReviewUUID.String()}, "project": {"reviews"}}} {
+		before := len(fake.AllRequests())
+		w = kataGet(t, server, "/api/kata/publication", selector)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "reviews", decodeKata[KataPublicationBody](t, w).Project)
+		for _, request := range fake.AllRequests()[before:] {
+			assert.NotEqual(t, http.MethodPost, request.Method)
+			assert.NotContains(t, request.Path, "/projects/8/issues")
+		}
+	}
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	assert.Equal(t, "other", decodeKata[KataPublicationBody](t, w).Project)
+	api := httptest.NewServer(server.httpServer.Handler)
+	t.Cleanup(api.Close)
+	query := mcpserver.KataContextQuery{ReviewUUID: record.ReviewUUID.String(), Project: "reviews"}
+	direct, err := server.mcpBackend().GetKataContext(t.Context(), query)
+	require.NoError(t, err)
+	remote, err := mcpserver.NewHTTPBackend(api.URL, api.Client()).GetKataContext(t.Context(), query)
+	require.NoError(t, err)
+	assert.Equal(t, direct, remote)
+	assert.Equal(t, "reviews", direct["project"])
+	cfg.Hooks = nil
+	cfg.Integrations.Kata.DefaultProject = "other"
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"review_uuid": {record.ReviewUUID.String()}, "project": {"reviews"}})
+	assert.Equal(t, "reviews", decodeKata[KataPublicationBody](t, w).Project)
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	assert.Equal(t, "other", decodeKata[KataPublicationBody](t, w).Project)
+	cfg.Integrations.Kata.DefaultProject = "reviews"
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "summary", Project: "other"}}
+	cfg.Hooks = append(cfg.Hooks, config.HookConfig{Type: "kata", Event: "review.completed", Findings: "summary", Project: "reviews"})
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	assert.Contains(t, decodeKata[KataPublicationBody](t, w).Message, "ambiguous Kata publication projects")
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}, "project": {"reviews"}})
+	assert.Equal(t, "reviews", decodeKata[KataPublicationBody](t, w).Project)
 
 	// Expired manual create still performs read-only discovery, even with no hook.
 	cfg.Hooks = nil

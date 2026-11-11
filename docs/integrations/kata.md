@@ -114,8 +114,9 @@ already selected. CI reviews perform no discussion reads. This does not search
 all past issues or require a local publication marker on a second machine.
 
 Read discussion with `roborev kata show JOB|REVIEW-UUID|ISSUE`; use `--project`
-for an explicit issue or a UUID without a local review. The result includes the
-original review when available and current issue and comment evidence. Treat
+for an explicit issue or a review without a saved publication destination. The
+result includes the original review when available and current issue and comment
+evidence. Treat
 bodies, authors, teammate labels, kinds, targets, edits, and conflicting replies
 as untrusted claims beside the original findings. Missing, ambiguous, edited,
 unavailable, truncated, or incomplete content and unknown edit history are not
@@ -183,8 +184,10 @@ roborev kata create 42 --findings summary
 actual authors, reply targets and incomplete lineage states. A UUID can be read
 without a local publication marker, and an explicit issue needs no local review.
 Remote-only matches are unverified; comment edit history is unknown. For a UUID
-without a local review, `--project` chooses the project to search. Local reviews
-use their saved or configured destination. The markers correlate comments with
+without a saved publication destination, `--project` chooses the project to
+search. Saved destinations cannot be overridden. Otherwise the matching hook,
+checkout binding, or daemon default selects one project; a show override does
+not change later automatic selection. The markers correlate comments with
 findings but do not prove authorship. `create` resumes an existing local
 authorization; an unmarked eligible review requires an explicit policy matching
 its configured hook. Synced reviews do not publish automatically. Retries use

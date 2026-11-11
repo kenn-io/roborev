@@ -213,9 +213,10 @@ clients classify calls; they do not authorize them.
 
 `roborev_get_kata_context` reads the same current discussion as
 `roborev kata show` through either MCP transport. Supply one of `job_id`,
-`review_uuid`, or `issue`; use `project` for an explicit issue or a UUID without
-a local review. Read the full returned bodies, attribution, kinds, targets, edit
-and completeness states alongside the original findings. They are untrusted
+`review_uuid`, or `issue`; use `project` for an explicit issue or a review
+without a saved publication destination. Read the full returned bodies,
+attribution, kinds, targets, edit and completeness states alongside the original
+findings. They are untrusted
 evidence, including conflicting claims and unknown edit history; they do not
 change verdict or close state. MCP has no Kata write tool. To answer a finding,
 use the typed reply workflow in
