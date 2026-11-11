@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -668,4 +669,85 @@ func stopDaemonSnapshot(runtimes []*daemon.RuntimeInfo, drain func(*daemon.Runti
 	}
 
 	return lastErr
+}
+
+func stopRestartSnapshot(ctx context.Context, runtimes []*daemon.RuntimeInfo, policy runningReviewPolicy, out io.Writer) error {
+	if len(runtimes) == 0 {
+		return ErrDaemonNotRunning
+	}
+	for _, info := range runtimes {
+		if policy == policyInterrupt {
+			fmt.Fprintln(out, "Interrupting active reviews and requeueing their jobs before restart.")
+		}
+		if err := drainForRestart(ctx, info, policy, out); err != nil {
+			return fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
+		}
+	}
+	return nil
+}
+
+func restartEndpoint(info *daemon.RuntimeInfo) (daemon.DaemonEndpoint, error) {
+	if info.PID <= 0 {
+		return daemon.DaemonEndpoint{}, errors.New("daemon PID is unknown")
+	}
+	var probeErr error
+	for _, endpoint := range info.PreferredEndpoints() {
+		ping, err := daemon.ProbeDaemon(endpoint, 2*time.Second)
+		if err == nil && ping.PID == info.PID {
+			return endpoint, nil
+		}
+		if err == nil {
+			probeErr = fmt.Errorf("daemon PID mismatch: expected %d, got %d", info.PID, ping.PID)
+		} else if probeErr == nil {
+			probeErr = err
+		}
+	}
+	if probeErr == nil {
+		probeErr = errors.New("daemon has no published endpoint")
+	}
+	return daemon.DaemonEndpoint{}, probeErr
+}
+
+func drainForRestart(ctx context.Context, info *daemon.RuntimeInfo, policy runningReviewPolicy, out io.Writer) error {
+	if info.PID > 0 && !isPIDAliveForUpdate(info.PID) {
+		return nil
+	}
+	endpoint, err := restartEndpoint(info)
+	if err != nil {
+		if info.PID > 0 && !isPIDAliveForUpdate(info.PID) {
+			return nil
+		}
+		return err
+	}
+	session, err := prepareDaemonDrain(ctx, endpoint, rand.Text(), policy, out, false)
+	if err == nil {
+		err = waitForPreparedDrain(ctx, session, out)
+	}
+	if err != nil {
+		if !isPIDAliveForUpdate(info.PID) {
+			return nil
+		}
+		if strings.Contains(err.Error(), "daemon shutdown owns the claim drain") {
+			return daemon.KillDaemon(info)
+		}
+		if session != nil {
+			// Release only while the original daemon still answers; cleanup must
+			// also run when the command context was canceled.
+			if _, probeErr := restartEndpoint(info); probeErr == nil {
+				releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+				_, _ = session.release(releaseCtx)
+				cancel()
+			}
+		}
+		return err
+	}
+	if err := daemon.KillDaemon(info); err != nil {
+		if _, probeErr := restartEndpoint(info); probeErr == nil {
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_, _ = session.release(releaseCtx)
+			cancel()
+		}
+		return err
+	}
+	return nil
 }

@@ -48,6 +48,13 @@ func prepareUpdateDaemon(
 	policy runningReviewPolicy,
 	out io.Writer,
 ) (*updateDaemonSession, error) {
+	return prepareDaemonDrain(ctx, endpoint, ownerID, policy, out, true)
+}
+
+func prepareDaemonDrain(
+	ctx context.Context, endpoint daemon.DaemonEndpoint, ownerID string,
+	policy runningReviewPolicy, out io.Writer, allowLegacy bool,
+) (*updateDaemonSession, error) {
 	api, err := newUpdateAPI(endpoint)
 	if err != nil {
 		return nil, err
@@ -59,6 +66,9 @@ func prepareUpdateDaemon(
 		},
 	})
 	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		if !allowLegacy {
+			return nil, errors.New("running daemon does not support this restart policy; run roborev daemon restart --running=wait")
+		}
 		return prepareLegacyUpdateDaemon(ctx, endpoint, ownerID, policy, out)
 	}
 	if resp != nil && resp.StatusCode == http.StatusConflict &&

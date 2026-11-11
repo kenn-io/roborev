@@ -1482,6 +1482,12 @@ restart reports that it is waiting, lets running jobs and worker finalization
 finish without a timeout, and only then starts the replacement daemon. On macOS,
 `daemon restart` restarts an owned daemon through its LaunchAgent.
 
+Use `roborev daemon restart --running=interrupt` to interrupt active reviews,
+wait for their workers to unwind, and requeue the same jobs without consuming a
+retry. Use `--running=abort` to refuse the restart if reviews are running; it
+requires one identifiable live daemon. Both policies require a daemon that
+supports coordinated draining. For older daemons, use `--running=wait`.
+
 !!! tip "Broken post-commit hook?"
 
     If your post-commit hook was corrupted during a previous upgrade (e.g. a stray

@@ -58,7 +58,10 @@ to inspect the queue and published browser address.`, example: `  roborev daemon
 available when it starts again. Use pause to suspend queue processing while
 leaving the daemon available for reads.`, example: `  roborev daemon stop`},
 	"daemon restart": {long: `Stop and start the local daemon to load new configuration or a new binary.
-If no daemon is running, start it. Review history stays in the data directory.`, example: `  roborev daemon restart`},
+If no daemon is running, start it. Review history stays in the data directory.
+Use --running=wait (default) to finish active reviews, interrupt to requeue them,
+or abort to refuse a restart while reviews are running. Interrupt and abort
+require a daemon that supports coordinated draining.`, example: `  roborev daemon restart`},
 	"daemon status": {long: `Inspect the local daemon, its queue, browser UI and Agent Hook reminders.
 Use --json for the status record, or doctor to diagnose setup and agents.`, example: `  roborev daemon status
   roborev daemon status --json`},

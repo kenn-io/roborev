@@ -170,10 +170,15 @@ func daemonCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	var restartRunning string
+	restartCmd := &cobra.Command{
 		Use:   "restart",
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			policy, err := parseRunningReviewPolicy(restartRunning)
+			if err != nil {
+				return err
+			}
 			var owner *daemonService
 			var runtimes []*daemon.RuntimeInfo
 			stop := daemonStop
@@ -188,6 +193,20 @@ func daemonCmd() *cobra.Command {
 					defer release()
 				}
 				stop = func() error { return stopDaemonSnapshot(runtimes, drainManagedDaemon, os.Stderr) }
+			}
+			if policy == policyInterrupt || policy == policyAbort {
+				if !restartThroughService {
+					runtimes, err = listAllRuntimes()
+					if err != nil && !os.IsNotExist(err) {
+						return err
+					}
+				}
+				if policy == policyAbort && (len(runtimes) != 1 || runtimes[0].PID <= 0 || runtimes[0].Stale()) {
+					return errors.New("--running=abort requires one identifiable live daemon")
+				}
+				stop = func() error {
+					return stopRestartSnapshot(cmd.Context(), runtimes, policy, os.Stderr)
+				}
 			}
 			wasRunning := true
 			if err := stop(); errors.Is(err, ErrDaemonNotRunning) {
@@ -209,7 +228,9 @@ func daemonCmd() *cobra.Command {
 			}
 			return nil
 		},
-	})
+	}
+	restartCmd.Flags().StringVar(&restartRunning, "running", "wait", "handling for running reviews: wait, interrupt, or abort")
+	cmd.AddCommand(restartCmd)
 
 	cmd.AddCommand(statusCmd())
 	cmd.AddCommand(daemonRunCmd())
