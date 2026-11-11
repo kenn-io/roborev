@@ -1432,7 +1432,7 @@ not start or restart a local daemon on its behalf.
 roborev daemon start             # Start background daemon
 roborev daemon stop              # Stop daemon
 roborev daemon restart           # Restart daemon
-roborev daemon restart --running=interrupt # Requeue running reviews and restart
+roborev daemon restart --running=interrupt # Requeue running jobs and restart
 roborev daemon status            # Show daemon, web UI, and queue status
 roborev daemon run               # Run in foreground
 roborev daemon pause                    # Pause queue processing
@@ -1450,14 +1450,16 @@ roborev hook uninstall           # Remove hook
 | Flag | Description |
 |------|-------------|
 | `--json` | Emit daemon, web UI, and queue status as JSON. Includes the canonical browser origin as `web_url` (with `web_disabled_reason` set to `config` or `missing-web-assets` when the browser listener is not running), active snoozes under `daemon.active_snoozes`, and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
+| `--running=wait\|interrupt` | On daemon restart, finish running jobs by default (`wait`) or interrupt and requeue them (`interrupt`) |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
 
-Restart waits for running reviews by default. Use `--running=interrupt` to
-requeue active reviews, wait for shutdown, and start the replacement. Those
-reviews start fresh without consuming a retry. If Ctrl-C interrupts a waiting
-restart, rerun it with `--running=interrupt` while the daemon is draining. Older
-daemons do not support interruption; restart them with the default
-`--running=wait`.
+Restart waits for running jobs to finish by default. Use `--running=interrupt`
+to requeue all running jobs, including reviews, synthesis, and background fixes,
+wait for shutdown, and start the replacement. Interrupted attempts start fresh,
+discarding in-progress work without consuming a retry. If Ctrl-C interrupts a
+waiting restart, rerun it with `--running=interrupt` while the daemon is
+draining. Older daemons do not support interruption; restart them with the
+default `--running=wait`.
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,
@@ -1485,10 +1487,11 @@ queue survives daemon restarts and is shown in `roborev daemon status` and the
 TUI. Use `cancel` when you need to stop one queued or running job instead of
 pausing the whole queue.
 
-Daemon shutdown also stops workers from claiming new jobs. If work is active,
-restart reports that it is waiting, lets running jobs and worker finalization
-finish without a timeout, and only then starts the replacement daemon. On macOS,
-`daemon restart` restarts an owned daemon through its LaunchAgent.
+Daemon shutdown also stops workers from claiming new jobs. If work is active, a
+graceful restart reports that it is waiting, lets running jobs and worker
+finalization finish without a timeout, and only then starts the replacement
+daemon. On macOS, `daemon restart` restarts an owned daemon through its
+LaunchAgent.
 
 !!! tip "Broken post-commit hook?"
 

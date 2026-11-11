@@ -188,7 +188,7 @@ func daemonCmd() *cobra.Command {
 			message := daemonShutdownWaitMessage
 			if runningPolicy == "interrupt" {
 				drain = interruptDaemon
-				message = "Interrupting running reviews and waiting for daemon shutdown..."
+				message = "Interrupting running jobs and waiting for daemon shutdown..."
 				stop = func() error {
 					return stopDaemonRuntimesWithMessage(listAllRuntimes, drain, os.Stderr, message)
 				}
