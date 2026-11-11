@@ -391,7 +391,9 @@ func TestSynthesisAvailabilityFallbackExperimentReport(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			wc := newWorkerTestContext(t, 1)
 			const clean = `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`
-			agent.RegisterForTest(t, &synthesisEntrypointTestAgent{name: "report-synthesis-backup", result: clean})
+			backup := &synthesisEntrypointTestAgent{name: "report-synthesis-backup", result: clean}
+			agent.RegisterForTest(t, backup)
+			selectedAgent := backup
 			switch tc.name {
 			case "backup":
 				agent.RegisterForTest(t, &unavailableSynthesisCommandAgent{name: tc.planned, command: "roborev-test-missing-report-primary"})
@@ -399,37 +401,67 @@ func TestSynthesisAvailabilityFallbackExperimentReport(t *testing.T) {
 				original, err := agent.Get("claude-code")
 				require.NoError(t, err)
 				t.Cleanup(func() { agent.Register(original) })
-				agent.Register(&synthesisEntrypointTestAgent{name: tc.selected, result: clean})
+				selectedAgent = &synthesisEntrypointTestAgent{name: tc.selected, result: clean}
+				agent.Register(selectedAgent)
 			default:
-				agent.RegisterForTest(t, &synthesisEntrypointTestAgent{name: tc.planned, result: clean})
+				selectedAgent = &synthesisEntrypointTestAgent{name: tc.planned, result: clean}
+				agent.RegisterForTest(t, selectedAgent)
 			}
 			run := uuid.New()
 			sha := testutil.GetHeadSHA(t, wc.TmpDir)
 			opts, err := panelSynthesisOpts(targetDescriptor{}, "example", run, config.SynthesisSpec{Agent: tc.planned, Model: "primary-model", BackupAgent: "report-synthesis-backup", BackupModel: "backup-model"}, nil, wc.Pool.cfgGetter.Config())
 			require.NoError(t, err)
 			opts.RepoID, opts.GitRef = wc.Repo.ID, sha
-			memberOpts := []storage.EnqueueOpts{{RepoID: wc.Repo.ID, GitRef: sha, Agent: "test", PanelRunUUID: &run, PanelMemberName: "voter"}}
+			memberOpts := []storage.EnqueueOpts{
+				{RepoID: wc.Repo.ID, GitRef: sha, Agent: "test", PanelRunUUID: &run, PanelMemberName: "voter"},
+				{RepoID: wc.Repo.ID, GitRef: sha, Agent: "test", PanelRunUUID: &run, PanelMemberName: "second", PanelMemberIndex: 1},
+			}
 			plan, err := experimentPlanForPanel(memberOpts, opts)
 			require.NoError(t, err)
 			opts.Experiment, err = storageAssignmentForExperiment(&config.ExperimentAssignment{ID: "synthesis-v1", DefinitionHash: "definition", DefinitionJSON: `{"ratio":0.5}`, Arm: config.ExperimentArmExperimental, SubjectHash: "topic"}, plan)
 			require.NoError(t, err)
 			members, synth, err := wc.DB.EnqueuePanelRun(memberOpts, opts)
 			require.NoError(t, err)
-			completeMember(t, wc, members[0].ID, "test", "No issues found.")
+			for _, member := range members {
+				markMemberRunning(t, wc, member.ID)
+				require.NoError(t, wc.DB.MarkJobAgentInvokedContext(t.Context(), member.ID, testWorkerID, "test"))
+				require.NoError(t, testutil.CompleteReviewFixture(wc.DB, member.ID, "test", "", "No issues found."))
+			}
 			job := releaseAndClaimSynthesis(t, wc, run)
-			doc, selected, _, err := wc.Pool.runSynthesisAgent(t.Context(), testWorkerID, job, nil, "prompt")
-			require.NoError(t, err)
-			require.Equal(t, tc.selected, selected)
+			succeeded := []reviewpkg.ReviewResult{
+				{Agent: "test", Status: reviewpkg.ResultDone, Output: "No issues found.", Verdict: storage.VerdictPass},
+				{Agent: "test", Status: reviewpkg.ResultDone, Output: "No issues found.", Verdict: storage.VerdictPass},
+			}
+			wc.Pool.synthesizeSucceededResults(t.Context(), testWorkerID, job, succeeded, false, "", nil)
+			assert.True(t, selectedAgent.reviewCalled)
+			assert.Equal(t, tc.model, selectedAgent.model)
 			stored, err := wc.DB.GetJobByID(synth.ID)
 			require.NoError(t, err)
-			assert.Equal(t, tc.selected, stored.Agent, "executor must be persisted before completion")
-			assert.Equal(t, tc.model, stored.Model)
-			raw, err := json.Marshal(doc)
-			require.NoError(t, err)
-			require.NoError(t, wc.DB.CompleteJob(synth.ID, selected, string(raw)))
+			assert.Equal(t, storage.JobStatusDone, stored.Status)
+			assert.Equal(t, tc.planned, stored.Agent)
+			assert.Equal(t, "primary-model", stored.Model)
+			assert.True(t, jobAgentInvoked(t, wc, synth.ID))
 			review, err := wc.DB.GetReviewByJobID(synth.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tc.selected, review.Agent)
+			assert.NotEmpty(t, review.StructuredOutput)
+			report, err := wc.DB.GetExperimentReport(t.Context(), "synthesis-v1", storage.ExperimentReportOptions{})
+			require.NoError(t, err)
+			var offPlan *storage.ExperimentMetricComparison
+			for i := range report.Metrics {
+				metric := &report.Metrics[i]
+				if metric.Metric == "off_plan_rate" {
+					offPlan = metric
+					break
+				}
+			}
+			require.NotNil(t, offPlan)
+			require.NotNil(t, offPlan.Experiment.Value)
+			want := 0.0
+			if tc.name == "backup" {
+				want = 1.0 / 3
+			}
+			assert.InDelta(t, want, *offPlan.Experiment.Value, 1e-12)
 		})
 	}
 }
