@@ -7,11 +7,16 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	"uuid"
 
 	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/procutil"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
@@ -119,7 +124,11 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 		return nil, nil, nil, nil, zero, nil, storage.ErrReviewChanged
 	}
 	cfg := p.cfg.Config()
-	selection, err := selectKataPublication(ctx, cfg, review.Job, resolveEffectiveRepoPath("kata", review.Job))
+	checkout, err := kataCheckout(ctx, review.Job)
+	if err != nil {
+		return nil, nil, nil, nil, zero, nil, err
+	}
+	selection, err := selectKataPublication(ctx, cfg, review.Job, checkout)
 	if err != nil {
 		return nil, nil, nil, nil, zero, nil, err
 	}
@@ -291,7 +300,10 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 	if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
 		return errors.New("Kata publication window expired")
 	}
-	checkout := resolveEffectiveRepoPath("kata", review.Job)
+	checkout, err := kataCheckout(ctx, review.Job)
+	if err != nil {
+		return err
+	}
 	postCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	return p.db.RunKataPublication(postCtx, record.ReviewUUID, record.DocumentHash, func(ctx context.Context) error {
@@ -366,7 +378,11 @@ func (p *kataPublisher) Authorize(ctx context.Context, jobID int64, policy strin
 	if !p.now().Add(kata.DefaultRequestTimeout).Before(review.CreatedAt.Add(7 * 24 * time.Hour)) {
 		return errors.New("Kata publication window expired")
 	}
-	selection, err := selectKataPublication(ctx, p.cfg.Config(), review.Job, resolveEffectiveRepoPath("kata", review.Job))
+	checkout, err := kataCheckout(ctx, review.Job)
+	if err != nil {
+		return err
+	}
+	selection, err := selectKataPublication(ctx, p.cfg.Config(), review.Job, checkout)
 	if err != nil {
 		return err
 	}
@@ -390,7 +406,10 @@ func (p *kataPublisher) inspectUnmarked(ctx context.Context, record *storage.Kat
 	if cfg == nil || !cfg.Integrations.Kata.Enabled {
 		return nil, errors.New("Kata integration disabled")
 	}
-	checkout := resolveEffectiveRepoPath("kata", review.Job)
+	checkout, err := kataCheckout(ctx, review.Job)
+	if err != nil {
+		return nil, err
+	}
 	client, err := kata.NewAPIClient(checkout, cfg.Integrations.Kata)
 	if err != nil {
 		return nil, err
@@ -461,4 +480,57 @@ func (p *kataPublisher) inspectUnmarked(ctx context.Context, record *storage.Kat
 func kataDestinationID(endpoint, projectUID string) string {
 	sum := sha256.Sum256([]byte(endpoint + "\x00" + projectUID))
 	return hex.EncodeToString(sum[:])
+}
+
+// kataCheckout validates the caller's worktree using the attempt context, so
+// an unresponsive Git process cannot keep publication alive at shutdown.
+func kataCheckout(ctx context.Context, job *storage.ReviewJob) (string, error) {
+	if job.WorktreePath == "" {
+		return job.RepoPath, nil
+	}
+	gitOutput := func(dir string, args ...string) (string, error) {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		procutil.HideConsole(cmd)
+		cmd.Dir = dir
+		out, err := cmd.Output()
+		return strings.TrimSpace(string(out)), err
+	}
+	canonical := func(path string) string {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return filepath.Clean(path)
+		}
+		resolved, err := filepath.EvalSymlinks(absolute)
+		if err == nil {
+			return filepath.Clean(resolved)
+		}
+		return filepath.Clean(absolute)
+	}
+	root, err := gitOutput(job.WorktreePath, "rev-parse", "--show-toplevel")
+	if err == nil {
+		// A linked worktree's .git file identifies its root even when a shared
+		// core.worktree setting makes --show-toplevel point elsewhere.
+		if info, statErr := os.Stat(filepath.Join(job.WorktreePath, ".git")); statErr == nil && !info.IsDir() {
+			root = job.WorktreePath
+		}
+		if canonical(root) == canonical(job.WorktreePath) {
+			common, commonErr := gitOutput(job.WorktreePath, "rev-parse", "--git-common-dir")
+			repoCommon, repoErr := gitOutput(job.RepoPath, "rev-parse", "--git-common-dir")
+			if commonErr == nil && repoErr == nil {
+				if !filepath.IsAbs(common) {
+					common = filepath.Join(job.WorktreePath, common)
+				}
+				if !filepath.IsAbs(repoCommon) {
+					repoCommon = filepath.Join(job.RepoPath, repoCommon)
+				}
+				if canonical(common) == canonical(repoCommon) {
+					return job.WorktreePath, nil
+				}
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return job.RepoPath, nil
 }

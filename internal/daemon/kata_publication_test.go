@@ -165,3 +165,11 @@ func TestKataRecoveryStopsInFlightAttempt(t *testing.T) {
 	require.NoError(t, wait(done))
 	require.NoError(t, wait(canceled))
 }
+
+func TestKataCheckoutHonorsCancellation(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := kataCheckout(ctx, &storage.ReviewJob{RepoPath: tc.TmpDir, WorktreePath: tc.TmpDir})
+	require.ErrorIs(t, err, context.Canceled)
+}
