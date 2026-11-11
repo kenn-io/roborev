@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -542,5 +543,69 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
 	for _, request := range fake.AllRequests()[before:] {
 		assert.NotEqual(t, http.MethodPost, request.Method)
+	}
+}
+
+func TestKataResponseRejectsDestinationChangesAtBarrier(t *testing.T) {
+	for _, scenario := range []string{"endpoint", "project UID", "reload", "disabled"} {
+		t.Run(scenario, func(t *testing.T) {
+			server, fake := kataAPIServer(t)
+			issue := fake.AddIssue(7, "a123", "findings", "body")
+			reviewID := "11111111-1111-4111-8111-111111111111"
+			issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": reviewID, "roborev.document_hash": strings.Repeat("a", 64), "roborev.policy": "summary", "roborev.completed_at": "2026-01-02T03:04:05Z", "roborev.finding_count": 1}
+			text := "Finding 1 from a roborev review."
+			digest := sha256.Sum256([]byte(text))
+			target := "01AAAAAAAAAAAAAAAAAAABC123"
+			issue.Comments = []katagen.CommentOut{{UID: target, IssueID: issue.Out.ID, Handle: new("c:abc123"), Body: fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, reviewID, digest), Author: "service"}}
+			read := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"reviews"}})
+			require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+			full := decodeKata[KataIssue](t, read)
+			request := KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, IssueUID: full.UID, TargetUID: target, Kind: "reply", Body: "evidence", IdempotencyKey: "Exact-Key"}
+			entered, resume := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			fake.Override = func(_ http.ResponseWriter, r *http.Request) bool {
+				path := "/api/v1/projects/7/issues/" + issue.Out.UID
+				if scenario == "project UID" {
+					path = "/api/v1/projects"
+				}
+				if r.Method == http.MethodGet && r.URL.Path == path {
+					once.Do(func() { close(entered); <-resume })
+				}
+				return false
+			}
+			w := httptest.NewRecorder()
+			httpReq := testutil.MakeJSONRequest(t, http.MethodPost, "/api/kata/response", request)
+			done := make(chan struct{})
+			go func() { defer close(done); server.httpServer.Handler.ServeHTTP(w, httpReq) }()
+			select {
+			case <-entered:
+			case <-done:
+				close(resume)
+				require.Equal(t, "barrier reached", "request completed before barrier", w.Body.String())
+			case <-t.Context().Done():
+				close(resume)
+				<-done
+				require.NoError(t, t.Context().Err())
+			}
+			if scenario == "project UID" {
+				fake.Projects[0].UID = "P9999999999999999999999999"
+			} else {
+				server.configWatcher.cfgMu.Lock()
+				switch scenario {
+				case "endpoint":
+					server.configWatcher.cfg.Integrations.Kata.Endpoint = "http://127.0.0.1:2"
+				case "disabled":
+					server.configWatcher.cfg.Integrations.Kata.Enabled = false
+				}
+				server.configWatcher.reloadCounter++
+				server.configWatcher.cfgMu.Unlock()
+			}
+			close(resume)
+			<-done
+			assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+			for _, req := range fake.AllRequests() {
+				assert.NotEqual(t, http.MethodPost, req.Method)
+			}
+		})
 	}
 }

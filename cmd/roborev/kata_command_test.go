@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -107,6 +109,10 @@ type shortKataWriter struct{}
 
 func (shortKataWriter) Write(p []byte) (int, error) { return len(p) / 2, nil }
 
+type failingKataWriter struct{}
+
+func (failingKataWriter) Write([]byte) (int, error) { return 0, errors.New("output unavailable") }
+
 func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	review := "11111111-1111-4111-8111-111111111111"
 	text := "Finding 1 from a roborev review."
@@ -134,8 +140,16 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
 	args := []string{"--server", server.URL, "kata", "comment", "abc1", "--project", "reviews", "--reply", "c:abc123", "--idempotency-key", "Case-Key", "-m", "It's evidence"}
-	root := newRootCmd()
 	var output bytes.Buffer
+	for _, writer := range []io.Writer{shortKataWriter{}, failingKataWriter{}} {
+		root := newRootCmd()
+		root.SetOut(writer)
+		root.SetErr(&output)
+		root.SetArgs(args)
+		require.ErrorContains(t, root.Execute(), "write retry instructions")
+		assert.Zero(t, posts.Load())
+	}
+	root := newRootCmd()
 	root.SetOut(&output)
 	root.SetErr(&output)
 	root.SetArgs(args)
@@ -148,10 +162,4 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	assert.Equal(t, rootUID, payload["target_uid"])
 	assert.Equal(t, "It's evidence", payload["body"])
 	assert.Equal(t, "Case-Key", payload["idempotency_key"])
-	root = newRootCmd()
-	root.SetOut(shortKataWriter{})
-	root.SetErr(&output)
-	root.SetArgs(args)
-	require.ErrorContains(t, root.Execute(), "write retry instructions")
-	assert.Equal(t, int64(1), posts.Load())
 }

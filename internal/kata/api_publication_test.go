@@ -627,3 +627,46 @@ func TestTypedCommentKindsAndServerErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestTypedCommentRejectsCorruptReceipts(t *testing.T) {
+	cases := []struct {
+		name    string
+		corrupt func(map[string]any, map[string]any)
+	}{
+		{"issue UID", func(i, _ map[string]any) { i["uid"] = "different" }},
+		{"issue project ID", func(i, _ map[string]any) { i["project_id"] = 99 }},
+		{"issue project UID", func(i, _ map[string]any) { i["project_uid"] = "different" }},
+		{"issue ID", func(i, _ map[string]any) { i["id"] = 0 }},
+		{"comment issue", func(_, c map[string]any) { c["issue_id"] = 12 }},
+		{"comment UID", func(_, c map[string]any) { c["uid"] = "" }},
+		{"author", func(_, c map[string]any) { c["author"] = "" }},
+		{"teammate missing", func(_, c map[string]any) { delete(c, "teammate") }},
+		{"teammate changed", func(_, c map[string]any) { c["teammate"] = "other" }},
+		{"body", func(_, c map[string]any) { c["body"] = "changed" }},
+		{"edited", func(_, c map[string]any) { c["edited_at"] = "2026-01-02T03:04:05Z" }},
+		{"target missing", func(_, c map[string]any) { delete(c, "reply_to_uid") }},
+		{"target changed", func(_, c map[string]any) { c["reply_to_uid"] = "other-target" }},
+		{"kind missing", func(_, c map[string]any) { delete(c, "reply_kind") }},
+		{"kind changed", func(_, c map[string]any) { c["reply_kind"] = "supersede" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := katafake.New(t)
+			c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
+			project, err := c.ResolvePublicationProject(t.Context(), "")
+			require.NoError(t, err)
+			f.Override = func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodPost {
+					return false
+				}
+				issue := map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID, "project_uid": project.UID}
+				comment := map[string]any{"uid": "reply-uid", "issue_id": 11, "body": "evidence", "author": "actual", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": "reply"}
+				tc.corrupt(issue, comment)
+				f.Reply(w, map[string]any{"changed": false, "issue": issue, "comment": comment})
+				return true
+			}
+			_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "evidence", "opaque-key", "reviewer")
+			require.ErrorIs(t, err, ErrInvalidResponse)
+		})
+	}
+}
