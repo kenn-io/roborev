@@ -3,6 +3,7 @@ package kata
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -283,10 +284,7 @@ func TestReadRemotePublicationEnvelopeAndRoots(t *testing.T) {
 	assert.Equal(t, "missing", ReadPublicationRoots(envelope, PublicationIssue{})[0].State)
 
 	for _, key := range []string{publicationVersionKey, publicationReviewKey, publicationHashKey, publicationPolicyKey, publicationTimeKey, publicationCountKey} {
-		metadata := make(map[string]any, len(p.issue.Metadata))
-		for k, v := range p.issue.Metadata {
-			metadata[k] = v
-		}
+		metadata := maps.Clone(p.issue.Metadata)
 		delete(metadata, key)
 		_, err := ReadPublicationEnvelope(metadata)
 		require.Error(t, err, key)

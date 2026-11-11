@@ -670,7 +670,7 @@ func (hr *HookRunner) recoverKataPublications() {
 }
 
 type kataManualRequest struct {
-	ctx    context.Context
+	ctx    context.Context //nolint:containedctx // caller request lifetime is passed to the queued publication attempt
 	jobID  int64
 	policy string
 	result chan kataManualResult
@@ -689,7 +689,7 @@ func (hr *HookRunner) publishKataManual(ctx context.Context, jobID int64, policy
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if hr.publisher == nil {
-		return nil, errors.New("Kata publisher unavailable")
+		return nil, errors.New("kata publisher unavailable")
 	}
 	req := kataManualRequest{ctx: ctx, jobID: jobID, policy: policy, result: make(chan kataManualResult, 1)}
 	select {

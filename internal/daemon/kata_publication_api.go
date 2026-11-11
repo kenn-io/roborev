@@ -8,6 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	gen "go.kenn.io/kata/pkg/client/generated"
+
 	"go.kenn.io/roborev/internal/kata"
 )
 
@@ -50,12 +51,15 @@ type KataPublicationRequest struct {
 	JobID    int64  `json:"job_id" minimum:"1"`
 	Findings string `json:"findings,omitempty"`
 }
-type KataPublishInput struct{ Body KataPublicationRequest }
-type KataPublicationOutput struct{ Body KataPublicationBody }
+type (
+	KataPublishInput      struct{ Body KataPublicationRequest }
+	KataPublicationOutput struct{ Body KataPublicationBody }
+)
 
 func kataComment(c gen.CommentOut) KataComment {
 	return KataComment{UID: c.UID, Handle: c.Handle, Body: c.Body, Author: c.Author, Teammate: c.Teammate, ReplyToUID: c.ReplyToUID, ReplyKind: c.ReplyKind, EditedAt: c.EditedAt}
 }
+
 func kataPublicationBody(status *KataPublicationStatus) KataPublicationBody {
 	body := KataPublicationBody{ReviewUUID: status.ReviewUUID.String(), DocumentHash: status.DocumentHash, State: status.State, DestinationID: status.DestinationID, ProjectUID: status.Project.UID, Project: status.Project.Name, Roots: []KataRoot{}, Comments: []KataComment{}}
 	if status.Issue != nil {
@@ -103,6 +107,7 @@ func (s *Server) publicationResult(ctx context.Context, id int64, status *KataPu
 	}
 	return &KataPublicationOutput{Body: body}, nil
 }
+
 func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInput) (*KataPublicationOutput, error) {
 	if in.JobID <= 0 {
 		return nil, huma.Error400BadRequest("job_id must be positive")
@@ -110,6 +115,7 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 	status, err := s.hookRunner.publisher.Inspect(ctx, in.JobID)
 	return s.publicationResult(ctx, in.JobID, status, err)
 }
+
 func (s *Server) humaKataPublish(ctx context.Context, in *KataPublishInput) (*KataPublicationOutput, error) {
 	req := in.Body
 	if req.JobID <= 0 {
@@ -132,7 +138,7 @@ func (s *Server) humaKataPublish(ctx context.Context, in *KataPublishInput) (*Ka
 	if !time.Now().Add(kata.DefaultRequestTimeout).Before(review.CreatedAt.Add(7 * 24 * time.Hour)) {
 		status, inspectErr := s.hookRunner.publisher.Inspect(ctx, req.JobID)
 		if inspectErr == nil {
-			inspectErr = errors.New("Kata publication window expired")
+			inspectErr = errors.New("kata publication window expired")
 		}
 		return s.publicationResult(ctx, req.JobID, status, inspectErr)
 	}

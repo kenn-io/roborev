@@ -133,10 +133,10 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 		return nil, nil, nil, nil, zero, nil, err
 	}
 	if selection == nil {
-		return nil, nil, nil, nil, zero, nil, errors.New("Kata publication hook is no longer authorized")
+		return nil, nil, nil, nil, zero, nil, errors.New("kata publication hook is no longer authorized")
 	}
 	if record.Marker != nil && (record.Marker.Version != 1 || (record.Marker.State != "pending" && record.Marker.State != "complete") || (record.Marker.ProjectUID == "") != (record.Marker.RequestFingerprint == "") || record.Marker.KataPublicationSeed != selection.seed || record.Marker.DocumentHash != record.DocumentHash) {
-		return nil, nil, nil, nil, zero, nil, errors.New("Kata publication authorization changed")
+		return nil, nil, nil, nil, zero, nil, errors.New("kata publication authorization changed")
 	}
 	opts := []kata.APIOption{kata.WithoutWorkspace()}
 	name := selection.seed.Project
@@ -169,7 +169,7 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 		return nil, nil, nil, nil, zero, nil, err
 	}
 	if record.Marker != nil && ((record.Marker.ProjectUID != "" && record.Marker.ProjectUID != project.UID) || (record.Marker.RequestFingerprint != "" && record.Marker.RequestFingerprint != publication.Fingerprint)) {
-		return nil, nil, nil, nil, zero, nil, errors.New("Kata publication destination or request changed")
+		return nil, nil, nil, nil, zero, nil, errors.New("kata publication destination or request changed")
 	}
 	return record, review, selection, client, project, publication, nil
 }
@@ -218,7 +218,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 		found := candidates[0]
 		if !publication.MatchesIssueEnvelope(found.Metadata) {
 			status.State = "ambiguous"
-			return status, errors.New("Kata issue metadata differs")
+			return status, errors.New("kata issue metadata differs")
 		}
 		issue, err := client.ShowPublicationIssue(ctx, project, found.UID)
 		if err != nil {
@@ -226,13 +226,13 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 		}
 		if !publication.MatchesIssueEnvelope(issue.Issue.Metadata) {
 			status.State = "ambiguous"
-			return status, errors.New("Kata issue metadata changed")
+			return status, errors.New("kata issue metadata changed")
 		}
 		status.Issue = &issue
 		status.Roots = publication.Roots(issue)
 		if issue.Truncated {
 			status.State = "truncated"
-			return status, errors.New("Kata comments are truncated")
+			return status, errors.New("kata comments are truncated")
 		}
 		status.State = "complete"
 		missing := -1
@@ -243,7 +243,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 					missing = root.Position
 				}
 				if root.State != "missing" {
-					return status, fmt.Errorf("Kata root %d is %s", root.Position, root.State)
+					return status, fmt.Errorf("kata root %d is %s", root.Position, root.State)
 				}
 			}
 		}
@@ -283,7 +283,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.KataPublicationRecord, review *storage.Review, project kata.PublicationProject, publication *kata.Publication, send func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error) error {
 	deadline := review.CreatedAt.Add(7 * 24 * time.Hour)
 	if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
-		return errors.New("Kata publication window expired")
+		return errors.New("kata publication window expired")
 	}
 	current, _, _, client, dest, prepared, err := p.current(ctx, jobID)
 	if err != nil {
@@ -302,7 +302,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		}
 	}
 	if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
-		return errors.New("Kata publication window expired")
+		return errors.New("kata publication window expired")
 	}
 	checkout, err := kataCheckout(ctx, review.Job)
 	if err != nil {
@@ -312,7 +312,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 	defer cancel()
 	return p.db.RunKataPublication(postCtx, record.ReviewUUID, record.DocumentHash, func(ctx context.Context) error {
 		if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
-			return errors.New("Kata publication window expired")
+			return errors.New("kata publication window expired")
 		}
 		locked, err := p.db.GetKataPublicationByUUID(ctx, record.ReviewUUID)
 		if err != nil {
@@ -334,7 +334,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 			return err
 		}
 		if selection == nil || selection.seed != locked.Marker.KataPublicationSeed {
-			return errors.New("Kata publication authorization changed")
+			return errors.New("kata publication authorization changed")
 		}
 		raw, err := json.Marshal(review.StructuredOutput)
 		if err != nil {
@@ -349,10 +349,10 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 			return err
 		}
 		if latest.Fingerprint != locked.Marker.RequestFingerprint {
-			return errors.New("Kata publication request changed")
+			return errors.New("kata publication request changed")
 		}
 		if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
-			return errors.New("Kata publication window expired")
+			return errors.New("kata publication window expired")
 		}
 		return send(ctx, client, dest, prepared)
 	})
@@ -380,7 +380,7 @@ func (p *kataPublisher) Authorize(ctx context.Context, jobID int64, policy strin
 		return storage.ErrReviewChanged
 	}
 	if !p.now().Add(kata.DefaultRequestTimeout).Before(review.CreatedAt.Add(7 * 24 * time.Hour)) {
-		return errors.New("Kata publication window expired")
+		return errors.New("kata publication window expired")
 	}
 	checkout, err := kataCheckout(ctx, review.Job)
 	if err != nil {
@@ -408,7 +408,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	}
 	cfg := p.cfg.Config()
 	if cfg == nil || !cfg.Integrations.Kata.Enabled {
-		return nil, errors.New("Kata integration disabled")
+		return nil, errors.New("kata integration disabled")
 	}
 	checkout, err := kataCheckout(ctx, review.Job)
 	if err != nil {
@@ -424,7 +424,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 			return nil, err
 		}
 		if endpoint != record.Marker.Endpoint {
-			return nil, errors.New("Kata publication destination changed")
+			return nil, errors.New("kata publication destination changed")
 		}
 		seed = &record.Marker.KataPublicationSeed
 	} else {
@@ -455,7 +455,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		return nil, err
 	}
 	if record.Marker != nil && record.Marker.ProjectUID != "" && record.Marker.ProjectUID != project.UID {
-		return nil, errors.New("Kata publication destination changed")
+		return nil, errors.New("kata publication destination changed")
 	}
 	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing"}
 	candidates, err := client.SearchPublicationIssues(ctx, project, record.ReviewUUID)
@@ -480,7 +480,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	}
 	if !matches(candidates[0].Metadata) {
 		status.State = "ambiguous"
-		return status, errors.New("Kata issue metadata differs")
+		return status, errors.New("kata issue metadata differs")
 	}
 	issue, err := client.ShowPublicationIssue(ctx, project, candidates[0].UID)
 	if err != nil {
@@ -488,7 +488,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	}
 	if !matches(issue.Issue.Metadata) {
 		status.State = "ambiguous"
-		return status, errors.New("Kata issue metadata changed")
+		return status, errors.New("kata issue metadata changed")
 	}
 	envelope, _ := kata.ReadPublicationEnvelope(issue.Issue.Metadata)
 	status.Issue, status.Roots = &issue, kata.ReadPublicationRoots(envelope, issue)

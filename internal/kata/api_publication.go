@@ -25,8 +25,10 @@ import (
 
 // PublicationMaxRequestBytes is the pinned Kata v0.19.0 Huma v2.37.3
 // default request-body limit. Huma rejects a body of this size or larger.
-const PublicationMaxRequestBytes = 1 << 20
-const PublicationAPISchemaVersion = "0.28.0"
+const (
+	PublicationMaxRequestBytes  = 1 << 20
+	PublicationAPISchemaVersion = "0.28.0"
+)
 
 const (
 	publicationReviewKey  = "roborev.review_uuid"
@@ -263,6 +265,7 @@ func PreparePublicationWithOptions(id uuid.UUID, hash string, completed time.Tim
 
 // IssueKey and RootKey use the review UUID rather than the mutable job UUID.
 func (p *Publication) IssueKey() string { return "roborev:review:" + p.ReviewUUID.String() }
+
 func (p *Publication) RootKey(position int) (string, error) {
 	if position < 0 || position >= len(p.roots) {
 		return "", fmt.Errorf("%w: invalid finding position", ErrRequestRejected)
@@ -379,7 +382,7 @@ func ReadPublicationEnvelope(metadata map[string]any) (PublicationEnvelope, erro
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return out, fmt.Errorf("invalid publication envelope: %w", err)
 	}
-	id, err := uuid.Parse(wire.Review)
+	id, err := uuid.Parse(wire.Review) //nolint:forbidigo // Parse the review UUID at the foreign Kata metadata text boundary.
 	if err != nil || id == uuid.Nil() || wire.Version != 1 || len(wire.Hash) != 64 || strings.Trim(wire.Hash, "0123456789abcdef") != "" || (wire.Policy != "comments" && wire.Policy != "summary") || wire.Count == nil || *wire.Count < 0 {
 		return out, errors.New("invalid publication envelope")
 	}

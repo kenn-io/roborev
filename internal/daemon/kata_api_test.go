@@ -300,7 +300,7 @@ func TestKataIssueFullCommentsAndAttribution(t *testing.T) {
 	assert.Equal(t, issue.Out.UID, got.UID)
 	assert.NotEmpty(t, got.ProjectUID)
 	require.NotNil(t, got.CommentsComplete)
-	assert.Equal(t, true, *got.CommentsComplete)
+	assert.True(t, *got.CommentsComplete)
 	require.Len(t, got.Comments, 2)
 	assert.Equal(t, "actual-author", got.Comments[0].Author)
 	assert.Equal(t, "reply text", got.Comments[1].Body)

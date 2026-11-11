@@ -1172,6 +1172,7 @@ func verifyComment(t *testing.T, actual Response, expectedUser, expectedMsg stri
 }
 
 func TestGetReviewByJobIDContextCancellation(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

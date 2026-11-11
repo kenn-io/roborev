@@ -294,6 +294,7 @@ func TestKataBothReviewPullPathsWaitForPublication(t *testing.T) {
 }
 
 func TestKataDocumentHashPreservesStoredSchema(t *testing.T) {
+	t.Parallel()
 	first := []byte(`{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":"a.go:3"}]}`)
 	reordered := []byte(`{ "findings": [{"location":"a.go:3", "fix":"f", "problem":"p", "severity":"low"}], "summary":"s", "schema_version":1 }`)
 	a, err := KataDocumentHash(first)
@@ -309,6 +310,7 @@ func TestKataDocumentHashPreservesStoredSchema(t *testing.T) {
 }
 
 func TestPendingKataPublicationsSkipsExpired(t *testing.T) {
+	t.Parallel()
 	env := setupJobEnv(t, "/tmp/kata-expiry", "kata-expiry")
 	claimJob(t, env.db, "worker")
 	seed := kataTestSeed()
