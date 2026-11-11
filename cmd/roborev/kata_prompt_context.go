@@ -34,7 +34,8 @@ func newKataPromptCache() *prompt.KataContextCache {
 		if !enabled {
 			return nil, nil
 		}
-		query := &generated.KataPublicationQuery{JobID: &review.JobID}
+		id := review.UUID.String()
+		query := &generated.KataPublicationQuery{JobID: &review.JobID, ReviewUUID: &id}
 		result, err := api.KataPublication(ctx, &generated.KataPublicationRequestOptions{Query: query})
 		if err != nil {
 			return nil, classifyKataPromptError(err)

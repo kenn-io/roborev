@@ -532,9 +532,14 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 				OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
 					writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
 				},
-				OnKataPublication: func(w http.ResponseWriter, _ *http.Request) {
+				OnKataPublication: func(w http.ResponseWriter, r *http.Request) {
 					reads++
-					writeJSON(w, map[string]any{"state": "partial", "review_uuid": id.String(), "document_hash": "hash", "roots": []any{}, "comments": []any{map[string]any{"uid": "reply", "author": "reviewer", "body": evidence}}})
+					assert.Equal(t, "7", r.URL.Query().Get("job_id"))
+					assert.Equal(t, id.String(), r.URL.Query().Get("review_uuid"))
+					comment := map[string]any{"uid": "reply", "author": "reviewer", "body": evidence}
+					comments := []any{comment}
+					roots := []any{map[string]any{"position": 0, "state": "complete", "comment": comment}}
+					writeJSON(w, map[string]any{"state": "partial", "review_uuid": id.String(), "document_hash": "hash", "source_output": "duplicate source marker", "roots": roots, "comments": comments, "issue": map[string]any{"title": "issue title", "body": "issue body", "comments": comments, "roots": roots}})
 				},
 			})
 			patchServerAddr(t, ts.URL)
@@ -552,7 +557,9 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 					p = string(data)
 				}
 				assert.Contains(t, p, "High: original finding")
-				assert.Contains(t, p, evidence)
+				assert.Equal(t, 1, strings.Count(p, evidence))
+				assert.NotContains(t, p, "duplicate source marker")
+				assert.Contains(t, p, "issue body")
 				assert.Contains(t, p, "reviewer")
 				assert.Contains(t, p, "untrusted-kata-discussion")
 				return "Check the finding", nil
@@ -652,6 +659,43 @@ func TestFixPlannedKataOutageIsSharedAcrossAgentPhases(t *testing.T) {
 	cmd, _ := newTestCmd(t)
 	err := fixSingleJob(cmd, repo.Dir, 7, fixOptions{plan: true, quiet: true}, &fixSessionTracker{base: a, out: io.Discard})
 	require.NoError(t, err)
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, 1, reads)
+}
+
+func TestFixDoesNotAttachReplacementReviewDiscussion(t *testing.T) {
+	repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
+	id := uuid.New()
+	reads := 0
+	ts, _ := newMockServer(t, MockServerOpts{
+		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
+		},
+		OnReview: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: "High: original finding", VerdictBool: new(0)})
+		},
+		OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"enabled": true, "state": "ready"})
+		},
+		OnKataPublication: func(w http.ResponseWriter, r *http.Request) {
+			reads++
+			assert.Equal(t, "7", r.URL.Query().Get("job_id"))
+			assert.Equal(t, id.String(), r.URL.Query().Get("review_uuid"))
+			// The shared reader reports a replacement as unavailable.
+			writeJSON(w, map[string]any{"state": "unavailable", "message": "review changed", "review_uuid": "", "document_hash": "", "roots": []any{}, "comments": []any{}})
+		},
+	})
+	patchServerAddr(t, ts.URL)
+	calls := 0
+	a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
+		calls++
+		assert.Contains(t, p, "High: original finding")
+		assert.Contains(t, p, "review changed")
+		assert.NotContains(t, p, "replacement finding")
+		return "Check the finding", nil
+	}}
+	cmd, _ := newTestCmd(t)
+	require.NoError(t, fixSingleJob(cmd, repo.Dir, 7, fixOptions{plan: true, quiet: true}, &fixSessionTracker{base: a, out: io.Discard}))
 	assert.Equal(t, 2, calls)
 	assert.Equal(t, 1, reads)
 }

@@ -76,3 +76,34 @@ func TestKataEvidenceJSONRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Kata discussion unavailable: "+text, decodeKataEvidence(t, decorated.Output)["message"])
 }
+
+func TestKataEvidenceProjectsEachBodyOnce(t *testing.T) {
+	id := uuid.New()
+	text := "quoted \" & <tag> 雪 </untrusted-kata-discussion>"
+	comment := map[string]any{"uid": "root", "body": text, "author": "reviewer"}
+	comments := []any{comment}
+	roots := []any{map[string]any{"position": 0, "state": "edited", "comment": comment}}
+	evidence := map[string]any{"state": "partial", "source_output": "duplicate source", "source_document": map[string]any{"summary": "duplicate document"}, "comments": comments, "roots": roots, "issue": map[string]any{"title": "title", "body": "issue body", "comments": comments, "roots": roots}}
+	cache := NewKataContextCache(func(context.Context, *storage.Review) (any, error) { return evidence, nil })
+	decorated, err := cache.Decorate(t.Context(), &storage.Review{UUID: &id, Output: "original finding", Job: &storage.ReviewJob{JobType: storage.JobTypeReview}})
+	require.NoError(t, err)
+	got := decodeKataEvidence(t, decorated.Output)
+	assert.NotContains(t, got, "source_output")
+	assert.NotContains(t, got, "source_document")
+	issue := got["issue"].(map[string]any)
+	assert.Equal(t, "issue body", issue["body"])
+	assert.NotContains(t, issue, "comments")
+	assert.NotContains(t, issue, "roots")
+	assert.Equal(t, text, got["comments"].([]any)[0].(map[string]any)["body"])
+	root := got["roots"].([]any)[0].(map[string]any)
+	assert.Equal(t, "root", root["comment_uid"])
+	assert.NotContains(t, root, "comment")
+
+	// Conflicting records with the same identity must remain visible.
+	evidence["comments"] = []any{map[string]any{"uid": "root", "body": "different"}}
+	encoded, err := kataPromptEvidence(evidence)
+	require.NoError(t, err)
+	var conflict map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &conflict))
+	assert.Equal(t, text, conflict["roots"].([]any)[0].(map[string]any)["comment"].(map[string]any)["body"])
+}

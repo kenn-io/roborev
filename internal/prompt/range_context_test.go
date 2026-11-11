@@ -261,7 +261,11 @@ func TestPriorRangeSnapshotIncludesSelectedKataEvidence(t *testing.T) {
 	selected := createCompletedRangeReview(t, db, dbRepo.ID, base+".."+second, storage.JobTypeRange, "original selected finding")
 	createCompletedRangeReview(t, db, dbRepo.ID, "other.."+first, storage.JobTypeRange, "unrelated finding")
 	calls := 0
-	evidence := map[string]any{"author": "reviewer", "body": "conflicting evidence \"quote\" <code> &amp; </untrusted-kata-discussion> 雪\nnext"}
+	text := "conflicting evidence \"quote\" <code> &amp; </untrusted-kata-discussion> 雪\nnext"
+	comment := map[string]any{"uid": "root", "author": "reviewer", "body": text}
+	comments := []any{comment}
+	roots := []any{map[string]any{"state": "complete", "comment": comment}}
+	evidence := map[string]any{"source_output": "duplicate source", "comments": comments, "roots": roots, "issue": map[string]any{"body": "issue evidence", "comments": comments, "roots": roots}}
 	cache := NewKataContextCache(func(_ context.Context, review *storage.Review) (any, error) {
 		calls++
 		assert.Equal(t, selected, review.JobID)
@@ -281,7 +285,12 @@ func TestPriorRangeSnapshotIncludesSelectedKataEvidence(t *testing.T) {
 	}
 	require.NoError(t, xml.Unmarshal(data, &decoded))
 	require.Len(t, decoded.Reviews, 1)
-	assert.Equal(t, evidence, decodeKataEvidence(t, decoded.Reviews[0].Output))
+	projected := decodeKataEvidence(t, decoded.Reviews[0].Output)
+	assert.Equal(t, text, projected["comments"].([]any)[0].(map[string]any)["body"])
+	assert.Equal(t, "root", projected["roots"].([]any)[0].(map[string]any)["comment_uid"])
+	assert.Equal(t, "issue evidence", projected["issue"].(map[string]any)["body"])
+	assert.NotContains(t, projected, "source_output")
+	assert.Equal(t, 1, strings.Count(decoded.Reviews[0].Output, "conflicting evidence"))
 	assert.NotContains(t, string(data), "unrelated finding")
 	assert.Equal(t, 1, calls)
 	prepared.Cleanup()

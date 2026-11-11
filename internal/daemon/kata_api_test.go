@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
@@ -474,6 +475,28 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	after, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Nil(t, after.Marker)
+	// Replace the selected review during the remote read, after UUID resolution.
+	replacementID := uuid.New()
+	changed := false
+	fake.Override = func(_ http.ResponseWriter, r *http.Request) bool {
+		if !changed && strings.Contains(r.URL.Path, "/issues") {
+			changed = true
+			_, updateErr := tc.DB.ExecContext(r.Context(), `UPDATE reviews SET uuid = ? WHERE job_id = ?`, replacementID.String(), job.ID)
+			assert.NoError(t, updateErr)
+		}
+		return false
+	}
+	w = kataGet(t, server, "/api/kata/publication", url.Values{"review_uuid": {record.ReviewUUID.String()}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.True(t, changed)
+	displaced := decodeKata[KataPublicationBody](t, w)
+	assert.Equal(t, "unavailable", displaced.State)
+	assert.Empty(t, displaced.Comments)
+	assert.Empty(t, displaced.SourceOutput)
+	assert.Empty(t, displaced.SourceDocument)
+	selected, err := server.readKataPromptContext(t.Context(), review)
+	require.NoError(t, err)
+	assert.Equal(t, "unavailable", selected.(KataPublicationBody).State)
 	for _, req := range fake.AllRequests() {
 		assert.NotEqual(t, http.MethodPost, req.Method)
 	}

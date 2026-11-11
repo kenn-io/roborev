@@ -23,7 +23,7 @@ func (s *Server) readKataPromptContext(ctx context.Context, review *storage.Revi
 	if !s.configWatcher.Config().Integrations.Kata.Enabled {
 		return nil, nil
 	}
-	out, err := s.humaKataPublication(ctx, &KataPublicationInput{JobID: review.JobID})
+	out, err := s.humaKataPublication(ctx, &KataPublicationInput{JobID: review.JobID, ReviewUUID: review.UUID.String()})
 	if err != nil {
 		var status huma.StatusError
 		if errors.As(err, &status) && (status.GetStatus() == http.StatusUnauthorized || status.GetStatus() == http.StatusForbidden || status.GetStatus() == http.StatusRequestTimeout || status.GetStatus() == http.StatusGatewayTimeout) {
@@ -161,8 +161,8 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 	if in.Issue != "" {
 		count++
 	}
-	if count != 1 || in.JobID < 0 {
-		return nil, huma.Error400BadRequest("select exactly one job_id, review_uuid, or issue")
+	if (count != 1 && !(count == 2 && in.JobID > 0 && in.ReviewUUID != "")) || in.JobID < 0 {
+		return nil, huma.Error400BadRequest("select a job_id, review_uuid, or issue; job_id and review_uuid may be combined")
 	}
 	jobID := in.JobID
 	var id uuid.UUID
@@ -172,16 +172,18 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 		if err != nil || id == uuid.Nil() {
 			return nil, huma.Error400BadRequest("invalid review UUID")
 		}
-		record, err := s.db.GetKataPublicationByUUID(ctx, id)
-		if err != nil && record == nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, kataReadError(err)
-		}
-		if record != nil {
-			jobID = record.JobID
+		if jobID == 0 {
+			record, err := s.db.GetKataPublicationByUUID(ctx, id)
+			if err != nil && record == nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, kataReadError(err)
+			}
+			if record != nil {
+				jobID = record.JobID
+			}
 		}
 	}
 	if jobID > 0 {
-		status, err := s.hookRunner.publisher.inspectProject(ctx, jobID, in.Project)
+		status, err := s.hookRunner.publisher.inspectSelected(ctx, jobID, in.Project, id)
 		if errors.Is(err, errKataPinnedProject) {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
@@ -191,9 +193,12 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 		if fatalKataRead(ctx, err) {
 			return nil, kataReadError(err)
 		}
+		if id != uuid.Nil() && (errors.Is(err, storage.ErrReviewChanged) || errors.Is(err, sql.ErrNoRows)) {
+			return unavailableKataContext(err), nil
+		}
 		if err != nil && status == nil && !errors.Is(err, sql.ErrNoRows) {
 			out := unavailableKataContext(err)
-			if review, readErr := s.db.GetReviewByJobIDContext(ctx, jobID); readErr == nil {
+			if review, readErr := s.db.GetReviewByJobIDContext(ctx, jobID); readErr == nil && (id == uuid.Nil() || (review.UUID != nil && *review.UUID == id)) {
 				out.Body.SourceOutput, out.Body.SourceDocument = review.Output, review.StructuredOutput
 			}
 			if ctx.Err() != nil {
@@ -313,7 +318,7 @@ func samePublicationEnvelope(metadata map[string]any, expected kata.PublicationE
 }
 
 func fatalKataRead(ctx context.Context, err error) bool {
-	return err != nil && (ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, kata.ErrAuthenticationRequired) || IsDaemonAccessError(err) || errors.Is(err, kata.ErrInsecureEndpoint) || errors.Is(err, kata.ErrPlatformSecurityLimit))
+	return err != nil && (ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, kata.ErrAuthenticationRequired) || IsDaemonAccessError(err) || errors.Is(err, kata.ErrInsecureEndpoint) || errors.Is(err, kata.ErrPlatformSecurityLimit))
 }
 
 func kataReadError(err error) error {

@@ -119,7 +119,14 @@ func (p *kataPublisher) Inspect(ctx context.Context, jobID int64) (*KataPublicat
 var errKataPinnedProject = errors.New("project cannot override a saved publication destination")
 
 func (p *kataPublisher) inspectProject(ctx context.Context, jobID int64, project string) (*KataPublicationStatus, error) {
+	return p.inspectSelected(ctx, jobID, project, uuid.Nil())
+}
+
+func (p *kataPublisher) inspectSelected(ctx context.Context, jobID int64, project string, expected uuid.UUID) (*KataPublicationStatus, error) {
 	record, err := p.db.GetKataPublication(ctx, jobID)
+	if record != nil && expected != uuid.Nil() && record.ReviewUUID != expected {
+		return nil, storage.ErrReviewChanged
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +146,21 @@ func (p *kataPublisher) inspectProject(ctx context.Context, jobID int64, project
 	if record.Marker != nil && strings.TrimSpace(project) != "" {
 		return nil, errKataPinnedProject
 	}
-	return p.inspectPublication(ctx, record, strings.TrimSpace(project))
+	status, err := p.inspectPublication(ctx, record, strings.TrimSpace(project))
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if fatalKataRead(ctx, err) {
+		return status, err
+	}
+	current, readErr := p.db.GetKataPublication(ctx, jobID)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if readErr != nil || current.ReviewUUID != record.ReviewUUID || current.DocumentHash != record.DocumentHash {
+		return nil, storage.ErrReviewChanged
+	}
+	return status, err
 }
 
 func (p *kataPublisher) current(ctx context.Context, jobID int64, attempt *kataPreparedAttempt) (*storage.KataPublicationRecord, *storage.Review, *kataSelection, *kata.APIClient, kata.PublicationProject, *kata.Publication, error) {
