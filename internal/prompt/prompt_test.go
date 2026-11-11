@@ -2,7 +2,6 @@ package prompt
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1182,18 +1181,9 @@ func TestTrustedConfigReadersDoNotUseWorkingTreeAfterDefaultRefPinFailure(t *tes
 	r.git("checkout", "-b", "feature")
 	r.writeFile(".roborev.toml", "review_guidelines = \"Untrusted guidance\"\nexclude_patterns = [\"untrusted.lock\"]\n")
 
-	realGit, err := exec.LookPath("git")
-	require.NoError(t, err)
-	shimPath := filepath.Join(t.TempDir(), "git")
-	shim := fmt.Sprintf(`#!/bin/sh
-if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ] && [ "$3" = "refs/remotes/origin/main^{commit}" ]; then
-	echo 'synthetic pinned ref failure' >&2
-	exit 1
-fi
-exec %q "$@"
-`, realGit)
-	require.NoError(t, os.WriteFile(shimPath, []byte(shim), 0o755))
-	t.Setenv("PATH", filepath.Dir(shimPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// A blob ref exists, but cannot be pinned as a commit.
+	blob := r.git("rev-parse", "HEAD:.roborev.toml")
+	r.git("update-ref", "refs/remotes/origin/main", blob)
 
 	ref, revision, err := config.ResolveDefaultBranchRevision(t.Context(), r.dir)
 	require.Error(t, err)
