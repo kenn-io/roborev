@@ -33,6 +33,7 @@ import (
 type fakeDoctorDaemon struct {
 	ping         *daemon.PingInfo
 	agents       *doctorDaemonAgents
+	agentsErr    error
 	jobs         []generated.ReviewJob
 	summary      *generated.Summary
 	summaryErr   error
@@ -52,7 +53,7 @@ func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
 }
 
 func (f fakeDoctorDaemon) Agents(context.Context, string, []string) (*doctorDaemonAgents, error) {
-	return f.agents, nil
+	return f.agents, f.agentsErr
 }
 
 func (f fakeDoctorDaemon) KataStatus(_ context.Context, binding kata.Binding) (*daemon.KataStatusBody, error) {

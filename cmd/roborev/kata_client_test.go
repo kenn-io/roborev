@@ -264,6 +264,50 @@ func TestKataClientKeepsTheCLIWhenTheConnectionIsOff(t *testing.T) {
 	})
 }
 
+func TestKataClientExplicitServerProbe(t *testing.T) {
+	marker := kataShimMarker(t)
+	previous, previousEndpoint := serverAddr, parsedServerEndpoint
+	t.Cleanup(func() { serverAddr, parsedServerEndpoint = previous, previousEndpoint })
+	serverAddr, parsedServerEndpoint = "http://127.0.0.1:1", nil
+
+	for _, tc := range []struct {
+		name    string
+		handler http.Handler
+		want    string
+	}{
+		{name: "status error", handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}), want: "HTTP 500"},
+		{name: "old daemon", handler: http.NotFoundHandler()},
+		{name: "disabled", handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"enabled":false,"state":"disabled","message":"disabled"}`))
+		})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(tc.handler)
+			defer ts.Close()
+			serverAddr = ts.URL
+			c := newKataClient(bindRepo(t, "p"), config.DefaultConfig())
+			if tc.want == "" {
+				assert.IsType(t, (*kata.CLIClient)(nil), c.(*lazyKataClient).resolve(t.Context()))
+				return
+			}
+			_, err := c.List(t.Context(), kata.ListOpts{})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+	serverAddr = "http://127.0.0.1:1"
+	c := newKataClientAt(bindRepo(t, "p"), config.DefaultConfig(), func() (daemon.DaemonEndpoint, error) {
+		return daemon.DaemonEndpoint{}, os.ErrNotExist
+	})
+	_, err := c.List(t.Context(), kata.ListOpts{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not be reached")
+	assert.NoFileExists(t, marker)
+}
+
 func TestKataClientFallsBackWhenTheStatusProbeStalls(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ep, err := daemon.ParseEndpoint("http://127.0.0.1:1")
@@ -301,12 +345,13 @@ func TestKataClientFallsBackWhenTheStatusProbeStalls(t *testing.T) {
 }
 
 func TestKataStatusProbeTimeoutDoesNotCancelReviewContext(t *testing.T) {
+	previous := serverAddr
+	serverAddr = "http://127.0.0.1:1"
+	t.Cleanup(func() { serverAddr = previous })
 	synctest.Test(t, func(t *testing.T) {
 		ep, err := daemon.ParseEndpoint("http://127.0.0.1:1")
 		require.NoError(t, err)
-		cfg := config.DefaultConfig()
-		cfg.Integrations.Kata.Enabled = true
-		client := newKataClientAt(bindRepo(t, "p"), cfg, func() (daemon.DaemonEndpoint, error) {
+		client := newKataClientAt(bindRepo(t, "p"), config.DefaultConfig(), func() (daemon.DaemonEndpoint, error) {
 			return ep, nil
 		})
 		lazy, ok := client.(*lazyKataClient)
