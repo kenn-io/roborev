@@ -30,7 +30,7 @@ func TestExperimentReportRoute(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE experiment_assignments SET assigned_at='2026-01-02T00:00:00Z' WHERE review_unit_uuid=?`, job.UUID)
+	_, err = db.ExecContext(t.Context(), `UPDATE experiment_assignments SET assigned_at='2026-01-02T00:00:00Z' WHERE review_unit_uuid=?`, job.UUID)
 	require.NoError(t, err)
 
 	for _, tc := range []struct {

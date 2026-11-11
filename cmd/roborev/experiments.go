@@ -16,7 +16,11 @@ import (
 )
 
 func experimentsCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "experiments", Short: "Read enrolled review experiments"}
+	cmd := &cobra.Command{
+		Use: "experiments", Short: "Read enrolled review experiments",
+		Long:    "Compare review outcomes for subjects enrolled in an immutable configuration experiment. Reports use the stored experiment definition and current retained results.",
+		Example: "  roborev experiments report review-session-v1",
+	}
 	cmd.AddCommand(experimentsReportCmd())
 	return cmd
 }

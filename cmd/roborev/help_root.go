@@ -87,7 +87,7 @@ func applyRootHelp(root *cobra.Command) {
 }
 
 var roborevCommandGroups = map[string]string{
-	"job": "review", "report": "review", "hook": "setup", "agent": "setup", "signing": "setup", "storage": "maintenance",
+	"job": "review", "report": "review", "experiments": "review", "hook": "setup", "agent": "setup", "signing": "setup", "storage": "maintenance",
 	"review": "review", "wait": "review", "list": "review", "show": "review", "search": "review", "analyze": "review", "insights": "review", "tui": "review", "ui": "review", "summary": "review", "cost": "review", "stream": "review", "log": "review", "enqueue": "review", "prompt": "review",
 	"fix": "fix", "refine": "fix", "run": "fix", "comment": "fix", "respond": "fix", "close": "fix", "compact": "fix",
 	"init": "setup", "doctor": "setup", "quickstart": "setup", "check-agents": "setup", "config": "setup", "install-hook": "setup", "uninstall-hook": "setup", "agent-hook": "setup", "skills": "setup", "mcp": "setup", "signing-init": "setup", "help": "setup", "completion": "setup",

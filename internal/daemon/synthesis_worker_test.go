@@ -390,7 +390,7 @@ func TestSynthesisAvailabilityFallbackExperimentReport(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wc := newWorkerTestContext(t, 1)
-			const clean = `{"schema_version":2,"summary":"clean","verdict":"pass","findings":[]}`
+			const clean = `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`
 			agent.RegisterForTest(t, &synthesisEntrypointTestAgent{name: "report-synthesis-backup", result: clean})
 			switch tc.name {
 			case "backup":
