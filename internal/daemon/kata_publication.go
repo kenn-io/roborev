@@ -472,11 +472,8 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	var name string
 	if seed == nil {
 		client, err = kata.NewAPIClient(checkout, cfg.Integrations.Kata)
-	} else if seed.AliasKind != "" {
-		client, err = kata.NewAPIClient("", cfg.Integrations.Kata, kata.WithWorkspaceAlias(kata.ProjectAlias{Kind: seed.AliasKind, Identity: seed.AliasIdentity}))
 	} else {
-		name = seed.Project
-		client, err = kata.NewAPIClient("", cfg.Integrations.Kata, kata.WithoutWorkspace())
+		client, name, err = kataSelectionClient(cfg.Integrations.Kata, *seed)
 	}
 	if err != nil {
 		return nil, err

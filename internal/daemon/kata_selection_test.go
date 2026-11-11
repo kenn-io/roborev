@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -274,29 +273,15 @@ func TestKataSynthesisSelectionDoesNotHoldAttemptGuard(t *testing.T) {
 		tc.Pool.completeSynthesisContext(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: "failed", Verdict: storage.VerdictFail, StructuredOutput: testutil.ReviewFixtureJSON("failed")}})
 	}()
 	t.Cleanup(func() { unblock(); <-done })
-	waitStarted := func() error {
-		select {
-		case <-started:
-			return nil
-		case <-time.After(10 * time.Second): // External fake HTTP request.
-			return errors.New("resolver did not start")
-		}
-	}
-	require.NoError(t, waitStarted())
+	// Wait for the external fake HTTP request.
+	testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 	locked := tc.Pool.attemptTransitionsMu.TryLock()
 	require.True(t, locked)
 	tc.Pool.attemptTransitionsMu.Unlock()
 	deleted := make(chan error, 1)
 	go func() { deleted <- tc.DB.DeleteRepoContext(context.WithoutCancel(t.Context()), tc.Repo.ID, true) }()
-	waitDeleted := func() error {
-		select {
-		case err := <-deleted:
-			return err
-		case <-time.After(10 * time.Second): // External SQLite attempt lock.
-			return errors.New("repository deletion blocked by resolver")
-		}
-	}
-	require.NoError(t, waitDeleted())
+	// Wait for the external SQLite attempt lock.
+	require.NoError(t, testutil.ReceiveWithTimeout(t, deleted, 10*time.Second))
 	unblock()
 	<-done
 	_, err := tc.DB.GetReviewByJobID(job.ID)

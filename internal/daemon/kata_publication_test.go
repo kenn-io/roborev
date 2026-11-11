@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -247,15 +246,7 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 	t.Cleanup(runner.Stop)
 	watchStartup.Store(true)
 	runner.startKataRecovery()
-	waitStarted := func() error {
-		select {
-		case <-started:
-			return nil
-		case <-time.After(10 * time.Second):
-			return errors.New("startup request did not arrive")
-		}
-	}
-	require.NoError(t, waitStarted())
+	testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 	runner.WaitUntilIdle()
 	recovered, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)
@@ -431,15 +422,7 @@ func TestKataStartupRecoversDroppedWriteResponses(t *testing.T) {
 		t.Cleanup(stop)
 		runner.startKataRecovery()
 		// The fake server uses a socket, so wait for its startup request.
-		wait := func() error {
-			select {
-			case <-started:
-				return nil
-			case <-time.After(10 * time.Second):
-				return errors.New("startup request did not arrive")
-			}
-		}
-		require.NoError(t, wait())
+		testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 		runner.WaitUntilIdle()
 		stop()
 		record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
@@ -497,19 +480,11 @@ func TestKataRecoveryStopsInFlightAttempt(t *testing.T) {
 	t.Cleanup(stop)
 	runner.startKataRecovery()
 	// The fake server uses an external socket, so the test waits on its barriers.
-	wait := func(ch <-chan struct{}) error {
-		select {
-		case <-ch:
-			return nil
-		case <-time.After(10 * time.Second):
-			return errors.New("socket barrier timed out")
-		}
-	}
-	require.NoError(t, wait(started))
+	testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 	done := make(chan struct{})
 	go func() { stop(); close(done) }()
-	require.NoError(t, wait(done))
-	require.NoError(t, wait(canceled))
+	testutil.ReceiveWithTimeout(t, done, 10*time.Second)
+	testutil.ReceiveWithTimeout(t, canceled, 10*time.Second)
 }
 
 func TestKataCheckoutHonorsCancellation(t *testing.T) {
@@ -675,26 +650,12 @@ func TestKataPreparedAttemptChecksInputs(t *testing.T) {
 			})
 		}()
 		t.Cleanup(func() { unblock(); <-finished })
-		waitStarted := func() error {
-			select {
-			case <-started:
-				return nil
-			case <-time.After(10 * time.Second): // External fake HTTP request.
-				return errors.New("resolver did not start")
-			}
-		}
-		require.NoError(t, waitStarted())
+		// Wait for the external fake HTTP request.
+		testutil.ReceiveWithTimeout(t, started, 10*time.Second)
 		deleted := make(chan error, 1)
 		go func() { deleted <- tc.DB.DeleteRepoContext(context.WithoutCancel(t.Context()), other.ID, true) }()
-		waitDeleted := func() error {
-			select {
-			case err := <-deleted:
-				return err
-			case <-time.After(10 * time.Second): // External SQLite attempt lock.
-				return errors.New("deletion blocked by resolver")
-			}
-		}
-		require.NoError(t, waitDeleted())
+		// Wait for the external SQLite attempt lock.
+		require.NoError(t, testutil.ReceiveWithTimeout(t, deleted, 10*time.Second))
 		cfg.Hooks[0].Project = "other"
 		block.Store(false)
 		unblock()
