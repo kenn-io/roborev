@@ -695,8 +695,8 @@ automatically. On an up-to-date mirror, a resumable background scan performs
 conversion after connection; restored reviews become visible on the next
 scheduled or manual sync. Archive listings and exports can be partial while the
 background conversion processes rows, with progress and completion recorded in
-daemon logs. Use `--postgres-url` to ask the daemon to convert,
-export, and import these records. PostgreSQL archive IDs are UUIDs:
+daemon logs. Use `--postgres-url` to ask the daemon to convert, export, and
+import these records. PostgreSQL archive IDs are UUIDs:
 
 ```bash
 roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" convert --dry-run

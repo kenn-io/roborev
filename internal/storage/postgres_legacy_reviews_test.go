@@ -126,7 +126,8 @@ func TestIntegrationLegacyReviewScanUnreadableState(t *testing.T) { //nolint:par
 }
 
 func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
-	pool := openTestPgPool(t)
+	env := newIntegrationEnv(t)
+	pool := env.Pool
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
@@ -136,6 +137,11 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest 
 	_, err := pool.Pool().Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, job_enqueued_at, job_source_machine_id, agent, prompt, output, updated_by_machine_id)
  VALUES ($1, $2, (SELECT enqueued_at FROM review_jobs WHERE uuid = $2), (SELECT source_machine_id FROM review_jobs WHERE uuid = $2), 'test', 'prompt', 'Legacy finding with missing details', $3)`, reviewID, jobID, defaultTestMachineID)
 	require.NoError(t, err)
+	// Connecting to an up-to-date schema leaves historical maintenance deferred.
+	require.NoError(t, pool.EnsureSchema(ctx))
+	var active int
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM reviews WHERE uuid = $1`, reviewID).Scan(&active))
+	assert.Equal(t, 1, active)
 	pulled, _, err := pool.PullReviews(ctx, uuid.New(), map[uuid.UUID]struct{}{jobID: {}}, "", 10)
 	require.NoError(t, err)
 	assert.Empty(t, pulled)
@@ -144,7 +150,6 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest 
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output', migration_error FROM legacy_reviews WHERE uuid = $1`, reviewID).Scan(&original, &reason))
 	assert.Equal(t, "Legacy finding with missing details", original)
 	assert.Contains(t, reason, "AI conversion required")
-	var active int
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM reviews WHERE uuid = $1`, reviewID).Scan(&active))
 	assert.Zero(t, active)
 	require.NoError(t, pool.migrateLegacyReviews(ctx, false))
@@ -387,7 +392,8 @@ func TestIntegrationLegacyMaintenance(t *testing.T) { //nolint:paralleltest // s
 			pool, ctx := env.Pool, t.Context()
 			repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 			commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
-			for range 200 {
+			// Leave fewer than a batch after the checkpoint, even if sync adds a review.
+			for range 102 {
 				insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
 			}
 			_, err := pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
@@ -395,7 +401,7 @@ func TestIntegrationLegacyMaintenance(t *testing.T) { //nolint:paralleltest // s
 			var checkpoint, earlier, locked uuid.UUID
 			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 99 LIMIT 1`).Scan(&checkpoint))
 			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 100 LIMIT 1`).Scan(&earlier))
-			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 199 LIMIT 1`).Scan(&locked))
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 101 LIMIT 1`).Scan(&locked))
 			tx, err := pool.Pool().Begin(ctx)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
