@@ -33,7 +33,7 @@ func StartReal(t *testing.T, ctx context.Context) RealKata {
 	t.Cleanup(func() {
 		// Fresh bounded context: the test's ctx may already be expired or
 		// canceled by the time cleanup runs.
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 		defer stopCancel()
 		stop := exec.CommandContext(stopCtx, "kata", "daemon", "stop")
 		stop.Dir = repo

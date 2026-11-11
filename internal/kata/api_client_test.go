@@ -1,7 +1,6 @@
 package kata
 
 import (
-	"context"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -440,7 +439,7 @@ func TestAPIClientTimesOut(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(c.CloseIdleConnections)
 		errc := make(chan error, 1)
-		go func() { _, err := c.List(context.Background(), ListOpts{}); errc <- err }()
+		go func() { _, err := c.List(t.Context(), ListOpts{}); errc <- err }()
 		synctest.Wait()
 		assert.Empty(t, errc, "request returned before the configured deadline")
 		require.ErrorIs(t, <-errc, ErrUnreachable)
