@@ -28,7 +28,7 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 			_, _ = buf.ReadFrom(r.Body)
 			body = buf.String()
 		}
-		fmt.Fprint(w, `{"review_uuid":"synthetic","document_hash":"hash","state":"partial","expired":false,"issue_uid":"issue-uid","issue_short_id":"abc1","destination_id":"destination","roots":[{"position":0,"state":"complete","comment":{"uid":"root-uid","handle":"c:root","body":"root","author":"alice"}}],"comments":[{"uid":"reply-uid","handle":"c:reply","body":"full reply","author":"bob","teammate":"reviewer","reply_to_uid":"root-uid"}]}`)
+		fmt.Fprint(w, `{"review_uuid":"synthetic","document_hash":"hash","state":"partial\u001b[2J","expired":false,"issue_uid":"issue-uid\r","issue_short_id":"abc1\u001b[2J","destination_id":"destination\u001b[2J","roots":[{"position":0,"state":"complete\u001b[2J","comment":{"uid":"root-uid\u001b[2J","handle":"c:root\u001b[2J","body":"root","author":"alice\u001b]0;owned\u0007"}}],"comments":[{"uid":"reply-uid","handle":"c:reply\u001b[2J","body":"full reply\n\tsecond line\u001b[2J\u0000","author":"bob\u001b[2J","teammate":"reviewer\u001b[2J","reply_to_uid":"root-uid\u001b[2J"}]}`)
 	}))
 	defer server.Close()
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
@@ -46,7 +46,13 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 		assert.Equal(t, tc.method, method)
 		assert.Contains(t, output.String(), "Status: partial")
 		assert.Contains(t, output.String(), "Finding 1: complete c:root")
-		assert.Contains(t, output.String(), "full reply")
+		assert.Contains(t, output.String(), "Issue: abc1 (issue-uid)")
+		assert.Contains(t, output.String(), "Destination: destination")
+		assert.Contains(t, output.String(), "(author: alice; UID: root-uid)")
+		assert.Contains(t, output.String(), "Reply c:reply by bob to root-uid (reviewer):\nfull reply\n\tsecond line")
+		assert.NotContains(t, output.String(), "\x1b")
+		assert.NotContains(t, output.String(), "\r")
+		assert.NotContains(t, output.String(), "\x00")
 		if tc.method == http.MethodGet {
 			assert.Contains(t, query, "job_id=42")
 		} else {

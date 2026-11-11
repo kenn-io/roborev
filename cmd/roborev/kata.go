@@ -47,35 +47,40 @@ func kataCmd() *cobra.Command {
 						return fmt.Errorf("daemon does not support Kata publication; restart it")
 					}
 				}
+				if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Detail != nil {
+					detail := sanitizeSearchSingleLine(*problem.Detail)
+					problem.Detail = &detail
+					err = problem
+				}
 				return daemonRequestError("Kata publication", err)
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Status: %s", response.State)
+			fmt.Fprintf(out, "Status: %s", sanitizeSearchSingleLine(response.State))
 			if response.Expired {
 				fmt.Fprint(out, " (expired)")
 			}
 			fmt.Fprintln(out)
 			if response.IssueUID != nil {
-				fmt.Fprintf(out, "Issue: %s (%s)\n", deref(response.IssueShortID), deref(response.IssueUID))
+				fmt.Fprintf(out, "Issue: %s (%s)\n", sanitizeSearchSingleLine(deref(response.IssueShortID)), sanitizeSearchSingleLine(deref(response.IssueUID)))
 			}
 			if response.DestinationID != nil {
-				fmt.Fprintf(out, "Destination: %s\n", *response.DestinationID)
+				fmt.Fprintf(out, "Destination: %s\n", sanitizeSearchSingleLine(*response.DestinationID))
 			}
 			for _, root := range response.Roots {
 				handle := ""
 				if root.Comment != nil {
-					handle = deref(root.Comment.Handle)
+					handle = sanitizeSearchSingleLine(deref(root.Comment.Handle))
 				}
 				if root.EndPosition != nil {
-					fmt.Fprintf(out, "Findings %d-%d: %s", root.Position+1, *root.EndPosition+1, root.State)
+					fmt.Fprintf(out, "Findings %d-%d: %s", root.Position+1, *root.EndPosition+1, sanitizeSearchSingleLine(root.State))
 				} else {
-					fmt.Fprintf(out, "Finding %d: %s", root.Position+1, root.State)
+					fmt.Fprintf(out, "Finding %d: %s", root.Position+1, sanitizeSearchSingleLine(root.State))
 				}
 				if handle != "" {
 					fmt.Fprintf(out, " %s", handle)
 				}
 				if root.Comment != nil {
-					fmt.Fprintf(out, " (author: %s; UID: %s)", root.Comment.Author, root.Comment.UID)
+					fmt.Fprintf(out, " (author: %s; UID: %s)", sanitizeSearchSingleLine(root.Comment.Author), sanitizeSearchSingleLine(root.Comment.UID))
 				}
 				fmt.Fprintln(out)
 			}
@@ -83,14 +88,14 @@ func kataCmd() *cobra.Command {
 				if comment.ReplyToUID == nil {
 					continue
 				}
-				fmt.Fprintf(out, "Reply %s by %s to %s", deref(comment.Handle), comment.Author, *comment.ReplyToUID)
+				fmt.Fprintf(out, "Reply %s by %s to %s", sanitizeSearchSingleLine(deref(comment.Handle)), sanitizeSearchSingleLine(comment.Author), sanitizeSearchSingleLine(*comment.ReplyToUID))
 				if comment.Teammate != nil {
-					fmt.Fprintf(out, " (%s)", *comment.Teammate)
+					fmt.Fprintf(out, " (%s)", sanitizeSearchSingleLine(*comment.Teammate))
 				}
-				fmt.Fprintf(out, ":\n%s\n", comment.Body)
+				fmt.Fprintf(out, ":\n%s\n", sanitizeSearchExcerpt(comment.Body))
 			}
 			if response.Message != nil && strings.TrimSpace(*response.Message) != "" {
-				return fmt.Errorf("publication incomplete: %s", *response.Message)
+				return fmt.Errorf("publication incomplete: %s", sanitizeSearchSingleLine(*response.Message))
 			}
 			return nil
 		}
