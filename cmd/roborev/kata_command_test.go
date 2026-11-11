@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -217,9 +218,16 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	require.True(t, ok)
 	_, retry, ok := strings.Cut(instructions, "Retry: ")
 	require.True(t, ok)
-	retryArgs, err := shlex.Split(strings.TrimSuffix(retry, "\n"))
-	require.NoError(t, err)
-	assert.Equal(t, []string{"roborev", "--server", strings.TrimPrefix(server.URL, "http://"), "kata", "comment", "issue-uid", "--project", "other", "--destination-id", "destination", "--expected-teammate", "roborev", "--reply", rootUID, "--idempotency-key", key, "-m", body}, retryArgs)
+	if runtime.GOOS == "windows" {
+		// ShellEscape uses PowerShell single quotes, whose doubled apostrophes
+		// cannot be parsed with POSIX shlex rules.
+		want := fmt.Sprintf("roborev --server '%s' kata comment 'issue-uid' --project 'other' --destination-id 'destination' --expected-teammate 'roborev' --reply '%s' --idempotency-key 'Case-''Key' -m 'It''s evidence\n\twith ''quotes'''\n", strings.TrimPrefix(server.URL, "http://"), rootUID)
+		assert.Equal(t, want, retry)
+	} else {
+		retryArgs, err := shlex.Split(strings.TrimSuffix(retry, "\n"))
+		require.NoError(t, err)
+		assert.Equal(t, []string{"roborev", "--server", strings.TrimPrefix(server.URL, "http://"), "kata", "comment", "issue-uid", "--project", "other", "--destination-id", "destination", "--expected-teammate", "roborev", "--reply", rootUID, "--idempotency-key", key, "-m", body}, retryArgs)
+	}
 	payload, ok := posted.Load().(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, rootUID, payload["target_uid"])
