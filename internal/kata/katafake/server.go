@@ -118,6 +118,9 @@ func New(t *testing.T) *Server {
 	return f
 }
 
+// Handler exposes the fake protocol handler for in-process transports.
+func (f *Server) Handler() http.Handler { return f.srv.Config.Handler }
+
 // URL is the server's base URL.
 func (f *Server) URL() string { return f.srv.URL }
 

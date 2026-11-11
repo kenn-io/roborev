@@ -10,12 +10,14 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -29,6 +31,108 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
+
+type kataLatencyTransport struct {
+	handler http.Handler
+	started chan struct{}
+}
+
+func (tr kataLatencyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	select {
+	case tr.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-time.After(4 * time.Second):
+	case <-r.Context().Done():
+		return nil, r.Context().Err()
+	}
+	response := httptest.NewRecorder()
+	tr.handler.ServeHTTP(response, r)
+	return response.Result(), nil
+}
+
+// This test is nonparallel: parallel tests cannot use the process-wide default
+// transport until it has been restored. The fake socket is outside the bubble;
+// the transport serves its handler in-process to make each delay virtual.
+func TestKataPublicationEntryPathsAllowLongSequences(t *testing.T) {
+	for _, entry := range []string{"direct", "completion hook", "manual", "startup"} {
+		t.Run(entry, func(t *testing.T) {
+			fake := katafake.New(t)
+			tc := newWorkerTestContext(t, 1)
+			job := tc.createAndClaimJob(t, "latency-review", "worker")
+			cfg := kataConnectionConfig(fake)
+			cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+			seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: "reviews", Policy: "comments"}
+			doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "first", Fix: "fix"}, {Severity: "high", Problem: "second", Fix: "fix"}}}
+			raw, err := json.Marshal(doc)
+			require.NoError(t, err)
+			require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
+			var issue *katafake.Issue
+			fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodPost {
+					return false
+				}
+				if issue == nil {
+					var req gen.CreateIssueRequestBody
+					if err := json.UnmarshalRead(r.Body, &req); err != nil {
+						fake.Fail(w, 400, "bad_request", "bad issue")
+						return true
+					}
+					issue = fake.AddIssue(7, "latency", req.Title, *req.Body, req.Labels...)
+					issue.Out.Metadata = req.Metadata
+					fake.Reply(w, map[string]any{"issue": map[string]any{"uid": issue.Out.UID, "project_id": 7, "metadata": req.Metadata}})
+					return true
+				}
+				var req gen.CommentRequestBody
+				if err := json.UnmarshalRead(r.Body, &req); err != nil {
+					fake.Fail(w, 400, "bad_request", "bad comment")
+					return true
+				}
+				uid := fmt.Sprintf("root-%d", len(issue.Comments)+1)
+				issue.Comments = append(issue.Comments, gen.CommentOut{UID: uid, Handle: &uid, Body: req.Body, Author: "service"})
+				fake.Reply(w, map[string]any{"issue": map[string]any{"uid": issue.Out.UID}, "comment": map[string]any{"uid": uid, "body": req.Body}})
+				return true
+			}
+			previous := http.DefaultTransport
+			started := make(chan struct{}, 1)
+			http.DefaultTransport = kataLatencyTransport{handler: fake.Handler(), started: started}
+			t.Cleanup(func() { http.DefaultTransport = previous })
+			synctest.Test(t, func(t *testing.T) {
+				publisher := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+				runner := NewHookRunner(NewStaticConfig(cfg), tc.Broadcaster, log.New(io.Discard, "", 0), tc.DB)
+				defer runner.Stop()
+				start := time.Now()
+				switch entry {
+				case "direct":
+					_, err = publisher.Publish(t.Context(), job.ID)
+				case "completion hook":
+					tc.Broadcaster.Broadcast(Event{Type: "review.completed", Verdict: "F", JobID: job.ID})
+					runner.WaitUntilIdle()
+				case "manual":
+					_, err = runner.publishKataManual(t.Context(), job.ID, "")
+				case "startup":
+					runner.startKataRecovery()
+					<-started // The startup goroutine has entered the transport.
+					runner.WaitUntilIdle()
+				}
+				require.NoError(t, err)
+				assert.Greater(t, time.Since(start), 30*time.Second)
+				record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+				require.NoError(t, err)
+				require.Equal(t, "complete", record.Marker.State)
+				status, err := publisher.Inspect(t.Context(), job.ID)
+				require.NoError(t, err)
+				require.Equal(t, "complete", status.State)
+				require.Len(t, status.Roots, 2)
+				for _, root := range status.Roots {
+					assert.Equal(t, "complete", root.State)
+				}
+				require.Len(t, issue.Comments, 2)
+			})
+		})
+	}
+}
 
 func TestKataPublicationExpiredNeverCreatesIssue(t *testing.T) {
 	fake := katafake.New(t)
