@@ -306,9 +306,21 @@ func TestAgentHookRunRejectsOutdatedRegistration(t *testing.T) {
 }
 
 func TestGrokAgentHookAppendsFixGuidelines(t *testing.T) {
+	flowReason := `resolve reviews
+
+Repository review flow, from .roborev.toml in the working tree. It refines the Which disposition step above for this repository:
+
+~~~dot
+digraph roborev_sample {
+  node [shape=box];
+  start [shape=oval label="Review"];
+  back [shape=oval label="Back to roborev_triage"];
+  start -> back;
+}
+~~~`
 	oldPost := postAgentHook
 	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
-		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+		return agenthook.Response{Triggered: true, Reason: flowReason}, nil
 	}
 	t.Cleanup(func() { postAgentHook = oldPost })
 
@@ -328,7 +340,11 @@ func TestGrokAgentHookAppendsFixGuidelines(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
 	reason, ok := output["reason"].(string)
 	require.True(t, ok)
+	assert.Contains(t, reason, "Repository review flow")
 	assert.Contains(t, reason, "Verify before editing.")
+	flowIndex := strings.Index(reason, "Repository review flow")
+	guidelinesIndex := strings.Index(reason, "## Autofix Guidelines")
+	assert.Less(t, flowIndex, guidelinesIndex)
 }
 
 func TestOwnerStopOutputSkipsGuidelinesAndSkillWarnings(t *testing.T) {

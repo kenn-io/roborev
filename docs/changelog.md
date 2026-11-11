@@ -24,19 +24,29 @@ All notable changes to roborev, grouped by minor release.
     remote key creation under `signing init`. Previous spellings remain hidden
     compatibility commands for at least one release. See the
     [command mapping](/docs/commands/#command-groups-and-migration).
+- **Repository review flows for the Agent Hook.** Set `[agent_hook] review_flow`
+    in `.roborev.toml` to a DOT diagram of how to handle repository findings.
+    The hook adds it after the built-in triage diagram. The setup-review skill
+    writes one from its interview, and `roborev doctor` explains whether the
+    hook will use it.
+
 - Agent Hook reminders carry the triage flow as a DOT diagram. Stop, commit,
     failed-review and injected reminders use the same flow. Custom instructions
     still replace it, and changing facts stay outside the diagram.
+
 - Agent Hook configuration no longer saves the built-in instruction text. Saved
     copies of earlier defaults follow the current built-in workflow.
+
 - Use root help as a guide to the review workflow, job IDs, target selection,
     output modes and recovery. Commands are grouped by purpose and include
     examples; `ls` aliases `list` and `resolve` aliases `close`.
+
 - Read recovery hints in CLI errors. Human errors use `hint:`, search agent
     output uses `Hint:`, and commands supporting `--json` write an error
     envelope to stderr. Success output stays unchanged. Usage mistakes now exit
     2 and invalid values exit 4; runtime failures and FAIL verdicts keep exit 1,
     and export cursor resets keep exit 3.
+
 - Report daemon startup failure when its child exits, with the startup log and a
     diagnostic command, instead of waiting for the readiness timeout.
 
