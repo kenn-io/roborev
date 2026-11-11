@@ -14,11 +14,13 @@ import (
 )
 
 type kataSelection struct {
-	seed    storage.KataPublicationSeed
-	options kata.PublicationOptions
+	seed        storage.KataPublicationSeed
+	options     kata.PublicationOptions
+	resolvedUID string // populated only when different selections required comparison
 }
 
-// selectKataPublication is deliberately offline: it never reads credentials.
+// Single or identical selections stay offline; distinct selections need a
+// server identity check before they can authorize one destination.
 func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage.ReviewJob, checkout string) (*kataSelection, error) {
 	if cfg == nil || !cfg.Integrations.Kata.Enabled || job.IsCIReview() || job.PanelRole == storage.PanelRoleMember || job.Source == storage.JobSourceRebuttal {
 		return nil, nil
@@ -63,12 +65,60 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 		if candidate.seed.Project == "" && candidate.seed.AliasKind == "" {
 			return nil, errors.New("no Kata project selected")
 		}
-		if selected != nil && (selected.seed != candidate.seed || !slices.Equal(selected.options.Labels, candidate.options.Labels) || !sameKataPriority(selected.options.Priority, candidate.options.Priority)) {
+		if selected == nil {
+			selected = &candidate
+			continue
+		}
+		if selected.seed.Policy != candidate.seed.Policy || !slices.Equal(selected.options.Labels, candidate.options.Labels) || !sameKataPriority(selected.options.Priority, candidate.options.Priority) {
 			return nil, errors.New("conflicting Kata publication hooks")
 		}
-		selected = &candidate
+		if selected.seed == candidate.seed {
+			continue
+		}
+		if selected.seed.AliasKind == "" && candidate.seed.AliasKind == "" {
+			return nil, errors.New("conflicting Kata publication hooks")
+		}
+		uid := selected.resolvedUID
+		if uid == "" {
+			uid, err = resolveKataSelection(ctx, cfg.Integrations.Kata, selected.seed)
+			if err != nil {
+				return nil, fmt.Errorf("resolve Kata publication hook: %w", err)
+			}
+		}
+		otherUID, err := resolveKataSelection(ctx, cfg.Integrations.Kata, candidate.seed)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Kata publication hook: %w", err)
+		}
+		if uid != otherUID {
+			return nil, errors.New("conflicting Kata publication hooks")
+		}
+		// Keep the committed alias authoritative even when the explicit hook
+		// was encountered first. The hint is not used as a destination.
+		if selected.seed.AliasKind == "" && candidate.seed.AliasKind != "" {
+			selected = &candidate
+		}
+		selected.resolvedUID = uid
 	}
 	return selected, nil
+}
+
+func resolveKataSelection(ctx context.Context, cfg config.KataIntegrationConfig, seed storage.KataPublicationSeed) (string, error) {
+	opts := []kata.APIOption{kata.WithoutWorkspace()}
+	name := seed.Project
+	if seed.AliasKind != "" {
+		opts = []kata.APIOption{kata.WithWorkspaceAlias(kata.ProjectAlias{Kind: seed.AliasKind, Identity: seed.AliasIdentity})}
+		name = ""
+	}
+	client, err := kata.NewAPIClient("", cfg, opts...)
+	if err != nil {
+		return "", err
+	}
+	defer client.CloseIdleConnections()
+	project, err := client.ResolvePublicationProject(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return project.UID, nil
 }
 
 // kataPublicationHooks applies the same supplied-review suppression to reads

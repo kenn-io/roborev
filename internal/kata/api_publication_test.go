@@ -60,6 +60,30 @@ func TestPublicationRenderingPreflightAndFingerprint(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestPublicationFindingPositions(t *testing.T) {
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "private summary", SourceLabels: []string{"reviewer"}, Findings: []structuredreview.Finding{
+		{Severity: "high", Problem: "first problem", Fix: "first fix"},
+		{Severity: "medium", Problem: "second problem", Fix: "second fix", Location: "file.go:12", Sources: []int{1}},
+	}}
+	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	for _, policy := range []string{"comments", "summary"} {
+		p, err := PreparePublication(id, strings.Repeat("a", 64), time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), doc, policy, "reviewer")
+		require.NoError(t, err)
+		require.Len(t, p.roots, 2)
+		if policy == "comments" {
+			assert.Contains(t, p.roots[0].Body, "### 1. High")
+			assert.Contains(t, p.roots[1].Body, "### 2. Medium")
+			for _, content := range []string{"second problem", "second fix", "file.go:12", "reviewer"} {
+				assert.Contains(t, p.roots[1].Body, content)
+			}
+		} else {
+			assert.Contains(t, p.roots[0].Body, "Finding 1 from a roborev review.")
+			assert.Contains(t, p.roots[1].Body, "Finding 2 from a roborev review.")
+			assert.NotContains(t, p.roots[1].Body, "second problem")
+		}
+	}
+}
+
 func TestPublicationRootStates(t *testing.T) {
 	t.Parallel()
 	p := publicationFixture(t, "comments")

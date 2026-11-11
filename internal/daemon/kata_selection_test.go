@@ -2,17 +2,108 @@ package daemon
 
 import (
 	"encoding/json/v2"
+	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
+
+func TestKataSelectionResolvesAmbiguousDestinations(t *testing.T) {
+	dir := testutil.NewTestRepo(t).Root
+	writeBinding := func(name string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.toml"), []byte("version = 1\n[project]\nname = \""+name+"\"\n"), 0o600))
+	}
+	fake := katafake.New(t)
+	cfg := kataConnectionConfig(fake)
+	job := &storage.ReviewJob{JobType: storage.JobTypeReview}
+	var aliasProject atomic.Int32
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/projects/resolve" {
+			return false
+		}
+		var request struct {
+			Alias gen.AliasInput `json:"alias"`
+		}
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+			return true
+		}
+		project := fake.Projects[aliasProject.Load()]
+		fake.Reply(w, gen.ProjectResolveBody{Project: project, Alias: gen.ProjectAlias{
+			AliasIdentity: request.Alias.Identity, AliasKind: request.Alias.Kind,
+			ID: 1, ProjectID: project.ID, CreatedAt: time.Unix(0, 0).UTC(),
+		}})
+		return true
+	}
+	cfg.Hooks = []config.HookConfig{
+		{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"},
+		{Type: "kata", Event: "review.completed", Findings: "comments"},
+	}
+	writeBinding("old-name")
+	selected, err := selectKataPublication(t.Context(), cfg, job, dir)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, fake.Projects[0].UID, selected.resolvedUID)
+	assert.Equal(t, "old-name", selected.seed.Project)
+	assert.Equal(t, "local", selected.seed.AliasKind)
+	emptyHint := selected.seed
+	emptyHint.Project = ""
+	uid, err := resolveKataSelection(t.Context(), cfg.Integrations.Kata, emptyHint)
+	require.NoError(t, err)
+	assert.Equal(t, fake.Projects[0].UID, uid)
+	cfg.Hooks[0], cfg.Hooks[1] = cfg.Hooks[1], cfg.Hooks[0]
+	reversed, err := selectKataPublication(t.Context(), cfg, job, dir)
+	require.NoError(t, err)
+	require.NotNil(t, reversed)
+	assert.Equal(t, selected.seed, reversed.seed)
+	cfg.Hooks[0], cfg.Hooks[1] = cfg.Hooks[1], cfg.Hooks[0]
+	// A matching hint cannot prove identity: the alias now resolves elsewhere.
+	writeBinding("reviews")
+	aliasProject.Store(1)
+	_, err = selectKataPublication(t.Context(), cfg, job, dir)
+	require.ErrorContains(t, err, "conflicting")
+	aliasProject.Store(0)
+	for _, change := range []func(){
+		func() { cfg.Hooks[1].Findings = "summary" },
+		func() { cfg.Hooks[1].Labels = []string{"different"} },
+		func() { cfg.Hooks[1].Priority = new(2) },
+	} {
+		cfg.Hooks[1] = config.HookConfig{Type: "kata", Event: "review.completed", Findings: "comments"}
+		change()
+		before := len(fake.AllRequests())
+		_, err = selectKataPublication(t.Context(), cfg, job, dir)
+		require.ErrorContains(t, err, "conflicting")
+		assert.Len(t, fake.AllRequests(), before)
+	}
+	// A single selection never reads credentials or contacts Kata.
+	cfg.Hooks = cfg.Hooks[1:]
+	cfg.Hooks[0].Findings = "comments"
+	cfg.Integrations.Kata.APIKey = ""
+	cfg.Integrations.Kata.APIKeyFile = filepath.Join(dir, "missing-token")
+	before := len(fake.AllRequests())
+	selected, err = selectKataPublication(t.Context(), cfg, job, dir)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Empty(t, selected.resolvedUID)
+	assert.Len(t, fake.AllRequests(), before)
+	cfg.Hooks = append([]config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}, cfg.Hooks...)
+	cfg.Hooks[1].Labels = nil
+	cfg.Hooks[1].Priority = nil
+	_, err = selectKataPublication(t.Context(), cfg, job, dir)
+	require.ErrorContains(t, err, "resolve Kata publication hook")
+}
 
 func TestKataSelectionCoalescesAndRejectsConflicts(t *testing.T) {
 	t.Parallel()
@@ -100,7 +191,7 @@ func TestKataCompletionCapturesUnknownVerdictFallback(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "fallback-review", "worker")
 	cfg := config.DefaultConfig()
-	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.test"}
+	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.test", APIKeyFile: filepath.Join(t.TempDir(), "missing-token")}
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
 	tc.Pool.cfgGetter = NewStaticConfig(cfg)
 	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
@@ -111,6 +202,27 @@ func TestKataCompletionCapturesUnknownVerdictFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, record.Marker)
 	assert.Equal(t, "comments", record.Marker.Policy)
+}
+
+func TestKataCompletionKeepsReviewWhenAmbiguousSelectionCannotResolve(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "offline-review", "worker")
+	repo := testutil.NewTestRepo(t)
+	repo.WriteFile(".kata.toml", "version = 1\n[project]\nname = \"reviews\"\n")
+	cfg := config.DefaultConfig()
+	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.test", APIKeyFile: filepath.Join(t.TempDir(), "missing-token")}
+	cfg.Hooks = []config.HookConfig{
+		{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"},
+		{Type: "kata", Event: "review.completed", Findings: "comments"},
+	}
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.Pool.completeReviewResult(t.Context(), "worker", job, repo.Root, "test", storage.ReviewCompletion{Output: string(raw)}))
+	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Nil(t, record.Marker)
 }
 
 func TestKataInspectionProjectRequiresUnambiguousExplicitProject(t *testing.T) {

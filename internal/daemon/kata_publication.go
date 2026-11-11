@@ -152,6 +152,9 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64) (*storage.Kata
 	if err != nil {
 		return nil, nil, nil, nil, zero, nil, err
 	}
+	if selection.resolvedUID != "" && selection.resolvedUID != project.UID {
+		return nil, nil, nil, nil, zero, nil, errors.New("kata publication destination changed")
+	}
 	raw, err := json.Marshal(review.StructuredOutput)
 	if err != nil {
 		return nil, nil, nil, nil, zero, nil, err
@@ -335,6 +338,9 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		}
 		if selection == nil || selection.seed != locked.Marker.KataPublicationSeed {
 			return errors.New("kata publication authorization changed")
+		}
+		if selection.resolvedUID != "" && selection.resolvedUID != dest.UID {
+			return errors.New("kata publication destination changed")
 		}
 		raw, err := json.Marshal(review.StructuredOutput)
 		if err != nil {

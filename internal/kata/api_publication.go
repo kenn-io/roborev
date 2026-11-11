@@ -236,7 +236,7 @@ func PreparePublicationWithOptions(id uuid.UUID, hash string, completed time.Tim
 		text := fmt.Sprintf("Finding %d from a roborev review.", i+1)
 		if policy == "comments" {
 			one := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "Review finding.", Findings: []structuredreview.Finding{finding}, SourceLabels: doc.SourceLabels}
-			text = one.Markdown("")
+			text = one.MarkdownFrom("", i+1)
 		}
 		digest := publicationDigest([]byte(text))
 		p.digests = append(p.digests, digest)
