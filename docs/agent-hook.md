@@ -86,9 +86,52 @@ Every reminder opens with a fixed preamble. It says the reminder is background
 maintenance, that the user's latest instruction comes first, and that findings
 are a reviewer's suggestions to triage, not requirements.
 
+### Triage diagram
+
 The default instruction names the exact review job IDs and asks the agent to
-triage them with the `roborev-fix` skill. It never runs `roborev fix --open` or
-discovers additional reviews. The skill gives each finding one disposition:
+triage them with the `roborev-fix` skill. Unless a custom instruction replaces
+it, new Stop, commit, failed-review, deferred, and injected reminders include
+the following triage flow:
+
+```dot
+digraph roborev_triage {
+  node [shape=box];
+  start [shape=oval label="Agent Hook reminder"];
+  busy [shape=diamond label="User's request unfinished?"];
+  finish [label="Finish it first"];
+  scope [label="Open only the named job IDs;\nnever roborev fix --open or --list"];
+  hold [shape=diamond label="User asked to see findings first,\nto pause, or waiting on the user's answer?"];
+  report [label="Open only the named job IDs;\nnever roborev fix --open or --list;\ntriage without editing;\nreport each disposition"];
+  triage [shape=diamond label="Which disposition fits\neach finding?"];
+  fix [label="Fix: smallest change, tested"];
+  decline [label="Decline: record why"];
+  invalid [label="Invalid: record evidence"];
+  ask [label="Ask: keep open, recommend"];
+  record [label="Comment per finding;\nclose reviews with no Ask"];
+  done [label="Run the completion command\nor tool, if given"];
+  resume [shape=oval label="Return to the interrupted work"];
+  start -> hold;
+  busy -> finish [label="yes"];
+  busy -> scope [label="no"];
+  finish -> scope;
+  scope -> triage;
+  hold -> report [label="yes"];
+  hold -> busy [label="no"];
+  triage -> fix [label="reachable defect,\nsmall fix in the task"];
+  triage -> decline [label="true, not worth it now"];
+  triage -> invalid [label="stale, unreachable, wrong"];
+  triage -> ask [label="outside the task, unclear,\nor new surface"];
+  fix -> record; decline -> record; invalid -> record; ask -> record;
+  record -> done; report -> done; done -> resume;
+}
+```
+
+Stop, commit, failed-review, and deferred reminders put their trigger counts and
+review job IDs after the flow. UserPromptSubmit and SessionStart injections put
+the failed-review facts before the preamble and flow. An active fix-session
+continuation repeats its saved review job IDs and completion command without
+repeating the flow. The built-in flow never runs `roborev fix --open` or
+discovers additional reviews. It gives each finding one disposition:
 
 - **Fix:** a reachable defect with real harm, removable by a small change inside
     the current task.
@@ -109,10 +152,14 @@ scoped to the repository lineage. They do not trigger another reminder in that
 session, while newly created review IDs still do. Deferred reminders acknowledge
 their IDs only when delivered.
 
-`instruction` replaces the default instruction but not the preamble. Custom
-instructions are emitted without the built-in scope or continuation guidance.
-When a reminder starts a fix session, roborev adds the required completion
-command after the custom instruction.
+An empty `instruction` uses the built-in workflow. So does a saved copy of any
+earlier built-in instruction: older versions wrote the default into
+`config.toml`. Custom text still replaces the workflow.
+
+`instruction` replaces the default instruction, diagram included, but not the
+preamble. A reminder separates the preamble, instruction, and trigger facts with
+blank lines. When it starts a fix session, roborev adds the completion command
+after those facts.
 
 ### Coordinating hook-triggered fixes
 
@@ -429,7 +476,7 @@ instruction = "Resolve open roborev findings now."
 | Stop hooks | `5` | `turn_threshold` | `--turn-threshold` | `ROBOREV_AGENT_HOOK_TURN_THRESHOLD` |
 | Commits | `0` | `commit_threshold` | `--commit-threshold` | `ROBOREV_AGENT_HOOK_COMMIT_THRESHOLD` |
 | Open failed reviews | `4` | `failed_review_threshold` | `--failed-review-threshold` | `ROBOREV_AGENT_HOOK_FAILED_REVIEW_THRESHOLD` |
-| Instruction | self-contained fix workflow | `instruction` | `--instruction` | `ROBOREV_AGENT_HOOK_INSTRUCTION` |
+| Instruction | built-in triage flow (empty) | `instruction` | `--instruction` | `ROBOREV_AGENT_HOOK_INSTRUCTION` |
 | Main daemon address | runtime discovery | | `--roborev-server` | `ROBOREV_AGENT_HOOK_ROBOREV_ADDR` |
 
 Factory Droid keeps `[droid_hook]` and the existing `ROBOREV_DROID_HOOK_*`

@@ -113,7 +113,7 @@ type AgentHookConfig struct {
 	TurnThreshold         int    `toml:"turn_threshold" comment:"Stop hook threshold; 0 disables Stop-based prompting."`
 	CommitThreshold       int    `toml:"commit_threshold" comment:"PostToolUse commit threshold; 0 disables commit-based prompting."`
 	FailedReviewThreshold int    `toml:"failed_review_threshold" comment:"Open failed roborev review threshold; 0 disables review-based prompting."`
-	Instruction           string `toml:"instruction" comment:"Instruction emitted when the agent hook decides a review/fix pass is needed."`
+	Instruction           string `toml:"instruction" comment:"Instruction emitted when the agent hook decides a review/fix pass is needed. Empty uses the built-in instruction."`
 }
 
 type DroidHookConfig struct {
@@ -1000,11 +1000,6 @@ const (
 	DefaultReviewContextCount    = 3
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
 	DefaultAgentQuotaCooldown    = 30 * time.Minute
-	DefaultAgentHookInstruction  = `Triage the review job IDs named in this reminder with the roborev-fix skill,
-and only those IDs. Fix reachable defects with the smallest change that stays
-inside the user's current task, decline or disprove the rest with a recorded
-reason, and ask the user about anything that would grow the task. Then return
-to the work this reminder interrupted.`
 
 	// DefaultHookTimeout bounds how long the post-commit hook waits for the
 	// daemon's enqueue handler before giving up so a stalled daemon never
@@ -1045,13 +1040,13 @@ func DefaultConfig() *Config {
 			TurnThreshold:         5,
 			CommitThreshold:       0,
 			FailedReviewThreshold: 4,
-			Instruction:           DefaultAgentHookInstruction,
+			Instruction:           "",
 		},
 		DroidHook: DroidHookConfig{
 			TurnThreshold:         5,
 			CommitThreshold:       0,
 			FailedReviewThreshold: 4,
-			Instruction:           DefaultAgentHookInstruction,
+			Instruction:           "",
 		},
 		KataContext: KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
 		Agent: AgentConfig{

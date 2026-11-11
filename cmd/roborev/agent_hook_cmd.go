@@ -130,11 +130,9 @@ func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin i
 	}
 	instruction := opts.Instruction
 	if input.HookEventName == "UserPromptSubmit" || input.HookEventName == "SessionStart" {
-		// Injected reminders carry purpose-built guidance in the daemon.
-		// The CLI default-fills Instruction with the stop-decision text,
-		// which would override it, so only explicitly configured
-		// instructions travel for these events.
-		if strings.TrimSpace(instruction) == strings.TrimSpace(agenthook.DefaultInstruction) {
+		// Empty lets new daemons choose their built-in flow while old daemons
+		// retain task-first injected guidance instead of honoring a saved default.
+		if agenthook.IsBuiltinInstruction(instruction) {
 			instruction = ""
 		}
 	}
@@ -327,7 +325,11 @@ func addAgentHookRunFlags(cmd *cobra.Command, opts *agenthook.Options) {
 	cmd.Flags().IntVar(&opts.TurnThreshold, "turn-threshold", opts.TurnThreshold, "Stop hook threshold; 0 disables Stop triggering")
 	cmd.Flags().IntVar(&opts.CommitThreshold, "commit-threshold", opts.CommitThreshold, "PostToolUse commit threshold; 0 disables commit triggering")
 	cmd.Flags().IntVar(&opts.FailedReviewThreshold, "failed-review-threshold", opts.FailedReviewThreshold, "open failed roborev review threshold; 0 disables review triggering")
-	cmd.Flags().StringVar(&opts.Instruction, "instruction", opts.Instruction, "continuation instruction")
+	cmd.Flags().StringVar(
+		&opts.Instruction, "instruction", opts.Instruction,
+		"continuation instruction; defaults to the built-in triage flow",
+	)
+	cmd.Flags().Lookup("instruction").DefValue = "built-in triage flow"
 	cmd.Flags().StringVar(&opts.RoborevServerAddr, "roborev-server", opts.RoborevServerAddr, "roborev daemon address; defaults to runtime discovery")
 }
 
