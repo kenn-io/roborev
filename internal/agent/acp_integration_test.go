@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/roborev/internal/testenv"
 )
 
 const (
@@ -92,6 +93,10 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 	}
 	if model := strings.TrimSpace(os.Getenv(acpIntegrationModelEnv)); model != "" {
 		agent.Model = model
+	}
+	for _, entry := range testenv.UserAgentEnv() {
+		key, value, _ := strings.Cut(entry, "=")
+		t.Setenv(key, value)
 	}
 
 	var streamOutput bytes.Buffer

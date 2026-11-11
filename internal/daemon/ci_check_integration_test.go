@@ -26,6 +26,7 @@ import (
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -366,6 +367,7 @@ func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 					t.Skip("requires mise")
 				}
 				versionCmd := exec.CommandContext(t.Context(), mise, "exec", "--", "go", "env", "GOVERSION")
+				versionCmd.Env = testenv.UserEnv()
 				versionCmd.Dir = "/"
 				version, err := versionCmd.Output()
 				if err != nil {
