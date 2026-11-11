@@ -259,7 +259,7 @@ func TestKataClientKeepsTheCLIWhenTheConnectionIsOff(t *testing.T) {
 	})
 	t.Run("nil config", func(t *testing.T) {
 		c := newKataClientAt(bindRepo(t, "p"), nil, func() (daemon.DaemonEndpoint, error) { return daemon.DaemonEndpoint{}, os.ErrNotExist })
-		_, isCLI := c.(*lazyKataClient).resolve(context.Background()).(*kata.CLIClient)
+		_, isCLI := c.(*lazyKataClient).resolve(t.Context()).(*kata.CLIClient)
 		assert.True(t, isCLI)
 	})
 }
@@ -273,7 +273,7 @@ func TestKataClientFallsBackWhenTheStatusProbeStalls(t *testing.T) {
 		})
 		client, ok := c.(*lazyKataClient)
 		require.True(t, ok)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		t.Cleanup(cancel)
 		started := make(chan struct{})
 		client.statusProbe = func(ctx context.Context) (*generated.KataStatusResponse, error) {
@@ -319,7 +319,7 @@ func TestKataStatusProbeTimeoutDoesNotCancelReviewContext(t *testing.T) {
 			return nil, ctx.Err()
 		}
 
-		ctx := context.Background()
+		ctx := t.Context()
 		type resolution struct {
 			result kata.ContextResult
 			err    error
@@ -353,7 +353,7 @@ func TestKataClientNeverShellsOutWhenTheConnectionIsEnabledLocally(t *testing.T)
 	marker := kataShimMarker(t)
 	local := config.DefaultConfig()
 	local.Integrations.Kata.Enabled = true
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("daemon unreachable", func(t *testing.T) {
 		c := newKataClientAt(bindRepo(t, "p"), local, func() (daemon.DaemonEndpoint, error) { return daemon.DaemonEndpoint{}, os.ErrNotExist })
@@ -383,13 +383,13 @@ func TestKataClientReportsWhatTheDaemonSaid(t *testing.T) {
 	var probes atomic.Int32
 	ep := kataDaemon(t, cfg)
 	c := newKataClientAt(bindRepo(t, "ghost"), config.DefaultConfig(), fixedEndpoint(ep, &probes))
-	_, err := c.List(context.Background(), kata.ListOpts{})
+	_, err := c.List(t.Context(), kata.ListOpts{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ghost")
 
 	fake.Token = "rotated-credential"
 	c = newKataClientAt(bindRepo(t, "reviews"), config.DefaultConfig(), fixedEndpoint(ep, &probes))
-	_, err = c.List(context.Background(), kata.ListOpts{})
+	_, err = c.List(t.Context(), kata.ListOpts{})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), kataCLICredential)
 	assert.NotContains(t, err.Error(), "rotated-credential")
@@ -401,9 +401,9 @@ func TestKataClientWithoutAnyProjectIsUnbound(t *testing.T) {
 	cfg.DefaultProject = ""
 	var probes atomic.Int32
 	c := newKataClientAt(bindRepo(t, ""), config.DefaultConfig(), fixedEndpoint(kataDaemon(t, cfg), &probes))
-	_, err := c.Binding(context.Background())
+	_, err := c.Binding(t.Context())
 	require.ErrorIs(t, err, kata.ErrNoBinding, "so the review is not given Kata context from nowhere")
-	_, err = c.List(context.Background(), kata.ListOpts{})
+	_, err = c.List(t.Context(), kata.ListOpts{})
 	require.ErrorIs(t, err, kata.ErrNoBinding)
 }
 
@@ -439,7 +439,7 @@ func TestKataClientNamesWhyTheDaemonCannotProvideTheConnection(t *testing.T) {
 			ep, err := daemon.ParseEndpoint(ts.URL)
 			require.NoError(t, err)
 			c := newKataClientAt(bindRepo(t, "p"), local, func() (daemon.DaemonEndpoint, error) { return ep, nil })
-			_, err = c.List(context.Background(), kata.ListOpts{})
+			_, err = c.List(t.Context(), kata.ListOpts{})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantIn)
 			assert.NotContains(t, err.Error(), tc.notWant)
@@ -451,7 +451,7 @@ func TestKataClientNamesWhyTheDaemonCannotProvideTheConnection(t *testing.T) {
 	ep, err := daemon.ParseEndpoint(ts.URL)
 	require.NoError(t, err)
 	c := newKataClientAt(bindRepo(t, "p"), config.DefaultConfig(), func() (daemon.DaemonEndpoint, error) { return ep, nil })
-	_, isCLI := c.(*lazyKataClient).resolve(context.Background()).(*kata.CLIClient)
+	_, isCLI := c.(*lazyKataClient).resolve(t.Context()).(*kata.CLIClient)
 	assert.True(t, isCLI)
 	assert.NoFileExists(t, marker)
 }

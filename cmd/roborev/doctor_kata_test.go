@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -23,9 +22,10 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func kataDoctorEnv(local config.KataIntegrationConfig, status daemon.KataStatusBody) *doctorEnv {
+func kataDoctorEnv(t *testing.T, local config.KataIntegrationConfig, status daemon.KataStatusBody) *doctorEnv {
+	t.Helper()
 	return &doctorEnv{
-		ctx:          context.Background(),
+		ctx:          t.Context(),
 		global:       &config.Config{Integrations: config.IntegrationsConfig{Kata: local}},
 		ping:         &daemon.PingInfo{OK: true},
 		daemonAgents: &doctorDaemonAgents{},
@@ -72,7 +72,7 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := kataDoctorEnv(config.KataIntegrationConfig{Enabled: true}, tt.status)
+			env := kataDoctorEnv(t, config.KataIntegrationConfig{Enabled: true}, tt.status)
 			got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
 			assert.Equal(t, tt.wantStatus, got.Status)
 			assert.Equal(t, "integrations", got.Category)
@@ -91,7 +91,7 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 
 func TestDoctorKataIsQuietWhenNothingEnablesIt(t *testing.T) {
 	off := daemon.KataStatusBody{State: "disabled", Message: "disabled"}
-	env := kataDoctorEnv(config.KataIntegrationConfig{}, off)
+	env := kataDoctorEnv(t, config.KataIntegrationConfig{}, off)
 	assertNoKataDoctorChecks(t, checkDoctorIntegrations(env))
 
 	env.kata, env.kataErr = nil, assert.AnError // an older daemon: no status at all
@@ -99,7 +99,7 @@ func TestDoctorKataIsQuietWhenNothingEnablesIt(t *testing.T) {
 }
 
 func TestDoctorKataMismatchBetweenConfigAndDaemon(t *testing.T) {
-	env := kataDoctorEnv(config.KataIntegrationConfig{Enabled: true}, daemon.KataStatusBody{State: "disabled", Message: "disabled"})
+	env := kataDoctorEnv(t, config.KataIntegrationConfig{Enabled: true}, daemon.KataStatusBody{State: "disabled", Message: "disabled"})
 	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
 	assert.Equal(t, doctorWarn, got.Status)
 	assert.Contains(t, got.Summary, "daemon has it disabled")
@@ -111,7 +111,7 @@ func TestDoctorKataMismatchBetweenConfigAndDaemon(t *testing.T) {
 }
 
 func TestDoctorKataWhenTheDaemonCannotBeAsked(t *testing.T) {
-	env := kataDoctorEnv(config.KataIntegrationConfig{Enabled: true, DefaultProject: "reviews"}, daemon.KataStatusBody{})
+	env := kataDoctorEnv(t, config.KataIntegrationConfig{Enabled: true, DefaultProject: "reviews"}, daemon.KataStatusBody{})
 	env.daemonAgents, env.kata, env.ping, env.pingErr = nil, nil, nil, assert.AnError
 	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
 	assert.Equal(t, doctorInfo, got.Status)
@@ -124,7 +124,7 @@ func TestDoctorKataWhenTheDaemonCannotBeAsked(t *testing.T) {
 // The daemon talks to Kata itself, so a kata hook does not need the kata CLI.
 func TestDoctorKataHookDoesNotNeedTheCLIWhenTheConnectionIsOn(t *testing.T) {
 	hooks := []config.HookConfig{{Event: "review.failed", Type: "kata"}}
-	env := kataDoctorEnv(config.KataIntegrationConfig{Enabled: true}, readyKata())
+	env := kataDoctorEnv(t, config.KataIntegrationConfig{Enabled: true}, readyKata())
 	env.global.Hooks = hooks
 	env.daemonAgents.HookTools = []agent.Diagnosis{{Name: "kata", Command: "kata", Error: "not found"}}
 	checks := checkDoctorIntegrations(env)
@@ -142,7 +142,7 @@ func TestDoctorKataReportNeverCarriesTheCredentialOrEndpoint(t *testing.T) {
 	const secret = "synthetic-kata-secret-9f3a"
 	local := config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.internal.example", APIKey: secret}
 	for _, status := range []daemon.KataStatusBody{readyKata(), {Enabled: true, State: "authentication_required", Message: "Kata rejected the credential."}} {
-		env := kataDoctorEnv(local, status)
+		env := kataDoctorEnv(t, local, status)
 		report := doctorReport{Checks: checkDoctorIntegrations(env)}
 		var human strings.Builder
 		renderDoctorReport(&human, report)
