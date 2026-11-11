@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -33,7 +35,10 @@ type GeminiAgent struct {
 	CommandAuto   bool           // Whether Command was selected from compatible command candidates
 	Reasoning     ReasoningLevel // Reasoning level (for future support)
 	Agentic       bool           // Whether agentic mode is enabled (allow file edits)
+	SessionID     string         // Existing session ID to resume
 }
+
+var _ SessionAgent = (*GeminiAgent)(nil)
 
 // NewGeminiAgent creates a new Gemini agent
 func NewGeminiAgent(command string) *GeminiAgent {
@@ -49,7 +54,7 @@ func (a *GeminiAgent) clone(opts ...agentCloneOption) *GeminiAgent {
 		a.Model,
 		a.Reasoning,
 		a.Agentic,
-		"",
+		a.SessionID,
 		opts...,
 	)
 	return &GeminiAgent{
@@ -59,6 +64,7 @@ func (a *GeminiAgent) clone(opts ...agentCloneOption) *GeminiAgent {
 		CommandAuto:   a.CommandAuto,
 		Reasoning:     cfg.Reasoning,
 		Agentic:       cfg.Agentic,
+		SessionID:     cfg.SessionID,
 	}
 }
 
@@ -80,6 +86,11 @@ func (a *GeminiAgent) WithModel(model string) Agent {
 	clone := a.clone(withClonedModel(model))
 	clone.ModelExplicit = true
 	return clone
+}
+
+// WithSessionID returns a copy of the agent configured to resume a prior session.
+func (a *GeminiAgent) WithSessionID(sessionID string) Agent {
+	return a.clone(withClonedSessionID(sessionID))
 }
 
 func (a *GeminiAgent) Name() string {
@@ -104,7 +115,7 @@ func (a *GeminiAgent) CommandLine() string {
 
 // PlanningCommandLine returns Gemini's representative read-only planning command.
 func (a *GeminiAgent) PlanningCommandLine() string {
-	return a.commandLine(false)
+	return a.WithSessionID("").(*GeminiAgent).commandLine(false)
 }
 
 func (a *GeminiAgent) commandLine(agenticMode bool) string {
@@ -156,6 +167,10 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []strin
 		args = append(args, "--approval-mode", "plan")
 	}
 
+	if a.SessionID != "" && !strings.HasPrefix(a.SessionID, "-") {
+		args = append(args, "--resume", a.SessionID)
+	}
+
 	return args
 }
 
@@ -182,6 +197,10 @@ func (a *GeminiAgent) buildAntigravityArgs(agenticMode bool) []string {
 	// Non-agentic print-mode reviews omit --sandbox: agy's sandbox permission
 	// gate rejects `pwd` (and similar read-only workspace probes) in headless
 	// print mode. Reviews still do not get --dangerously-skip-permissions.
+
+	if a.SessionID != "" && !strings.HasPrefix(a.SessionID, "-") {
+		args = append(args, "--conversation", a.SessionID)
+	}
 
 	return args
 }
@@ -272,6 +291,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	var finalArgs []string
 	var stdin io.Reader
 	if antigravityPromptViaFlag(ctx, a.Command) {
+		args = append([]string{"--output-format", "stream-json"}, args...)
 		if size, limit := antigravityPromptArgSize(trimmedPrompt), antigravityMaxPromptArgLen(); size > limit {
 			finalArgs = append([]string(nil), args...)
 			stdin = strings.NewReader(trimmedPrompt + "\n")
@@ -292,7 +312,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		Output:       output,
 		StreamStderr: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			return parsePlainTextOutput(r, sw)
+			return a.parseAntigravityOutput(r, sw)
 		},
 	})
 	if runErr != nil {
@@ -478,20 +498,77 @@ func isModelNotFoundError(stderr string) bool {
 			strings.Contains(lower, "not_found"))
 }
 
+type geminiStepUpdate struct {
+	StepIndex *int   `json:"step_index,omitempty"`
+	Type      string `json:"type,omitempty"`
+	StepType  string `json:"step_type,omitempty"`
+	ToolName  string `json:"tool_name,omitempty"`
+	Content   string `json:"content,omitempty"`
+	Text      string `json:"text,omitempty"`
+	TextDelta string `json:"text_delta,omitempty"`
+	Delta     string `json:"delta,omitempty"`
+	ToolCalls []any  `json:"tool_calls,omitempty"`
+}
+
 // geminiStreamMessage represents a message in Gemini's stream-json output format
 type geminiStreamMessage struct {
-	Type    string `json:"type"`
-	Subtype string `json:"subtype,omitempty"`
+	Type      string `json:"type"`
+	Event     string `json:"event,omitempty"`
+	Subtype   string `json:"subtype,omitempty"`
+	StepIndex *int   `json:"step_index,omitempty"`
 	// Top-level fields for "message" type events
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content,omitempty"`
+	Text    string `json:"text,omitempty"`
 	Delta   bool   `json:"delta,omitempty"`
 	// Nested message field (older format / Claude Code compatibility)
 	Message struct {
 		Content string `json:"content,omitempty"`
 	} `json:"message,omitempty"`
-	// Result field for "result" type events
-	Result string `json:"result,omitempty"`
+	// Antigravity step_update and tool_call fields
+	StepUpdate geminiStepUpdate `json:"step_update,omitempty"`
+	ToolCall   map[string]any   `json:"tool_call,omitempty"`
+	// Result/response fields for "result" events (string or nested object)
+	Result   jsontext.Value `json:"result,omitempty"`
+	Response string         `json:"response,omitempty"`
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func isGeminiStepTool(msg geminiStreamMessage) bool {
+	typ := strings.ToLower(firstNonEmptyString(msg.StepUpdate.Type, msg.StepUpdate.StepType))
+	return typ == "tool_call" || typ == "tool" || typ == "subagent" ||
+		msg.StepUpdate.ToolName != "" || len(msg.StepUpdate.ToolCalls) > 0 || len(msg.ToolCall) > 0
+}
+
+func extractGeminiResultText(msg geminiStreamMessage) string {
+	if msg.Response != "" {
+		return msg.Response
+	}
+	if len(msg.Result) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(msg.Result, &s); err == nil && s != "" {
+		return s
+	}
+	var nested struct {
+		Response string `json:"response"`
+		Result   string `json:"result"`
+		Content  string `json:"content"`
+		Text     string `json:"text"`
+	}
+	if err := json.Unmarshal(msg.Result, &nested); err == nil {
+		return firstNonEmptyString(nested.Response, nested.Result, nested.Content, nested.Text)
+	}
+	return ""
 }
 
 // parseResult contains the parsed result from stream-json output
@@ -512,18 +589,37 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
 			validEventsParsed = true
 
-			if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
+			if (msg.Type == "message" || msg.Event == "message") && msg.Role == "assistant" && msg.Content != "" {
 				assistantMessages.Add(msg.Content)
 			}
-			if msg.Type == "assistant" && msg.Message.Content != "" {
+			if (msg.Type == "assistant" || msg.Event == "assistant") && msg.Message.Content != "" {
 				assistantMessages.Add(msg.Message.Content)
 			}
-			if msg.Type == "tool" || msg.Type == "tool_result" {
+			if msg.Type == "step_update" || msg.Event == "step_update" {
+				if isGeminiStepTool(msg) {
+					assistantMessages.ResetAfterTool()
+				} else {
+					stepID := ""
+					if msg.StepUpdate.StepIndex != nil {
+						stepID = strconv.Itoa(*msg.StepUpdate.StepIndex)
+					} else if msg.StepIndex != nil {
+						stepID = strconv.Itoa(*msg.StepIndex)
+					}
+					if text := firstNonEmptyString(msg.StepUpdate.Content, msg.StepUpdate.Text, msg.Text, msg.Content); text != "" {
+						assistantMessages.AddWithID(stepID, text)
+					} else if delta := firstNonEmptyString(msg.StepUpdate.TextDelta, msg.StepUpdate.Delta); delta != "" {
+						assistantMessages.Add(delta)
+					}
+				}
+			}
+			if msg.Type == "tool" || msg.Event == "tool" || msg.Type == "tool_result" || msg.Event == "tool_result" {
 				assistantMessages.ResetAfterTool()
 			}
 
-			if msg.Type == "result" && msg.Result != "" {
-				lastResult = msg.Result
+			if msg.Type == "result" || msg.Event == "result" {
+				if res := extractGeminiResultText(msg); res != "" {
+					lastResult = res
+				}
 			}
 		}
 		return nil
@@ -546,6 +642,15 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	}
 
 	return parseResult{}, nil
+}
+
+func (a *GeminiAgent) parseAntigravityOutput(r io.Reader, sw *syncWriter) (string, error) {
+	var raw bytes.Buffer
+	parsed, err := a.parseStreamJSON(io.TeeReader(r, &raw), sw)
+	if errors.Is(err, errNoStreamJSON) {
+		return strings.TrimSpace(raw.String()), nil
+	}
+	return parsed.result, err
 }
 
 func init() {

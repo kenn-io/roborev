@@ -28,6 +28,21 @@ func TestExtractSessionID(t *testing.T) {
 			want: "pascal-session-999",
 		},
 		{
+			name: "agy conversation_id",
+			line: `{"event":"init","conversation_id":"agy-conv-123"}`,
+			want: "agy-conv-123",
+		},
+		{
+			name: "camel conversationId",
+			line: `{"event":"init","conversationId":"agy-camel-456"}`,
+			want: "agy-camel-456",
+		},
+		{
+			name: "agy result event with conversation_id",
+			line: `{"event":"result","conversation_id":"agy-res-789","response":"ok"}`,
+			want: "agy-res-789",
+		},
+		{
 			name: "pi session event id",
 			line: `{"type":"session","id":"pi-session-321"}`,
 			want: "pi-session-321",

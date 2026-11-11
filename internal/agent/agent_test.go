@@ -598,6 +598,22 @@ func TestSessionAgentsPreserveStateAcrossCloneMethods(t *testing.T) {
 				assert.True(t, grok.Agentic)
 			},
 		},
+		{
+			name: "gemini",
+			agent: NewGeminiAgent("gemini").
+				WithSessionID("session-123").
+				WithModel("gemini-1.5-pro").
+				WithReasoning(ReasoningThorough).
+				WithAgentic(true),
+			verify: func(t *testing.T, a Agent) {
+				gemini, ok := a.(*GeminiAgent)
+				require.True(t, ok)
+				assert.Equal(t, "session-123", gemini.SessionID)
+				assert.Equal(t, "gemini-1.5-pro", gemini.Model)
+				assert.Equal(t, ReasoningThorough, gemini.Reasoning)
+				assert.True(t, gemini.Agentic)
+			},
+		},
 	}
 
 	for _, tt := range tests {
