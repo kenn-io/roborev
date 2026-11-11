@@ -615,7 +615,7 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	const memberAOutput = "## Review\nNo issues found."
 	completeMember(t, tc, members[0].ID, memberAgent, memberAOutput)
 	failMember(t, tc, members[1].ID)
-	_, err := tc.DB.Exec("UPDATE review_jobs SET agent_invoked=1,token_usage=? WHERE id=?", `{"has_cost":true,"cost_usd":0.01}`, members[0].ID)
+	_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET agent_invoked=1,token_usage=? WHERE id=?", `{"has_cost":true,"cost_usd":0.01}`, members[0].ID)
 	require.NoError(t, err)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
@@ -851,7 +851,7 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
 	completeMember(t, tc, members[0].ID, memberAgent, "No issues found.")
 	completeMember(t, tc, members[1].ID, memberAgent, "No findings to report.")
-	_, err := tc.DB.Exec("UPDATE review_jobs SET agent_invoked=1,token_usage=? WHERE id=?", `{"has_cost":true,"cost_usd":0.01}`, members[0].ID)
+	_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET agent_invoked=1,token_usage=? WHERE id=?", `{"has_cost":true,"cost_usd":0.01}`, members[0].ID)
 	require.NoError(t, err)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)

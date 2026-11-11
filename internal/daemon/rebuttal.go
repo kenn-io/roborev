@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -148,4 +150,31 @@ User explanation: %q
 	s.broadcaster.Broadcast(eventForJob("review.enqueued", job, job.ID))
 	s.workerPool.wake()
 	return &RebuttalOutput{Body: job}, nil
+}
+
+const assessmentJSONSchema = `{"type":"object","additionalProperties":false,"required":["outcome","explanation"],"properties":{"outcome":{"type":"string","enum":["confirmed","refuted","superseded"]},"explanation":{"type":"string","minLength":1}}}`
+
+// runRebuttalAssessment returns the final assessment output, using the agent's
+// native structured-review mode when available.
+func runRebuttalAssessment(
+	ctx context.Context,
+	a agent.Agent,
+	repoPath, gitRef, prompt string,
+	out io.Writer,
+) (string, error) {
+	readOnly, ok := a.(agent.ReadOnlyReviewAgent)
+	if !ok || !readOnly.SupportsReadOnlyReview() {
+		return "", fmt.Errorf("agent %q cannot enforce read-only assessments", a.Name())
+	}
+	ctx = agent.WithReadOnlyReview(ctx)
+	if structured, ok := a.(agent.StructuredReviewAgent); ok {
+		result, err := structured.ReviewWithSchema(
+			ctx, repoPath, gitRef, prompt, jsontext.Value(assessmentJSONSchema), out,
+		)
+		if err != nil {
+			return "", err
+		}
+		return string(result), nil
+	}
+	return a.Review(ctx, repoPath, gitRef, prompt, out)
 }

@@ -1663,7 +1663,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		workerID, agentName, rtTag, job.ID)
 	var agentReview review.ReviewResult
 	if err == nil && job.Source == storage.JobSourceRebuttal {
-		agentReview.Output, err = rebuttal.RunAgentAssessment(
+		agentReview.Output, err = runRebuttalAssessment(
 			ctx, a, reviewRepoPath, implementationRef, reviewPrompt, agentOutput,
 		)
 	} else if err == nil && (job.IsTaskJob() || job.IsFixJob()) {
