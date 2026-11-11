@@ -155,6 +155,14 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 			if reason == "" || seenReasons[reason] || (!report.Labels.Available && report.Labels.Reason != "" && strings.Contains(reason, report.Labels.Reason)) {
 				return false
 			}
+			for _, metric := range report.Metrics {
+				if metric.Reason != "" && strings.HasSuffix(reason, ": "+metric.Reason) {
+					if seenReasons[metric.Reason] {
+						return false
+					}
+					seenReasons[metric.Reason] = true
+				}
+			}
 			seenReasons[reason] = true
 			return true
 		}
