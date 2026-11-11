@@ -122,6 +122,6 @@ func kataCmd() *cobra.Command {
 	show.RunE = run(false)
 	create.RunE = run(true)
 	create.Flags().StringVar(&findings, "findings", "", "disclosure for a previously unmarked review: comments or summary")
-	root.AddCommand(show, create)
+	root.AddCommand(show, create, kataResponseCmd())
 	return root
 }

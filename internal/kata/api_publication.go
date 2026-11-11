@@ -15,9 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	gen "go.kenn.io/kata/pkg/client/generated"
+	"golang.org/x/net/http/httpguts"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -170,7 +172,7 @@ func (c *APIClient) ShowPublicationIssue(ctx context.Context, project Publicatio
 	if _, err := c.tr.do(ctx, http.MethodGet, path+"/"+ref, nil, nil, nil, &response, http.StatusOK); err != nil {
 		return PublicationIssue{}, err
 	}
-	if response.Issue.UID == "" || (!strings.EqualFold(response.Issue.UID, ref) && !strings.EqualFold(response.Issue.ShortID, ref)) || response.Issue.ProjectID != project.ID {
+	if response.Issue.UID == "" || (!strings.EqualFold(response.Issue.UID, ref) && !strings.EqualFold(response.Issue.ShortID, ref)) || response.Issue.ProjectID != project.ID || (response.Issue.ProjectUID != nil && *response.Issue.ProjectUID != project.UID) {
 		return PublicationIssue{}, fmt.Errorf("%w: issue identity mismatch", ErrInvalidResponse)
 	}
 	legacy, err := mapShownIssue(project.Name, response.Issue, response.Labels, response.Links)
@@ -365,7 +367,7 @@ func (c *APIClient) CreatePublicationRoot(ctx context.Context, project Publicati
 	if err != nil {
 		return out, err
 	}
-	_, err = c.tr.do(ctx, http.MethodPost, path+"/"+issueUID+"/comments", nil, p.roots[position], http.Header{"Idempotency-Key": {key}}, &out, http.StatusOK, http.StatusCreated)
+	out, err = c.postComment(ctx, path, issueUID, p.roots[position], key)
 	if err == nil && (out.Comment.UID == "" || out.Comment.Body != p.roots[position].Body || out.Comment.ReplyToUID != nil || !strings.EqualFold(out.Issue.UID, issueUID)) {
 		return gen.CommentResponseBody{}, fmt.Errorf("%w: created comment identity or body mismatch", ErrInvalidResponse)
 	}
@@ -497,4 +499,124 @@ func ReadPublicationRoots(envelope PublicationEnvelope, issue PublicationIssue) 
 	}
 	addMissing(next, envelope.FindingCount-1)
 	return roots
+}
+
+// ResolvePublicationTarget selects a comment in a verified finding thread in
+// the complete issue. Correlation markers do not establish author trust.
+func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue, target string) (string, error) {
+	if issue.Truncated || issue.Issue.UID == "" || issue.Issue.ID <= 0 || project.ID <= 0 || project.UID == "" || project.Name == "" || issue.Issue.ProjectID != project.ID {
+		return "", fmt.Errorf("%w: incomplete issue identity or comments", ErrRequestRejected)
+	}
+	envelope, err := ReadPublicationEnvelope(issue.Issue.Metadata)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrRequestRejected, err)
+	}
+	roots := ReadPublicationRoots(envelope, issue)
+	byUID := make(map[string]gen.CommentOut, len(issue.Comments))
+	var matches []gen.CommentOut
+	for _, comment := range issue.Comments {
+		if comment.UID == "" {
+			return "", fmt.Errorf("%w: comment missing UID", ErrInvalidResponse)
+		}
+		key := strings.ToLower(comment.UID)
+		if _, exists := byUID[key]; exists {
+			return "", fmt.Errorf("%w: duplicate comment UID", ErrInvalidResponse)
+		}
+		byUID[key] = comment
+		if strings.EqualFold(comment.UID, target) || (len(target) >= 8 && strings.EqualFold(target[:2], "c:") && strings.HasSuffix(key, strings.ToLower(target[2:]))) {
+			matches = append(matches, comment)
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("%w: target comment not found", ErrNotFound)
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("%w: ambiguous target comment", ErrConflict)
+	}
+	selected := matches[0].UID
+	seen := make(map[string]bool)
+	current := matches[0]
+	for {
+		key := strings.ToLower(current.UID)
+		if seen[key] {
+			return "", fmt.Errorf("%w: cyclic comment ancestry", ErrRequestRejected)
+		}
+		seen[key] = true
+		if current.IssueID != issue.Issue.ID || (current.IssueUID != nil && !strings.EqualFold(*current.IssueUID, issue.Issue.UID)) || (current.ProjectID != nil && *current.ProjectID != project.ID) || (current.ProjectUID != nil && *current.ProjectUID != project.UID) || (current.ProjectName != nil && *current.ProjectName != project.Name) {
+			return "", fmt.Errorf("%w: foreign comment", ErrRequestRejected)
+		}
+		if current.ReplyToUID == nil {
+			for _, root := range roots {
+				if root.State == "complete" && root.Comment != nil && strings.EqualFold(root.Comment.UID, current.UID) {
+					return selected, nil
+				}
+			}
+			return "", fmt.Errorf("%w: target is not in a complete finding thread", ErrRequestRejected)
+		}
+		parent, ok := byUID[strings.ToLower(*current.ReplyToUID)]
+		if !ok {
+			return "", fmt.Errorf("%w: missing comment ancestor", ErrRequestRejected)
+		}
+		current = parent
+	}
+}
+
+// ValidateReply checks the producer's evidence and idempotency constraints.
+func ValidateReply(kind, body, key string) error {
+	switch gen.CommentRequestBodyKind(kind) {
+	case gen.Reply, gen.Confirm, gen.Refute, gen.Supersede:
+	default:
+		return fmt.Errorf("%w: invalid reply kind", ErrRequestRejected)
+	}
+	normalized := strings.Join(strings.Fields(body), " ")
+	if normalized == "" || ((kind == "confirm" || kind == "refute") && utf8.RuneCountInString(normalized) < 40) {
+		return fmt.Errorf("%w: insufficient reply evidence", ErrRequestRejected)
+	}
+	if key == "" || !httpguts.ValidHeaderFieldValue(key) || strings.TrimSpace(key) != key {
+		return fmt.Errorf("%w: invalid idempotency key", ErrRequestRejected)
+	}
+	return nil
+}
+
+func (c *APIClient) postComment(ctx context.Context, path, issueUID string, request gen.CommentRequestBody, key string) (gen.CommentResponseBody, error) {
+	var out gen.CommentResponseBody
+	encoded, err := encodeRequest(request)
+	if err != nil || len(encoded) >= PublicationMaxRequestBytes {
+		return out, fmt.Errorf("%w: comment request exceeds Kata's request limit", ErrRequestRejected)
+	}
+	_, err = c.tr.do(ctx, http.MethodPost, path+"/"+issueUID+"/comments", nil, request, http.Header{"Idempotency-Key": {key}}, &out, http.StatusOK, http.StatusCreated)
+	return out, err
+}
+
+// Comment submits a typed response. The caller resolves and validates its target
+// against a complete issue immediately before calling it.
+func (c *APIClient) Comment(ctx context.Context, project PublicationProject, issueUID, target, kind, body, key, teammate string) (gen.CommentResponseBody, error) {
+	var out gen.CommentResponseBody
+	path, err := publicationPath(project)
+	if err != nil {
+		return out, err
+	}
+	if err = validatePathSegment(issueUID); err != nil {
+		return out, err
+	}
+	if err = validatePathSegment(target); err != nil {
+		return out, err
+	}
+	if err = ValidateReply(kind, body, key); err != nil {
+		return out, err
+	}
+	if err = config.ValidateKataTeammate(teammate); err != nil {
+		return out, fmt.Errorf("%w: invalid teammate", ErrRequestRejected)
+	}
+	k := gen.CommentRequestBodyKind(kind)
+	request := gen.CommentRequestBody{Actor: new(WriteActor), Teammate: &teammate, Body: body, ReplyTo: &target, Kind: &k}
+	out, err = c.postComment(ctx, path, issueUID, request, key)
+	if err != nil {
+		return out, err
+	}
+	comment := out.Comment
+	if !strings.EqualFold(out.Issue.UID, issueUID) || out.Issue.ProjectID != project.ID || (out.Issue.ProjectUID != nil && *out.Issue.ProjectUID != project.UID) || out.Issue.ID <= 0 || comment.IssueID != out.Issue.ID || comment.UID == "" || comment.Author == "" || comment.Body != body || comment.EditedAt != nil || comment.ReplyToUID == nil || *comment.ReplyToUID != target || comment.ReplyKind == nil || *comment.ReplyKind != kind || comment.Teammate == nil || *comment.Teammate != teammate {
+		return gen.CommentResponseBody{}, fmt.Errorf("%w: comment receipt mismatch", ErrInvalidResponse)
+	}
+	return out, nil
 }

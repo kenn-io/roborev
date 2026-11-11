@@ -2590,14 +2590,19 @@ func (j JobWithReview) Validate() error {
 }
 
 type KataComment struct {
-	Author     string     `json:"author" validate:"required"`
-	Body       string     `json:"body" validate:"required"`
-	EditedAt   *time.Time `json:"edited_at,omitempty"`
-	Handle     *string    `json:"handle,omitempty"`
-	ReplyKind  *string    `json:"reply_kind,omitempty"`
-	ReplyToUID *string    `json:"reply_to_uid,omitempty"`
-	Teammate   *string    `json:"teammate,omitempty"`
-	UID        string     `json:"uid" validate:"required"`
+	Author      string     `json:"author" validate:"required"`
+	Body        string     `json:"body" validate:"required"`
+	EditedAt    *time.Time `json:"edited_at,omitempty"`
+	Handle      *string    `json:"handle,omitempty"`
+	IssueID     int64      `json:"issue_id"`
+	IssueUID    *string    `json:"issue_uid,omitempty"`
+	ProjectID   *int64     `json:"project_id,omitempty"`
+	ProjectName *string    `json:"project_name,omitempty"`
+	ProjectUID  *string    `json:"project_uid,omitempty"`
+	ReplyKind   *string    `json:"reply_kind,omitempty"`
+	ReplyToUID  *string    `json:"reply_to_uid,omitempty"`
+	Teammate    *string    `json:"teammate,omitempty"`
+	UID         string     `json:"uid" validate:"required"`
 }
 
 func (k KataComment) Validate() error {
@@ -2614,9 +2619,13 @@ type KataIssue struct {
 	Comments            []KataComment        `json:"comments,omitempty"`
 	CommentsComplete    *bool                `json:"comments_complete,omitempty"`
 	DestinationID       *string              `json:"destination_id,omitempty"`
+	Generation          int64                `json:"generation" validate:"gte=0"`
+	IssueID             *int64               `json:"issue_id,omitempty"`
 	Labels              []string             `json:"labels" validate:"required"`
 	Metadata            jsontext.Value       `json:"metadata,omitempty"`
 	Parent              *KataLinkPeer        `json:"parent,omitempty"`
+	Project             *string              `json:"project,omitempty"`
+	ProjectID           *int64               `json:"project_id,omitempty"`
 	ProjectUID          *string              `json:"project_uid,omitempty"`
 	PublicationEnvelope *PublicationEnvelope `json:"publication_envelope,omitempty"`
 	QualifiedID         string               `json:"qualified_id" validate:"required"`
@@ -2654,6 +2663,9 @@ func (k KataIssue) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Comments[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(k.Generation, "gte=0"); err != nil {
+		errors = errors.Append("Generation", err)
 	}
 	if err := typesValidator.Var(k.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
@@ -2809,6 +2821,36 @@ type KataPublicationRequest struct {
 }
 
 func (k KataPublicationRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataReplyReceipt struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	Author   string  `json:"author" validate:"required"`
+	Changed  bool    `json:"changed"`
+	Teammate string  `json:"teammate" validate:"required"`
+	UID      string  `json:"uid" validate:"required"`
+}
+
+func (k KataReplyReceipt) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataResponseRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema         *string `json:"$schema,omitempty"`
+	Body           string  `json:"body" validate:"required"`
+	DestinationID  string  `json:"destination_id" validate:"required"`
+	Generation     int64   `json:"generation" validate:"gte=0"`
+	IdempotencyKey string  `json:"idempotency_key" validate:"required"`
+	IssueUID       string  `json:"issue_uid" validate:"required"`
+	Kind           string  `json:"kind" validate:"required"`
+	Project        string  `json:"project" validate:"required"`
+	TargetUID      string  `json:"target_uid" validate:"required"`
+}
+
+func (k KataResponseRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(k))
 }
 

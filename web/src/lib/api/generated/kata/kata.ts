@@ -8,6 +8,8 @@ import type {
   KataPublicationBody,
   KataPublicationParams,
   KataPublicationRequest,
+  KataReplyReceipt,
+  KataResponseRequest,
   KataShowIssueParams,
   KataStatusBody,
   KataStatusParams,
@@ -170,6 +172,49 @@ export const kataPublish = async (
       ...getHeaders(options?.headers),
     },
     body: JSON.stringify(kataPublicationRequest),
+  });
+};
+
+export const getKataResponseUrl = () => {
+  return `/api/kata/response`;
+};
+
+/**
+ * @summary Reply to a Kata finding
+ */
+export const kataResponse = async (
+  kataResponseRequest: NonReadonly<KataResponseRequest>,
+  options?: RequestInit,
+): Promise<KataReplyReceipt> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return roborevFetch<KataReplyReceipt>(getKataResponseUrl(), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(kataResponseRequest),
   });
 };
 

@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,9 +96,62 @@ func TestKataRemoteCommandsRejectedThroughRoot(t *testing.T) {
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("[remote_client]\nexternal_url='https://reviews.example.test'\n"), 0o600))
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
-	for _, verb := range []string{"show", "create"} {
+	for _, verb := range []string{"show", "create", "comment"} {
 		root := newRootCmd()
 		root.SetArgs([]string{"--server", "https://reviews.example.test", "kata", verb, "42"})
 		require.ErrorContains(t, root.Execute(), "other commands require a local daemon")
 	}
+}
+
+type shortKataWriter struct{}
+
+func (shortKataWriter) Write(p []byte) (int, error) { return len(p) / 2, nil }
+
+func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
+	review := "11111111-1111-4111-8111-111111111111"
+	text := "Finding 1 from a roborev review."
+	digest := sha256.Sum256([]byte(text))
+	rootBody := fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, review, digest)
+	rootUID := "01AAAAAAAAAAAAAAAAAAABC123"
+	var posts atomic.Int64
+	var posted atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/ping":
+			fmt.Fprint(w, `{"ok":true,"service":"roborev","version":"test"}`)
+		case "/api/kata/issue":
+			_ = json.NewEncoder(w).Encode(map[string]any{"uid": "issue-uid", "issue_id": 2, "project_id": 7, "project": "reviews", "project_uid": "project-uid", "destination_id": "destination", "generation": 3, "short_id": "abc1", "qualified_id": "reviews#abc1", "title": "issue", "body": "body", "status": "open", "labels": []string{}, "comments_complete": true, "metadata": map[string]any{"roborev.version": 1, "roborev.review_uuid": review}, "publication_envelope": map[string]any{"version": 1, "review_uuid": review, "document_hash": strings.Repeat("a", 64), "policy": "summary", "completed_at": "2026-01-02T03:04:05Z", "finding_count": 1}, "comments": []any{map[string]any{"uid": rootUID, "handle": "c:abc123", "issue_id": 2, "body": rootBody, "author": "service"}}})
+		case "/api/kata/response":
+			posts.Add(1)
+			var data map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&data)
+			posted.Store(data)
+			fmt.Fprint(w, `{"uid":"reply-uid","author":"actual-author","teammate":"roborev","changed":true}`)
+		}
+	}))
+	defer server.Close()
+	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
+	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
+	args := []string{"--server", server.URL, "kata", "comment", "abc1", "--project", "reviews", "--reply", "c:abc123", "--idempotency-key", "Case-Key", "-m", "It's evidence"}
+	root := newRootCmd()
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetArgs(args)
+	require.NoError(t, root.Execute())
+	assert.Equal(t, int64(1), posts.Load())
+	assert.Contains(t, output.String(), "Retry: roborev --server ")
+	assert.Contains(t, output.String(), "actual-author")
+	payload, ok := posted.Load().(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, rootUID, payload["target_uid"])
+	assert.Equal(t, "It's evidence", payload["body"])
+	assert.Equal(t, "Case-Key", payload["idempotency_key"])
+	root = newRootCmd()
+	root.SetOut(shortKataWriter{})
+	root.SetErr(&output)
+	root.SetArgs(args)
+	require.ErrorContains(t, root.Execute(), "write retry instructions")
+	assert.Equal(t, int64(1), posts.Load())
 }

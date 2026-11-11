@@ -2611,6 +2611,18 @@ components:
           type: string
         handle:
           type: string
+        issue_id:
+          format: int64
+          type: integer
+        issue_uid:
+          type: string
+        project_id:
+          format: int64
+          type: integer
+        project_name:
+          type: string
+        project_uid:
+          type: string
         reply_kind:
           type: string
         reply_to_uid:
@@ -2620,6 +2632,7 @@ components:
         uid:
           type: string
       required:
+        - issue_id
         - uid
         - body
         - author
@@ -2654,6 +2667,13 @@ components:
           type: boolean
         destination_id:
           type: string
+        generation:
+          format: int64
+          minimum: 0
+          type: integer
+        issue_id:
+          format: int64
+          type: integer
         labels:
           items:
             type: string
@@ -2663,6 +2683,11 @@ components:
           type: object
         parent:
           $ref: "#/components/schemas/KataLinkPeer"
+        project:
+          type: string
+        project_id:
+          format: int64
+          type: integer
         project_uid:
           type: string
         publication_envelope:
@@ -2688,6 +2713,7 @@ components:
         uid:
           type: string
       required:
+        - generation
         - short_id
         - qualified_id
         - title
@@ -2796,6 +2822,68 @@ components:
           type: integer
       required:
         - job_id
+      type: object
+    KataReplyReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataReplyReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        author:
+          type: string
+        changed:
+          type: boolean
+        teammate:
+          type: string
+        uid:
+          type: string
+      required:
+        - uid
+        - author
+        - teammate
+        - changed
+      type: object
+    KataResponseRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataResponseRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        body:
+          type: string
+        destination_id:
+          type: string
+        generation:
+          format: int64
+          minimum: 0
+          type: integer
+        idempotency_key:
+          type: string
+        issue_uid:
+          type: string
+        kind:
+          type: string
+        project:
+          type: string
+        target_uid:
+          type: string
+      required:
+        - project
+        - destination_id
+        - generation
+        - issue_uid
+        - target_uid
+        - kind
+        - body
+        - idempotency_key
       type: object
     KataRoot:
       additionalProperties: false
@@ -7201,6 +7289,61 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Bad Gateway
       summary: Create or resume finding publication
+      tags:
+        - kata
+  /api/kata/response:
+    post:
+      operationId: kata-response
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataResponseRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataReplyReceipt"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Request
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Gateway
+      summary: Reply to a Kata finding
       tags:
         - kata
   /api/kata/status:

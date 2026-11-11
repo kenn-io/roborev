@@ -368,6 +368,14 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Errors = []int{400, 404, 409, 502}
 		})
 
+	huma.Post(api, "/api/kata/response", s.humaKataResponse,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-response"
+			o.Summary = "Reply to a Kata finding"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{400, 404, 409, 502}
+		})
+
 	huma.Get(api, "/api/ping", s.humaPing,
 		func(o *huma.Operation) {
 			o.OperationID = "ping"

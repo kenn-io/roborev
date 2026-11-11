@@ -2,6 +2,7 @@ package kata
 
 import (
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"net/http"
@@ -485,6 +486,144 @@ func TestPublicationProjectSelectionUsesFreshObject(t *testing.T) {
 				assert.Equal(t, 5, lists)
 				assert.Equal(t, 0, resolves)
 			}
+		})
+	}
+}
+
+func TestResolvePublicationTarget(t *testing.T) {
+	p := publicationFixture(t, "comments")
+	project := PublicationProject{ID: 7, Name: "reviews", UID: "project-uid"}
+	root := gen.CommentOut{UID: "01AAAAAAAAAAAAAAAAAAABC123", Handle: new("c:abc123"), Body: p.roots[0].Body, IssueID: 10}
+	reply := gen.CommentOut{UID: "01BBBBBBBBBBBBBBBBBBDEF456", Handle: new("c:def456"), Body: "reply", IssueID: 10, ReplyToUID: &root.UID}
+	issue := PublicationIssue{Issue: gen.ShowIssueOut{UID: "issue-uid", ID: 10, ProjectID: 7, Metadata: p.issue.Metadata}, Comments: []gen.CommentOut{root, reply}}
+	selected, err := ResolvePublicationTarget(project, issue, "c:def456")
+	require.NoError(t, err)
+	assert.Equal(t, reply.UID, selected)
+	selected, err = ResolvePublicationTarget(project, issue, root.UID)
+	require.NoError(t, err)
+	assert.Equal(t, root.UID, selected)
+	cases := []struct {
+		name   string
+		mutate func(*PublicationIssue)
+	}{
+		{"truncated", func(i *PublicationIssue) { i.Truncated = true }},
+		{"edited root", func(i *PublicationIssue) { i.Comments[0].Body += "changed" }},
+		{"foreign reply", func(i *PublicationIssue) { i.Comments[1].IssueID = 11 }},
+		{"missing parent", func(i *PublicationIssue) { i.Comments[1].ReplyToUID = new("missing") }},
+		{"cycle", func(i *PublicationIssue) { i.Comments[1].ReplyToUID = &i.Comments[1].UID }},
+		{"ambiguous", func(i *PublicationIssue) {
+			i.Comments = append(i.Comments, gen.CommentOut{UID: "01CCCCCCCCCCCCCCCCCCDEF456", IssueID: 10})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			copy := issue
+			copy.Comments = append([]gen.CommentOut(nil), issue.Comments...)
+			tc.mutate(&copy)
+			_, err := ResolvePublicationTarget(project, copy, "c:def456")
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestValidateReplyEvidenceAndKey(t *testing.T) {
+	for _, kind := range []string{"confirm", "refute"} {
+		for _, count := range []int{39, 40, 41} {
+			err := ValidateReply(kind, strings.Repeat("界", count), "Key-A")
+			if count < 40 {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		}
+	}
+	for _, kind := range []string{"reply", "supersede"} {
+		require.NoError(t, ValidateReply(kind, "evidence", "CaseSensitive"))
+	}
+	require.Error(t, ValidateReply("other", "evidence", "key"))
+	require.Error(t, ValidateReply("reply", " \n ", "key"))
+	require.Error(t, ValidateReply("reply", "evidence", ""))
+	require.Error(t, ValidateReply("reply", "evidence", "bad\nkey"))
+}
+
+func TestTypedCommentReceiptAndReplay(t *testing.T) {
+	f := katafake.New(t)
+	c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
+	project, err := c.ResolvePublicationProject(t.Context(), "")
+	require.NoError(t, err)
+	changed := true
+	f.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPost {
+			return false
+		}
+		f.Reply(w, map[string]any{"changed": changed, "issue": map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID}, "comment": map[string]any{"uid": "reply-uid", "issue_id": 11, "body": "evidence", "author": "server-author", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": "reply"}})
+		return true
+	}
+	receipt, err := c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "evidence", "Key-A", "reviewer")
+	require.NoError(t, err)
+	assert.Equal(t, "server-author", receipt.Comment.Author)
+	assert.True(t, receipt.Changed)
+	changed = false
+	receipt, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "evidence", "Key-A", "reviewer")
+	require.NoError(t, err)
+	assert.False(t, receipt.Changed)
+	_, err = c.Comment(t.Context(), project, "issue-uid", "other-target", "reply", "evidence", "Key-A", "reviewer")
+	require.ErrorIs(t, err, ErrInvalidResponse)
+	var posts []katafake.Request
+	for _, request := range f.Requests() {
+		if request.Method == http.MethodPost {
+			posts = append(posts, request)
+		}
+	}
+	require.Len(t, posts, 3)
+	assert.Equal(t, "Key-A", posts[0].Header.Get("Idempotency-Key"))
+	assert.Contains(t, string(posts[0].Body), `"reply_to":"target-uid"`)
+	assert.NotContains(t, string(posts[0].Body), `"force"`)
+}
+
+func TestTypedCommentKindsAndServerErrors(t *testing.T) {
+	for _, kind := range []string{"reply", "confirm", "refute", "supersede"} {
+		t.Run(kind, func(t *testing.T) {
+			f := katafake.New(t)
+			c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
+			project, err := c.ResolvePublicationProject(t.Context(), "")
+			require.NoError(t, err)
+			body := strings.Repeat("界", 40) + "\n original"
+			var sent gen.CommentRequestBody
+			var decodeErr error
+			f.Override = func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodPost {
+					return false
+				}
+				decodeErr = json.UnmarshalRead(r.Body, &sent)
+				f.Reply(w, map[string]any{"changed": true, "issue": map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID}, "comment": map[string]any{"uid": "reply-uid", "issue_id": 11, "body": body, "author": "author", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": kind}})
+				return true
+			}
+			_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", kind, body, "key", "reviewer")
+			require.NoError(t, err)
+			require.NoError(t, decodeErr)
+			require.NotNil(t, sent.Kind)
+			assert.Equal(t, kind, string(*sent.Kind))
+			assert.Equal(t, body, sent.Body)
+			assert.Nil(t, sent.Force)
+		})
+	}
+	for _, code := range []string{"duplicate_reply", "idempotency_mismatch", "issue_closed"} {
+		t.Run(code, func(t *testing.T) {
+			f := katafake.New(t)
+			c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
+			project, err := c.ResolvePublicationProject(t.Context(), "")
+			require.NoError(t, err)
+			f.Override = func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodPost {
+					return false
+				}
+				f.Fail(w, http.StatusConflict, code, "synthetic conflict")
+				return true
+			}
+			_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "text", "key", "reviewer")
+			require.ErrorIs(t, err, ErrConflict)
+			assert.Equal(t, code, ErrorCode(err))
 		})
 	}
 }

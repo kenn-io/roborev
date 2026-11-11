@@ -460,3 +460,87 @@ func TestKataInspectionReadsOversizedUnmarkedPublication(t *testing.T) {
 		assert.NotEqual(t, http.MethodPost, request.Method)
 	}
 }
+
+func TestKataResponseRejectsInvalidRequestsBeforeWriting(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	for _, request := range []KataResponseRequest{
+		{},
+		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "reply", Body: "text", IdempotencyKey: "key"},
+		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "confirm", Body: "short", IdempotencyKey: "key"},
+		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "reply", Body: "text", IdempotencyKey: "key", Generation: 10},
+	} {
+		w := kataPost(t, server, "/api/kata/response", request)
+		assert.NotEqual(t, http.StatusOK, w.Code)
+	}
+	for _, request := range fake.AllRequests() {
+		assert.NotEqual(t, http.MethodPost, request.Method)
+	}
+}
+
+func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	issue := fake.AddIssue(8, "a123", "findings", "body")
+	reviewID := "11111111-1111-4111-8111-111111111111"
+	issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": reviewID, "roborev.document_hash": strings.Repeat("a", 64), "roborev.policy": "summary", "roborev.completed_at": "2026-01-02T03:04:05Z", "roborev.finding_count": 1}
+	text := "Finding 1 from a roborev review."
+	digest := sha256.Sum256([]byte(text))
+	root := katagen.CommentOut{UID: "01AAAAAAAAAAAAAAAAAAABC123", IssueID: issue.Out.ID, Handle: new("c:abc123"), Body: fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, reviewID, digest), Author: "service"}
+	prior := katagen.CommentOut{UID: "01BBBBBBBBBBBBBBBBBBDEF456", IssueID: issue.Out.ID, Handle: new("c:def456"), Body: "earlier reply", Author: "teammate", ReplyToUID: &root.UID, ReplyKind: new("reply")}
+	issue.Comments = []katagen.CommentOut{root, prior}
+	var request katagen.CommentRequestBody
+	var requestErr error
+	var requestKey string
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPost {
+			return false
+		}
+		requestErr = json.NewDecoder(r.Body).Decode(&request)
+		requestKey = r.Header.Get("Idempotency-Key")
+		if requestErr != nil || request.ReplyTo == nil || request.Kind == nil || request.Teammate == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return true
+		}
+		saved := katagen.CommentOut{UID: "01CCCCCCCCCCCCCCCCCC789012", IssueID: issue.Out.ID, Handle: new("c:789012"), Body: request.Body, Author: "actual-author", Teammate: request.Teammate, ReplyToUID: request.ReplyTo, ReplyKind: new(string(*request.Kind))}
+		issue.Comments = append(issue.Comments, saved)
+		fake.Reply(w, map[string]any{"changed": true, "issue": map[string]any{"id": issue.Out.ID, "uid": issue.Out.UID, "project_id": 8}, "comment": map[string]any{"uid": saved.UID, "issue_id": issue.Out.ID, "body": saved.Body, "author": saved.Author, "teammate": *saved.Teammate, "reply_to_uid": *saved.ReplyToUID, "reply_kind": *saved.ReplyKind}})
+		return true
+	}
+	read := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"other"}})
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	full := decodeKata[KataIssue](t, read)
+	body := strings.Repeat("e", 40)
+	posted := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, IssueUID: full.UID, TargetUID: prior.UID, Kind: "refute", Body: body, IdempotencyKey: "Exact-Key"})
+	require.Equal(t, http.StatusOK, posted.Code, posted.Body.String())
+	receipt := decodeKata[KataReplyReceipt](t, posted)
+	require.NoError(t, requestErr)
+	require.NotNil(t, request.ReplyTo)
+	require.NotNil(t, request.Kind)
+	assert.Equal(t, prior.UID, *request.ReplyTo)
+	assert.Equal(t, katagen.Refute, *request.Kind)
+	assert.Equal(t, "Exact-Key", requestKey)
+	assert.Nil(t, request.Force)
+	assert.Equal(t, "actual-author", receipt.Author)
+	assert.Equal(t, "roborev", receipt.Teammate)
+	assert.True(t, receipt.Changed)
+	read = kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"other"}})
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	full = decodeKata[KataIssue](t, read)
+	require.Len(t, full.Comments, 3)
+	assert.Equal(t, body, full.Comments[2].Body)
+	assert.Equal(t, prior.UID, *full.Comments[2].ReplyToUID)
+	// A reload after the full read but before the final write invalidates the tuple.
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/") {
+			server.configWatcher.cfgMu.Lock()
+			server.configWatcher.reloadCounter++
+			server.configWatcher.cfgMu.Unlock()
+		}
+		return false
+	}
+	before := len(fake.AllRequests())
+	stale := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, IssueUID: full.UID, TargetUID: prior.UID, Kind: "reply", Body: "another reply", IdempotencyKey: "other-key"})
+	assert.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
+	for _, request := range fake.AllRequests()[before:] {
+		assert.NotEqual(t, http.MethodPost, request.Method)
+	}
+}

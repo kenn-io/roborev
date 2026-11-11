@@ -8,6 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
 )
 
@@ -53,6 +54,10 @@ type KataIssue struct {
 	UID              string                    `json:"uid,omitempty"`
 	Author           string                    `json:"author,omitempty"`
 	Teammate         *string                   `json:"teammate,omitempty"`
+	Project          string                    `json:"project,omitempty"`
+	Generation       uint64                    `json:"generation"`
+	ProjectID        int64                     `json:"project_id,omitempty"`
+	IssueID          int64                     `json:"issue_id,omitempty"`
 	ProjectUID       string                    `json:"project_uid,omitempty"`
 	DestinationID    string                    `json:"destination_id,omitempty"`
 	Metadata         map[string]any            `json:"metadata,omitempty"`
@@ -132,7 +137,10 @@ func (s *Server) humaKataStatus(ctx context.Context, in *KataStatusInput) (*Kata
 // daemon's own directory and uses the caller's project name, workspace alias,
 // or the configured default.
 func (s *Server) kataProxyClient(alias *kata.ProjectAlias) (*kata.APIClient, error) {
-	cfg := s.configWatcher.Config().Integrations.Kata
+	return kataProxyClientFor(s.configWatcher.Config().Integrations.Kata, alias)
+}
+
+func kataProxyClientFor(cfg config.KataIntegrationConfig, alias *kata.ProjectAlias) (*kata.APIClient, error) {
 	if !cfg.Enabled {
 		return nil, huma.Error409Conflict("the Kata API connection is not enabled; set [integrations.kata] in the daemon's config")
 	}
@@ -243,7 +251,8 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if project != "" && !strings.Contains(ref, "#") {
 		ref = project + "#" + ref
 	}
-	client, err := s.kataProxyClient(alias)
+	cfg, generation := s.configWatcher.kataSnapshot()
+	client, err := kataProxyClientFor(cfg, alias)
 	if err != nil {
 		return nil, err
 	}
@@ -252,6 +261,9 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if named, rest, qualified := strings.Cut(ref, "#"); qualified {
 		if named == "" {
 			return nil, huma.Error400BadRequest("empty project in issue reference")
+		}
+		if project != "" && project != named {
+			return nil, huma.Error400BadRequest("conflicting project selectors")
 		}
 		projectName, issueRef = named, rest
 	}
@@ -272,6 +284,10 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	}
 	result := kataIssueFromClient(full.Legacy)
 	result.UID = full.Issue.UID
+	result.IssueID = full.Issue.ID
+	result.ProjectID = destination.ID
+	result.Project = destination.Name
+	result.Generation = generation
 	result.Author, result.Teammate = full.Issue.Author, full.Issue.Teammate
 	result.ProjectUID = destination.UID
 	result.DestinationID = kataDestinationID(client.PublicationEndpoint(), destination.UID)

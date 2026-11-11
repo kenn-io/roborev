@@ -202,7 +202,7 @@ teammate = "roborev"                            # default
 | `api_key` | Bearer credential, masked in `roborev config list` and `get`. Prefer `api_key_file` |
 | `api_key_file` | File holding the credential, read by the daemon each time it connects. A leading `~/` is your home directory. Mutually exclusive with `api_key` |
 | `default_project` | Project used when a repo has no binding |
-| `teammate` | Teammate name included in root finding comments roborev publishes, including generic notices under the `summary` policy. Kata records the actual author separately. Default `roborev`. Letters, digits, `.`, `_`, and `-`, starting with a letter or digit, up to 64 characters |
+| `teammate` | Teammate name included in replies and root finding comments roborev publishes, including generic notices under the `summary` policy. Kata records the actual author separately. Default `roborev`. Letters, digits, `.`, `_`, and `-`, starting with a letter or digit, up to 64 characters |
 
 The section is global-only. A repo's `.roborev.toml` that sets it is rejected,
 because a repo must not choose where credentials are sent. A loopback HTTP
@@ -297,3 +297,28 @@ Together, the two directions form a workflow: a commit references a Kata issue,
 the review prompt includes that issue as task intent, and if the review fails or
 finds problems, the findings land back in the Kata backlog with the commands to
 reproduce and fix them.
+
+### Reply to a finding
+
+Use `roborev kata show JOB` to see finding roots and stored replies. Reply to a
+root or a reply in that finding's thread:
+
+```bash
+roborev kata comment ISSUE --refute c:abcdef -m 'Evidence explaining the finding and the observed behavior.'
+```
+
+Choose one of `--reply`, `--confirm`, `--refute`, or `--supersede`. Confirm and
+refute need at least 40 Unicode characters after whitespace is normalized;
+supersede is an explanatory assertion. The original message is sent unchanged.
+Use `--project` to select a project when the issue reference is not qualified.
+Roborev prints the destination, full target UID, key, and a retry command before
+sending. Keep that command if the outcome is uncertain. It retries the same
+body, destination, kind, and key; inspect the thread before using a new key
+after Kata's seven-day deduplication window.
+
+Kata returns the actual author and the configured teammate. Use native Kata to
+write under your own identity. Summary publication only limits automatic
+finding disclosure; an explicit reply sends the text you supply. Duplicate,
+idempotency mismatch, closed issue, missing or ambiguous target, unsupported
+server, and connection failures are errors. An exact replay can return
+`Changed: false`.

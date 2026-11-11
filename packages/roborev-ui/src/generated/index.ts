@@ -125,6 +125,8 @@ export * from "./kataListIssuesParams";
 export * from "./kataPublicationBody";
 export * from "./kataPublicationParams";
 export * from "./kataPublicationRequest";
+export * from "./kataReplyReceipt";
+export * from "./kataResponseRequest";
 export * from "./kataRoot";
 export * from "./kataShowIssueParams";
 export * from "./kataStatusBody";

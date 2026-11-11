@@ -17,9 +17,14 @@ export interface KataIssue {
   comments?: KataComment[];
   comments_complete?: boolean;
   destination_id?: string;
+  /** @minimum 0 */
+  generation: number;
+  issue_id?: number;
   labels: string[];
   metadata?: KataIssueMetadata;
   parent?: KataLinkPeer;
+  project?: string;
+  project_id?: number;
   project_uid?: string;
   publication_envelope?: PublicationEnvelope;
   qualified_id: string;
