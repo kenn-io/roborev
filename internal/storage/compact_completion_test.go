@@ -12,6 +12,7 @@ import (
 )
 
 func TestCompactCompletionRollsBackAndRecovers(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, "/tmp/compact-completion")
@@ -62,6 +63,7 @@ func TestCompactCompletionRollsBackAndRecovers(t *testing.T) {
 }
 
 func TestCompactCompletionGuardsSourcesAndCanceledJob(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, "/tmp/compact-completion-guards")
