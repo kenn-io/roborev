@@ -51,11 +51,12 @@ func TestDeferredReminderWithLegacyInstructionRendersCurrentDefault(t *testing.T
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	count := 1
-	store := &StateStore{reviews: newDeferredReminderSource(repo.Path(), &count), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: newDeferredReminderSource(t, repo.Path(), &count), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	pending := PendingReminder{TriggeredBy: "failed_reviews", Instruction: legacyDefaultInstructions[0], TrackedRepoRoot: repo.Path(), WorktreeRoot: repo.Path(), Branch: "main", LineageKey: "repo", FailedReviewCount: 1}
 	state := SessionState{}
 	queuePendingReminder(&state, pending)
 	store.sessions["session-1"] = state
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	resp, err := store.Record(Request{Event: Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"}})
 	require.NoError(t, err)
 	require.True(t, resp.Triggered)
