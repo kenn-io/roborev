@@ -49,7 +49,8 @@ func TestReviewReminderAppendsRepoReviewFlow(t *testing.T) {
 			repo := testutil.NewGitRepo(t)
 			repo.CommitFile("main.go", "package main\n", "initial")
 			count := 1
-			store := &StateStore{reviews: newDeferredReminderSource(repo.Path(), &count), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+			store := &StateStore{reviews: newDeferredReminderSource(t, repo.Path(), &count), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+			seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 			calls := 0
 			store.flows = reviewFlowFunc(func(_ context.Context, path string) config.AgentHookReviewFlow {
 				calls++
@@ -66,12 +67,23 @@ func TestReviewReminderAppendsRepoReviewFlow(t *testing.T) {
 				req.CommitThreshold = 1
 				_, err := store.Record(req)
 				require.NoError(t, err)
+				req.Event.HookEventName = "PreToolUse"
+				req.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)}
+				_, err = store.Record(req)
+				require.NoError(t, err)
 				repo.CommitFile("feature.go", "package main\n", "feature")
+				store.reviews = newDeferredReminderSource(t, repo.Path(), &count)
+				req.Event.HookEventName = "PostToolUse"
 				req.Event.ToolInput = map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)}
 			}
 			resp, err := store.Record(req)
 			require.NoError(t, err)
 			require.True(t, resp.Triggered)
+			wantTrigger := "failed_reviews"
+			if event == "commit" {
+				wantTrigger = "commit"
+			}
+			assert.Equal(t, wantTrigger, resp.TriggeredBy)
 			require.NotNil(t, resp.FixSessionID)
 			assert.Equal(t, 1, calls)
 			assert.True(t, strings.HasSuffix(resp.Reason, agentguide.FenceDOT(testRepoFlow)))
@@ -96,11 +108,12 @@ func TestReviewReminderUsesCommittedRepoReviewFlow(t *testing.T) {
 	repo.CommitFile(".roborev.toml", "[agent_hook]\nreview_flow = '''\n"+testRepoFlow+"\n'''\n", "configure review flow")
 	count := 1
 	store := &StateStore{
-		reviews:  newDeferredReminderSource(repo.Path(), &count),
+		reviews:  newDeferredReminderSource(t, repo.Path(), &count),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
 
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	resp, err := store.Record(Request{
 		Agent:     kitagenthook.AgentClaude,
 		Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
@@ -126,18 +139,21 @@ func TestDeferredReminderUsesPendingRepoReviewFlow(t *testing.T) {
 			if repoRoot != repo.Path() {
 				return nil, true
 			}
-			return []storage.ReviewJob{failedReviewJob(1)}, true
+			return []storage.ReviewJob{failedReviewJob(1, repo.HeadSHA())}, true
 		},
 	}
 	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	calls := 0
 	store.flows = reviewFlowFunc(func(_ context.Context, path string) config.AgentHookReviewFlow {
 		calls++
 		assert.Equal(t, repo.Path(), path)
 		return config.AgentHookReviewFlow{Text: testRepoFlow}
 	})
-	_, err := store.Record(Request{Event: Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)}}, FailedReviewThreshold: 1, DeferPostToolReminder: true})
+	deferred, err := store.Record(Request{Event: Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: map[string]jsontext.Value{"command": jsontext.Value(`"git status"`)}}, FailedReviewThreshold: 1, DeferPostToolReminder: true})
 	require.NoError(t, err)
+	assert.False(t, deferred.Triggered)
+	require.NotEmpty(t, store.sessions["session-1"].PendingReminders)
 	assert.Zero(t, calls)
 	resp, err := store.Record(Request{Event: Input{SessionID: "session-1", CWD: other.Path(), HookEventName: "Stop"}})
 	require.NoError(t, err)
@@ -151,7 +167,8 @@ func TestCustomInstructionDoesNotLoadRepoReviewFlow(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	count := 1
-	store := &StateStore{reviews: newDeferredReminderSource(repo.Path(), &count), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: newDeferredReminderSource(t, repo.Path(), &count), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	store.flows = reviewFlowFunc(func(_ context.Context, path string) config.AgentHookReviewFlow {
 		assert.Empty(t, path, "custom instruction loaded repository flow")
 		return config.AgentHookReviewFlow{}
@@ -174,7 +191,8 @@ func TestInvalidRepoReviewFlowPreservesTriggeredReminder(t *testing.T) {
 	repo.CommitFile("main.go", "package main\n", "initial")
 	repo.WriteFile(".roborev.toml", "[agent_hook]\nreview_flow = 'not dot'\n")
 	count := 1
-	store := &StateStore{reviews: newDeferredReminderSource(repo.Path(), &count), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: newDeferredReminderSource(t, repo.Path(), &count), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	seedOwnedCommitFixtures(t, store, []string{"session-1"}, repo.Path())
 	resp, err := store.Record(Request{Agent: kitagenthook.AgentClaude, Event: Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"}, Threshold: 1})
 	require.NoError(t, err)
 	require.True(t, resp.Triggered)
