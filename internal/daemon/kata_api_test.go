@@ -295,7 +295,7 @@ func TestKataPublicationRoutesRejectMissingReview(t *testing.T) {
 func TestKataIssueFullCommentsAndAttribution(t *testing.T) {
 	server, fake := kataAPIServer(t)
 	issue := fake.AddIssue(7, "abc1", "title", "body")
-	issue.Comments = []katagen.CommentOut{{UID: "root-uid", Handle: new("c:root"), Body: "root text", Author: "actual-author"}, {UID: "reply-uid", Handle: new("c:reply"), Body: "reply text", Author: "responder", ReplyToUID: new("root-uid"), ReplyKind: new("answer")}}
+	issue.Comments = []katagen.CommentOut{{UID: "root-uid", Handle: new("c:root"), Body: "root text", Author: "actual-author"}, {UID: "reply-uid", Handle: new("c:reply"), Body: "reply text", Author: "responder", ReplyToUID: new("root-uid"), ReplyKind: new("reply")}}
 	w := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {"abc1"}})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	got := decodeKata[KataIssue](t, w)
@@ -306,7 +306,11 @@ func TestKataIssueFullCommentsAndAttribution(t *testing.T) {
 	require.Len(t, got.Comments, 2)
 	assert.Equal(t, "actual-author", got.Comments[0].Author)
 	assert.Equal(t, "reply text", got.Comments[1].Body)
+	assert.Equal(t, "responder", got.Comments[1].Author)
+	require.NotNil(t, got.Comments[1].ReplyToUID)
 	assert.Equal(t, "root-uid", *got.Comments[1].ReplyToUID)
+	require.NotNil(t, got.Comments[1].ReplyKind)
+	assert.Equal(t, "reply", *got.Comments[1].ReplyKind)
 }
 
 func TestKataIssueHugeUntrustedFindingCount(t *testing.T) {

@@ -627,7 +627,7 @@ func TestKataPreparedAttemptChecksInputs(t *testing.T) {
 	}
 }
 
-func TestKataPublicationDeadlineAppliesToEveryPost(t *testing.T) {
+func TestKataPublicationPostDeadlineBoundary(t *testing.T) {
 	fake := katafake.New(t)
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "deadline-review", "worker")
@@ -644,24 +644,20 @@ func TestKataPublicationDeadlineAppliesToEveryPost(t *testing.T) {
 	require.NoError(t, err)
 	client.CloseIdleConnections()
 	boundary := review.CreatedAt.Add(7*24*time.Hour - kata.DefaultRequestTimeout)
-	for _, operation := range []string{"issue", "first root", "second root"} {
-		t.Run(operation, func(t *testing.T) {
-			for _, delta := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
-				p.now = func() time.Time { return boundary.Add(delta) }
-				sent := false
-				err := p.post(t.Context(), job.ID, record, review, project, publication, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
-					sent = true
-					return nil
-				})
-				if delta < 0 {
-					require.NoError(t, err)
-					assert.True(t, sent)
-				} else {
-					require.ErrorContains(t, err, "expired")
-					assert.False(t, sent)
-				}
-			}
+	for _, delta := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
+		p.now = func() time.Time { return boundary.Add(delta) }
+		sent := false
+		err := p.post(t.Context(), job.ID, record, review, project, publication, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+			sent = true
+			return nil
 		})
+		if delta < 0 {
+			require.NoError(t, err)
+			assert.True(t, sent)
+		} else {
+			require.ErrorContains(t, err, "expired")
+			assert.False(t, sent)
+		}
 	}
 }
 

@@ -198,22 +198,29 @@ func TestKataPublicationGuardBlocksMutationsAndAllowsMarkerUpdate(t *testing.T) 
 
 func TestKataReviewPullAcquiresAttemptLockBeforeTransaction(t *testing.T) {
 	t.Parallel()
-	h := newSyncTestHelper(t)
-	s, err := h.db.newPullSession(t.Context())
-	require.NoError(t, err)
-	defer s.close()
-	h.db.attempts.mu.RLock()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	require.ErrorIs(t, NewSyncWorker(h.db, testSyncConfig()).pullReview(ctx, s, PulledReview{}), context.Canceled)
-	assert.True(t, s.started.IsZero())
-	h.db.attempts.mu.RUnlock()
-	// Unlocked batches must finish before acquiring the attempt lock.
-	require.NoError(t, s.begin(t.Context(), false))
-	s.budget = time.Hour
-	require.NoError(t, s.begin(t.Context(), true))
-	assert.True(t, s.jobs)
-	require.NoError(t, s.commit(t.Context()))
+	synctest.Test(t, func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		s, err := h.db.newPullSession(t.Context())
+		require.NoError(t, err)
+		defer s.close()
+		h.db.attempts.mu.RLock()
+		done := make(chan error, 1)
+		go func() {
+			done <- NewSyncWorker(h.db, testSyncConfig()).pullReview(t.Context(), s, PulledReview{})
+		}()
+		synctest.Wait()
+		assert.Empty(t, done, "review pull must wait for the attempt lock")
+		assert.True(t, s.started.IsZero(), "transaction must not start before the attempt lock")
+		h.db.attempts.mu.RUnlock()
+		require.NoError(t, <-done)
+		require.NoError(t, s.commit(t.Context()))
+		// Unlocked batches must finish before acquiring the attempt lock.
+		require.NoError(t, s.begin(t.Context(), false))
+		s.budget = time.Hour
+		require.NoError(t, s.begin(t.Context(), true))
+		assert.True(t, s.jobs)
+		require.NoError(t, s.commit(t.Context()))
+	})
 }
 
 func TestKataPublicationPullKeepsAuthorizationLocalAndGuardsEdits(t *testing.T) {

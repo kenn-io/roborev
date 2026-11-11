@@ -150,7 +150,9 @@ func TestPublicationRootStates(t *testing.T) {
 	require.Len(t, roots, 1)
 	assert.Equal(t, "complete", roots[0].State)
 	assert.Equal(t, "actual-author", roots[0].Comment.Author)
-	assert.Equal(t, "ambiguous", p.Roots(PublicationIssue{Comments: []gen.CommentOut{comment, comment}})[0].State)
+	duplicate := comment
+	duplicate.UID, duplicate.Handle = "other-comment-uid", new("c:other")
+	assert.Equal(t, "ambiguous", p.Roots(PublicationIssue{Comments: []gen.CommentOut{comment, duplicate}})[0].State)
 	comment.Body += " edited"
 	assert.Equal(t, "edited", p.Roots(PublicationIssue{Comments: []gen.CommentOut{comment}})[0].State)
 	comment.Body = p.roots[0].Body
@@ -356,7 +358,9 @@ func TestReadRemotePublicationEnvelopeAndRoots(t *testing.T) {
 	assert.Equal(t, "actual-author", roots[0].Comment.Author)
 	comment.Body = "modified" + comment.Body
 	assert.Equal(t, "edited", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}})[0].State)
-	assert.Equal(t, "ambiguous", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment, comment}})[0].State)
+	duplicate := comment
+	duplicate.UID, duplicate.Handle = "other-comment-uid", new("c:other")
+	assert.Equal(t, "ambiguous", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment, duplicate}})[0].State)
 	assert.Equal(t, "truncated", ReadPublicationRoots(envelope, PublicationIssue{Truncated: true})[0].State)
 	comment.Body = "marker removed"
 	now := time.Now()

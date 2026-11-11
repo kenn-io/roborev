@@ -248,7 +248,9 @@ func TestKataInspectionProjectRequiresUnambiguousExplicitProject(t *testing.T) {
 
 func TestKataSynthesisSelectionDoesNotHoldAttemptGuard(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := tc.createAndClaimJob(t, "blocked-selection", "worker")
+	run, members, _ := enqueuePanelRun(t, tc, "blocked-selection", []memberSpec{{name: "member", agent: "test"}})
+	completeMember(t, tc, members[0].ID, "test", "finding")
+	job := releaseAndClaimSynthesis(t, tc, run)
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".kata.toml"), []byte("version = 1\n[project]\nname = \"reviews\"\n"), 0o600))
 	fake := katafake.New(t)
 	cfg := kataConnectionConfig(fake)
@@ -269,7 +271,7 @@ func TestKataSynthesisSelectionDoesNotHoldAttemptGuard(t *testing.T) {
 	}
 	go func() {
 		defer close(done)
-		tc.Pool.completeSynthesisContext(t.Context(), "worker", job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: "failed", Verdict: storage.VerdictFail, StructuredOutput: testutil.ReviewFixtureJSON("failed")}})
+		tc.Pool.completeSynthesisContext(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: "failed", Verdict: storage.VerdictFail, StructuredOutput: testutil.ReviewFixtureJSON("failed")}})
 	}()
 	t.Cleanup(func() { unblock(); <-done })
 	waitStarted := func() error {
