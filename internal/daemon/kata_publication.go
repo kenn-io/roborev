@@ -179,7 +179,11 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64, write bool) (*Kata
 	if err != nil {
 		return nil, err
 	}
-	defer func() { client.CloseIdleConnections() }()
+	defer func() {
+		if client != nil {
+			client.CloseIdleConnections()
+		}
+	}()
 	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing"}
 	if write && record.Marker == nil {
 		return status, errors.New("review has no local publication authorization")
