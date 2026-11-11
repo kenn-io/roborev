@@ -2611,9 +2611,15 @@ components:
           type: string
         handle:
           type: string
+        history:
+          type: string
+        lineage:
+          type: string
         reply_kind:
           type: string
         reply_to_uid:
+          type: string
+        root_uid:
           type: string
         teammate:
           type: string
@@ -2755,6 +2761,8 @@ components:
           type: string
         expired:
           type: boolean
+        issue:
+          $ref: "#/components/schemas/KataIssue"
         issue_author:
           type: string
         issue_short_id:
@@ -2777,6 +2785,11 @@ components:
           items:
             $ref: "#/components/schemas/KataRoot"
           type: array
+        source_document:
+          additionalProperties: true
+          type: object
+        source_output:
+          type: string
         state:
           type: string
       required:
@@ -7178,11 +7191,24 @@ paths:
         - explode: false
           in: query
           name: job_id
-          required: true
           schema:
             format: int64
-            minimum: 1
             type: integer
+        - explode: false
+          in: query
+          name: review_uuid
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: issue
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: project
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -7196,12 +7222,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorModel"
           description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
         "404":
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/ErrorModel"
           description: Not Found
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Request Timeout
         "409":
           content:
             application/problem+json:
@@ -7226,6 +7270,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorModel"
           description: Bad Gateway
+        "504":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Gateway Timeout
       summary: Inspect finding publication
       tags:
         - kata

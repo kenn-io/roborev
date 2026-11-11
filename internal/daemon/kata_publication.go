@@ -27,6 +27,8 @@ type KataPublicationStatus struct {
 	Issue         *kata.PublicationIssue
 	Roots         []kata.PublicationRoot
 	State         string
+	Generation    uint64
+	Source        *storage.Review
 }
 
 type kataPublisher struct {
@@ -211,7 +213,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 			client.CloseIdleConnections()
 		}
 	}()
-	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing"}
+	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing", Source: review}
 	if record.Marker == nil {
 		return status, errors.New("review has no local publication authorization")
 	}
@@ -439,6 +441,10 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		return nil, storage.ErrReviewChanged
 	}
 	cfg := p.cfg.Config()
+	var generation uint64
+	if watcher, ok := p.cfg.(*ConfigWatcher); ok {
+		cfg, generation = watcher.configSnapshot()
+	}
 	if cfg == nil || !cfg.Integrations.Kata.Enabled {
 		return nil, errors.New("kata integration disabled")
 	}
@@ -486,15 +492,15 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	if record.Marker != nil && record.Marker.ProjectUID != "" && record.Marker.ProjectUID != project.UID {
 		return nil, errors.New("kata publication destination changed")
 	}
-	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing"}
-	candidates, err := client.SearchPublicationIssues(ctx, project, record.ReviewUUID)
-	if err != nil || len(candidates) == 0 {
+	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing", Generation: generation, Source: review}
+	issue, searchMetadata, err := client.ReadPublicationIssue(ctx, project, record.ReviewUUID, "")
+	if errors.Is(err, kata.ErrConflict) {
+		status.State = "ambiguous"
+	}
+	if err != nil || issue == nil {
 		return status, err
 	}
-	if len(candidates) != 1 {
-		status.State = "ambiguous"
-		return status, errors.New("multiple Kata publication issues")
-	}
+	status.Issue = issue
 	raw, err := json.Marshal(review.StructuredOutput)
 	if err != nil {
 		return status, err
@@ -507,13 +513,9 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		envelope, err := kata.ReadPublicationEnvelope(metadata)
 		return err == nil && envelope.ReviewUUID == record.ReviewUUID && envelope.DocumentHash == record.DocumentHash && envelope.CompletedAt.Equal(review.CreatedAt) && envelope.FindingCount == len(doc.Findings) && (record.Marker == nil || envelope.Policy == record.Marker.Policy)
 	}
-	if !matches(candidates[0].Metadata) {
+	if !matches(searchMetadata) {
 		status.State = "ambiguous"
 		return status, errors.New("kata issue metadata differs")
-	}
-	issue, err := client.ShowPublicationIssue(ctx, project, candidates[0].UID)
-	if err != nil {
-		return status, err
 	}
 	if !matches(issue.Issue.Metadata) {
 		status.State = "ambiguous"
@@ -524,7 +526,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	if err != nil {
 		return status, err
 	}
-	status.Issue, status.Roots = &issue, expected.Roots(issue)
+	status.Roots = expected.Roots(*issue)
 	status.State = "complete"
 	if issue.Truncated {
 		status.State = "truncated"

@@ -317,3 +317,9 @@ func (cw *ConfigWatcher) kataSnapshot() (config.KataIntegrationConfig, uint64) {
 	defer cw.cfgMu.RUnlock()
 	return cw.cfg.Integrations.Kata, cw.reloadCounter
 }
+
+func (cw *ConfigWatcher) configSnapshot() (*config.Config, uint64) {
+	cw.cfgMu.RLock()
+	defer cw.cfgMu.RUnlock()
+	return cw.cfg, cw.reloadCounter
+}

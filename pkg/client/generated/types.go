@@ -2599,14 +2599,17 @@ func (j JobWithReview) Validate() error {
 }
 
 type KataComment struct {
-	Author     string     `json:"author" validate:"required"`
-	Body       string     `json:"body" validate:"required"`
-	EditedAt   *time.Time `json:"edited_at,omitempty"`
-	Handle     *string    `json:"handle,omitempty"`
-	ReplyKind  *string    `json:"reply_kind,omitempty"`
-	ReplyToUID *string    `json:"reply_to_uid,omitempty"`
-	Teammate   *string    `json:"teammate,omitempty"`
-	UID        string     `json:"uid" validate:"required"`
+	Author      string     `json:"author" validate:"required"`
+	Body        string     `json:"body" validate:"required"`
+	EditedAt    *time.Time `json:"edited_at,omitempty"`
+	Handle      *string    `json:"handle,omitempty"`
+	History     *string    `json:"history,omitempty"`
+	Lineage     *string    `json:"lineage,omitempty"`
+	ReplyKind   *string    `json:"reply_kind,omitempty"`
+	ReplyToUID  *string    `json:"reply_to_uid,omitempty"`
+	RootUID     *string    `json:"root_uid,omitempty"`
+	Teammate    *string    `json:"teammate,omitempty"`
+	UID         string     `json:"uid" validate:"required"`
 }
 
 func (k KataComment) Validate() error {
@@ -2761,22 +2764,25 @@ func (k KataLinkPeer) Validate() error {
 
 type KataPublicationBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema        *string       `json:"$schema,omitempty"`
-	Comments      []KataComment `json:"comments" validate:"required"`
-	DestinationID *string       `json:"destination_id,omitempty"`
-	DocumentHash  string        `json:"document_hash" validate:"required"`
-	Expired       bool          `json:"expired"`
-	IssueAuthor   *string       `json:"issue_author,omitempty"`
-	IssueShortID  *string       `json:"issue_short_id,omitempty"`
-	IssueTeammate *string       `json:"issue_teammate,omitempty"`
-	IssueUID      *string       `json:"issue_uid,omitempty"`
-	Message       *string       `json:"message,omitempty"`
-	Policy        *string       `json:"policy,omitempty"`
-	Project       *string       `json:"project,omitempty"`
-	ProjectUID    *string       `json:"project_uid,omitempty"`
-	ReviewUUID    string        `json:"review_uuid" validate:"required"`
-	Roots         []KataRoot    `json:"roots" validate:"required"`
-	State         string        `json:"state" validate:"required"`
+	Schema         *string        `json:"$schema,omitempty"`
+	Comments       []KataComment  `json:"comments" validate:"required"`
+	DestinationID  *string        `json:"destination_id,omitempty"`
+	DocumentHash   string         `json:"document_hash" validate:"required"`
+	Expired        bool           `json:"expired"`
+	Issue          *KataIssue     `json:"issue,omitempty"`
+	IssueAuthor    *string        `json:"issue_author,omitempty"`
+	IssueShortID   *string        `json:"issue_short_id,omitempty"`
+	IssueTeammate  *string        `json:"issue_teammate,omitempty"`
+	IssueUID       *string        `json:"issue_uid,omitempty"`
+	Message        *string        `json:"message,omitempty"`
+	Policy         *string        `json:"policy,omitempty"`
+	Project        *string        `json:"project,omitempty"`
+	ProjectUID     *string        `json:"project_uid,omitempty"`
+	ReviewUUID     string         `json:"review_uuid" validate:"required"`
+	Roots          []KataRoot     `json:"roots" validate:"required"`
+	SourceDocument map[string]any `json:"source_document,omitempty"`
+	SourceOutput   *string        `json:"source_output,omitempty"`
+	State          string         `json:"state" validate:"required"`
 }
 
 func (k KataPublicationBody) Validate() error {
@@ -2793,6 +2799,13 @@ func (k KataPublicationBody) Validate() error {
 	}
 	if err := typesValidator.Var(k.DocumentHash, "required"); err != nil {
 		errors = errors.Append("DocumentHash", err)
+	}
+	if k.Issue != nil {
+		if v, ok := any(k.Issue).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Issue", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(k.ReviewUUID, "required"); err != nil {
 		errors = errors.Append("ReviewUUID", err)

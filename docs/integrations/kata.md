@@ -154,12 +154,20 @@ nothing. A rerun produces a new review UUID and issue; previous comments remain.
 
 ```bash
 roborev kata show 42
+roborev kata show 11111111-1111-4111-8111-111111111111
+roborev kata show issue-uid --project reviews
 roborev kata create 42
 roborev kata create 42 --findings summary
 ```
 
-`show` reads issue, comment handles and actual authors. The markers correlate
-comments with findings but do not prove authorship. `create` resumes an existing
+`show` reads the selected project's issue, complete returned comments, handles,
+actual authors, reply targets and incomplete lineage states. A UUID can be
+read without a local publication marker, and an explicit issue needs no local
+review. Remote-only matches are unverified; comment edit history is unknown.
+For a UUID without a local review, `--project` chooses the project to search.
+Local reviews use their saved or configured destination.
+The markers correlate comments with findings but do not prove authorship.
+`create` resumes an existing
 local authorization; an unmarked eligible review requires an explicit policy
 matching its configured hook. Synced reviews do not publish automatically.
 Retries use the original review's seven-day window and stop when a full Kata

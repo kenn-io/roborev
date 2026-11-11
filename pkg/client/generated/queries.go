@@ -368,11 +368,10 @@ type KataListIssuesQuery struct {
 }
 
 type KataPublicationQuery struct {
-	JobID int64 `json:"job_id" validate:"gte=1"`
-}
-
-func (k KataPublicationQuery) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+	JobID      *int64  `json:"job_id,omitempty"`
+	ReviewUUID *string `json:"review_uuid,omitempty"`
+	Issue      *string `json:"issue,omitempty"`
+	Project    *string `json:"project,omitempty"`
 }
 
 type KataStatusQuery struct {

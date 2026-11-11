@@ -258,6 +258,12 @@ type KataPublicationErrorResponse = ErrorModel
 
 type KataPublicationErrorResponseApplicationProblemPlusJSON = ErrorModel
 
+type KataPublicationErrorResponseApplicationProblemPlusJSON403 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON404 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON408 = ErrorModel
+
 type KataPublicationErrorResponseApplicationProblemPlusJSON409 = ErrorModel
 
 type KataPublicationErrorResponseApplicationProblemPlusJSON422 = ErrorModel
@@ -265,6 +271,8 @@ type KataPublicationErrorResponseApplicationProblemPlusJSON422 = ErrorModel
 type KataPublicationErrorResponseApplicationProblemPlusJSON500 = ErrorModel
 
 type KataPublicationErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON504 = ErrorModel
 
 type KataPublishResponse = KataPublicationBody
 
@@ -806,11 +814,15 @@ type KataPublicationResp struct {
 	StatusCode                    int
 	JSON200                       *KataPublicationResponse
 	ApplicationProblemPlusJSON400 *KataPublicationErrorResponse
-	ApplicationProblemPlusJSON404 *KataPublicationErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON401 *KataPublicationErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON403 *KataPublicationErrorResponseApplicationProblemPlusJSON403
+	ApplicationProblemPlusJSON404 *KataPublicationErrorResponseApplicationProblemPlusJSON404
+	ApplicationProblemPlusJSON408 *KataPublicationErrorResponseApplicationProblemPlusJSON408
 	ApplicationProblemPlusJSON409 *KataPublicationErrorResponseApplicationProblemPlusJSON409
 	ApplicationProblemPlusJSON422 *KataPublicationErrorResponseApplicationProblemPlusJSON422
 	ApplicationProblemPlusJSON500 *KataPublicationErrorResponseApplicationProblemPlusJSON500
 	ApplicationProblemPlusJSON502 *KataPublicationErrorResponseApplicationProblemPlusJSON502
+	ApplicationProblemPlusJSON504 *KataPublicationErrorResponseApplicationProblemPlusJSON504
 }
 
 type KataPublishResp struct {

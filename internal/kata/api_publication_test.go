@@ -634,3 +634,27 @@ func TestPublicationProjectSelectionUsesFreshObject(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicationLineageReportsIncompleteThreads(t *testing.T) {
+	project := PublicationProject{ID: 7, UID: "project", Name: "reviews"}
+	root := gen.CommentOut{UID: "root", IssueID: 9}
+	reply := gen.CommentOut{UID: "reply", IssueID: 9, ReplyToUID: new("root")}
+	orphan := gen.CommentOut{UID: "orphan", IssueID: 9, ReplyToUID: new("missing")}
+	cycle := gen.CommentOut{UID: "cycle", IssueID: 9, ReplyToUID: new("cycle")}
+	foreign := gen.CommentOut{UID: "foreign", IssueID: 10}
+	issue := PublicationIssue{Comments: []gen.CommentOut{root, reply, orphan, cycle, foreign}}
+	issue.Issue.ID, issue.Issue.UID, issue.Issue.ProjectID = 9, "issue", 7
+	roots := []PublicationRoot{{Position: 0, State: "complete", Comment: &root}}
+	states := PublicationLineage(project, issue, roots)
+	require.Len(t, states, 5)
+	assert.Equal(t, "complete", states[0].State)
+	assert.Equal(t, "root", states[1].RootUID)
+	assert.Equal(t, "complete", states[1].State)
+	assert.Equal(t, "orphan", states[2].State)
+	assert.Equal(t, "cycle", states[3].State)
+	assert.Equal(t, "foreign", states[4].State)
+	issue.Truncated = true
+	for _, state := range PublicationLineage(project, issue, roots) {
+		assert.Equal(t, "truncated", state.State)
+	}
+}

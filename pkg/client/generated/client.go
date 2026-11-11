@@ -2441,7 +2441,10 @@ func (c *Client) KataPublication(ctx context.Context, options *KataPublicationRe
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"job_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"issue":       {Style: "form", Explode: &[]bool{false}[0]},
+		"job_id":      {Style: "form", Explode: &[]bool{false}[0]},
+		"project":     {Style: "form", Explode: &[]bool{false}[0]},
+		"review_uuid": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/kata/publication",

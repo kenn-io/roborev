@@ -358,7 +358,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "kata-publication"
 			o.Summary = "Inspect finding publication"
 			o.Tags = []string{"kata"}
-			o.Errors = []int{400, 404, 409, 502}
+			o.Errors = []int{400, 401, 403, 404, 408, 409, 502, 504}
 		})
 	huma.Post(api, "/api/kata/publication", s.humaKataPublish,
 		func(o *huma.Operation) {

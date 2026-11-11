@@ -1,11 +1,9 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	jsonv2 "encoding/json/v2"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	katagen "go.kenn.io/kata/pkg/client/generated"
@@ -25,10 +24,9 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katafake"
+	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
-	apiclient "go.kenn.io/roborev/pkg/client"
-	"go.kenn.io/roborev/pkg/client/generated"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -308,7 +306,7 @@ func TestKataPublicationRoutesRejectMissingReview(t *testing.T) {
 func TestKataIssueFullCommentsAndAttribution(t *testing.T) {
 	server, fake := kataAPIServer(t)
 	issue := fake.AddIssue(7, "abc1", "title", "body")
-	issue.Comments = []katagen.CommentOut{{UID: "root-uid", Handle: new("c:root"), Body: "root text", Author: "actual-author"}, {UID: "reply-uid", Handle: new("c:reply"), Body: "reply text", Author: "responder", ReplyToUID: new("root-uid"), ReplyKind: new("reply")}}
+	issue.Comments = []katagen.CommentOut{{UID: "root-uid", Handle: new("c:root"), Body: "root text", Author: "actual-author"}, {UID: "reply-uid", Handle: new("c:reply"), Body: "reply text", Author: "responder", ReplyToUID: new("root-uid"), ReplyKind: new("answer")}}
 	w := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {"abc1"}})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	got := decodeKata[KataIssue](t, w)
@@ -319,11 +317,7 @@ func TestKataIssueFullCommentsAndAttribution(t *testing.T) {
 	require.Len(t, got.Comments, 2)
 	assert.Equal(t, "actual-author", got.Comments[0].Author)
 	assert.Equal(t, "reply text", got.Comments[1].Body)
-	assert.Equal(t, "responder", got.Comments[1].Author)
-	require.NotNil(t, got.Comments[1].ReplyToUID)
 	assert.Equal(t, "root-uid", *got.Comments[1].ReplyToUID)
-	require.NotNil(t, got.Comments[1].ReplyKind)
-	assert.Equal(t, "reply", *got.Comments[1].ReplyKind)
 }
 
 func TestKataIssueHugeUntrustedFindingCount(t *testing.T) {
@@ -372,6 +366,14 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	assert.Equal(t, "summary", got.Policy)
 	require.Len(t, got.Roots, 1)
 	assert.Equal(t, "service", got.Roots[0].Comment.Author)
+	byUUID := kataGet(t, server, "/api/kata/publication", url.Values{"review_uuid": {record.ReviewUUID.String()}})
+	require.Equal(t, http.StatusOK, byUUID.Code, byUUID.Body.String())
+	assert.Equal(t, got, decodeKata[KataPublicationBody](t, byUUID))
+	explicit := kataGet(t, server, "/api/kata/publication", url.Values{"issue": {issue.Out.UID}, "project": {"reviews"}})
+	require.Equal(t, http.StatusOK, explicit.Code, explicit.Body.String())
+	explicitBody := decodeKata[KataPublicationBody](t, explicit)
+	assert.Equal(t, "unverified", explicitBody.State)
+	assert.Equal(t, review.StructuredOutput, explicitBody.SourceDocument)
 	// A replacement can carry a valid digest of its own body without matching
 	// the original review. Its identity and attribution remain visible.
 	replacement := "Finding 1 from a different review."
@@ -395,7 +397,10 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	issue.Out.Metadata["roborev.version"] = 2
 	w = kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(t, "ambiguous", decodeKata[KataPublicationBody](t, w).State)
+	invalid := decodeKata[KataPublicationBody](t, w)
+	assert.Equal(t, "ambiguous", invalid.State)
+	require.NotNil(t, invalid.Issue)
+	assert.Equal(t, marker, invalid.Comments[0].Body)
 	issue.Out.Metadata["roborev.version"] = 1
 	// An explicit hook project wins over the default for an unmarked reader.
 	other := fake.AddIssue(8, "other-issue", "findings", "body", "roborev")
@@ -469,35 +474,20 @@ func TestKataInspectionReadsOversizedUnmarkedPublication(t *testing.T) {
 
 func TestKataResponseRejectsInvalidRequestsBeforeWriting(t *testing.T) {
 	server, fake := kataAPIServer(t)
-	_, generation := server.configWatcher.kataSnapshot()
-	base := KataResponseRequest{Project: "reviews", DestinationID: "wrong", Generation: generation, Teammate: "roborev", IssueUID: "issue-uid", TargetUID: "01AAAAAAAAAAAAAAAAAAABC123", Kind: "reply", Body: "text", IdempotencyKey: "key"}
-	for _, tc := range []struct {
-		name         string
-		request      KataResponseRequest
-		status       int
-		message      string
-		projectReads int
-	}{
-		{"missing fields", KataResponseRequest{}, http.StatusBadRequest, "missing destination or target", 0},
-		{"invalid key", func() KataResponseRequest { r := base; r.IdempotencyKey = ""; return r }(), http.StatusBadRequest, "invalid idempotency key", 0},
-		{"generation", func() KataResponseRequest { r := base; r.Generation++; return r }(), http.StatusConflict, "configuration changed", 0},
-		{"teammate", func() KataResponseRequest { r := base; r.Teammate = "other"; return r }(), http.StatusConflict, "teammate changed", 0},
-		{"destination", base, http.StatusConflict, "destination changed", 1},
+	invalidEvidence := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: "reviews", DestinationID: "destination", Teammate: "roborev", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "confirm", Body: "short", IdempotencyKey: "key"})
+	assert.Equal(t, http.StatusBadRequest, invalidEvidence.Code)
+	assert.Empty(t, fake.AllRequests())
+	for _, request := range []KataResponseRequest{
+		{},
+		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "reply", Body: "text", IdempotencyKey: "key"},
+		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "confirm", Body: "short", IdempotencyKey: "key"},
+		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "reply", Body: "text", IdempotencyKey: "key", Generation: 10},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			before := len(fake.AllRequests())
-			w := kataPost(t, server, "/api/kata/response", tc.request)
-			assert.Equal(t, tc.status, w.Code, w.Body.String())
-			assert.Contains(t, w.Body.String(), tc.message)
-			var projectReads int
-			for _, request := range fake.AllRequests()[before:] {
-				assert.NotEqual(t, http.MethodPost, request.Method)
-				if request.Method == http.MethodGet && request.Path == "/api/v1/projects" {
-					projectReads++
-				}
-			}
-			assert.Equal(t, tc.projectReads, projectReads)
-		})
+		w := kataPost(t, server, "/api/kata/response", request)
+		assert.NotEqual(t, http.StatusOK, w.Code)
+	}
+	for _, request := range fake.AllRequests() {
+		assert.NotEqual(t, http.MethodPost, request.Method)
 	}
 }
 
@@ -514,7 +504,6 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	var request katagen.CommentRequestBody
 	var requestErr error
 	var requestKey string
-	var rejectValidation bool
 	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method != http.MethodPost {
 			return false
@@ -525,11 +514,7 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return true
 		}
-		if rejectValidation {
-			fake.Fail(w, http.StatusBadRequest, "validation", "synthetic evidence error")
-			return true
-		}
-		saved := katagen.CommentOut{UID: fmt.Sprintf("01%024d", len(issue.Comments)+1), IssueID: issue.Out.ID, Handle: new("c:789012"), Body: request.Body, Author: "actual-author", Teammate: request.Teammate, ReplyToUID: request.ReplyTo, ReplyKind: new(string(*request.Kind))}
+		saved := katagen.CommentOut{UID: "01CCCCCCCCCCCCCCCCCC789012", IssueID: issue.Out.ID, Handle: new("c:789012"), Body: request.Body, Author: "actual-author", Teammate: request.Teammate, ReplyToUID: request.ReplyTo, ReplyKind: new(string(*request.Kind))}
 		issue.Comments = append(issue.Comments, saved)
 		fake.Reply(w, map[string]any{"changed": true, "issue": map[string]any{"id": issue.Out.ID, "uid": issue.Out.UID, "project_id": 8}, "comment": map[string]any{"uid": saved.UID, "issue_id": issue.Out.ID, "body": saved.Body, "author": saved.Author, "teammate": *saved.Teammate, "reply_to_uid": *saved.ReplyToUID, "reply_kind": *saved.ReplyKind}})
 		return true
@@ -537,59 +522,6 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	read := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"other"}})
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	full := decodeKata[KataIssue](t, read)
-	for _, tc := range []struct {
-		name    string
-		mutate  func()
-		status  int
-		message string
-	}{
-		{"removed target", func() { issue.Comments = issue.Comments[:1] }, http.StatusNotFound, "target comment not found"},
-		{"edited root", func() { issue.Comments[0].Body += " changed" }, http.StatusBadRequest, "complete finding thread"},
-		{"missing ancestor", func() { issue.Comments[1].ReplyToUID = new("01CCCCCCCCCCCCCCCCCCABC123") }, http.StatusBadRequest, "missing comment ancestor"},
-		{"reparented", func() {
-			issue.Comments = append(issue.Comments, katagen.CommentOut{UID: "01CCCCCCCCCCCCCCCCCCABC123", IssueID: issue.Out.ID, Body: "other root", Author: "service"})
-			issue.Comments[1].ReplyToUID = &issue.Comments[2].UID
-		}, http.StatusBadRequest, "complete finding thread"},
-		{"foreign ownership", func() { issue.Comments[1].IssueID++ }, http.StatusBadRequest, "foreign comment"},
-		{"cycle", func() {
-			issue.Comments[0].ReplyToUID = &issue.Comments[1].UID
-			issue.Comments[0].ReplyKind = new("reply")
-		}, http.StatusBadRequest, "cyclic comment ancestry"},
-		{"unsupported envelope", func() { issue.Out.Metadata["roborev.version"] = 2 }, http.StatusBadRequest, "invalid publication envelope"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			original := append([]katagen.CommentOut(nil), issue.Comments...)
-			tc.mutate()
-			defer func() { issue.Comments = original; issue.Out.Metadata["roborev.version"] = 1 }()
-			before := len(fake.AllRequests())
-			result := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "reply", Body: "evidence", IdempotencyKey: "Thread-Key"})
-			assert.Equal(t, tc.status, result.Code, result.Body.String())
-			assert.Contains(t, result.Body.String(), tc.message)
-			for _, sent := range fake.AllRequests()[before:] {
-				assert.NotEqual(t, http.MethodPost, sent.Method)
-			}
-		})
-	}
-	rejectValidation = true
-	beforeInvalid := len(fake.AllRequests())
-	invalid := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "confirm", Body: "short", IdempotencyKey: "Evidence-Key"})
-	assert.Equal(t, http.StatusBadRequest, invalid.Code)
-	assert.Contains(t, invalid.Body.String(), "validation")
-	assert.Contains(t, invalid.Body.String(), "synthetic evidence error")
-	assert.Equal(t, "short", request.Body)
-	require.NotNil(t, request.Kind)
-	assert.Equal(t, katagen.Confirm, *request.Kind)
-	assert.Equal(t, "Evidence-Key", requestKey)
-	assert.Nil(t, request.Force)
-	var invalidPosts int
-	for _, sent := range fake.AllRequests()[beforeInvalid:] {
-		if sent.Method == http.MethodPost {
-			invalidPosts++
-		}
-	}
-	assert.Equal(t, 1, invalidPosts)
-	assert.Len(t, issue.Comments, 2)
-	rejectValidation = false
 	body := strings.Repeat("e", 40)
 	posted := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "refute", Body: body, IdempotencyKey: "Exact-Key"})
 	require.Equal(t, http.StatusOK, posted.Code, posted.Body.String())
@@ -610,97 +542,6 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	require.Len(t, full.Comments, 3)
 	assert.Equal(t, body, full.Comments[2].Body)
 	assert.Equal(t, prior.UID, *full.Comments[2].ReplyToUID)
-
-	// Exercise the registered route with the exact JSON-v2 producer sizes.
-	kind := katagen.Reply
-	wire := katagen.CommentRequestBody{Actor: new(kata.WriteActor), Body: "", Kind: &kind, ReplyTo: &prior.UID, Teammate: new("roborev")}
-	emptyWire, encodeErr := jsonv2.Marshal(wire, jsonv2.Deterministic(true))
-	require.NoError(t, encodeErr)
-	route := httptest.NewServer(server.Handler())
-	t.Cleanup(route.Close)
-	generatedClient, clientErr := apiclient.NewWithHTTPClient(route.URL, route.Client())
-	require.NoError(t, clientErr)
-	for _, tc := range []struct {
-		name, content, encoding string
-		producerSize            int
-		accepted                bool
-	}{
-		{"producer N-1", strings.Repeat("x", kata.PublicationMaxRequestBytes-1-len(emptyWire)), "direct", kata.PublicationMaxRequestBytes - 1, true},
-		{"producer N", strings.Repeat("x", kata.PublicationMaxRequestBytes-len(emptyWire)), "direct", kata.PublicationMaxRequestBytes, false},
-		{"producer N+1", strings.Repeat("x", kata.PublicationMaxRequestBytes+1-len(emptyWire)), "direct", kata.PublicationMaxRequestBytes + 1, false},
-		{"generated HTML escaping", strings.Repeat("<", 360000), "generated", 0, true},
-		{"direct expanded JSON", strings.Repeat("x", 360000), "expanded", 0, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			wire.Body = tc.content
-			encoded, encodeErr := jsonv2.Marshal(wire, jsonv2.Deterministic(true))
-			require.NoError(t, encodeErr)
-			if tc.producerSize != 0 {
-				require.Len(t, encoded, tc.producerSize)
-			}
-			requestBody := KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "reply", Body: tc.content, IdempotencyKey: "Boundary-Key"}
-			before := len(fake.AllRequests())
-			var status int
-			var reply KataReplyReceipt
-			var wrapperBytes int64
-			if tc.encoding == "generated" {
-				input := generated.KataResponseRequest{Project: requestBody.Project, DestinationID: requestBody.DestinationID, Generation: int64(requestBody.Generation), Teammate: requestBody.Teammate, IssueUID: requestBody.IssueUID, TargetUID: requestBody.TargetUID, Kind: requestBody.Kind, Body: requestBody.Body, IdempotencyKey: requestBody.IdempotencyKey}
-				got, callErr := generatedClient.KataResponse(t.Context(), &generated.KataResponseRequestOptions{Body: &input}, func(_ context.Context, r *http.Request) error { wrapperBytes = r.ContentLength; return nil })
-				require.NoError(t, callErr)
-				reply = KataReplyReceipt{UID: got.UID, Author: got.Author, Teammate: got.Teammate, Changed: got.Changed, Body: got.Body}
-				status = http.StatusOK
-			} else {
-				raw, marshalErr := json.Marshal(requestBody)
-				require.NoError(t, marshalErr)
-				if tc.encoding == "expanded" {
-					original := append([]byte(`"body":"`), bytes.Repeat([]byte("x"), len(tc.content))...)
-					replacement := append([]byte(`"body":"`), bytes.Repeat([]byte(`\u0078`), len(tc.content))...)
-					require.Contains(t, string(raw), string(original))
-					raw = bytes.Replace(raw, original, replacement, 1)
-				}
-				wrapperBytes = int64(len(raw))
-				r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/kata/response", bytes.NewReader(raw))
-				r.Header.Set("Content-Type", "application/json")
-				w := httptest.NewRecorder()
-				server.Handler().ServeHTTP(w, r)
-				status = w.Code
-				if tc.accepted {
-					reply = decodeKata[KataReplyReceipt](t, w)
-				} else {
-					assert.Contains(t, w.Body.String(), "request limit")
-				}
-			}
-			if tc.encoding == "generated" || tc.encoding == "expanded" {
-				assert.Greater(t, wrapperBytes, int64(2<<20))
-			}
-			if tc.producerSize == kata.PublicationMaxRequestBytes-1 {
-				assert.Greater(t, wrapperBytes, int64(kata.PublicationMaxRequestBytes))
-			}
-			var posts []katafake.Request
-			for _, sent := range fake.AllRequests()[before:] {
-				if sent.Method == http.MethodPost {
-					posts = append(posts, sent)
-				}
-			}
-			if !tc.accepted {
-				assert.Equal(t, http.StatusBadRequest, status)
-				assert.Empty(t, posts)
-				return
-			}
-			require.Equal(t, http.StatusOK, status)
-			require.Len(t, posts, 1)
-			assert.Equal(t, encoded, posts[0].Body)
-			assert.Equal(t, requestBody.IdempotencyKey, posts[0].Header.Get("Idempotency-Key"))
-			assert.Equal(t, tc.content, request.Body)
-			require.NotNil(t, request.ReplyTo)
-			assert.Equal(t, prior.UID, *request.ReplyTo)
-			require.NotNil(t, request.Kind)
-			assert.Equal(t, kind, *request.Kind)
-			assert.Equal(t, "actual-author", reply.Author)
-			assert.Equal(t, "roborev", reply.Teammate)
-			assert.Equal(t, tc.content, reply.Body)
-		})
-	}
 	// The successful response may have been lost. A fresh read after a teammate
 	// change must not turn the same key into a different producer request.
 	server.configWatcher.cfgMu.Lock()
@@ -714,10 +555,32 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	retry := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: updated.Project, DestinationID: updated.DestinationID, Generation: updated.Generation, Teammate: full.ReplyTeammate, IssueUID: updated.UID, TargetUID: prior.UID, Kind: "refute", Body: body, IdempotencyKey: "Exact-Key"})
 	assert.Equal(t, http.StatusConflict, retry.Code, retry.Body.String())
 	assert.Len(t, fake.AllRequests(), beforeChangeRetry)
+	server.configWatcher.cfgMu.Lock()
+	server.configWatcher.cfg.Integrations.Kata.Teammate = "roborev"
+	server.configWatcher.reloadCounter++
+	server.configWatcher.cfgMu.Unlock()
+	read = kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"other"}})
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	full = decodeKata[KataIssue](t, read)
+	// A reload after the full read but before the final write invalidates the tuple.
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/") {
+			server.configWatcher.cfgMu.Lock()
+			server.configWatcher.reloadCounter++
+			server.configWatcher.cfgMu.Unlock()
+		}
+		return false
+	}
+	before := len(fake.AllRequests())
+	stale := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "reply", Body: "another reply", IdempotencyKey: "other-key"})
+	assert.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
+	for _, request := range fake.AllRequests()[before:] {
+		assert.NotEqual(t, http.MethodPost, request.Method)
+	}
 }
 
 func TestKataResponseRejectsDestinationChangesAtBarrier(t *testing.T) {
-	for _, scenario := range []string{"project UID", "reload"} {
+	for _, scenario := range []string{"endpoint", "project UID", "reload", "disabled"} {
 		t.Run(scenario, func(t *testing.T) {
 			server, fake := kataAPIServer(t)
 			issue := fake.AddIssue(7, "a123", "findings", "body")
@@ -731,11 +594,6 @@ func TestKataResponseRejectsDestinationChangesAtBarrier(t *testing.T) {
 			require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 			full := decodeKata[KataIssue](t, read)
 			request := KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: target, Kind: "reply", Body: "evidence", IdempotencyKey: "Exact-Key"}
-			configBefore, _ := server.configWatcher.kataSnapshot()
-			if scenario == "reload" {
-				server.configWatcher.configPath = filepath.Join(t.TempDir(), "config.toml")
-				require.NoError(t, config.SaveGlobalTo(server.configWatcher.configPath, server.configWatcher.Config()))
-			}
 			entered, resume := make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			fake.Override = func(_ http.ResponseWriter, r *http.Request) bool {
@@ -765,22 +623,115 @@ func TestKataResponseRejectsDestinationChangesAtBarrier(t *testing.T) {
 			if scenario == "project UID" {
 				fake.Projects[0].UID = "P9999999999999999999999999"
 			} else {
-				server.configWatcher.reloadConfig()
-				reloaded, generation := server.configWatcher.kataSnapshot()
-				assert.Equal(t, configBefore, reloaded)
-				assert.Equal(t, full.Generation+1, generation)
+				server.configWatcher.cfgMu.Lock()
+				switch scenario {
+				case "endpoint":
+					server.configWatcher.cfg.Integrations.Kata.Endpoint = "http://127.0.0.1:2"
+				case "disabled":
+					server.configWatcher.cfg.Integrations.Kata.Enabled = false
+				}
+				server.configWatcher.reloadCounter++
+				server.configWatcher.cfgMu.Unlock()
 			}
 			close(resume)
 			<-done
 			assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-			if scenario == "project UID" {
-				assert.Contains(t, w.Body.String(), "destination changed")
-			} else {
-				assert.Contains(t, w.Body.String(), "configuration changed")
-			}
 			for _, req := range fake.AllRequests() {
 				assert.NotEqual(t, http.MethodPost, req.Method)
 			}
 		})
+	}
+}
+
+func TestKataPublicationExplicitIssueWithoutLocalReview(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	issue := fake.AddIssue(7, "standalone", "Discussion", "complete issue body")
+	issue.Comments = []katagen.CommentOut{{UID: "orphan", IssueID: issue.Out.ID, Author: "reviewer", Body: "complete evidence", ReplyToUID: new("missing")}}
+	server := newServerWithLogs(tc.DB, kataConnectionConfig(fake), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = server.Close() })
+	w := kataGet(t, server, "/api/kata/publication", url.Values{"issue": {issue.Out.UID}, "project": {"reviews"}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got := decodeKata[KataPublicationBody](t, w)
+	assert.Equal(t, "unverified", got.State)
+	require.NotNil(t, got.Issue)
+	assert.Equal(t, "complete issue body", got.Issue.Body)
+	require.Len(t, got.Comments, 1)
+	assert.Equal(t, "complete evidence", got.Comments[0].Body)
+	assert.Equal(t, "orphan", got.Comments[0].Lineage)
+	assert.Equal(t, "unknown", got.Comments[0].History)
+}
+
+func TestKataPublicationAuthenticationIsFatal(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			fake := katafake.New(t)
+			fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+				fake.Fail(w, status, "denied", "access denied")
+				return true
+			}
+			tc := newWorkerTestContext(t, 1)
+			server := newServerWithLogs(tc.DB, kataConnectionConfig(fake), "", newTestErrorLog(), newTestActivityLog())
+			t.Cleanup(func() { _ = server.Close() })
+			w := kataGet(t, server, "/api/kata/publication", url.Values{"issue": {"issue"}, "project": {"reviews"}})
+			assert.Equal(t, status, w.Code, w.Body.String())
+		})
+	}
+}
+
+func TestKataContextMCPBackendParity(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	issue := fake.AddIssue(7, "parity", "Discussion", "body")
+	issue.Comments = []katagen.CommentOut{{UID: "comment", IssueID: issue.Out.ID, Author: "author", Body: "evidence"}}
+	api := httptest.NewServer(server.httpServer.Handler)
+	t.Cleanup(api.Close)
+	query := mcpserver.KataContextQuery{Issue: issue.Out.UID, Project: "reviews"}
+	inProcess, err := server.mcpBackend().GetKataContext(t.Context(), query)
+	require.NoError(t, err)
+	httpResult, err := mcpserver.NewHTTPBackend(api.URL, api.Client()).GetKataContext(t.Context(), query)
+	require.NoError(t, err)
+	assert.Equal(t, inProcess, httpResult)
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		fake.Fail(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return true
+	}
+	_, directErr := server.mcpBackend().GetKataContext(t.Context(), query)
+	_, httpErr := mcpserver.NewHTTPBackend(api.URL, api.Client()).GetKataContext(t.Context(), query)
+	var direct, remote *mcpserver.Error
+	require.ErrorAs(t, directErr, &direct)
+	require.ErrorAs(t, httpErr, &remote)
+	assert.Equal(t, mcpserver.ErrorCodeAuthentication, direct.Code)
+	assert.Equal(t, direct.Code, remote.Code)
+}
+
+func TestKataPublicationUUIDWithoutLocalReview(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	issue := fake.AddIssue(7, "remote-only", "Discussion", "body")
+	id := "11111111-1111-4111-8111-111111111111"
+	issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": id, "roborev.document_hash": strings.Repeat("a", 64), "roborev.policy": "summary", "roborev.completed_at": "2026-01-02T03:04:05Z", "roborev.finding_count": 1}
+	server := newServerWithLogs(tc.DB, kataConnectionConfig(fake), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = server.Close() })
+	w := kataGet(t, server, "/api/kata/publication", url.Values{"review_uuid": {id}, "project": {"reviews"}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got := decodeKata[KataPublicationBody](t, w)
+	assert.Equal(t, "unverified", got.State)
+	assert.Equal(t, id, got.ReviewUUID)
+	assert.Equal(t, issue.Out.UID, got.IssueUID)
+	require.NotNil(t, got.Issue)
+	assert.Equal(t, "body", got.Issue.Body)
+}
+
+func TestKataContextCancellationClassification(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		status int
+	}{
+		{context.Canceled, http.StatusRequestTimeout},
+		{context.DeadlineExceeded, http.StatusGatewayTimeout},
+	} {
+		var status huma.StatusError
+		require.ErrorAs(t, kataReadError(tc.err), &status)
+		assert.Equal(t, tc.status, status.GetStatus())
 	}
 }

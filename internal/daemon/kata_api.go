@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -277,26 +278,33 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if err != nil {
 		return nil, kataProxyError(err)
 	}
-	full, err := client.ShowPublicationIssue(ctx, destination, issueRef)
+	full, _, err := client.ReadPublicationIssue(ctx, destination, uuid.Nil(), issueRef)
 	if err != nil {
 		return nil, kataProxyError(err)
 	}
+	result := kataIssueFromPublication(destination, kataDestinationID(client.PublicationEndpoint(), destination.UID), generation, *full)
+	result.ReplyTeammate = cfg.ResolvedTeammate()
+	return &KataIssueOutput{Body: result}, nil
+}
+
+func kataIssueFromPublication(destination kata.PublicationProject, destinationID string, generation uint64, full kata.PublicationIssue) KataIssue {
 	result := kataIssueFromClient(full.Legacy)
 	result.UID = full.Issue.UID
 	result.Project = destination.Name
 	result.Generation = generation
-	result.ReplyTeammate = cfg.ResolvedTeammate()
 	result.Author, result.Teammate = full.Issue.Author, full.Issue.Teammate
 	result.ProjectUID = destination.UID
-	result.DestinationID = kataDestinationID(client.PublicationEndpoint(), destination.UID)
+	result.DestinationID = destinationID
 	result.Metadata = full.Issue.Metadata
 	result.CommentsComplete = new(!full.Truncated)
 	for _, comment := range full.Comments {
 		result.Comments = append(result.Comments, kataComment(comment))
 	}
+	var roots []kata.PublicationRoot
 	if envelope, err := kata.ReadPublicationEnvelope(full.Issue.Metadata); err == nil {
 		result.Envelope = &envelope
-		for _, root := range kata.ReadPublicationRoots(envelope, full) {
+		roots = kata.ReadPublicationRoots(envelope, full)
+		for _, root := range roots {
 			item := KataRoot{Position: root.Position, EndPosition: root.EndPosition, State: root.State}
 			if root.Comment != nil {
 				comment := kataComment(*root.Comment)
@@ -305,5 +313,15 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 			result.Roots = append(result.Roots, item)
 		}
 	}
-	return &KataIssueOutput{Body: result}, nil
+	kataIssueLineage(&result, destination, full, roots)
+	return result
+}
+
+func kataIssueLineage(result *KataIssue, project kata.PublicationProject, full kata.PublicationIssue, roots []kata.PublicationRoot) {
+	states := kata.PublicationLineage(project, full, roots)
+	for i := range result.Comments {
+		result.Comments[i].RootUID = states[i].RootUID
+		result.Comments[i].Lineage = states[i].State
+		result.Comments[i].History = "unknown"
+	}
 }

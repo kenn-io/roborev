@@ -466,3 +466,14 @@ func TestMCPSearchPreservesRepoAmbiguityThroughHTTPBackend(t *testing.T) {
 	assert.Equal(t, ErrorCodeInvalidArgument, failure.Error.Code)
 	assert.Equal(t, NewError(ErrorCodeInvalidArgument, message).Error(), failure.Error.Message)
 }
+
+func TestHTTPBackendKataContextClassifiesAuthentication(t *testing.T) {
+	d, backend := newFakeDaemon(t)
+	d.routes["/api/kata/publication"] = jsonResponse(http.StatusUnauthorized, `{"detail":"Kata authentication required"}`)
+	_, err := backend.GetKataContext(t.Context(), KataContextQuery{Issue: "issue-uid", Project: "reviews"})
+	var backendErr *Error
+	require.ErrorAs(t, err, &backendErr)
+	assert.Equal(t, ErrorCodeAuthentication, backendErr.Code)
+	assert.Equal(t, "issue-uid", d.requests[0].Query().Get("issue"))
+	assert.Equal(t, "reviews", d.requests[0].Query().Get("project"))
+}

@@ -3,24 +3,33 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"strings"
 	"time"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 	gen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 type KataComment struct {
-	UID        string     `json:"uid"`
-	Handle     *string    `json:"handle,omitempty"`
-	Body       string     `json:"body"`
-	Author     string     `json:"author"`
-	Teammate   *string    `json:"teammate,omitempty"`
-	ReplyToUID *string    `json:"reply_to_uid,omitempty"`
-	ReplyKind  *string    `json:"reply_kind,omitempty"`
-	EditedAt   *time.Time `json:"edited_at,omitempty"`
+	UID         string     `json:"uid"`
+	Handle      *string    `json:"handle,omitempty"`
+	Body        string     `json:"body"`
+	Author      string     `json:"author"`
+	Teammate    *string    `json:"teammate,omitempty"`
+	ReplyToUID  *string    `json:"reply_to_uid,omitempty"`
+	ReplyKind   *string    `json:"reply_kind,omitempty"`
+	EditedAt    *time.Time `json:"edited_at,omitempty"`
+	RootUID     string     `json:"root_uid,omitempty"`
+	Lineage     string     `json:"lineage,omitempty"`
+	History     string     `json:"history,omitempty"`
 }
 type KataRoot struct {
 	Position    int          `json:"position"`
@@ -29,24 +38,30 @@ type KataRoot struct {
 	Comment     *KataComment `json:"comment,omitempty"`
 }
 type KataPublicationBody struct {
-	ReviewUUID    string        `json:"review_uuid"`
-	DocumentHash  string        `json:"document_hash"`
-	State         string        `json:"state"`
-	Expired       bool          `json:"expired"`
-	Policy        string        `json:"policy,omitempty"`
-	DestinationID string        `json:"destination_id,omitempty"`
-	ProjectUID    string        `json:"project_uid,omitempty"`
-	Project       string        `json:"project,omitempty"`
-	IssueUID      string        `json:"issue_uid,omitempty"`
-	IssueShortID  string        `json:"issue_short_id,omitempty"`
-	IssueAuthor   string        `json:"issue_author,omitempty"`
-	IssueTeammate *string       `json:"issue_teammate,omitempty"`
-	Roots         []KataRoot    `json:"roots"`
-	Comments      []KataComment `json:"comments"`
-	Message       string        `json:"message,omitempty"`
+	ReviewUUID     string                   `json:"review_uuid"`
+	DocumentHash   string                   `json:"document_hash"`
+	State          string                   `json:"state"`
+	Expired        bool                     `json:"expired"`
+	Policy         string                   `json:"policy,omitempty"`
+	DestinationID  string                   `json:"destination_id,omitempty"`
+	ProjectUID     string                   `json:"project_uid,omitempty"`
+	Project        string                   `json:"project,omitempty"`
+	IssueUID       string                   `json:"issue_uid,omitempty"`
+	IssueShortID   string                   `json:"issue_short_id,omitempty"`
+	IssueAuthor    string                   `json:"issue_author,omitempty"`
+	IssueTeammate  *string                  `json:"issue_teammate,omitempty"`
+	Roots          []KataRoot               `json:"roots"`
+	Comments       []KataComment            `json:"comments"`
+	Issue          *KataIssue               `json:"issue,omitempty"`
+	SourceOutput   string                   `json:"source_output,omitempty"`
+	SourceDocument storage.StructuredOutput `json:"source_document,omitempty"`
+	Message        string                   `json:"message,omitempty"`
 }
 type KataPublicationInput struct {
-	JobID int64 `query:"job_id" required:"true" minimum:"1"`
+	JobID      int64  `query:"job_id"`
+	ReviewUUID string `query:"review_uuid"`
+	Issue      string `query:"issue"`
+	Project    string `query:"project"`
 }
 type KataPublicationRequest struct {
 	JobID    int64  `json:"job_id" minimum:"1"`
@@ -95,9 +110,16 @@ func (s *Server) publicationResult(ctx context.Context, id int64, status *KataPu
 		return nil, huma.Error500InternalServerError("publication unavailable")
 	}
 	body := kataPublicationBody(status)
-	review, reviewErr := s.db.GetReviewByJobIDContext(ctx, id)
-	if reviewErr == nil {
+	if status.Issue != nil {
+		issue := kataIssueFromPublication(status.Project, status.DestinationID, status.Generation, *status.Issue)
+		issue.Roots = body.Roots
+		kataIssueLineage(&issue, status.Project, *status.Issue, status.Roots)
+		body.Comments = issue.Comments
+		body.Issue = &issue
+	}
+	if review := status.Source; review != nil {
 		body.Expired = !time.Now().Add(kata.DefaultRequestTimeout).Before(review.CreatedAt.Add(7 * 24 * time.Hour))
+		body.SourceOutput, body.SourceDocument = review.Output, review.StructuredOutput
 	}
 	record, recordErr := s.db.GetKataPublication(ctx, id)
 	if recordErr == nil && record.Marker != nil && body.Policy == "" {
@@ -110,11 +132,178 @@ func (s *Server) publicationResult(ctx context.Context, id int64, status *KataPu
 }
 
 func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInput) (*KataPublicationOutput, error) {
-	if in.JobID <= 0 {
-		return nil, huma.Error400BadRequest("job_id must be positive")
+	count := 0
+	if in.JobID > 0 {
+		count++
 	}
-	status, err := s.hookRunner.publisher.Inspect(ctx, in.JobID)
-	return s.publicationResult(ctx, in.JobID, status, err)
+	if in.ReviewUUID != "" {
+		count++
+	}
+	if in.Issue != "" {
+		count++
+	}
+	if count != 1 || in.JobID < 0 {
+		return nil, huma.Error400BadRequest("select exactly one job_id, review_uuid, or issue")
+	}
+	jobID := in.JobID
+	var id uuid.UUID
+	if in.ReviewUUID != "" {
+		var err error
+		id, err = uuid.Parse(in.ReviewUUID) //nolint:forbidigo // Parse an external selector.
+		if err != nil || id == uuid.Nil() {
+			return nil, huma.Error400BadRequest("invalid review UUID")
+		}
+		record, err := s.db.GetKataPublicationByUUID(ctx, id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, kataReadError(err)
+		}
+		if record != nil {
+			jobID = record.JobID
+		}
+	}
+	if jobID > 0 {
+		if in.Project != "" {
+			return nil, huma.Error400BadRequest("project cannot override a local review destination")
+		}
+		status, err := s.hookRunner.publisher.Inspect(ctx, jobID)
+		if ctx.Err() != nil {
+			return nil, kataReadError(ctx.Err())
+		}
+		if fatalKataRead(ctx, err) {
+			return nil, kataReadError(err)
+		}
+		if err != nil && status == nil && !errors.Is(err, sql.ErrNoRows) {
+			out := unavailableKataContext(err)
+			if review, readErr := s.db.GetReviewByJobIDContext(ctx, jobID); readErr == nil {
+				out.Body.SourceOutput, out.Body.SourceDocument = review.Output, review.StructuredOutput
+			}
+			if ctx.Err() != nil {
+				return nil, kataReadError(ctx.Err())
+			}
+			return out, nil
+		}
+		if err != nil && status != nil && status.State == "missing" {
+			if status.Issue == nil {
+				status.State = "unavailable"
+			} else {
+				status.State = "partial"
+			}
+		}
+		return s.publicationResult(ctx, jobID, status, err)
+	}
+	cfg, generation := s.configWatcher.kataSnapshot()
+	if !cfg.Enabled {
+		return nil, huma.Error409Conflict("Kata integration is disabled")
+	}
+	client, err := kata.NewAPIClient("", cfg, kata.WithoutWorkspace())
+	if err != nil {
+		return nil, kataReadError(err)
+	}
+	defer client.CloseIdleConnections()
+	project, err := client.ResolvePublicationProject(ctx, strings.TrimSpace(in.Project))
+	if ctx.Err() != nil {
+		return nil, kataReadError(ctx.Err())
+	}
+	if err != nil {
+		if !fatalKataRead(ctx, err) && errors.Is(err, kata.ErrUnreachable) {
+			return unavailableKataContext(err), nil
+		}
+		return nil, kataReadError(err)
+	}
+	issue, metadata, err := client.ReadPublicationIssue(ctx, project, id, strings.TrimSpace(in.Issue))
+	if ctx.Err() != nil {
+		return nil, kataReadError(ctx.Err())
+	}
+	if err != nil {
+		if !fatalKataRead(ctx, err) && errors.Is(err, kata.ErrUnreachable) {
+			return unavailableKataContext(err), nil
+		}
+		if errors.Is(err, kata.ErrConflict) {
+			return &KataPublicationOutput{Body: KataPublicationBody{ReviewUUID: id.String(), State: "ambiguous", Message: err.Error(), Project: project.Name, ProjectUID: project.UID, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Roots: []KataRoot{}, Comments: []KataComment{}}}, nil
+		}
+		return nil, kataReadError(err)
+	}
+	body := KataPublicationBody{State: "missing", Roots: []KataRoot{}, Comments: []KataComment{}, Project: project.Name, ProjectUID: project.UID, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID)}
+	if id != uuid.Nil() {
+		body.ReviewUUID = id.String()
+	}
+	if issue == nil {
+		return &KataPublicationOutput{Body: body}, nil
+	}
+	body.State = "unverified"
+	full := kataIssueFromPublication(project, body.DestinationID, generation, *issue)
+	body.Issue = &full
+	body.IssueUID, body.IssueShortID, body.IssueAuthor, body.IssueTeammate = full.UID, full.ShortID, full.Author, full.Teammate
+	body.Comments, body.Roots = full.Comments, full.Roots
+	if full.Envelope != nil {
+		body.Policy = full.Envelope.Policy
+		body.ReviewUUID = full.Envelope.ReviewUUID.String()
+		body.DocumentHash = full.Envelope.DocumentHash
+		// An explicit issue can carry local source evidence without asserting
+		// that its destination or envelope has been verified.
+		if in.Issue != "" {
+			record, lookupErr := s.db.GetKataPublicationByUUID(ctx, full.Envelope.ReviewUUID)
+			if lookupErr == nil && record.DocumentHash == full.Envelope.DocumentHash {
+				review, readErr := s.db.GetReviewByJobIDContext(ctx, record.JobID)
+				if readErr == nil && review.UUID != nil && *review.UUID == record.ReviewUUID {
+					raw, marshalErr := json.Marshal(review.StructuredOutput)
+					hash, hashErr := storage.KataDocumentHash(raw)
+					if marshalErr == nil && hashErr == nil && hash == record.DocumentHash {
+						body.SourceOutput, body.SourceDocument = review.Output, review.StructuredOutput
+					} else {
+						body.Message = "local source changed during inspection"
+					}
+				} else if readErr != nil {
+					body.Message = fmt.Sprintf("local source unavailable: %v", readErr)
+				}
+			} else if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+				body.Message = fmt.Sprintf("local source unavailable: %v", lookupErr)
+			}
+			if ctx.Err() != nil {
+				return nil, kataReadError(ctx.Err())
+			}
+		}
+		if id != uuid.Nil() && (full.Envelope.ReviewUUID != id || !samePublicationEnvelope(metadata, *full.Envelope)) {
+			body.State = "ambiguous"
+		}
+	} else if id != uuid.Nil() {
+		body.State = "ambiguous"
+	}
+	if issue.Truncated && body.State != "ambiguous" {
+		body.State = "truncated"
+	}
+	return &KataPublicationOutput{Body: body}, nil
+}
+
+func unavailableKataContext(err error) *KataPublicationOutput {
+	return &KataPublicationOutput{Body: KataPublicationBody{State: "unavailable", Message: err.Error(), Roots: []KataRoot{}, Comments: []KataComment{}}}
+}
+
+func samePublicationEnvelope(metadata map[string]any, expected kata.PublicationEnvelope) bool {
+	actual, err := kata.ReadPublicationEnvelope(metadata)
+	return err == nil && actual.Version == expected.Version && actual.ReviewUUID == expected.ReviewUUID && actual.DocumentHash == expected.DocumentHash && actual.Policy == expected.Policy && actual.CompletedAt.Equal(expected.CompletedAt) && actual.FindingCount == expected.FindingCount
+}
+
+func fatalKataRead(ctx context.Context, err error) bool {
+	return err != nil && (ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, kata.ErrAuthenticationRequired) || IsDaemonAccessError(err) || errors.Is(err, kata.ErrInsecureEndpoint) || errors.Is(err, kata.ErrPlatformSecurityLimit))
+}
+
+func kataReadError(err error) error {
+	if apiErr, ok := kata.AsAPIError(err); ok && apiErr.Status == http.StatusForbidden {
+		return huma.Error403Forbidden("Kata access denied")
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return huma.NewError(http.StatusRequestTimeout, "Kata read canceled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return huma.NewError(http.StatusGatewayTimeout, "Kata read deadline exceeded")
+	case errors.Is(err, kata.ErrAuthenticationRequired):
+		return huma.Error401Unauthorized("Kata authentication required")
+	case IsDaemonAccessError(err), errors.Is(err, kata.ErrInsecureEndpoint), errors.Is(err, kata.ErrPlatformSecurityLimit):
+		return huma.Error403Forbidden("Kata access denied")
+	default:
+		return kataProxyError(fmt.Errorf("read Kata context: %w", err))
+	}
 }
 
 func (s *Server) humaKataPublish(ctx context.Context, in *KataPublishInput) (*KataPublicationOutput, error) {

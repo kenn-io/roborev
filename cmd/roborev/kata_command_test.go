@@ -95,6 +95,34 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 	}
 }
 
+func TestKataShowSelectorQueries(t *testing.T) {
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/ping" {
+			fmt.Fprint(w, `{"ok":true,"service":"roborev","version":"test"}`)
+			return
+		}
+		query = r.URL.RawQuery
+		fmt.Fprint(w, `{"review_uuid":"","document_hash":"","state":"unverified","expired":false,"roots":[],"comments":[{"uid":"c1","body":"evidence","author":"actual","lineage":"orphan","history":"unknown"}]}`)
+	}))
+	defer server.Close()
+	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
+	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
+	for _, tc := range []struct{ selector, param string }{{"11111111-1111-4111-8111-111111111111", "review_uuid="}, {"issue-uid", "issue=issue-uid"}} {
+		root := newRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs([]string{"--server", server.URL, "kata", "show", tc.selector, "--project", "reviews"})
+		require.NoError(t, root.Execute())
+		assert.Contains(t, query, tc.param)
+		assert.Contains(t, query, "project=reviews")
+		assert.Contains(t, out.String(), "evidence")
+		assert.Contains(t, out.String(), "lineage: orphan")
+	}
+}
+
 func TestKataRemoteCommandsRejectedThroughRoot(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("[remote_client]\nexternal_url='https://reviews.example.test'\n"), 0o600))
