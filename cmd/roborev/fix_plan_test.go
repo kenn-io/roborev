@@ -460,59 +460,14 @@ func TestFixPlanCompletePromptTransport(t *testing.T) {
 	assert.Empty(t, repo.Run("status", "--porcelain"))
 }
 
-func TestUnplannedFixCompletePromptTransport(t *testing.T) {
-	for _, batch := range []bool{false, true} {
-		t.Run(fmt.Sprintf("batch=%t", batch), func(t *testing.T) {
-			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
-			require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte("max_prompt_size = 1000\n"), 0o600))
-			repo.Run("add", ".roborev.toml")
-			repo.Run("commit", "-m", "Set prompt transport threshold")
-			findings := "High: cancellation not checked " + strings.Repeat("context ", 500)
-			ts, _ := newMockServer(t, MockServerOpts{ReviewOutput: findings, OnJobs: func(w http.ResponseWriter, r *http.Request) {
-				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test"}}})
-			}})
-			patchServerAddr(t, ts.URL)
-			var path string
-			calls := 0
-			a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, p string, _ io.Writer) (string, error) {
-				calls++
-				const prefix = "Read the complete task prompt from "
-				require.True(t, strings.HasPrefix(p, prefix))
-				quoted, _, _ := strings.Cut(strings.TrimPrefix(p, prefix), " and carry out")
-				var err error
-				path, err = strconv.Unquote(quoted)
-				require.NoError(t, err)
-				rel, err := filepath.Rel(dir, path)
-				require.NoError(t, err)
-				assert.True(t, filepath.IsLocal(rel))
-				body, err := os.ReadFile(path)
-				require.NoError(t, err)
-				assert.Contains(t, string(body), findings)
-				return "No changes required", nil
-			}}
-			cmd, _ := newTestCmd(t)
-			tracker := &fixSessionTracker{base: a, out: io.Discard}
-			if batch {
-				roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
-				require.NoError(t, processFixBatch(t.Context(), cmd, roots, []int64{7}, 0, fixOptions{}, tracker))
-			} else {
-				require.NoError(t, fixSingleJob(cmd, repo.Dir, 7, fixOptions{}, tracker))
-			}
-			assert.Equal(t, 1, calls)
-			_, err := os.Stat(path)
-			require.ErrorIs(t, err, os.ErrNotExist)
-			assert.Empty(t, repo.Run("status", "--porcelain"))
-		})
-	}
-}
-
 func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 	for _, tc := range []struct {
-		name              string
+		name, mode        string
 		batch, plan, only bool
 	}{
-		{"single", false, false, false}, {"single planned", false, true, false}, {"single plan only", false, true, true},
-		{"batch", true, false, false}, {"batch planned", true, true, false}, {"batch plan only", true, true, true},
+		{"single", "evidence", false, false, false}, {"single planned", "evidence", false, true, false}, {"single plan only", "evidence", false, true, true},
+		{"batch", "evidence", true, false, false}, {"batch planned", "evidence", true, true, false}, {"batch plan only", "evidence", true, true, true},
+		{"authentication", "auth", false, true, false}, {"outage", "outage", false, true, false}, {"replacement", "replacement", false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
@@ -520,6 +475,7 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 			repo.Run("add", ".roborev.toml")
 			repo.Run("commit", "-m", "Set prompt transport threshold")
 			id := uuid.New()
+			finding := "High: original finding " + strings.Repeat("source context ", 200)
 			evidence := strings.Repeat("conflicting attributed evidence ", 200)
 			reads := 0
 			ts, state := newMockServer(t, MockServerOpts{
@@ -527,7 +483,7 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
 				},
 				OnReview: func(w http.ResponseWriter, _ *http.Request) {
-					writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: "High: original finding", VerdictBool: new(0)})
+					writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: finding, VerdictBool: new(0)})
 				},
 				OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
 					writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
@@ -536,6 +492,21 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 					reads++
 					assert.Equal(t, "7", r.URL.Query().Get("job_id"))
 					assert.Equal(t, id.String(), r.URL.Query().Get("review_uuid"))
+					switch tc.mode {
+					case "auth", "outage":
+						w.Header().Set("Content-Type", "application/problem+json")
+						if tc.mode == "auth" {
+							w.WriteHeader(http.StatusUnauthorized)
+							fmt.Fprint(w, `{"status":401,"detail":"authentication required"}`)
+						} else {
+							w.WriteHeader(http.StatusServiceUnavailable)
+							fmt.Fprint(w, `{"status":503,"detail":"temporary outage"}`)
+						}
+						return
+					case "replacement":
+						writeJSON(w, map[string]any{"state": "unavailable", "message": "review changed", "review_uuid": "", "document_hash": "", "roots": []any{}, "comments": []any{}})
+						return
+					}
 					comment := map[string]any{"uid": "reply", "author": "reviewer", "body": evidence}
 					comments := []any{comment}
 					roots := []any{map[string]any{"position": 0, "state": "complete", "comment": comment}}
@@ -545,35 +516,53 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 			patchServerAddr(t, ts.URL)
 			calls := 0
 			var paths []string
-			a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
+			a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, p string, _ io.Writer) (string, error) {
 				calls++
 				if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
 					quoted, _, _ := strings.Cut(rest, " and carry out")
 					path, err := strconv.Unquote(quoted)
 					require.NoError(t, err)
+					rel, err := filepath.Rel(dir, path)
+					require.NoError(t, err)
+					assert.True(t, filepath.IsLocal(rel))
 					paths = append(paths, path)
 					data, err := os.ReadFile(path)
 					require.NoError(t, err)
 					p = string(data)
 				}
-				assert.Contains(t, p, "High: original finding")
-				assert.Equal(t, 1, strings.Count(p, evidence))
-				assert.NotContains(t, p, "duplicate source marker")
-				assert.Contains(t, p, "issue body")
-				assert.Contains(t, p, "reviewer")
-				assert.Contains(t, p, "untrusted-kata-discussion")
+				assert.Contains(t, p, finding)
+				switch tc.mode {
+				case "evidence":
+					assert.Equal(t, 1, strings.Count(p, evidence))
+					assert.NotContains(t, p, "duplicate source marker")
+					assert.Contains(t, p, "issue body")
+					assert.Contains(t, p, "reviewer")
+					assert.Contains(t, p, "untrusted-kata-discussion")
+				case "outage":
+					assert.Contains(t, p, "Kata discussion unavailable")
+				case "replacement":
+					assert.Contains(t, p, "review changed")
+					assert.NotContains(t, p, "replacement finding")
+				}
 				return "Check the finding", nil
 			}}
 			cmd, _ := newTestCmd(t)
 			tracker := &fixSessionTracker{base: a, out: io.Discard}
 			opts := fixOptions{plan: tc.plan, planOnly: tc.only, quiet: true}
+			var err error
 			if tc.batch {
-				err := processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{7}, 0, opts, tracker)
-				require.NoError(t, err)
+				err = processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{7}, 0, opts, tracker)
 			} else {
-				require.NoError(t, fixSingleJob(cmd, repo.Dir, 7, opts, tracker))
+				err = fixSingleJob(cmd, repo.Dir, 7, opts, tracker)
 			}
 			assert.Equal(t, 1, reads)
+			if tc.mode == "auth" {
+				require.Error(t, err)
+				assert.Zero(t, calls)
+				assert.Zero(t, state.Closes())
+				return
+			}
+			require.NoError(t, err)
 			if tc.plan && !tc.only {
 				assert.Equal(t, 2, calls)
 			} else {
@@ -582,120 +571,14 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 			if tc.only {
 				assert.Zero(t, state.Closes())
 			}
+			if tc.mode == "evidence" {
+				require.NotEmpty(t, paths)
+			}
 			for _, path := range paths {
 				_, err := os.Stat(path)
 				require.ErrorIs(t, err, os.ErrNotExist)
 			}
+			assert.Empty(t, repo.Run("status", "--porcelain"))
 		})
 	}
-}
-
-func TestFixKataAuthenticationStopsBeforeAgent(t *testing.T) {
-	repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
-	id := uuid.New()
-	ts, state := newMockServer(t, MockServerOpts{
-		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview}}})
-		},
-		OnReview: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: "High: original finding", VerdictBool: new(0)})
-		},
-		OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
-		},
-		OnKataPublication: func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"status":401,"detail":"authentication required"}`)
-		},
-	})
-	patchServerAddr(t, ts.URL)
-	calls := 0
-	a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) { calls++; return "", nil }}
-	cmd, _ := newTestCmd(t)
-	err := fixSingleJob(cmd, repo.Dir, 7, fixOptions{plan: true}, &fixSessionTracker{base: a, out: io.Discard})
-	require.Error(t, err)
-	assert.Zero(t, calls)
-	assert.Zero(t, state.Closes())
-}
-
-func TestFixPlannedKataOutageIsSharedAcrossAgentPhases(t *testing.T) {
-	repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
-	id := uuid.New()
-	reads := 0
-	ts, _ := newMockServer(t, MockServerOpts{
-		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
-		},
-		OnReview: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: "High: original finding", VerdictBool: new(0)})
-		},
-		OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
-		},
-		OnKataPublication: func(w http.ResponseWriter, _ *http.Request) {
-			reads++
-			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, `{"status":503,"detail":"temporary outage"}`)
-		},
-	})
-	patchServerAddr(t, ts.URL)
-	calls := 0
-	a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
-		calls++
-		if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
-			quoted, _, _ := strings.Cut(rest, " and carry out")
-			path, err := strconv.Unquote(quoted)
-			require.NoError(t, err)
-			body, err := os.ReadFile(path)
-			require.NoError(t, err)
-			p = string(body)
-		}
-		assert.Contains(t, p, "High: original finding")
-		assert.Contains(t, p, "Kata discussion unavailable")
-		return "Check the finding", nil
-	}}
-	cmd, _ := newTestCmd(t)
-	err := fixSingleJob(cmd, repo.Dir, 7, fixOptions{plan: true, quiet: true}, &fixSessionTracker{base: a, out: io.Discard})
-	require.NoError(t, err)
-	assert.Equal(t, 2, calls)
-	assert.Equal(t, 1, reads)
-}
-
-func TestFixDoesNotAttachReplacementReviewDiscussion(t *testing.T) {
-	repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
-	id := uuid.New()
-	reads := 0
-	ts, _ := newMockServer(t, MockServerOpts{
-		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
-		},
-		OnReview: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: "High: original finding", VerdictBool: new(0)})
-		},
-		OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, map[string]any{"enabled": true, "state": "ready"})
-		},
-		OnKataPublication: func(w http.ResponseWriter, r *http.Request) {
-			reads++
-			assert.Equal(t, "7", r.URL.Query().Get("job_id"))
-			assert.Equal(t, id.String(), r.URL.Query().Get("review_uuid"))
-			// The shared reader reports a replacement as unavailable.
-			writeJSON(w, map[string]any{"state": "unavailable", "message": "review changed", "review_uuid": "", "document_hash": "", "roots": []any{}, "comments": []any{}})
-		},
-	})
-	patchServerAddr(t, ts.URL)
-	calls := 0
-	a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
-		calls++
-		assert.Contains(t, p, "High: original finding")
-		assert.Contains(t, p, "review changed")
-		assert.NotContains(t, p, "replacement finding")
-		return "Check the finding", nil
-	}}
-	cmd, _ := newTestCmd(t)
-	require.NoError(t, fixSingleJob(cmd, repo.Dir, 7, fixOptions{plan: true, quiet: true}, &fixSessionTracker{base: a, out: io.Discard}))
-	assert.Equal(t, 2, calls)
-	assert.Equal(t, 1, reads)
 }

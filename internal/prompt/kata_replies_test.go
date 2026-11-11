@@ -98,12 +98,10 @@ func TestKataEvidenceProjectsEachBodyOnce(t *testing.T) {
 	root := got["roots"].([]any)[0].(map[string]any)
 	assert.Equal(t, "root", root["comment_uid"])
 	assert.NotContains(t, root, "comment")
-
-	// Conflicting records with the same identity must remain visible.
-	evidence["comments"] = []any{map[string]any{"uid": "root", "body": "different"}}
+	evidence["comments"] = []any{comment, map[string]any{"uid": "root", "body": "conflicting reply"}, map[string]any{"uid": "", "body": "missing identity"}}
 	encoded, err := kataPromptEvidence(evidence)
 	require.NoError(t, err)
-	var conflict map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &conflict))
-	assert.Equal(t, text, conflict["roots"].([]any)[0].(map[string]any)["comment"].(map[string]any)["body"])
+	var projected map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &projected))
+	assert.Equal(t, evidence["comments"], projected["comments"])
 }

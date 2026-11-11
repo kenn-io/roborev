@@ -86,58 +86,27 @@ func kataPromptEvidence(data any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var body map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var body map[string]any
+	if err := decoder.Decode(&body); err != nil || body == nil {
 		return json.MarshalIndent(data, "", "  ")
 	}
 	delete(body, "source_output")
 	delete(body, "source_document")
-	if issueRaw, ok := body["issue"]; ok {
-		var issue map[string]json.RawMessage
-		if json.Unmarshal(issueRaw, &issue) == nil && issue != nil {
-			for _, key := range []string{"comments", "roots"} {
-				if top, exists := body[key]; exists && bytes.Equal(issue[key], top) {
-					delete(issue, key)
-				}
-			}
-			body["issue"], err = json.Marshal(issue)
-			if err != nil {
-				return nil, err
-			}
-		}
+	if issue, ok := body["issue"].(map[string]any); ok {
+		delete(issue, "comments")
+		delete(issue, "roots")
 	}
-	if rootsRaw, ok := body["roots"]; ok {
-		var roots []map[string]json.RawMessage
-		var comments []map[string]json.RawMessage
-		if json.Unmarshal(rootsRaw, &roots) == nil && json.Unmarshal(body["comments"], &comments) == nil {
-			for _, root := range roots {
-				var comment map[string]json.RawMessage
-				if json.Unmarshal(root["comment"], &comment) == nil && comment != nil {
-					matches := 0
-					for _, candidate := range comments {
-						if !bytes.Equal(comment["uid"], candidate["uid"]) || len(comment["uid"]) == 0 || bytes.Equal(comment["uid"], []byte(`""`)) {
-							continue
-						}
-						equal := true
-						for key, value := range comment {
-							if !bytes.Equal(value, candidate[key]) {
-								equal = false
-								break
-							}
-						}
-						if equal {
-							matches++
-						}
-					}
-					if matches == 1 {
-						root["comment_uid"] = comment["uid"]
-						delete(root, "comment")
-					}
-				}
+	if roots, ok := body["roots"].([]any); ok {
+		for _, value := range roots {
+			root, ok := value.(map[string]any)
+			if !ok {
+				continue
 			}
-			body["roots"], err = json.Marshal(roots)
-			if err != nil {
-				return nil, err
+			if comment, ok := root["comment"].(map[string]any); ok {
+				root["comment_uid"] = comment["uid"]
+				delete(root, "comment")
 			}
 		}
 	}
