@@ -352,7 +352,7 @@ func TestGoalWorkerRecordsUsageAndFindings(t *testing.T) {
 	c.Pool.processJob(testWorkerID, claimed)
 	logBytes, err := os.ReadFile(JobLogPath(job.ID))
 	require.NoError(t, err)
-	assert.Contains(t, string(logBytes), `{"assistantMessageEvent":{"type":"text_delta","delta":"x"},"type":"message_update"}`)
+	assert.Contains(t, string(logBytes), `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}`)
 	stored, err := c.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
 	usage := tokens.ParseJSON(stored.TokenUsage)

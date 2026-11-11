@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"bytes"
+	stdjson "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -523,31 +524,53 @@ type piJobLogSink struct {
 	usage     jsontext.Value
 }
 
+// newPiInvocationLogWriter keeps state within one actual agent invocation.
+func newPiInvocationLogWriter(name string, out io.Writer) io.Writer {
+	if name == "pi" {
+		return &piJobLogSink{out: out}
+	}
+	return out
+}
+
 func (w *piJobLogSink) Write(p []byte) (int, error) {
-	w.pending = append(w.pending, p...)
-	var completed bytes.Buffer
-	for {
-		i := bytes.IndexByte(w.pending, '\n')
+	var output bytes.Buffer
+	remaining := p
+	if len(w.pending) != 0 {
+		i := bytes.IndexByte(remaining, '\n')
 		if i < 0 {
+			w.pending = append(w.pending, remaining...)
+		} else {
+			w.pending = append(w.pending, remaining[:i+1]...)
+			w.compact(w.pending) // Observe state; the original bytes were already written.
+			w.pending = nil
+			output.Write(remaining[:i+1])
+			remaining = remaining[i+1:]
+		}
+		if i < 0 {
+			output.Write(remaining)
+			remaining = nil
+		}
+	}
+	for len(remaining) > 0 {
+		i := bytes.IndexByte(remaining, '\n')
+		if i < 0 {
+			w.pending = append(w.pending, remaining...)
+			output.Write(remaining)
 			break
 		}
-		completed.Write(w.compact(w.pending[:i+1]))
-		w.pending = w.pending[i+1:]
+		output.Write(w.compact(remaining[:i+1]))
+		remaining = remaining[i+1:]
 	}
-	if completed.Len() > 0 {
-		if _, err := w.out.Write(completed.Bytes()); err != nil {
+	if output.Len() > 0 {
+		n, err := w.out.Write(output.Bytes())
+		if err != nil {
 			return 0, err
+		}
+		if n != output.Len() {
+			return 0, io.ErrShortWrite
 		}
 	}
 	return len(p), nil
-}
-
-// Flush preserves an incomplete record on normal completion or interruption.
-func (w *piJobLogSink) Flush() {
-	if len(w.pending) != 0 {
-		_, _ = w.out.Write(w.pending)
-	}
-	w.pending = nil
 }
 
 func (w *piJobLogSink) compact(line []byte) []byte {
@@ -567,28 +590,63 @@ func (w *piJobLogSink) compact(line []byte) []byte {
 		w.usage = nil
 		return line
 	}
-	if !w.assistant || len(ev.Usage) == 0 {
+	if !w.assistant {
+		return line
+	}
+	if len(ev.Usage) == 0 || ev.Event.Type == "" {
+		w.usage = nil
 		return line
 	}
 	delta := ev.Usage.Kind() == '{' && (ev.Event.Type == "text_delta" ||
 		ev.Event.Type == "thinking_delta" || ev.Event.Type == "toolcall_delta")
 	same := bytes.Equal(ev.Usage, w.usage)
 	if delta && same {
-		var fields map[string]jsontext.Value
-		if json.Unmarshal(line, &fields) != nil {
-			return line
-		}
-		delete(fields, "usage")
-		out, err := json.Marshal(fields, json.Deterministic(true))
-		if err != nil {
-			return line
-		}
-		return append(out, line[bytes.LastIndexByte(line, '}')+1:]...)
+		return removePiUsage(line)
 	}
 	if delta {
 		w.usage = ev.Usage
 	} else if !same {
 		w.usage = nil
+	}
+	return line
+}
+
+// removePiUsage splices the member from an already validated event without
+// changing the spelling, ordering, or whitespace of the remaining members.
+func removePiUsage(line []byte) []byte {
+	dec := stdjson.NewDecoder(bytes.NewReader(line))
+	if _, err := dec.Token(); err != nil {
+		return line
+	}
+	for dec.More() {
+		start := int(dec.InputOffset())
+		key, err := dec.Token()
+		if err != nil {
+			return line
+		}
+		var value stdjson.RawMessage
+		if dec.Decode(&value) != nil {
+			return line
+		}
+		if key != "usage" {
+			continue
+		}
+		end := int(dec.InputOffset())
+		i := start
+		for i < end && (line[i] == ' ' || line[i] == '\t' || line[i] == '\r' || line[i] == '\n') {
+			i++
+		}
+		if line[i] != ',' {
+			i = end
+			for i < len(line) && (line[i] == ' ' || line[i] == '\t' || line[i] == '\r' || line[i] == '\n') {
+				i++
+			}
+			if i >= len(line) || line[i] != ',' {
+				return line
+			}
+			end = i + 1
+		}
+		return append(append([]byte{}, line[:start]...), line[end:]...)
 	}
 	return line
 }

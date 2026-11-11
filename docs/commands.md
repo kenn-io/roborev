@@ -722,8 +722,9 @@ into compact, human-readable progress lines showing tool calls and agent text.
 It requests the log and its stored metadata through the daemon API to select
 that renderer. Use `--raw` for the exact stored bytes when scripting, debugging,
 or reading an orphaned log file. Stored Pi logs omit repeated identical
-cumulative usage from message deltas. An omitted usage object repeats the
-previous value for that assistant message; usage changes remain in the log.
+cumulative usage from complete message deltas received in a single write. An
+omitted usage object repeats the previous value for that assistant message;
+usage changes and records split across writes remain in the log.
 Live output retains the original bytes. For a daemon using a custom database,
 select that daemon with
 `--server`; the CLI does not open SQLite.
