@@ -1490,7 +1490,16 @@ func (e ErrorModel) Validate() error {
 }
 
 func (s ErrorModel) Error() string {
-	return "unmapped client error"
+	res0 := s.Detail
+	if res0 == nil {
+		return "unknown error"
+	}
+	res1 := *res0
+	return res1
+}
+
+func NewErrorModel(message string) ErrorModel {
+	return ErrorModel{Detail: runtime.Ptr(message)}
 }
 
 type ErrorResponse struct {

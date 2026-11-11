@@ -3,6 +3,8 @@ skip-prune: true
 output:
   use-single-file: false
   directory: ..
+error-mapping:
+  ErrorModel: detail
 generate:
   client: true
   client-with-response: true
