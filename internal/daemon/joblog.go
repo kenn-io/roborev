@@ -3,7 +3,6 @@ package daemon
 import (
 	"bufio"
 	"bytes"
-	stdjson "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -536,41 +535,27 @@ func newPiInvocationLogWriter(name string, out io.Writer) io.Writer {
 
 func (w *piJobLogSink) Write(p []byte) (int, error) {
 	var output bytes.Buffer
-	remaining := p
-	if len(w.pending) != 0 {
-		i := bytes.IndexByte(remaining, '\n')
-		if i < 0 {
-			w.pending = append(w.pending, remaining...)
-		} else {
-			w.pending = append(w.pending, remaining[:i+1]...)
-			w.compact(w.pending) // Observe state; the original bytes were already written.
+	for rest := p; len(rest) > 0; {
+		end := bytes.IndexByte(rest, '\n') + 1
+		if end == 0 {
+			end = len(rest)
+		}
+		record := rest[:end]
+		rest = rest[end:]
+		if len(w.pending) == 0 && record[end-1] == '\n' {
+			output.Write(w.compact(record))
+			continue
+		}
+		// Store split-record bytes now; observe the record once it completes.
+		output.Write(record)
+		w.pending = append(w.pending, record...)
+		if record[end-1] == '\n' {
+			w.compact(w.pending)
 			w.pending = nil
-			output.Write(remaining[:i+1])
-			remaining = remaining[i+1:]
-		}
-		if i < 0 {
-			output.Write(remaining)
-			remaining = nil
 		}
 	}
-	for len(remaining) > 0 {
-		i := bytes.IndexByte(remaining, '\n')
-		if i < 0 {
-			w.pending = append(w.pending, remaining...)
-			output.Write(remaining)
-			break
-		}
-		output.Write(w.compact(remaining[:i+1]))
-		remaining = remaining[i+1:]
-	}
-	if output.Len() > 0 {
-		n, err := w.out.Write(output.Bytes())
-		if err != nil {
-			return 0, err
-		}
-		if n != output.Len() {
-			return 0, io.ErrShortWrite
-		}
+	if _, err := w.out.Write(output.Bytes()); err != nil {
+		return 0, err
 	}
 	return len(p), nil
 }
@@ -616,21 +601,21 @@ func (w *piJobLogSink) compact(line []byte) []byte {
 // removePiUsage splices the member from an already validated event without
 // changing the spelling, ordering, or whitespace of the remaining members.
 func removePiUsage(line []byte) []byte {
-	dec := stdjson.NewDecoder(bytes.NewReader(line))
-	if _, err := dec.Token(); err != nil {
+	dec := jsontext.NewDecoder(bytes.NewReader(line))
+	if _, err := dec.ReadToken(); err != nil {
 		return line
 	}
-	for dec.More() {
+	for dec.PeekKind() != '}' {
 		start := int(dec.InputOffset())
-		key, err := dec.Token()
+		key, err := dec.ReadToken()
 		if err != nil {
 			return line
 		}
-		var value stdjson.RawMessage
-		if dec.Decode(&value) != nil {
+		isUsage := key.String() == "usage"
+		if _, err := dec.ReadValue(); err != nil {
 			return line
 		}
-		if key != "usage" {
+		if !isUsage {
 			continue
 		}
 		end := int(dec.InputOffset())
