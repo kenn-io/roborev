@@ -327,7 +327,7 @@ func addAgentHookRunFlags(cmd *cobra.Command, opts *agenthook.Options) {
 	cmd.Flags().IntVar(&opts.FailedReviewThreshold, "failed-review-threshold", opts.FailedReviewThreshold, "open failed roborev review threshold; 0 disables review triggering")
 	cmd.Flags().StringVar(
 		&opts.Instruction, "instruction", opts.Instruction,
-		"continuation instruction; defaults to the built-in triage flow",
+		"continuation instruction",
 	)
 	cmd.Flags().Lookup("instruction").DefValue = "built-in triage flow"
 	cmd.Flags().StringVar(&opts.RoborevServerAddr, "roborev-server", opts.RoborevServerAddr, "roborev daemon address; defaults to runtime discovery")
