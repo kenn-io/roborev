@@ -859,6 +859,27 @@ func (c CloseReviewRequest) Validate() error {
 	return errors
 }
 
+type CommentLink struct {
+	Author       *string    `json:"author,omitempty"`
+	Body         *string    `json:"body,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	EditedAt     *time.Time `json:"edited_at,omitempty"`
+	Handle       *string    `json:"handle,omitempty"`
+	IssueShortID *string    `json:"issue_short_id,omitempty"`
+	IssueUID     *string    `json:"issue_uid,omitempty"`
+	Kind         string     `json:"kind" validate:"required"`
+	ProjectID    *int64     `json:"project_id,omitempty"`
+	ProjectUID   *string    `json:"project_uid,omitempty"`
+	Status       *string    `json:"status,omitempty"`
+	TargetEdited *bool      `json:"target_edited,omitempty"`
+	Teammate     *string    `json:"teammate,omitempty"`
+	UID          *string    `json:"uid,omitempty"`
+}
+
+func (c CommentLink) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type ComponentHealth struct {
 	Healthy  bool               `json:"healthy"`
 	Message  *string            `json:"message,omitempty"`
@@ -2599,21 +2620,51 @@ func (j JobWithReview) Validate() error {
 }
 
 type KataComment struct {
-	Author      string     `json:"author" validate:"required"`
-	Body        string     `json:"body" validate:"required"`
-	EditedAt    *time.Time `json:"edited_at,omitempty"`
-	Handle      *string    `json:"handle,omitempty"`
-	History     *string    `json:"history,omitempty"`
-	Lineage     *string    `json:"lineage,omitempty"`
-	ReplyKind   *string    `json:"reply_kind,omitempty"`
-	ReplyToUID  *string    `json:"reply_to_uid,omitempty"`
-	RootUID     *string    `json:"root_uid,omitempty"`
-	Teammate    *string    `json:"teammate,omitempty"`
-	UID         string     `json:"uid" validate:"required"`
+	Author             string        `json:"author" validate:"required"`
+	Backlinks          []CommentLink `json:"backlinks,omitempty"`
+	BacklinksTruncated *bool         `json:"backlinks_truncated,omitempty"`
+	Body               string        `json:"body" validate:"required"`
+	EditedAt           *time.Time    `json:"edited_at,omitempty"`
+	Handle             *string       `json:"handle,omitempty"`
+	History            *string       `json:"history,omitempty"`
+	Lineage            *string       `json:"lineage,omitempty"`
+	Reply              *CommentLink  `json:"reply,omitempty"`
+	ReplyKind          *string       `json:"reply_kind,omitempty"`
+	ReplyToUID         *string       `json:"reply_to_uid,omitempty"`
+	RootUID            *string       `json:"root_uid,omitempty"`
+	Teammate           *string       `json:"teammate,omitempty"`
+	UID                string        `json:"uid" validate:"required"`
 }
 
 func (k KataComment) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(k.Author, "required"); err != nil {
+		errors = errors.Append("Author", err)
+	}
+	for i, item := range k.Backlinks {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Backlinks[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.Body, "required"); err != nil {
+		errors = errors.Append("Body", err)
+	}
+	if k.Reply != nil {
+		if v, ok := any(k.Reply).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Reply", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.UID, "required"); err != nil {
+		errors = errors.Append("UID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type KataIssue struct {

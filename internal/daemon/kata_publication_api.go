@@ -42,17 +42,20 @@ func (s *Server) readKataPromptContext(ctx context.Context, review *storage.Revi
 }
 
 type KataComment struct {
-	UID         string     `json:"uid"`
-	Handle      *string    `json:"handle,omitempty"`
-	Body        string     `json:"body"`
-	Author      string     `json:"author"`
-	Teammate    *string    `json:"teammate,omitempty"`
-	ReplyToUID  *string    `json:"reply_to_uid,omitempty"`
-	ReplyKind   *string    `json:"reply_kind,omitempty"`
-	EditedAt    *time.Time `json:"edited_at,omitempty"`
-	RootUID     string     `json:"root_uid,omitempty"`
-	Lineage     string     `json:"lineage,omitempty"`
-	History     string     `json:"history,omitempty"`
+	Reply              *gen.CommentLink  `json:"reply,omitempty"`
+	Backlinks          []gen.CommentLink `json:"backlinks,omitempty"`
+	BacklinksTruncated *bool             `json:"backlinks_truncated,omitempty"`
+	UID                string            `json:"uid"`
+	Handle             *string           `json:"handle,omitempty"`
+	Body               string            `json:"body"`
+	Author             string            `json:"author"`
+	Teammate           *string           `json:"teammate,omitempty"`
+	ReplyToUID         *string           `json:"reply_to_uid,omitempty"`
+	ReplyKind          *string           `json:"reply_kind,omitempty"`
+	EditedAt           *time.Time        `json:"edited_at,omitempty"`
+	RootUID            string            `json:"root_uid,omitempty"`
+	Lineage            string            `json:"lineage,omitempty"`
+	History            string            `json:"history,omitempty"`
 }
 type KataRoot struct {
 	Position    int          `json:"position"`
@@ -96,7 +99,7 @@ type (
 )
 
 func kataComment(c gen.CommentOut) KataComment {
-	return KataComment{UID: c.UID, Handle: c.Handle, Body: c.Body, Author: c.Author, Teammate: c.Teammate, ReplyToUID: c.ReplyToUID, ReplyKind: c.ReplyKind, EditedAt: c.EditedAt}
+	return KataComment{UID: c.UID, Handle: c.Handle, Body: c.Body, Author: c.Author, Teammate: c.Teammate, ReplyToUID: c.ReplyToUID, ReplyKind: c.ReplyKind, EditedAt: c.EditedAt, Reply: c.Reply, Backlinks: c.Backlinks, BacklinksTruncated: c.BacklinksTruncated}
 }
 
 func kataPublicationBody(status *KataPublicationStatus) KataPublicationBody {
@@ -107,9 +110,7 @@ func kataPublicationBody(status *KataPublicationStatus) KataPublicationBody {
 		if envelope, err := kata.ReadPublicationEnvelope(issue.Metadata); err == nil {
 			body.Policy = envelope.Policy
 		}
-		for _, comment := range status.Issue.Comments {
-			body.Comments = append(body.Comments, kataComment(comment))
-		}
+		return body
 	}
 	for _, root := range status.Roots {
 		r := KataRoot{Position: root.Position, EndPosition: root.EndPosition, State: root.State}
@@ -136,8 +137,7 @@ func (s *Server) publicationResult(ctx context.Context, id int64, status *KataPu
 	if status.Issue != nil {
 		issue := kataIssueFromPublication(status.Project, status.DestinationID, status.Generation, *status.Issue, &status.Roots)
 		issue.ReplyTeammate = status.ReplyTeammate
-		issue.Roots = body.Roots
-		body.Comments = issue.Comments
+		body.Roots, body.Comments = issue.Roots, issue.Comments
 		body.Issue = &issue
 	}
 	if review := status.Source; review != nil {

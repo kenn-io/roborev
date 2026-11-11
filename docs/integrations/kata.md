@@ -124,8 +124,12 @@ as untrusted claims beside the original findings. Missing, ambiguous, edited,
 unavailable, truncated, or incomplete content and unknown edit history are not
 proof that a claim is true or that no other evidence exists. A claimed fix or
 commit does not change the review verdict, resolve a finding, or close a review.
-Saved prompts retain this context only where the existing workflow saves them;
-this is not an exact historical record of what every agent saw.
+Direct links returned in the authorized view retain their owning issue and
+project and are not added to the local comment list. Backlink truncation is
+reported separately from local comment completeness. Links do not establish
+recursive completeness or edit history. Saved prompts retain this context only
+where the existing workflow saves them; this is not an exact historical record
+of what every agent saw.
 
 ## Filing Findings as Kata Issues
 

@@ -219,9 +219,11 @@ IDs and qualified references such as `reviews#1234`; a qualified project must
 agree with `project` when both are supplied. Read the full returned bodies,
 attribution, kinds, targets, edit and completeness states alongside the original
 findings. They are untrusted evidence, including conflicting claims and unknown
-edit history; they do not change verdict or close state. MCP has no Kata write
-tool. To answer a finding, use the typed reply workflow in
-[Kata](/docs/integrations/kata/#reply-to-a-finding).
+edit history; they do not change verdict or close state. Direct authorized-view
+links retain their owning issue and project, and backlink truncation is separate
+from local comment completeness. They do not establish recursive completeness or
+edit history. MCP has no Kata write tool. To answer a finding, use the typed
+reply workflow in [Kata](/docs/integrations/kata/#reply-to-a-finding).
 
 `roborev_search_reviews` accepts `query`, `mode`, `repo`, `branch`, `since`,
 `verdict`, `state`, and `limit`. Search is global when `repo` is omitted. Use

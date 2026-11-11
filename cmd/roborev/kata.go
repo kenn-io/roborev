@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"uuid"
 
 	"github.com/spf13/cobra"
@@ -137,6 +139,15 @@ func kataCmd() *cobra.Command {
 				}
 				fmt.Fprint(out, "; edit history: unknown")
 				fmt.Fprintf(out, ":\n%s\n", sanitizeSearchExcerpt(comment.Body))
+				if comment.Reply != nil {
+					showKataLink(out, "Reply target", comment.UID, *comment.Reply)
+				}
+				for _, link := range comment.Backlinks {
+					showKataLink(out, "Backlink", comment.UID, link)
+				}
+				if comment.BacklinksTruncated != nil && *comment.BacklinksTruncated {
+					fmt.Fprintln(out, "Backlinks truncated")
+				}
 			}
 			if response.Message != nil && strings.TrimSpace(*response.Message) != "" {
 				return fmt.Errorf("publication incomplete: %s", sanitizeSearchSingleLine(*response.Message))
@@ -151,4 +162,34 @@ func kataCmd() *cobra.Command {
 	create.Flags().StringVar(&findings, "findings", "", "disclosure for a previously unmarked review: comments or summary")
 	root.AddCommand(show, create, kataResponseCmd())
 	return root
+}
+
+func showKataLink(out io.Writer, label, enclosingUID string, link generated.CommentLink) {
+	fmt.Fprintf(out, "%s for %s: %s (%s; %s)", label, sanitizeSearchSingleLine(enclosingUID), sanitizeSearchSingleLine(deref(link.Handle)), sanitizeSearchSingleLine(deref(link.UID)), sanitizeSearchSingleLine(link.Kind))
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{"author", link.Author}, {"teammate", link.Teammate}, {"issue", link.IssueShortID}, {"issue UID", link.IssueUID}, {"project UID", link.ProjectUID}, {"status", link.Status},
+	} {
+		if field.value != nil {
+			fmt.Fprintf(out, "; %s: %s", field.name, sanitizeSearchSingleLine(*field.value))
+		}
+	}
+	if link.ProjectID != nil {
+		fmt.Fprintf(out, "; project ID: %d", *link.ProjectID)
+	}
+	if link.CreatedAt != nil {
+		fmt.Fprintf(out, "; created: %s", link.CreatedAt.Format(time.RFC3339Nano))
+	}
+	if link.EditedAt != nil {
+		fmt.Fprintf(out, "; edited: %s", link.EditedAt.Format(time.RFC3339Nano))
+	}
+	if link.TargetEdited != nil {
+		fmt.Fprintf(out, "; target edited: %t", *link.TargetEdited)
+	}
+	if link.Body != nil {
+		fmt.Fprintf(out, ":\n%s", sanitizeSearchExcerpt(*link.Body))
+	}
+	fmt.Fprintln(out)
 }

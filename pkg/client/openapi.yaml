@@ -989,6 +989,43 @@ components:
         - job_id
         - closed
       type: object
+    CommentLink:
+      additionalProperties: false
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        edited_at:
+          format: date-time
+          type: string
+        handle:
+          type: string
+        issue_short_id:
+          type: string
+        issue_uid:
+          type: string
+        kind:
+          type: string
+        project_id:
+          format: int64
+          type: integer
+        project_uid:
+          type: string
+        status:
+          type: string
+        target_edited:
+          type: boolean
+        teammate:
+          type: string
+        uid:
+          type: string
+      required:
+        - kind
+      type: object
     ComponentHealth:
       additionalProperties: false
       properties:
@@ -2604,6 +2641,12 @@ components:
       properties:
         author:
           type: string
+        backlinks:
+          items:
+            $ref: "#/components/schemas/CommentLink"
+          type: array
+        backlinks_truncated:
+          type: boolean
         body:
           type: string
         edited_at:
@@ -2615,6 +2658,8 @@ components:
           type: string
         lineage:
           type: string
+        reply:
+          $ref: "#/components/schemas/CommentLink"
         reply_kind:
           type: string
         reply_to_uid:
