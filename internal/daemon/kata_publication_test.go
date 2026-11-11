@@ -105,6 +105,17 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 	publisher := newKataPublisher(tc.DB, NewStaticConfig(cfg))
 	_, err = publisher.Publish(t.Context(), job.ID)
 	require.Error(t, err)
+	cfg.Hooks[0].Labels = []string{"changed"}
+	_, err = publisher.Publish(t.Context(), job.ID)
+	require.ErrorContains(t, err, "destination or request changed")
+	cfg.Hooks[0].Labels = nil
+	oldUID := fake.Projects[0].UID
+	fake.Projects[0].UID = "different-project-uid"
+	_, err = publisher.Publish(t.Context(), job.ID)
+	require.ErrorContains(t, err, "destination or request changed")
+	fake.Projects[0].UID = oldUID
+	fake.Token = "rotated-token"
+	cfg.Integrations.Kata.APIKey = "rotated-token"
 	_, err = publisher.Publish(t.Context(), job.ID)
 	require.Error(t, err)
 	status, err := publisher.Publish(t.Context(), job.ID)
