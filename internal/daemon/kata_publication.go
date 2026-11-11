@@ -55,6 +55,8 @@ func (a *kataPreparedAttempt) matches(record *storage.KataPublicationRecord, rev
 		slices.Equal(selection.options.Labels, a.options.Labels) && sameKataPriority(selection.options.Priority, a.options.Priority)
 }
 
+var errKataSelectionChanged = errors.New("kata publication selection changed during write")
+
 type kataPublicationLock struct {
 	ch    chan struct{}
 	users int
@@ -149,7 +151,11 @@ func (p *kataPublisher) current(ctx context.Context, jobID int64, attempt *kataP
 	if record.Marker != nil && (record.Marker.Version != 1 || (record.Marker.State != "pending" && record.Marker.State != "complete") || (record.Marker.ProjectUID == "") != (record.Marker.RequestFingerprint == "") || !sameKataAuthorization(record.Marker.KataPublicationSeed, selection.seed) || record.Marker.DocumentHash != record.DocumentHash) {
 		return nil, nil, nil, nil, zero, nil, errors.New("kata publication authorization changed")
 	}
-	client, name, err := kataSelectionClient(cfg.Integrations.Kata, selection.seed)
+	selection.inputs.credential, err = selection.inputs.connection.ResolveAPIKey()
+	if err != nil {
+		return nil, nil, nil, nil, zero, nil, fmt.Errorf("%w: %w", kata.ErrAuthenticationRequired, err)
+	}
+	client, name, err := kataSelectionClient(selection.inputs.connection, selection.seed)
 	if err != nil {
 		return nil, nil, nil, nil, zero, nil, err
 	}
@@ -223,7 +229,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 				_, err := c.CreatePublicationIssue(ctx, dest, pub)
 				return err
 			})
-			if err != nil {
+			if err != nil && !errors.Is(err, errKataSelectionChanged) {
 				return status, err
 			}
 			client.CloseIdleConnections()
@@ -284,7 +290,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 			_, err := c.CreatePublicationRoot(ctx, dest, issue.Issue.UID, pub, missing)
 			return err
 		})
-		if err != nil {
+		if err != nil && !errors.Is(err, errKataSelectionChanged) {
 			return status, err
 		}
 		client.CloseIdleConnections()
@@ -300,7 +306,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 	if !p.now().Add(kata.DefaultRequestTimeout).Before(deadline) {
 		return errors.New("kata publication window expired")
 	}
-	current, _, _, client, dest, prepared, err := p.current(ctx, jobID, attempt)
+	current, _, selection, client, dest, prepared, err := p.current(ctx, jobID, attempt)
 	if err != nil {
 		return err
 	}
@@ -344,11 +350,20 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		if job.RepoPath != review.Job.RepoPath || job.WorktreePath != review.Job.WorktreePath {
 			return storage.ErrReviewChanged
 		}
-		selection, err := selectKataPublication(ctx, cfg, job, checkout)
+		inputs, err := collectKataSelection(ctx, cfg, job, checkout)
 		if err != nil {
 			return err
 		}
-		if selection == nil || !sameKataAuthorization(selection.seed, locked.Marker.KataPublicationSeed) {
+		if inputs != nil {
+			inputs.credential, err = inputs.connection.ResolveAPIKey()
+			if err != nil {
+				return fmt.Errorf("%w: %w", kata.ErrAuthenticationRequired, err)
+			}
+		}
+		if !selection.inputs.equal(inputs) {
+			return errKataSelectionChanged
+		}
+		if !sameKataAuthorization(selection.seed, locked.Marker.KataPublicationSeed) {
 			return errors.New("kata publication authorization changed")
 		}
 		if selection.resolvedUID != "" && selection.resolvedUID != dest.UID {

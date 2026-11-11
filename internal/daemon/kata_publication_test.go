@@ -628,6 +628,113 @@ func TestKataPreparedAttemptChecksInputs(t *testing.T) {
 			assert.False(t, sent)
 		})
 	}
+	t.Run("mixed selectors resolve outside the write guard", func(t *testing.T) {
+		fake := katafake.New(t)
+		tc := newWorkerTestContext(t, 1)
+		job := tc.createAndClaimJob(t, "mixed-selection", "worker")
+		require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".kata.toml"), []byte("version = 1\n[project]\nname = \"reviews\"\n"), 0o600))
+		binding, err := kata.WorkspaceBinding(t.Context(), tc.TmpDir)
+		require.NoError(t, err)
+		require.NotNil(t, binding.Alias)
+		cfg := kataConnectionConfig(fake)
+		cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}, {Type: "kata", Event: "review.completed", Findings: "comments"}}
+		seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: binding.Project, AliasKind: binding.Alias.Kind, AliasIdentity: binding.Alias.Identity, Policy: "comments"}
+		require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
+		started, release := make(chan struct{}), make(chan struct{})
+		var block atomic.Bool
+		var once sync.Once
+		unblock := func() { once.Do(func() { close(release) }) }
+		t.Cleanup(unblock)
+		fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+			if r.URL.Path != "/api/v1/projects/resolve" {
+				return false
+			}
+			if block.Load() {
+				close(started)
+				<-release
+			}
+			fake.Reply(w, gen.ProjectResolveBody{Project: fake.Projects[0]})
+			return true
+		}
+		p := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+		attempt := &kataPreparedAttempt{}
+		record, review, _, client, project, prepared, err := p.current(t.Context(), job.ID, attempt)
+		require.NoError(t, err)
+		client.CloseIdleConnections()
+		other, err := tc.DB.GetOrCreateRepo(t.TempDir())
+		require.NoError(t, err)
+		block.Store(true)
+		done := make(chan error, 1)
+		finished := make(chan struct{})
+		var sent atomic.Bool
+		go func() {
+			defer close(finished)
+			done <- p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+				sent.Store(true)
+				return nil
+			})
+		}()
+		t.Cleanup(func() { unblock(); <-finished })
+		waitStarted := func() error {
+			select {
+			case <-started:
+				return nil
+			case <-time.After(10 * time.Second): // External fake HTTP request.
+				return errors.New("resolver did not start")
+			}
+		}
+		require.NoError(t, waitStarted())
+		deleted := make(chan error, 1)
+		go func() { deleted <- tc.DB.DeleteRepoContext(context.WithoutCancel(t.Context()), other.ID, true) }()
+		waitDeleted := func() error {
+			select {
+			case err := <-deleted:
+				return err
+			case <-time.After(10 * time.Second): // External SQLite attempt lock.
+				return errors.New("deletion blocked by resolver")
+			}
+		}
+		require.NoError(t, waitDeleted())
+		cfg.Hooks[0].Project = "other"
+		block.Store(false)
+		unblock()
+		require.ErrorIs(t, <-done, errKataSelectionChanged)
+		assert.False(t, sent.Load())
+		// The changed selector is resolved again outside the guard and rejected.
+		_, _, _, _, _, _, err = p.current(t.Context(), job.ID, attempt)
+		require.ErrorContains(t, err, "conflicting")
+		cfg.Hooks[0].Project = "reviews"
+		calls := 0
+		p.cfg = kataConfigFunc(func() *config.Config {
+			calls++
+			if calls == 3 {
+				cfg.Hooks[0].Project = "other"
+			}
+			return cfg
+		})
+		_, err = p.run(t.Context(), job.ID)
+		require.ErrorContains(t, err, "conflicting")
+		for _, request := range fake.Requests() {
+			if strings.Contains(request.Path, "/issues") {
+				assert.NotEqual(t, http.MethodPost, request.Method, "stale selection must not write")
+			}
+		}
+		cfg.Hooks[0].Project = "reviews"
+		p.cfg = NewStaticConfig(cfg)
+		guardedRepo, err := tc.DB.GetOrCreateRepo(t.TempDir())
+		require.NoError(t, err)
+		synctest.Test(t, func(t *testing.T) {
+			deleted := make(chan error, 1)
+			err := p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+				go func() { deleted <- tc.DB.DeleteRepoContext(t.Context(), guardedRepo.ID, true) }()
+				synctest.Wait()
+				assert.Empty(t, deleted, "exclusive mutation must wait for the protected send")
+				return nil
+			})
+			require.NoError(t, err)
+			require.NoError(t, <-deleted)
+		})
+	})
 }
 
 func TestKataPublicationPostDeadlineBoundary(t *testing.T) {

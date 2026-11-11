@@ -17,6 +17,7 @@ type kataSelection struct {
 	seed        storage.KataPublicationSeed
 	options     kata.PublicationOptions
 	resolvedUID string // populated only when different selections required comparison
+	inputs      *kataSelectionInputs
 }
 
 // sameKataAuthorization treats a registered alias as the selector; its project
@@ -27,9 +28,32 @@ func sameKataAuthorization(a, b storage.KataPublicationSeed) bool {
 		(a.AliasKind != "" || a.Project == b.Project)
 }
 
-// Single or identical selections stay offline; distinct selections need a
-// server identity check before they can authorize one destination.
-func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage.ReviewJob, checkout string) (*kataSelection, error) {
+// kataSelectionInputs is an invocation-local snapshot of all effective hooks
+// and connection settings, not a cache of remote observations.
+type kataSelectionInputs struct {
+	connection config.KataIntegrationConfig
+	credential string
+	candidates []kataSelection
+}
+
+func (a *kataSelectionInputs) equal(b *kataSelectionInputs) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.connection != b.connection || a.credential != b.credential || len(a.candidates) != len(b.candidates) {
+		return false
+	}
+	for i, x := range a.candidates {
+		y := b.candidates[i]
+		if !sameKataAuthorization(x.seed, y.seed) || !slices.Equal(x.options.Labels, y.options.Labels) || !sameKataPriority(x.options.Priority, y.options.Priority) {
+			return false
+		}
+	}
+	return true
+}
+
+// collectKataSelection reads only local inputs; it never contacts Kata.
+func collectKataSelection(ctx context.Context, cfg *config.Config, job *storage.ReviewJob, checkout string) (*kataSelectionInputs, error) {
 	if cfg == nil || !cfg.Integrations.Kata.Enabled || job.IsCIReview() || job.PanelRole == storage.PanelRoleMember || job.Source == storage.JobSourceRebuttal {
 		return nil, nil
 	}
@@ -42,11 +66,12 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := kata.NormalizePublicationEndpoint(cfg.Integrations.Kata.Endpoint)
+	connection := cfg.Integrations.Kata
+	endpoint, err := kata.NormalizePublicationEndpoint(connection.Endpoint)
 	if err != nil {
 		return nil, err
 	}
-	var selected *kataSelection
+	inputs := &kataSelectionInputs{connection: connection}
 	for _, hook := range hooks {
 		if hook.Type != "kata" || hook.Findings == "" || !matchEvent(hook.Event, "review.completed") || !matchBranch(hook.Branches, job.HookBranch()) {
 			continue
@@ -55,6 +80,9 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 			return nil, errors.New("invalid Kata findings policy")
 		}
 		candidate := kataSelection{seed: storage.KataPublicationSeed{Endpoint: endpoint, Project: strings.TrimSpace(hook.Project), Policy: hook.Findings}, options: kata.PublicationOptions{Labels: append([]string{kata.RoborevLabel}, hook.Labels...), Priority: hook.Priority}}
+		if hook.Priority != nil {
+			candidate.options.Priority = new(*hook.Priority)
+		}
 		slices.Sort(candidate.options.Labels)
 		candidate.options.Labels = slices.Compact(candidate.options.Labels)
 		if candidate.seed.Project == "" {
@@ -73,6 +101,20 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 		if candidate.seed.Project == "" && candidate.seed.AliasKind == "" {
 			return nil, errors.New("no Kata project selected")
 		}
+		inputs.candidates = append(inputs.candidates, candidate)
+	}
+	return inputs, nil
+}
+
+// Single or identical selections stay offline; distinct selections need a
+// server identity check before they can authorize one destination.
+func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage.ReviewJob, checkout string) (*kataSelection, error) {
+	inputs, err := collectKataSelection(ctx, cfg, job, checkout)
+	if err != nil || inputs == nil {
+		return nil, err
+	}
+	var selected *kataSelection
+	for _, candidate := range inputs.candidates {
 		if selected == nil {
 			selected = &candidate
 			continue
@@ -88,12 +130,12 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 		}
 		uid := selected.resolvedUID
 		if uid == "" {
-			uid, err = resolveKataSelection(ctx, cfg.Integrations.Kata, selected.seed)
+			uid, err = resolveKataSelection(ctx, inputs.connection, selected.seed)
 			if err != nil {
 				return nil, fmt.Errorf("resolve Kata publication hook: %w", err)
 			}
 		}
-		otherUID, err := resolveKataSelection(ctx, cfg.Integrations.Kata, candidate.seed)
+		otherUID, err := resolveKataSelection(ctx, inputs.connection, candidate.seed)
 		if err != nil {
 			return nil, fmt.Errorf("resolve Kata publication hook: %w", err)
 		}
@@ -106,6 +148,9 @@ func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage
 			selected = &candidate
 		}
 		selected.resolvedUID = uid
+	}
+	if selected != nil {
+		selected.inputs = inputs
 	}
 	return selected, nil
 }
