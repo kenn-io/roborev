@@ -652,8 +652,8 @@ Reasoning is unaffected by this block for reviews; it follows `review_reasoning`
 
 ### Binary Evidence
 
-Set `[review] binary_evidence = true` in global or repository configuration
-to include committed changed binary files in built-in and custom reviews. It
+Set `[review] binary_evidence = true` in global or repository configuration to
+include committed changed binary files in built-in and custom reviews. It
 defaults to false; the repository setting overrides the global setting. A custom
 review type can override it. Built-in reviews of uncommitted changes omit the
 evidence. See [Binary evidence](advanced/custom-review-types.md#binary-evidence)

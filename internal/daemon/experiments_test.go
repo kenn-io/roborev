@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +26,7 @@ func TestEnqueueSingleReviewPersistsExperiment(t *testing.T) {
 			Config: map[string]any{
 				"reuse_review_session": true,
 				"review_min_severity":  "high",
+				"review":               map[string]any{"binary_evidence": true},
 			},
 		},
 	}
@@ -53,6 +55,16 @@ func TestEnqueueSingleReviewPersistsExperiment(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, job.Branch, stored.Branch)
 	assert.Equal(t, job.Experiments, stored.Experiments)
+	assignment, err := db.GetExperimentAssignmentInputForJobUUID(*stored.UUID)
+	require.NoError(t, err)
+	require.NotNil(t, assignment)
+	var plan experimentJobPlan
+	require.NoError(t, json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &plan))
+	assert.JSONEq(t, stored.PanelMemberConfigJSON, plan.PanelMemberConfigJSON)
+	require.NoError(t, applyFrozenExperimentSettings(stored, assignment))
+	settings, err := reviewJobSettings(stored, repo.Path(), server.configWatcher.Config())
+	require.NoError(t, err)
+	assert.True(t, settings.BinaryEvidence)
 
 	repo.CommitFile("review.go", "package review\n\nfunc changed() {}\n", "change review")
 	req = testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{

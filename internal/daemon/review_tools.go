@@ -27,7 +27,8 @@ func currentReviewTools(job storage.ReviewJob, repoCfg *config.RepoConfig, cfg *
 
 // reviewJobSettings returns the settings frozen in a job's member config, so
 // queued jobs and reruns keep the settings they were enqueued with. Jobs
-// without frozen settings use their review type's current settings.
+// without frozen settings use their review type's current settings, except
+// legacy prebuilt CI jobs, which did not load config for built-in types.
 func reviewJobSettings(job *storage.ReviewJob, configRepoPath string, cfg *config.Config) (config.ReviewSettings, error) {
 	var settings config.ReviewSettings
 	if !job.IsReviewJob() {
@@ -52,7 +53,8 @@ func reviewJobSettings(job *storage.ReviewJob, configRepoPath string, cfg *confi
 		return settings, err
 	}
 	if job.IsGoalReviewJob() || job.Source == storage.JobSourceRebuttal ||
-		(job.IsDirtyJob() && config.IsBuiltInReviewType(job.ReviewType)) {
+		(config.IsBuiltInReviewType(job.ReviewType) &&
+			(job.IsDirtyJob() || (job.IsCIReview() && job.PromptPrebuilt && job.Prompt != ""))) {
 		return settings, nil
 	}
 	var repoCfg *config.RepoConfig

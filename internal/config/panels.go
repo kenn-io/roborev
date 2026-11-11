@@ -52,7 +52,7 @@ type PanelSpec struct {
 
 // ReviewConfig holds the [review] table: panel selection defaults plus the
 // named subagent and panel maps. Present on both Config (global) and
-// RepoConfig (per-repo); MergeReviewConfig combines them.
+// RepoConfig (per-repo). ResolveReviewSettings handles binary evidence.
 type ReviewConfig struct {
 	BinaryEvidence *bool                     `toml:"binary_evidence" comment:"Save committed changed binary files for reviewers to read."`
 	DefaultPanel   string                    `toml:"default_panel"`
@@ -67,19 +67,11 @@ type ReviewConfig struct {
 // keys; DefaultPanel and HookPanel are repo-over-global. Inputs are not mutated.
 func MergeReviewConfig(repo, global ReviewConfig) ReviewConfig {
 	merged := ReviewConfig{
-		BinaryEvidence: repo.BinaryEvidence,
-		DefaultPanel:   resolve("", repo.DefaultPanel, global.DefaultPanel),
-		HookPanel:      resolve("", repo.HookPanel, global.HookPanel),
-		Types:          make(map[string]ReviewTypeSpec, len(global.Types)+len(repo.Types)),
-		Subagents:      make(map[string]SubagentSpec, len(global.Subagents)+len(repo.Subagents)),
-		Panels:         make(map[string]PanelSpec, len(global.Panels)+len(repo.Panels)),
-	}
-	if merged.BinaryEvidence == nil {
-		merged.BinaryEvidence = global.BinaryEvidence
-	}
-	if merged.BinaryEvidence != nil {
-		value := *merged.BinaryEvidence
-		merged.BinaryEvidence = &value
+		DefaultPanel: resolve("", repo.DefaultPanel, global.DefaultPanel),
+		HookPanel:    resolve("", repo.HookPanel, global.HookPanel),
+		Types:        make(map[string]ReviewTypeSpec, len(global.Types)+len(repo.Types)),
+		Subagents:    make(map[string]SubagentSpec, len(global.Subagents)+len(repo.Subagents)),
+		Panels:       make(map[string]PanelSpec, len(global.Panels)+len(repo.Panels)),
 	}
 	for name, spec := range global.Types {
 		merged.Types[name] = spec.Clone()

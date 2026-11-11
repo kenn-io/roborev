@@ -81,8 +81,8 @@ reviews access to changed binary files, set this in global or repository config:
 binary_evidence = true
 ```
 
-The setting defaults to false. A repository value overrides the global value.
-A custom type can override the shared setting, including with `false`:
+The setting defaults to false. A repository value overrides the global value. A
+custom type can override the shared setting, including with `false`:
 
 ```toml
 [review.types.exhibits]
@@ -111,9 +111,9 @@ that matches it gets no copy.
 
 Built-in reviews of uncommitted changes still work with the shared setting, but
 receive no binary evidence. Custom dirty reviews fail when their resolved
-setting enables evidence. Keep `snapshot_dir` in `.gitignore`; `roborev init` adds it.
-Keep committed rubrics outside `snapshot_dir`, because roborev will not write
-snapshots into a directory that holds tracked files.
+setting enables evidence. Keep `snapshot_dir` in `.gitignore`; `roborev init`
+adds it. Keep committed rubrics outside `snapshot_dir`, because roborev will not
+write snapshots into a directory that holds tracked files.
 
 ## Paths and includes
 

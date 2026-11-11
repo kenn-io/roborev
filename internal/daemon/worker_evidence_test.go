@@ -16,36 +16,19 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-const binaryEvidenceTypesConfig = `[review.types.exhibits]
+const binaryEvidenceTypesConfig = `[review]
+binary_evidence = true
+
+[review.types.exhibits]
 template = "rubric.md"
 binary_evidence = true
 
 [review.types.plain]
 template = "rubric.md"
+binary_evidence = false
 `
 
-func TestProcessJobBinaryEvidenceBuiltIn(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	require.NoError(t, os.WriteFile(filepath.Join(tc.GitRepo.GitDir, "info", "attributes"), []byte("*.pdf -diff\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("[review]\nbinary_evidence = true\n"), 0o644))
-	sha := tc.GitRepo.CommitFile("exhibit.pdf", "%PDF\x00committed", "add exhibit")
-	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
-	require.NoError(t, err)
-	agent.RegisterForTest(t, &structuredWorkerTestAgent{
-		name:     "builtin-evidence",
-		result:   jsontext.Value(`{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`),
-		onPrompt: func(_, prompt string) { assert.Contains(t, prompt, "Committed review evidence") },
-	})
-	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "builtin-evidence", ReviewType: "default"})
-	require.NoError(t, err)
-	claimed, err := tc.DB.ClaimJob(testWorkerID)
-	require.NoError(t, err)
-	require.Equal(t, job.ID, claimed.ID)
-	tc.Pool.processJob(testWorkerID, claimed)
-	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-}
-
-func TestProcessJobBinaryEvidenceOnlyForEnablingType(t *testing.T) {
+func TestProcessJobBinaryEvidenceSettings(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	// Git for Windows routes *.pdf through a text converter that rejects these
 	// synthetic bytes; review the fixture as plain binary on every host.
@@ -62,7 +45,7 @@ func TestProcessJobBinaryEvidenceOnlyForEnablingType(t *testing.T) {
 	for _, tt := range []struct {
 		reviewType string
 		evidence   bool
-	}{{reviewType: "exhibits", evidence: true}, {reviewType: "plain"}} {
+	}{{reviewType: "default", evidence: true}, {reviewType: "exhibits", evidence: true}, {reviewType: "plain"}} {
 		t.Run(tt.reviewType, func(t *testing.T) {
 			agentName := "evidence-" + tt.reviewType
 			var saved string
