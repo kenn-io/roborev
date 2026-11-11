@@ -237,7 +237,7 @@ func readAPIError(resp *http.Response) error {
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("%w: read error response", ErrUnreachable)
+		return apiErr
 	}
 	if json.Unmarshal(data, &envelope) == nil {
 		apiErr.Code = sanitizeServerText(envelope.Error.Code)
