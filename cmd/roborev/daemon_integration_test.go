@@ -23,7 +23,6 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -185,7 +184,6 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	// Use "." since we are in cmd/roborev package. The built daemon runs in a
 	// subprocess, so compile kit's test telemetry disable tag into that binary.
 	buildCmd := exec.CommandContext(t.Context(), "go", "build", "-o", binPath, ".")
-	buildCmd.Env = testenv.UserEnv()
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -363,7 +361,6 @@ func TestDaemonLifecycleEndToEnd(t *testing.T) {
 	// The built daemon runs in a subprocess, so compile kit's test telemetry
 	// disable tag into that binary.
 	buildCmd := exec.CommandContext(t.Context(), "go", "build", "-o", binPath, ".")
-	buildCmd.Env = testenv.UserEnv()
 	out, err := buildCmd.CombinedOutput()
 	require.NoError(t, err, "failed to build test binary: %s", out)
 
@@ -531,7 +528,7 @@ func buildVersionedUpdateDaemon(ctx context.Context, dir, name, version string) 
 		"-ldflags", "-X go.kenn.io/roborev/internal/version.Version="+version,
 		"-o", path, ".",
 	)
-	cmd.Env = append(testenv.UserEnv(), "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("build %s daemon: %w\n%s", version, err, out)
