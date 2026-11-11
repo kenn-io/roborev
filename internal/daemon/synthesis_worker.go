@@ -144,7 +144,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 		return
 	}
 	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, neutral, instructions)
-	doc, resolvedAgent, capturedSession, runErr := wp.runSynthesisAgent(
+	doc, resolvedAgent, tokenUsage, runErr := wp.runSynthesisAgent(
 		ctx, workerID, job, succeeded, prompt,
 	)
 	if runErr != nil {
@@ -157,9 +157,9 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	}
 	result.Agent = resolvedAgent
 	wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{
-		review:          result,
-		capturedSession: capturedSession,
-		captureUsage:    true,
+		review:       result,
+		tokenUsage:   tokenUsage,
+		captureUsage: true,
 	}, doc, check)
 }
 
@@ -331,16 +331,16 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 	}
 }
 
-// synthesisResult carries what a synthesis attempt produced. capturedSession
+// synthesisResult carries what a synthesis attempt produced. tokenUsage
 // and captureUsage are set only when a synthesis agent actually ran: usage
 // capture must happen after the terminal write but before the completion
 // broadcast so a CI cost footer never renders an unpriced synthesis row.
 type synthesisResult struct {
 	// Keep the review and its effective policy together across completion.
-	review          reviewpkg.ReviewResult
-	capturedSession string
-	captureUsage    bool
-	checkerUsage    *tokens.Usage
+	review       reviewpkg.ReviewResult
+	tokenUsage   sessionTokenUsage
+	captureUsage bool
+	checkerUsage *tokens.Usage
 }
 
 // completeSynthesisContext stores the synthesis review, guards against the
@@ -351,9 +351,10 @@ func (wp *WorkerPool) completeSynthesisContext(
 ) {
 	var tokenUsage *sessionTokenUsage
 	if res.captureUsage || res.checkerUsage != nil {
-		collected := wp.collectTokenUsageForSession(
-			context.Background(), workerID, job, res.capturedSession,
-		)
+		collected := res.tokenUsage
+		if !collected.allowSessionless {
+			collected = wp.collectTokenUsageForSession(context.Background(), workerID, job, collected.capturedSession)
+		}
 		collected.withUnpricedPhase(res.captureUsage, res.checkerUsage)
 		tokenUsage = &collected
 	}
@@ -406,17 +407,18 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		workerID, job.ID, job.RepoName, job.PanelName)
 
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.completed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		JobUUID:  job.UUID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    agentName,
-		Verdict:  string(verdict),
-		Findings: output,
+		Type:              "review.completed",
+		TS:                time.Now(),
+		JobID:             job.ID,
+		JobUUID:           job.UUID,
+		Repo:              job.RepoPath,
+		RepoName:          job.RepoName,
+		SHA:               job.GitRef,
+		Branch:            job.HookBranch(),
+		Agent:             agentName,
+		SuppressRepoHooks: hasSuppliedReviewSettings(job),
+		Verdict:           string(verdict),
+		Findings:          output,
 	})
 }
 
@@ -430,31 +432,46 @@ func (wp *WorkerPool) completeSynthesisLocked(
 func (wp *WorkerPool) runSynthesisAgent(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 	reviews []reviewpkg.ReviewResult, prompt string,
-) (reviewpkg.SynthesisDocument, string, string, error) {
+) (reviewpkg.SynthesisDocument, string, sessionTokenUsage, error) {
 	if saved, err := wp.db.SaveJobPromptForAttempt(job, workerID, prompt); err != nil {
 		log.Printf("[%s] Error saving synthesis prompt for job %d: %v", workerID, job.ID, err)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save synthesis prompt: %v", err))
-		return reviewpkg.SynthesisDocument{}, "", "", err
+		return reviewpkg.SynthesisDocument{}, "", sessionTokenUsage{}, err
 	} else if !saved {
-		return reviewpkg.SynthesisDocument{}, "", "", errSynthesisCanceled
+		return reviewpkg.SynthesisDocument{}, "", sessionTokenUsage{}, errSynthesisCanceled
 	}
 
 	a, agentName, err := wp.configureSynthesisAgentContext(ctx, workerID, job)
 	if err != nil {
-		return reviewpkg.SynthesisDocument{}, "", "", err
+		return reviewpkg.SynthesisDocument{}, "", sessionTokenUsage{}, err
 	}
 
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.started",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    agentName,
+		Type:              "review.started",
+		TS:                time.Now(),
+		JobID:             job.ID,
+		Repo:              job.RepoPath,
+		RepoName:          job.RepoName,
+		SHA:               job.GitRef,
+		Branch:            job.HookBranch(),
+		Agent:             agentName,
+		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 	})
 
+	cfg := wp.cfgGetter.Config()
+	var tools *config.ReviewToolPolicy
+	if hasSuppliedReviewSettings(job) {
+		snapshot, err := readSuppliedReviewSnapshot(job)
+		if err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, err.Error())
+			return reviewpkg.SynthesisDocument{}, agentName, sessionTokenUsage{}, err
+		}
+		tools = snapshot.Tools
+	}
+	// Strict Claude does not save a provider session. Capture only this
+	// invocation's stream, independently of the best-effort shared job log.
+	sessionless := tools != nil && agentName == "claude-code"
+	var emitted invocationOutput
 	normalizer := GetNormalizer(agentName)
 	outputWriter := wp.outputBuffers.Writer(job.ID, normalizer)
 	defer outputWriter.Flush()
@@ -465,23 +482,19 @@ func (wp *WorkerPool) runSynthesisAgent(
 		}
 	}()
 	agentOutput := io.MultiWriter(jobLog, outputWriter)
+	if sessionless {
+		agentOutput = io.MultiWriter(&emitted, agentOutput)
+	}
 	sessionWriter := agent.NewSessionCaptureWriter(agentOutput, func(sessionID string) {
+		if sessionless {
+			return
+		}
 		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for synthesis job %d: %v", workerID, job.ID, err)
 		}
 	})
 	agentOutput = sessionWriter
 
-	cfg := wp.cfgGetter.Config()
-	var tools *config.ReviewToolPolicy
-	if hasSuppliedReviewSettings(job) {
-		snapshot, err := readSuppliedReviewSnapshot(job)
-		if err != nil {
-			wp.failOrRetryContext(ctx, workerID, job, agentName, err.Error())
-			return reviewpkg.SynthesisDocument{}, agentName, "", err
-		}
-		tools = snapshot.Tools
-	}
 	doc, err := reviewpkg.RunSynthesisAgent(ctx, a, reviews, prompt, job.MinSeverity, agentOutput, reviewpkg.SynthesisHooks{
 		ConfigRepoPath:   resolveEffectiveRepoPath(workerID, job),
 		GlobalConfig:     cfg,
@@ -516,23 +529,42 @@ func (wp *WorkerPool) runSynthesisAgent(
 		},
 	})
 	sessionWriter.Flush()
-	if sessionID := sessionWriter.SessionID(); sessionID != "" {
+	if sessionID := sessionWriter.SessionID(); sessionID != "" && !sessionless {
 		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
 			log.Printf("[%s] Error persisting session ID for synthesis job %d: %v", workerID, job.ID, saveErr)
+		}
+	}
+	collected := sessionTokenUsage{capturedSession: sessionWriter.SessionID()}
+	if sessionless {
+		usage, usageErr := tokens.ParseSchemaUsage(agentName, strings.NewReader(emitted.String()))
+		if usageErr != nil {
+			log.Printf("[%s] read synthesis usage for job %d: %v", workerID, job.ID, usageErr)
+		}
+		if usage != nil {
+			// The session is disposable; there is no later provider lookup.
+			usage.ThreadID = ""
+			usage.ProviderSessionIDs = nil
+			usage.ExpectedProviderSessions = 0
+		}
+		collected = sessionTokenUsage{logUsage: usage, allowSessionless: true}
+		if err != nil {
+			// Failure/cancel transitions below run first. The attempt fence prevents
+			// this usage from attaching to a retry or a newly claimed attempt.
+			defer wp.storeTokenUsageForSession(workerID, job, collected)
 		}
 	}
 	if err != nil {
 		if checkoutErr, ok := errors.AsType[*reviewpkg.SynthesisCheckoutError](err); ok {
 			wp.failOrRetryContext(ctx, workerID, job, agentName, checkoutErr.Error())
-			return reviewpkg.SynthesisDocument{}, agentName, "", checkoutErr.Err
+			return reviewpkg.SynthesisDocument{}, agentName, sessionTokenUsage{}, checkoutErr.Err
 		}
 		if errors.Is(ctx.Err(), context.Canceled) {
 			if wp.handleUpdateInterruption(ctx, workerID, job) {
-				return reviewpkg.SynthesisDocument{}, agentName, "", errSynthesisCanceled
+				return reviewpkg.SynthesisDocument{}, agentName, sessionTokenUsage{}, errSynthesisCanceled
 			}
 			// A user cancellation is already terminal. Don't fail it.
 			log.Printf("[%s] Synthesis job %d canceled during agent run", workerID, job.ID)
-			return reviewpkg.SynthesisDocument{}, agentName, "", errSynthesisCanceled
+			return reviewpkg.SynthesisDocument{}, agentName, sessionTokenUsage{}, errSynthesisCanceled
 		}
 		if noVerdict, ok := errors.AsType[*reviewpkg.NoVerdictError](err); ok {
 			// Same code and same failover as a review that produced no
@@ -540,15 +572,15 @@ func (wp *WorkerPool) runSynthesisAgent(
 			wp.failoverOrFailNonRetryableAgentContext(
 				ctx, workerID, job, agentName, reviewpkg.NoVerdictMessage(noVerdict),
 			)
-			return reviewpkg.SynthesisDocument{}, agentName, sessionWriter.SessionID(), err
+			return reviewpkg.SynthesisDocument{}, agentName, collected, err
 		}
 		wp.failOrRetryAgentContext(ctx, workerID, job, agentName, fmt.Sprintf("agent: %v", err))
-		return reviewpkg.SynthesisDocument{}, agentName, sessionWriter.SessionID(), err
+		return reviewpkg.SynthesisDocument{}, agentName, collected, err
 	}
 	if wp.handleUpdateInterruption(ctx, workerID, job) {
-		return reviewpkg.SynthesisDocument{}, agentName, "", errSynthesisCanceled
+		return reviewpkg.SynthesisDocument{}, agentName, sessionTokenUsage{}, errSynthesisCanceled
 	}
-	return doc, agentName, sessionWriter.SessionID(), nil
+	return doc, agentName, collected, nil
 }
 
 // configureSynthesisAgent resolves and configures the read-only synthesis agent,

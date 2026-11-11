@@ -106,18 +106,21 @@ discussion context the agent needs. All supplied members vote in synthesis.
 Each member can also set `model`, `provider`, `reasoning`, `review_type`, and
 `min_severity`. Synthesis accepts `model`, `provider`, `reasoning`,
 `instructions`, `tools`, `backup_agent`, and `backup_model`. Omitted execution
-choices resolve from the daemon's configuration at enqueue time. Empty backup
-choices stay empty; local backup settings cannot fill them. A supplied synthesis
-tool policy must be supported by both its primary and backup agents, just as for
-members.
+choices resolve from the daemon's review configuration at enqueue time: members
+use their `review_type`, and synthesis uses the default review type's model and
+reasoning, not `synthesis_model` or `synthesis_reasoning`. Send explicit values
+to choose them independently of those defaults. Empty backup choices stay empty;
+local backup settings cannot fill them. A supplied synthesis tool policy must be
+supported by both its primary and backup agents, just as for members.
 
 RoboRev resolves the commit or range once for the whole panel. Members and
-synthesis run in fresh checkouts of that head. The panel uses the supplied
+synthesis run in fresh checkouts of that head. Branch labels are inferred from
+that head; ambiguous branches remain unlabeled. The panel uses the supplied
 policy even if `.roborev.toml` changes or becomes invalid. It does not select
-local panel defaults, experiments, automatic design reviews, or reusable
-sessions. Invalid member or synthesis settings reject the request before any
-jobs are queued. Each successful enqueue creates a new panel; enqueue requests
-do not have replay receipts.
+local panel defaults, experiments, automatic design reviews, reusable sessions,
+or repository hooks. Global daemon hooks still run. Invalid member or synthesis
+settings reject the request before any jobs are queued. Each successful enqueue
+creates a new panel; enqueue requests do not have replay receipts.
 
 Retries preserve each member's prompt and settings. Whole-panel reruns create
 new jobs with the original choices, including the primary agent after backup
@@ -130,5 +133,7 @@ retained findings completes without a synthesis call.
 Member calls appear in
 [invocation history](supplied-review-prompts.md#reading-invocation-history).
 Synthesis results use the review endpoint; synthesis calls do not have
-invocation history. Supplied policy does not sandbox native agent configuration.
+invocation history. Restricted Claude synthesis records emitted tokens and cost
+in the job and spend summaries, including terminal failures, without looking up
+an unsaved session. Supplied policy does not sandbox native agent configuration.
 The daemon still owns credentials, runtime controls, retries, and cooldowns.

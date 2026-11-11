@@ -1454,16 +1454,17 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Broadcast started event
 	wp.broadcaster.Broadcast(Event{
-		Type:          "review.started",
-		TS:            time.Now(),
-		JobID:         job.ID,
-		Repo:          job.RepoPath,
-		RepoName:      job.RepoName,
-		SHA:           job.GitRef,
-		Branch:        job.HookBranch(),
-		Agent:         agentName,
-		WorktreePath:  eventWorktreePath,
-		SuppressHooks: suppressJobHooks(job),
+		Type:              "review.started",
+		TS:                time.Now(),
+		JobID:             job.ID,
+		Repo:              job.RepoPath,
+		RepoName:          job.RepoName,
+		SHA:               job.GitRef,
+		Branch:            job.HookBranch(),
+		Agent:             agentName,
+		WorktreePath:      eventWorktreePath,
+		SuppressHooks:     suppressJobHooks(job),
+		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 	})
 
 	// Create output writer for tail command
@@ -1863,19 +1864,20 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			eventVerdict = ""
 		}
 		wp.broadcaster.Broadcast(Event{
-			Type:          "review.completed",
-			TS:            time.Now(),
-			JobID:         job.ID,
-			JobUUID:       job.UUID,
-			Repo:          job.RepoPath,
-			RepoName:      job.RepoName,
-			SHA:           job.GitRef,
-			Branch:        job.HookBranch(),
-			Agent:         agentName,
-			Verdict:       eventVerdict,
-			Findings:      output,
-			WorktreePath:  eventWorktreePath,
-			SuppressHooks: suppressJobHooks(job),
+			Type:              "review.completed",
+			TS:                time.Now(),
+			JobID:             job.ID,
+			JobUUID:           job.UUID,
+			Repo:              job.RepoPath,
+			RepoName:          job.RepoName,
+			SHA:               job.GitRef,
+			Branch:            job.HookBranch(),
+			Agent:             agentName,
+			Verdict:           eventVerdict,
+			Findings:          output,
+			WorktreePath:      eventWorktreePath,
+			SuppressHooks:     suppressJobHooks(job),
+			SuppressRepoHooks: hasSuppliedReviewSettings(job),
 		})
 	})
 	if completed && wp.captureSetupFinished != nil {
@@ -1890,16 +1892,17 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 		log.Printf("[%s] Job %d was canceled", workerID, job.ID)
 		if !wp.cancellationEventOwnedByCaller(job.ID) {
 			wp.broadcaster.Broadcast(Event{
-				Type:          jobEventType(job, "canceled"),
-				TS:            time.Now(),
-				JobID:         job.ID,
-				Repo:          job.RepoPath,
-				RepoName:      job.RepoName,
-				SHA:           job.GitRef,
-				Branch:        job.HookBranch(),
-				Agent:         agentName,
-				WorktreePath:  eventWorktreePath,
-				SuppressHooks: suppressJobHooks(job),
+				Type:              jobEventType(job, "canceled"),
+				TS:                time.Now(),
+				JobID:             job.ID,
+				Repo:              job.RepoPath,
+				RepoName:          job.RepoName,
+				SHA:               job.GitRef,
+				Branch:            job.HookBranch(),
+				Agent:             agentName,
+				WorktreePath:      eventWorktreePath,
+				SuppressHooks:     suppressJobHooks(job),
+				SuppressRepoHooks: hasSuppliedReviewSettings(job),
 			})
 		}
 		// Member canceled is terminal — release the panel synthesis.
@@ -2380,18 +2383,19 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		}
 	}
 	wp.broadcaster.Broadcast(Event{
-		Type:          jobEventType(job, "failed"),
-		TS:            time.Now(),
-		JobID:         job.ID,
-		JobUUID:       job.UUID,
-		Repo:          job.RepoPath,
-		RepoName:      job.RepoName,
-		SHA:           job.GitRef,
-		Branch:        job.HookBranch(),
-		Agent:         agentName,
-		Error:         errorMsg,
-		WorktreePath:  wtPath,
-		SuppressHooks: suppressJobHooks(job),
+		Type:              jobEventType(job, "failed"),
+		TS:                time.Now(),
+		JobID:             job.ID,
+		JobUUID:           job.UUID,
+		Repo:              job.RepoPath,
+		RepoName:          job.RepoName,
+		SHA:               job.GitRef,
+		Branch:            job.HookBranch(),
+		Agent:             agentName,
+		Error:             errorMsg,
+		WorktreePath:      wtPath,
+		SuppressHooks:     suppressJobHooks(job),
+		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 	})
 	// broadcastFailed is the terminal-failure chokepoint (never reached on
 	// retry/failover), so a member that finally fails releases its panel's

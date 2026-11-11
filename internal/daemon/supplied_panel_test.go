@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +24,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/tokens"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
@@ -30,8 +34,24 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
 	base := repo.CommitFile("file.txt", "before\n", "base")
-	repo.CommitFile(".roborev.toml", "exclude_patterns = ['file.txt']\nreview_min_severity = 'high'\nmodel = 'checkout-model'\nmax_prompt_size = 1\nsnapshot_dir = 'checkout-snapshots'\n", "policy")
+	hookDir := t.TempDir()
+	cfg := config.DefaultConfig()
+	repoHooks := ""
+	for _, event := range []string{"started", "completed"} {
+		cfg.Hooks = append(cfg.Hooks, config.HookConfig{Event: "review." + event, Command: touchCmd(filepath.Join(hookDir, "global-{job_id}-"+event))})
+		repoHooks += fmt.Sprintf("\n[[hooks]]\nevent = %q\ncommand = %q\n", "review."+event, touchCmd(filepath.Join(hookDir, "repo-{job_id}-"+event)))
+	}
+	runner := NewHookRunner(NewStaticConfig(cfg), server.workerPool.broadcaster, nil)
+	t.Cleanup(runner.Stop)
+	var executed []int64
+	repoPolicy := "exclude_patterns = ['file.txt']\nreview_min_severity = 'high'\nmodel = 'checkout-model'\nmax_prompt_size = 1\nsnapshot_dir = 'checkout-snapshots'\n" + repoHooks
+	repo.CommitFile(".roborev.toml", repoPolicy, "policy")
 	head := repo.CommitFile("file.txt", "VISIBLE_CHANGE\n", "target")
+	repo.Run("branch", "-m", "review-target")
+	repo.Run("checkout", "-b", "unrelated-checkout", base)
+	repo.CommitFile("other.txt", "unrelated", "unrelated")
+	// Hook dispatch reads the current checkout, not the frozen review checkout.
+	repo.CommitFile(".roborev.toml", repoPolicy, "checkout policy")
 	ref := base + ".." + head
 	memberCalls, synthesisCalls := 0, 0
 	memberPrompts := make(map[string]int)
@@ -84,6 +104,8 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 			require.NotNil(t, job)
 			require.Equal(t, storage.PanelRoleMember, job.PanelRole)
 			assert.Equal(t, "caller-model", job.Model)
+			assert.Equal(t, "review-target", job.Branch)
+			executed = append(executed, job.ID)
 			server.workerPool.processJob(testWorkerID, job)
 			finished, err := db.GetJobByID(job.ID)
 			require.NoError(t, err)
@@ -106,11 +128,21 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, job)
 		assert.Equal(t, "synthesis-model", job.Model)
+		assert.Equal(t, "review-target", job.Branch)
+		executed = append(executed, job.ID)
 		server.workerPool.processJob(testWorkerID, job)
 		finished, err := db.GetJobByID(job.ID)
 		require.NoError(t, err)
 		require.Equal(t, storage.JobStatusDone, finished.Status, finished.Error)
+		runner.WaitUntilIdle()
+		server.hookRunner.WaitUntilIdle()
 		if run == 0 {
+			for _, id := range executed {
+				for _, event := range []string{"started", "completed"} {
+					assert.FileExists(t, filepath.Join(hookDir, fmt.Sprintf("global-%d-%s", id, event)))
+					assert.NoFileExists(t, filepath.Join(hookDir, fmt.Sprintf("repo-%d-%s", id, event)), "supplied policy must not execute repository hooks")
+				}
+			}
 			// Even malformed current policy must not change the frozen rerun.
 			require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("invalid TOML ["), 0o600))
 			rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: panel.ID}})
@@ -250,6 +282,76 @@ func TestSuppliedPanelRejectsInvalidPlanWithoutQueueingMembers(t *testing.T) {
 			jobs, err := db.ListJobs("", "", 10, 0)
 			require.NoError(t, err)
 			assert.Empty(t, jobs)
+		})
+	}
+}
+
+func TestSuppliedPanelRecordsStrictClaudeSynthesisUsage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failed=%t", failed), func(t *testing.T) {
+			testenv.SetDataDir(t)
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+			result, exit := `{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`, "0"
+			if failed {
+				result, exit = "review failed", "1"
+			}
+			stream := `{"type":"system","subtype":"init","session_id":"unsaved","permissionMode":"dontAsk","tools":["Read","Glob","Grep","StructuredOutput"],"mcp_servers":[]}` + "\n" +
+				fmt.Sprintf(`{"type":"result","session_id":"unsaved","is_error":%t,"result":%q,"usage":{"input_tokens":100,"output_tokens":20},"total_cost_usd":0.25}`, failed, result)
+			script := "#!/bin/sh\ncase \"$1\" in\n*etxtbsy*) exit 0 ;;\n--help) echo '--restricted --tools --allowedTools --strict-mcp-config --mcp-config --permission-mode --permission-prompts --no-session-persistence --disable-slash-commands --json-schema'; exit 0 ;;\nesac\ncat <<'OUTPUT'\n" + stream + "\nOUTPUT\nexit " + exit + "\n"
+			t.Cleanup(testutil.MockBinaryInPath(t, "claude", script))
+			server, db, _ := newTestServer(t)
+			sessionLookups := 0
+			server.workerPool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+				sessionLookups++
+				return nil, tokens.ErrUsageProviderUnavailable
+			}
+			repo := testutil.NewGitRepo(t)
+			head := repo.CommitFile("file.txt", "target", "target")
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "usage-panel-member", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+				return string(testutil.ReviewFixtureJSON("## Findings\n- [P1] Missing validation")), nil
+			}})
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/panel/enqueue", map[string]any{
+				"repo_path": repo.Path(), "git_ref": head,
+				"members":   []any{map[string]any{"name": "reviewer", "agent": "usage-panel-member", "review_prompt": "Review.", "review_settings": map[string]any{}}},
+				"synthesis": map[string]any{"agent": "claude-code", "instructions": "Verify the finding.", "tools": map[string]any{"mode": "read-only", "mcp": map[string]any{}}},
+			}))
+			require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+			var panel PanelEnqueueResponse
+			testutil.DecodeJSON(t, w, &panel)
+			for range 2 {
+				job, err := db.ClaimJob(testWorkerID)
+				require.NoError(t, err)
+				require.NotNil(t, job)
+				if failed && job.IsSynthesisJob() {
+					for range maxRetries {
+						retried, err := db.RetryJob(job.ID, testWorkerID, maxRetries, 0)
+						require.NoError(t, err)
+						require.True(t, retried)
+						job, err = db.ClaimJob(testWorkerID)
+						require.NoError(t, err)
+						require.NotNil(t, job)
+					}
+				}
+				server.workerPool.processJob(testWorkerID, job)
+			}
+			stored, err := db.GetJobByID(panel.ID)
+			require.NoError(t, err)
+			wantStatus := storage.JobStatusDone
+			if failed {
+				wantStatus = storage.JobStatusFailed
+			}
+			require.Equal(t, wantStatus, stored.Status, stored.Error)
+			assertStrictClaudeUsage(t, stored)
+			assert.Zero(t, sessionLookups, "restricted Claude must not need a saved session for usage")
+			assert.Empty(t, stored.SessionID)
+			assert.Empty(t, tokens.ParseJSON(stored.TokenUsage).ThreadID)
+			spend, err := db.GetBudgetSpend(time.Now())
+			require.NoError(t, err)
+			assert.InDelta(t, 0.25, spend.TotalUSD, 1e-9)
 		})
 	}
 }

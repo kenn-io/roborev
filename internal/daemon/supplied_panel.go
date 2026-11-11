@@ -77,7 +77,7 @@ func (s *Server) humaEnqueueSuppliedPanel(ctx context.Context, input *EnqueueSup
 		return early, nil
 	}
 	descriptor.jobType = storage.JobTypeForEnqueue(descriptor.baseOpts())
-	descriptor.branch = metadata.CurrentBranch()
+	descriptor.branch = git.InferBranchForCommit(ctx, checkoutRoot, descriptor.sessionSHA)
 	cfg := s.configWatcher.Config().ForRepo(checkoutRoot)
 	run := uuid.New()
 	members := make([]storage.EnqueueOpts, len(req.Members))
