@@ -139,9 +139,10 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 			posted.Store(data)
 			if code := producerError.Load().(string); code != "" {
 				status := http.StatusConflict
-				if code == "validation" {
+				switch code {
+				case "validation":
 					status = http.StatusBadRequest
-				} else if code == "comment_not_found" {
+				case "comment_not_found":
 					status = http.StatusNotFound
 				}
 				w.WriteHeader(status)

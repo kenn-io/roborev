@@ -608,20 +608,22 @@ func TestTypedCommentKindsAndServerErrors(t *testing.T) {
 					return false
 				}
 				status := http.StatusConflict
-				if code == "validation" {
+				switch code {
+				case "validation":
 					status = http.StatusBadRequest
-				} else if code == "comment_not_found" {
+				case "comment_not_found":
 					status = http.StatusNotFound
 				}
 				f.Fail(w, status, code, "synthetic producer error")
 				return true
 			}
 			_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "text", "key", "reviewer")
-			if code == "validation" {
+			switch code {
+			case "validation":
 				require.ErrorIs(t, err, ErrRequestRejected)
-			} else if code == "comment_not_found" {
+			case "comment_not_found":
 				require.ErrorIs(t, err, ErrNotFound)
-			} else {
+			default:
 				require.ErrorIs(t, err, ErrConflict)
 			}
 			assert.Equal(t, code, ErrorCode(err))
