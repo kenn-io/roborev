@@ -213,10 +213,14 @@ the Kata key. Signed HTTPS remote access does not support this workflow:
 the remote listener does not expose the `/api/kata/*` endpoints.
 
 A command asks the daemon on first use whether the connection is on, and it
-never starts the daemon. If the daemon is not running, or has the connection
-off, the command runs the `kata` CLI as it always has. The exception is a shell
-whose own config enables the connection: there an unreachable or disabled daemon
-is an error, not a quiet switch to the CLI.
+never starts the daemon. When local API config is off and no `--server` is
+selected, an unavailable daemon falls back to the `kata` CLI. With an explicit
+`--server`, including a loopback tunnel, a failed status probe reports an error
+instead of switching to local Kata credentials. If the daemon reports that the
+connection is disabled, or an older daemon returns 404 for the unsupported
+status route, the command still uses the CLI when local API config is off. When
+local config enables the connection, an unreachable or disabled daemon is an
+error.
 
 ### Check the connection
 

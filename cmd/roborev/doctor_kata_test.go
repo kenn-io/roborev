@@ -89,6 +89,22 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 	}
 }
 
+func TestDoctorKataStatusIsIndependentOfAgentProbe(t *testing.T) {
+	status := readyKata()
+	d := fakeDoctorDaemon{ping: &daemon.PingInfo{OK: true}, agentsErr: assert.AnError, kata: &status}
+	env := loadDoctorEnv(t.Context(), bindRepo(t, "reviews"), d)
+	require.ErrorIs(t, env.daemonAgentsErr, assert.AnError)
+	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
+	assert.Equal(t, doctorOK, got.Status)
+	assert.Contains(t, got.Summary, "ready")
+
+	env.global.Integrations.Kata.Enabled = true
+	env.kata, env.kataErr = nil, assert.AnError
+	got = findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
+	assert.Contains(t, got.Summary, "could not be read")
+	assert.Equal(t, []string{assert.AnError.Error()}, got.Details)
+}
+
 func TestDoctorKataIsQuietWhenNothingEnablesIt(t *testing.T) {
 	off := daemon.KataStatusBody{State: "disabled", Message: "disabled"}
 	env := kataDoctorEnv(t, config.KataIntegrationConfig{}, off)

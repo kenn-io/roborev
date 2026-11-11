@@ -32,15 +32,16 @@ func newKataClient(workdir string, cfg *config.Config) kata.Client {
 // newKataClientAt is newKataClient with the daemon endpoint supplied, for
 // tests.
 func newKataClientAt(workdir string, cfg *config.Config, endpoint func() (daemon.DaemonEndpoint, error)) kata.Client {
-	return &lazyKataClient{workdir: workdir, cfg: cfg, endpoint: endpoint}
+	return &lazyKataClient{workdir: workdir, cfg: cfg, endpoint: endpoint, explicitServer: serverAddr != ""}
 }
 
 // lazyKataClient picks between the daemon's connection and the kata CLI the
 // first time Kata is used.
 type lazyKataClient struct {
-	workdir  string
-	cfg      *config.Config
-	endpoint func() (daemon.DaemonEndpoint, error)
+	workdir        string
+	cfg            *config.Config
+	endpoint       func() (daemon.DaemonEndpoint, error)
+	explicitServer bool
 	// statusProbe replaces the initial request in tests that simulate a stalled
 	// daemon.
 	statusProbe func(context.Context) (*generated.KataStatusResponse, error)
@@ -59,9 +60,9 @@ const kataStatusProbeTimeout = 2 * kata.DefaultRequestTimeout
 var _ kata.Client = (*lazyKataClient)(nil)
 
 // resolve decides once. The daemon is asked, never started: a CLI that has no
-// daemon running behaves as it always has unless its own config enables the
-// connection, in which case Kata is unavailable rather than silently run
-// through the kata CLI.
+// daemon running falls back to the CLI unless local config enables the
+// connection or --server explicitly selects a daemon. An explicit server
+// also falls back when it reports disabled or does not support the route.
 func (c *lazyKataClient) resolve(ctx context.Context) kata.Client {
 	c.once.Do(func() {
 		localEnabled := c.cfg != nil && c.cfg.Integrations.Kata.Enabled
@@ -98,7 +99,7 @@ func (c *lazyKataClient) resolve(ctx context.Context) kata.Client {
 		switch {
 		case reachErr == nil && !daemonOff:
 			c.chosen = &daemonKataClient{api: api, workdir: c.workdir, defaultProject: deref(status.DefaultProject)}
-		case !localEnabled:
+		case !localEnabled && (!c.explicitServer || daemonOff || isKataStatusNotFound(reachErr)):
 			c.chosen = kata.NewCLIClient(c.workdir)
 		case reachErr != nil:
 			c.chosen = failedKataClient{err: kataProbeFailure(reachErr)}
@@ -107,6 +108,11 @@ func (c *lazyKataClient) resolve(ctx context.Context) kata.Client {
 		}
 	})
 	return c.chosen
+}
+
+func isKataStatusNotFound(err error) bool {
+	status, answered := daemonAnswerStatus(err)
+	return answered && status == http.StatusNotFound
 }
 
 // kataProbeFailure says why the daemon could not provide the connection. A

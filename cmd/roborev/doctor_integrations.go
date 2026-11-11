@@ -228,18 +228,15 @@ var kataFixes = map[string]string{
 func checkDoctorKata(env *doctorEnv) []doctorCheck {
 	localEnabled := env.global != nil && env.global.Integrations.Kata.Enabled
 	const id = "integrations.kata"
-	if env.daemonAgents == nil {
-		if !localEnabled {
-			return nil
-		}
-		return []doctorCheck{{
-			ID: id, Category: "integrations", Status: doctorInfo,
-			Summary: "the Kata connection is enabled in config; it is checked when the daemon is running",
-		}}
-	}
 	if env.kata == nil {
 		if !localEnabled {
 			return nil
+		}
+		if !env.daemonUp() {
+			return []doctorCheck{{
+				ID: id, Category: "integrations", Status: doctorInfo,
+				Summary: "the Kata connection is enabled in config; it is checked when the daemon is running",
+			}}
 		}
 		check := doctorCheck{
 			ID: id, Category: "integrations", Status: doctorInfo,
