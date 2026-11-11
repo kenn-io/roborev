@@ -184,10 +184,16 @@ async function exchangeCredentials(
   try {
     bodyValue = await response.json();
   } catch {
-    return { state: "error", message: "session response was not valid JSON" };
+    return {
+      state: "error",
+      message: "Could not start your session. Try again.",
+    };
   }
   if (!isCredentialBody(bodyValue)) {
-    return { state: "error", message: "session response was incomplete" };
+    return {
+      state: "error",
+      message: "Could not start your session. Try again.",
+    };
   }
   sessionStorage.setItem(sessionKey, bodyValue.session);
   sessionStorage.setItem(csrfKey, bodyValue.csrf);

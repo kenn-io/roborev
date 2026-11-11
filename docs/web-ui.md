@@ -198,7 +198,7 @@ The headline values have these meanings:
 - **Estimated cost** includes eligible attempts that have a readable cost in
     their token-usage data. It counts attempts by `finished_at` within the
     selected half-open time range and is not an external billing total.
-- **Pricing coverage** is priced eligible attempts divided by all eligible
+- **Agent runs with known cost** is priced eligible attempts divided by all eligible
     attempts. When coverage is incomplete, estimated cost is a lower bound.
     Retries clear the prior job's token-usage data, so historical retried work
     can also be undercounted.
