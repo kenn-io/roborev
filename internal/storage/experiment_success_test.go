@@ -47,7 +47,7 @@ func successReportFixture(t *testing.T, bar *config.ExperimentSuccess, n int, de
 func TestExperimentReportSuccess(t *testing.T) {
 	t.Parallel()
 	db, _ := successReportFixture(t, successBar(), 4, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	encoded, err := json.Marshal(r)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestExperimentReportSuccessMinimumNotEstablished(t *testing.T) {
 	bar := successBar()
 	bar.MinEffect = "60%"
 	db, _ := successReportFixture(t, bar, 4, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	require.NotNil(t, r.Success)
 	assert.Equal(t, "bar not met", r.Success.State)
@@ -74,7 +74,7 @@ func TestExperimentReportSuccessZeroMinimumRequiresImprovement(t *testing.T) {
 	bar := successBar()
 	bar.MinEffect = "0"
 	db, _ := successReportFixture(t, bar, 4, 10, 10)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "bar not met", r.Success.State)
 	assert.Contains(t, r.Success.Reason, "no statistically detectable improvement")
@@ -85,7 +85,7 @@ func TestExperimentReportSuccessTinyExactPermutation(t *testing.T) {
 	bar := successBar()
 	bar.MinEffect = "0"
 	db, _ := successReportFixture(t, bar, 3, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{MinSubjects: 1})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{MinSubjects: 1})
 	require.NoError(t, err)
 	m := reportMetric(t, r, "cost_per_review")
 	assert.InDelta(t, 0.1, *m.PValue, 1e-12)
@@ -99,7 +99,7 @@ func TestExperimentReportSuccessDeclaredDirection(t *testing.T) {
 	bar.Direction = "higher"
 	bar.MinEffect = "0"
 	db, _ := successReportFixture(t, bar, 4, 5, 10)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "worse", reportMetric(t, r, "cost_per_review").State)
 	assert.Equal(t, "bar met", r.Success.State)
@@ -108,7 +108,7 @@ func TestExperimentReportSuccessDeclaredDirection(t *testing.T) {
 func TestExperimentReportSuccessInsufficientSubjects(t *testing.T) {
 	t.Parallel()
 	db, _ := successReportFixture(t, successBar(), 3, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "not enough data", r.Success.State)
 }
@@ -118,7 +118,7 @@ func TestExperimentReportSuccessIncompleteCost(t *testing.T) {
 	db, _ := successReportFixture(t, successBar(), 4, 10, 5)
 	_, err := db.Exec(`UPDATE review_jobs SET token_usage='' WHERE git_ref='experiment-0'`)
 	require.NoError(t, err)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "not enough data", r.Success.State)
 	assert.Contains(t, r.Success.Reason, "cost_per_review")
@@ -129,7 +129,7 @@ func TestExperimentReportSuccessUnavailableLabelGuard(t *testing.T) {
 	bar := successBar()
 	bar.Guards = []string{"refuted_per_100 <= +0"}
 	db, _ := successReportFixture(t, bar, 4, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "not enough data", r.Success.State)
 	require.Len(t, r.Success.Guards, 1)
@@ -141,7 +141,7 @@ func TestExperimentReportSuccessUnavailableLabelPrimary(t *testing.T) {
 	t.Parallel()
 	bar := &config.ExperimentSuccess{Metric: "confirmed_per_review", Direction: "higher", MinEffect: "0"}
 	db, _ := successReportFixture(t, bar, 4, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "not enough data", r.Success.State)
 	assert.Contains(t, r.Success.Reason, "stable finding identity")
@@ -152,7 +152,7 @@ func TestExperimentReportSuccessZeroRelativeBaseline(t *testing.T) {
 	bar := successBar()
 	bar.Direction = "higher"
 	db, _ := successReportFixture(t, bar, 4, 0, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "not enough data", r.Success.State)
 	assert.Contains(t, r.Success.Reason, "zero or undefined")
@@ -163,7 +163,7 @@ func TestExperimentReportSuccessBothZeroRelativeGuard(t *testing.T) {
 	bar := successBar()
 	bar.Guards = []string{"job_failure_rate <= +1%"}
 	db, _ := successReportFixture(t, bar, 4, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "not enough data", r.Success.State)
 	assert.Contains(t, r.Success.Guards[0].Reason, "zero or undefined")
@@ -187,7 +187,7 @@ func TestExperimentReportSuccessReliabilityRegression(t *testing.T) {
 			}
 			_, err := db.Exec(`UPDATE reviews SET agent='other' WHERE job_id IN (SELECT id FROM review_jobs WHERE git_ref LIKE 'experiment-%')`)
 			require.NoError(t, err)
-			r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+			r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 			require.NoError(t, err)
 			if tc.failDefault {
 				assert.Equal(t, "better", reportMetric(t, r, "job_failure_rate").State)
@@ -203,7 +203,7 @@ func TestExperimentReportSuccessStoredDefinitionImmutable(t *testing.T) {
 	bar := successBar()
 	db, repoID := successReportFixture(t, bar, 4, 10, 5)
 	bar.MinEffect = "90%" // Editing today's config cannot rewrite the enrolled bar.
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "20%", r.Success.MinEffect)
 	assert.Equal(t, "bar met", r.Success.State)
@@ -214,7 +214,7 @@ func TestExperimentReportSuccessStoredDefinitionImmutable(t *testing.T) {
 func TestExperimentReportSuccessGuardConservativeEndpoints(t *testing.T) {
 	t.Parallel()
 	db, _ := successReportFixture(t, successBar(), 4, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	for i := range r.Metrics {
 		if r.Metrics[i].Metric == "cost_per_review" {
@@ -233,7 +233,7 @@ func TestExperimentReportSuccessGuardConservativeEndpoints(t *testing.T) {
 func TestExperimentReportSuccessUnconfiguredOmitted(t *testing.T) {
 	t.Parallel()
 	db, _ := successReportFixture(t, nil, 4, 10, 5)
-	r, err := db.GetExperimentReport("success-v1", ExperimentReportOptions{})
+	r, err := db.GetExperimentReport(t.Context(), "success-v1", ExperimentReportOptions{})
 	require.NoError(t, err)
 	assert.Nil(t, r.Success)
 	encoded, err := json.Marshal(r)

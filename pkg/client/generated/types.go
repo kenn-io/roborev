@@ -1864,6 +1864,9 @@ func (e ExperimentSuccessResult) Validate() error {
 	if err := typesValidator.Var(e.Direction, "required"); err != nil {
 		errors = errors.Append("Direction", err)
 	}
+	if err := typesValidator.Var(e.Guards, "required"); err != nil {
+		errors = errors.Append("Guards", err)
+	}
 	for i, item := range e.Guards {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
