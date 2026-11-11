@@ -94,9 +94,6 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
 
-      - name: Install SQLite headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
-
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.4'
@@ -146,9 +143,6 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
-
-      - name: Install SQLite headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -257,13 +251,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
-
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
-        if: runner.os == 'Linux'
-
-      - name: Install SQLite headers
-        if: runner.os == 'Linux'
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - name: Configure Windows Go paths
         if: runner.os == 'Windows'
@@ -422,11 +409,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
-
-      - name: Install SQLite headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
-
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.4'
@@ -472,11 +454,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
-
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
-
-      - name: Install SQLite headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -547,11 +524,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
-
-      - name: Install SQLite headers
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
-
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.4'
@@ -595,10 +567,6 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
-
-      - name: Install SQLite headers
-        if: needs.go-changes.outputs.changed == 'true'
-        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         id: setup_go
