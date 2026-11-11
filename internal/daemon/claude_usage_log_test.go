@@ -128,6 +128,7 @@ func TestCaptureTokenUsageForSessionUsesClaudeJobLog(t *testing.T) {
 		assert := assert.New(t)
 		job := newJob(t, "claude-code")
 		logPath := JobLogPath(job.ID)
+		require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
 		require.NoError(t, os.WriteFile(logPath, []byte(
 			`{"type":"result","session_id":"session-f","modelUsage":{"model-a":{"inputTokens":100,"outputTokens":10}}}`+"\n"+
 				`{"type":"result","session_id":"session-g","modelUsage":{"model-a":{"inputTokens":100,"outputTokens":10}}}`+"\n",
