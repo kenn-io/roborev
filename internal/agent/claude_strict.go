@@ -143,7 +143,7 @@ func claudeHelpFlags(ctx context.Context, command string) (map[string]bool, erro
 			return cached.(map[string]bool), nil
 		}
 	}
-	output, err := claudeHelpOutput(ctx, command)
+	output, cacheable, err := claudeHelpOutput(ctx, command)
 	if err != nil {
 		return nil, fmt.Errorf("check %s --help: %w", command, err)
 	}
@@ -153,7 +153,7 @@ func claudeHelpFlags(ctx context.Context, command string) (map[string]bool, erro
 			flags[strings.TrimRight(field, ",")] = true
 		}
 	}
-	if key.path != "" {
+	if key.path != "" && cacheable {
 		claudeHelpFlagCache.Store(key, flags)
 	}
 	return flags, nil
