@@ -212,12 +212,7 @@ func TestKataFeedbackAcrossMachinesE2E(t *testing.T) {
 	producerView, err := producer.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, producerView.StatusCode)
-	var native struct {
-		Comments []struct {
-			UID       string                `json:"uid"`
-			Backlinks []katagen.CommentLink `json:"backlinks"`
-		} `json:"comments"`
-	}
+	var native katagen.ShowIssueResponseBody
 	require.NoError(t, json.NewDecoder(producerView.Body).Decode(&native))
 	require.NoError(t, producerView.Body.Close())
 	var expected []katagen.CommentLink
@@ -241,12 +236,7 @@ func TestKataFeedbackAcrossMachinesE2E(t *testing.T) {
 	assert.Equal(t, &status.Project.ID, link.ProjectID)
 	require.NotNil(t, link.CreatedAt)
 	checkLinks := func(data []byte) {
-		var shown struct {
-			Comments []struct {
-				UID       string                `json:"uid"`
-				Backlinks []katagen.CommentLink `json:"backlinks"`
-			} `json:"comments"`
-		}
+		var shown katagen.ShowIssueResponseBody
 		require.NoError(t, json.Unmarshal(data, &shown))
 		found := false
 		for _, comment := range shown.Comments {

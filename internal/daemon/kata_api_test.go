@@ -230,15 +230,9 @@ func TestKataIssueShowsOneIssue(t *testing.T) {
 	issue := decodeKata[KataIssue](t, w)
 	assert.Equal(t, "reviews#aaa1", issue.QualifiedID)
 	assert.Equal(t, "the body", issue.Body)
-	var wire struct {
-		Comments []struct {
-			UID                string                `json:"uid"`
-			Reply              *katagen.CommentLink  `json:"reply"`
-			Backlinks          []katagen.CommentLink `json:"backlinks"`
-			BacklinksTruncated *bool                 `json:"backlinks_truncated"`
-		} `json:"comments"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &wire))
+	wire := decodeKata[struct {
+		Comments []katagen.CommentOut `json:"comments"`
+	}](t, w)
 	require.Len(t, wire.Comments, 2)
 	assert.Equal(t, "local-root", wire.Comments[0].UID)
 	assert.Equal(t, []katagen.CommentLink{link}, wire.Comments[0].Backlinks)
@@ -388,13 +382,7 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	got := decodeKata[KataPublicationBody](t, w)
 	assert.Equal(t, "complete", got.State)
 	assert.Equal(t, "summary", got.Policy)
-	var publicationWire struct {
-		Comments []struct {
-			Backlinks          []katagen.CommentLink `json:"backlinks"`
-			BacklinksTruncated *bool                 `json:"backlinks_truncated"`
-		} `json:"comments"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &publicationWire))
+	publicationWire := decodeKata[katagen.ShowIssueResponseBody](t, w)
 	require.Len(t, publicationWire.Comments, 1)
 	assert.Equal(t, []katagen.CommentLink{link}, publicationWire.Comments[0].Backlinks)
 	assert.Equal(t, new(true), publicationWire.Comments[0].BacklinksTruncated)
@@ -473,6 +461,7 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	assert.Equal(t, direct, remote)
 	assert.Equal(t, "reviews", direct["project"])
 	for _, result := range []map[string]any{direct, remote} {
+		var publicationWire katagen.ShowIssueResponseBody
 		encoded, marshalErr := json.Marshal(result)
 		require.NoError(t, marshalErr)
 		require.NoError(t, json.Unmarshal(encoded, &publicationWire))
