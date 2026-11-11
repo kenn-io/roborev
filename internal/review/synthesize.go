@@ -185,7 +185,7 @@ func runSynthesis(
 		ctx, 5*time.Minute)
 	defer cancel()
 
-	doc, err := RunSynthesisAgent(synthCtx, synthAgent, results, synthPrompt, opts.MinSeverity, nil, SynthesisHooks{
+	doc, _, err := RunSynthesisAgent(synthCtx, synthAgent, results, synthPrompt, opts.MinSeverity, nil, SynthesisHooks{
 		ConfigRepoPath: opts.RepoPath,
 		GlobalConfig:   opts.GlobalConfig,
 		Checkout: func() (SynthesisCheckout, error) {

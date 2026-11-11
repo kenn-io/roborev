@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -134,6 +135,18 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 		finished, err := db.GetJobByID(job.ID)
 		require.NoError(t, err)
 		require.Equal(t, storage.JobStatusDone, finished.Status, finished.Error)
+		reports, err := client.GetJobInvocations(t.Context(), &generated.GetJobInvocationsRequestOptions{
+			Query: &generated.GetJobInvocationsQuery{JobID: job.ID},
+		})
+		require.NoError(t, err)
+		require.Len(t, reports.Invocations, 1)
+		assert.Equal(t, "succeeded", reports.Invocations[0].Status)
+		assert.Equal(t, "synthesis-model", reports.Invocations[0].Model)
+		assert.Equal(t, ref, reports.Invocations[0].GitRef)
+		assert.Nil(t, reports.Invocations[0].Usage)
+		structured, err := json.Marshal(reports.Invocations[0].StructuredOutput)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[],"source_labels":["supplied-panel-member","supplied-panel-member"]}`, string(structured))
 		runner.WaitUntilIdle()
 		server.hookRunner.WaitUntilIdle()
 		if run == 0 {
@@ -240,6 +253,16 @@ func TestSuppliedPanelRestoresPrimaryAgentsAfterFailover(t *testing.T) {
 		finished, err := db.GetJobByID(panel.ID)
 		require.NoError(t, err)
 		require.Equal(t, storage.JobStatusDone, finished.Status, finished.Error)
+		reports, err := db.ListReviewInvocations(t.Context(), panel.ID)
+		require.NoError(t, err)
+		require.Len(t, reports, 2)
+		assert.Equal(t, "failed", reports[0].Status)
+		assert.Equal(t, "partial", reports[0].RawOutput)
+		assert.Equal(t, "context window exceeded", reports[0].Error)
+		assert.Equal(t, "synthesis-primary-model", reports[0].Model)
+		assert.Equal(t, "succeeded", reports[1].Status)
+		assert.Equal(t, "synthesis-backup", reports[1].Agent)
+		assert.Equal(t, "synthesis-backup-model", reports[1].Model)
 		if run == 0 {
 			rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: panel.ID}})
 			require.NoError(t, err)
@@ -345,6 +368,18 @@ func TestSuppliedPanelRecordsStrictClaudeSynthesisUsage(t *testing.T) {
 				wantStatus = storage.JobStatusFailed
 			}
 			require.Equal(t, wantStatus, stored.Status, stored.Error)
+			reports, err := db.ListReviewInvocations(t.Context(), panel.ID)
+			require.NoError(t, err)
+			require.Len(t, reports, 1)
+			wantInvocationStatus := "succeeded"
+			if failed {
+				wantInvocationStatus = "failed"
+			}
+			assert.Equal(t, wantInvocationStatus, reports[0].Status)
+			require.NotNil(t, reports[0].Usage)
+			assert.Equal(t, int64(100), reports[0].Usage.InputTokens)
+			assert.Equal(t, int64(20), reports[0].Usage.OutputTokens)
+			assert.InDelta(t, 0.25, reports[0].Usage.CostUSD, 1e-9)
 			assertStrictClaudeUsage(t, stored)
 			assert.Zero(t, sessionLookups, "restricted Claude must not need a saved session for usage")
 			assert.Empty(t, stored.SessionID)

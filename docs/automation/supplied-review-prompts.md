@@ -110,9 +110,10 @@ review.
 ## Reading invocation history
 
 Reviews submitted with `review_settings` record each call to the review agent
-locally. Read that history with `GET /api/job/invocations?job_id=123`, replacing
-`123` with the job ID returned by enqueue. Generated Go clients expose
-`GetJobInvocations` through `pkg/client`.
+locally. Supplied panels record both member and synthesis agent calls. Read that
+history with `GET /api/job/invocations?job_id=123`, replacing `123` with the job
+ID returned by enqueue. Generated Go clients expose `GetJobInvocations` through
+`pkg/client`.
 
 The response contains an `invocations` array in execution order. Each record has
 its own local ID, the job's enqueue time, selected agent/model/reasoning,

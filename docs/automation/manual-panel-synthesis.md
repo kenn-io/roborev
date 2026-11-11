@@ -130,10 +130,16 @@ outcomes remain: no usable review fails the synthesis job, and a single usable
 review without synthesis instructions passes through. A clean panel with no
 retained findings completes without a synthesis call.
 
-Member calls appear in
-[invocation history](supplied-review-prompts.md#reading-invocation-history).
-Synthesis results use the review endpoint; synthesis calls do not have
-invocation history. Restricted Claude synthesis records emitted tokens and cost
-in the job and spend summaries, including terminal failures, without looking up
-an unsaved session. Supplied policy does not sandbox native agent configuration.
-The daemon still owns credentials, runtime controls, retries, and cooldowns.
+Member and synthesis calls appear in
+[invocation history](supplied-review-prompts.md#reading-invocation-history). Use
+each member's job ID for its calls and the panel's returned `id` for synthesis
+calls. Retries and backup agents keep separate records with their outputs,
+errors, and available usage. Whole-panel reruns create new jobs; the original
+jobs keep their history. Passthrough, clean-panel completion, and failures
+before an agent runs create no synthesis invocation. The final combined review
+still uses the review endpoint.
+
+Restricted Claude synthesis also records emitted tokens and cost in the job and
+spend summaries, including terminal failures, without looking up an unsaved
+session. Supplied policy does not sandbox native agent configuration. The daemon
+still owns credentials, runtime controls, retries, and cooldowns.

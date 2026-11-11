@@ -134,7 +134,7 @@ func TestRunSynthesisAgentPrefersSchemaReviewOverPlainReview(t *testing.T) {
 	reviews := []ReviewResult{{Agent: "codex", Status: ResultDone, Output: "Found issue A"}}
 	cleaned := false
 
-	doc, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{
+	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{
 		Checkout: func() (SynthesisCheckout, error) {
 			return SynthesisCheckout{RepoPath: "/repo", GitRef: "HEAD", Cleanup: func() { cleaned = true }}, nil
 		},
