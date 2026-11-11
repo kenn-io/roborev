@@ -333,7 +333,7 @@ func (p *kataPublisher) post(ctx context.Context, jobID int64, record *storage.K
 		if err != nil {
 			return err
 		}
-		if locked.Marker == nil || locked.Marker.Version != 1 || (locked.Marker.State != "pending" && locked.Marker.State != "complete") || locked.Marker.DocumentHash != locked.DocumentHash || !sameKataAuthorization(locked.Marker.KataPublicationSeed, current.Marker.KataPublicationSeed) || locked.Marker.ProjectUID != dest.UID || locked.Marker.RequestFingerprint != prepared.Fingerprint {
+		if locked.Marker == nil || locked.Marker.Version != 1 || (locked.Marker.State != "pending" && locked.Marker.State != "complete") || locked.Marker.DocumentHash != locked.DocumentHash || locked.Marker.KataPublicationSeed != current.Marker.KataPublicationSeed || locked.Marker.ProjectUID != dest.UID || locked.Marker.RequestFingerprint != prepared.Fingerprint {
 			return storage.ErrReviewChanged
 		}
 		cfg := p.cfg.Config()

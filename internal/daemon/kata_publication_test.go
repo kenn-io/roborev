@@ -818,13 +818,7 @@ func TestKataPublicationAliasHintDoesNotChangeAuthorization(t *testing.T) {
 			fake := katafake.New(t)
 			tc := newWorkerTestContext(t, 1)
 			job := tc.createAndClaimJob(t, "alias-hint", "worker")
-			gitRemote := func(args ...string) {
-				t.Helper()
-				cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", tc.TmpDir, "remote"}, args...)...)
-				out, err := cmd.CombinedOutput()
-				require.NoError(t, err, "%s", out)
-			}
-			gitRemote("add", "origin", "https://example.test/org/original.git")
+			tc.GitRepo.RunGit("remote", "add", "origin", "https://example.test/org/original.git")
 			writeHint := func(name string) {
 				t.Helper()
 				require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".kata.toml"), []byte("version = 1\n[project]\nname = \""+name+"\"\n"), 0o600))
@@ -871,22 +865,20 @@ func TestKataPublicationAliasHintDoesNotChangeAuthorization(t *testing.T) {
 			assert.True(t, sent)
 			p.cfg = NewStaticConfig(cfg)
 			resolved.Store(1)
-			_, _, _, _, _, _, err = p.current(t.Context(), job.ID, attempt)
-			require.ErrorContains(t, err, "destination or request changed")
 			sent = false
 			err = p.post(t.Context(), job.ID, record, review, project, prepared, attempt, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
 				sent = true
 				return nil
 			})
-			require.Error(t, err)
+			require.ErrorContains(t, err, "destination or request changed")
 			assert.False(t, sent)
 			resolved.Store(0)
 			for _, change := range []struct {
 				name           string
 				apply, restore func()
 			}{
-				{"alias identity", func() { gitRemote("set-url", "origin", "https://example.test/org/other.git") }, func() { gitRemote("set-url", "origin", "https://example.test/org/original.git") }},
-				{"alias kind", func() { gitRemote("remove", "origin") }, func() { gitRemote("add", "origin", "https://example.test/org/original.git") }},
+				{"alias identity", func() { tc.GitRepo.RunGit("remote", "set-url", "origin", "https://example.test/org/other.git") }, func() { tc.GitRepo.RunGit("remote", "set-url", "origin", "https://example.test/org/original.git") }},
+				{"alias kind", func() { tc.GitRepo.RunGit("remote", "remove", "origin") }, func() { tc.GitRepo.RunGit("remote", "add", "origin", "https://example.test/org/original.git") }},
 				{"endpoint", func() { cfg.Integrations.Kata.Endpoint = "https://other.example.test" }, func() { cfg.Integrations.Kata.Endpoint = fake.URL() }},
 				{"policy", func() { cfg.Hooks[0].Findings = "summary" }, func() { cfg.Hooks[0].Findings = "comments" }},
 			} {
