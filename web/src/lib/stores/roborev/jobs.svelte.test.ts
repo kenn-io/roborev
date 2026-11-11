@@ -1903,6 +1903,35 @@ describe("createJobsStore panel expansion", () => {
     };
   }
 
+  it("recovers panel members after a lost request", async () => {
+    const parent = makePanelParent(10);
+    let panelCalls = 0;
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          panelCalls++;
+          if (panelCalls === 1) return offlineRead();
+          return Promise.resolve({ jobs: [makeMember(11, "run-10", 0)] });
+        }
+        return Promise.resolve({ jobs: [parent] });
+      }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+    vi.useFakeTimers();
+    try {
+      store.togglePanel(parent);
+      await vi.runAllTimersAsync();
+      expect(store.getPanelMembers("run-10")?.map((job) => job.id)).toEqual([
+        11,
+      ]);
+      expect(store.getPanelMemberError("run-10")).toBeUndefined();
+      expect(panelCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("lazily fetches members sorted by panel_member_index on first expand", async () => {
     const parent = makePanelParent(10);
     const members = [makeMember(12, "run-10", 1), makeMember(11, "run-10", 0)];

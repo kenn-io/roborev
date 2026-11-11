@@ -811,8 +811,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
 
   const fetchPanelMembersEffect = (runUuid: string) =>
     Effect.gen(function* () {
-      const workflow = yield* RoborevWorkflow;
-      yield* workflow.panel(opts.owner, runUuid, {
+      yield* (yield* RoborevWorkflow).panel(opts.owner, runUuid, {
         onStart: Effect.sync(() => {
           loadingMembers = { ...loadingMembers, [runUuid]: true };
           const startedErrors = { ...panelMemberErrors };
@@ -830,6 +829,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
             { signal },
           ),
         ).pipe(
+          retryIdempotentRead,
           Effect.catchTag("RoborevHTTPError", (cause) =>
             Effect.fail(
               RoborevResponseError.make({
