@@ -252,6 +252,48 @@ type KataListIssuesErrorResponseApplicationProblemPlusJSON500 = ErrorModel
 
 type KataListIssuesErrorResponseApplicationProblemPlusJSON502 = ErrorModel
 
+type KataCreateIssueResponse = KataCreateResponse
+
+type KataCreateIssueErrorResponse = ErrorModel
+
+type KataCreateIssueErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type KataCreateIssueErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type KataCreateIssueErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type KataCreateIssueErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type KataCreateIssueErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
+type KataPublicationResponse = KataPublicationBody
+
+type KataPublicationErrorResponse = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
+type KataPublishResponse = KataPublicationBody
+
+type KataPublishErrorResponse = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
 type KataStatusResponse = KataStatusBody
 
 type KataStatusErrorResponse = ErrorModel
@@ -756,6 +798,45 @@ type KataListIssuesResp struct {
 	ApplicationProblemPlusJSON422 *KataListIssuesErrorResponseApplicationProblemPlusJSON422
 	ApplicationProblemPlusJSON500 *KataListIssuesErrorResponseApplicationProblemPlusJSON500
 	ApplicationProblemPlusJSON502 *KataListIssuesErrorResponseApplicationProblemPlusJSON502
+}
+
+type KataCreateIssueResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON201                       *KataCreateIssueResponse
+	ApplicationProblemPlusJSON400 *KataCreateIssueErrorResponse
+	ApplicationProblemPlusJSON404 *KataCreateIssueErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *KataCreateIssueErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *KataCreateIssueErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *KataCreateIssueErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON502 *KataCreateIssueErrorResponseApplicationProblemPlusJSON502
+}
+
+type KataPublicationResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *KataPublicationResponse
+	ApplicationProblemPlusJSON400 *KataPublicationErrorResponse
+	ApplicationProblemPlusJSON404 *KataPublicationErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *KataPublicationErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *KataPublicationErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *KataPublicationErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON502 *KataPublicationErrorResponseApplicationProblemPlusJSON502
+}
+
+type KataPublishResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *KataPublishResponse
+	ApplicationProblemPlusJSON400 *KataPublishErrorResponse
+	ApplicationProblemPlusJSON404 *KataPublishErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *KataPublishErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *KataPublishErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *KataPublishErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON502 *KataPublishErrorResponseApplicationProblemPlusJSON502
 }
 
 type KataStatusResp struct {
@@ -1617,6 +1698,53 @@ func (c *RawClient) KataListIssuesRaw(ctx context.Context, options *KataListIssu
 		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/issues",
 		Method:     "GET",
 		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataCreateIssueRaw(ctx context.Context, options *KataCreateIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataCreateIssueRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/kata/issues",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataPublicationRaw(ctx context.Context, options *KataPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataPublicationRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/publication",
+		Method:     "GET",
+		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataPublishRaw(ctx context.Context, options *KataPublishRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataPublishRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/kata/publication",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

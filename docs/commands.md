@@ -1410,6 +1410,17 @@ roborev repo merge source target          # Merge reviews between repos
 
 See: [Repository Management](/docs/guides/repository-management/)
 
+## Kata findings
+
+Use `roborev kata show JOB` to inspect the issue, finding handles, replies, and
+publication status for a review. Use `roborev kata create JOB` to resume a
+previously authorized publication. For an unmarked eligible review, supply
+`--findings comments` or `--findings summary` matching its configured hook. The
+original seven-day retry window still applies. These commands use the local or
+tunneled daemon's Kata API connection; signed remote HTTPS does not expose Kata
+operations. See
+[Kata findings publication](/docs/integrations/kata/#publish-individual-findings).
+
 ## Daemon & Hooks
 
 Automatic daemon discovery uses live runtime records from the selected data

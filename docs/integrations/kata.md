@@ -130,6 +130,44 @@ default; set `project = "myproj"` to override. Every issue receives the
 any extra `labels` you configure. roborev uses an idempotency key per job/event,
 so reruns do not create duplicate issues.
 
+### Publish individual findings
+
+Enable the daemon API connection below and configure a `review.completed` hook
+with `findings = "comments"` to publish one root comment per finding. Use
+`findings = "summary"` for generic notices without finding text, paths, fixes,
+review summaries, or diagnostic text. Replies are supplied explicitly by their
+sender and are not covered by this export setting. Omit `findings` to retain the
+legacy issue-body hook.
+
+```toml
+[[hooks]]
+type = "kata"
+event = "review.completed"
+findings = "comments" # or "summary"
+```
+
+This requires Kata API schema 0.28.0 and a matching enabled daemon connection.
+It applies to failing local review and synthesis results, excluding CI, panel
+members, and rebuttals. Equivalent hooks coalesce; conflicting hooks publish
+nothing. A rerun produces a new review UUID and issue; previous comments remain.
+
+```bash
+roborev kata show 42
+roborev kata create 42
+roborev kata create 42 --findings summary
+```
+
+`show` reads issue, comment handles and actual authors. The markers correlate
+comments with findings but do not prove authorship. `create` resumes an existing
+local authorization; an unmarked eligible review requires an explicit policy
+matching its configured hook. Synced reviews do not publish automatically.
+Retries use the original review's seven-day window and stop when a full Kata
+request cannot fit inside it. Expired reviews remain readable. Ambiguous,
+modified, unavailable or truncated comments stop replay. Every encoded request
+is preflighted against Kata's 1 MiB body limit before any write; oversized
+findings are never clipped. An outage may require a daemon restart or an
+explicit retry.
+
 See [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration)
 in the review hooks guide for hook fields and event patterns.
 

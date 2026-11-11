@@ -260,3 +260,29 @@ func TestPublicationOptionsFingerprint(t *testing.T) {
 	assert.NotEqual(t, first.Fingerprint, prepare(PublicationOptions{Labels: []string{"a", "z"}, Priority: new(2)}).Fingerprint)
 	assert.NotEqual(t, first.Fingerprint, prepare(PublicationOptions{Labels: []string{"a"}, Priority: new(1)}).Fingerprint)
 }
+
+func TestReadRemotePublicationEnvelopeAndRoots(t *testing.T) {
+	p := publicationFixture(t, "comments")
+	envelope, err := ReadPublicationEnvelope(p.issue.Metadata)
+	require.NoError(t, err)
+	assert.Equal(t, p.ReviewUUID, envelope.ReviewUUID)
+	assert.Equal(t, 1, envelope.FindingCount)
+	comment := gen.CommentOut{UID: "comment-uid", Handle: new("c:one"), Body: p.roots[0].Body, Author: "actual-author"}
+	roots := ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}})
+	require.Len(t, roots, 1)
+	assert.Equal(t, "complete", roots[0].State)
+	assert.Equal(t, "actual-author", roots[0].Comment.Author)
+	comment.Body = "modified" + comment.Body
+	assert.Equal(t, "edited", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment}})[0].State)
+	assert.Equal(t, "ambiguous", ReadPublicationRoots(envelope, PublicationIssue{Comments: []gen.CommentOut{comment, comment}})[0].State)
+	assert.Equal(t, "truncated", ReadPublicationRoots(envelope, PublicationIssue{Truncated: true})[0].State)
+	for _, key := range []string{publicationVersionKey, publicationReviewKey, publicationHashKey, publicationPolicyKey, publicationTimeKey, publicationCountKey} {
+		metadata := make(map[string]any, len(p.issue.Metadata))
+		for k, v := range p.issue.Metadata {
+			metadata[k] = v
+		}
+		delete(metadata, key)
+		_, err := ReadPublicationEnvelope(metadata)
+		require.Error(t, err, key)
+	}
+}

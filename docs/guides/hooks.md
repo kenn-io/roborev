@@ -66,6 +66,7 @@ type = "kata"
 | `command` | string | Shell command to run, with `{var}` template interpolation |
 | `type` | string | Built-in hook type: `"beads"`, `"kata"`, or `"webhook"`. Empty or `"command"` runs `command` |
 | `url` | string | Webhook destination URL (required when `type = "webhook"`) |
+| `findings` | string | Kata structured publication policy: `"comments"` or `"summary"`; omit for legacy behavior |
 | `project` | string | Kata hook project override. Defaults to the repo's `.kata.toml` binding |
 | `labels` | array | Extra labels for Kata-created issues. `roborev` is always added |
 | `priority` | integer | Kata issue priority (`0`-`4`). Omit to use roborev's defaults |
@@ -218,7 +219,14 @@ labels = ["from-review"]
 priority = 2
 ```
 
-What the `type = "kata"` hook does for each event:
+The example uses the legacy issue-body mode. To publish individual comments, set
+`findings = "comments"` on a `review.completed` Kata hook; `"summary"` exports
+only generic notices. Structured publication requires the daemon's Kata API
+connection and schema 0.28.0. See
+[Publish individual findings](/docs/integrations/kata/#publish-individual-findings)
+for disclosure, retry and deadline behavior.
+
+What the `type = "kata"` hook does for each event in legacy mode:
 
 | Event | Verdict | Action |
 |-------|---------|--------|

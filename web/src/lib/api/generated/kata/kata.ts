@@ -5,6 +5,9 @@ import type {
   KataIssue,
   KataIssuesOutputBody,
   KataListIssuesParams,
+  KataPublicationBody,
+  KataPublicationParams,
+  KataPublicationRequest,
   KataShowIssueParams,
   KataStatusBody,
   KataStatusParams,
@@ -67,6 +70,121 @@ export const kataListIssues = async (
   return roborevFetch<KataIssuesOutputBody>(getKataListIssuesUrl(params), {
     ...options,
     method: "GET",
+  });
+};
+
+export const getKataCreateIssueUrl = () => {
+  return `/api/kata/issues`;
+};
+
+/**
+ * @summary File a Kata issue as roborev through the daemon's connection
+ */
+export const kataCreateIssue = async (
+  kataCreateRequest: NonReadonly<KataCreateRequest>,
+  options?: RequestInit,
+): Promise<KataCreateResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return roborevFetch<KataCreateResponse>(getKataCreateIssueUrl(), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(kataCreateRequest),
+  });
+};
+
+export const getKataPublicationUrl = (params: KataPublicationParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/kata/publication?${stringifiedParams}`
+    : `/api/kata/publication`;
+};
+
+/**
+ * @summary Inspect finding publication
+ */
+export const kataPublication = async (
+  params: KataPublicationParams,
+  options?: RequestInit,
+): Promise<KataPublicationBody> => {
+  return roborevFetch<KataPublicationBody>(getKataPublicationUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getKataPublishUrl = () => {
+  return `/api/kata/publication`;
+};
+
+/**
+ * @summary Create or resume finding publication
+ */
+export const kataPublish = async (
+  kataPublicationRequest: NonReadonly<KataPublicationRequest>,
+  options?: RequestInit,
+): Promise<KataPublicationBody> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<
+      string | readonly string[] | undefined
+    >(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return roborevFetch<KataPublicationBody>(getKataPublishUrl(), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getHeaders(options?.headers),
+    },
+    body: JSON.stringify(kataPublicationRequest),
   });
 };
 

@@ -2688,6 +2688,11 @@ because Pi extensions may define their own flags and value requirements.
 
 ## Hooks
 
+Kata `review.completed` hooks may set `findings = "comments"` or `"summary"` to
+opt into structured publication through the daemon API connection. Omit it for
+the legacy issue-body hook. See
+[Kata findings publication](/docs/integrations/kata/#publish-individual-findings).
+
 Run shell commands when reviews complete or fail. See the
 [Review Hooks guide](/docs/guides/hooks) for full details.
 

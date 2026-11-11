@@ -672,6 +672,7 @@ func (hr *HookRunner) recoverKataPublications() {
 type kataManualRequest struct {
 	ctx    context.Context
 	jobID  int64
+	policy string
 	result chan kataManualResult
 }
 type kataManualResult struct {
@@ -681,10 +682,16 @@ type kataManualResult struct {
 
 // PublishKata registers a manual attempt with the runner's shutdown lifecycle.
 func (hr *HookRunner) PublishKata(ctx context.Context, jobID int64) (*KataPublicationStatus, error) {
+	return hr.publishKataManual(ctx, jobID, "")
+}
+
+func (hr *HookRunner) publishKataManual(ctx context.Context, jobID int64, policy string) (*KataPublicationStatus, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	if hr.publisher == nil {
 		return nil, errors.New("Kata publisher unavailable")
 	}
-	req := kataManualRequest{ctx: ctx, jobID: jobID, result: make(chan kataManualResult, 1)}
+	req := kataManualRequest{ctx: ctx, jobID: jobID, policy: policy, result: make(chan kataManualResult, 1)}
 	select {
 	case hr.manualKataCh <- req:
 	case <-ctx.Done():
@@ -704,10 +711,17 @@ func (hr *HookRunner) PublishKata(ctx context.Context, jobID int64) (*KataPublic
 
 func (hr *HookRunner) runManualKata(req kataManualRequest) {
 	defer hr.wg.Done()
-	ctx, cancel := context.WithCancel(req.ctx)
+	ctx, cancel := context.WithTimeout(req.ctx, 30*time.Second)
 	stop := context.AfterFunc(hr.publicationCtx, cancel)
 	defer stop()
 	defer cancel()
-	status, err := hr.publisher.Publish(ctx, req.jobID)
+	var status *KataPublicationStatus
+	var err error
+	if req.policy != "" {
+		err = hr.publisher.Authorize(ctx, req.jobID, req.policy)
+	}
+	if err == nil {
+		status, err = hr.publisher.Publish(ctx, req.jobID)
+	}
 	req.result <- kataManualResult{status: status, err: err}
 }

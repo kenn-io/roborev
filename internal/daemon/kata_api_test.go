@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,9 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata/katafake"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 const kataTestCredential = "synthetic-kata-credential"
@@ -266,4 +271,69 @@ func TestKataEndpointsMapKataFailures(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
 	assert.NotContains(t, w.Body.String(), kataTestCredential)
 	assert.NotContains(t, w.Body.String(), "another-credential")
+}
+
+func TestKataPublicationRoutesRejectMissingReview(t *testing.T) {
+	server, _ := kataAPIServer(t)
+	get := kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {"12345"}})
+	assert.Equal(t, http.StatusNotFound, get.Code)
+	post := kataPost(t, server, "/api/kata/publication", KataPublicationRequest{JobID: 12345, Findings: "comments"})
+	assert.Equal(t, http.StatusNotFound, post.Code)
+	invalid := kataPost(t, server, "/api/kata/publication", KataPublicationRequest{JobID: 12345, Findings: "unknown"})
+	assert.Equal(t, http.StatusBadRequest, invalid.Code)
+}
+
+func TestKataIssueFullCommentsAndAttribution(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	issue := fake.AddIssue(7, "abc1", "title", "body")
+	issue.Comments = []katagen.CommentOut{{UID: "root-uid", Handle: new("c:root"), Body: "root text", Author: "actual-author"}, {UID: "reply-uid", Handle: new("c:reply"), Body: "reply text", Author: "responder", ReplyToUID: new("root-uid"), ReplyKind: new("answer")}}
+	w := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {"abc1"}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got := decodeKata[KataIssue](t, w)
+	assert.Equal(t, issue.Out.UID, got.UID)
+	assert.NotEmpty(t, got.ProjectUID)
+	require.NotNil(t, got.CommentsComplete)
+	assert.Equal(t, true, *got.CommentsComplete)
+	require.Len(t, got.Comments, 2)
+	assert.Equal(t, "actual-author", got.Comments[0].Author)
+	assert.Equal(t, "reply text", got.Comments[1].Body)
+	assert.Equal(t, "root-uid", *got.Comments[1].ReplyToUID)
+}
+
+func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "synced-review", "worker")
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail}))
+	review, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Nil(t, record.Marker)
+	issue := fake.AddIssue(7, "synthetic", "findings", "body", "roborev")
+	issue.Out.Metadata = map[string]any{"roborev.version": 1, "roborev.review_uuid": record.ReviewUUID.String(), "roborev.document_hash": record.DocumentHash, "roborev.policy": "summary", "roborev.completed_at": review.CreatedAt.UTC().Format(time.RFC3339Nano), "roborev.finding_count": 1}
+	text := "Finding 1 from a roborev review."
+	digest := sha256.Sum256([]byte(text))
+	marker := fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, record.ReviewUUID, digest)
+	issue.Comments = []katagen.CommentOut{{UID: "root-uid", Handle: new("c:root"), Body: marker, Author: "service"}}
+	cfg := kataConnectionConfig(fake)
+	// A synced machine has no local publication hook or marker.
+	server := newServerWithLogs(tc.DB, cfg, "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = server.Close() })
+	w := kataGet(t, server, "/api/kata/publication", url.Values{"job_id": {fmt.Sprint(job.ID)}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got := decodeKata[KataPublicationBody](t, w)
+	assert.Equal(t, "complete", got.State)
+	assert.Equal(t, "summary", got.Policy)
+	require.Len(t, got.Roots, 1)
+	assert.Equal(t, "service", got.Roots[0].Comment.Author)
+	after, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Nil(t, after.Marker)
+	for _, req := range fake.AllRequests() {
+		assert.NotEqual(t, http.MethodPost, req.Method)
+	}
 }

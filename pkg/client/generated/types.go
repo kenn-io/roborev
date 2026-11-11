@@ -2589,19 +2589,91 @@ func (j JobWithReview) Validate() error {
 	return errors
 }
 
+type KataComment struct {
+	Author     string     `json:"author" validate:"required"`
+	Body       string     `json:"body" validate:"required"`
+	EditedAt   *time.Time `json:"edited_at,omitempty"`
+	Handle     *string    `json:"handle,omitempty"`
+	ReplyKind  *string    `json:"reply_kind,omitempty"`
+	ReplyToUID *string    `json:"reply_to_uid,omitempty"`
+	Teammate   *string    `json:"teammate,omitempty"`
+	UID        string     `json:"uid" validate:"required"`
+}
+
+func (k KataComment) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataCreateRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Body Issue body
+	Body *string `json:"body,omitempty"`
+
+	// IdempotencyKey Makes a retry return the issue the first request created
+	IdempotencyKey *string  `json:"idempotency_key,omitempty"`
+	Labels         []string `json:"labels,omitempty"`
+
+	// Priority Priority 0 to 4
+	Priority *int64 `json:"priority,omitempty"`
+
+	// Project Project to file into; empty selects the default project
+	Project *string `json:"project,omitempty"`
+
+	// Title Issue title
+	Title string `json:"title" validate:"required"`
+
+	// WorkspaceAliasIdentity Registered workspace alias identity; use with workspace_alias_kind instead of project
+	WorkspaceAliasIdentity *string `json:"workspace_alias_identity,omitempty"`
+
+	// WorkspaceAliasKind Registered workspace alias kind: git or local
+	WorkspaceAliasKind *string `json:"workspace_alias_kind,omitempty"`
+}
+
+func (k KataCreateRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataCreateResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Author The actor Kata recorded; an authenticated credential overrides roborev's requested actor
+	Author *string `json:"author,omitempty"`
+
+	// Reused Whether Kata answered with an issue an earlier request under the same key created
+	Reused  bool   `json:"reused"`
+	ShortID string `json:"short_id" validate:"required"`
+}
+
+func (k KataCreateResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
 type KataIssue struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema      *string        `json:"$schema,omitempty"`
-	BlockedBy   []KataLinkPeer `json:"blocked_by,omitempty"`
-	Blocks      []KataLinkPeer `json:"blocks,omitempty"`
-	Body        string         `json:"body" validate:"required"`
-	Labels      []string       `json:"labels" validate:"required"`
-	Parent      *KataLinkPeer  `json:"parent,omitempty"`
-	QualifiedID string         `json:"qualified_id" validate:"required"`
-	Related     []KataLinkPeer `json:"related,omitempty"`
-	ShortID     string         `json:"short_id" validate:"required"`
-	Status      string         `json:"status" validate:"required"`
-	Title       string         `json:"title" validate:"required"`
+	Schema              *string              `json:"$schema,omitempty"`
+	Author              *string              `json:"author,omitempty"`
+	BlockedBy           []KataLinkPeer       `json:"blocked_by,omitempty"`
+	Blocks              []KataLinkPeer       `json:"blocks,omitempty"`
+	Body                string               `json:"body" validate:"required"`
+	Comments            []KataComment        `json:"comments,omitempty"`
+	CommentsComplete    *bool                `json:"comments_complete,omitempty"`
+	DestinationID       *string              `json:"destination_id,omitempty"`
+	Labels              []string             `json:"labels" validate:"required"`
+	Metadata            map[string]struct{}  `json:"metadata,omitempty"`
+	Parent              *KataLinkPeer        `json:"parent,omitempty"`
+	ProjectUID          *string              `json:"project_uid,omitempty"`
+	PublicationEnvelope *PublicationEnvelope `json:"publication_envelope,omitempty"`
+	QualifiedID         string               `json:"qualified_id" validate:"required"`
+	Related             []KataLinkPeer       `json:"related,omitempty"`
+	Roots               []KataRoot           `json:"roots,omitempty"`
+	ShortID             string               `json:"short_id" validate:"required"`
+	Status              string               `json:"status" validate:"required"`
+	Teammate            *string              `json:"teammate,omitempty"`
+	Title               string               `json:"title" validate:"required"`
+	UID                 *string              `json:"uid,omitempty"`
 }
 
 func (k KataIssue) Validate() error {
@@ -2623,6 +2695,13 @@ func (k KataIssue) Validate() error {
 	if err := typesValidator.Var(k.Body, "required"); err != nil {
 		errors = errors.Append("Body", err)
 	}
+	for i, item := range k.Comments {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Comments[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(k.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
 	}
@@ -2633,6 +2712,13 @@ func (k KataIssue) Validate() error {
 			}
 		}
 	}
+	if k.PublicationEnvelope != nil {
+		if v, ok := any(k.PublicationEnvelope).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PublicationEnvelope", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(k.QualifiedID, "required"); err != nil {
 		errors = errors.Append("QualifiedID", err)
 	}
@@ -2640,6 +2726,13 @@ func (k KataIssue) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Related[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range k.Roots {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Roots[%d]", i), err)
 			}
 		}
 	}
@@ -2691,6 +2784,98 @@ type KataLinkPeer struct {
 
 func (k KataLinkPeer) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataPublicationBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string       `json:"$schema,omitempty"`
+	Comments      []KataComment `json:"comments" validate:"required"`
+	DestinationID *string       `json:"destination_id,omitempty"`
+	DocumentHash  string        `json:"document_hash" validate:"required"`
+	Expired       bool          `json:"expired"`
+	IssueAuthor   *string       `json:"issue_author,omitempty"`
+	IssueShortID  *string       `json:"issue_short_id,omitempty"`
+	IssueTeammate *string       `json:"issue_teammate,omitempty"`
+	IssueUID      *string       `json:"issue_uid,omitempty"`
+	Message       *string       `json:"message,omitempty"`
+	Policy        *string       `json:"policy,omitempty"`
+	Project       *string       `json:"project,omitempty"`
+	ProjectUID    *string       `json:"project_uid,omitempty"`
+	ReviewUUID    string        `json:"review_uuid" validate:"required"`
+	Roots         []KataRoot    `json:"roots" validate:"required"`
+	State         string        `json:"state" validate:"required"`
+}
+
+func (k KataPublicationBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(k.Comments, "required"); err != nil {
+		errors = errors.Append("Comments", err)
+	}
+	for i, item := range k.Comments {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Comments[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.DocumentHash, "required"); err != nil {
+		errors = errors.Append("DocumentHash", err)
+	}
+	if err := typesValidator.Var(k.ReviewUUID, "required"); err != nil {
+		errors = errors.Append("ReviewUUID", err)
+	}
+	if err := typesValidator.Var(k.Roots, "required"); err != nil {
+		errors = errors.Append("Roots", err)
+	}
+	for i, item := range k.Roots {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Roots[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataPublicationRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	Findings *string `json:"findings,omitempty"`
+	JobID    int64   `json:"job_id" validate:"gte=1"`
+}
+
+func (k KataPublicationRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataRoot struct {
+	Comment  *KataComment `json:"comment,omitempty"`
+	Position int64        `json:"position"`
+	State    string       `json:"state" validate:"required"`
+}
+
+func (k KataRoot) Validate() error {
+	var errors runtime.ValidationErrors
+	if k.Comment != nil {
+		if v, ok := any(k.Comment).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Comment", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type KataStatusBody struct {
@@ -3324,6 +3509,37 @@ func (p PostgresLegacyReview) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
 			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PublicationEnvelope struct {
+	CompletedAt  time.Time `json:"completed_at" validate:"required"`
+	DocumentHash string    `json:"document_hash" validate:"required"`
+	FindingCount int64     `json:"finding_count"`
+	Policy       string    `json:"policy" validate:"required"`
+	ReviewUUID   uuid.UUID `json:"review_uuid" validate:"required"`
+	Version      int64     `json:"version"`
+}
+
+func (p PublicationEnvelope) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.CompletedAt, "required"); err != nil {
+		errors = errors.Append("CompletedAt", err)
+	}
+	if err := typesValidator.Var(p.DocumentHash, "required"); err != nil {
+		errors = errors.Append("DocumentHash", err)
+	}
+	if err := typesValidator.Var(p.Policy, "required"); err != nil {
+		errors = errors.Append("Policy", err)
+	}
+	if v, ok := any(p.ReviewUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewUUID", err)
 		}
 	}
 	if len(errors) == 0 {

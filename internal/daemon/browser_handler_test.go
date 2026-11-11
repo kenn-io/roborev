@@ -1234,3 +1234,24 @@ func TestProjectBrowserReviewJobReadable(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &fields))
 	assert.Equal(t, true, fields["readable"])
 }
+
+func TestBrowserHandlerRejectsKataPublication(t *testing.T) {
+	handler, _ := newBrowserHandlerFixture(t, testBrowserAuthToken)
+	login := browserRequest(t.Context(), http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: testBrowserAuthToken})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, login)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var credentials WebSessionCredentials
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &credentials))
+	cookies := recorder.Result().Cookies()
+	require.Len(t, cookies, 1)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		req := browserRequest(t.Context(), method, "/api/kata/publication?job_id=1", map[string]any{"job_id": 1})
+		req.AddCookie(cookies[0])
+		req.Header.Set(WebSessionHeader, credentials.Session)
+		req.Header.Set(WebCSRFHeader, credentials.CSRF)
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		assert.Equal(t, http.StatusNotFound, out.Code)
+	}
+}

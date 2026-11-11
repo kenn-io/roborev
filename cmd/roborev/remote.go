@@ -12,6 +12,9 @@ import (
 // Remote access is a separate read surface. Refuse foreground agent flows and
 // lifecycle commands before they can interpret remote paths as local work.
 func validateRemoteCommandFor(cmd *cobra.Command) error {
+	if parent := cmd.Parent(); parent != nil && parent.Name() == "kata" {
+		return validateRemoteCommand("kata")
+	}
 	if parent := cmd.Parent(); parent != nil && parent.Name() == "completion" && parent.Parent() == cmd.Root() {
 		return validateRemoteCommand("completion")
 	}

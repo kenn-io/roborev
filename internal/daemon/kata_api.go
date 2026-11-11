@@ -50,16 +50,26 @@ type KataLinkPeer struct {
 
 // KataIssue is the subset of a Kata issue roborev reads.
 type KataIssue struct {
-	ShortID     string         `json:"short_id"`
-	QualifiedID string         `json:"qualified_id"`
-	Title       string         `json:"title"`
-	Body        string         `json:"body"`
-	Status      string         `json:"status"`
-	Labels      []string       `json:"labels"`
-	Parent      *KataLinkPeer  `json:"parent,omitempty"`
-	Blocks      []KataLinkPeer `json:"blocks,omitempty"`
-	BlockedBy   []KataLinkPeer `json:"blocked_by,omitempty"`
-	Related     []KataLinkPeer `json:"related,omitempty"`
+	UID              string                    `json:"uid,omitempty"`
+	Author           string                    `json:"author,omitempty"`
+	Teammate         *string                   `json:"teammate,omitempty"`
+	ProjectUID       string                    `json:"project_uid,omitempty"`
+	DestinationID    string                    `json:"destination_id,omitempty"`
+	Metadata         map[string]any            `json:"metadata,omitempty"`
+	Comments         []KataComment             `json:"comments,omitempty"`
+	CommentsComplete *bool                     `json:"comments_complete,omitempty"`
+	Envelope         *kata.PublicationEnvelope `json:"publication_envelope,omitempty"`
+	Roots            []KataRoot                `json:"roots,omitempty"`
+	ShortID          string                    `json:"short_id"`
+	QualifiedID      string                    `json:"qualified_id"`
+	Title            string                    `json:"title"`
+	Body             string                    `json:"body"`
+	Status           string                    `json:"status"`
+	Labels           []string                  `json:"labels"`
+	Parent           *KataLinkPeer             `json:"parent,omitempty"`
+	Blocks           []KataLinkPeer            `json:"blocks,omitempty"`
+	BlockedBy        []KataLinkPeer            `json:"blocked_by,omitempty"`
+	Related          []KataLinkPeer            `json:"related,omitempty"`
 }
 
 // KataIssuesInput holds query parameters for GET /api/kata/issues.
@@ -241,5 +251,42 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if err != nil {
 		return nil, kataProxyError(err)
 	}
-	return &KataIssueOutput{Body: kataIssueFromClient(issue)}, nil
+	result := kataIssueFromClient(issue)
+	projectName := project
+	issueRef := ref
+	if named, rest, qualified := strings.Cut(ref, "#"); qualified {
+		projectName, issueRef = named, rest
+	}
+	destination, err := client.ResolvePublicationProject(ctx, projectName)
+	if errors.Is(err, kata.ErrIncompatible) {
+		return &KataIssueOutput{Body: result}, nil
+	}
+	if err != nil {
+		return nil, kataProxyError(err)
+	}
+	full, err := client.ShowPublicationIssue(ctx, destination, issueRef)
+	if err != nil {
+		return nil, kataProxyError(err)
+	}
+	result.UID = full.Issue.UID
+	result.Author, result.Teammate = full.Issue.Author, full.Issue.Teammate
+	result.ProjectUID = destination.UID
+	result.DestinationID = kataDestinationID(client.PublicationEndpoint(), destination.UID)
+	result.Metadata = full.Issue.Metadata
+	result.CommentsComplete = new(!full.Truncated)
+	for _, comment := range full.Comments {
+		result.Comments = append(result.Comments, kataComment(comment))
+	}
+	if envelope, err := kata.ReadPublicationEnvelope(full.Issue.Metadata); err == nil {
+		result.Envelope = &envelope
+		for _, root := range kata.ReadPublicationRoots(envelope, full) {
+			item := KataRoot{Position: root.Position, State: root.State}
+			if root.Comment != nil {
+				comment := kataComment(*root.Comment)
+				item.Comment = &comment
+			}
+			result.Roots = append(result.Roots, item)
+		}
+	}
+	return &KataIssueOutput{Body: result}, nil
 }

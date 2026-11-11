@@ -303,6 +303,9 @@ func normalizeMSYSPath(path string) string {
 	return filepath.FromSlash(path)
 }
 
+// NormalizeMSYSPath converts Git output to a native filesystem path.
+func NormalizeMSYSPath(path string) string { return normalizeMSYSPath(path) }
+
 // CommitInfo holds metadata about a commit
 type CommitInfo struct {
 	SHA       string

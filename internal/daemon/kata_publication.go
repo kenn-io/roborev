@@ -10,11 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 	"uuid"
 
+	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/procutil"
 	"go.kenn.io/roborev/internal/storage"
@@ -493,7 +493,7 @@ func kataCheckout(ctx context.Context, job *storage.ReviewJob) (string, error) {
 		procutil.HideConsole(cmd)
 		cmd.Dir = dir
 		out, err := cmd.Output()
-		return strings.TrimSpace(string(out)), err
+		return gitpkg.NormalizeMSYSPath(string(out)), err
 	}
 	canonical := func(path string) string {
 		absolute, err := filepath.Abs(path)

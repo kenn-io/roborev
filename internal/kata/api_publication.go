@@ -289,36 +289,17 @@ func (p *Publication) MatchesIssueEnvelope(metadata map[string]any) bool {
 // Roots reconstructs mappings from complete comment bodies and markers.
 // Missing markers cannot be attributed to a position and remain missing.
 func (p *Publication) Roots(issue PublicationIssue) []PublicationRoot {
-	out := make([]PublicationRoot, len(p.roots))
-	for i, root := range p.roots {
-		out[i] = PublicationRoot{Position: i, State: "missing"}
-		prefix := fmt.Sprintf("<!-- roborev:v1 review=%s position=%d ", p.ReviewUUID, i)
-		var candidates []gen.CommentOut
-		for _, comment := range issue.Comments {
-			if comment.ReplyToUID == nil && strings.Contains(comment.Body, prefix) {
-				candidates = append(candidates, comment)
-			}
-		}
-		switch {
-		case len(candidates) > 1:
-			out[i].State = "ambiguous"
-		case len(candidates) == 1:
-			comment := candidates[0]
-			out[i].Comment = &comment
-			if comment.Body != root.Body || comment.EditedAt != nil {
-				out[i].State = "edited"
-			} else if comment.UID == "" || comment.Handle == nil || *comment.Handle == "" {
-				out[i].State = "unavailable"
-			} else if issue.Truncated {
-				out[i].State = "truncated"
-			} else {
-				out[i].State = "complete"
-			}
-		case issue.Truncated:
-			out[i].State = "truncated"
+	envelope, err := ReadPublicationEnvelope(p.issue.Metadata)
+	if err != nil {
+		return nil
+	}
+	roots := ReadPublicationRoots(envelope, issue)
+	for i := range roots {
+		if roots[i].Comment != nil && roots[i].State == "complete" && roots[i].Comment.Body != p.roots[i].Body {
+			roots[i].State = "edited"
 		}
 	}
-	return out
+	return roots
 }
 
 // CreatePublicationIssue sends exactly the preflighted issue request. The
@@ -361,4 +342,85 @@ func (c *APIClient) CreatePublicationRoot(ctx context.Context, project Publicati
 		return gen.CommentResponseBody{}, fmt.Errorf("%w: created comment identity or body mismatch", ErrInvalidResponse)
 	}
 	return out, err
+}
+
+// PublicationEnvelope is untrusted correlation metadata returned by Kata.
+type PublicationEnvelope struct {
+	Version      int       `json:"version"`
+	ReviewUUID   uuid.UUID `json:"review_uuid"`
+	DocumentHash string    `json:"document_hash"`
+	Policy       string    `json:"policy"`
+	CompletedAt  time.Time `json:"completed_at"`
+	FindingCount int       `json:"finding_count"`
+}
+
+// ReadPublicationEnvelope validates every field of a v1 correlation envelope.
+func ReadPublicationEnvelope(metadata map[string]any) (PublicationEnvelope, error) {
+	var out PublicationEnvelope
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return out, err
+	}
+	var wire struct {
+		Version   int    `json:"roborev.version"`
+		Review    string `json:"roborev.review_uuid"`
+		Hash      string `json:"roborev.document_hash"`
+		Policy    string `json:"roborev.policy"`
+		Completed string `json:"roborev.completed_at"`
+		Count     *int   `json:"roborev.finding_count"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return out, fmt.Errorf("invalid publication envelope: %w", err)
+	}
+	id, err := uuid.Parse(wire.Review)
+	if err != nil || id == uuid.Nil() || wire.Version != 1 || len(wire.Hash) != 64 || strings.Trim(wire.Hash, "0123456789abcdef") != "" || (wire.Policy != "comments" && wire.Policy != "summary") || wire.Count == nil || *wire.Count < 0 {
+		return out, errors.New("invalid publication envelope")
+	}
+	completed, err := time.Parse(time.RFC3339Nano, wire.Completed)
+	if err != nil || completed.IsZero() {
+		return out, errors.New("invalid publication completion time")
+	}
+	return PublicationEnvelope{Version: wire.Version, ReviewUUID: id, DocumentHash: wire.Hash, Policy: wire.Policy, CompletedAt: completed, FindingCount: *wire.Count}, nil
+}
+
+// ReadPublicationRoots verifies markers and current bodies without a local review.
+// Correlation is untrusted and does not establish the comment's author.
+func ReadPublicationRoots(envelope PublicationEnvelope, issue PublicationIssue) []PublicationRoot {
+	roots := make([]PublicationRoot, envelope.FindingCount)
+	for i := range roots {
+		roots[i] = PublicationRoot{Position: i, State: "missing"}
+		prefix := fmt.Sprintf("<!-- roborev:v1 review=%s position=%d ", envelope.ReviewUUID, i)
+		var candidates []gen.CommentOut
+		for _, comment := range issue.Comments {
+			if comment.ReplyToUID == nil && strings.Contains(comment.Body, prefix) {
+				candidates = append(candidates, comment)
+			}
+		}
+		switch {
+		case len(candidates) > 1:
+			roots[i].State = "ambiguous"
+		case len(candidates) == 1:
+			comment := candidates[0]
+			roots[i].Comment = &comment
+			markerAt := strings.LastIndex(comment.Body, "\n\n"+prefix)
+			valid := false
+			if markerAt >= 0 {
+				text := comment.Body[:markerAt]
+				valid = comment.Body[markerAt+2:] == publicationMarker(envelope.ReviewUUID, i, publicationDigest([]byte(text)))
+			}
+			switch {
+			case !valid || comment.EditedAt != nil:
+				roots[i].State = "edited"
+			case comment.UID == "" || comment.Handle == nil || *comment.Handle == "":
+				roots[i].State = "unavailable"
+			case issue.Truncated:
+				roots[i].State = "truncated"
+			default:
+				roots[i].State = "complete"
+			}
+		case issue.Truncated:
+			roots[i].State = "truncated"
+		}
+	}
+	return roots
 }

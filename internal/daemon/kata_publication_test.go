@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -183,4 +185,58 @@ func TestKataCheckoutHonorsCancellation(t *testing.T) {
 	cancel()
 	_, err := kataCheckout(ctx, &storage.ReviewJob{RepoPath: tc.TmpDir, WorktreePath: tc.TmpDir})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestKataPublicationDeadlineAppliesToEveryPost(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "deadline-review", "worker")
+	cfg := kataConnectionConfig(fake)
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+	seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: "reviews", Policy: "comments"}
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "first", Fix: "fix"}, {Severity: "high", Problem: "second", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail, KataPublication: &seed}))
+	p := newKataPublisher(tc.DB, NewStaticConfig(cfg))
+	record, review, _, client, project, publication, err := p.current(t.Context(), job.ID)
+	require.NoError(t, err)
+	client.CloseIdleConnections()
+	boundary := review.CreatedAt.Add(7*24*time.Hour - kata.DefaultRequestTimeout)
+	for _, operation := range []string{"issue", "first root", "second root"} {
+		t.Run(operation, func(t *testing.T) {
+			for _, delta := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
+				p.now = func() time.Time { return boundary.Add(delta) }
+				sent := false
+				err := p.post(t.Context(), job.ID, record, review, project, publication, func(context.Context, *kata.APIClient, kata.PublicationProject, *kata.Publication) error {
+					sent = true
+					return nil
+				})
+				if delta < 0 {
+					require.NoError(t, err)
+					assert.True(t, sent)
+				} else {
+					require.ErrorContains(t, err, "expired")
+					assert.False(t, sent)
+				}
+			}
+		})
+	}
+}
+
+func TestKataCheckoutValidatesLinkedAndForeignWorktrees(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	linked := filepath.Join(t.TempDir(), "linked")
+	out, err := exec.CommandContext(t.Context(), "git", "-C", tc.TmpDir, "worktree", "add", "--detach", linked, "HEAD").CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	t.Cleanup(func() {
+		_ = exec.CommandContext(context.WithoutCancel(t.Context()), "git", "-C", tc.TmpDir, "worktree", "remove", "--force", linked).Run()
+	})
+	got, err := kataCheckout(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, WorktreePath: linked})
+	require.NoError(t, err)
+	assert.Equal(t, linked, got)
+	foreign := newWorkerTestContext(t, 1)
+	got, err = kataCheckout(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, WorktreePath: foreign.TmpDir})
+	require.NoError(t, err)
+	assert.Equal(t, tc.TmpDir, got)
 }

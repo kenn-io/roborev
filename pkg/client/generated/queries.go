@@ -367,6 +367,14 @@ type KataListIssuesQuery struct {
 	Unlimited *bool `json:"unlimited,omitempty"`
 }
 
+type KataPublicationQuery struct {
+	JobID int64 `json:"job_id" validate:"gte=1"`
+}
+
+func (k KataPublicationQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
 type KataStatusQuery struct {
 	// Project Project to check instead of the default project
 	Project *string `json:"project,omitempty"`
