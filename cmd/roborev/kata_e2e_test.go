@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -189,46 +188,6 @@ func TestKataTypedReplyThroughDaemonE2E(t *testing.T) {
 	assert.Equal(t, "roborev", shown.Comments[7].Author)
 	require.NotNil(t, shown.Comments[7].ReplyToUID)
 	assert.Equal(t, roots[0].Comment.UID, *shown.Comments[7].ReplyToUID)
-
-	// Kata, not the proxy, owns kind and normalized evidence validation.
-	api := ep.APIClient(0)
-	for i, tc := range []struct {
-		kind, body string
-		accepted   bool
-	}{
-		{"confirm", strings.Repeat("界", 19) + " \u2003\t" + strings.Repeat("界", 19), false},
-		{"confirm", " " + strings.Repeat("界", 40) + "\n", true},
-		{"confirm", strings.Repeat("界", 41), true},
-		{"refute", strings.Repeat("é", 19) + "\t\u2003 " + strings.Repeat("é", 19), false},
-		{"refute", strings.Repeat("é", 40), true},
-		{"refute", "\n" + strings.Repeat("é", 41) + " ", true},
-		{"reply", " \u2003\n", false},
-		{"unknown", "ordinary body", false},
-	} {
-		target := roots[(i%6)+1].Comment.UID
-		before, showErr := client.ShowPublicationIssue(ctx, project, created.Issue.UID)
-		require.NoError(t, showErr)
-		request := generated.KataResponseRequest{Project: project.Name, DestinationID: *full.DestinationID, Generation: full.Generation, Teammate: "roborev", IssueUID: created.Issue.UID, TargetUID: target, Kind: tc.kind, Body: tc.body, IdempotencyKey: fmt.Sprintf("boundary-%d", i)}
-		receipt, postErr := api.KataResponse(ctx, &generated.KataResponseRequestOptions{Body: &request})
-		after, showErr := client.ShowPublicationIssue(ctx, project, created.Issue.UID)
-		require.NoError(t, showErr)
-		if !tc.accepted {
-			require.ErrorContains(t, postErr, "validation")
-			assert.Len(t, after.Comments, len(before.Comments))
-			continue
-		}
-		require.NoError(t, postErr)
-		assert.Equal(t, "roborev", receipt.Author)
-		assert.Equal(t, "roborev", receipt.Teammate)
-		require.Len(t, after.Comments, len(before.Comments)+1)
-		last := after.Comments[len(after.Comments)-1]
-		assert.Equal(t, tc.body, last.Body)
-		assert.Equal(t, "roborev", last.Author)
-		require.NotNil(t, last.ReplyToUID)
-		assert.Equal(t, target, *last.ReplyToUID)
-		require.NotNil(t, last.ReplyKind)
-		assert.Equal(t, tc.kind, *last.ReplyKind)
-	}
 
 	// Discover A, lose a committed reply, then execute the printed shell tuple
 	// after discovery points at a fresh daemon transport B.

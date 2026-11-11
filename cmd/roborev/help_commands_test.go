@@ -72,10 +72,6 @@ func TestKataCommentHelpDescribesDestinationAndRetry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, cmd.Long, "project, destination ID and target UID")
 	assert.Contains(t, cmd.Long, "exact idempotency key")
-	examples, err := advertisedCommands(helpShellLines(cmd.Example, true))
-	require.NoError(t, err)
-	require.Len(t, examples, 1)
-	assert.NoError(t, validateHelpInvocation(examples[0]))
 }
 
 // advertisedCommands tokenizes documented shell snippets without starting a

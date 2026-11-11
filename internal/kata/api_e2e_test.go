@@ -245,4 +245,58 @@ func TestTypedReplyRealKataLostReceiptAndRetry(t *testing.T) {
 	assert.Equal(t, receipt.Comment.UID, shown.Comments[3].UID)
 	assert.Equal(t, "Edited evidence", shown.Comments[3].Body)
 	assert.Equal(t, "roborev", shown.Comments[3].Author)
+
+	// Evidence length and kind are validated by the real producer.
+	boundaryDoc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary"}
+	for range 6 {
+		boundaryDoc.Findings = append(boundaryDoc.Findings, structuredreview.Finding{Severity: "high", Problem: "problem", Fix: "fix"})
+	}
+	boundaryPub, err := kata.PreparePublication(uuid.New(), strings.Repeat("a", 64), time.Now().UTC(), boundaryDoc, "summary", "roborev")
+	require.NoError(t, err)
+	boundaryIssue, err := c.CreatePublicationIssue(ctx, project, boundaryPub)
+	require.NoError(t, err)
+	var boundaryTargets []string
+	for position := range 6 {
+		root, rootErr := c.CreatePublicationRoot(ctx, project, boundaryIssue.Issue.UID, boundaryPub, position)
+		require.NoError(t, rootErr)
+		boundaryTargets = append(boundaryTargets, root.Comment.UID)
+	}
+	for i, tc := range []struct {
+		kind, body string
+		accepted   bool
+	}{
+		{"confirm", strings.Repeat("界", 19) + " \u2003\t" + strings.Repeat("界", 19), false},
+		{"confirm", " " + strings.Repeat("界", 40) + "\n", true},
+		{"confirm", strings.Repeat("界", 41), true},
+		{"refute", strings.Repeat("é", 19) + "\t\u2003 " + strings.Repeat("é", 19), false},
+		{"refute", strings.Repeat("é", 40), true},
+		{"refute", "\n" + strings.Repeat("é", 41) + " ", true},
+		{"reply", " \u2003\n", false},
+		{"unknown", "ordinary body", false},
+	} {
+		target := boundaryTargets[i%len(boundaryTargets)]
+		before, showErr := c.ShowPublicationIssue(ctx, project, boundaryIssue.Issue.UID)
+		require.NoError(t, showErr)
+		got, postErr := c.Comment(ctx, project, boundaryIssue.Issue.UID, target, tc.kind, tc.body, fmt.Sprintf("boundary-%d", i), "roborev")
+		after, showErr := c.ShowPublicationIssue(ctx, project, boundaryIssue.Issue.UID)
+		require.NoError(t, showErr)
+		if !tc.accepted {
+			require.ErrorIs(t, postErr, kata.ErrRequestRejected)
+			assert.Equal(t, "validation", kata.ErrorCode(postErr))
+			assert.Len(t, after.Comments, len(before.Comments))
+			continue
+		}
+		require.NoError(t, postErr)
+		assert.Equal(t, "roborev", got.Comment.Author)
+		require.NotNil(t, got.Comment.Teammate)
+		assert.Equal(t, "roborev", *got.Comment.Teammate)
+		require.Len(t, after.Comments, len(before.Comments)+1)
+		last := after.Comments[len(after.Comments)-1]
+		assert.Equal(t, tc.body, last.Body)
+		assert.Equal(t, "roborev", last.Author)
+		require.NotNil(t, last.ReplyToUID)
+		assert.Equal(t, target, *last.ReplyToUID)
+		require.NotNil(t, last.ReplyKind)
+		assert.Equal(t, tc.kind, *last.ReplyKind)
+	}
 }

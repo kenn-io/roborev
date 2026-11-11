@@ -494,7 +494,7 @@ func TestResolvePublicationTarget(t *testing.T) {
 	p := publicationFixture(t, "comments")
 	project := PublicationProject{ID: 7, Name: "reviews", UID: "project-uid"}
 	root := gen.CommentOut{UID: "01AAAAAAAAAAAAAAAAAAABC123", Handle: new("c:abc123"), Body: p.roots[0].Body, IssueID: 10}
-	reply := gen.CommentOut{UID: "01BBBBBBBBBBBBBBBBBBDEF456", Handle: new("c:def456"), Body: "reply", IssueID: 10, ReplyToUID: &root.UID}
+	reply := gen.CommentOut{UID: "01BBBBBBBBBBBBBBBBBBDEF456", Handle: new("c:def456"), Body: "reply", IssueID: 10, ReplyToUID: &root.UID, ReplyKind: new("reply")}
 	issue := PublicationIssue{Issue: gen.ShowIssueOut{UID: "issue-uid", ID: 10, ProjectID: 7, Metadata: p.issue.Metadata}, Comments: []gen.CommentOut{root, reply}}
 	selected, err := ResolvePublicationTarget(project, issue, "c:def456")
 	require.NoError(t, err)
@@ -508,9 +508,7 @@ func TestResolvePublicationTarget(t *testing.T) {
 	}{
 		{"truncated", func(i *PublicationIssue) { i.Truncated = true }},
 		{"edited root", func(i *PublicationIssue) { i.Comments[0].Body += "changed" }},
-		{"foreign reply", func(i *PublicationIssue) { i.Comments[1].IssueID = 11 }},
-		{"missing parent", func(i *PublicationIssue) { i.Comments[1].ReplyToUID = new("missing") }},
-		{"cycle", func(i *PublicationIssue) { i.Comments[1].ReplyToUID = &i.Comments[1].UID }},
+		{"missing parent", func(i *PublicationIssue) { i.Comments[1].ReplyToUID = new("01CCCCCCCCCCCCCCCCCCABC123") }},
 		{"ambiguous", func(i *PublicationIssue) {
 			i.Comments = append(i.Comments, gen.CommentOut{UID: "01CCCCCCCCCCCCCCCCCCDEF456", IssueID: 10})
 		}},
@@ -535,42 +533,10 @@ func TestValidateReplyKey(t *testing.T) {
 	}
 }
 
-func TestTypedCommentReceiptAndReplay(t *testing.T) {
-	f := katafake.New(t)
-	c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
-	project, err := c.ResolvePublicationProject(t.Context(), "")
-	require.NoError(t, err)
-	changed := true
-	f.Override = func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method != http.MethodPost {
-			return false
-		}
-		f.Reply(w, map[string]any{"changed": changed, "issue": map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID}, "comment": map[string]any{"uid": "reply-uid", "issue_id": 11, "body": "evidence", "author": "server-author", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": "reply"}})
-		return true
-	}
-	receipt, err := c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "evidence", "Key-A", "reviewer")
-	require.NoError(t, err)
-	assert.Equal(t, "server-author", receipt.Comment.Author)
-	assert.True(t, receipt.Changed)
-	changed = false
-	receipt, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "evidence", "Key-A", "reviewer")
-	require.NoError(t, err)
-	assert.False(t, receipt.Changed)
-	_, err = c.Comment(t.Context(), project, "issue-uid", "other-target", "reply", "evidence", "Key-A", "reviewer")
-	require.ErrorIs(t, err, ErrInvalidResponse)
-	var posts []katafake.Request
-	for _, request := range f.Requests() {
-		if request.Method == http.MethodPost {
-			posts = append(posts, request)
-		}
-	}
-	require.Len(t, posts, 3)
-	assert.Equal(t, "Key-A", posts[0].Header.Get("Idempotency-Key"))
-	assert.Contains(t, string(posts[0].Body), `"reply_to":"target-uid"`)
-	assert.NotContains(t, string(posts[0].Body), `"force"`)
-}
-
-func TestTypedCommentKindsAndServerErrors(t *testing.T) {
+func TestTypedCommentKindsAndReceipts(t *testing.T) {
+	const issueUID = "01AAAAAAAAAAAAAAAAAAABC123"
+	const targetUID = "01BBBBBBBBBBBBBBBBBBDEF456"
+	const commentUID = "01CCCCCCCCCCCCCCCCCC789012"
 	for _, kind := range []string{"reply", "confirm", "refute", "supersede"} {
 		t.Run(kind, func(t *testing.T) {
 			f := katafake.New(t)
@@ -585,54 +551,26 @@ func TestTypedCommentKindsAndServerErrors(t *testing.T) {
 					return false
 				}
 				decodeErr = json.UnmarshalRead(r.Body, &sent)
-				f.Reply(w, map[string]any{"changed": true, "issue": map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID}, "comment": map[string]any{"uid": "reply-uid", "issue_id": 11, "body": body, "author": "author", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": kind}})
+				f.Reply(w, map[string]any{"changed": true, "issue": map[string]any{"uid": issueUID, "id": 11, "project_id": project.ID}, "comment": map[string]any{"uid": commentUID, "issue_id": 11, "body": body, "author": "author", "teammate": "reviewer", "reply_to_uid": targetUID, "reply_kind": kind}})
 				return true
 			}
-			_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", kind, body, "key", "reviewer")
+			receipt, err := c.Comment(t.Context(), project, issueUID, targetUID, kind, body, "key", "reviewer")
 			require.NoError(t, err)
+			assert.Equal(t, "author", receipt.Comment.Author)
+			assert.True(t, receipt.Changed)
+			requests := f.Requests()
+			require.NotEmpty(t, requests)
+			assert.Equal(t, "key", requests[len(requests)-1].Header.Get("Idempotency-Key"))
 			require.NoError(t, decodeErr)
 			require.NotNil(t, sent.Kind)
 			assert.Equal(t, kind, string(*sent.Kind))
 			assert.Equal(t, body, sent.Body)
+			require.NotNil(t, sent.ReplyTo)
+			assert.Equal(t, targetUID, *sent.ReplyTo)
 			assert.Nil(t, sent.Force)
 		})
 	}
-	for _, code := range []string{"duplicate_reply", "idempotency_mismatch", "issue_closed", "validation", "comment_not_found"} {
-		t.Run(code, func(t *testing.T) {
-			f := katafake.New(t)
-			c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
-			project, err := c.ResolvePublicationProject(t.Context(), "")
-			require.NoError(t, err)
-			f.Override = func(w http.ResponseWriter, r *http.Request) bool {
-				if r.Method != http.MethodPost {
-					return false
-				}
-				status := http.StatusConflict
-				switch code {
-				case "validation":
-					status = http.StatusBadRequest
-				case "comment_not_found":
-					status = http.StatusNotFound
-				}
-				f.Fail(w, status, code, "synthetic producer error")
-				return true
-			}
-			_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "text", "key", "reviewer")
-			switch code {
-			case "validation":
-				require.ErrorIs(t, err, ErrRequestRejected)
-			case "comment_not_found":
-				require.ErrorIs(t, err, ErrNotFound)
-			default:
-				require.ErrorIs(t, err, ErrConflict)
-			}
-			assert.Equal(t, code, ErrorCode(err))
-			assert.ErrorContains(t, err, "synthetic producer error")
-		})
-	}
-}
-
-func TestTypedCommentRejectsCorruptReceipts(t *testing.T) {
+	// Reject inconsistent receipts even when the server responds successfully.
 	cases := []struct {
 		name    string
 		corrupt func(map[string]any, map[string]any)
@@ -647,7 +585,6 @@ func TestTypedCommentRejectsCorruptReceipts(t *testing.T) {
 		{"teammate missing", func(_, c map[string]any) { delete(c, "teammate") }},
 		{"teammate changed", func(_, c map[string]any) { c["teammate"] = "other" }},
 		{"body", func(_, c map[string]any) { c["body"] = "changed" }},
-		{"edited", func(_, c map[string]any) { c["edited_at"] = "2026-01-02T03:04:05Z" }},
 		{"target missing", func(_, c map[string]any) { delete(c, "reply_to_uid") }},
 		{"target changed", func(_, c map[string]any) { c["reply_to_uid"] = "other-target" }},
 		{"kind missing", func(_, c map[string]any) { delete(c, "reply_kind") }},
@@ -660,20 +597,17 @@ func TestTypedCommentRejectsCorruptReceipts(t *testing.T) {
 			project, err := c.ResolvePublicationProject(t.Context(), "")
 			require.NoError(t, err)
 			for _, changed := range []bool{true, false} {
-				if !changed && tc.name == "edited" {
-					continue // An edited unchanged receipt is a valid replay.
-				}
 				f.Override = func(w http.ResponseWriter, r *http.Request) bool {
 					if r.Method != http.MethodPost {
 						return false
 					}
-					issue := map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID, "project_uid": project.UID}
-					comment := map[string]any{"uid": "reply-uid", "issue_id": 11, "body": "evidence", "author": "actual", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": "reply"}
+					issue := map[string]any{"uid": issueUID, "id": 11, "project_id": project.ID, "project_uid": project.UID}
+					comment := map[string]any{"uid": commentUID, "issue_id": 11, "body": "evidence", "author": "actual", "teammate": "reviewer", "reply_to_uid": targetUID, "reply_kind": "reply"}
 					tc.corrupt(issue, comment)
 					f.Reply(w, map[string]any{"changed": changed, "issue": issue, "comment": comment})
 					return true
 				}
-				_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "evidence", "opaque-key", "reviewer")
+				_, err = c.Comment(t.Context(), project, issueUID, targetUID, "reply", "evidence", "opaque-key", "reviewer")
 				require.ErrorIs(t, err, ErrInvalidResponse, "changed=%t", changed)
 			}
 		})

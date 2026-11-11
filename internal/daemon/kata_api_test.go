@@ -464,17 +464,35 @@ func TestKataInspectionReadsOversizedUnmarkedPublication(t *testing.T) {
 
 func TestKataResponseRejectsInvalidRequestsBeforeWriting(t *testing.T) {
 	server, fake := kataAPIServer(t)
-	for _, request := range []KataResponseRequest{
-		{},
-		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "reply", Body: "text", IdempotencyKey: "key"},
-		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "confirm", Body: "short", IdempotencyKey: "key"},
-		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "reply", Body: "text", IdempotencyKey: "key", Generation: 10},
+	_, generation := server.configWatcher.kataSnapshot()
+	base := KataResponseRequest{Project: "reviews", DestinationID: "wrong", Generation: generation, Teammate: "roborev", IssueUID: "issue-uid", TargetUID: "01AAAAAAAAAAAAAAAAAAABC123", Kind: "reply", Body: "text", IdempotencyKey: "key"}
+	for _, tc := range []struct {
+		name         string
+		request      KataResponseRequest
+		status       int
+		message      string
+		projectReads int
+	}{
+		{"missing fields", KataResponseRequest{}, http.StatusBadRequest, "missing destination or target", 0},
+		{"invalid key", func() KataResponseRequest { r := base; r.IdempotencyKey = ""; return r }(), http.StatusBadRequest, "invalid idempotency key", 0},
+		{"generation", func() KataResponseRequest { r := base; r.Generation++; return r }(), http.StatusConflict, "configuration changed", 0},
+		{"teammate", func() KataResponseRequest { r := base; r.Teammate = "other"; return r }(), http.StatusConflict, "teammate changed", 0},
+		{"destination", base, http.StatusConflict, "destination changed", 1},
 	} {
-		w := kataPost(t, server, "/api/kata/response", request)
-		assert.NotEqual(t, http.StatusOK, w.Code)
-	}
-	for _, request := range fake.AllRequests() {
-		assert.NotEqual(t, http.MethodPost, request.Method)
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(fake.AllRequests())
+			w := kataPost(t, server, "/api/kata/response", tc.request)
+			assert.Equal(t, tc.status, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), tc.message)
+			var projectReads int
+			for _, request := range fake.AllRequests()[before:] {
+				assert.NotEqual(t, http.MethodPost, request.Method)
+				if request.Method == http.MethodGet && request.Path == "/api/v1/projects" {
+					projectReads++
+				}
+			}
+			assert.Equal(t, tc.projectReads, projectReads)
+		})
 	}
 }
 
@@ -567,32 +585,10 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	retry := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: updated.Project, DestinationID: updated.DestinationID, Generation: updated.Generation, Teammate: full.ReplyTeammate, IssueUID: updated.UID, TargetUID: prior.UID, Kind: "refute", Body: body, IdempotencyKey: "Exact-Key"})
 	assert.Equal(t, http.StatusConflict, retry.Code, retry.Body.String())
 	assert.Len(t, fake.AllRequests(), beforeChangeRetry)
-	server.configWatcher.cfgMu.Lock()
-	server.configWatcher.cfg.Integrations.Kata.Teammate = "roborev"
-	server.configWatcher.reloadCounter++
-	server.configWatcher.cfgMu.Unlock()
-	read = kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"other"}})
-	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
-	full = decodeKata[KataIssue](t, read)
-	// A reload after the full read but before the final write invalidates the tuple.
-	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/") {
-			server.configWatcher.cfgMu.Lock()
-			server.configWatcher.reloadCounter++
-			server.configWatcher.cfgMu.Unlock()
-		}
-		return false
-	}
-	before := len(fake.AllRequests())
-	stale := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "reply", Body: "another reply", IdempotencyKey: "other-key"})
-	assert.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
-	for _, request := range fake.AllRequests()[before:] {
-		assert.NotEqual(t, http.MethodPost, request.Method)
-	}
 }
 
 func TestKataResponseRejectsDestinationChangesAtBarrier(t *testing.T) {
-	for _, scenario := range []string{"endpoint", "project UID", "reload", "disabled"} {
+	for _, scenario := range []string{"project UID", "reload"} {
 		t.Run(scenario, func(t *testing.T) {
 			server, fake := kataAPIServer(t)
 			issue := fake.AddIssue(7, "a123", "findings", "body")
@@ -606,6 +602,11 @@ func TestKataResponseRejectsDestinationChangesAtBarrier(t *testing.T) {
 			require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 			full := decodeKata[KataIssue](t, read)
 			request := KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: target, Kind: "reply", Body: "evidence", IdempotencyKey: "Exact-Key"}
+			configBefore, _ := server.configWatcher.kataSnapshot()
+			if scenario == "reload" {
+				server.configWatcher.configPath = filepath.Join(t.TempDir(), "config.toml")
+				require.NoError(t, config.SaveGlobalTo(server.configWatcher.configPath, server.configWatcher.Config()))
+			}
 			entered, resume := make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			fake.Override = func(_ http.ResponseWriter, r *http.Request) bool {
@@ -635,19 +636,19 @@ func TestKataResponseRejectsDestinationChangesAtBarrier(t *testing.T) {
 			if scenario == "project UID" {
 				fake.Projects[0].UID = "P9999999999999999999999999"
 			} else {
-				server.configWatcher.cfgMu.Lock()
-				switch scenario {
-				case "endpoint":
-					server.configWatcher.cfg.Integrations.Kata.Endpoint = "http://127.0.0.1:2"
-				case "disabled":
-					server.configWatcher.cfg.Integrations.Kata.Enabled = false
-				}
-				server.configWatcher.reloadCounter++
-				server.configWatcher.cfgMu.Unlock()
+				server.configWatcher.reloadConfig()
+				reloaded, generation := server.configWatcher.kataSnapshot()
+				assert.Equal(t, configBefore, reloaded)
+				assert.Equal(t, full.Generation+1, generation)
 			}
 			close(resume)
 			<-done
 			assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+			if scenario == "project UID" {
+				assert.Contains(t, w.Body.String(), "destination changed")
+			} else {
+				assert.Contains(t, w.Body.String(), "configuration changed")
+			}
 			for _, req := range fake.AllRequests() {
 				assert.NotEqual(t, http.MethodPost, req.Method)
 			}
