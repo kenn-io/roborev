@@ -210,6 +210,14 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 		}
 		return s.publicationResult(ctx, jobID, status, err)
 	}
+	projectName, issueRef := strings.TrimSpace(in.Project), ""
+	if in.Issue != "" {
+		var err error
+		projectName, issueRef, err = kataIssueSelection(in.Issue, projectName)
+		if err != nil {
+			return nil, err
+		}
+	}
 	cfg, generation := s.configWatcher.kataSnapshot()
 	if !cfg.Enabled {
 		return nil, huma.Error409Conflict("Kata integration is disabled")
@@ -219,7 +227,7 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 		return nil, kataReadError(err)
 	}
 	defer client.CloseIdleConnections()
-	project, err := client.ResolvePublicationProject(ctx, strings.TrimSpace(in.Project))
+	project, err := client.ResolvePublicationProject(ctx, projectName)
 	if ctx.Err() != nil {
 		return nil, kataReadError(ctx.Err())
 	}
@@ -229,7 +237,7 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 		}
 		return nil, kataReadError(err)
 	}
-	issue, metadata, err := client.ReadPublicationIssue(ctx, project, id, strings.TrimSpace(in.Issue))
+	issue, metadata, err := client.ReadPublicationIssue(ctx, project, id, issueRef)
 	if ctx.Err() != nil {
 		return nil, kataReadError(ctx.Err())
 	}

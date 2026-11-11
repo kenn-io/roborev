@@ -94,14 +94,30 @@ func TestKataShowSelectorQueries(t *testing.T) {
 	defer server.Close()
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
-	for _, tc := range []struct{ selector, param string }{{"11111111-1111-4111-8111-111111111111", "review_uuid="}, {"issue-uid", "issue=issue-uid"}} {
+	for _, tc := range []struct {
+		selector, param string
+		issue           bool
+	}{
+		{"11111111-1111-4111-8111-111111111111", "review_uuid=", false},
+		{"issue-uid", "issue=issue-uid", false},
+		{"reviews#1234", "issue=reviews%231234", false},
+		{"1234", "job_id=1234", false},
+		{"1234", "issue=1234", true},
+	} {
 		root := newRootCmd()
 		var out bytes.Buffer
 		root.SetOut(&out)
 		root.SetErr(&out)
-		root.SetArgs([]string{"--server", server.URL, "kata", "show", tc.selector, "--project", "reviews"})
+		args := []string{"--server", server.URL, "kata", "show", tc.selector, "--project", "reviews"}
+		if tc.issue {
+			args = append(args, "--issue")
+		}
+		root.SetArgs(args)
 		require.NoError(t, root.Execute())
 		assert.Contains(t, query, tc.param)
+		if tc.issue {
+			assert.NotContains(t, query, "job_id=")
+		}
 		assert.Contains(t, query, "project=reviews")
 		assert.Contains(t, out.String(), "evidence")
 		assert.Contains(t, out.String(), "lineage: orphan")

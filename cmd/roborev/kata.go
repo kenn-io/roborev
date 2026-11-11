@@ -18,6 +18,7 @@ import (
 func kataCmd() *cobra.Command {
 	root := &cobra.Command{Use: "kata", Short: "Inspect or publish review findings in Kata"}
 	var findings, project string
+	var issueSelector bool
 	show := &cobra.Command{Use: "show JOB|REVIEW-UUID|ISSUE", Short: "Show the Kata discussion for a review or issue", Args: cobra.ExactArgs(1)}
 	create := &cobra.Command{Use: "create JOB", Short: "Create or resume the Kata publication for a review", Args: cobra.ExactArgs(1)}
 	run := func(write bool) func(*cobra.Command, []string) error {
@@ -43,7 +44,9 @@ func kataCmd() *cobra.Command {
 				response, err = api.KataPublish(cmd.Context(), &generated.KataPublishRequestOptions{Body: &body})
 			} else {
 				query := &generated.KataPublicationQuery{}
-				if idErr == nil && id > 0 {
+				if issueSelector {
+					query.Issue = &args[0]
+				} else if idErr == nil && id > 0 {
 					query.JobID = &id
 				} else if _, parseErr := uuid.Parse(args[0]); parseErr == nil { //nolint:forbidigo // Parse the user-supplied selector.
 					query.ReviewUUID = &args[0]
@@ -142,7 +145,8 @@ func kataCmd() *cobra.Command {
 		}
 	}
 	show.RunE = run(false)
-	show.Flags().StringVar(&project, "project", "", "Kata project for an explicit issue or UUID")
+	show.Flags().BoolVar(&issueSelector, "issue", false, "Interpret the selector as a Kata issue, including numeric short IDs")
+	show.Flags().StringVar(&project, "project", "", "Kata project for an issue or unmarked review")
 	create.RunE = run(true)
 	create.Flags().StringVar(&findings, "findings", "", "disclosure for a previously unmarked review: comments or summary")
 	root.AddCommand(show, create, kataResponseCmd())

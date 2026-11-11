@@ -753,6 +753,31 @@ func TestKataContextMCPBackendParity(t *testing.T) {
 	httpResult, err := mcpserver.NewHTTPBackend(api.URL, api.Client()).GetKataContext(t.Context(), query)
 	require.NoError(t, err)
 	assert.Equal(t, inProcess, httpResult)
+	numeric := fake.AddIssue(8, "1234", "Numeric issue", "complete evidence")
+	numeric.Comments = []katagen.CommentOut{{UID: "numeric-comment", IssueID: numeric.Out.ID, Author: "reviewer", Body: "conflicting evidence"}}
+	for _, query := range []mcpserver.KataContextQuery{{Issue: "other#1234"}, {Issue: "1234", Project: "other"}, {Issue: "other#1234", Project: "other"}} {
+		direct, err := server.mcpBackend().GetKataContext(t.Context(), query)
+		require.NoError(t, err)
+		remote, err := mcpserver.NewHTTPBackend(api.URL, api.Client()).GetKataContext(t.Context(), query)
+		require.NoError(t, err)
+		assert.Equal(t, direct, remote)
+		assert.Equal(t, "other", direct["project"])
+		assert.Equal(t, numeric.Out.UID, direct["issue_uid"])
+		assert.Contains(t, fmt.Sprint(direct["comments"]), "conflicting evidence")
+	}
+	for _, query := range []url.Values{{"issue": {"other#1234"}, "project": {"reviews"}}, {"issue": {"other#"}}, {"issue": {"#1234"}}, {"issue": {"other#bad#1234"}}} {
+		before := len(fake.AllRequests())
+		w := kataGet(t, server, "/api/kata/publication", query)
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Len(t, fake.AllRequests(), before)
+	}
+	conflict := mcpserver.KataContextQuery{Issue: "other#1234", Project: "reviews"}
+	_, directConflict := server.mcpBackend().GetKataContext(t.Context(), conflict)
+	_, remoteConflict := mcpserver.NewHTTPBackend(api.URL, api.Client()).GetKataContext(t.Context(), conflict)
+	var directInvalid, remoteInvalid *mcpserver.Error
+	require.ErrorAs(t, directConflict, &directInvalid)
+	require.ErrorAs(t, remoteConflict, &remoteInvalid)
+	assert.Equal(t, directInvalid.Code, remoteInvalid.Code)
 	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
 		fake.Fail(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return true

@@ -248,6 +248,10 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	if alias != nil && strings.Contains(ref, "#") {
 		return nil, huma.Error400BadRequest("a qualified issue ref and workspace alias cannot be provided together")
 	}
+	projectName, issueRef, err := kataIssueSelection(ref, project)
+	if err != nil {
+		return nil, err
+	}
 	if project != "" && !strings.Contains(ref, "#") {
 		ref = project + "#" + ref
 	}
@@ -255,17 +259,6 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	client, err := kataProxyClientFor(cfg, alias)
 	if err != nil {
 		return nil, err
-	}
-	projectName := project
-	issueRef := ref
-	if named, rest, qualified := strings.Cut(ref, "#"); qualified {
-		if named == "" {
-			return nil, huma.Error400BadRequest("empty project in issue reference")
-		}
-		if project != "" && project != named {
-			return nil, huma.Error400BadRequest("conflicting project selectors")
-		}
-		projectName, issueRef = named, rest
 	}
 	destination, err := client.ResolvePublicationProject(ctx, projectName)
 	if errors.Is(err, kata.ErrIncompatible) || errors.Is(err, kata.ErrProjectNotFound) {
@@ -285,6 +278,24 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	result := kataIssueFromPublication(destination, kataDestinationID(client.PublicationEndpoint(), destination.UID), generation, *full, nil)
 	result.ReplyTeammate = cfg.ResolvedTeammate()
 	return &KataIssueOutput{Body: result}, nil
+}
+
+// kataIssueSelection resolves a qualified issue without searching another project.
+func kataIssueSelection(ref, project string) (string, string, error) {
+	ref, project = strings.TrimSpace(ref), strings.TrimSpace(project)
+	if named, rest, qualified := strings.Cut(ref, "#"); qualified {
+		if named == "" || rest == "" || strings.Contains(rest, "#") {
+			return "", "", huma.Error400BadRequest("invalid qualified issue reference")
+		}
+		if project != "" && project != named {
+			return "", "", huma.Error400BadRequest("conflicting project selectors")
+		}
+		return named, rest, nil
+	}
+	if ref == "" {
+		return "", "", huma.Error400BadRequest("empty issue reference")
+	}
+	return project, ref, nil
 }
 
 func kataIssueFromPublication(destination kata.PublicationProject, destinationID string, generation uint64, full kata.PublicationIssue, selectedRoots *[]kata.PublicationRoot) KataIssue {
