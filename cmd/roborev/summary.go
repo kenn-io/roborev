@@ -436,16 +436,16 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 	cmd.Printf("  Documents unavailable: %d missing, %d invalid, %d legacy, %d unable to review\n", f.MissingDocuments, f.InvalidDocuments, f.LegacyDocuments, f.UnableDocuments)
 	cmd.Printf("  Rebuttals: %d valid, %d unbound, %d stale, %d unmatched/ambiguous, %d invalid, %d ineligible\n", f.Rebuttals.Valid, f.Rebuttals.Unbound, f.Rebuttals.Stale, f.Rebuttals.Ambiguous, f.Rebuttals.Invalid, f.Rebuttals.Ineligible)
 	cmd.Println("  R confirms/refutes agent assertions; closure is resolution only. K, D and panel R labels unavailable.")
-	priced := false
+	showSpend := false
 	for _, r := range f.Rows {
-		if r.Cost.JobsWithCost > 0 {
-			priced = true
+		if r.Cost.HasUsableSpend() {
+			showSpend = true
 			break
 		}
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprint(w, "  Group\tFindings\tLabeled\tPositive\tNegative\tExcluded\tUnlabeled\tActed-on\tResolution")
-	if priced {
+	if showSpend {
 		fmt.Fprint(w, "\tRetained spend\tCost/positive")
 	}
 	fmt.Fprintln(w)
@@ -465,18 +465,12 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 			key = "(unspecified)"
 		}
 		fmt.Fprintf(w, "  %s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s", key, r.Findings, r.Labeled, r.Positive, r.Negative, r.Excluded, r.Unlabeled, rate, resolution)
-		if priced {
+		if showSpend {
 			spend, per := "-", "-"
-			if r.Cost.JobsWithCost > 0 {
-				spend = fmt.Sprintf("~$%.2f", r.Cost.TotalUSD)
-				if !r.Cost.Complete {
-					spend = fmt.Sprintf("≥$%.2f (%d/%d priced)", r.Cost.TotalUSD, r.Cost.JobsWithCost, r.Cost.JobsTotal)
-				}
+			if r.Cost.HasUsableSpend() {
+				spend = formatFindingSpend(r.Cost, r.Cost.TotalUSD)
 				if r.CostPerPositive != nil {
-					per = fmt.Sprintf("~$%.2f", *r.CostPerPositive)
-					if !r.Cost.Complete {
-						per = fmt.Sprintf("≥$%.2f (%d/%d priced)", *r.CostPerPositive, r.Cost.JobsWithCost, r.Cost.JobsTotal)
-					}
+					per = formatFindingSpend(r.Cost, *r.CostPerPositive)
 				}
 			}
 			fmt.Fprintf(w, "\t%s\t%s", spend, per)
@@ -484,8 +478,15 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 		fmt.Fprintln(w)
 	}
 	_ = w.Flush()
-	if f.GroupBy == "severity" && priced {
+	if f.GroupBy == "severity" && showSpend {
 		cmd.Println("  Severity spend overlaps across cells; each review is charged once per cell.")
 	}
 	cmd.Println()
+}
+
+func formatFindingSpend(cost storage.CostAggregate, amount float64) string {
+	if cost.Complete {
+		return fmt.Sprintf("~$%.2f", amount)
+	}
+	return fmt.Sprintf("≥$%.2f (%d/%d priced)", amount, cost.JobsWithCost, cost.JobsTotal)
 }

@@ -334,7 +334,7 @@ func findingStats(q querier, opts SummaryOptions, groupBy string) (*FindingStats
 		c := cells[key]
 		finishFindingCounts(&c.FindingOutcomeCounts, minimum)
 		finishFindingCost(&c.Cost)
-		if c.Positive > 0 && c.Cost.JobsWithCost > 0 {
+		if c.Positive > 0 && c.Cost.HasUsableSpend() {
 			v := c.Cost.TotalUSD / float64(c.Positive)
 			c.CostPerPositive = &v
 		}
@@ -413,7 +413,10 @@ func findingReviewCosts(q querier, r *findingReview, asOf time.Time) ([]findingE
 		where = "(j.id=? OR (j.panel_run_uuid=? AND j.panel_role='member'))"
 		args = append(args, r.run)
 	}
-	rows, err := q.Query(`SELECT j.id,j.finished_at,CASE WHEN `+hasCost+` THEN 1 ELSE 0 END,CASE WHEN `+hasCost+` THEN json_extract(j.token_usage,'$.cost_usd') ELSE 0 END FROM review_jobs j WHERE `+where+` AND `+costEligible, args...)
+	rows, err := q.Query(`SELECT j.id,j.finished_at,
+ CASE WHEN `+costComplete+` THEN 1 ELSE 0 END,
+ CASE WHEN `+hasCost+` THEN json_extract(j.token_usage,'$.cost_usd') ELSE 0 END
+ FROM review_jobs j WHERE `+where+` AND `+costEligible, args...)
 	if err != nil {
 		return nil, err
 	}

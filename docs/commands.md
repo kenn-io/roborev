@@ -1088,10 +1088,12 @@ historical retries. Whole-panel cost includes parent and member work, including
 failed invoked and advisory members. Each execution is charged once per cell;
 severity cells overlap when a review contains several severities, so their spend
 is not additive. Runs that never invoked an agent do not reduce cost coverage. A
-recorded zero-dollar price is priced; missing prices are not free. Cost /
-positive is unavailable without positive findings. Partial prices show a lower
-bound such as `≥$2.00 (3/4 priced)`; human cost columns are omitted when no row
-has usable prices. JSON always preserves eligible and priced denominators.
+fully priced zero-dollar execution counts as priced. A partly priced execution
+adds its recorded dollars to spend and leaves coverage incomplete. Cost per
+positive finding is unavailable without positive findings. Partial prices show a
+lower bound such as `≥$2.00 (0/1 priced)`. Human cost columns are omitted when
+no row has usable prices. JSON always preserves eligible and priced
+denominators.
 
 ## Aggregate Cost
 

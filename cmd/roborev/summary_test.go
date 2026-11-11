@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -169,11 +170,8 @@ func TestPrintFindingSummary(t *testing.T) {
 		LogicalReviews:    3,
 		StructuredReviews: 2,
 		Rows: []storage.FindingStatsRow{{
-			Key: "high",
-			FindingOutcomeCounts: storage.FindingOutcomeCounts{
-				Findings: 4, Labeled: 2, Positive: 1, Negative: 1, Unlabeled: 2,
-				RateState: "below_minimum", FailingReviews: 1, ClosedReviews: 1,
-			},
+			Key: "high", Findings: 4, Labeled: 2, Positive: 1, Negative: 1, Unlabeled: 2,
+			RateState: "below_minimum", FailingReviews: 1, ClosedReviews: 1,
 			Cost:            storage.CostAggregate{TotalUSD: 3, JobsTotal: 2, JobsWithCost: 1},
 			CostPerPositive: new(3.0),
 		}},
@@ -187,6 +185,11 @@ func TestPrintFindingSummary(t *testing.T) {
 	assert.Contains(t, out.String(), "≥$3.00 (1/2 priced)")
 	out.Reset()
 	f.Rows[0].Cost.JobsWithCost = 0
+	printFindingSummary(cmd, &f)
+	assert.Equal(t, 2, strings.Count(out.String(), "≥$3.00 (0/2 priced)"), "spend and cost per positive are lower bounds")
+	out.Reset()
+	f.Rows[0].Cost.TotalUSD = 0
+	f.Rows[0].CostPerPositive = nil
 	printFindingSummary(cmd, &f)
 	assert.NotContains(t, out.String(), "Retained spend")
 	assert.NotContains(t, out.String(), "Cost/positive")

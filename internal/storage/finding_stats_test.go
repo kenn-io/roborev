@@ -429,6 +429,33 @@ func TestFindingStatsWholePanelRetainedCost(t *testing.T) {
 	assert.Equal(t, 2, f.Cost.JobsTotal)
 }
 
+func TestFindingStatsRetainsPartiallyPricedSpend(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, "/tmp/outcome-repo")
+	id := findingStatsReview(t, db, repo.ID, JobTypeReview, []structuredreview.Finding{
+		{Severity: "high", Problem: "unique bug", Fix: "repair"},
+	})
+	review, err := db.GetReviewByJobID(id)
+	require.NoError(t, err)
+	statsLabel(t, db, id, findingVersionText(review), "unique bug", "confirmed", "2026-10-20 12:00:00")
+	_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET token_usage=? WHERE id=?",
+		`{"has_cost":true,"cost_usd":2.5,"expected_provider_sessions":2,"provider_session_ids":["review-session"]}`, id)
+	require.NoError(t, err)
+
+	stats, err := db.GetFindingStats(t.Context(), SummaryOptions{}, "severity")
+	require.NoError(t, err)
+	require.Len(t, stats.Rows, 1)
+	row := stats.Rows[0]
+	want := CostAggregate{JobsTotal: 1, TotalUSD: 2.5}
+	assert.Equal(t, want, stats.Cost)
+	assert.Equal(t, want, row.Cost)
+	assert.Equal(t, 1, row.Positive)
+	require.NotNil(t, row.CostPerPositive)
+	assert.InDelta(t, 2.5, *row.CostPerPositive, 0.0001)
+}
+
 func TestFindingStatsCompletionOrderKeepsSubsecondPrecision(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
