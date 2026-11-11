@@ -196,7 +196,7 @@ teammate = "roborev"                            # default
 | `api_key` | Bearer credential, masked in `roborev config list` and `get`. Prefer `api_key_file` |
 | `api_key_file` | File holding the credential, read by the daemon each time it connects. A leading `~/` is your home directory. Mutually exclusive with `api_key` |
 | `default_project` | Project used when a repo has no binding |
-| `teammate` | Teammate name Kata records on comments roborev posts. Default `roborev`. Letters, digits, `.`, `_`, and `-`, starting with a letter or digit, up to 64 characters. Roborev files issues, which carry no teammate, and does not post comments yet, so nothing uses it today |
+| `teammate` | Teammate name included in root finding comments roborev publishes, including generic notices under the `summary` policy. Kata records the actual author separately. Default `roborev`. Letters, digits, `.`, `_`, and `-`, starting with a letter or digit, up to 64 characters |
 
 The section is global-only. A repo's `.roborev.toml` that sets it is rejected,
 because a repo must not choose where credentials are sent. A loopback HTTP
