@@ -301,9 +301,9 @@ reproduce and fix them.
 ### Reply to a finding
 
 Use `roborev kata show JOB` to see the issue UID, canonical project, destination
-ID, finding roots, and stored replies. Edited replies are marked; their displayed
-body is the current text. Reply to a root or a reply in that finding's thread,
-using the displayed issue UID, project, destination ID, and target UID:
+ID, finding roots, and stored replies. Edited replies are marked; their
+displayed body is the current text. Reply to a root or a reply in that finding's
+thread, using the displayed issue UID, project, destination ID, and target UID:
 
 ```bash
 roborev kata comment ISSUE_UID --project PROJECT --destination-id DESTINATION_ID --refute TARGET_UID -m 'Evidence explaining the finding and the observed behavior.'
@@ -313,8 +313,8 @@ Choose one of `--reply`, `--confirm`, `--refute`, or `--supersede`. Confirm and
 refute need at least 40 Unicode characters after whitespace is normalized;
 supersede is an explanatory assertion. The original message is sent unchanged.
 Use the displayed project and destination ID on the initial reply, especially
-when a hook selected a project other than the current workspace or default.
-The destination ID checks that the reply still goes to the destination shown.
+when a hook selected a project other than the current workspace or default. The
+destination ID checks that the reply still goes to the destination shown.
 Roborev prints the destination, full target UID, teammate, key, and a retry
 command before sending. Keep that command if the outcome is uncertain. It
 retries the same body, destination, target, kind, teammate, and key; a changed
@@ -324,9 +324,9 @@ the keyed request, so a changed actor can cause an idempotency mismatch. Inspect
 the thread before using a new key after Kata's seven-day deduplication window.
 
 Kata returns the actual author and the configured teammate. Use native Kata to
-write under your own identity. Summary publication only limits automatic
-finding disclosure; an explicit reply sends the text you supply. Duplicate,
-idempotency mismatch, closed issue, missing or ambiguous target, unsupported
-server, and connection failures are errors. An exact replay can return
-`Changed: false`. If the reply was edited after it was created, the replay
-reports its current edited body.
+write under your own identity. Summary publication only limits automatic finding
+disclosure; an explicit reply sends the text you supply. Duplicate, idempotency
+mismatch, closed issue, missing or ambiguous target, unsupported server, and
+connection failures are errors. An exact replay can return `Changed: false`. If
+the reply was edited after it was created, the replay reports its current edited
+body.
