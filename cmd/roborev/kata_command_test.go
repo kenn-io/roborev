@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 func TestKataCommandsThroughRoot(t *testing.T) {
@@ -53,6 +56,8 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 }
 
 func TestKataRemoteCommandsRejectedThroughRoot(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("[remote_client]\nexternal_url='https://reviews.example.test'\n"), 0o600))
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
 	for _, verb := range []string{"show", "create"} {
