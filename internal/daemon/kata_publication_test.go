@@ -358,11 +358,20 @@ func TestKataPublicationRecoversLostResponses(t *testing.T) {
 
 func TestKataStartupRecoversDroppedWriteResponses(t *testing.T) {
 	fake := katafake.New(t)
+	// Serialize both the override and the fake's normal list/show handlers.
+	var serverMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverMu.Lock()
+		defer serverMu.Unlock()
+		fake.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "dropped-response-review", "worker")
 	cfg := kataConnectionConfig(fake)
+	cfg.Integrations.Kata.Endpoint = server.URL
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
-	seed := storage.KataPublicationSeed{Endpoint: fake.URL(), Project: "reviews", Policy: "comments"}
+	seed := storage.KataPublicationSeed{Endpoint: server.URL, Project: "reviews", Policy: "comments"}
 	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
@@ -407,8 +416,12 @@ func TestKataStartupRecoversDroppedWriteResponses(t *testing.T) {
 	publisher := newKataPublisher(tc.DB, NewStaticConfig(cfg))
 	_, err = publisher.Publish(t.Context(), job.ID)
 	require.Error(t, err)
-	require.NotNil(t, issue)
-	require.Empty(t, issue.Comments)
+	func() {
+		serverMu.Lock()
+		defer serverMu.Unlock()
+		require.NotNil(t, issue)
+		require.Empty(t, issue.Comments)
+	}()
 	for attempt := range 2 {
 		watchStartup.Store(true)
 		runner := NewHookRunner(NewStaticConfig(cfg), tc.Broadcaster, log.New(io.Discard, "", 0), tc.DB)
@@ -432,13 +445,21 @@ func TestKataStartupRecoversDroppedWriteResponses(t *testing.T) {
 		require.NoError(t, err)
 		if attempt == 0 {
 			require.Equal(t, "pending", record.Marker.State)
-			require.Len(t, issue.Comments, 1)
+			func() {
+				serverMu.Lock()
+				defer serverMu.Unlock()
+				require.Len(t, issue.Comments, 1)
+			}()
 		}
 	}
 	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)
 	require.Equal(t, "complete", record.Marker.State)
-	require.Len(t, issue.Comments, 1)
+	func() {
+		serverMu.Lock()
+		defer serverMu.Unlock()
+		require.Len(t, issue.Comments, 1)
+	}()
 	var posts int
 	for _, req := range fake.AllRequests() {
 		if req.Method == http.MethodPost {
