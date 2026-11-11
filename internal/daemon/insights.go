@@ -124,7 +124,7 @@ func (s *Server) fetchPriorInsights(ctx context.Context, repoRoot, branch string
 		return nil, fmt.Errorf("list prior insights: %w", err)
 	}
 	var latest, job *storage.ReviewJob
-	var baseline *storage.FindingStats
+	var baseline *prompt.InsightsBaseline
 	for i := range jobs {
 		j := &jobs[i]
 		if j.FinishedAt == nil || !j.FinishedAt.Before(asOf) || (latest != nil && compareInsightsCompletion(j, latest) <= 0) {
