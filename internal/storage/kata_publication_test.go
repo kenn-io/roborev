@@ -17,6 +17,20 @@ func kataTestSeed() KataPublicationSeed {
 	return KataPublicationSeed{Endpoint: "https://kata.example.test/base", Project: "example", AliasKind: "git", AliasIdentity: "example.test/repo", Policy: "comments"}
 }
 
+func TestKataPublicationSeedSupportsAliasWithoutProjectName(t *testing.T) {
+	t.Parallel()
+	seed := kataTestSeed()
+	seed.Project = ""
+	encoded, err := newKataPublication(seed, reviewFixtureJSON("FAIL: finding"))
+	require.NoError(t, err)
+	var marker KataPublication
+	require.NoError(t, json.Unmarshal([]byte(encoded), &marker))
+	assert.Equal(t, seed, marker.KataPublicationSeed)
+	seed.AliasIdentity = ""
+	_, err = newKataPublication(seed, reviewFixtureJSON("FAIL: finding"))
+	require.Error(t, err)
+}
+
 func TestKataPublicationMigrationIsRepeatable(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)

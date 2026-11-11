@@ -61,7 +61,7 @@ func KataDocumentHash(raw []byte) (string, error) {
 }
 
 func newKataPublication(seed KataPublicationSeed, raw []byte) (string, error) {
-	if seed.Endpoint == "" || seed.Project == "" || (seed.Policy != "comments" && seed.Policy != "summary") || (seed.AliasKind == "") != (seed.AliasIdentity == "") {
+	if seed.Endpoint == "" || (seed.Project == "" && seed.AliasKind == "") || (seed.Policy != "comments" && seed.Policy != "summary") || (seed.AliasKind == "") != (seed.AliasIdentity == "") {
 		return "", errors.New("invalid Kata publication authorization")
 	}
 	hash, err := KataDocumentHash(raw)
