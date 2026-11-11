@@ -76,7 +76,7 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 		assert.Contains(t, output.String(), "(author: alice; UID: root-uid)")
 		assert.Contains(t, output.String(), "Reply c:reply (reply-uid; confirm) by bob to root-uid (reviewer) [edited]:\nfull reply\n\tsecond line")
 		assert.Contains(t, output.String(), "Reply c:two (reply-2; refute) by eve to root-uid:\ndisagree")
-		assert.Contains(t, output.String(), "Reply c:three (reply-3; ) by sam to root-uid:\nplain")
+		assert.Contains(t, output.String(), "Reply c:three (reply-3) by sam to root-uid:\nplain")
 		assert.NotContains(t, output.String(), "\x1b")
 		assert.NotContains(t, output.String(), "\r")
 		assert.NotContains(t, output.String(), "\x00")

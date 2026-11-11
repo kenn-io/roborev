@@ -100,7 +100,11 @@ func kataCmd() *cobra.Command {
 				if comment.ReplyToUID == nil {
 					continue
 				}
-				fmt.Fprintf(out, "Reply %s (%s; %s) by %s to %s", sanitizeSearchSingleLine(deref(comment.Handle)), sanitizeSearchSingleLine(comment.UID), sanitizeSearchSingleLine(deref(comment.ReplyKind)), sanitizeSearchSingleLine(comment.Author), sanitizeSearchSingleLine(*comment.ReplyToUID))
+				kind := sanitizeSearchSingleLine(deref(comment.ReplyKind))
+				if kind != "" {
+					kind = "; " + kind
+				}
+				fmt.Fprintf(out, "Reply %s (%s%s) by %s to %s", sanitizeSearchSingleLine(deref(comment.Handle)), sanitizeSearchSingleLine(comment.UID), kind, sanitizeSearchSingleLine(comment.Author), sanitizeSearchSingleLine(*comment.ReplyToUID))
 				if comment.Teammate != nil {
 					fmt.Fprintf(out, " (%s)", sanitizeSearchSingleLine(*comment.Teammate))
 				}
