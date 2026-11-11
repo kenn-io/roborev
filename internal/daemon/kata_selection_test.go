@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func TestKataSelectionCoalescesAndRejectsConflicts(t *testing.T) {
@@ -91,4 +93,21 @@ func TestKataSelectionSuppressesSuppliedRepoHooks(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, "global", selected.seed.Project)
+}
+
+func TestKataCompletionCapturesUnknownVerdictFallback(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "fallback-review", "worker")
+	cfg := config.DefaultConfig()
+	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.test"}
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.Pool.completeReviewResult(t.Context(), "worker", job, tc.TmpDir, "test", storage.ReviewCompletion{Output: string(raw)}))
+	record, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, record.Marker)
+	assert.Equal(t, "comments", record.Marker.Policy)
 }
