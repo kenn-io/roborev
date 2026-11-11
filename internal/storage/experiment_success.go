@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"math"
@@ -27,17 +28,17 @@ type ExperimentGuardResult struct {
 
 func evaluateExperimentSuccess(r *ExperimentReport) *ExperimentSuccessResult {
 	var definition struct {
-		Success *config.ExperimentSuccess `json:"success"`
+		Success jsontext.Value `json:"success"`
 	}
 	err := json.Unmarshal([]byte(r.definitionJSON), &definition)
-	if err == nil && definition.Success == nil {
+	if err == nil && (len(definition.Success) == 0 || string(definition.Success) == "null") {
 		return nil
 	}
 	result := &ExperimentSuccessResult{State: "not enough data", Reason: "Stored success definition is invalid."}
-	if err != nil || config.ValidateExperimentSuccess(definition.Success) != nil {
+	var bar config.ExperimentSuccess
+	if err != nil || json.Unmarshal(definition.Success, &bar, json.RejectUnknownMembers(true)) != nil || config.ValidateExperimentSuccess(&bar) != nil {
 		return result
 	}
-	bar := definition.Success
 	result.Metric, result.Direction, result.MinEffect = bar.Metric, bar.Direction, bar.MinEffect
 	for _, guard := range bar.Guards {
 		result.Guards = append(result.Guards, ExperimentGuardResult{Guard: guard, State: "not enough data", Reason: "Success evaluation is gated."})
@@ -105,7 +106,7 @@ func evaluateExperimentSuccess(r *ExperimentReport) *ExperimentSuccessResult {
 	}
 	for _, name := range []string{"job_failure_rate", "off_plan_rate"} {
 		m := metrics[name]
-		if *m.PValue <= .05 && m.Interval.Low > 0 {
+		if m.State == "worse" {
 			result.State, result.Reason = "bar not met", "A statistically detectable increase in job failure or off-plan execution gates success."
 			return result
 		}

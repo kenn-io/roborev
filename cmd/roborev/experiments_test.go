@@ -248,6 +248,23 @@ func TestFormatExperimentReportSuccess(t *testing.T) {
 	}
 	out = formatExperimentReport(report)
 	assert.Equal(t, 1, strings.Count(out, "rebuttals do not identify individual findings"))
-	assert.Equal(t, 1, strings.Count(out, "Success evaluation is gated."))
+	assert.NotContains(t, out, "Success evaluation is gated.")
 	assert.Contains(t, out, "off_plan_rate <= 0: not enough data")
+}
+
+func TestFormatExperimentReportSuccessUnavailableDetails(t *testing.T) {
+	report := experimentReportFixture()
+	report.Success = &storage.ExperimentSuccessResult{State: "not enough data", Reason: "Stored success definition is invalid."}
+	out := formatExperimentReport(report)
+	assert.Contains(t, out, "Success bar: not enough data\n  Stored success definition is invalid.")
+	assert.NotContains(t, out, "not enough data (  by at least )")
+	report.Success = &storage.ExperimentSuccessResult{Metric: "cost_per_review", Direction: "lower", MinEffect: "10%", State: "not enough data", Reason: "cost_per_review: Required metric coverage is incomplete.", Guards: []storage.ExperimentGuardResult{{Guard: "cost_per_review <= 0", State: "not enough data", Reason: "cost_per_review: Required metric coverage is incomplete."}}}
+	out = formatExperimentReport(report)
+	assert.NotContains(t, out, "cost_per_review: Required metric coverage is incomplete.")
+	assert.Contains(t, out, "cost_per_review <= 0: not enough data")
+	report.Success.Reason = "Required guard observations or relative baselines are unavailable."
+	report.Success.Guards[0].Reason = "Relative guard is unavailable for a zero or undefined default baseline."
+	out = formatExperimentReport(report)
+	assert.NotContains(t, out, report.Success.Reason)
+	assert.Contains(t, out, report.Success.Guards[0].Reason)
 }

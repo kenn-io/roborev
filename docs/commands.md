@@ -1193,7 +1193,8 @@ When the enrolled definition includes a
 also prints `bar met`, `bar not met`, or `not enough data`, with a reason and
 per-guard results. The optional JSON `success` object is omitted when no bar was
 configured. Evaluation always uses the stored definition; current config edits
-cannot move the bar.
+cannot move the bar. Success applies to the selected assignment cohort and can
+change as outcomes accrue.
 
 The primary needs a detected improvement in its declared direction, including
 when its minimum is zero. Its conservative 95% improvement bound must meet the

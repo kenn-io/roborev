@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
 	"slices"
@@ -436,9 +437,7 @@ func mergeExperimentDefinitions(global *Config, repo *RepoConfig) (map[string]Ex
 		if err := validateExperimentEntries(global.Experiments, true); err != nil {
 			return nil, err
 		}
-		for id, definition := range global.Experiments {
-			merged[id] = cloneExperimentDefinition(definition)
-		}
+		maps.Copy(merged, global.Experiments)
 	}
 	if repo != nil {
 		for id, definition := range repo.Experiments {
@@ -455,10 +454,10 @@ func mergeExperimentDefinitions(global *Config, repo *RepoConfig) (map[string]Ex
 				if !experimentDefinitionComplete(definition) {
 					return nil, fmt.Errorf("repository experiment %q overrides no global definition", id)
 				}
-				merged[id] = cloneExperimentDefinition(definition)
+				merged[id] = definition
 				continue
 			}
-			base.Enabled = new(*definition.Enabled)
+			base.Enabled = definition.Enabled
 			merged[id] = base
 		}
 	}

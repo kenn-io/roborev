@@ -108,23 +108,6 @@ func ValidateExperimentSuccess(success *ExperimentSuccess) error {
 	return nil
 }
 
-func cloneExperimentDefinition(definition ExperimentDefinition) ExperimentDefinition {
-	if definition.Enabled != nil {
-		definition.Enabled = new(*definition.Enabled)
-	}
-	if definition.Ratio != nil {
-		definition.Ratio = new(*definition.Ratio)
-	}
-	definition.Workflows = slices.Clone(definition.Workflows)
-	definition.Config = cloneExperimentMap(definition.Config)
-	if definition.Success != nil {
-		success := *definition.Success
-		success.Guards = slices.Clone(success.Guards)
-		definition.Success = &success
-	}
-	return definition
-}
-
 // UnmarshalTOML accepts a numeric absolute minimum as well as a string. The
 // canonical definition always stores its deterministic string representation.
 func (s *ExperimentSuccess) UnmarshalTOML(value any) error {

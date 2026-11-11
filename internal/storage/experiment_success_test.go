@@ -192,6 +192,7 @@ func TestExperimentReportSuccessReliabilityRegression(t *testing.T) {
 			if tc.failDefault {
 				assert.Equal(t, "better", reportMetric(t, r, "job_failure_rate").State)
 			}
+			assert.Equal(t, "worse", reportMetric(t, r, "off_plan_rate").State)
 			assert.Equal(t, "bar not met", r.Success.State)
 			assert.Contains(t, r.Success.Reason, "job failure or off-plan")
 		})
@@ -239,4 +240,14 @@ func TestExperimentReportSuccessUnconfiguredOmitted(t *testing.T) {
 	encoded, err := json.Marshal(r)
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), `"success"`)
+}
+
+func TestExperimentSuccessRejectsUnknownStoredFields(t *testing.T) {
+	r := &ExperimentReport{definitionJSON: `{"future_definition_field":true,"success":{"metric":"cost_per_review","direction":"lower","min_effect":"0","future_success_field":true}}`}
+	result := evaluateExperimentSuccess(r)
+	require.NotNil(t, result)
+	assert.Equal(t, "not enough data", result.State)
+	assert.Contains(t, result.Reason, "invalid")
+	r.definitionJSON = `{"future_definition_field":true}`
+	assert.Nil(t, evaluateExperimentSuccess(r))
 }

@@ -152,7 +152,7 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 	if report.Success != nil {
 		bar := report.Success
 		showReason := func(reason string) bool {
-			if reason == "" || seenReasons[reason] || (!report.Labels.Available && report.Labels.Reason != "" && strings.Contains(reason, report.Labels.Reason)) {
+			if reason == "" || reason == "Success evaluation is gated." || (incompleteCost && reason == "cost_per_review: Required metric coverage is incomplete.") || seenReasons[reason] || (!report.Labels.Available && report.Labels.Reason != "" && strings.Contains(reason, report.Labels.Reason)) {
 				return false
 			}
 			for _, metric := range report.Metrics {
@@ -166,8 +166,18 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 			seenReasons[reason] = true
 			return true
 		}
-		fmt.Fprintf(&out, "Success bar: %s (%s %s by at least %s)\n", bar.State, bar.Metric, bar.Direction, bar.MinEffect)
-		if showReason(bar.Reason) {
+		fmt.Fprintf(&out, "Success bar: %s", bar.State)
+		if bar.Metric != "" && bar.Direction != "" && bar.MinEffect != "" {
+			fmt.Fprintf(&out, " (%s %s by at least %s)", bar.Metric, bar.Direction, bar.MinEffect)
+		}
+		out.WriteByte('\n')
+		guardExplanation := false
+		for _, guard := range bar.Guards {
+			if guard.Reason != "" && guard.Reason != "Success evaluation is gated." && ((bar.Reason == "One or more conservative guard bounds are not met." && guard.State == "bar not met") || (bar.Reason == "Required guard observations or relative baselines are unavailable." && guard.State == "not enough data")) {
+				guardExplanation = true
+			}
+		}
+		if !guardExplanation && showReason(bar.Reason) {
 			fmt.Fprintf(&out, "  %s\n", bar.Reason)
 		}
 		for _, guard := range bar.Guards {

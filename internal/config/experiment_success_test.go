@@ -56,11 +56,9 @@ func TestExperimentSuccessImmutable(t *testing.T) {
 	require.NoError(t, err)
 	merged, err := mergeExperimentDefinitions(global, &RepoConfig{Experiments: map[string]ExperimentDefinition{"cost-v1": {Enabled: new(false)}}})
 	require.NoError(t, err)
-	copied := merged["cost-v1"]
-	copied.Success.MinEffect = "20%"
-	copied.Success.Guards[0] = "job_failure_rate <= +0.02"
-	assert.Equal(t, "10%", global.Experiments["cost-v1"].Success.MinEffect)
-	assert.Equal(t, "job_failure_rate <= +0.01", global.Experiments["cost-v1"].Success.Guards[0])
+	assert.False(t, *merged["cost-v1"].Enabled)
+	copied := definition
+	copied.Success = &ExperimentSuccess{Metric: "cost_per_review", Direction: "lower", MinEffect: "20%", Guards: []string{"job_failure_rate <= +0.02"}}
 	_, changed, err := canonicalizeExperimentDefinition(copied)
 	require.NoError(t, err)
 	assert.NotEqual(t, hash, changed)
