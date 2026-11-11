@@ -168,7 +168,7 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	show.SetErr(&shown)
 	show.SetArgs([]string{"--server", server.URL, "kata", "show", "42"})
 	require.NoError(t, show.Execute())
-	assert.Contains(t, shown.String(), "Issue: abc1 (issue-uid)\n")
+	assert.Contains(t, shown.String(), "Issue: other#abc1 (issue-uid)\n")
 	assert.Contains(t, shown.String(), "UID: "+rootUID)
 	fields := make(map[string]string)
 	for line := range strings.SplitSeq(shown.String(), "\n") {
