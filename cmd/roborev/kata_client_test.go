@@ -276,8 +276,10 @@ func TestKataClientExplicitServerProbe(t *testing.T) {
 		want    string
 	}{
 		{name: "status error", handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusInternalServerError)
-		}), want: "HTTP 500"},
+			_, _ = w.Write([]byte(`{"title":"Error","status":500,"detail":"synthetic daemon failure"}`))
+		}), want: "synthetic daemon failure"},
 		{name: "old daemon", handler: http.NotFoundHandler()},
 		{name: "disabled", handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
