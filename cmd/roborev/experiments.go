@@ -94,6 +94,7 @@ Comparisons are exploratory and unadjusted; no overall winner is declared.`,
 
 func formatExperimentReport(report storage.ExperimentReport) string {
 	var out strings.Builder
+	seenReasons := map[string]bool{}
 	fmt.Fprintf(&out, "Experiment %s (as of %s)\n", report.ID, report.AsOf.UTC().Format(time.RFC3339Nano))
 	fmt.Fprintf(&out, "Assignment cohort UTC: [%s, %s); minimum %d subjects per arm\n",
 		experimentReportBound(report.Since), experimentReportBound(report.Until), report.MinSubjects)
@@ -112,11 +113,16 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 		fmt.Fprintf(&out, "  %s; %d/%d components priced; %d/%d units have complete cost; attribution=%d/%d units; readable outputs=%d/%d\n",
 			cost, a.Cost.PricedComponents, a.Cost.EligibleComponents, a.Cost.CompleteUnits, a.ReviewUnits,
 			a.AttributionCompleteUnits, a.ReviewUnits, a.OutputUnits, a.ReviewUnits)
-		if a.Cost.Reason != "" {
-			fmt.Fprintf(&out, "  %s\n", a.Cost.Reason)
+	}
+	for _, cost := range []storage.ExperimentCostCoverage{report.Default.Cost, report.Experiment.Cost} {
+		const commonCostReason = "Complete terminal components and full cost coverage are required; run backfill-tokens for missing recorded dollars."
+		if cost.Reason != "" && cost.Reason != commonCostReason && !seenReasons[cost.Reason] {
+			fmt.Fprintf(&out, "Cost: %s\n", cost.Reason)
+			seenReasons[cost.Reason] = true
 		}
 	}
 	if !report.Integrity.Complete {
+		seenReasons[report.Integrity.Reason] = true
 		fmt.Fprintf(&out, "Integrity: %s (conflicting subjects=%d, incomplete units=%d)\n",
 			report.Integrity.Reason, report.Integrity.ConflictingSubjects, report.Integrity.IncompleteUnits)
 	}
@@ -128,10 +134,12 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 	}
 	out.WriteByte('\n')
 	if report.Allocation.Warning != "" {
+		seenReasons[report.Allocation.Warning] = true
 		fmt.Fprintf(&out, "  %s\n", report.Allocation.Warning)
 	}
 	if !report.Labels.Available {
-		fmt.Fprintf(&out, "Finding labels, label coverage, and refuted-review lists unavailable: %s\n", report.Labels.Reason)
+		out.WriteString("Finding labels and refuted-review lists are unavailable because rebuttals do not identify individual findings.\n")
+		seenReasons[report.Labels.Reason] = true
 	}
 	if (!report.Default.Cost.Complete && report.Default.ReviewUnits > 0) || (!report.Experiment.Cost.Complete && report.Experiment.ReviewUnits > 0) {
 		out.WriteString("Cost comparison requires full coverage in both arms. Run roborev backfill-tokens for missing usage; prices may remain unavailable.\n")
@@ -150,8 +158,9 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 				metric.Interval.Low, metric.Interval.High, experimentReportNumber(metric.PValue),
 				experimentReportNumber(metric.RandomizationThreshold), method, metric.Permutations)
 		}
-		if metric.Reason != "" {
+		if metric.Reason != "" && metric.Reason != "Exploratory, unadjusted comparison." && !seenReasons[metric.Reason] {
 			fmt.Fprintf(&out, "  %s\n", metric.Reason)
+			seenReasons[metric.Reason] = true
 		}
 	}
 	fmt.Fprintf(&out, "\nMethod: exploratory, unadjusted subject-label permutation comparisons; %d resamples. Bootstrap intervals are approximate, including with exact permutations.\n", report.Method.Resamples)

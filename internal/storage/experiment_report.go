@@ -230,7 +230,7 @@ func (db *DB) GetExperimentReport(ctx context.Context, id string, opts Experimen
 	if opts.MinSubjects == 0 {
 		opts.MinSubjects = 4
 	}
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}

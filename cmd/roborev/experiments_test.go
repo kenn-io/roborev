@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,7 +184,7 @@ func TestFormatExperimentReport(t *testing.T) {
 	assert.Contains(out, "cost unknown")
 	assert.Contains(out, "0/6 components priced")
 	assert.Contains(out, "backfill-tokens")
-	assert.Contains(out, "Labels lack durable finding identity.")
+	assert.Contains(out, "rebuttals do not identify individual findings")
 	assert.Contains(out, "cost_per_review")
 	assert.Contains(out, "not enough data")
 	assert.Contains(out, "duration_p50_seconds")
@@ -196,6 +197,18 @@ func TestFormatExperimentReport(t *testing.T) {
 	assert.Contains(out, "Bootstrap intervals are approximate")
 	assert.Contains(out, "latest retained attempts")
 	assert.Contains(out, "exploratory, unadjusted")
+
+	// Shared explanations appear once while each metric retains its status.
+	report.Metrics = append(report.Metrics,
+		storage.ExperimentMetricComparison{Metric: "confirmed_per_review", State: "not enough data", Reason: report.Labels.Reason},
+		storage.ExperimentMetricComparison{Metric: "findings_high_per_review", State: "not enough data", Reason: "Required metric coverage is incomplete."},
+		storage.ExperimentMetricComparison{Metric: "findings_low_per_review", State: "not enough data", Reason: "Required metric coverage is incomplete."},
+	)
+	out = formatExperimentReport(report)
+	assert.Equal(1, strings.Count(out, "rebuttals do not identify individual findings"))
+	assert.Equal(1, strings.Count(out, "Required metric coverage is incomplete."))
+	assert.Equal(1, strings.Count(out, "Run backfill-tokens to fill missing cost."))
+	assert.Contains(out, "findings_low_per_review: not enough data")
 
 	// An incomplete metric still displays coverage, with inference unavailable.
 	metric := &report.Metrics[1]
