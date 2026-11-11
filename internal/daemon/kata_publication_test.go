@@ -151,7 +151,7 @@ func TestKataPublicationExpiredNeverCreatesIssue(t *testing.T) {
 	review, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	publisher := newKataPublisher(tc.DB, NewStaticConfig(cfg))
-	_, err = publisher.inspectProject(t.Context(), job.ID, "other")
+	_, err = publisher.inspectSelected(t.Context(), job.ID, "other", *review.UUID)
 	require.ErrorIs(t, err, errKataPinnedProject)
 	publisher.now = func() time.Time { return review.CreatedAt.Add(7*24*time.Hour - kata.DefaultRequestTimeout) }
 	status, err := publisher.Publish(t.Context(), job.ID)

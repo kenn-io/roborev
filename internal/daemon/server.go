@@ -3849,8 +3849,7 @@ func (s *Server) humaFixJob(
 			cache := prompt.NewKataContextCache(s.readKataPromptContext)
 			review, err = cache.Decorate(ctx, review)
 			if err != nil {
-				var status huma.StatusError
-				if errors.As(err, &status) {
+				if status, ok := errors.AsType[huma.StatusError](err); ok {
 					return nil, status
 				}
 				return nil, kataReadError(err)

@@ -114,14 +114,10 @@ func (p *kataPublisher) Publish(ctx context.Context, jobID int64) (*KataPublicat
 }
 
 func (p *kataPublisher) Inspect(ctx context.Context, jobID int64) (*KataPublicationStatus, error) {
-	return p.inspectProject(ctx, jobID, "")
+	return p.inspectSelected(ctx, jobID, "", uuid.Nil())
 }
 
 var errKataPinnedProject = errors.New("project cannot override a saved publication destination")
-
-func (p *kataPublisher) inspectProject(ctx context.Context, jobID int64, project string) (*KataPublicationStatus, error) {
-	return p.inspectSelected(ctx, jobID, project, uuid.Nil())
-}
 
 func (p *kataPublisher) inspectSelected(ctx context.Context, jobID int64, project string, expected uuid.UUID) (*KataPublicationStatus, error) {
 	record, err := p.db.GetKataPublication(ctx, jobID)

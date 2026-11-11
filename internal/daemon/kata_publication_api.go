@@ -161,7 +161,7 @@ func (s *Server) humaKataPublication(ctx context.Context, in *KataPublicationInp
 	if in.Issue != "" {
 		count++
 	}
-	if (count != 1 && !(count == 2 && in.JobID > 0 && in.ReviewUUID != "")) || in.JobID < 0 {
+	if (count != 1 && (count != 2 || in.JobID <= 0 || in.ReviewUUID == "")) || in.JobID < 0 {
 		return nil, huma.Error400BadRequest("select a job_id, review_uuid, or issue; job_id and review_uuid may be combined")
 	}
 	jobID := in.JobID

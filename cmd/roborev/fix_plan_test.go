@@ -465,9 +465,15 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 		name, mode        string
 		batch, plan, only bool
 	}{
-		{"single", "evidence", false, false, false}, {"single planned", "evidence", false, true, false}, {"single plan only", "evidence", false, true, true},
-		{"batch", "evidence", true, false, false}, {"batch planned", "evidence", true, true, false}, {"batch plan only", "evidence", true, true, true},
-		{"authentication", "auth", false, true, false}, {"outage", "outage", false, true, false}, {"replacement", "replacement", false, true, false},
+		{"single", "evidence", false, false, false},
+		{"single planned", "evidence", false, true, false},
+		{"single plan only", "evidence", false, true, true},
+		{"batch", "evidence", true, false, false},
+		{"batch planned", "evidence", true, true, false},
+		{"batch plan only", "evidence", true, true, true},
+		{"authentication", "auth", false, true, false},
+		{"outage", "outage", false, true, false},
+		{"replacement", "replacement", false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})

@@ -99,11 +99,11 @@ func TestKataShowSelectorQueries(t *testing.T) {
 		selector, param string
 		issue           bool
 	}{
-		{"11111111-1111-4111-8111-111111111111", "review_uuid=", false},
-		{"issue-uid", "issue=issue-uid", false},
-		{"reviews#1234", "issue=reviews%231234", false},
-		{"1234", "job_id=1234", false},
-		{"1234", "issue=1234", true},
+		{"11111111-1111-4111-8111-111111111111", "review_uuid", false},
+		{"issue-uid", "issue", false},
+		{"reviews#1234", "issue", false},
+		{"1234", "job_id", false},
+		{"1234", "issue", true},
 	} {
 		root := newRootCmd()
 		var out bytes.Buffer
@@ -115,16 +115,13 @@ func TestKataShowSelectorQueries(t *testing.T) {
 		}
 		root.SetArgs(args)
 		require.NoError(t, root.Execute())
-		assert.Contains(t, query, tc.param)
-		if strings.HasPrefix(tc.param, "review_uuid=") {
-			values, err := url.ParseQuery(query)
-			require.NoError(t, err)
-			assert.Equal(t, tc.selector, values.Get("review_uuid"))
-		}
+		values, err := url.ParseQuery(query)
+		require.NoError(t, err)
+		assert.Equal(t, tc.selector, values.Get(tc.param))
 		if tc.issue {
-			assert.NotContains(t, query, "job_id=")
+			assert.Empty(t, values.Get("job_id"))
 		}
-		assert.Contains(t, query, "project=reviews")
+		assert.Equal(t, "reviews", values.Get("project"))
 		assert.Contains(t, out.String(), "evidence")
 		assert.Contains(t, out.String(), "lineage: orphan")
 	}

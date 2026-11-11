@@ -67,7 +67,7 @@ func kataCmd() *cobra.Command {
 				if !write {
 					classified := client.ClassifyKataContextError(err)
 					if errors.Is(classified, client.ErrKataAuthentication) || errors.Is(classified, client.ErrKataAccess) || errors.Is(classified, context.Canceled) || errors.Is(classified, context.DeadlineExceeded) {
-						return fmt.Errorf("Kata context: %w", classified)
+						return fmt.Errorf("kata context: %w", classified)
 					}
 				}
 				status, answered := daemonAnswerStatus(err)

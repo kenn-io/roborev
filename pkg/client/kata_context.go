@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	ErrKataAuthentication = errors.New("Kata authentication required")
-	ErrKataAccess         = errors.New("Kata access denied")
+	ErrKataAuthentication = errors.New("kata authentication required")
+	ErrKataAccess         = errors.New("kata access denied")
 )
 
 // ClassifyKataContextError preserves fatal read classes across daemon HTTP.
