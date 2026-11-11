@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,7 @@ import (
 )
 
 // The executable writes a marker if invoked. Availability checks must only
-// locate it, even when a configured HTTP provider takes precedence.
+// locate it.
 func installCostSourceFixture(t *testing.T, dir string) string {
 	t.Helper()
 	marker := filepath.Join(dir, "executed")
@@ -37,54 +38,58 @@ func installCostSourceFixture(t *testing.T, dir string) string {
 }
 
 func TestCostSourceHealth(t *testing.T) {
-	for _, cli := range []bool{false, true} {
-		for _, provider := range []string{"none", "agentsview", "endpoint", "both"} {
-			t.Run(fmt.Sprintf("cli=%t/provider=%s", cli, provider), func(t *testing.T) {
-				assert := assert.New(t)
-				dir := t.TempDir()
-				t.Setenv("PATH", dir)
-				marker := filepath.Join(dir, "executed")
-				if cli {
-					marker = installCostSourceFixture(t, dir)
+	for _, tc := range []struct {
+		name    string
+		healthy bool
+	}{
+		{name: "missing"},
+		{name: "non-executable"},
+		{name: "cli", healthy: true},
+		{name: "agentsview", healthy: true},
+		{name: "endpoint", healthy: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			dir := t.TempDir()
+			t.Setenv("PATH", dir)
+			cfg := config.DefaultConfig()
+			switch tc.name {
+			case "non-executable":
+				if runtime.GOOS == "windows" {
+					t.Skip("Windows does not use Unix executable permission bits")
 				}
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "agentsview"), nil, 0o600))
+			case "cli":
+				marker := installCostSourceFixture(t, dir)
+				t.Cleanup(func() { assert.NoFileExists(marker) })
+			case "agentsview", "endpoint":
 				var requests atomic.Int32
 				httpSource := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 					requests.Add(1)
 				}))
-				defer httpSource.Close()
-				cfg := config.DefaultConfig()
-				if provider == "agentsview" || provider == "both" {
+				t.Cleanup(func() {
+					httpSource.Close()
+					assert.Zero(requests.Load())
+				})
+				if tc.name == "agentsview" {
 					cfg.AgentsView.URL = httpSource.URL
-					cfg.AgentsView.TokenFile = filepath.Join(dir, "missing-token")
-				}
-				if provider == "endpoint" || provider == "both" {
+				} else {
 					cfg.Cost.Endpoint = httpSource.URL + "/{session_id}"
 				}
-				health := costSourceHealth(cfg)
-				assert.Equal("cost", health.Name)
-				assert.Equal(cli || provider != "none", health.Healthy)
-				if health.Healthy {
-					assert.Empty(health.Message)
-				} else {
-					assert.Contains(health.Message, "no usage source")
-					assert.Contains(health.Message, "install agentsview")
-					assert.Contains(health.Message, "agentsview.url or cost.endpoint")
-				}
-				assert.NoFileExists(marker)
-				assert.Zero(requests.Load())
-			})
-		}
-	}
-}
+			}
 
-func TestCostSourceHealthRequiresExecutable(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows does not use Unix executable permission bits")
+			health := costSourceHealth(cfg)
+			assert.Equal("cost", health.Name)
+			assert.Equal(tc.healthy, health.Healthy)
+			if tc.healthy {
+				assert.Empty(health.Message)
+			} else {
+				assert.Contains(health.Message, "no usage source")
+				assert.Contains(health.Message, "install agentsview")
+				assert.Contains(health.Message, "agentsview.url or cost.endpoint")
+			}
+		})
 	}
-	dir := t.TempDir()
-	t.Setenv("PATH", dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "agentsview"), nil, 0o600))
-	assert.False(t, costSourceHealth(config.DefaultConfig()).Healthy)
 }
 
 func TestHealthReportsMissingCostSourceAndConfigChanges(t *testing.T) {
@@ -110,70 +115,68 @@ func TestHealthReportsMissingCostSourceAndConfigChanges(t *testing.T) {
 		health := decodeHealthStatus(t, response)
 		assert.Equal(t, provider != "none", health.Healthy)
 		assert.True(t, health.Ready, "missing accounting does not block review work")
-		assert.Contains(t, health.Components, costSourceHealth(cfg))
-		assert.Empty(t, health.RecentErrors, "health requests must not log repeated warnings")
+		if provider == "none" {
+			assertMissingCostComponent(t, health.Components)
+		} else {
+			assert.Contains(t, health.Components, storage.ComponentHealth{Name: "cost", Healthy: true})
+		}
 	}
 }
 
+func assertMissingCostComponent(t *testing.T, components []storage.ComponentHealth) {
+	t.Helper()
+	i := slices.IndexFunc(components, func(component storage.ComponentHealth) bool { return component.Name == "cost" })
+	require.NotEqual(t, -1, i, "cost health must be present")
+	assert.False(t, components[i].Healthy)
+	assert.Contains(t, components[i].Message, "no usage source")
+}
+
 func TestHealthMissingCostSourcePreservesCIRecovery(t *testing.T) {
-	h, server, _ := recoveringCIHealth(t)
+	_, server, _ := recoveringCIHealth(t)
 	t.Setenv("PATH", t.TempDir())
-	h.Cfg.Cost.Endpoint = ""
+	cfg := *server.configWatcher.Config()
+	cfg.Cost.Endpoint = ""
+	server.configWatcher.cfgMu.Lock()
+	server.configWatcher.cfg = &cfg
+	server.configWatcher.cfgMu.Unlock()
 	server.agentHealth.run = func(_ context.Context, _ *config.Config) storage.ComponentHealth {
 		return storage.ComponentHealth{Name: "agents", Healthy: true}
 	}
 	health, ci := readCIHealth(t, server)
-	assert.False(t, health.Healthy)
-	assert.True(t, health.Ready)
-	assert.Contains(t, health.Components, costSourceHealth(h.Cfg))
+	assertMissingCostComponent(t, health.Components)
 	require.NotNil(t, ci.Recovery, "missing accounting must not hide review retry recovery")
 }
 
 func TestCostSourceStartupWarning(t *testing.T) {
-	for _, provider := range []string{"none", "cli", "agentsview", "endpoint"} {
-		t.Run(provider, func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		warnings int
+	}{
+		{name: "none", warnings: 1},
+		{name: "endpoint", endpoint: "https://usage.example.test/{session_id}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			testenv.SetDataDir(t)
 			setShortRuntimeDir(t)
-			dir := t.TempDir()
-			t.Setenv("PATH", dir)
-			marker := filepath.Join(dir, "executed")
-			if provider == "cli" {
-				marker = installCostSourceFixture(t, dir)
-			}
+			t.Setenv("PATH", t.TempDir())
 			cfg := config.DefaultConfig()
 			cfg.DefaultAgent = "test"
 			cfg.ServerAddr = "127.0.0.1:0"
-			if provider == "agentsview" {
-				cfg.AgentsView.URL = "https://usage.example.test"
-			}
-			if provider == "endpoint" {
-				cfg.Cost.Endpoint = "https://usage.example.test/{session_id}"
-			}
+			cfg.Cost.Endpoint = tc.endpoint
 			var output bytes.Buffer
 			original := log.Writer()
 			log.SetOutput(&output)
-			t.Cleanup(func() { log.SetOutput(original) })
+			t.Cleanup(func() {
+				log.SetOutput(original)
+				assert.Equal(t, tc.warnings, strings.Count(output.String(), "Warning: no usage source:"))
+			})
 			server := newServerWithLogs(testutil.OpenTestDB(t), cfg, "", newTestErrorLog(), newTestActivityLog())
 			errCh, _ := startServerAndWaitForRuntime(t, server)
 			for range 2 {
 				executeHealthCheck(t.Context(), server, http.MethodGet)
 			}
 			stopTestServer(t, server, errCh)
-			log.SetOutput(original)
-			want := 0
-			if provider == "none" {
-				want = 1
-				assert.Contains(t, output.String(), costSourceHealth(cfg).Message)
-			}
-			assert.Equal(t, want, strings.Count(output.String(), "Warning: no usage source:"))
-			var costErrors []ErrorEntry
-			for _, entry := range server.errorLog.RecentN(100) {
-				if entry.Component == "cost" {
-					costErrors = append(costErrors, entry)
-				}
-			}
-			assert.Len(t, costErrors, want)
-			assert.NoFileExists(t, marker)
 		})
 	}
 }

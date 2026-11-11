@@ -1,20 +1,16 @@
 package daemon
 
 import (
-	"os/exec"
-
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 )
 
 // costSourceHealth checks availability only: it never executes agentsview,
 // reads credentials or session data, or contacts a configured HTTP provider.
 func costSourceHealth(cfg *config.Config) storage.ComponentHealth {
 	health := storage.ComponentHealth{Name: "cost", Healthy: true}
-	if cfg.AgentsView.URL != "" || cfg.Cost.Endpoint != "" {
-		return health
-	}
-	if _, err := exec.LookPath("agentsview"); err == nil {
+	if tokens.UsageSourceAvailable(cfg) {
 		return health
 	}
 	health.Healthy = false

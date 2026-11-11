@@ -554,9 +554,6 @@ func (s *Server) Start(ctx context.Context) error {
 	s.agentHealth.start(cfg)
 	if cost := costSourceHealth(cfg); !cost.Healthy {
 		log.Printf("Warning: %s", cost.Message)
-		if s.errorLog != nil {
-			s.errorLog.LogError("cost", cost.Message, 0)
-		}
 	}
 
 	// Repair stale roborev-managed hooks in registered repos (skip in CI

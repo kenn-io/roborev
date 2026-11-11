@@ -12,11 +12,25 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
+func baseFetchConfig(cfg *config.Config) FetchConfig {
+	return FetchConfig{Endpoint: cfg.Cost.Endpoint, Timeout: cfg.Cost.ResolvedTimeout(), RequireCLI: true, AgentsViewURL: cfg.AgentsView.URL}
+}
+
+// UsageSourceAvailable checks for a configured HTTP provider or an executable
+// agentsview on PATH. It does not read credentials or probe the provider.
+func UsageSourceAvailable(cfg *config.Config) bool {
+	if baseFetchConfig(cfg).source() != sourceCLI {
+		return true
+	}
+	_, err := resolveAgentsview()
+	return err == nil
+}
+
 // FetchConfigFromConfig keeps all daemon lookups and diagnostics on one provider.
 // cfg is validated at load; resolve the token here to observe file rotation.
 func FetchConfigFromConfig(cfg *config.Config) (FetchConfig, error) {
-	out := FetchConfig{Endpoint: cfg.Cost.Endpoint, Timeout: cfg.Cost.ResolvedTimeout(), RequireCLI: true, AgentsViewURL: cfg.AgentsView.URL}
-	if out.AgentsViewURL != "" {
+	out := baseFetchConfig(cfg)
+	if out.source() == sourceAgentsView {
 		token, err := cfg.AgentsView.ResolveToken()
 		if err != nil {
 			return FetchConfig{}, err
