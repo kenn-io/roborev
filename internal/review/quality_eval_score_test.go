@@ -5,10 +5,10 @@ import (
 	"math"
 	"slices"
 	"testing"
+	"testing/quick"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 )
 
 // These tests protect the evaluation's accounting, not model quality. Model
@@ -24,8 +24,12 @@ func TestQualityScoreOneFindingCannotEarnTwoBugs(t *testing.T) {
 }
 
 func TestQualityScoreDuplicatesCannotIncreaseRecall(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		labels := hegel.Draw(ht, hegel.Lists(hegel.SampledFrom([]string{"invoice", "cursor"})))
+	property := func(input []byte) bool {
+		choices := []string{"invoice", "cursor"}
+		labels := make([]string, len(input))
+		for i, value := range input {
+			labels[i] = choices[int(value)%len(choices)]
+		}
 		row := qualityObservation{Expected: []string{"invoice", "cursor"}, Targets: []string{"invoice", "cursor"}}
 		var judgments []qualityJudgment
 		for i, label := range labels {
@@ -33,7 +37,7 @@ func TestQualityScoreDuplicatesCannotIncreaseRecall(t *testing.T) {
 			judgments = append(judgments, qualityJudgment{Finding: i + 1, Mechanisms: []string{label}, Reason: "Source-grounded mechanism."})
 		}
 		got, err := qualityScore(row, judgments)
-		require.NoError(ht, err)
+		require.NoError(t, err)
 		want := 0
 		if slices.Contains(labels, "invoice") {
 			want++
@@ -41,14 +45,20 @@ func TestQualityScoreDuplicatesCannotIncreaseRecall(t *testing.T) {
 		if slices.Contains(labels, "cursor") {
 			want++
 		}
-		assert.Equal(ht, want, got.Detected)
-		assert.Equal(ht, len(labels)-want, got.Duplicates)
-	}, hegel.WithTestCases(2000))
+		assert.Equal(t, want, got.Detected)
+		assert.Equal(t, len(labels)-want, got.Duplicates)
+		return !t.Failed()
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 2000}))
 }
 
 func TestQualityScorePermutationDoesNotChangeCounts(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		labels := hegel.Draw(ht, hegel.Lists(hegel.SampledFrom([]string{"invoice", "cursor", ""})))
+	property := func(input []byte) bool {
+		choices := []string{"invoice", "cursor", ""}
+		labels := make([]string, len(input))
+		for i, value := range input {
+			labels[i] = choices[int(value)%len(choices)]
+		}
 		row := qualityObservation{Expected: []string{"invoice", "cursor"}, Targets: []string{"invoice", "cursor"}}
 		var judgments []qualityJudgment
 		for i, label := range labels {
@@ -58,16 +68,18 @@ func TestQualityScorePermutationDoesNotChangeCounts(t *testing.T) {
 			}
 		}
 		before, err := qualityScore(row, judgments)
-		require.NoError(ht, err)
+		require.NoError(t, err)
 		for i := range judgments {
 			judgments[i].Finding = len(labels) + 1 - judgments[i].Finding
 		}
 		slices.Reverse(row.Findings)
 		slices.Reverse(judgments)
 		after, err := qualityScore(row, judgments)
-		require.NoError(ht, err)
-		assert.Equal(ht, before, after)
-	}, hegel.WithTestCases(2000))
+		require.NoError(t, err)
+		assert.Equal(t, before, after)
+		return !t.Failed()
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 2000}))
 }
 
 func TestQualityScoreFailuresAndUnjudgedRemainInDenominator(t *testing.T) {
@@ -135,9 +147,13 @@ func TestQualityRateWilsonKnownEndpoints(t *testing.T) {
 }
 
 func TestQualityRateBoundsIncludeUnknown(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
+	property := func(input []byte) bool {
 		// Values are counts materialized from a full-domain list of trial outcomes.
-		trials := hegel.Draw(ht, hegel.Lists(hegel.Integers(0, 2)))
+		choices := []int{0, 1, 2}
+		trials := make([]int, len(input))
+		for i, value := range input {
+			trials[i] = choices[int(value)%len(choices)]
+		}
 		successes, unknown := 0, 0
 		for _, outcome := range trials {
 			if outcome == 1 {
@@ -149,15 +165,17 @@ func TestQualityRateBoundsIncludeUnknown(t *testing.T) {
 		}
 		got := qualityMeasure(successes, len(trials), unknown)
 		if len(trials) == 0 {
-			assert.Nil(ht, got.Estimate)
-			return
+			assert.Nil(t, got.Estimate)
+			return !t.Failed()
 		}
-		require.NotNil(ht, got.Estimate)
-		require.NotNil(ht, got.Upper)
-		assert.InDelta(ht, float64(successes)/float64(len(trials)), *got.Estimate, 0)
-		assert.InDelta(ht, float64(successes+unknown)/float64(len(trials)), *got.Upper, 0)
-		assert.False(ht, math.IsNaN(*got.WilsonLow))
-	}, hegel.WithTestCases(2000))
+		require.NotNil(t, got.Estimate)
+		require.NotNil(t, got.Upper)
+		assert.InDelta(t, float64(successes)/float64(len(trials)), *got.Estimate, 0)
+		assert.InDelta(t, float64(successes+unknown)/float64(len(trials)), *got.Upper, 0)
+		assert.False(t, math.IsNaN(*got.WilsonLow))
+		return !t.Failed()
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 2000}))
 }
 
 func TestQualityScoreSynthesisCannotHideDistinctBug(t *testing.T) {
@@ -170,8 +188,12 @@ func TestQualityScoreSynthesisCannotHideDistinctBug(t *testing.T) {
 }
 
 func TestQualityScoreAllTrialStatesConservePlannedDenominator(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		states := hegel.Draw(ht, hegel.Lists(hegel.SampledFrom([]string{"complete", "failed", "unjudged", "planned"})))
+	property := func(input []byte) bool {
+		choices := []string{"complete", "failed", "unjudged", "planned"}
+		states := make([]string, len(input))
+		for i, value := range input {
+			states[i] = choices[int(value)%len(choices)]
+		}
 		var rows []qualityObservation
 		unknown, completed, failed, pending := 0, 0, 0, 0
 		for i, state := range states {
@@ -195,14 +217,16 @@ func TestQualityScoreAllTrialStatesConservePlannedDenominator(t *testing.T) {
 			rows = append(rows, row)
 		}
 		got, err := qualitySummarize(rows, nil)
-		require.NoError(ht, err)
-		assert.Equal(ht, len(states), got.Planned)
-		assert.Equal(ht, len(states), got.Recall.Denominator)
-		assert.Equal(ht, unknown, got.Recall.Unknown)
-		assert.Equal(ht, completed, got.Completed)
-		assert.Equal(ht, failed, got.Failed)
-		assert.Equal(ht, pending, got.Pending)
-	}, hegel.WithTestCases(2000))
+		require.NoError(t, err)
+		assert.Equal(t, len(states), got.Planned)
+		assert.Equal(t, len(states), got.Recall.Denominator)
+		assert.Equal(t, unknown, got.Recall.Unknown)
+		assert.Equal(t, completed, got.Completed)
+		assert.Equal(t, failed, got.Failed)
+		assert.Equal(t, pending, got.Pending)
+		return !t.Failed()
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 2000}))
 }
 
 func TestQualityControlStabilityReportsReflags(t *testing.T) {
@@ -230,8 +254,12 @@ func TestQualityStabilityDistinguishesUnknownFromJudgedEmpty(t *testing.T) {
 }
 
 func TestQualityScoreConservesEveryFinding(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		labels := hegel.Draw(ht, hegel.Lists(hegel.SampledFrom([]string{"invoice", "cursor", "ambiguous", "legitimate_extra", "other_false_positive", "unjudged", "unassigned"})))
+	property := func(input []byte) bool {
+		choices := []string{"invoice", "cursor", "ambiguous", "legitimate_extra", "other_false_positive", "unjudged", "unassigned"}
+		labels := make([]string, len(input))
+		for i, value := range input {
+			labels[i] = choices[int(value)%len(choices)]
+		}
 		row := qualityObservation{Expected: []string{"invoice"}, Targets: []string{"invoice", "cursor"}, Findings: make([]StructuredFinding, len(labels))}
 		var judgments []qualityJudgment
 		for i, label := range labels {
@@ -249,31 +277,34 @@ func TestQualityScoreConservesEveryFinding(t *testing.T) {
 			judgments = append(judgments, judgment)
 		}
 		got, err := qualityScore(row, judgments)
-		require.NoError(ht, err)
-		assert.Equal(ht, len(labels), got.Detected+got.MechanismFP+got.Duplicates+got.LegitimateExtras+got.OtherFalsePositives+got.UnjudgedFindings)
-	}, hegel.WithTestCases(2000))
+		require.NoError(t, err)
+		assert.Equal(t, len(labels), got.Detected+got.MechanismFP+got.Duplicates+got.LegitimateExtras+got.OtherFalsePositives+got.UnjudgedFindings)
+		return !t.Failed()
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 2000}))
 }
 
 func TestQualityPlanConservesRepeatDenominators(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		// Unbounded collection length materializes every positive repeat count;
-		// the generator does not impose a new application count limit.
-		repeat := len(hegel.Draw(ht, hegel.Lists(hegel.Booleans()))) + 1
+	property := func(input []byte) bool {
+		// Input length supplies positive repeat counts without an application limit.
+		repeat := len(input) + 1
 		rows, err := qualityPlan(repeat)
-		require.NoError(ht, err)
+		require.NoError(t, err)
 		ids := map[string]bool{}
 		for i := range rows {
 			ids[rows[i].ID] = true
 			rows[i].State = "planned"
 		}
 		summary, err := qualitySummarize(rows, nil)
-		require.NoError(ht, err)
-		assert.Len(ht, ids, 8*repeat)
-		assert.Equal(ht, 2*repeat, summary.Recall.Denominator)
-		assert.Equal(ht, 2*repeat, summary.FixedFP.Denominator)
-		assert.Equal(ht, 2*repeat, summary.SafeFP.Denominator)
-		assert.Equal(ht, 3*repeat, summary.SynthesisLoss.Denominator)
-	}, hegel.WithTestCases(2000))
+		require.NoError(t, err)
+		assert.Len(t, ids, 8*repeat)
+		assert.Equal(t, 2*repeat, summary.Recall.Denominator)
+		assert.Equal(t, 2*repeat, summary.FixedFP.Denominator)
+		assert.Equal(t, 2*repeat, summary.SafeFP.Denominator)
+		assert.Equal(t, 3*repeat, summary.SynthesisLoss.Denominator)
+		return !t.Failed()
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 2000}))
 }
 
 func TestQualityFailedControlRemainsUnknown(t *testing.T) {
@@ -295,8 +326,12 @@ func TestQualityFailedControlRemainsUnknown(t *testing.T) {
 }
 
 func TestQualitySummaryRowPermutation(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		labels := hegel.Draw(ht, hegel.Lists(hegel.SampledFrom([]string{"invoice", "cursor", "unjudged", "failed", "planned", "clean"})))
+	property := func(input []byte) bool {
+		choices := []string{"invoice", "cursor", "unjudged", "failed", "planned", "clean"}
+		labels := make([]string, len(input))
+		for i, value := range input {
+			labels[i] = choices[int(value)%len(choices)]
+		}
 		var rows []qualityObservation
 		judgments := map[string][]qualityJudgment{}
 		for i, label := range labels {
@@ -315,18 +350,24 @@ func TestQualitySummaryRowPermutation(t *testing.T) {
 			rows = append(rows, row)
 		}
 		before, err := qualitySummarize(rows, judgments)
-		require.NoError(ht, err)
+		require.NoError(t, err)
 		slices.Reverse(rows)
 		after, err := qualitySummarize(rows, judgments)
-		require.NoError(ht, err)
-		assert.Equal(ht, before, after)
-	}, hegel.WithTestCases(2000))
+		require.NoError(t, err)
+		assert.Equal(t, before, after)
+		return !t.Failed()
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 2000}))
 }
 
 func TestQualityPlanRejectsNonpositiveRepeats(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		count := hegel.Draw(ht, hegel.Integers(math.MinInt, 0))
+	property := func(count int) bool {
+		if count > 0 {
+			count = -count
+		}
 		_, err := qualityPlan(count)
-		require.Error(ht, err)
-	}, hegel.WithTestCases(2000))
+		require.Error(t, err)
+		return !t.Failed()
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 2000}))
 }
