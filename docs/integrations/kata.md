@@ -318,8 +318,9 @@ The destination ID checks that the reply still goes to the destination shown.
 Roborev prints the destination, full target UID, teammate, key, and a retry
 command before sending. Keep that command if the outcome is uncertain. It
 retries the same body, destination, target, kind, teammate, and key; a changed
-teammate stops the retry. Kata checks the authenticated actor as part of the
-keyed request, so a changed actor can cause an idempotency mismatch. Inspect
+teammate stops the retry. Automatic daemon selection is repeated on retry; an
+explicit `--server` stays pinned. Kata checks the authenticated actor as part of
+the keyed request, so a changed actor can cause an idempotency mismatch. Inspect
 the thread before using a new key after Kata's seven-day deduplication window.
 
 Kata returns the actual author and the configured teammate. Use native Kata to

@@ -96,7 +96,11 @@ func kataResponseCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		retry := fmt.Sprintf("roborev --server %s kata comment %s --project %s --destination-id %s --expected-teammate %s --%s %s --idempotency-key %s -m %s", daemon.ShellEscape(ep.ConfigAddr()), daemon.ShellEscape(*issue.UID), daemon.ShellEscape(*issue.Project), daemon.ShellEscape(*issue.DestinationID), daemon.ShellEscape(teammate), kind, daemon.ShellEscape(selected), daemon.ShellEscape(key), daemon.ShellEscape(body))
+		server := ""
+		if serverAddr != "" {
+			server = " --server " + daemon.ShellEscape(ep.ConfigAddr())
+		}
+		retry := fmt.Sprintf("roborev%s kata comment %s --project %s --destination-id %s --expected-teammate %s --%s %s --idempotency-key %s -m %s", server, daemon.ShellEscape(*issue.UID), daemon.ShellEscape(*issue.Project), daemon.ShellEscape(*issue.DestinationID), daemon.ShellEscape(teammate), kind, daemon.ShellEscape(selected), daemon.ShellEscape(key), daemon.ShellEscape(body))
 		instructions := fmt.Sprintf("Issue: %s\nTarget: %s\nKind: %s\nKey: %s\nDestination: %s\nProject: %s\nTeammate: %s\nRetry: %s\n", *issue.UID, selected, kind, key, *issue.DestinationID, *issue.Project, teammate, retry)
 		n, err := io.WriteString(cmd.OutOrStdout(), instructions)
 		if err == nil && n != len(instructions) {

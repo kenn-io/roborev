@@ -526,24 +526,13 @@ func TestResolvePublicationTarget(t *testing.T) {
 	}
 }
 
-func TestValidateReplyEvidenceAndKey(t *testing.T) {
-	for _, kind := range []string{"confirm", "refute"} {
-		for _, count := range []int{39, 40, 41} {
-			err := ValidateReply(kind, strings.Repeat("界", count), "Key-A")
-			if count < 40 {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-		}
+func TestValidateReplyKey(t *testing.T) {
+	for _, key := range []string{"", "bad\nkey", "bad\x00key", " key", "key "} {
+		require.Error(t, ValidateReplyKey(key))
 	}
-	for _, kind := range []string{"reply", "supersede"} {
-		require.NoError(t, ValidateReply(kind, "evidence", "CaseSensitive"))
+	for _, key := range []string{"CaseSensitive", "opaque:key/1", "MiXeD-Key"} {
+		require.NoError(t, ValidateReplyKey(key))
 	}
-	require.Error(t, ValidateReply("other", "evidence", "key"))
-	require.Error(t, ValidateReply("reply", " \n ", "key"))
-	require.Error(t, ValidateReply("reply", "evidence", ""))
-	require.Error(t, ValidateReply("reply", "evidence", "bad\nkey"))
 }
 
 func TestTypedCommentReceiptAndReplay(t *testing.T) {
@@ -608,7 +597,7 @@ func TestTypedCommentKindsAndServerErrors(t *testing.T) {
 			assert.Nil(t, sent.Force)
 		})
 	}
-	for _, code := range []string{"duplicate_reply", "idempotency_mismatch", "issue_closed"} {
+	for _, code := range []string{"duplicate_reply", "idempotency_mismatch", "issue_closed", "validation", "comment_not_found"} {
 		t.Run(code, func(t *testing.T) {
 			f := katafake.New(t)
 			c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
@@ -618,12 +607,25 @@ func TestTypedCommentKindsAndServerErrors(t *testing.T) {
 				if r.Method != http.MethodPost {
 					return false
 				}
-				f.Fail(w, http.StatusConflict, code, "synthetic conflict")
+				status := http.StatusConflict
+				if code == "validation" {
+					status = http.StatusBadRequest
+				} else if code == "comment_not_found" {
+					status = http.StatusNotFound
+				}
+				f.Fail(w, status, code, "synthetic producer error")
 				return true
 			}
 			_, err = c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "text", "key", "reviewer")
-			require.ErrorIs(t, err, ErrConflict)
+			if code == "validation" {
+				require.ErrorIs(t, err, ErrRequestRejected)
+			} else if code == "comment_not_found" {
+				require.ErrorIs(t, err, ErrNotFound)
+			} else {
+				require.ErrorIs(t, err, ErrConflict)
+			}
 			assert.Equal(t, code, ErrorCode(err))
+			assert.ErrorContains(t, err, "synthetic producer error")
 		})
 	}
 }

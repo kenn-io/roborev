@@ -40,7 +40,7 @@ func (s *Server) humaKataResponse(ctx context.Context, in *KataResponseInput) (*
 	if req.Project == "" || req.DestinationID == "" || req.IssueUID == "" || req.TargetUID == "" {
 		return nil, huma.Error400BadRequest("missing destination or target")
 	}
-	if err := kata.ValidateReply(req.Kind, req.Body, req.IdempotencyKey); err != nil {
+	if err := kata.ValidateReplyKey(req.IdempotencyKey); err != nil {
 		return nil, kataProxyError(err)
 	}
 	cfg, generation := s.configWatcher.kataSnapshot()

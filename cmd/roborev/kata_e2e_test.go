@@ -4,8 +4,13 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -13,6 +18,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/google/shlex"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -85,6 +91,8 @@ func TestKataTypedReplyThroughDaemonE2E(t *testing.T) {
 		t.Skip("real Kata uses a private Unix socket")
 	}
 	ctx := t.Context()
+	isolateDaemonSelection(t)
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
 	k := katatest.StartReal(t, ctx)
 	cfg := config.KataIntegrationConfig{Enabled: true, Endpoint: k.SocketEndpoint(t, ctx), DefaultProject: "e2etest", Teammate: "roborev"}
 	client, err := kata.NewAPIClient(k.Repo, cfg)
@@ -92,17 +100,22 @@ func TestKataTypedReplyThroughDaemonE2E(t *testing.T) {
 	defer client.CloseIdleConnections()
 	project, err := client.ResolvePublicationProject(ctx, "e2etest")
 	require.NoError(t, err)
-	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary"}
+	for range 7 {
+		doc.Findings = append(doc.Findings, structuredreview.Finding{Severity: "high", Problem: "problem", Fix: "fix"})
+	}
 	publication, err := kata.PreparePublication(uuid.New(), strings.Repeat("a", 64), time.Now().UTC(), doc, "summary", "roborev")
 	require.NoError(t, err)
 	created, err := client.CreatePublicationIssue(ctx, project, publication)
 	require.NoError(t, err)
-	_, err = client.CreatePublicationRoot(ctx, project, created.Issue.UID, publication, 0)
-	require.NoError(t, err)
+	for position := range 7 {
+		_, err = client.CreatePublicationRoot(ctx, project, created.Issue.UID, publication, position)
+		require.NoError(t, err)
+	}
 	shown, err := client.ShowPublicationIssue(ctx, project, created.Issue.UID)
 	require.NoError(t, err)
 	roots := publication.Roots(shown)
-	require.Len(t, roots, 1)
+	require.Len(t, roots, 7)
 	require.Equal(t, "complete", roots[0].State)
 	require.NotNil(t, roots[0].Comment)
 	require.NotNil(t, roots[0].Comment.Handle)
@@ -171,9 +184,176 @@ func TestKataTypedReplyThroughDaemonE2E(t *testing.T) {
 	assert.EqualValues(t, 2, posts.Load())
 	shown, err = client.ShowPublicationIssue(ctx, project, created.Issue.UID)
 	require.NoError(t, err)
-	require.Len(t, shown.Comments, 2)
-	assert.Equal(t, "Evidence with 'quotes' and\nnewlines.", shown.Comments[1].Body)
-	assert.Equal(t, "roborev", shown.Comments[1].Author)
-	require.NotNil(t, shown.Comments[1].ReplyToUID)
-	assert.Equal(t, roots[0].Comment.UID, *shown.Comments[1].ReplyToUID)
+	require.Len(t, shown.Comments, 8)
+	assert.Equal(t, "Evidence with 'quotes' and\nnewlines.", shown.Comments[7].Body)
+	assert.Equal(t, "roborev", shown.Comments[7].Author)
+	require.NotNil(t, shown.Comments[7].ReplyToUID)
+	assert.Equal(t, roots[0].Comment.UID, *shown.Comments[7].ReplyToUID)
+
+	// Kata, not the proxy, owns kind and normalized evidence validation.
+	api := ep.APIClient(0)
+	for i, tc := range []struct {
+		kind, body string
+		accepted   bool
+	}{
+		{"confirm", strings.Repeat("界", 19) + " \u2003\t" + strings.Repeat("界", 19), false},
+		{"confirm", " " + strings.Repeat("界", 40) + "\n", true},
+		{"confirm", strings.Repeat("界", 41), true},
+		{"refute", strings.Repeat("é", 19) + "\t\u2003 " + strings.Repeat("é", 19), false},
+		{"refute", strings.Repeat("é", 40), true},
+		{"refute", "\n" + strings.Repeat("é", 41) + " ", true},
+		{"reply", " \u2003\n", false},
+		{"unknown", "ordinary body", false},
+	} {
+		target := roots[(i%6)+1].Comment.UID
+		before, showErr := client.ShowPublicationIssue(ctx, project, created.Issue.UID)
+		require.NoError(t, showErr)
+		request := generated.KataResponseRequest{Project: project.Name, DestinationID: *full.DestinationID, Generation: full.Generation, Teammate: "roborev", IssueUID: created.Issue.UID, TargetUID: target, Kind: tc.kind, Body: tc.body, IdempotencyKey: fmt.Sprintf("boundary-%d", i)}
+		receipt, postErr := api.KataResponse(ctx, &generated.KataResponseRequestOptions{Body: &request})
+		after, showErr := client.ShowPublicationIssue(ctx, project, created.Issue.UID)
+		require.NoError(t, showErr)
+		if !tc.accepted {
+			require.ErrorContains(t, postErr, "validation")
+			assert.Len(t, after.Comments, len(before.Comments))
+			continue
+		}
+		require.NoError(t, postErr)
+		assert.Equal(t, "roborev", receipt.Author)
+		assert.Equal(t, "roborev", receipt.Teammate)
+		require.Len(t, after.Comments, len(before.Comments)+1)
+		last := after.Comments[len(after.Comments)-1]
+		assert.Equal(t, tc.body, last.Body)
+		assert.Equal(t, "roborev", last.Author)
+		require.NotNil(t, last.ReplyToUID)
+		assert.Equal(t, target, *last.ReplyToUID)
+		require.NotNil(t, last.ReplyKind)
+		assert.Equal(t, tc.kind, *last.ReplyKind)
+	}
+
+	// Discover A, lose a committed reply, then execute the printed shell tuple
+	// after discovery points at a fresh daemon transport B.
+	currentURL := proxy.URL
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		u, parseErr := url.Parse(currentURL)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		return &daemon.RuntimeInfo{Network: "tcp", Address: u.Host}, nil
+	}
+	drop.Store(true)
+	beforePosts := posts.Load()
+	args = []string{"kata", "comment", created.Issue.UID, "--project", project.Name, "--supersede", roots[0].Comment.UID, "--idempotency-key", "Restart-Key", "-m", "Automatic 'quoted'\nbody."}
+	first, err = run()
+	require.Error(t, err)
+	assert.EqualValues(t, beforePosts+1, posts.Load())
+	committed, err := client.ShowPublicationIssue(ctx, project, created.Issue.UID)
+	require.NoError(t, err)
+	var committedUID string
+	for _, comment := range committed.Comments {
+		if comment.Body == "Automatic 'quoted'\nbody." {
+			committedUID = comment.UID
+		}
+	}
+	require.NotEmpty(t, committedUID)
+	_, retryText, ok := strings.Cut(first, "Retry: ")
+	require.True(t, ok)
+	assert.NotContains(t, retryText, "--server")
+	assert.Contains(t, retryText, *full.DestinationID)
+	assert.Contains(t, retryText, created.Issue.UID)
+	assert.Contains(t, retryText, roots[0].Comment.UID)
+	assert.Contains(t, retryText, "Restart-Key")
+	assert.Contains(t, retryText, "--expected-teammate 'roborev'")
+	retryArgs, splitErr := shlex.Split(strings.TrimSuffix(retryText, "\n"))
+	require.NoError(t, splitErr)
+	require.Equal(t, "roborev", retryArgs[0])
+	args = retryArgs[1:]
+	proxy.Close()
+	require.NoError(t, server.Close())
+
+	second := daemon.NewServer(db, daemonCfg, "")
+	t.Cleanup(func() { _ = second.Close() })
+	var secondPosts atomic.Int32
+	secondProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/kata/response" {
+			secondPosts.Add(1)
+		}
+		second.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(secondProxy.Close)
+	currentURL = secondProxy.URL
+	replay, err = run()
+	require.NoError(t, err)
+	assert.Contains(t, replay, "Changed: false")
+	assert.Contains(t, replay, "Comment: "+committedUID)
+	assert.EqualValues(t, 1, secondPosts.Load())
+	shown, err = client.ShowPublicationIssue(ctx, project, created.Issue.UID)
+	require.NoError(t, err)
+	var found int
+	for _, comment := range shown.Comments {
+		if comment.Body == "Automatic 'quoted'\nbody." {
+			found++
+		}
+	}
+	assert.Equal(t, 1, found)
+
+	// A changed teammate is detected from a fresh daemon snapshot before POST.
+	changedCfg := config.DefaultConfig()
+	changedCfg.Integrations.Kata = cfg
+	changedCfg.Integrations.Kata.Teammate = "different"
+	changed := daemon.NewServer(db, changedCfg, "")
+	t.Cleanup(func() { _ = changed.Close() })
+	var changedPosts atomic.Int32
+	changedProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/kata/response" {
+			changedPosts.Add(1)
+		}
+		changed.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(changedProxy.Close)
+	currentURL = changedProxy.URL
+	_, err = run()
+	require.ErrorContains(t, err, "teammate changed")
+	assert.Zero(t, changedPosts.Load())
+	// Relay the same isolated producer through a different configured endpoint.
+	// Its project and issue remain readable, but the destination fingerprint differs.
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", strings.TrimPrefix(cfg.Endpoint, "unix://"))
+	}}
+	t.Cleanup(transport.CloseIdleConnections)
+	relay := httptest.NewServer(&httputil.ReverseProxy{Transport: transport, Director: func(r *http.Request) {
+		r.URL.Scheme, r.URL.Host = "http", "kata"
+		r.Header.Del("Authorization")
+	}})
+	t.Cleanup(relay.Close)
+	destinationCfg := config.DefaultConfig()
+	destinationCfg.Integrations.Kata = cfg
+	destinationCfg.Integrations.Kata.Endpoint = relay.URL
+	destinationCfg.Integrations.Kata.APIKey = "fixture-token"
+	destinationServer := daemon.NewServer(db, destinationCfg, "")
+	t.Cleanup(func() { _ = destinationServer.Close() })
+	var destinationPosts atomic.Int32
+	destinationProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/kata/response" {
+			destinationPosts.Add(1)
+		}
+		destinationServer.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(destinationProxy.Close)
+	currentURL = destinationProxy.URL
+	_, err = run()
+	require.ErrorContains(t, err, "destination changed")
+	assert.Zero(t, destinationPosts.Load())
+
+	// Explicit endpoints remain pinned even while discovery advertises another daemon.
+	currentURL = changedProxy.URL
+	args = append([]string{"--server", secondProxy.URL}, retryArgs[1:]...)
+	explicit, err := run()
+	require.NoError(t, err)
+	assert.Contains(t, explicit, "Retry: roborev --server '"+strings.TrimPrefix(secondProxy.URL, "http://")+"'")
+	assert.EqualValues(t, 2, secondPosts.Load())
+	assert.Zero(t, changedPosts.Load())
+	args = append([]string{"--server", proxy.URL}, retryArgs[1:]...)
+	_, err = run()
+	require.Error(t, err)
+	assert.EqualValues(t, 2, secondPosts.Load())
 }

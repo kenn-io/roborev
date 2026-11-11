@@ -120,7 +120,8 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	rootBody := fmt.Sprintf("%s\n\n<!-- roborev:v1 review=%s position=0 digest=%x -->", text, review, digest)
 	rootUID := "01AAAAAAAAAAAAAAAAAAABC123"
 	var posts atomic.Int64
-	var posted, selectedProject atomic.Value
+	var posted, selectedProject, producerError atomic.Value
+	producerError.Store("")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -136,6 +137,17 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 			var data map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&data)
 			posted.Store(data)
+			if code := producerError.Load().(string); code != "" {
+				status := http.StatusConflict
+				if code == "validation" {
+					status = http.StatusBadRequest
+				} else if code == "comment_not_found" {
+					status = http.StatusNotFound
+				}
+				w.WriteHeader(status)
+				fmt.Fprintf(w, `{"status":%d,"detail":%q}`, status, "Kata "+code+": synthetic producer error")
+				return
+			}
 			fmt.Fprint(w, `{"uid":"reply-uid","author":"actual-author","teammate":"roborev","changed":false,"body":"edited evidence","edited_at":"2026-01-02T03:04:05Z"}`)
 		}
 	}))
@@ -189,7 +201,7 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	require.NoError(t, root.Execute())
 	assert.Equal(t, int64(1), posts.Load())
 	assert.Equal(t, "other", selectedProject.Load())
-	assert.Contains(t, output.String(), "Retry: roborev --server ")
+	assert.Contains(t, output.String(), "Retry: roborev --server '"+strings.TrimPrefix(server.URL, "http://")+"'")
 	assert.Contains(t, output.String(), "actual-author")
 	assert.Contains(t, output.String(), "--expected-teammate ")
 	assert.Contains(t, output.String(), "Current body (edited):\nedited evidence")
@@ -201,4 +213,14 @@ func TestKataCommentPrintsRetryBeforePosting(t *testing.T) {
 	assert.Equal(t, "It's evidence", payload["body"])
 	assert.Equal(t, "Case-Key", payload["idempotency_key"])
 	assert.Equal(t, "roborev", payload["teammate"])
+	for _, code := range []string{"validation", "comment_not_found", "duplicate_reply", "idempotency_mismatch", "issue_closed"} {
+		producerError.Store(code)
+		root := newRootCmd()
+		root.SetOut(&output)
+		root.SetErr(&output)
+		root.SetArgs(args)
+		err := root.Execute()
+		require.ErrorContains(t, err, code)
+		assert.ErrorContains(t, err, "synthetic producer error")
+	}
 }

@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 	"uuid"
 
 	gen "go.kenn.io/kata/pkg/client/generated"
@@ -561,17 +560,8 @@ func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue
 	}
 }
 
-// ValidateReply checks the producer's evidence and idempotency constraints.
-func ValidateReply(kind, body, key string) error {
-	switch gen.CommentRequestBodyKind(kind) {
-	case gen.Reply, gen.Confirm, gen.Refute, gen.Supersede:
-	default:
-		return fmt.Errorf("%w: invalid reply kind", ErrRequestRejected)
-	}
-	normalized := strings.Join(strings.Fields(body), " ")
-	if normalized == "" || ((kind == "confirm" || kind == "refute") && utf8.RuneCountInString(normalized) < 40) {
-		return fmt.Errorf("%w: insufficient reply evidence", ErrRequestRejected)
-	}
+// ValidateReplyKey checks the opaque key before it is used as an HTTP header.
+func ValidateReplyKey(key string) error {
 	if key == "" || !httpguts.ValidHeaderFieldValue(key) || strings.TrimSpace(key) != key {
 		return fmt.Errorf("%w: invalid idempotency key", ErrRequestRejected)
 	}
@@ -588,9 +578,9 @@ func (c *APIClient) postComment(ctx context.Context, path, issueUID string, requ
 	return out, err
 }
 
-// Comment submits a typed response. The caller must validate kind, body, and key
-// with ValidateReply and resolve the target against a complete issue immediately
-// before calling it.
+// Comment submits a typed response. The caller must validate the key and resolve
+// the target against a complete issue immediately before calling it. Kata
+// validates the kind and body.
 func (c *APIClient) Comment(ctx context.Context, project PublicationProject, issueUID, target, kind, body, key, teammate string) (gen.CommentResponseBody, error) {
 	var out gen.CommentResponseBody
 	path, err := publicationPath(project)

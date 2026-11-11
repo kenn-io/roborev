@@ -464,9 +464,6 @@ func TestKataInspectionReadsOversizedUnmarkedPublication(t *testing.T) {
 
 func TestKataResponseRejectsInvalidRequestsBeforeWriting(t *testing.T) {
 	server, fake := kataAPIServer(t)
-	invalidEvidence := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: "reviews", DestinationID: "destination", Teammate: "roborev", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "confirm", Body: "short", IdempotencyKey: "key"})
-	assert.Equal(t, http.StatusBadRequest, invalidEvidence.Code)
-	assert.Empty(t, fake.AllRequests())
 	for _, request := range []KataResponseRequest{
 		{},
 		{Project: "reviews", DestinationID: "wrong", IssueUID: "issue-uid", TargetUID: "target-uid", Kind: "reply", Body: "text", IdempotencyKey: "key"},
@@ -494,6 +491,7 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	var request katagen.CommentRequestBody
 	var requestErr error
 	var requestKey string
+	var rejectValidation bool
 	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method != http.MethodPost {
 			return false
@@ -504,6 +502,10 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return true
 		}
+		if rejectValidation {
+			fake.Fail(w, http.StatusBadRequest, "validation", "synthetic evidence error")
+			return true
+		}
 		saved := katagen.CommentOut{UID: "01CCCCCCCCCCCCCCCCCC789012", IssueID: issue.Out.ID, Handle: new("c:789012"), Body: request.Body, Author: "actual-author", Teammate: request.Teammate, ReplyToUID: request.ReplyTo, ReplyKind: new(string(*request.Kind))}
 		issue.Comments = append(issue.Comments, saved)
 		fake.Reply(w, map[string]any{"changed": true, "issue": map[string]any{"id": issue.Out.ID, "uid": issue.Out.UID, "project_id": 8}, "comment": map[string]any{"uid": saved.UID, "issue_id": issue.Out.ID, "body": saved.Body, "author": saved.Author, "teammate": *saved.Teammate, "reply_to_uid": *saved.ReplyToUID, "reply_kind": *saved.ReplyKind}})
@@ -512,6 +514,26 @@ func TestKataResponseWritesSelectedReplyAndReadsItBack(t *testing.T) {
 	read := kataGet(t, server, "/api/kata/issue", url.Values{"ref": {issue.Out.UID}, "project": {"other"}})
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	full := decodeKata[KataIssue](t, read)
+	rejectValidation = true
+	beforeInvalid := len(fake.AllRequests())
+	invalid := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "confirm", Body: "short", IdempotencyKey: "Evidence-Key"})
+	assert.Equal(t, http.StatusBadRequest, invalid.Code)
+	assert.Contains(t, invalid.Body.String(), "validation")
+	assert.Contains(t, invalid.Body.String(), "synthetic evidence error")
+	assert.Equal(t, "short", request.Body)
+	require.NotNil(t, request.Kind)
+	assert.Equal(t, katagen.Confirm, *request.Kind)
+	assert.Equal(t, "Evidence-Key", requestKey)
+	assert.Nil(t, request.Force)
+	var invalidPosts int
+	for _, sent := range fake.AllRequests()[beforeInvalid:] {
+		if sent.Method == http.MethodPost {
+			invalidPosts++
+		}
+	}
+	assert.Equal(t, 1, invalidPosts)
+	assert.Len(t, issue.Comments, 2)
+	rejectValidation = false
 	body := strings.Repeat("e", 40)
 	posted := kataPost(t, server, "/api/kata/response", KataResponseRequest{Project: full.Project, DestinationID: full.DestinationID, Generation: full.Generation, Teammate: full.ReplyTeammate, IssueUID: full.UID, TargetUID: prior.UID, Kind: "refute", Body: body, IdempotencyKey: "Exact-Key"})
 	require.Equal(t, http.StatusOK, posted.Code, posted.Body.String())
