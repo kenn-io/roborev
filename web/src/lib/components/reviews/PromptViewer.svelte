@@ -1,11 +1,26 @@
 <script lang="ts">
+  import { Button } from "@kenn-io/kit-ui";
   import { getReviewStores } from "../../stores/context";
   const stores = getReviewStores();
+  const prompt = $derived(stores.roborevReview?.getPrompt());
+  const loadFailure = $derived(stores.roborevReview?.getError());
+
+  function retryReview(): void {
+    const jobId = stores.roborevReview?.getSelectedJobId();
+    if (jobId !== undefined) stores.roborevReview?.loadReview(jobId);
+  }
 </script>
 
 <div class="prompt-viewer">
-  {#if stores.roborevReview?.getPrompt()}
-    <pre class="prompt-text">{stores.roborevReview.getPrompt()}</pre>
+  {#if prompt}
+    <pre class="prompt-text">{prompt}</pre>
+  {:else if stores.roborevReview?.isLoading()}
+    <div class="prompt-empty">Loading prompt…</div>
+  {:else if loadFailure}
+    <div class="prompt-empty prompt-retry" role="alert">
+      <p>{loadFailure}</p>
+      <Button size="sm" onclick={retryReview} label="Retry" />
+    </div>
   {:else}
     <div class="prompt-empty">No prompt available.</div>
   {/if}
@@ -34,5 +49,18 @@
     text-align: center;
     font-size: var(--font-size-md);
     color: var(--text-muted);
+  }
+
+  /* Matches the review tab's error row: message and Retry share one line. */
+  .prompt-retry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .prompt-retry p {
+    margin: 0;
   }
 </style>
