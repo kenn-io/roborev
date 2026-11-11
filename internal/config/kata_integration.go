@@ -24,17 +24,15 @@ type IntegrationsConfig struct {
 	Kata KataIntegrationConfig `toml:"kata"`
 }
 
-// KataIntegrationConfig is the daemon's optional connection to a Kata server.
+// KataIntegrationConfig holds settings for an optional Kata API connection.
 // It is global-only: a repository cannot choose where credentials are sent.
-// When enabled, every Kata use goes through this connection; when disabled,
-// roborev keeps running the kata CLI as before.
 type KataIntegrationConfig struct {
-	Enabled        bool   `toml:"enabled" comment:"Connect the daemon to Kata's API instead of running the kata CLI. Requires endpoint."`
+	Enabled        bool   `toml:"enabled" comment:"Enable validation of the explicit Kata API connection settings. Requires endpoint."`
 	Endpoint       string `toml:"endpoint" comment:"Kata API endpoint: https://host, loopback http://localhost:port, or unix:///path/to/socket."`
 	APIKey         string `toml:"api_key" json:"-" sensitive:"true" comment:"Bearer credential for Kata. Prefer api_key_file; masked in config output."`
 	APIKeyFile     string `toml:"api_key_file" comment:"File holding the Kata credential, read by the daemon. A leading ~/ is the home directory."`
 	DefaultProject string `toml:"default_project" comment:"Kata project used when a repository has no .kata.local.toml or .kata.toml binding."`
-	Teammate       string `toml:"teammate" comment:"Teammate name Kata records on comments roborev posts (default roborev)."`
+	Teammate       string `toml:"teammate" comment:"Configured teammate handle reserved for Kata replies (default roborev)."`
 }
 
 // KataEndpointKind classifies an accepted Kata endpoint.
