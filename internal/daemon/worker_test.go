@@ -1714,11 +1714,12 @@ func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
 	})
 
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID:     tc.Repo.ID,
-		GitRef:     "dirty",
-		Agent:      agentName,
-		JobType:    storage.JobTypeDirty,
-		DirtyFiles: []string{"go.sum"},
+		RepoID:                tc.Repo.ID,
+		GitRef:                "dirty",
+		Agent:                 agentName,
+		JobType:               storage.JobTypeDirty,
+		DirtyFiles:            []string{"go.sum"},
+		PanelMemberConfigJSON: `{"binary_evidence":true}`,
 	})
 	require.NoError(t, err)
 
@@ -1731,6 +1732,7 @@ func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	assert.Contains(t, capturedPrompt, "## Dependency Metadata")
 	assert.Contains(t, capturedPrompt, "go.sum changed")
+	assert.NotContains(t, capturedPrompt, "Committed review evidence")
 }
 
 func TestProcessJob_BroadcastsBranchOnLifecycleEvents(t *testing.T) {
