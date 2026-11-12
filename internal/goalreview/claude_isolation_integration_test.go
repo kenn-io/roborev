@@ -23,7 +23,6 @@ func TestClaudeGoalReviewSuppressesRepositoryHooks(t *testing.T) {
 	if err != nil {
 		t.Skip("Claude CLI is required for the local transport isolation check")
 	}
-	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".claude"), 0700))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "auth"), 0700))

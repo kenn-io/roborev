@@ -120,7 +120,7 @@ hydrate_branch() {
 
   rm -rf "$target"
   mkdir -p "$target"
-  git -C "$repo_root" archive "$asset_ref" --output="$target/.hydrate.tar"; tar -xf "$target/.hydrate.tar" -C "$target"; rm -f "$target/.hydrate.tar"
+  git -C "$repo_root" archive "$asset_ref" | tar -xf - -C "$target"
 
   if ! has_expected_assets "$target" "$@"; then
     printf 'docs assets not hydrated: %s is missing expected assets\n' "$branch" >&2
