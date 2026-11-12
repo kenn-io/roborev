@@ -1381,11 +1381,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// The job's stored prompt is the only copy the prompt views read, so a
 	// failed save retries the job instead of running the agent without it.
-	if saved, err := wp.db.SaveJobPromptForAttempt(ctx, job, workerID, promptToPersist, rubricDigest); err != nil {
-		log.Printf("[%s] Error saving prompt: %v", workerID, err)
-		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
-		return
-	} else if !saved {
+	if !wp.savePromptOrFinish(ctx, workerID, job, promptToPersist, rubricDigest, checkout.eventWorktreePath) {
 		return
 	}
 
@@ -1903,6 +1899,29 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if completed && wp.captureSetupFinished != nil {
 		wp.captureSetupFinished()
 	}
+}
+
+// savePromptOrFinish stores the prompt and digest for a running claim and
+// reports whether the worker may continue. A canceled row means the save lost to
+// cancellation, so the worker emits the event it owns; any other failed save
+// retries the job, and a replaced claim does nothing.
+func (wp *WorkerPool) savePromptOrFinish(
+	ctx context.Context, workerID string, job *storage.ReviewJob, text string,
+	digest *string, eventWorktreePath string,
+) bool {
+	saved, err := wp.db.SaveJobPromptForAttempt(ctx, job, workerID, text, digest)
+	if saved {
+		return true
+	}
+	// Read the row after the failed save; the finalizer still verifies the claim.
+	current, getErr := wp.db.GetJobByIDContext(context.WithoutCancel(ctx), job.ID)
+	if getErr == nil && current.Status == storage.JobStatusCanceled {
+		wp.finishCanceledAttempt(workerID, job, job.Agent, eventWorktreePath)
+	} else if err != nil {
+		log.Printf("[%s] Error saving prompt: %v", workerID, err)
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
+	}
+	return false
 }
 
 // finishCanceledAttempt emits cancellation only for the claim that still owns

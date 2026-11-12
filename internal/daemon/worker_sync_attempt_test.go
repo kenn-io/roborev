@@ -234,3 +234,45 @@ func TestWorkerCanceledEventIncludesRubric(t *testing.T) {
 	assert.Equal(t, "custom", event.ReviewType)
 	assert.Equal(t, &digest, event.RubricSHA256)
 }
+
+func TestSavePromptOrFinishCanceledClaimEmitsWorkerEvent(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name        string
+		ctxCanceled bool
+		replaced    bool
+		wantEvents  int
+	}{
+		{name: "canceled row live context", wantEvents: 1},
+		{name: "canceled row canceled context", ctxCanceled: true, wantEvents: 1},
+		{name: "replaced claim", replaced: true, wantEvents: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tc := newWorkerTestContext(t, 1)
+			_, events := tc.Broadcaster.Subscribe("")
+			job := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID)
+			if tt.replaced {
+				changed, err := tc.DB.FailoverJob(job.ID, testWorkerID, "backup", "")
+				require.NoError(t, err)
+				require.True(t, changed)
+				next, err := tc.DB.ClaimJob("new-worker")
+				require.NoError(t, err)
+				require.NotNil(t, next)
+			}
+			// The poller cancels an expired panel member in the database
+			// before the worker reaches the prompt save.
+			require.NoError(t, tc.DB.CancelJob(job.ID))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.ctxCanceled {
+				cancel()
+			}
+			assert.False(t, tc.Pool.savePromptOrFinish(ctx, testWorkerID, job, "prompt", nil, ""))
+			require.Len(t, events, tt.wantEvents)
+			if tt.wantEvents > 0 {
+				assert.Equal(t, "review.canceled", (<-events).Type)
+			}
+		})
+	}
+}
