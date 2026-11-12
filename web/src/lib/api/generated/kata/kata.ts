@@ -15,6 +15,34 @@ import type {
 
 import { roborevFetch } from "../../generated-fetch";
 
+// https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
+type IfEquals<X, Y, A = X, B = never> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? A : B;
+
+type WritableKeys<T> = {
+  [P in keyof T]-?: IfEquals<
+    { [Q in P]: T[P] },
+    { -readonly [Q in P]: T[P] },
+    P
+  >;
+}[keyof T];
+
+type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
+  k: infer I,
+) => void
+  ? I
+  : never;
+type DistributeReadOnlyOverUnions<T> = T extends any ? NonReadonly<T> : never;
+
+type Writable<T> = Pick<T, WritableKeys<T>>;
+type NonReadonly<T> = [T] extends [UnionToIntersection<T>]
+  ? {
+      [P in keyof Writable<T>]: T[P] extends object
+        ? NonReadonly<NonNullable<T[P]>>
+        : T[P];
+    }
+  : DistributeReadOnlyOverUnions<T>;
+
 export const getKataShowIssueUrl = (params: KataShowIssueParams) => {
   const normalizedParams = new URLSearchParams();
 
@@ -70,49 +98,6 @@ export const kataListIssues = async (
   return roborevFetch<KataIssuesOutputBody>(getKataListIssuesUrl(params), {
     ...options,
     method: "GET",
-  });
-};
-
-export const getKataCreateIssueUrl = () => {
-  return `/api/kata/issues`;
-};
-
-/**
- * @summary File a Kata issue as roborev through the daemon's connection
- */
-export const kataCreateIssue = async (
-  kataCreateRequest: NonReadonly<KataCreateRequest>,
-  options?: RequestInit,
-): Promise<KataCreateResponse> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit["headers"]>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(
-          h as Iterable<Iterable<string>>,
-          (entry) => Array.from(entry) as [string, string],
-        ),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<
-      string | readonly string[] | undefined
-    >(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-  return roborevFetch<KataCreateResponse>(getKataCreateIssueUrl(), {
-    ...options,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getHeaders(options?.headers),
-    },
-    body: JSON.stringify(kataCreateRequest),
   });
 };
 

@@ -155,10 +155,6 @@ type ClientInterface interface {
 	KataListIssues(ctx context.Context, options *KataListIssuesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*KataListIssuesResponse, error)
 	KataListIssuesWithResponse(ctx context.Context, options *KataListIssuesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*KataListIssuesResp, error)
 
-	// KataCreateIssue File a Kata issue as roborev through the daemon's connection
-	KataCreateIssue(ctx context.Context, options *KataCreateIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*KataCreateIssueResponse, error)
-	KataCreateIssueWithResponse(ctx context.Context, options *KataCreateIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*KataCreateIssueResp, error)
-
 	// KataPublication Inspect finding publication
 	KataPublication(ctx context.Context, options *KataPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*KataPublicationResponse, error)
 	KataPublicationWithResponse(ctx context.Context, options *KataPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*KataPublicationResp, error)
@@ -2422,70 +2418,6 @@ func (c *Client) KataListIssues(ctx context.Context, options *KataListIssuesRequ
 				ContentType:   resp.Headers.Get("Content-Type"),
 				ContentLength: len(bodyBytes),
 				TargetType:    "KataListIssuesResponse",
-				Body:          bodyBytes,
-				Err:           err,
-			}
-		}
-		return target, nil
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/kata/issues")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	return responseParser(ctx, resp)
-}
-
-// KataCreateIssue File a Kata issue as roborev through the daemon's connection
-func (c *Client) KataCreateIssue(ctx context.Context, options *KataCreateIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*KataCreateIssueResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/kata/issues",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*KataCreateIssueResponse, error) {
-		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
-			target := new(KataCreateIssueErrorResponse)
-			// Handle empty error response body gracefully - skip unmarshal if no content
-			if len(bodyBytes) > 0 {
-				if err = json.Unmarshal(bodyBytes, target); err != nil {
-					return nil, &runtime.ResponseDecodeError{
-						StatusCode:    resp.StatusCode,
-						ContentType:   resp.Headers.Get("Content-Type"),
-						ContentLength: len(bodyBytes),
-						TargetType:    "KataCreateIssueErrorResponse",
-						Body:          bodyBytes,
-						Err:           err,
-					}
-				}
-			}
-			// Return error with (possibly empty) target
-			if errTarget, ok := any(*target).(error); ok {
-				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
-			}
-			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
-				runtime.WithStatusCode(resp.StatusCode))
-		}
-		target := new(KataCreateIssueResponse)
-		// Handle empty response body gracefully
-		if len(bodyBytes) == 0 {
-			return target, nil
-		}
-		if err = json.Unmarshal(bodyBytes, target); err != nil {
-			return nil, &runtime.ResponseDecodeError{
-				StatusCode:    resp.StatusCode,
-				ContentType:   resp.Headers.Get("Content-Type"),
-				ContentLength: len(bodyBytes),
-				TargetType:    "KataCreateIssueResponse",
 				Body:          bodyBytes,
 				Err:           err,
 			}

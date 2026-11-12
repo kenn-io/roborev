@@ -252,20 +252,6 @@ type KataListIssuesErrorResponseApplicationProblemPlusJSON500 = ErrorModel
 
 type KataListIssuesErrorResponseApplicationProblemPlusJSON502 = ErrorModel
 
-type KataCreateIssueResponse = KataCreateResponse
-
-type KataCreateIssueErrorResponse = ErrorModel
-
-type KataCreateIssueErrorResponseApplicationProblemPlusJSON = ErrorModel
-
-type KataCreateIssueErrorResponseApplicationProblemPlusJSON409 = ErrorModel
-
-type KataCreateIssueErrorResponseApplicationProblemPlusJSON422 = ErrorModel
-
-type KataCreateIssueErrorResponseApplicationProblemPlusJSON500 = ErrorModel
-
-type KataCreateIssueErrorResponseApplicationProblemPlusJSON502 = ErrorModel
-
 type KataPublicationResponse = KataPublicationBody
 
 type KataPublicationErrorResponse = ErrorModel
@@ -798,19 +784,6 @@ type KataListIssuesResp struct {
 	ApplicationProblemPlusJSON422 *KataListIssuesErrorResponseApplicationProblemPlusJSON422
 	ApplicationProblemPlusJSON500 *KataListIssuesErrorResponseApplicationProblemPlusJSON500
 	ApplicationProblemPlusJSON502 *KataListIssuesErrorResponseApplicationProblemPlusJSON502
-}
-
-type KataCreateIssueResp struct {
-	HTTPResponse                  *http.Response
-	Body                          []byte
-	StatusCode                    int
-	JSON201                       *KataCreateIssueResponse
-	ApplicationProblemPlusJSON400 *KataCreateIssueErrorResponse
-	ApplicationProblemPlusJSON404 *KataCreateIssueErrorResponseApplicationProblemPlusJSON
-	ApplicationProblemPlusJSON409 *KataCreateIssueErrorResponseApplicationProblemPlusJSON409
-	ApplicationProblemPlusJSON422 *KataCreateIssueErrorResponseApplicationProblemPlusJSON422
-	ApplicationProblemPlusJSON500 *KataCreateIssueErrorResponseApplicationProblemPlusJSON500
-	ApplicationProblemPlusJSON502 *KataCreateIssueErrorResponseApplicationProblemPlusJSON502
 }
 
 type KataPublicationResp struct {
@@ -1698,22 +1671,6 @@ func (c *RawClient) KataListIssuesRaw(ctx context.Context, options *KataListIssu
 		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/issues",
 		Method:     "GET",
 		Options:    options,
-	}, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-	return c.doer.Do(ctx, req)
-}
-
-func (c *RawClient) KataCreateIssueRaw(ctx context.Context, options *KataCreateIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
-	if options == nil {
-		options = &KataCreateIssueRequestOptions{}
-	}
-	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/kata/issues",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
