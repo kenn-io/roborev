@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agentguide"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -35,41 +37,95 @@ func TestInstallSetupReviewWorkflow(t *testing.T) {
 func TestSetupReviewConfigExampleValidates(t *testing.T) {
 	content, err := fs.ReadFile(codexSkills, path.Join("codex", "roborev-setup-review", "SKILL.md"))
 	require.NoError(t, err)
-	example := setupReviewTOMLExample(t, string(content), "# .roborev.toml")
+	for _, tc := range []struct {
+		name, marker string
+		swarm        bool
+	}{{"base", "# .roborev.toml", false}, {"swarm", "# .roborev.toml (swarm)", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			example := setupReviewTOMLExample(t, string(content), tc.marker)
 
-	repo := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(example), 0o644))
-	repoCfg, err := config.LoadRepoConfig(repo)
-	require.NoError(t, err)
-	require.NotNil(t, repoCfg)
-	require.NoError(t, config.ValidateEffectiveReviewConfig(nil, repoCfg))
+			repo := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(example), 0o644))
+			repoCfg, err := config.LoadRepoConfig(repo)
 
-	panel, ok := repoCfg.Review.Panels[repoCfg.Review.HookPanel]
-	require.True(t, ok, "example hook panel %q is not defined", repoCfg.Review.HookPanel)
-	require.NotEmpty(t, panel.Members)
-	for _, member := range panel.Members {
-		subagent, ok := repoCfg.Review.Subagents[member]
-		require.True(t, ok, "panel member %s is not defined", member)
-		_, ok = config.ResolveCustomReviewTypeFromConfig(subagent.ReviewType, repoCfg, nil)
-		require.True(t, ok, "member %s uses undefined custom type %q", member, subagent.ReviewType)
-	}
-
-	// Custom types do not inherit review_agent. Resolve the example with
-	// different generic defaults to ensure it follows the selected default
-	// rather than pinning a reviewer in the example.
-	for _, defaultAgent := range []string{"grok", "pi"} {
-		t.Run(defaultAgent, func(t *testing.T) {
-			assert := assert.New(t)
-			members, _, err := config.ResolvePanel(
-				repoCfg.Review.HookPanel,
-				repo,
-				&config.Config{ReviewAgent: "codex", DefaultAgent: defaultAgent},
-			)
 			require.NoError(t, err)
-			require.NotEmpty(t, members)
-			for _, member := range members {
-				assert.Equal(defaultAgent, member.Agent,
-					"custom reviewer %s should follow default_agent", member.Name)
+			require.NotNil(t, repoCfg)
+			require.NoError(t, config.ValidateEffectiveReviewConfig(nil, repoCfg))
+
+			if tc.swarm {
+				require.Contains(t, repoCfg.Hooks, config.HookConfig{Event: "review.completed", Type: "kata", Labels: []string{"swarm"}})
+			}
+
+			panel, ok := repoCfg.Review.Panels[repoCfg.Review.HookPanel]
+			require.True(t, ok, "example hook panel %q is not defined", repoCfg.Review.HookPanel)
+			require.NotEmpty(t, panel.Members)
+			for _, member := range panel.Members {
+				subagent, ok := repoCfg.Review.Subagents[member]
+				require.True(t, ok, "panel member %s is not defined", member)
+				_, ok = config.ResolveCustomReviewTypeFromConfig(subagent.ReviewType, repoCfg, nil)
+				require.True(t, ok, "member %s uses undefined custom type %q", member, subagent.ReviewType)
+			}
+
+			flow := strings.TrimSpace(repoCfg.AgentHook.ReviewFlow)
+			require.NotEmpty(t, flow, "example must show a review flow")
+			graph, err := agentguide.LintDOT(agentguide.FenceDOT(flow))
+			require.NoError(t, err)
+			assert.Equal(t, "roborev_"+strings.ReplaceAll(repoCfg.Review.HookPanel, "-", "_"), graph.Name)
+			readNode, ok := graph.Node("read")
+			require.True(t, ok, "example must include a read node")
+			assert.Equal(t, "Read each: roborev show --from-skill --job <job_id>", readNode.Label)
+			exit := false
+			for _, node := range graph.Nodes {
+				if node.Shape == "oval" && len(graph.Out(node.ID)) == 0 && strings.Contains(node.Label, "roborev_triage") {
+					exit = true
+				}
+			}
+			assert.True(t, exit, "flow must hand back to the triage diagram")
+			t.Run("Graphviz", func(t *testing.T) {
+				err := agentguide.CanonWithGraphviz(t.Context(), flow)
+				if errors.Is(err, agentguide.ErrGraphvizUnavailable) {
+					t.Skip("graphviz not installed")
+				}
+				require.NoError(t, err)
+			})
+
+			if tc.swarm {
+				assert.Equal(t, []agentguide.Edge{{From: "read", To: "outcome"}}, graph.Out("read"))
+				assert.Equal(t, []agentguide.Edge{{From: "outcome", To: "swarm"}}, graph.Out("outcome"))
+				edges := graph.Out("swarm")
+				require.Len(t, edges, 2)
+				labels := make(map[string]string, len(edges))
+				for _, edge := range edges {
+					labels[edge.To] = strings.ToLower(edge.Label)
+				}
+				require.Contains(t, labels, "ask")
+				require.Contains(t, labels, "who")
+				assert.Contains(t, labels["ask"], "contested")
+				for _, outcome := range []string{"confirmed", "refuted", "unchecked", "no current outcome"} {
+					assert.Contains(t, labels["who"], outcome)
+					assert.NotContains(t, labels["ask"], outcome)
+				}
+				assert.NotContains(t, labels["who"], "contested")
+			}
+
+			// Custom types do not inherit review_agent. Resolve the example with
+			// different generic defaults to ensure it follows the selected default
+			// rather than pinning a reviewer in the example.
+			for _, defaultAgent := range []string{"grok", "pi"} {
+				t.Run(defaultAgent, func(t *testing.T) {
+					assert := assert.New(t)
+					members, _, err := config.ResolvePanel(
+						repoCfg.Review.HookPanel,
+						repo,
+						&config.Config{ReviewAgent: "codex", DefaultAgent: defaultAgent},
+					)
+					require.NoError(t, err)
+					require.NotEmpty(t, members)
+					for _, member := range members {
+						assert.Equal(defaultAgent, member.Agent,
+							"custom reviewer %s should follow default_agent", member.Name)
+					}
+				})
 			}
 		})
 	}

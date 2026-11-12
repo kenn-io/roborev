@@ -15,7 +15,6 @@ const (
 	DefaultTurnThreshold         = 5
 	DefaultCommitThreshold       = 0
 	DefaultFailedReviewThreshold = 4
-	DefaultInstruction           = config.DefaultAgentHookInstruction
 
 	TurnThresholdEnv         = "ROBOREV_AGENT_HOOK_TURN_THRESHOLD"
 	CommitThresholdEnv       = "ROBOREV_AGENT_HOOK_COMMIT_THRESHOLD"
