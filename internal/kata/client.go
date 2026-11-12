@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/BurntSushi/toml"
 
@@ -21,10 +22,11 @@ import (
 
 // CLIClient implements Client by shelling out to the kata CLI.
 type CLIClient struct {
-	bin     string
-	workdir string
-	env     []string
-	run     func(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) ([]byte, error)
+	archiveReuse atomic.Uint32
+	bin          string
+	workdir      string
+	env          []string
+	run          func(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) ([]byte, error)
 }
 
 var _ Client = (*CLIClient)(nil)

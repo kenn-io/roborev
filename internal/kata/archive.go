@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -54,33 +55,67 @@ func (c *CLIClient) ResolveArchiveIssue(ctx context.Context, project, ref string
 	return ArchiveIssue{UID: result.Issue.UID, ShortID: result.Issue.ShortID}, nil
 }
 
-// ArchiveRubric serializes the list/add pair for a canonical UID returned by
-// ResolveArchiveIssue and an exact file name.
-func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string, data []byte) error {
-	key := project + "#" + uid + "/" + name
-	archiveLocks.Lock()
-	lock := archiveLocks.locks[key]
-	if lock == nil {
-		lock = &archiveLock{token: make(chan struct{}, 1)}
-		lock.token <- struct{}{}
-		archiveLocks.locks[key] = lock
+// supportsAttachmentReuse caches only successful help probes. Concurrent first
+// probes may run independently so one caller's context never blocks another.
+func (c *CLIClient) supportsAttachmentReuse(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
-	lock.users++
-	archiveLocks.Unlock()
-	defer func() {
-		archiveLocks.Lock()
-		lock.users--
-		if lock.users == 0 {
-			delete(archiveLocks.locks, key)
+	if state := c.archiveReuse.Load(); state != 0 {
+		return state == 2, nil
+	}
+	out, err := c.run(ctx, c, []string{"docbank", "attachments", "add", "--help"}, nil)
+	if err != nil {
+		return false, fmt.Errorf("probe attachment reuse: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	state := uint32(1)
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "--reuse-existing" {
+			state = 2
+			break
 		}
-		archiveLocks.Unlock()
-	}()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-lock.token:
 	}
-	defer func() { lock.token <- struct{}{} }()
+	c.archiveReuse.Store(state)
+	return state == 2, nil
+}
+
+// ArchiveRubric uses atomic reuse when available, or serializes the legacy
+// list/add pair within this process.
+func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string, data []byte) error {
+	reuse, err := c.supportsAttachmentReuse(ctx)
+	if err != nil {
+		return err
+	}
+	if !reuse {
+		key := project + "#" + uid + "/" + name
+		archiveLocks.Lock()
+		lock := archiveLocks.locks[key]
+		if lock == nil {
+			lock = &archiveLock{token: make(chan struct{}, 1)}
+			lock.token <- struct{}{}
+			archiveLocks.locks[key] = lock
+		}
+		lock.users++
+		archiveLocks.Unlock()
+		defer func() {
+			archiveLocks.Lock()
+			lock.users--
+			if lock.users == 0 {
+				delete(archiveLocks.locks, key)
+			}
+			archiveLocks.Unlock()
+		}()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-lock.token:
+		}
+		defer func() { lock.token <- struct{}{} }()
+	}
 	issue, err := c.ResolveArchiveIssue(ctx, project, uid)
 	if err != nil {
 		return err
@@ -89,24 +124,26 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string
 		return fmt.Errorf("resolve issue: identity changed; retry archive")
 	}
 	ref := issue.ShortID
-	out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", ref, "--json", "--project", project}, nil)
-	if err != nil {
-		return fmt.Errorf("list attachments: %w", err)
-	}
-	var listed struct {
-		Attachments map[string]struct {
-			Name string `json:"name"`
-		} `json:"attachments"`
-	}
-	if err := json.Unmarshal(out, &listed); err != nil {
-		return fmt.Errorf("parse attachments: %w", err)
-	}
-	if listed.Attachments == nil {
-		return fmt.Errorf("parse attachments: missing attachments")
-	}
-	for _, item := range listed.Attachments {
-		if item.Name == name {
-			return nil
+	if !reuse {
+		out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", ref, "--json", "--project", project}, nil)
+		if err != nil {
+			return fmt.Errorf("list attachments: %w", err)
+		}
+		var listed struct {
+			Attachments map[string]struct {
+				Name string `json:"name"`
+			} `json:"attachments"`
+		}
+		if err := json.Unmarshal(out, &listed); err != nil {
+			return fmt.Errorf("parse attachments: %w", err)
+		}
+		if listed.Attachments == nil {
+			return fmt.Errorf("parse attachments: missing attachments")
+		}
+		for _, item := range listed.Attachments {
+			if item.Name == name {
+				return nil
+			}
 		}
 	}
 	dir, err := os.MkdirTemp("", "roborev-rubric-*")
@@ -125,7 +162,11 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string
 	if issue.UID != uid {
 		return fmt.Errorf("resolve issue: identity changed; retry archive")
 	}
-	out, err = c.run(ctx, c, []string{"docbank", "attachments", "add", issue.ShortID, file, "--json", "--project", project}, nil)
+	args := []string{"docbank", "attachments", "add", issue.ShortID, file, "--json", "--project", project}
+	if reuse {
+		args = append(args, "--reuse-existing")
+	}
+	out, err := c.run(ctx, c, args, nil)
 	if err != nil {
 		return fmt.Errorf("add attachment: %w", err)
 	}

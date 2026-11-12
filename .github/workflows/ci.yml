@@ -403,6 +403,24 @@ jobs:
         if: ${{ !cancelled() && (runner.os != 'Windows' || matrix.shard == 'windows-remaining') }}
         uses: $/.github/actions/go-cache-save
 
+  kata-pinned-cli:
+    needs: go-changes
+    if: github.event_name == 'workflow_dispatch' || needs.go-changes.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Install pinned Kata into runner scratch
+        run: |
+          mkdir -p "$RUNNER_TEMP/kata/bin"
+          GOBIN="$RUNNER_TEMP/kata/bin" go install go.kenn.io/kata/cmd/kata@591bf1e9939a30c315ef6345fbc8a39ad4f52643
+      - name: Exercise pinned Kata archive transport
+        run: ROBOREV_KATA_TEST_BINARY="$RUNNER_TEMP/kata/bin/kata" go test -tags kata ./internal/kata -run '^TestArchiveRubricPinnedCLI$'
+
   daemon-race:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
