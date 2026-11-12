@@ -287,6 +287,7 @@ func TestMarkJobsSyncedSkipsRowsChangedSinceSnapshot(t *testing.T) {
 // A digest save must invalidate an earlier mark and defeat a stale mark even
 // when updated_at has the same second precision as the pushed snapshot.
 func TestPromptDigestSaveInvalidatesSyncMark(t *testing.T) {
+	t.Parallel()
 	for _, markFirst := range []bool{false, true} {
 		t.Run(fmt.Sprintf("mark-first=%t", markFirst), func(t *testing.T) {
 			h := newSyncTestHelper(t)
