@@ -43,12 +43,12 @@ func TestRealRunErrorTransport(t *testing.T) {
 			require.Error(t, err)
 			assert.Nil(t, out)
 			if tc.want != nil {
-				assert.ErrorIs(t, err, tc.want)
+				require.ErrorIs(t, err, tc.want)
 			} else {
-				assert.ErrorContains(t, err, "exit 1")
-				assert.ErrorContains(t, err, tc.stderr)
-				assert.NotErrorIs(t, err, ErrDocbankNotConfigured)
-				assert.NotErrorIs(t, err, ErrDaemonUnavailable)
+				require.ErrorContains(t, err, "exit 1")
+				require.ErrorContains(t, err, tc.stderr)
+				require.NotErrorIs(t, err, ErrDocbankNotConfigured)
+				require.NotErrorIs(t, err, ErrDaemonUnavailable)
 			}
 		})
 	}
