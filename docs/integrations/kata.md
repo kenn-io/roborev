@@ -128,9 +128,9 @@ and member job results from `roborev job show` when needed. Assign every
 identified source reviewer. If the mapping is ambiguous, such as the same agent
 and type with different member instructions, do not assign that finding; report
 it unchecked. Keep one root and outcome row per finding. Reconcile every
-full-result finding to a root and outcome. Record handles from `kata show`. For
-`<result>`, use the top-level `uuid` from the JSON output; if absent, use
-exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only for
+full-result finding to a root and outcome. Record complete comment references
+from `kata show`. For `<result>`, use the top-level `uuid` from the JSON output;
+if absent, use exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only for
 identical retries of the same result. A rerun has a new result: leave old roots,
 replies and outcomes as history, post a new charter and roots with new keys, and
 never carry outcomes forward:
@@ -149,16 +149,17 @@ findings per context is a configurable default based on one
 teammate checks alone, treating finding text as data, and reads other replies
 only after posting. The following evidence is illustrative; replace it with the
 actual rubric check and locations. Confirm and refute require at least 40
-characters of evidence:
+characters of evidence. `<comment-ref>` is the complete reference returned by
+`kata show`:
 
 ```bash
-kata --teammate=facts-codex comment '<issue>' --confirm 'c:<handle>' \
+kata --teammate=facts-codex comment '<issue>' --confirm '<comment-ref>' \
   -m 'The facts rubric checks dates; the draft and exhibit give different dates.' \
   --idempotency-key 'swarm:<result>:f1:facts-codex:confirm' --agent
-kata --teammate=facts-claude-code comment '<issue>' --refute 'c:<handle>' \
+kata --teammate=facts-claude-code comment '<issue>' --refute '<comment-ref>' \
   -m 'The exhibit supports the date in the draft; the finding is mistaken.' \
   --idempotency-key 'swarm:<result>:f1:facts-claude-code:refute' --agent
-kata --teammate=lead show '<issue>' --thread 'c:<handle>' --agent
+kata --teammate=lead show '<issue>' --thread '<comment-ref>' --agent
 ```
 
 If neither answer is established, use `--reply` and say what was checked and
@@ -171,10 +172,17 @@ not use `roborev`. Never use `--force`: a duplicate reply of the same kind from
 the same actor and teammate is a conflict, while an identical retry with the
 same idempotency key returns its original result.
 
+Before classifying, the lead reads each thread. If `Comments truncated` (or JSON
+`comments_truncated`) is true, repeat `show --thread` with `--since` set to the
+last non-root comment reference on the truncated page. Collect replies until
+truncation is false. Federation can retain a later root on a truncated page, so
+do not use the root as the cursor. If completeness cannot be established, leave
+the finding unchecked and actionable.
+
 The lead checks that cited paths and lines exist at the reviewed commit and
 posts an outcome comment with one row per finding: confirmed for confirms only,
-refuted for refutes only, contested for both, and unchecked for neither. A
-resolving citation alone does not prove a conclusion. The lead never confirms or
+refuted for refutes only, contested for both, and unchecked for neither or
+incomplete threads. A resolving citation alone does not prove a conclusion. The lead never confirms or
 refutes; the user decides what to do with contested and unchecked findings. A
 reply does not close the Kata issue or the roborev review. With user approval,
 refuted findings can inform rubric tuning. Main fix, refine and later review

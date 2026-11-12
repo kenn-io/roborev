@@ -144,7 +144,7 @@ func TestNativeTypedRepliesE2E(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out, &shown))
 	require.Len(t, shown.Comments, 1)
 	require.NotEmpty(t, shown.Comments[0].Handle)
-	root := "c:" + shown.Comments[0].Handle
+	root := shown.Comments[0].Handle
 	evidence := "The rubric checks the date and the exhibit gives a different date."
 	confirm := []string{"--teammate=facts-codex", "comment", res.ShortID, "--confirm", root, "-m", evidence, "--idempotency-key", "swarm:fixture:f1:facts-codex:confirm", "--agent"}
 	out, err = run(confirm...)
