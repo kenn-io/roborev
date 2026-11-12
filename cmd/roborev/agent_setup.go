@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -284,7 +285,11 @@ func agentMCPItem(name, executable, address string, server mcpconfig.RegisteredS
 			}
 		}
 		if status.State == agentsetup.StateOK && !isRoborevMCP(server) {
-			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Cannot verify that the server provides RoboRev tools", NextStep: "Confirm the server provides RoboRev tools in the agent"}, nil
+			next := "Confirm the server provides RoboRev tools in the agent"
+			if server.URL != "" {
+				next = "Run roborev mcp status and use an advertised URL, or confirm the remote server's tools in the agent"
+			}
+			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Cannot verify that the server provides RoboRev tools", NextStep: next}, nil
 		}
 		return status, nil
 	}
@@ -292,21 +297,28 @@ func agentMCPItem(name, executable, address string, server mcpconfig.RegisteredS
 }
 
 func isRoborevMCP(server mcpconfig.RegisteredServer) bool {
-	path, err := exec.LookPath(server.Command)
-	if err != nil {
-		return false
+	if server.URL != "" {
+		listeners, err := discoverMCPListeners(2 * time.Second)
+		return err == nil && slices.ContainsFunc(listeners, func(listener mcpListenerStatus) bool { return listener.URL == server.URL })
 	}
-	actual, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	binary, err := githook.ResolveRoborevPath("")
-	if err != nil {
-		return false
-	}
-	expected, err := os.Stat(binary.Path)
-	if err != nil || !os.SameFile(actual, expected) {
-		return false
+	name := filepath.Base(server.Command)
+	if !strings.EqualFold(name, "roborev") && !strings.EqualFold(name, "roborev.exe") {
+		path, err := exec.LookPath(server.Command)
+		if err != nil {
+			return false
+		}
+		actual, err := os.Stat(path)
+		if err != nil {
+			return false
+		}
+		binary, err := githook.ResolveRoborevPath("")
+		if err != nil {
+			return false
+		}
+		expected, err := os.Stat(binary.Path)
+		if err != nil || !os.SameFile(actual, expected) {
+			return false
+		}
 	}
 	for i := 1; i < len(server.Args); i++ {
 		if server.Args[i-1] == "mcp" && server.Args[i] == "serve" {

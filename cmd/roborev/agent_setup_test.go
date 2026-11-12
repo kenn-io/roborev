@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +18,7 @@ import (
 	"go.kenn.io/kit/agentsetup"
 
 	"go.kenn.io/roborev/internal/agenthook"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/mcpconfig"
 	"go.kenn.io/roborev/internal/skills"
 )
@@ -215,6 +217,60 @@ func TestSetupDoesNotTrustServerName(t *testing.T) {
 	status, err := item.Check(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, agentsetup.StateUnknown, status.State)
+}
+
+func TestSetupAcceptsCopiedRoboRevExecutable(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	fakeAgent(t, "claude")
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	data, err := os.ReadFile(exe)
+	require.NoError(t, err)
+	name := "roborev"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	copyPath := filepath.Join(t.TempDir(), name)
+	require.NoError(t, os.WriteFile(copyPath, data, 0o700))
+	opts := mcpconfig.Options{Agent: skills.AgentClaude, Executable: copyPath}
+	_, err = mcpconfig.Install(opts)
+	require.NoError(t, err)
+	server, _, err := mcpconfig.Registration(opts)
+	require.NoError(t, err)
+	item, err := agentMCPItem("claude", exe, "", server, true)
+	require.NoError(t, err)
+	status, err := item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateOK, status.State)
+}
+
+func TestSetupChecksAdvertisedHTTPMCP(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	fakeAgent(t, "claude")
+	advertised := "http://127.0.0.1:7373/mcp"
+	stubMCPStatusDiscovery(t, []*daemon.RuntimeInfo{{PID: 11, Network: "tcp", Address: "127.0.0.1:7373"}}, func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return &daemon.PingInfo{PID: 11, MCPURL: advertised}, nil
+	})
+	opts := mcpconfig.Options{Agent: skills.AgentClaude, Transport: "http", URL: advertised}
+	_, err := mcpconfig.Install(opts)
+	require.NoError(t, err)
+	server, _, err := mcpconfig.Registration(opts)
+	require.NoError(t, err)
+	item, err := agentMCPItem("claude", "roborev", "", server, true)
+	require.NoError(t, err)
+	status, err := item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateOK, status.State)
+	advertised = "http://127.0.0.1:7374/mcp"
+	status, err = item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateUnknown, status.State)
+	assert.Contains(t, status.NextStep, "roborev mcp status")
+	item, err = agentMCPItem("claude", "roborev", "http://127.0.0.1:7374", server, true)
+	require.NoError(t, err)
+	status, err = item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateOutdated, status.State)
 }
 
 func TestClaudeMCPUsesKitCheck(t *testing.T) {
