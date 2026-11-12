@@ -15,35 +15,28 @@ All notable changes to roborev, grouped by minor release.
     batched reviews containing them. Find older reviews and reviews moved by a
     rebase in the TUI or `/roborev-fix`. ZCode's prompt-only events leave
     automatic reminders silent.
-
 - Report the provider error when a Pi review or classification fails, instead of
     a missing `result.json`. When Amazon Bedrock rejects image input for a
     text-only model, the job goes to the backup agent without retries.
-
 - Explain unfiltered, empty multi-word lexical searches with complete coverage
     and a hint to try fewer words. CLI output writes the hint to stderr; JSON
     and MCP return its code and message.
-
 - Find review records under `job`, aggregate reports under `report`, Git hooks
     under `hook`, and provider checks and integrations under `agent`. Queue
     controls live under `daemon`; repair commands live under `storage` and
     remote key creation under `signing init`. Previous spellings remain hidden
     compatibility commands for at least one release. See the
     [command mapping](/docs/commands/#command-groups-and-migration).
-
 - Use root help as a guide to the review workflow, job IDs, target selection,
     output modes and recovery. Commands are grouped by purpose and include
     examples; `ls` aliases `list` and `resolve` aliases `close`.
-
 - Read recovery hints in CLI errors. Human errors use `hint:`, search agent
     output uses `Hint:`, and commands supporting `--json` write an error
     envelope to stderr. Success output stays unchanged. Usage mistakes now exit
     2 and invalid values exit 4; runtime failures and FAIL verdicts keep exit 1,
     and export cursor resets keep exit 3.
-
 - Report daemon startup failure when its child exits, with the startup log and a
     diagnostic command, instead of waiting for the readiness timeout.
-
 - Read the CI checker's results as data. A checked review's document has a
     `check` member that says whether checking completed or failed and, for each
     finding, whether it was kept or dropped, with the checker's evidence and
@@ -54,7 +47,6 @@ All notable changes to roborev, grouped by minor release.
     at the first checked review, and Go programs that decode documents with an
     older `pkg/structuredreview` fail on them. Upgrade those machines and
     programs before or with the CI host.
-
 - The generated Go client's `Validate` accepts review findings whose `location`
     is `null`, as the API documents.
 
