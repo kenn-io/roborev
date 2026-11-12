@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/kata"
 )
 
 // doctorRecentWindow is how far back the failure and CI burst checks look.
@@ -43,6 +44,8 @@ type doctorEnv struct {
 	daemonAgentsErr error
 
 	postCommitLog string
+
+	rubricKata func(context.Context, string) (kata.Binding, kata.DocbankHealth, error, error, error)
 }
 
 func loadDoctorEnv(ctx context.Context, repoPath string, d doctorDaemon) *doctorEnv {
@@ -151,6 +154,7 @@ func runDoctorChecks(env *doctorEnv) []doctorCheck {
 		checkDoctorRepo,
 		checkDoctorGuidelines,
 		checkDoctorIntegrations,
+		checkDoctorKataRubrics,
 	}
 	var out []doctorCheck
 	for _, check := range checks {

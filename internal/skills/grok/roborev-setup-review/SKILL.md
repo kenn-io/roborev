@@ -188,6 +188,17 @@ Rules that matter:
 - Put the setup in the repository's `.roborev.toml`. Use the global
     `~/.roborev/config.toml` only when the user wants the same review in every
     repository, and only with their approval.
+- When setting up a custom type, offer to archive its rendered rubric on the
+    Kata issues referenced by local commit or range reviews. This is off by
+    default. Explain that every issue reader and metadata writer served by the
+    Kata daemon can read the vault rubric. If the user wants it, propose
+    `kata docbank setup` and `[kata_rubrics] mode = "current"` in global
+    `~/.roborev/config.toml`; only global config can enable it. A repository
+    may opt out with `[kata_rubrics] mode = "off"` in `.roborev.toml`.
+    Kata issue attachments are named `roborev-rubric.<type>.<sha16>.md`;
+    `roborev show` identifies the rubric as `<type>@<sha16>`. Use
+    `roborev doctor --from-skill --json` to check the setup. An unknown
+    Docbank state means Kata did not expose enough information to verify it.
 - Custom types need an agent with JSON Schema output: `codex`, `claude-code`,
     `pi`, or `grok`. Pi also needs its `pi-json-schema` extension, which
     validation and doctor do not check. Custom types do not inherit

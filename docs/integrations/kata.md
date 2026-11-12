@@ -112,6 +112,12 @@ Kata daemon. Enable this only if that audience may read your rubrics. A
 repository can opt out with `[kata_rubrics] mode = "off"` in `.roborev.toml`;
 it cannot enable the feature.
 
+Run `roborev doctor` in the repository to check the mode, Kata CLI and project
+binding. When Kata exposes its Docbank credential state, doctor reports whether
+its key resolves. This does not verify connectivity. If Kata omits that state,
+including for older daemons or restricted diagnostics, doctor reports it as
+unknown. Check `kata docbank setup` and the daemon configuration if needed.
+
 Roborev attaches `roborev-rubric.<type>.<digest>.md` to up to ten referenced
 issues in the bound project. The digest in the name is the first 16 characters
 of the SHA-256 of the file; the full digest is recorded on the review. Repeated
