@@ -211,3 +211,19 @@ func TestWaitingClaimTimeoutCleansOnlyItsOwnClaim(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerCanceledEventIncludesRubric(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	_, events := tc.Broadcaster.Subscribe("")
+	job := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID)
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	job.ReviewType = "custom"
+	job.RubricSHA256 = &digest
+	tc.Pool.finishCanceledAttempt(testWorkerID, job, job.Agent, "")
+	require.Len(t, events, 1)
+	event := <-events
+	assert.Equal(t, "review.canceled", event.Type)
+	assert.Equal(t, "custom", event.ReviewType)
+	assert.Equal(t, &digest, event.RubricSHA256)
+}

@@ -2395,7 +2395,8 @@ func (db *DB) ResetStaleJobs() error {
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL,
 		    session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
-		    token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL
+		    token_usage = NULL, command_line = NULL, agent_invoked = 0,
+		    rubric_sha256 = CASE WHEN source IN ('ci', 'ci_branch') AND prompt_prebuilt = 1 THEN rubric_sha256 ELSE NULL END, synced_at = NULL
 		WHERE status = 'running'
 	`)
 	return err

@@ -66,7 +66,7 @@ func TestPostgresMigrationReviewAttempts(t *testing.T) { //nolint:paralleltest /
 		assert.Nil(producing)
 	}
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version))
-	assert.Equal(pgSchemaVersion, version)
+	assert.Equal(25, version)
 	var original, archiveAttempt string
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output', record->>'job_enqueued_at' FROM legacy_reviews WHERE uuid = $1`, archivedReview).Scan(&original, &archiveAttempt))
 	assert.Equal("A historical finding without enough detail.", original)

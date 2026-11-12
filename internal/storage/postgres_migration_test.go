@@ -31,6 +31,9 @@ var postgresV18Schema string
 //go:embed schemas/postgres_v23.sql
 var postgresV23Schema string
 
+//go:embed schemas/postgres_v24.sql
+var postgresV24Schema string
+
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
 // schema file and seeding schema_version. It deliberately does NOT call
@@ -56,6 +59,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		17: postgresV17Schema,
 		18: postgresV18Schema,
 		23: postgresV23Schema,
+		24: postgresV24Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
@@ -317,4 +321,19 @@ func TestPostgresMigration_BackupColumns(t *testing.T) { //nolint:paralleltest /
 	).Scan(&ba, &bm))
 	require.Empty(t, ba)
 	require.Empty(t, bm)
+}
+
+func TestPostgresMigrationRubricDigest25(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	pool := openTestPgPoolRawAtVersion(t, 24)
+	ctx := t.Context()
+	var count int
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = 'rubric_sha256'`).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, pool.EnsureSchema(ctx))
+	require.NoError(t, pool.EnsureSchema(ctx))
+	var version int
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version))
+	assert.Equal(t, 25, version)
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = 'rubric_sha256' AND data_type = 'text' AND is_nullable = 'YES'`).Scan(&count))
+	assert.Equal(t, 1, count)
 }

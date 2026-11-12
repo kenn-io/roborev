@@ -614,9 +614,6 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 	})
 	require.NoError(t, err)
 	// Only terminal jobs sync.
-	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET rubric_sha256 = ? WHERE id = ?`, digest, member.ID)
-	require.NoError(t, err)
 	setStatus(t, db, member.ID, JobStatusDone)
 
 	jobs, err := db.GetJobsToSync(machineID, 100)
@@ -630,7 +627,6 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 	assert.Equal(2, s.PanelMemberIndex)
 	assert.JSONEq(`{"agent":"test"}`, s.PanelMemberConfigJSON)
 	assert.True(s.NonVoting)
-	assert.Equal(&digest, s.RubricSHA256)
 }
 
 func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
@@ -640,9 +636,7 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/panel-pull")
 
-	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 	pulled := PulledJob{
-		RubricSHA256:          &digest,
 		UUID:                  testUUID("uuid-1"),
 		GitRef:                "abc123",
 		Agent:                 "test",
@@ -661,9 +655,6 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 		NonVoting:             true,
 	}
 	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
-	var storedDigest *string
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT rubric_sha256 FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&storedDigest))
-	assert.Equal(&digest, storedDigest)
 
 	var got ReviewJob
 	var cb int
@@ -1219,4 +1210,42 @@ func TestJobReadPathsReturnNonVoting(t *testing.T) {
 	batch, err := db.GetJobsWithReviewsByIDs([]int64{observer.ID})
 	require.NoError(t, err)
 	assert.True(batch[observer.ID].Job.NonVoting, "GetJobsWithReviewsByIDs")
+}
+
+func TestRubricDigestSyncRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, t.TempDir())
+	machine, err := db.GetMachineID()
+	require.NoError(t, err)
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "head", Agent: "test", RubricSHA256: &digest})
+	require.NoError(t, err)
+	setStatus(t, db, job.ID, JobStatusDone)
+	jobs, err := db.GetJobsToSync(machine, 100)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, &digest, jobs[0].RubricSHA256)
+	pulled := PulledJob{UUID: testUUID("rubric-remote"), GitRef: "other", Agent: "test", JobType: JobTypeReview, Status: "done", EnqueuedAt: time.Now(), UpdatedAt: time.Now(), SourceMachineID: testUUID("rubric-peer"), RubricSHA256: &digest}
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	var id int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&id))
+	got, err := db.GetJobByID(id)
+	require.NoError(t, err)
+	assert.Equal(t, &digest, got.RubricSHA256)
+	changed := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	pulled.RubricSHA256 = &changed
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	got, err = db.GetJobByID(id)
+	require.NoError(t, err)
+	assert.Equal(t, &changed, got.RubricSHA256)
+}
+
+func TestRubricIDRequiresTypeAndFullPrefix(t *testing.T) {
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	short := "1234"
+	assert.Empty(t, RubricID("custom", nil))
+	assert.Empty(t, RubricID("", &digest))
+	assert.Empty(t, RubricID("custom", &short))
+	assert.Equal(t, "custom@1234567890abcdef", RubricID("custom", &digest))
 }

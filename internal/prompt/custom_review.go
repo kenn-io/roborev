@@ -77,24 +77,25 @@ type customReviewTemplateData struct {
 func (b *Builder) resolveSystemPrompt(
 	agentName, reviewType, promptType string,
 ) (string, bool, error) {
-	return b.resolveSystemPromptForResult(agentName, reviewType, promptType, nil)
+	text, custom, _, err := b.resolveSystemPromptWithRubric(agentName, reviewType, promptType, nil)
+	return text, custom, err
 }
 
-func (b *Builder) resolveSystemPromptForResult(
+func (b *Builder) resolveSystemPromptWithRubric(
 	agentName, reviewType, promptType string, result *BuildResult,
-) (string, bool, error) {
+) (string, bool, []byte, error) {
 	if config.IsBuiltInReviewType(reviewType) {
-		return GetSystemPrompt(agentName, promptType), false, nil
+		return GetSystemPrompt(agentName, promptType), false, nil, nil
 	}
 	repoCfg, err := b.resolveRepoConfig()
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	resolved, ok := config.ResolveCustomReviewTypeFromConfig(
 		reviewType, repoCfg, b.globalCfg,
 	)
 	if !ok {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"custom review type %q is not configured", reviewType,
 		)
 	}
@@ -115,7 +116,7 @@ func (b *Builder) resolveSystemPromptForResult(
 
 	templateText, err := read(resolved.Spec.Template)
 	if err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q template: %w", reviewType, err,
 		)
 	}
@@ -123,7 +124,7 @@ func (b *Builder) resolveSystemPromptForResult(
 	for name, filePath := range resolved.Spec.Includes {
 		contents, includeErr := read(filePath)
 		if includeErr != nil {
-			return "", true, fmt.Errorf(
+			return "", true, nil, fmt.Errorf(
 				"review type %q include %q: %w",
 				reviewType, name, includeErr,
 			)
@@ -135,7 +136,7 @@ func (b *Builder) resolveSystemPromptForResult(
 		Option("missingkey=error").
 		Parse(templateText)
 	if err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q parse template: %w", reviewType, err,
 		)
 	}
@@ -144,16 +145,16 @@ func (b *Builder) resolveSystemPromptForResult(
 		ReviewType: reviewType,
 		Includes:   includes,
 	}); err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q render template: %w", reviewType, err,
 		)
 	}
 	if result != nil {
 		result.RubricArchiveEnabled = archiveAllowed
 	}
-	text := strings.TrimSpace(rendered.String()) +
-		structuredReviewOutputInstruction
-	return text, true, nil
+	rubric := []byte(strings.TrimSpace(rendered.String()) + "\n")
+	text := strings.TrimSuffix(string(rubric), "\n") + structuredReviewOutputInstruction
+	return text, true, rubric, nil
 }
 
 func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
