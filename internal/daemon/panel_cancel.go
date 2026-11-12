@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,9 +14,9 @@ import (
 // It delegates to the shared cascadePanelMembers helper so the member-cancel
 // loop is single-sourced between the HTTP cancel path and the CI poller.
 func (s *Server) cascadeCancelPanelMembers(
-	job *storage.ReviewJob, callerBroadcastsEvent bool,
+	ctx context.Context, job *storage.ReviewJob, callerBroadcastsEvent bool,
 ) []storage.ReviewJob {
-	canceled, err := cascadePanelMembers(s.db, func(id int64) {
+	canceled, err := cascadePanelMembers(ctx, s.db, func(id int64) {
 		s.workerPool.cancelJob(id, callerBroadcastsEvent)
 	}, job)
 	if err != nil {
@@ -26,8 +27,8 @@ func (s *Server) cascadeCancelPanelMembers(
 
 // canceledJobSnapshot refreshes the row after cancellation; the earlier row
 // may predate a worker's prompt and rubric save. Preserve it on lookup failure.
-func canceledJobSnapshot(db *storage.DB, job *storage.ReviewJob) *storage.ReviewJob {
-	current, err := db.GetJobByID(job.ID)
+func canceledJobSnapshot(ctx context.Context, db *storage.DB, job *storage.ReviewJob) *storage.ReviewJob {
+	current, err := db.GetJobByIDContext(ctx, job.ID)
 	if err != nil {
 		log.Printf("cancel job %d: refresh snapshot failed: %v", job.ID, err)
 		return job
@@ -65,7 +66,7 @@ func (s *Server) retireCIPanelForCanceledSynthesis(job *storage.ReviewJob) {
 // worker process for a member (may be nil — e.g. the CI poller in tests, where
 // it is nil-guarded by the caller).
 func cascadePanelMembers(
-	db *storage.DB, killWorker func(int64), job *storage.ReviewJob,
+	ctx context.Context, db *storage.DB, killWorker func(int64), job *storage.ReviewJob,
 ) ([]storage.ReviewJob, error) {
 	if job == nil || job.PanelRole != storage.PanelRoleSynthesis || job.PanelRunUUID == nil {
 		return nil, nil
@@ -84,7 +85,7 @@ func cascadePanelMembers(
 			}
 			continue
 		}
-		m = canceledJobSnapshot(db, m)
+		m = canceledJobSnapshot(ctx, db, m)
 		if killWorker != nil {
 			killWorker(m.ID)
 		}
@@ -108,7 +109,7 @@ func cascadePanelMembers(
 // terminal. The returned jobs are exactly the rows this call transitioned, in
 // parent-first order, so callers can announce those state changes.
 func cancelPanelRunParentFirst(
-	db *storage.DB, killWorker func(int64), synth *storage.ReviewJob,
+	ctx context.Context, db *storage.DB, killWorker func(int64), synth *storage.ReviewJob,
 ) ([]storage.ReviewJob, error) {
 	if synth == nil {
 		return nil, nil
@@ -119,12 +120,12 @@ func cancelPanelRunParentFirst(
 			return nil, fmt.Errorf("cancel synthesis %d: %w", synth.ID, err)
 		}
 	} else {
-		canceled = append(canceled, *canceledJobSnapshot(db, synth))
+		canceled = append(canceled, *canceledJobSnapshot(ctx, db, synth))
 		if killWorker != nil {
 			killWorker(synth.ID)
 		}
 	}
-	members, err := cascadePanelMembers(db, killWorker, synth)
+	members, err := cascadePanelMembers(ctx, db, killWorker, synth)
 	return append(canceled, members...), err
 }
 

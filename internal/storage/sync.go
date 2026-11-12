@@ -673,6 +673,7 @@ func (db *DB) MarkJobSynced(jobID int64) error {
 // the exact terminal attempt that was pushed. MarkJobsSynced restores synced_at
 // only when the row still matches all of them.
 type JobSyncMark struct {
+	RubricSHA256    *string
 	EnqueuedAtRaw   string
 	SourceMachineID uuid.UUID
 	ID              int64
@@ -694,6 +695,7 @@ type JobSyncMark struct {
 // the push loop and the WHERE clause in agreement.
 func NewJobSyncMark(j SyncableJob) JobSyncMark {
 	return JobSyncMark{
+		RubricSHA256:    j.RubricSHA256,
 		EnqueuedAtRaw:   j.EnqueuedAtRaw,
 		SourceMachineID: j.SourceMachineID,
 		ID:              j.ID,
@@ -731,6 +733,7 @@ func NewJobSyncMark(j SyncableJob) JobSyncMark {
 //     overwrite the reset's synced_at = NULL and strand the cleared-cost state.
 //     status moves off the terminal push set on every reset; session_id and
 //     agent_invoked further pin the attempt against a same-second re-completion.
+//   - rubric_sha256: a same-second digest write must invalidate a stale mark.
 //   - agent, model, provider, error, started_at, finished_at: for sessionless,
 //     unpriced attempts, the fields above can all match again after a reset plus
 //     same-second terminal re-completion. These attempt metadata fields keep a
@@ -755,7 +758,8 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 		   AND status = ? AND COALESCE(session_id, '') = ? AND agent_invoked = ?
 		   AND agent = ? AND COALESCE(model, '') = ? AND COALESCE(provider, '') = ?
 		   AND COALESCE(error, '') = ? AND COALESCE(started_at, '') = ?
-		   AND COALESCE(finished_at, '') = ? AND enqueued_at = ? AND source_machine_id = ?`)
+		   AND COALESCE(finished_at, '') = ? AND enqueued_at = ? AND source_machine_id = ?
+		   AND rubric_sha256 IS ?`)
 	if err != nil {
 		return fmt.Errorf("prepare mark jobs synced: %w", err)
 	}
@@ -768,7 +772,7 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 		}
 		if _, err := stmt.Exec(
 			now, m.ID, m.UpdatedAt, m.TokenUsage, m.Status, m.SessionID, invoked,
-			m.Agent, m.Model, m.Provider, m.Error, m.StartedAtRaw, m.FinishedAtRaw, m.EnqueuedAtRaw, m.SourceMachineID,
+			m.Agent, m.Model, m.Provider, m.Error, m.StartedAtRaw, m.FinishedAtRaw, m.EnqueuedAtRaw, m.SourceMachineID, m.RubricSHA256,
 		); err != nil {
 			return fmt.Errorf("mark job %d synced: %w", m.ID, err)
 		}

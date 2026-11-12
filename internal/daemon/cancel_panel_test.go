@@ -177,15 +177,16 @@ func TestCancelSynthesisBroadcastsEveryCanceledJob(t *testing.T) {
 		laterDigest := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 		// The callback runs after the member list was read and the first member
 		// canceled, but before the second member's cancellation transition.
-		canceled, err := cancelPanelRunParentFirst(db, func(id int64) {
+		canceled, err := cancelPanelRunParentFirst(t.Context(), db, func(id int64) {
 			switch id {
 			case first.ID:
 				saved, saveErr := db.SaveJobPromptForAttempt(t.Context(), second, "worker-2", "prompt", &digest)
 				require.NoError(t, saveErr)
 				require.True(t, saved)
 			case second.ID:
-				_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs SET rubric_sha256 = ? WHERE id = ?`, laterDigest, id)
-				require.NoError(t, updateErr)
+				saved, saveErr := db.SaveJobPromptForAttempt(t.Context(), second, "worker-2", "late prompt", &laterDigest)
+				require.NoError(t, saveErr)
+				assert.False(t, saved)
 			}
 		}, synth)
 		require.NoError(t, err)

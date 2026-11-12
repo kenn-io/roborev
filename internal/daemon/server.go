@@ -2670,7 +2670,7 @@ func (s *Server) humaCancelJob(
 	// complete the synthesis despite the user's cancel. Canceling the parent
 	// first makes the later MaybeReleasePanelSynthesis a no-op on an
 	// already-terminal row.
-	canceledMembers := s.cascadeCancelPanelMembers(job, true)
+	canceledMembers := s.cascadeCancelPanelMembers(lookupCtx, job, true)
 	s.releaseSynthesisIfCanceledMember(job)
 
 	s.broadcaster.Broadcast(eventForMutationPrincipal(

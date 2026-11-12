@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"sync"
+	"time"
 )
 
 // The daemon owns one DB. Pulls and reruns take the write lock; worker
@@ -188,6 +189,7 @@ func (db *DB) RunJobAttempt(job *ReviewJob, workerID string, transition func()) 
 // only while the worker still owns the attempt.
 func (db *DB) SaveJobPromptForAttempt(ctx context.Context, job *ReviewJob, workerID, text string, digest *string) (bool, error) {
 	var saveErr error
+	saved := false
 	current, err := db.RunJobAttempt(job, workerID, func() {
 		var tx *sql.Tx
 		tx, saveErr = db.BeginTx(ctx, nil)
@@ -195,14 +197,33 @@ func (db *DB) SaveJobPromptForAttempt(ctx context.Context, job *ReviewJob, worke
 			return
 		}
 		defer func() { _ = tx.Rollback() }()
-		saveErr = setJobContent(ctx, tx, job.ID, jobContentPrompt, text)
-		if saveErr != nil {
+		// Claim the running row before writing content. This orders the save
+		// with CancelJob in SQLite and keeps both values in one transaction.
+		owner := ""
+		if job.SourceMachineID != nil {
+			owner = job.SourceMachineID.String()
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE review_jobs SET rubric_sha256 = ?, updated_at = ?, synced_at = NULL
+			WHERE id = ? AND status = 'running' AND worker_id = ?
+			AND COALESCE(source_machine_id, '') = ? COLLATE NOCASE AND COALESCE(started_at, '') = ?`,
+			digest, time.Now().Format(time.RFC3339), job.ID, workerID, owner, job.StartedAtRaw)
+		if err != nil {
+			saveErr = err
 			return
 		}
-		if _, saveErr = tx.ExecContext(ctx, `UPDATE review_jobs SET rubric_sha256 = ? WHERE id = ?`, digest, job.ID); saveErr != nil {
+		rows, err := result.RowsAffected()
+		if err != nil {
+			saveErr = err
+			return
+		}
+		if rows == 0 {
+			return
+		}
+		if saveErr = setJobContent(ctx, tx, job.ID, jobContentPrompt, text); saveErr != nil {
 			return
 		}
 		saveErr = tx.Commit()
+		saved = saveErr == nil
 	})
-	return current, errors.Join(err, saveErr)
+	return current && saved, errors.Join(err, saveErr)
 }
