@@ -75,6 +75,7 @@ func TestKataCommandsThroughRoot(t *testing.T) {
 		assert.Contains(t, output.String(), "Issue: "+tc.issue+"\n")
 		if tc.project != "" {
 			assert.Contains(t, output.String(), "Project: "+tc.project+"\n")
+			assert.Equal(t, 1, strings.Count(output.String(), "Project: "))
 		} else {
 			assert.NotContains(t, output.String(), "Project:")
 		}

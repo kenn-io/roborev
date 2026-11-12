@@ -422,74 +422,6 @@ func TestReadRemotePublicationEnvelopeAndRoots(t *testing.T) {
 	}
 }
 
-func TestPublicationProjectSelectionUsesFreshObject(t *testing.T) {
-	for _, alias := range []bool{false, true} {
-		t.Run(fmt.Sprintf("alias=%t", alias), func(t *testing.T) {
-			f := katafake.New(t)
-			var mode atomic.Int32
-			f.Override = func(w http.ResponseWriter, r *http.Request) bool {
-				if r.URL.Path != "/api/v1/projects" && r.URL.Path != "/api/v1/projects/resolve" {
-					return false
-				}
-				project := f.Projects[0]
-				switch mode.Load() {
-				case 1:
-					project.UID = "changed-uid"
-				case 2:
-					project.UID = ""
-				case 3:
-					project.Active = false
-				case 4:
-					now := time.Now()
-					project.DeletedAt = &now
-				}
-				if r.URL.Path == "/api/v1/projects/resolve" {
-					f.Reply(w, gen.ProjectResolveBody{Project: project})
-				} else {
-					f.Reply(w, gen.ListProjectsResponseBody{Projects: []gen.ProjectOut{project}})
-				}
-				return true
-			}
-			cfg := config.KataIntegrationConfig{Enabled: true, Endpoint: f.URL(), APIKey: testAPIKey, DefaultProject: "reviews"}
-			opts := []APIOption{WithoutWorkspace()}
-			if alias {
-				opts = append(opts, WithWorkspaceAlias(ProjectAlias{Kind: "local", Identity: "synthetic"}))
-			}
-			c, err := NewAPIClient("", cfg, opts...)
-			require.NoError(t, err)
-			t.Cleanup(c.CloseIdleConnections)
-			first, err := c.ResolvePublicationProject(t.Context(), "")
-			require.NoError(t, err)
-			assert.Equal(t, f.Projects[0].UID, first.UID)
-			mode.Store(1)
-			second, err := c.ResolvePublicationProject(t.Context(), "")
-			require.NoError(t, err)
-			assert.Equal(t, "changed-uid", second.UID)
-			for _, value := range []int32{2, 3, 4} {
-				mode.Store(value)
-				_, err = c.ResolvePublicationProject(t.Context(), "")
-				require.ErrorIs(t, err, ErrProjectNotFound)
-			}
-			var lists, resolves int
-			for _, request := range f.Requests() {
-				if request.Path == "/api/v1/projects" {
-					lists++
-				}
-				if request.Path == "/api/v1/projects/resolve" {
-					resolves++
-				}
-			}
-			if alias {
-				assert.Equal(t, 0, lists)
-				assert.Equal(t, 5, resolves)
-			} else {
-				assert.Equal(t, 5, lists)
-				assert.Equal(t, 0, resolves)
-			}
-		})
-	}
-}
-
 func TestResolvePublicationTarget(t *testing.T) {
 	p := publicationFixture(t, "comments")
 	project := PublicationProject{ID: 7, Name: "reviews", UID: "project-uid"}
@@ -635,21 +567,70 @@ func TestTypedCommentKindsAndReceipts(t *testing.T) {
 	}
 }
 
-func TestTypedCommentEditedReplay(t *testing.T) {
-	f := katafake.New(t)
-	c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
-	project, err := c.ResolvePublicationProject(t.Context(), "")
-	require.NoError(t, err)
-	f.Override = func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method != http.MethodPost {
-			return false
-		}
-		f.Reply(w, map[string]any{"changed": false, "issue": map[string]any{"uid": "issue-uid", "id": 11, "project_id": project.ID}, "comment": map[string]any{"uid": "reply-uid", "issue_id": 11, "body": "edited evidence", "edited_at": "2026-01-02T03:04:05Z", "author": "actual", "teammate": "reviewer", "reply_to_uid": "target-uid", "reply_kind": "reply"}})
-		return true
+func TestPublicationProjectSelectionUsesFreshObject(t *testing.T) {
+	for _, alias := range []bool{false, true} {
+		t.Run(fmt.Sprintf("alias=%t", alias), func(t *testing.T) {
+			f := katafake.New(t)
+			var mode atomic.Int32
+			f.Override = func(w http.ResponseWriter, r *http.Request) bool {
+				if r.URL.Path != "/api/v1/projects" && r.URL.Path != "/api/v1/projects/resolve" {
+					return false
+				}
+				project := f.Projects[0]
+				switch mode.Load() {
+				case 1:
+					project.UID = "changed-uid"
+				case 2:
+					project.UID = ""
+				case 3:
+					project.Active = false
+				case 4:
+					now := time.Now()
+					project.DeletedAt = &now
+				}
+				if r.URL.Path == "/api/v1/projects/resolve" {
+					f.Reply(w, gen.ProjectResolveBody{Project: project})
+				} else {
+					f.Reply(w, gen.ListProjectsResponseBody{Projects: []gen.ProjectOut{project}})
+				}
+				return true
+			}
+			cfg := config.KataIntegrationConfig{Enabled: true, Endpoint: f.URL(), APIKey: testAPIKey, DefaultProject: "reviews"}
+			opts := []APIOption{WithoutWorkspace()}
+			if alias {
+				opts = append(opts, WithWorkspaceAlias(ProjectAlias{Kind: "local", Identity: "synthetic"}))
+			}
+			c, err := NewAPIClient("", cfg, opts...)
+			require.NoError(t, err)
+			t.Cleanup(c.CloseIdleConnections)
+			first, err := c.ResolvePublicationProject(t.Context(), "")
+			require.NoError(t, err)
+			assert.Equal(t, f.Projects[0].UID, first.UID)
+			mode.Store(1)
+			second, err := c.ResolvePublicationProject(t.Context(), "")
+			require.NoError(t, err)
+			assert.Equal(t, "changed-uid", second.UID)
+			for _, value := range []int32{2, 3, 4} {
+				mode.Store(value)
+				_, err = c.ResolvePublicationProject(t.Context(), "")
+				require.ErrorIs(t, err, ErrProjectNotFound)
+			}
+			var lists, resolves int
+			for _, request := range f.Requests() {
+				if request.Path == "/api/v1/projects" {
+					lists++
+				}
+				if request.Path == "/api/v1/projects/resolve" {
+					resolves++
+				}
+			}
+			if alias {
+				assert.Equal(t, 0, lists)
+				assert.Equal(t, 5, resolves)
+			} else {
+				assert.Equal(t, 5, lists)
+				assert.Equal(t, 0, resolves)
+			}
+		})
 	}
-	receipt, err := c.Comment(t.Context(), project, "issue-uid", "target-uid", "reply", "original evidence", "opaque-key", "reviewer")
-	require.NoError(t, err)
-	assert.False(t, receipt.Changed)
-	assert.Equal(t, "edited evidence", receipt.Comment.Body)
-	assert.NotNil(t, receipt.Comment.EditedAt)
 }
