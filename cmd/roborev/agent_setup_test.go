@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,7 +18,6 @@ import (
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/mcpconfig"
-	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/skills"
 )
 
@@ -154,33 +151,6 @@ func TestSetupRejectsMalformedRegistration(t *testing.T) {
 	}
 }
 
-func TestSetupReportsWrongMCPTools(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	fakeAgent(t, "claude")
-	_, err := runSetup("--agent", "claude", "--mcp")
-	require.NoError(t, err)
-	t.Setenv("ROBOREV_TEST_WRONG_MCP", "1")
-	states, err := setupReport(t, "--agent", "claude", "--check")
-	require.Error(t, err)
-	assert.Equal(t, agentsetup.StateUnknown, states["mcp roborev"])
-}
-
-func TestProbeMCPToolsUsesSelectedHTTPSettings(t *testing.T) {
-	t.Setenv("ROBOREV_TEST_MCP_TOKEN", "secret")
-	backend := mcpserver.NewHTTPBackend("http://127.0.0.1:1", http.DefaultClient)
-	handler := mcpserver.New(backend, "test", nil).HTTPHandler()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer secret" || r.Header.Get("X-Example") != "selected" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	}))
-	defer server.Close()
-	err := probeMCPTools(t.Context(), mcpconfig.RegisteredServer{URL: server.URL + "/mcp", Headers: map[string]string{"X-Example": "selected"}, BearerTokenEnvVar: "ROBOREV_TEST_MCP_TOKEN"})
-	require.NoError(t, err)
-}
-
 func TestSetupReportsMatcherWithoutBash(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", home)
@@ -199,6 +169,52 @@ func TestSetupReportsMatcherWithoutBash(t *testing.T) {
 	states, err := setupReport(t, "--agent", "claude", "--check")
 	require.Error(t, err)
 	assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
+	out, err := runSetup("--agent", "claude", "--server", "http://127.0.0.1:8282")
+	require.Error(t, err, out)
+	assert.Equal(t, string(data), readFile(t, path))
+}
+
+func TestSetupLeavesUnsupportedHookEventUnchanged(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	fakeAgent(t, "claude")
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe, MCP: true}, io.Discard))
+	path := filepath.Join(home, "settings.json")
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
+	hooks := doc["hooks"].(map[string]any)
+	hooks["UnknownEvent"] = hooks["Stop"]
+	delete(hooks, "Stop")
+	data, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	out, err := runSetup("--agent", "claude", "--server", "http://127.0.0.1:8282")
+	require.Error(t, err, out)
+	assert.Equal(t, string(data), readFile(t, path))
+	states, err := setupReport(t, "--agent", "claude", "--check")
+	require.Error(t, err)
+	assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
+	assert.Equal(t, agentsetup.StateUnknown, states["mcp roborev"])
+}
+
+func TestSetupDoesNotTrustServerName(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	fakeAgent(t, "claude")
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	opts := mcpconfig.Options{Agent: skills.AgentClaude, Executable: "other-server"}
+	_, err = mcpconfig.Install(opts)
+	require.NoError(t, err)
+	server, found, err := mcpconfig.Registration(opts)
+	require.NoError(t, err)
+	require.True(t, found)
+	item, err := agentMCPItem("claude", exe, "", server, true)
+	require.NoError(t, err)
+	status, err := item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateUnknown, status.State)
 }
 
 func TestClaudeMCPUsesKitCheck(t *testing.T) {
@@ -227,7 +243,7 @@ func TestClaudeMCPUsesKitCheck(t *testing.T) {
 	require.NoError(t, os.WriteFile(result.Path, data, 0o600))
 	status, err = item.Check(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, agentsetup.StateOK, status.State)
+	assert.Equal(t, agentsetup.StateUnknown, status.State)
 	assert.Equal(t, string(data), readFile(t, result.Path))
 
 	item, err = agentMCPItem("claude", exe, "http://127.0.0.1:8282", server, true)
@@ -235,6 +251,19 @@ func TestClaudeMCPUsesKitCheck(t *testing.T) {
 	status, err = item.Check(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, agentsetup.StateOutdated, status.State)
+
+	doc["mcpServers"].(map[string]any)["roborev"].(map[string]any)["headersHelper"] = "helper"
+	data, err = json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(result.Path, data, 0o600))
+	server, _, err = mcpconfig.Registration(opts)
+	require.NoError(t, err)
+	item, err = agentMCPItem("claude", exe, "", server, true)
+	require.NoError(t, err)
+	status, err = item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateUnknown, status.State)
+	assert.Equal(t, string(data), readFile(t, result.Path))
 }
 
 func TestAgentSetupKeepsCustomCommands(t *testing.T) {
@@ -314,13 +343,51 @@ func TestQuickstartCodexTrust(t *testing.T) {
 	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
 	_, err := runSetup("--agent", "codex", "--mcp")
 	require.NoError(t, err)
+	marker := filepath.Join(t.TempDir(), "mcp-probe")
+	t.Setenv("ROBOREV_TEST_MCP_MARKER", marker)
 	check := checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
 	assert.Equal(t, statusOK, check.Status)
-	assert.Contains(t, check.Details, "mcp roborev: ok")
+	assert.NotContains(t, check.Details, "mcp roborev")
 	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "untrusted")
 	check = checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
 	assert.Equal(t, checkStatus("untrusted"), check.Status)
 	assert.Contains(t, check.FixCommand, "/hooks")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	require.NoError(t, os.RemoveAll(filepath.Join(os.Getenv("CODEX_HOME"), "skills")))
+	check = checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
+	assert.Equal(t, statusOK, check.Status)
+	_, err = os.Stat(marker)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestDoctorChecksMCPBeforeDaemon(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	fakeAgent(t, "codex")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	_, err := runSetup("--agent", "codex", "--mcp")
+	require.NoError(t, err)
+	marker := filepath.Join(t.TempDir(), "mcp-probe")
+	t.Setenv("ROBOREV_TEST_MCP_MARKER", marker)
+	env := loadDoctorEnv(t.Context(), "", fakeDoctorDaemon{onPing: func() {
+		_, err := os.Stat(marker)
+		assert.NoError(t, err)
+	}})
+	require.NotEmpty(t, env.agentReach)
+	assert.Equal(t, "agents.reach.codex", env.agentReach[0].ID)
+}
+
+func TestSetupIgnoresMalformedUnselectedMCP(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	fakeAgent(t, "claude")
+	path := filepath.Join(home, ".claude.json")
+	const malformed = `{"mcpServers":{"roborev":{"command":"roborev","args":"invalid"}}}`
+	require.NoError(t, os.WriteFile(path, []byte(malformed), 0o600))
+	out, err := runSetup("--agent", "claude")
+	require.NoError(t, err, out)
+	out, err = runSetup("--agent", "claude", "--check")
+	require.NoError(t, err, out)
+	assert.Equal(t, malformed, readFile(t, path))
 }
 
 func TestReadinessUsesInstalledHookModeAndSuggestsMCPRepair(t *testing.T) {
@@ -332,7 +399,7 @@ func TestReadinessUsesInstalledHookModeAndSuggestsMCPRepair(t *testing.T) {
 	_, err = mcpconfig.Install(mcpconfig.Options{Agent: skills.AgentClaude, Executable: exe})
 	require.NoError(t, err)
 	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe}, io.Discard))
-	_, details := agentReadiness(t.Context(), "claude")
+	_, details := agentReadiness(t.Context(), "claude", false)
 	require.Len(t, details, 2)
 	assert.Contains(t, details[0], "hooks:")
 	assert.Contains(t, details[1], "skills:")
@@ -340,7 +407,7 @@ func TestReadinessUsesInstalledHookModeAndSuggestsMCPRepair(t *testing.T) {
 	_, err = runSetup("--agent", "claude", "--mcp")
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(filepath.Join(home, ".claude.json")))
-	row, _ := agentReadiness(t.Context(), "claude")
+	row, _ := agentReadiness(t.Context(), "claude", false)
 	assert.Equal(t, agentsetup.StateMissing, row.State)
 	assert.NotEmpty(t, row.NextStep)
 }
@@ -417,6 +484,11 @@ func fakeCodexAppServer() int {
 			}
 			result = map[string]any{"data": []any{map[string]any{"hooks": hooks}}}
 		case "mcpServerStatus/list":
+			if path := os.Getenv("ROBOREV_TEST_MCP_MARKER"); path != "" {
+				if err := os.WriteFile(path, nil, 0o600); err != nil {
+					return 4
+				}
+			}
 			result = map[string]any{"data": []any{map[string]any{"name": "roborev", "tools": map[string]any{"read_review": map[string]any{}}}}}
 		default:
 			return 2

@@ -52,7 +52,7 @@ func (v agentView) where() string {
 
 func checkDoctorAgents(env *doctorEnv) []doctorCheck {
 	var out []doctorCheck
-	out = append(out, checkDoctorAgentReach(env)...)
+	out = append(out, env.agentReach...)
 	local := agent.DiagnoseAll(env.repoCfg, env.global)
 
 	if env.daemonUp() && env.daemonAgentsErr != nil {
@@ -119,7 +119,7 @@ func checkDoctorAgentReach(env *doctorEnv) []doctorCheck {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(env.ctx, daemonStartTimeout+10*time.Second)
-		worst, details := agentReadiness(ctx, name)
+		worst, details := agentReadiness(ctx, name, false)
 		cancel()
 		check := doctorCheck{ID: "agents.reach." + name, Category: "agents", Status: doctorOK, Summary: name + " integration readiness", Details: details, Fix: worst.NextStep}
 		if worst.State == agentsetup.StateFailed {

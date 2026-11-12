@@ -36,9 +36,13 @@ type fakeDoctorDaemon struct {
 	summary      *generated.Summary
 	summaryErr   error
 	summaryCalls *int
+	onPing       func()
 }
 
 func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
+	if f.onPing != nil {
+		f.onPing()
+	}
 	if f.ping == nil {
 		return nil, errors.New("connection refused")
 	}

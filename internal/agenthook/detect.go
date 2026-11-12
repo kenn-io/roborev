@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -193,6 +194,8 @@ func InstalledCommand(agent kitagenthook.Agent) (kitagenthook.Commands, []kitage
 	events, _ := root["hooks"].(map[string]any)
 	var command kitagenthook.Commands
 	var specs []kitagenthook.Hook
+	profile, _ := kitagenthook.LookupProfile(agent)
+	unsupported := false
 	for _, event := range slices.Sorted(maps.Keys(events)) {
 		groups, _ := events[event].([]any)
 		for _, raw := range groups {
@@ -200,8 +203,17 @@ func InstalledCommand(agent kitagenthook.Agent) (kitagenthook.Commands, []kitage
 			if !ok {
 				continue
 			}
-			matcher, _ := group["matcher"].(string)
+			matcher, matcherOK := group["matcher"].(string)
 			for _, hook := range ownedHooks(group["hooks"], agent) {
+				if _, exists := group["matcher"]; exists && !matcherOK {
+					unsupported = true
+				}
+				if _, err := regexp.Compile(matcher); err != nil {
+					unsupported = true
+				}
+				if !slices.ContainsFunc(profile.SupportedEvents, func(supported kitagenthook.Event) bool { return strings.EqualFold(string(supported), event) }) {
+					unsupported = true
+				}
 				windows, _ := hook["commandWindows"].(string)
 				next := kitagenthook.Commands{Native: hook["command"].(string), Windows: windows}
 				if len(specs) > 0 && command != next {
@@ -213,5 +225,18 @@ func InstalledCommand(agent kitagenthook.Agent) (kitagenthook.Commands, []kitage
 			}
 		}
 	}
-	return command, specs, false, nil
+	if agent == kitagenthook.AgentClaude {
+		for _, event := range []kitagenthook.Event{"PreToolUse", "PostToolUse"} {
+			covered, present := false, false
+			for _, spec := range specs {
+				if spec.Event == event {
+					present = true
+					match, _ := regexp.MatchString(spec.Matcher, "Bash")
+					covered = covered || match
+				}
+			}
+			unsupported = unsupported || present && !covered
+		}
+	}
+	return command, specs, unsupported, nil
 }

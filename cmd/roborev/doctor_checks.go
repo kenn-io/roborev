@@ -42,6 +42,7 @@ type doctorEnv struct {
 	daemonAgents    *doctorDaemonAgents
 	daemonAgentsErr error
 
+	agentReach    []doctorCheck
 	postCommitLog string
 }
 
@@ -64,6 +65,11 @@ func loadDoctorEnv(ctx context.Context, repoPath string, d doctorDaemon) *doctor
 		if branch, err := gitrepo.DefaultBranch(ctx, repoPath); err == nil {
 			env.repoBranch = branch
 		}
+	}
+	env.agentReach = checkDoctorAgentReach(env)
+	if _, live := d.(liveDoctorDaemon); live {
+		d = newDoctorDaemon(getDaemonEndpoint())
+		env.daemon = d
 	}
 	env.ping, env.pingErr = d.Ping()
 	if env.pingErr == nil {

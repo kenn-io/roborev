@@ -6,16 +6,14 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"reflect"
-	"regexp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	kitagenthook "go.kenn.io/kit/agenthook"
 	"go.kenn.io/kit/agentsetup"
-	"go.kenn.io/kit/consolewindow"
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/githook"
@@ -51,7 +49,7 @@ func agentSetupCmd() *cobra.Command {
 		if cmd.Flags().Changed("mcp") && !check {
 			selected = &mcp
 		}
-		items, err := agentSetupItems(name, selected, server)
+		items, err := agentSetupItems(name, selected, server, false)
 		if err != nil {
 			return []agentsetup.Item{{Name: "setup", Check: func(context.Context) (agentsetup.Status, error) { return agentsetup.Status{}, err }}}, nil
 		}
@@ -78,9 +76,9 @@ func agentSetupCmd() *cobra.Command {
 
 // agentReadiness checks one agent in the mode its hooks already use and
 // returns the row that most needs attention with one detail per row.
-func agentReadiness(ctx context.Context, name string) (agentsetup.Row, []string) {
+func agentReadiness(ctx context.Context, name string, hooksOnly bool) (agentsetup.Row, []string) {
 	report, _ := agentsetup.Run(ctx, agentsetup.Options{Agents: []string{name}, CheckOnly: true, SetupCommand: "roborev agent setup", Items: func(name string) ([]agentsetup.Item, error) {
-		items, err := agentSetupItems(name, nil, nil)
+		items, err := agentSetupItems(name, nil, nil, hooksOnly)
 		if err != nil {
 			items = []agentsetup.Item{{Name: "setup", Check: func(context.Context) (agentsetup.Status, error) { return agentsetup.Status{}, err }}}
 		}
@@ -107,7 +105,7 @@ func agentReadiness(ctx context.Context, name string) (agentsetup.Row, []string)
 // agentSetupItems keeps the installed hook's executable, server, and custom
 // arguments unless setup selects a change. An explicit server reaches both the
 // hook and MCP, and a generated hook's missing absolute executable is replaced.
-func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item, error) {
+func agentSetupItems(name string, mcp *bool, server *string, hooksOnly bool) ([]agentsetup.Item, error) {
 	agent := kitagenthook.Agent(name)
 	binary, err := githook.ResolveRoborevPath("")
 	if err != nil {
@@ -125,10 +123,6 @@ func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item,
 			return nil, err
 		}
 		opts.Executable, opts.MCP, opts.RoborevServerAddr = installed.Executable, installed.MCP, installed.RoborevServerAddr
-	}
-	registration, registered, err := mcpconfig.Registration(mcpconfig.Options{Agent: skills.Agent(name)})
-	if err != nil {
-		return nil, err
 	}
 	selected := opts.MCP
 	if mcp != nil {
@@ -168,26 +162,16 @@ func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item,
 	if mixed {
 		hookItem.Install = nil
 		hookItem.Check = mixedHookStatus
-	} else if name == "claude" && found {
-		check := hookItem.Check
-		hookItem.Check = func(ctx context.Context) (agentsetup.Status, error) {
-			status, err := check(ctx)
-			if err != nil || status.State != agentsetup.StateOK {
-				return status, err
-			}
-			for _, event := range []kitagenthook.Event{"PreToolUse", "PostToolUse"} {
-				covered := false
-				for _, spec := range specs {
-					if spec.Event == event {
-						match, err := regexp.MatchString(spec.Matcher, "Bash")
-						covered = covered || err == nil && match
-					}
-				}
-				if !covered {
-					return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Hook matcher does not cover Bash", NextStep: "Update the hook matcher to include Bash"}, nil
-				}
-			}
-			return status, nil
+	}
+	if hooksOnly {
+		return []agentsetup.Item{hookItem}, nil
+	}
+	var registration mcpconfig.RegisteredServer
+	var registered bool
+	if selected && !mixed {
+		registration, registered, err = mcpconfig.Registration(mcpconfig.Options{Agent: skills.Agent(name)})
+		if err != nil {
+			return nil, err
 		}
 	}
 	items := []agentsetup.Item{hookItem, {
@@ -222,7 +206,7 @@ func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item,
 }
 
 func mixedHookStatus(context.Context) (agentsetup.Status, error) {
-	return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Hook commands differ between events", NextStep: "Inspect the hooks in the agent"}, nil
+	return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Hook commands or settings need inspection", NextStep: "Inspect the hooks in the agent"}, nil
 }
 
 // agentMCPItem registers the roborev MCP server, or repairs the connection the
@@ -230,9 +214,7 @@ func mixedHookStatus(context.Context) (agentsetup.Status, error) {
 func agentMCPItem(name, executable, address string, server mcpconfig.RegisteredServer, registered bool) (agentsetup.Item, error) {
 	opts := mcpconfig.Options{Agent: skills.Agent(name)}
 	if !registered {
-		requested := mcpconfig.Server(mcpconfig.Options{Executable: executable, Server: address})
-		server = mcpconfig.RegisteredServer{Command: requested.Command, Args: requested.Args}
-		return verifyMCPItem(agentsetup.MCP(name, "roborev", requested), server), nil
+		server = mcpconfig.RegisteredServer{Command: executable, Args: mcpconfig.Server(mcpconfig.Options{Executable: executable, Server: address}).Args}
 	}
 	if address != "" && server.DaemonAddress() != address {
 		var err error
@@ -241,69 +223,57 @@ func agentMCPItem(name, executable, address string, server mcpconfig.RegisteredS
 		}
 	}
 	item := agentsetup.MCP(name, "roborev", server.Server())
-	item.Install = func(context.Context) error { return mcpconfig.Repair(opts, server) }
-	if name == "claude" {
-		kitCheck := item.Check
-		item.Check = func(ctx context.Context) (agentsetup.Status, error) {
-			status, err := kitCheck(ctx)
-			if err != nil || status.State != agentsetup.StateOutdated {
-				return status, err
-			}
-			current, found, err := mcpconfig.Registration(opts)
-			if err != nil {
-				return agentsetup.Status{}, err
-			}
-			if !found || !reflect.DeepEqual(current, server) {
-				return status, nil
-			}
-			return checkClaudeMCPWithHeadersHelper(ctx)
-		}
+	if registered {
+		item.Install = func(context.Context) error { return mcpconfig.Repair(opts, server) }
 	}
-	return verifyMCPItem(item, server), nil
-}
-
-func verifyMCPItem(item agentsetup.Item, server mcpconfig.RegisteredServer) agentsetup.Item {
 	check := item.Check
 	item.Check = func(ctx context.Context) (agentsetup.Status, error) {
+		unknown := agentsetup.Status{State: agentsetup.StateUnknown, Reason: "The preserved MCP settings need inspection", NextStep: "Inspect the MCP server in the agent"}
+		if server.HeadersHelper != "" {
+			return unknown, nil
+		}
 		status, err := check(ctx)
-		if err != nil || status.State != agentsetup.StateOK {
+		if err != nil {
 			return status, err
 		}
-		if err := probeMCPTools(ctx, server); err != nil {
-			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: err.Error(), NextStep: "Inspect the MCP server in the agent"}, nil
+		if status.State == agentsetup.StateOutdated {
+			current, found, err := mcpconfig.Registration(opts)
+			if err != nil {
+				return status, err
+			}
+			if found && reflect.DeepEqual(current.Server(), server.Server()) {
+				return unknown, nil
+			}
+		}
+		if status.State == agentsetup.StateOK && !isRoborevMCP(server) {
+			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Cannot verify that the server provides RoboRev tools", NextStep: "Inspect the MCP server in the agent"}, nil
 		}
 		return status, nil
 	}
-	return item
+	return item, nil
 }
 
-// Kit reports entries with unmodeled fields as outdated. Ask Claude directly
-// when the modeled fields match, keeping the configuration intact.
-func checkClaudeMCPWithHeadersHelper(ctx context.Context) (agentsetup.Status, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	cmd := consolewindow.CommandContext(ctx, "claude", "mcp", "get", "--", "roborev")
-	cmd.WaitDelay = 100 * time.Millisecond
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		return agentsetup.Status{State: agentsetup.StateUnknown, Reason: ctx.Err().Error(), NextStep: "Retry once the server is ready"}, nil
+func isRoborevMCP(server mcpconfig.RegisteredServer) bool {
+	path, err := exec.LookPath(server.Command)
+	if err != nil {
+		return false
 	}
-	if err != nil && len(output) == 0 {
-		return agentsetup.Status{State: agentsetup.StateUnknown, Reason: err.Error(), NextStep: "Inspect the server in the agent"}, nil
+	actual, err := os.Stat(path)
+	if err != nil {
+		return false
 	}
-	fields := map[string]string{}
-	for line := range strings.SplitSeq(string(output), "\n") {
-		key, value, _ := strings.Cut(strings.TrimSpace(line), ":")
-		fields[key] = strings.TrimSpace(value)
+	binary, err := githook.ResolveRoborevPath("")
+	if err != nil {
+		return false
 	}
-	if strings.HasPrefix(fields["Scope"], "User config") {
-		status := strings.TrimLeft(fields["Status"], "✓✔✗✘ ")
-		if fields["Issue"] != "" || status == "Failed to connect" {
-			return agentsetup.Status{State: agentsetup.StateFailed, Reason: strings.TrimSpace(fields["Status"] + "\n" + fields["Issue"]), NextStep: "Correct the server error and retry"}, nil
-		}
-		if status == "Connected" {
-			return agentsetup.Status{State: agentsetup.StateOK, Reason: "Claude reports the user server connected"}, nil
+	expected, err := os.Stat(binary.Path)
+	if err != nil || !os.SameFile(actual, expected) {
+		return false
+	}
+	for i := 1; i < len(server.Args); i++ {
+		if server.Args[i-1] == "mcp" && server.Args[i] == "serve" {
+			return true
 		}
 	}
-	return agentsetup.Status{State: agentsetup.StateUnknown, Reason: strings.TrimSpace(string(output)), NextStep: "Inspect the server in the agent"}, nil
+	return false
 }
