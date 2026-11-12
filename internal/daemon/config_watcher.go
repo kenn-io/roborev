@@ -313,9 +313,8 @@ func logConfigChanges(old, new *config.Config) {
 
 // kataSnapshot keeps the connection and its generation in one atomic read.
 func (cw *ConfigWatcher) kataSnapshot() (config.KataIntegrationConfig, uint64) {
-	cw.cfgMu.RLock()
-	defer cw.cfgMu.RUnlock()
-	return cw.cfg.Integrations.Kata, cw.reloadCounter
+	cfg, generation := cw.configSnapshot()
+	return cfg.Integrations.Kata, generation
 }
 
 func (cw *ConfigWatcher) configSnapshot() (*config.Config, uint64) {

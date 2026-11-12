@@ -225,6 +225,10 @@ from local comment completeness. They do not establish recursive completeness or
 edit history. MCP has no Kata write tool. To answer a finding, use the typed
 reply workflow in [Kata](/docs/integrations/kata/#reply-to-a-finding).
 
+For daemon HTTP errors, the MCP HTTP backend reports request timeout as
+`canceled`, gateway timeout as `deadline_exceeded`, and conflict or bad gateway
+as `unavailable`. Search has its own error mapping described below.
+
 `roborev_search_reviews` accepts `query`, `mode`, `repo`, `branch`, `since`,
 `verdict`, `state`, and `limit`. Search is global when `repo` is omitted. Use
 `auto` for normal discovery, `lexical` for exact paths, identifiers, SHA
