@@ -55,7 +55,7 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 		wp.handleUpdateInterruption(ctx, workerID, job)
 		return
 	}
-	wp.completeSynthesisContext(workerID, job, res)
+	wp.completeSynthesisContext(ctx, workerID, job, res)
 }
 
 func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob, res synthesisResult, doc structuredreview.Document, check *ciCheckConfig) (synthesisResult, bool) {

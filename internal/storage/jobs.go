@@ -1329,6 +1329,7 @@ type ReviewCompletion struct {
 	StructuredOutput jsontext.Value
 	MinSeverity      string
 	FileCoverage     *ReviewFileCoverage
+	KataPublication  *KataPublicationSeed
 }
 
 // CompleteJobResult marks a job done and stores the result produced by the
@@ -1454,10 +1455,19 @@ func (db *DB) completeJob(
 			excludedFileCount = *coverage.Excluded
 		}
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, output, verdict_bool, structured_output, reviewed_file_count, excluded_file_count, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	var publication any
+	if completion.KataPublication != nil && verdictBoolVal == 0 && len(completion.StructuredOutput) != 0 {
+		marker, markerErr := newKataPublication(*completion.KataPublication, completion.StructuredOutput)
+		if markerErr != nil {
+			log.Printf("jobs CompleteJob: prepare Kata publication: %v", markerErr)
+		} else {
+			publication = marker
+		}
+	}
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, output, verdict_bool, structured_output, reviewed_file_count, excluded_file_count, uuid, updated_by_machine_id, updated_at, kata_publication) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, agent, finalOutput, verdictBoolVal,
 		nullString(string(completion.StructuredOutput)), reviewedFileCount, excludedFileCount,
-		reviewUUID, machineID, now)
+		reviewUUID, machineID, now, publication)
 	if err != nil {
 		return err
 	}

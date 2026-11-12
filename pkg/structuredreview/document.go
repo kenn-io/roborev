@@ -713,6 +713,11 @@ func (r Document) Passed(minSeverity string) bool {
 // no finding reaches it, the rendering says so before listing the findings so
 // a reader can see why the review passed without losing the content.
 func (r Document) Markdown(minSeverity string) string {
+	return r.MarkdownFrom(minSeverity, 1)
+}
+
+// MarkdownFrom renders a document with the given first finding number.
+func (r Document) MarkdownFrom(minSeverity string, firstFinding int) string {
 	if r.Legacy != nil {
 		return "**Unstructured historical review.** Finding counts are unavailable.\n\n" + r.Legacy.Markdown
 	}
@@ -737,7 +742,7 @@ func (r Document) Markdown(minSeverity string) string {
 	for i, finding := range r.Findings {
 		// Kind, topic, and confidence are data only. Rendered Markdown is
 		// posted to pull requests and never labels a finding with them.
-		fmt.Fprintf(&out, "\n### %d. %s\n\n", i+1, titleSeverity(finding.Severity))
+		fmt.Fprintf(&out, "\n### %d. %s\n\n", i+firstFinding, titleSeverity(finding.Severity))
 		if finding.Location != "" {
 			fmt.Fprintf(&out, "**Location:** %s\n\n", finding.Location)
 		}

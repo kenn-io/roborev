@@ -793,7 +793,7 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 		WithStructuredOutput(reviewJobUsesStructuredOutput(job))
 	if !job.IsCIReview() {
 		builder = builder.WithKataClient(
-			kata.NewCLIClient(checkout.resolvedConfigRepoPath()),
+			kata.NewFromConfig(checkout.resolvedConfigRepoPath(), cfg),
 		)
 	}
 	return builder
@@ -1464,6 +1464,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Agent:             agentName,
 		WorktreePath:      eventWorktreePath,
 		SuppressHooks:     suppressJobHooks(job),
+		SuppressKataHooks: suppressKataHooks(job),
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 	})
 
@@ -1771,6 +1772,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		tokenUsage = &collected
 	}
 
+	var kataSeed *storage.KataPublicationSeed
+	if !job.IsFixJob() {
+		kataSeed = wp.prepareKataPublication(ctx, workerID, job, checkout.resolvedConfigRepoPath())
+	}
 	completed := false
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
@@ -1783,22 +1788,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			}
 		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
 			agentReview.Verdict != storage.VerdictUnknown {
-			if err := wp.db.CompleteJobResult(
-				job.ID, agentName, storage.ReviewCompletion{
+			if err := wp.completeReviewResult(
+				job, agentName, storage.ReviewCompletion{
 					Output:           output,
 					Verdict:          agentReview.Verdict,
 					StructuredOutput: agentReview.StructuredOutput,
 					MinSeverity:      effectiveMinSeverity,
 					FileCoverage:     fileCoverage,
-				},
+				}, kataSeed,
 			); err != nil {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
 				return
 			}
-		} else if err := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
+		} else if err := wp.completeReviewResult(job, agentName, storage.ReviewCompletion{
 			Output:       output,
 			FileCoverage: fileCoverage,
-		}); err != nil {
+		}, kataSeed); err != nil {
 			log.Printf("[%s] Error storing review: %v", workerID, err)
 			return
 		}
@@ -1877,6 +1882,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			Findings:          output,
 			WorktreePath:      eventWorktreePath,
 			SuppressHooks:     suppressJobHooks(job),
+			SuppressKataHooks: suppressKataHooks(job),
 			SuppressRepoHooks: hasSuppliedReviewSettings(job),
 		})
 	})
@@ -1902,6 +1908,7 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 				Agent:             agentName,
 				WorktreePath:      eventWorktreePath,
 				SuppressHooks:     suppressJobHooks(job),
+				SuppressKataHooks: suppressKataHooks(job),
 				SuppressRepoHooks: hasSuppliedReviewSettings(job),
 			})
 		}
@@ -2395,6 +2402,7 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		Error:             errorMsg,
 		WorktreePath:      wtPath,
 		SuppressHooks:     suppressJobHooks(job),
+		SuppressKataHooks: suppressKataHooks(job),
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 	})
 	// broadcastFailed is the terminal-failure chokepoint (never reached on

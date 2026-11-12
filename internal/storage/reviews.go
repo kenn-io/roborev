@@ -11,22 +11,28 @@ import (
 	"uuid"
 )
 
-// ErrReviewChanged means a guarded rebuttal mutation targeted an earlier
-// review version than the one currently stored for the job.
-var ErrReviewChanged = errors.New("review changed since rebuttal was queued")
+// ErrReviewChanged means a guarded operation targeted an earlier review.
+var ErrReviewChanged = errors.New("review changed since the guarded operation began")
 
 // GetReviewByJobID finds a review by its job ID
 func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
-	return db.getReviewByJobID(jobID, false)
+	// Legacy callers have not yet been converted to pass a context.
+	return db.GetReviewByJobIDContext(context.Background(), jobID)
+}
+
+// GetReviewByJobIDContext finds a review using the caller's deadline.
+func (db *DB) GetReviewByJobIDContext(ctx context.Context, jobID int64) (*Review, error) {
+	return db.getReviewByJobID(ctx, jobID, false)
 }
 
 // GetReviewByJobIDWithFindingCounts loads a review and requests its job's
 // nullable finding-count projection for queue ID lookups.
 func (db *DB) GetReviewByJobIDWithFindingCounts(jobID int64) (*Review, error) {
-	return db.getReviewByJobID(jobID, true)
+	// Legacy callers have not yet been converted to pass a context.
+	return db.getReviewByJobID(context.Background(), jobID, true)
 }
 
-func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review, error) {
+func (db *DB) getReviewByJobID(ctx context.Context, jobID int64, includeFindingCounts bool) (*Review, error) {
 	var r Review
 	var reviewFields reviewScanFields
 	var job ReviewJob
@@ -34,7 +40,7 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 	reviewDestinations := reviewScanDestinations(&r, &reviewFields)
 	jobDestinations := jobScanDestinations(&job, &jobFields)
 	diffContentExpr := findingCountsDiffContentExpr(includeFindingCounts)
-	err := db.QueryRow(`
+	err := db.QueryRowContext(ctx, `
 		SELECT `+reviewSelectColumns+`,
 		       `+jobSelectColumns(jobTextColumns{Prompt: "NULL", Diff: diffContentExpr, Patch: "NULL"})+`
 		FROM reviews rv
@@ -46,7 +52,7 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 	`, jobID).Scan(append(reviewDestinations, jobDestinations...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		var unresolved int
-		archiveErr := db.QueryRow(`SELECT count(*) FROM legacy_reviews WHERE job_id = ? AND resolved_at IS NULL`, jobID).Scan(&unresolved)
+		archiveErr := db.QueryRowContext(ctx, `SELECT count(*) FROM legacy_reviews WHERE job_id = ? AND resolved_at IS NULL`, jobID).Scan(&unresolved)
 		if archiveErr == nil && unresolved > 0 {
 			return nil, ErrLegacyReviewMigration
 		}
@@ -59,7 +65,7 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 		return nil, err
 	}
 	applyReviewJobScan(&job, jobFields)
-	if err := db.attachExperimentAssignments(&job); err != nil {
+	if err := db.attachExperimentAssignmentsContext(ctx, &job); err != nil {
 		return nil, err
 	}
 	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output, r.Output != "")
