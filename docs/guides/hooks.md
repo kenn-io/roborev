@@ -226,6 +226,9 @@ connection and schema 0.28.0. See
 [Publish individual findings](/docs/integrations/kata/#publish-individual-findings)
 for disclosure, retry and deadline behavior.
 
+Kata hooks skip CI reviews, panel members, and rebuttal jobs in both legacy and
+finding publication modes. Other hook types retain their own event behavior.
+
 What the `type = "kata"` hook does for each event in legacy mode:
 
 | Event | Verdict | Action |
