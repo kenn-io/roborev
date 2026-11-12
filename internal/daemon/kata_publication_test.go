@@ -37,6 +37,36 @@ type kataLatencyTransport struct {
 	started chan struct{}
 }
 
+func TestKataPublicationInspectSyncedReviewUsesDefaultProject(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "synced-review", "worker")
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail}))
+	// Sync-only repositories store their remote identity as the root path.
+	identity := "https://example.invalid/team/synthetic.git"
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE repos SET root_path = ?, identity = ? WHERE id = ?`, identity, identity, tc.Repo.ID)
+	require.NoError(t, err)
+	before, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.Nil(t, before.Marker)
+
+	publisher := newKataPublisher(tc.DB, NewStaticConfig(kataConnectionConfig(fake)))
+	status, err := publisher.Inspect(t.Context(), job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.Equal(t, "missing", status.State)
+	assert.Equal(t, fake.Projects[0].UID, status.Project.UID)
+	for _, req := range fake.AllRequests() {
+		assert.Equal(t, http.MethodGet, req.Method)
+	}
+	after, err := tc.DB.GetKataPublication(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
 func (tr kataLatencyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	select {
 	case tr.started <- struct{}{}:
