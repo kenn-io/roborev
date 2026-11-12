@@ -19,8 +19,9 @@ import (
 
 // newKataClient returns the Kata client for a CLI command running in workdir.
 //
-// When the daemon's [integrations.kata] connection is enabled, reads go through the daemon: it holds the credential and the endpoint, so a
-// CLI that tunnels to another machine's local daemon API needs neither.
+// When the daemon's [integrations.kata] connection is enabled, reads go through
+// the daemon. It holds the credential and endpoint, so a CLI that tunnels to
+// another machine's local daemon API needs neither.
 // Signed HTTPS remote access does not expose Kata operations. Otherwise the
 // kata CLI is run exactly as before. Which applies is decided on first use,
 // so commands that never need Kata contact nothing.
