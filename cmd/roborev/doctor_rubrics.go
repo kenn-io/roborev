@@ -8,8 +8,13 @@ func checkDoctorKataRubrics(env *doctorEnv) []doctorCheck {
 	}
 	mode := config.ResolveKataRubricsMode(env.repoCfg, env.global)
 	result := doctorCheck{ID: "integrations.kata_rubrics", Category: "integrations"}
+	if mode == "off" {
+		result.Status, result.Summary = doctorInfo, "Kata rubric archiving: mode off"
+		return []doctorCheck{result}
+	}
 	if env.daemonAgents == nil || env.daemonAgents.RubricSetup == nil {
 		result.Status, result.Summary = doctorInfo, "Kata rubric archiving: mode "+mode+", daemon setup unverified"
+		result.Details = []string{"Vault rubrics are readable by all issue readers and metadata writers."}
 		result.Fix = "start or restart the roborev daemon to verify its Kata setup"
 		return []doctorCheck{result}
 	}
@@ -28,9 +33,12 @@ func checkDoctorKataRubrics(env *doctorEnv) []doctorCheck {
 	case "missing":
 		result.Status, result.Summary, result.Fix = doctorFail, "Kata rubric archiving: mode current, Docbank credential missing", "check kata docbank setup and the daemon's credential"
 	case "ok":
-		result.Status, result.Summary = doctorOK, "Kata rubric archiving: mode current, Docbank key resolves for "+probe.Project
+		result.Status, result.Summary = doctorOK, "Kata rubric archiving: mode current, Docbank key resolves for "+probe.Project+"; vault rubrics are readable by all issue readers and metadata writers"
 	default:
 		result.Status, result.Summary = doctorInfo, "Kata rubric archiving: mode current, Docbank state unknown"
+	}
+	if probe.Project != "" && probe.State != "ok" {
+		result.Details = append(result.Details, "Kata project: "+probe.Project)
 	}
 	if probe.Error != "" {
 		result.Details = append(result.Details, probe.Error)

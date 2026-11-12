@@ -23,7 +23,8 @@ export interface DoctorAgentsOutputBody {
   repo_config_error?: string;
   /** The requested agent names, resolved by the daemon; unknown names report an error */
   requested: Diagnosis[];
-  /** Usage provider and authenticated probe result from the daemon process */
+  /** Rubric archiving diagnosis from the daemon process */
   rubric_setup?: DoctorRubricSetup;
+  /** Usage provider and authenticated probe result from the daemon process */
   usage_provider?: DoctorUsageProvider;
 }

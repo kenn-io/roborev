@@ -272,8 +272,6 @@ func (d liveDoctorDaemon) Agents(ctx context.Context, repo string, names []strin
 	if len(names) > 0 {
 		query.Agent = names
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
 	resp, err := d.client().DoctorAgents(ctx, &generated.DoctorAgentsRequestOptions{Query: query})
 	if err != nil {
 		return nil, daemonRequestError("ask the daemon about agents", err)

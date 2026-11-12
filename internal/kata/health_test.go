@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDocbankHealth(t *testing.T) {
@@ -23,7 +24,11 @@ func TestDocbankHealth(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, args := stubClient(tc.response, tc.runErr)
 			got, err := c.DocbankHealth(t.Context())
-			assert.Equal(t, tc.wantErr, err != nil)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
 			assert.Equal(t, tc.credential, got.Credential)
 			assert.Equal(t, []string{"health", "--json"}, *args)
 		})

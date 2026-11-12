@@ -334,6 +334,31 @@ func TestDoctorRubricSetupDaemonEnvironment(t *testing.T) {
 	require.Len(t, out.Body.HookTools, 1)
 	assert.Equal(t, "kata", out.Body.HookTools[0].Name)
 	assert.True(t, out.Body.HookTools[0].Available)
+
+	for _, tc := range []struct{ name, script, state, detail string }{
+		{"missing", `printf '%s' '{"docbank":{"credential":"missing"}}'`, "missing", ""},
+		{"omitted", `printf '%s' '{}'`, "unknown", ""},
+		{"unavailable", `echo secret >&2; exit 1`, "unknown", "Kata health could not be read"},
+		// The subprocess is external work; the probe deadline stops it.
+		{"timeout", `exec /bin/sleep 30`, "unknown", "Kata health could not be read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(filepath.Join(bin, "kata"), []byte("#!/bin/sh\n"+tc.script+"\n"), 0o755))
+			out := get()
+			require.NotNil(t, out.Body.RubricSetup)
+			assert.Equal(t, tc.state, out.Body.RubricSetup.State)
+			assert.Equal(t, "example", out.Body.RubricSetup.Project)
+			assert.Equal(t, tc.detail, out.Body.RubricSetup.Error)
+			assert.NotEmpty(t, out.Body.Agents)
+			assert.NotNil(t, out.Body.UsageProvider)
+		})
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte("[kata_rubrics]\nmode = \"off\"\n"), 0o600))
+	out = get()
+	require.NotNil(t, out.Body.RubricSetup)
+	assert.Equal(t, "off", out.Body.RubricSetup.State)
+	require.NoError(t, os.Remove(filepath.Join(repo, ".roborev.toml")))
+
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".kata.toml"), []byte("[project\n"), 0o600))
 	out = get()
 	require.NotNil(t, out.Body.RubricSetup)

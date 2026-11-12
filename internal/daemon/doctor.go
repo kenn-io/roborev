@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"time"
 	"uuid"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -56,14 +57,11 @@ func (s *Server) humaDoctorAgents(
 	if repoCfg != nil {
 		hooks = append(hooks, repoCfg.Hooks...)
 	}
-	if config.ResolveKataRubricsMode(repoCfg, cfg) == "current" {
-		hooks = append(hooks, config.HookConfig{Type: "kata"})
-	}
+	mode := config.ResolveKataRubricsMode(repoCfg, cfg)
 	seen := map[string]bool{}
-	for _, h := range hooks {
-		tool, ok := hookTools[h.Type]
-		if !ok || seen[tool] {
-			continue
+	addTool := func(tool string) {
+		if seen[tool] {
+			return
 		}
 		seen[tool] = true
 		d := agent.Diagnosis{Name: tool, Command: tool}
@@ -75,8 +73,16 @@ func (s *Server) humaDoctorAgents(
 		}
 		resp.Body.HookTools = append(resp.Body.HookTools, d)
 	}
+	for _, h := range hooks {
+		if tool, ok := hookTools[h.Type]; ok {
+			addTool(tool)
+		}
+	}
+	if repo != "" && mode == "current" {
+		addTool("kata")
+	}
 	if repo != "" {
-		result := &DoctorRubricSetup{Mode: config.ResolveKataRubricsMode(repoCfg, cfg), State: "off"}
+		result := &DoctorRubricSetup{Mode: mode, State: "off"}
 		resp.Body.RubricSetup = result
 		if result.Mode == "current" {
 			result.State = "kata_missing"
@@ -84,7 +90,8 @@ func (s *Server) humaDoctorAgents(
 				if d.Name == "kata" && d.Available {
 					result.State = "unknown"
 					c := kata.NewCLIClient(repo)
-					binding, err := c.Binding(ctx)
+					probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+					binding, err := c.Binding(probeCtx)
 					switch {
 					case errors.Is(err, kata.ErrNoBinding):
 						result.State = "binding_missing"
@@ -92,7 +99,7 @@ func (s *Server) humaDoctorAgents(
 						result.State, result.Error = "binding_error", err.Error()
 					default:
 						result.Project = binding.Project
-						health, err := c.DocbankHealth(ctx)
+						health, err := c.DocbankHealth(probeCtx)
 						if err == nil && (health.Credential == "ok" || health.Credential == "missing") {
 							result.State = health.Credential
 						} else if err != nil {
@@ -100,6 +107,7 @@ func (s *Server) humaDoctorAgents(
 							result.Error = "Kata health could not be read"
 						}
 					}
+					cancel()
 					break
 				}
 			}
