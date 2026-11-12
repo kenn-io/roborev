@@ -601,7 +601,7 @@ teammate = "roborev"
 | `api_key` | - | Bearer credential, masked in config output. Mutually exclusive with `api_key_file` |
 | `api_key_file` | - | File holding the credential; a leading `~/` is your home directory |
 | `default_project` | - | Project used when a repo has no `.kata.local.toml` or `.kata.toml` binding |
-| `teammate` | `roborev` | Teammate name Kata records on published roots and daemon replies |
+| `teammate` | `roborev` | Teammate name Kata records on published roots, including generic notices under `summary`, and daemon replies |
 
 Choose either `api_key` or `api_key_file`. Loopback HTTP requires a key; remote
 plaintext HTTP is refused. HTTPS and Unix sockets may omit a key when the server

@@ -24,6 +24,13 @@ func TestKataContextCachePreservesEvidenceAndErrors(t *testing.T) {
 		calls++
 		return data, nil
 	})
+	unidentified := *review
+	unidentified.UUID = nil
+	unchanged, err := cache.Decorate(t.Context(), &unidentified)
+	require.NoError(t, err)
+	require.Same(t, &unidentified, unchanged)
+	assert.Equal(t, "original finding", unchanged.Output)
+	assert.Zero(t, calls)
 	first, err := cache.Decorate(t.Context(), review)
 	require.NoError(t, err)
 	second, err := cache.Decorate(t.Context(), review)

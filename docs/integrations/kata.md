@@ -463,7 +463,8 @@ UID from `roborev kata show`. This writes under the daemon's configured
 teammate, default `roborev`, so the reply may have the same attribution as
 daemon posts. Supersede duplicates with native `kata --teammate=lead` so the
 lead's identity is visible. Teammates always use native Kata with their own
-names, and write refute reasons in the evidence text.
+names, and write refute reasons in the evidence text. See [Reply to a
+finding](#reply-to-a-finding) for the command and error details.
 
 For synthesis, match each Markdown `Reported by` agent and review type to panel
 member metadata and member job results from `roborev job show` when needed.
@@ -536,10 +537,13 @@ lead never confirms or refutes; the user decides what to do with contested and
 unchecked findings. A reply does not close the Kata issue or the roborev review.
 With user approval, refuted findings can inform rubric tuning. Check
 `roborev kata show <job-id>` for the selected result and discussion. Native-only
-publication, an unselected review, an already-built prompt or an incomplete read
-requires an explicit handoff: include the result identity, relevant findings and
-roots, outcomes, available supporting and conflicting evidence, and incomplete
-or unchecked state. Do not assume the next agent saw every reply. See
+publication, an unselected review or an already-built prompt can leave delivery
+absent or unverified. Before starting any next fix, refine or review recipient,
+when readback is incomplete or delivery to that recipient's prompt is absent or
+unverified, hand over the result identity, relevant findings and roots, outcomes,
+available supporting and conflicting evidence, and incomplete or unchecked
+state. Complete readback alone does not establish recipient delivery. Do not
+assume the next agent saw every reply. See
 [Discussion from prior reviews](#discussion-from-prior-reviews) for selection,
 availability and error details.
 
