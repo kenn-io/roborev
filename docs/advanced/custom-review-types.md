@@ -41,7 +41,8 @@ include can change it. CI custom reviews record the digest of their prebuilt
 prompt. Built-in types, supplied prompts, and panel synthesis have no rubric
 digest.
 
-You can [archive custom rubrics onto Kata issues](/docs/integrations/kata/#archiving-custom-rubrics).
+You can
+[archive custom rubrics onto Kata issues](/docs/integrations/kata/#archiving-custom-rubrics).
 
 ## Configuration reference
 
