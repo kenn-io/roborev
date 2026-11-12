@@ -545,9 +545,11 @@ starts them. Guess two per reviewer on different agents if the user runs two,
 otherwise one. Each gets a fresh context. The user's harness starts them; this
 skill does not. State the resulting calls and chunks in the proposal.
 
-Name each teammate `<reviewer>-<agent>`, for example `facts-codex` and
-`facts-claude-code`. Add `-2`, `-3` only for clashes. Use lowercase letters,
-digits and hyphens, start with a letter, and keep names at most 64 characters.
+Name each teammate `<reviewer>-<agent>`, using the panel member name as
+`<reviewer>`, or the review type for a standalone review. Examples are
+`facts-codex` and `facts-claude-code`. Add `-2`, `-3` only for clashes. Use
+lowercase letters, digits and hyphens, start with a letter, and keep names at
+most 64 characters.
 Never use `roborev`, person names, model versions, session IDs or hostnames.
 The coordinator is `lead` and never confirms or refutes. Pass the teammate's
 name as `--teammate=<name>` on every Kata command. Names record attribution
@@ -614,13 +616,20 @@ If neither is established, reply with what you checked and what was missing.
 
 ## Steps and commands
 
-1. After the user agrees, lead selects the standalone job or combined synthesis
-   job printed at panel enqueue. Find its issue by job ID and match the reviewed
-   commit. Read the full result with `roborev job show --job <id>`; the issue
-   may be truncated. Post a charter with question, job, commit, rubric paths,
-   brief at that commit, roster and assignments.
-2. Lead posts one root per finding, preserving position, reviewer, severity,
-   location and problem text. Record handles and reconcile every finding to a
+1. After the user agrees, lead uses `roborev job list` and
+   `roborev job show --job <id>` to identify the standalone or combined synthesis
+   job and reviewed commit; an ID printed at enqueue is a shortcut. Find its issue by job ID.
+   If the ref is dirty or no committed snapshot matches the reviewed changes,
+   stop: the user must commit and request a new review before a swarm. The issue
+   may be truncated; use the full job result. Post a charter with question, job,
+   commit, rubric paths, brief at that commit, roster and assignments.
+2. For synthesis, match each Markdown `Reported by` agent and review type to
+   panel member metadata and member job results from `roborev job show` when
+   needed. Assign every identified source reviewer; if mapping is ambiguous,
+   for example identical agent and type with different member instructions,
+   do not assign that finding and report it unchecked. Lead posts one root per
+   finding, preserving position, sources, severity, location and problem text.
+   Record handles and reconcile every finding to a
    root and outcome. Assign five findings per fresh context by default, adjustable
    by the user: [#1376](https://github.com/kenn-io/roborev/issues/1376)
    measured this on one workload. The user starts teammates.

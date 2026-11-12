@@ -105,11 +105,12 @@ restrict access. Use Kata's issue-scoped credentials for that. Before starting,
 agree on the providers and accounts, the Kata server and any federated hubs:
 findings and whatever teammates write as evidence will be stored there.
 
-For a failing standalone review, use that job's issue. For a panel, use the
-combined synthesis job ID printed at enqueue. The hook also files issues for
-failing members, and all may share the swarm label, so find the issue by job ID.
-Run commands from the bound repository and match the issue to the job and
-reviewed commit. Replace the quoted placeholders with actual values:
+Run `roborev job list` from the bound repository, then use `roborev job show` to
+identify the standalone or combined synthesis job and reviewed commit. An ID
+printed at enqueue is a shortcut. Use that job's issue; the hook also files
+issues for failing panel members. If the ref is dirty or no committed snapshot
+matches the reviewed changes, stop: commit and request a new review before a
+swarm. Match the issue to the job and commit. Replace the quoted placeholders:
 
 ```bash
 kata --teammate=lead search "roborev show <job-id>" --agent
@@ -121,13 +122,18 @@ roborev job show --job <job-id> --json
 The lead writes a charter with the question, review job and commit, rubric per
 reviewer, brief at that commit, roster and assignments. The hook issue body may
 be truncated, so copy every finding from the full job result into its own root,
-including position, reviewer, severity, location and problem text. Reconcile
-every full-result finding to a root and outcome. Record handles from
-`kata show`. For `<result>`, use the top-level `uuid` from the JSON output; if
-absent, use exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only
-for identical retries of the same result. A rerun has a new result: leave old
-roots, replies and outcomes as history, post a new charter and roots with new
-keys, and never carry outcomes forward:
+including position, sources, severity, location and problem text. For synthesis,
+match each Markdown `Reported by` agent and review type to panel member metadata
+and member job results from `roborev job show` when needed. Assign every
+identified source reviewer. If the mapping is ambiguous, such as the same agent
+and type with different member instructions, do not assign that finding; report
+it unchecked. Keep one root and outcome row per finding. Reconcile every
+full-result finding to a root and outcome. Record handles from `kata show`. For
+`<result>`, use the top-level `uuid` from the JSON output; if absent, use
+exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only for
+identical retries of the same result. A rerun has a new result: leave old roots,
+replies and outcomes as history, post a new charter and roots with new keys, and
+never carry outcomes forward:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
@@ -158,11 +164,12 @@ kata --teammate=lead show '<issue>' --thread 'c:<handle>' --agent
 If neither answer is established, use `--reply` and say what was checked and
 what is missing. If a typed reply fails, stop and report the error rather than
 substituting an untyped answer. Teammates use distinct names of the form
-`<reviewer>-<agent>`: lowercase letters, digits and hyphens, starting with a
-letter, at most 64 characters; add a number only for a clash. Do not use
-`roborev`. Never use `--force`: a duplicate reply of the same kind from the same
-actor and teammate is a conflict, while an identical retry with the same
-idempotency key returns its original result.
+`<reviewer>-<agent>`, where reviewer is the panel member name or, for a
+standalone review, the review type: lowercase letters, digits and hyphens,
+starting with a letter, at most 64 characters; add a number only for a clash. Do
+not use `roborev`. Never use `--force`: a duplicate reply of the same kind from
+the same actor and teammate is a conflict, while an identical retry with the
+same idempotency key returns its original result.
 
 The lead checks that cited paths and lines exist at the reviewed commit and
 posts an outcome comment with one row per finding: confirmed for confirms only,
