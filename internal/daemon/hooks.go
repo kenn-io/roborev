@@ -221,8 +221,8 @@ func (hr *HookRunner) handleEvent(event Event) {
 			if event.SuppressKataHooks {
 				continue
 			}
-			if hook.Findings != "" {
-				if hr.publisher != nil && event.Type == "review.completed" && event.Verdict == "F" && !publicationScheduled {
+			if hook.Findings != "" && event.Type == "review.completed" {
+				if hr.publisher != nil && event.Verdict == "F" && !publicationScheduled {
 					publicationScheduled = true
 					fired++
 					hr.wg.Add(1)
