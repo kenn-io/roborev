@@ -460,8 +460,9 @@ kata --teammate=lead show '<issue>' --agent
 The lead can also post a plain reply on a published finding with
 `roborev kata comment`, using the issue UID, project, destination ID and target
 UID from `roborev kata show`. This writes under the daemon's configured
-teammate, not `lead`. Supersede duplicates with native `kata --teammate=lead`
-so the lead's identity is visible. Teammates always use native Kata with their
+teammate, default `roborev`, so the reply may have the same attribution as
+daemon posts. Supersede duplicates with native `kata --teammate=lead` so the
+lead's identity is visible. Teammates always use native Kata with their
 own names, and write refute reasons in the evidence text.
 
 For synthesis, match each Markdown `Reported by` agent and review type to panel

@@ -717,8 +717,9 @@ kata --teammate=lead show '<issue>' --thread '<comment-ref>' --agent
 With the daemon API connection, lead may post a plain reply on a published
 finding with `roborev kata comment` using the issue UID, project, destination
 ID and target UID from `roborev kata show`. This uses the configured teammate,
-not `lead`. Supersede duplicates with native `kata --teammate=lead` so the
-lead's identity is visible. Teammates always use native Kata with their own
+default `roborev`, so the reply may have the same attribution as daemon posts.
+Supersede duplicates with native `kata --teammate=lead` so the lead's identity
+is visible. Teammates always use native Kata with their own
 names. Keep refute reasons in the evidence text.
 
 Use `--refute` or `--reply` when evidence calls for it, with the kind in the
@@ -728,10 +729,13 @@ cite `path:line` instead of quoting evidence.
 
 Selected discussion may reach the next fix, refine or daemon-run local review
 as untrusted claims; CI and `review --local` never receive it. Selection and
-availability are not guaranteed. When readback is incomplete or cannot be
-established, lead explicitly hands over the result identity, relevant findings
-and roots, outcomes, available supporting and conflicting evidence, and
-incomplete or unchecked state. Never assume the next agent saw every reply.
+availability are not guaranteed. Before edits, when readback is incomplete or
+delivery to the recipient's prompt is absent or unverified, lead explicitly
+hands over the result identity, relevant findings and roots, outcomes, available
+supporting and conflicting evidence, and incomplete or unchecked state. This
+includes native-only publication, an unselected review and an already-built
+prompt, even if lead read the complete discussion. Never assume the next agent
+saw every reply.
 ````
 
 See the [Kata walkthrough](https://roborev.io/docs/integrations/kata/#confirm-or-refute-findings-with-a-swarm).
@@ -749,10 +753,10 @@ Finish with a short summary:
 - How to start a swarm run, if configured; the user starts the teammates.
     With the daemon API connection, selected source reviews can carry current
     discussion into fix, refine and daemon-run local review prompts as untrusted
-    claims; CI and `review --local` do not. Check availability and completeness.
-    When readback is incomplete or cannot be established, explicitly hand over
-    the result identity, relevant findings and roots, outcomes, available
-    supporting and conflicting evidence, and incomplete or unchecked state.
+    claims; CI and `review --local` do not. Before edits, use the brief's full
+    evidence handoff whenever readback is incomplete or delivery to the
+    recipient's prompt is absent or unverified, including native-only publication,
+    an unselected review or an already-built prompt.
 - How to add a source document: commit its text where the rubric expects it,
     and update the rubric or include when the path changes.
 - What is still pending, such as hooks, a stopped daemon, guidelines waiting
