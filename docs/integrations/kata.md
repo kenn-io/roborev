@@ -115,6 +115,12 @@ database context, and CI reviews perform no discussion reads. This does not
 search all past issues or require a local publication marker on a second
 machine.
 
+Only readable, non-CI, non-goal source reviews are eligible. For earlier
+reviews, `review_context_count` defaults to 3; 0 disables that history. Same-ref
+attempts and range reviews have their own selection. This is separate from
+`[kata_context]` task modes. Access and cancellation errors can stop the
+operation; other read failures may appear as unavailable context.
+
 Read discussion with `roborev kata show JOB|REVIEW-UUID|ISSUE`; use `--project`
 for an explicit issue or a review without a saved publication destination. The
 numeric selector denotes a job; use `--issue` for an all-digit Kata short ID, or
@@ -451,11 +457,12 @@ kata --teammate=lead search "roborev show <job-id>" --agent
 kata --teammate=lead show '<issue>' --agent
 ```
 
-The lead can also post a plain reply or supersede a duplicate on a published
-finding with `roborev kata comment`, using the issue UID, project, destination
-ID and target UID from `roborev kata show`. This writes under the daemon's
-configured teammate, not `lead`. Teammates always use native Kata with their own
-names, and write refute reasons in the evidence text.
+The lead can also post a plain reply on a published finding with
+`roborev kata comment`, using the issue UID, project, destination ID and target
+UID from `roborev kata show`. This writes under the daemon's configured
+teammate, not `lead`. Supersede duplicates with native `kata --teammate=lead`
+so the lead's identity is visible. Teammates always use native Kata with their
+own names, and write refute reasons in the evidence text.
 
 For synthesis, match each Markdown `Reported by` agent and review type to panel
 member metadata and member job results from `roborev job show` when needed.
@@ -526,19 +533,14 @@ refuted for refutes only, contested for both, and unchecked for neither or
 incomplete threads. A resolving citation alone does not prove a conclusion. The
 lead never confirms or refutes; the user decides what to do with contested and
 unchecked findings. A reply does not close the Kata issue or the roborev review.
-With user approval, refuted findings can inform rubric tuning. With the daemon
-API connection enabled, fix, refine and daemon-run local review prompts can
-include current discussion as untrusted claims for readable, non-CI, non-goal
-source reviews they select. For earlier reviews, `review_context_count` defaults
-to 3; 0 disables that history. Same-ref attempts and range reviews have their
-own selection. This is separate from `[kata_context]` task modes. Check
-`roborev kata show <job-id>` for the selected result and discussion. Missing,
-partial, ambiguous, unavailable or truncated content is not complete evidence.
-Access and cancellation errors can stop the operation; other read failures may
-appear as unavailable context. Native-only publication, an unselected review, an
-already-built prompt or an incomplete read requires an explicit outcome handoff.
-Do not assume the next agent saw every reply; CI and `review --local` do not
-receive this discussion.
+With user approval, refuted findings can inform rubric tuning. Check
+`roborev kata show <job-id>` for the selected result and discussion. Native-only
+publication, an unselected review, an already-built prompt or an incomplete
+read requires an explicit handoff: include the result identity, relevant
+findings and roots, outcomes, available supporting and conflicting evidence,
+and incomplete or unchecked state. Do not assume the next agent saw every reply.
+See [Discussion from prior reviews](#discussion-from-prior-reviews) for
+selection, availability and error details.
 
 ## Closing the Loop
 
