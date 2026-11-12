@@ -16,6 +16,24 @@ import (
 	"go.kenn.io/roborev/internal/kata/katatest"
 )
 
+// TestAPIClientCurrentProducer checks the published Kata v0.23.0 contract.
+// CI installs that exact producer so an incompatible schema cannot be skipped.
+func TestAPIClientCurrentProducer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	k := katatest.StartReal(t, ctx)
+	cfg := config.KataIntegrationConfig{
+		Enabled: true, Endpoint: k.SocketEndpoint(t, ctx), DefaultProject: "e2etest",
+	}
+	c, err := kata.NewAPIClient(k.Repo, cfg)
+	require.NoError(t, err)
+	defer c.CloseIdleConnections()
+
+	info, err := c.Info(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "0.43.0", info.APISchemaVersion)
+}
+
 // TestAPIClientE2E runs the API client against a real Kata daemon in a
 // disposable home, reached over its private Unix socket. It covers the calls
 // the connection makes: health and project checks, create with an idempotency
