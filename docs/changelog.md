@@ -7,7 +7,6 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
-- The review swarm can use finding roots published by a ready Kata connection.
 - Set up an optional Kata swarm to confirm or refute review findings with
     independent evidence.
 - Receive failed-review reminders only for commits the session gains during
