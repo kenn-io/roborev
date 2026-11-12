@@ -268,7 +268,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 					missing = root.Position
 				}
 				if root.State != "missing" {
-					return status, fmt.Errorf("kata root %d is %s", root.Position, root.State)
+					return status, fmt.Errorf("kata finding %d is %s", root.Position+1, root.State)
 				}
 			}
 		}
@@ -285,7 +285,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 			return status, nil
 		}
 		if issue.Issue.ClosedAt != nil || issue.Issue.Status == "closed" {
-			return status, errors.New("closed Kata issue has missing roots")
+			return status, errors.New("closed Kata issue has missing findings")
 		}
 		err = p.post(ctx, jobID, record, review, project, publication, attempt, func(ctx context.Context, c *kata.APIClient, dest kata.PublicationProject, pub *kata.Publication) error {
 			_, err := c.CreatePublicationRoot(ctx, dest, issue.Issue.UID, pub, missing)
