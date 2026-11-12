@@ -171,9 +171,10 @@ func TestRepairSelectedMCPConnection(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config")
 			opts := Options{Agent: tc.agent, ConfigPath: path}
 			require.NoError(t, os.WriteFile(path, []byte(tc.config), 0o600))
-			server, found := Registration(opts)
+			server, found, err := Registration(opts)
+			require.NoError(t, err)
 			require.True(t, found)
-			server, err := server.WithServer("http://127.0.0.1:8282")
+			server, err = server.WithServer("http://127.0.0.1:8282")
 			require.NoError(t, err)
 			require.NoError(t, Repair(opts, server))
 			data, err := os.ReadFile(path)

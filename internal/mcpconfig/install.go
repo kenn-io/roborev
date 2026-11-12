@@ -115,36 +115,57 @@ func (r RegisteredServer) Server() agentmcp.Server {
 	return agentmcp.Server{Transport: r.Transport, Command: r.Command, Args: r.Args, Env: r.Env, URL: r.URL, Headers: r.Headers, BearerTokenEnvVar: r.BearerTokenEnvVar}
 }
 
-// Registration reads the installed Claude or Codex server. An absent or
-// unreadable entry is not registered.
-func Registration(opts Options) (RegisteredServer, bool) {
+// Registration reads the installed Claude or Codex server.
+func Registration(opts Options) (RegisteredServer, bool, error) {
 	path, err := ConfigPath(opts)
 	if err != nil {
-		return RegisteredServer{}, false
+		return RegisteredServer{}, false, err
 	}
 	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return RegisteredServer{}, false, nil
+	}
 	if err != nil {
-		return RegisteredServer{}, false
+		return RegisteredServer{}, false, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return RegisteredServer{}, false, nil
 	}
 	var server RegisteredServer
+	var found bool
 	if opts.Agent == skills.AgentCodex {
 		var doc struct {
-			Servers map[string]RegisteredServer `toml:"mcp_servers"`
+			Servers map[string]toml.Primitive `toml:"mcp_servers"`
 		}
-		err = toml.Unmarshal(data, &doc)
-		server = doc.Servers["roborev"]
-	} else if data, err = hujson.Standardize(data); err == nil {
-		var doc struct {
-			Servers map[string]jsontext.Value `json:"mcpServers"`
+		var meta toml.MetaData
+		meta, err = toml.Decode(string(data), &doc)
+		entry, exists := doc.Servers["roborev"]
+		found = exists
+		if err == nil && found {
+			err = meta.PrimitiveDecode(entry, &server)
 		}
-		if err = json.Unmarshal(data, &doc); err == nil && len(doc.Servers["roborev"]) > 0 {
-			err = json.Unmarshal(doc.Servers["roborev"], &server)
+	} else {
+		data, err = hujson.Standardize(data)
+		if err == nil {
+			var doc struct {
+				Servers map[string]jsontext.Value `json:"mcpServers"`
+			}
+			if err = json.Unmarshal(data, &doc); err == nil {
+				entry, exists := doc.Servers["roborev"]
+				found = exists
+				if found {
+					err = json.Unmarshal(entry, &server)
+				}
+			}
 		}
 	}
-	if err != nil || server.Command == "" && server.URL == "" {
-		return RegisteredServer{}, false
+	if err != nil {
+		return RegisteredServer{}, false, fmt.Errorf("read MCP registration %s: %w", path, err)
 	}
-	return server, true
+	if found && server.Command == "" && server.URL == "" {
+		return RegisteredServer{}, false, fmt.Errorf("MCP registration %s needs a command or URL", path)
+	}
+	return server, found, nil
 }
 
 // DaemonAddress returns the daemon selected by the registration, if any.
@@ -234,7 +255,10 @@ func Repair(opts Options, server RegisteredServer) error {
 	if err != nil {
 		return err
 	}
-	current, _ := Registration(opts)
+	current, _, err := Registration(opts)
+	if err != nil {
+		return err
+	}
 	changed := false
 	fields := map[string]any{}
 	if server.URL != current.URL {

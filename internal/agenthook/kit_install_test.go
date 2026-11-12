@@ -307,6 +307,14 @@ func TestMCPHookRejectsUnusableDaemonURL(t *testing.T) {
 }
 
 func TestHookCommandOptionsAndRewrite(t *testing.T) {
+	t.Run("Claude Windows path", func(t *testing.T) {
+		command, err := kitagenthook.BuildCommand(`C:\Program Files\roborev.exe`, "agent-hook", "run", "--agent", "claude", agentHookMarker)
+		require.NoError(t, err)
+		updated, err := RewriteCommand(kitagenthook.Commands{Native: command.POSIX}, kitagenthook.AgentClaude, InstallOptions{MCP: true}, "roborev")
+		require.NoError(t, err)
+		assert.Contains(t, updated.Native, `'C:\Program Files\roborev.exe'`)
+		assert.Contains(t, updated.Native, "--mcp")
+	})
 	for _, tc := range []struct {
 		name, command string
 		mcp           bool

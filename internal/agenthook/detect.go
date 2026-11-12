@@ -167,6 +167,9 @@ func RewriteCommand(command kitagenthook.Commands, agent kitagenthook.Agent, opt
 		rest = append(rest, "--mcp")
 	}
 	updated, err := kitagenthook.BuildCommand(args[0], rest...)
+	if agent == kitagenthook.AgentClaude {
+		updated.Native = updated.POSIX
+	}
 	if command.Windows == "" {
 		updated.Windows = ""
 	}
