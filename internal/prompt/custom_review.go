@@ -74,13 +74,6 @@ type customReviewTemplateData struct {
 	Includes   map[string]string
 }
 
-func (b *Builder) resolveSystemPrompt(
-	agentName, reviewType, promptType string,
-) (string, bool, error) {
-	text, custom, _, err := b.resolveSystemPromptWithRubric(agentName, reviewType, promptType, nil)
-	return text, custom, err
-}
-
 func (b *Builder) resolveSystemPromptWithRubric(
 	agentName, reviewType, promptType string, result *BuildResult,
 ) (string, bool, []byte, error) {

@@ -19,6 +19,9 @@ import (
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
+// preservePrebuiltRubricSQL keeps the digest tied to an immutable CI prompt.
+const preservePrebuiltRubricSQL = `CASE WHEN source IN ('ci', 'ci_branch') AND prompt_prebuilt = 1 THEN rubric_sha256 ELSE NULL END`
+
 // preciseTimestampLayout is a fixed-width timestamp layout used for the
 // retry_not_before column, attempt boundaries (started_at), and finished_at.
 // Two reasons it differs from RFC3339Nano:
@@ -873,7 +876,7 @@ func (db *DB) RequeueUpdateInterruptedJob(
 		    resume_source_job_uuid = NULL,
 		    token_usage = NULL,
 		    command_line = NULL,
-		    agent_invoked = 0, rubric_sha256 = CASE WHEN source IN ('ci', 'ci_branch') AND prompt_prebuilt = 1 THEN rubric_sha256 ELSE NULL END,
+		    agent_invoked = 0, rubric_sha256 = ` + preservePrebuiltRubricSQL + `,
 		    synced_at = NULL
 		WHERE id = ? AND status = 'running' AND worker_id = ?
 	`, jobID, workerID)
@@ -1888,13 +1891,13 @@ func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int, retryBackof
 	if workerID != "" {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, rubric_sha256 = CASE WHEN source IN ('ci', 'ci_branch') AND prompt_prebuilt = 1 THEN rubric_sha256 ELSE NULL END, synced_at = NULL, retry_not_before = ?
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, rubric_sha256 = ` + preservePrebuiltRubricSQL + `, synced_at = NULL, retry_not_before = ?
 			WHERE id = ? AND retry_count < ? AND status = 'running' AND worker_id = ?
 		`, notBefore, jobID, maxRetries, workerID)
 	} else {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, rubric_sha256 = CASE WHEN source IN ('ci', 'ci_branch') AND prompt_prebuilt = 1 THEN rubric_sha256 ELSE NULL END, synced_at = NULL, retry_not_before = ?
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, rubric_sha256 = ` + preservePrebuiltRubricSQL + `, synced_at = NULL, retry_not_before = ?
 			WHERE id = ? AND retry_count < ? AND status = 'running'
 		`, notBefore, jobID, maxRetries)
 	}
@@ -1935,7 +1938,7 @@ func (db *DB) FailoverJob(jobID int64, workerID, backupAgent, backupModel string
 		    resume_source_job_uuid = NULL,
 		    token_usage = NULL,
 		    command_line = NULL,
-		    agent_invoked = 0, rubric_sha256 = CASE WHEN source IN ('ci', 'ci_branch') AND prompt_prebuilt = 1 THEN rubric_sha256 ELSE NULL END,
+		    agent_invoked = 0, rubric_sha256 = ` + preservePrebuiltRubricSQL + `,
 		    synced_at = NULL,
 		    retry_not_before = NULL
 		WHERE id = ?

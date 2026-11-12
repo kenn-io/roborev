@@ -323,7 +323,7 @@ func TestPostgresMigration_BackupColumns(t *testing.T) { //nolint:paralleltest /
 	require.Empty(t, bm)
 }
 
-func TestPostgresMigrationRubricDigest25(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+func TestIntegrationPostgresMigrationRubricDigest25(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
 	pool := openTestPgPoolRawAtVersion(t, 24)
 	ctx := t.Context()
 	var count int

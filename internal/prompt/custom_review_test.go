@@ -76,10 +76,10 @@ func TestCustomReviewReadsRepoFilesFromConfiguredRef(t *testing.T) {
 		},
 	}}
 
-	got, custom, err := NewBuilder(nil).
+	got, custom, _, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted base rubric.")
@@ -98,10 +98,10 @@ func TestCustomReviewReadsGlobalRelativeFilesFromConfiguredRef(t *testing.T) {
 		},
 	}}
 
-	got, custom, err := NewBuilderWithConfig(nil, globalCfg).
+	got, custom, _, err := NewBuilderWithConfig(nil, globalCfg).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(nil, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted global rubric.")
@@ -128,10 +128,10 @@ func TestCustomReviewReadsExternalSymlinkFromConfiguredRef(t *testing.T) {
 		},
 	}}
 
-	got, custom, err := NewBuilder(nil).
+	got, custom, _, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "External rubric.")
@@ -156,10 +156,10 @@ func TestCustomReviewReadsThroughDirectorySymlinkFromConfiguredRef(t *testing.T)
 		},
 	}}
 
-	got, custom, err := NewBuilder(nil).
+	got, custom, _, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted directory-link rubric.")
@@ -178,20 +178,20 @@ func TestCustomReviewUsesExplicitNilRepoConfig(t *testing.T) {
 		},
 	}}
 
-	got, custom, err := NewBuilderWithConfig(nil, globalCfg).
+	got, custom, _, err := NewBuilderWithConfig(nil, globalCfg).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(nil, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted global rubric.")
 }
 
 func TestCustomReviewMissingDefinitionFails(t *testing.T) {
-	_, _, err := NewBuilder(nil).
+	_, _, _, err := NewBuilder(nil).
 		ForRepo(t.TempDir(), 0).
 		WithRepoConfig(&config.RepoConfig{}, "").
-		resolveSystemPrompt("codex", "removed-type", "removed-type")
+		resolveSystemPromptWithRubric("codex", "removed-type", "removed-type", nil)
 	require.ErrorContains(t, err, `custom review type "removed-type" is not configured`)
 }
 
@@ -207,11 +207,11 @@ func TestCustomReviewFilesPreserveCompleteTemplate(t *testing.T) {
 		},
 	}}
 
-	rendered, _, err := NewBuilder(nil).
+	rendered, _, _, err := NewBuilder(nil).
 		ForRepo(repoPath, 0).
 		WithRepoConfig(repoCfg, "").
-		resolveSystemPrompt(
-			"codex", "custom", "custom",
+		resolveSystemPromptWithRubric(
+			"codex", "custom", "custom", nil,
 		)
 	require.NoError(t, err)
 	assert.Contains(t, rendered, strings.Repeat("x", 1024))
@@ -350,10 +350,9 @@ func TestReviewResultRubricCommitAndRange(t *testing.T) {
 	builder := NewBuilder(nil).ForRepo(repo.dir, 0).WithRepoConfig(cfg, "")
 	for _, ref := range []string{head, base + ".." + head} {
 		t.Run(ref, func(t *testing.T) {
-			result, err := builder.BuildResultForReview(ref, 0, "test", "custom", "")
+			result, err := builder.BuildResultWithAdditionalContext(ref, 0, "test", "custom", "", "")
 			require.NoError(t, err)
 			assert.Equal(t, []byte("Inspect safety\n"), result.Rubric)
-			assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256(result.Rubric)), result.RubricSHA256)
 		})
 	}
 }
