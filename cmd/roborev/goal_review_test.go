@@ -178,10 +178,10 @@ func TestGoalReviewLocalClaudeUsesConfiguredAPIKey(t *testing.T) {
 	t.Setenv("GOAL_REVIEW_KEY_FILE", keyFile)
 	claude := filepath.Join(dataDir, "claude")
 	require.NoError(t, os.WriteFile(claude, []byte(`#!/bin/sh
-case "$*" in
-*--version*) echo "Claude Code"; exit 0 ;;
-*--help*) echo 'usage: claude --tools --bare'; exit 0 ;;
-esac
+if [ "$1" = "--help" ]; then
+  echo 'usage: claude --tools --bare'
+  exit 0
+fi
 cat >/dev/null
 printf '%s' "$ANTHROPIC_API_KEY" > "$GOAL_REVIEW_KEY_FILE"
 printf '%s\n' '{"type":"result","result":"{\"findings\":[]}"}'
