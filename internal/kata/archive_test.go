@@ -27,7 +27,7 @@ func TestArchiveRubricListsAndAddsExactBytes(t *testing.T) {
 		assert.Equal(t, []byte("rubric\n"), data)
 		return []byte(`{"results":[{"attachment_id":"attachment.test"}]}`), nil
 	}
-	require.NoError(t, c.ArchiveRubric(t.Context(), "abc4", "roborev-rubric.example.0123456789abcdef.md", []byte("rubric\n")))
+	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "roborev-rubric.example.0123456789abcdef.md", []byte("rubric\n")))
 	assert.Equal(t, 2, calls)
 }
 
@@ -38,7 +38,7 @@ func TestArchiveRubricSkipsExisting(t *testing.T) {
 	c.run = func(_ context.Context, _ *CLIClient, _ []string, _ io.Reader) ([]byte, error) {
 		return []byte(`{"attachments":{"attachment.test":{"name":"rubric.md"}}}`), nil
 	}
-	require.NoError(t, c.ArchiveRubric(t.Context(), "abc4", "rubric.md", []byte("rubric\n")))
+	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")))
 }
 
 func TestArchiveRubricReportsAddFailure(t *testing.T) {
@@ -53,7 +53,7 @@ func TestArchiveRubricReportsAddFailure(t *testing.T) {
 		}
 		return []byte(`{"results":[{"error":"docbank_not_configured"}]}`), nil
 	}
-	require.ErrorContains(t, c.ArchiveRubric(t.Context(), "abc4", "rubric.md", []byte("rubric\n")), "docbank_not_configured")
+	require.ErrorContains(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")), "docbank_not_configured")
 }
 
 func TestArchiveRubricSerializesConcurrentAdds(t *testing.T) {
@@ -78,9 +78,9 @@ func TestArchiveRubricSerializesConcurrentAdds(t *testing.T) {
 		return []byte(`{"results":[{"attachment_id":"attachment.test"}]}`), nil
 	}
 	result := make(chan error, 2)
-	go func() { result <- c.ArchiveRubric(t.Context(), "abc4", "rubric.md", []byte("rubric\n")) }()
+	go func() { result <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
 	<-firstList
-	go func() { result <- c.ArchiveRubric(t.Context(), "abc4", "rubric.md", []byte("rubric\n")) }()
+	go func() { result <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
 	close(release)
 	require.NoError(t, <-result)
 	require.NoError(t, <-result)
@@ -103,11 +103,11 @@ func TestArchiveRubricCancelWaitingForLock(t *testing.T) {
 		return nil, nil
 	}
 	done := make(chan error, 1)
-	go func() { done <- c.ArchiveRubric(t.Context(), "abc4", "rubric.md", []byte("rubric\n")) }()
+	go func() { done <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
 	<-started
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	require.ErrorIs(t, c.ArchiveRubric(ctx, "abc4", "rubric.md", []byte("rubric\n")), context.Canceled)
+	require.ErrorIs(t, c.ArchiveRubric(ctx, "demo", "abc4", "rubric.md", []byte("rubric\n")), context.Canceled)
 	close(release)
 	require.NoError(t, <-done)
 }

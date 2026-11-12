@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"log"
 	"strings"
@@ -21,6 +20,9 @@ func archiveRubricMessages(ctx context.Context, client kata.Client, project stri
 	seen := map[string]bool{}
 	for _, msg := range messages {
 		for _, ref := range kata.ParseRefs(msg, project) {
+			if ctx.Err() != nil {
+				return
+			}
 			if seen[ref] {
 				continue
 			}
@@ -28,7 +30,7 @@ func archiveRubricMessages(ctx context.Context, client kata.Client, project stri
 				return
 			}
 			seen[ref] = true
-			if err := client.ArchiveRubric(ctx, ref, name, data); err != nil {
+			if err := client.ArchiveRubric(ctx, project, ref, name, data); err != nil {
 				report(fmt.Errorf("attach rubric to %s#%s: %w", project, ref, err))
 				if ctx.Err() != nil {
 					return
@@ -38,7 +40,7 @@ func archiveRubricMessages(ctx context.Context, client kata.Client, project stri
 	}
 }
 
-func archiveRubric(ctx context.Context, client kata.Client, job storage.ReviewJob, data []byte, digest string, report func(error)) {
+func archiveRubric(ctx context.Context, client kata.Client, job storage.ReviewJob, repoPath string, data []byte, digest string, report func(error)) {
 	binding, err := client.Binding(ctx)
 	if err != nil {
 		report(err)
@@ -46,7 +48,7 @@ func archiveRubric(ctx context.Context, client kata.Client, job storage.ReviewJo
 	}
 	commits := []string{job.GitRef}
 	if strings.Contains(job.GitRef, "..") {
-		commits, err = gitpkg.GetRangeCommitsCtx(ctx, job.RepoPath, job.GitRef)
+		commits, err = gitpkg.GetRangeCommitsCtx(ctx, repoPath, job.GitRef)
 		if err != nil {
 			report(fmt.Errorf("read reviewed commits: %w", err))
 			return
@@ -54,7 +56,7 @@ func archiveRubric(ctx context.Context, client kata.Client, job storage.ReviewJo
 	}
 	var messages []string
 	for _, ref := range commits {
-		info, err := gitpkg.GetCommitInfoCtx(ctx, job.RepoPath, ref)
+		info, err := gitpkg.GetCommitInfoCtx(ctx, repoPath, ref)
 		if err != nil {
 			report(fmt.Errorf("read reviewed commit: %w", err))
 			return
@@ -66,11 +68,7 @@ func archiveRubric(ctx context.Context, client kata.Client, job storage.ReviewJo
 }
 
 func prepareRubricArchive(job *storage.ReviewJob, enabled bool, data []byte) bool {
-	if !enabled || len(data) == 0 || job.RubricSHA256 == nil || len(*job.RubricSHA256) != 64 || job.IsCIReview() || job.Source == "ci_branch" || job.IsDirtyJob() || !job.IsReviewJob() || job.IsGoalReviewJob() || job.PromptPrebuilt || job.Source == storage.JobSourceReviewPrompt || hasSuppliedReviewSettings(job) {
-		return false
-	}
-	if fmt.Sprintf("%x", sha256.Sum256(data)) != *job.RubricSHA256 {
-		log.Printf("rubric archive for job %d skipped: rubric digest mismatch", job.ID)
+	if !enabled || job.IsCIReview() || job.Source == "ci_branch" || job.IsDirtyJob() || !job.IsReviewJob() || job.IsGoalReviewJob() || job.PromptPrebuilt || job.Source == storage.JobSourceReviewPrompt || hasSuppliedReviewSettings(job) {
 		return false
 	}
 	if len(data) > rubricArchiveMaxBytes {

@@ -58,7 +58,7 @@ func (f *FakeClient) Create(_ context.Context, req kata.CreateReq) (kata.CreateR
 }
 
 // ArchiveRubric records a rubric once per issue and name.
-func (f *FakeClient) ArchiveRubric(_ context.Context, ref, name string, data []byte) error {
+func (f *FakeClient) ArchiveRubric(_ context.Context, _, ref, name string, data []byte) error {
 	if f.ArchiveErr != nil {
 		return f.ArchiveErr
 	}
