@@ -22,52 +22,17 @@ func Installed(agent kitagenthook.Agent, path string) (bool, error) {
 	return result.Changed, nil
 }
 
-// InstalledOptions reads the choices in the agent's RoboRev-owned hooks.
-// Command is set only when the hook has arguments setup does not generate.
-func InstalledOptions(agent kitagenthook.Agent) (InstallOptions, bool, error) {
-	path, err := kitagenthook.ConfigPath(agent)
+// CommandOptions reads the executable and connection selected by a hook command.
+func CommandOptions(command string) (InstallOptions, error) {
+	args, err := splitHookCommand(command)
 	if err != nil {
-		return InstallOptions{}, false, err
+		return InstallOptions{}, err
 	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return InstallOptions{}, false, nil
+	if len(args) == 0 {
+		return InstallOptions{}, fmt.Errorf("empty hook command")
 	}
-	var root any
-	if err == nil {
-		err = json.Unmarshal(data, &root)
-	}
-	if err != nil {
-		return InstallOptions{}, false, err
-	}
-	generated := []string{"agent-hook", "run", "--agent", string(agent), agentHookMarker}
-	var result InstallOptions
-	found := false
-	for _, hook := range ownedHooks(root, agent) {
-		command := hook["command"].(string)
-		if !strings.Contains(command, agentHookMarker) {
-			continue
-		}
-		args, _ := splitHookCommand(command) // ownedHooks has parsed it
-		next := InstallOptions{Executable: args[0]}
-		if timeout, ok := hook["timeout"].(float64); ok {
-			next.Timeout = time.Duration(timeout) * time.Second
-		}
-		var extra []string
-		next.MCP, next.RoborevServerAddr, _, err = hookArgs(args[1:])
-		if err != nil {
-			return InstallOptions{}, false, fmt.Errorf("invalid --mcp value in %s: %w", path, err)
-		}
-		_, _, extra, _ = hookArgs(args[min(len(args), 6):])
-		custom := !slices.Equal(args[1:min(len(args), 6)], generated) || len(extra) > 0
-		if custom {
-			next.Command = withoutHookMarker(command)
-		}
-		if !found {
-			result, found = next, true
-		}
-	}
-	return result, found, nil
+	mcp, server, _, err := hookArgs(args[1:])
+	return InstallOptions{Executable: args[0], MCP: mcp, RoborevServerAddr: server}, err
 }
 
 func hookArgs(args []string) (mcp bool, server string, extra []string, err error) {
@@ -90,23 +55,6 @@ func hookArgs(args []string) (mcp bool, server string, extra []string, err error
 		}
 	}
 	return
-}
-
-func withoutHookMarker(command string) string {
-	args, err := splitHookCommand(command)
-	if err != nil || len(args) == 0 {
-		return command
-	}
-	_, _, rest, err := hookArgs(args[1:])
-	if err != nil {
-		return command
-	}
-	rest = slices.DeleteFunc(rest, func(arg string) bool { return arg == agentHookMarker })
-	built, err := kitagenthook.BuildCommand(args[0], rest...)
-	if err != nil {
-		return command
-	}
-	return built.POSIX
 }
 
 func InstalledForAgent(path, agent string) (bool, error) {

@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"maps"
 	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -52,7 +50,7 @@ func agentSetupCmd() *cobra.Command {
 		if cmd.Flags().Changed("mcp") && !check {
 			selected = &mcp
 		}
-		items, _, err := agentSetupItems(name, selected, server)
+		items, err := agentSetupItems(name, selected, server)
 		if err != nil {
 			return []agentsetup.Item{{Name: "setup", Check: func(context.Context) (agentsetup.Status, error) { return agentsetup.Status{}, err }}}, nil
 		}
@@ -75,7 +73,13 @@ func agentSetupCmd() *cobra.Command {
 // agentReadiness checks one agent in the mode its hooks already use and
 // returns the row that most needs attention with one detail per row.
 func agentReadiness(ctx context.Context, name string) (agentsetup.Row, []string) {
-	report, _ := runAgentSetup(ctx, []string{name}, nil, true, nil)
+	report, _ := agentsetup.Run(ctx, agentsetup.Options{Agents: []string{name}, CheckOnly: true, SetupCommand: "roborev agent setup", Items: func(name string) ([]agentsetup.Item, error) {
+		items, err := agentSetupItems(name, nil, nil)
+		if err != nil {
+			items = []agentsetup.Item{{Name: "setup", Check: func(context.Context) (agentsetup.Status, error) { return agentsetup.Status{}, err }}}
+		}
+		return items, nil
+	}})
 	worst := agentsetup.Row{State: agentsetup.StateOK}
 	var details []string
 	for _, row := range report.Rows {
@@ -94,35 +98,28 @@ func agentReadiness(ctx context.Context, name string) (agentsetup.Row, []string)
 	return worst, details
 }
 
-// runAgentSetup installs or checks each agent. A nil mcp keeps the mode each
-// agent already uses, and an agent whose config cannot be read reports a failed
-// row without stopping the others.
-func runAgentSetup(ctx context.Context, names []string, mcp *bool, check bool, server *string) (agentsetup.Report, error) {
-	report, err := agentsetup.Run(ctx, agentsetup.Options{Agents: names, CheckOnly: check, SetupCommand: "roborev agent setup", Items: func(name string) ([]agentsetup.Item, error) {
-		items, _, err := agentSetupItems(name, mcp, server)
-		if err != nil {
-			items = []agentsetup.Item{{Name: "setup", Check: func(context.Context) (agentsetup.Status, error) { return agentsetup.Status{}, err }}}
-		}
-		return items, nil
-	}})
-	return report, err
-}
-
 // agentSetupItems keeps the installed hook's executable, server, and custom
 // arguments unless setup selects a change. An explicit server reaches both the
 // hook and MCP, and a generated hook's missing absolute executable is replaced.
-func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item, bool, error) {
+func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item, error) {
 	agent := kitagenthook.Agent(name)
 	binary, err := githook.ResolveRoborevPath("")
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	installed, found, err := agenthook.InstalledOptions(agent)
-	if err != nil {
-		return nil, false, err
+	command, specs, mixed, err := agenthook.InstalledCommand(agent)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
 	}
 	opts := agenthook.InstallOptions{Executable: binary.Path, Timeout: 10 * time.Second}
-	opts = installedSetupOptions(opts, installed, found, binary.Path)
+	found := len(specs) > 0
+	if found {
+		installed, err := agenthook.CommandOptions(command.Native)
+		if err != nil {
+			return nil, err
+		}
+		opts.Executable, opts.MCP, opts.RoborevServerAddr = installed.Executable, installed.MCP, installed.RoborevServerAddr
+	}
 	registration, registered := mcpconfig.Registration(mcpconfig.Options{Agent: skills.Agent(name)})
 	if opts.RoborevServerAddr == "" && registered {
 		opts.RoborevServerAddr = registration.DaemonAddress()
@@ -135,34 +132,31 @@ func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item,
 		opts.RoborevServerAddr = *server
 	}
 	opts.Agent, opts.MCP = name, selected
-	hooks, err := setupHookOptions(agent, opts)
+	hooks, err := agenthook.KitInstallOptions(agent, opts)
 	if err != nil {
-		return nil, selected, err
+		return nil, err
 	}
 	path, err := kitagenthook.ConfigPath(agent)
 	if err != nil {
-		return nil, selected, err
+		return nil, err
 	}
-	mixed := false
-	if found {
-		command, specs, different, err := agenthook.InstalledCommand(agent)
+	if found && !mixed {
+		command, err = agenthook.RewriteCommand(command, agent, opts, binary.Path)
 		if err != nil {
-			return nil, selected, err
+			return nil, err
 		}
-		mixed = different
-		if !mixed {
-			command, err = agenthook.RewriteCommand(command, agent, opts, binary.Path)
-			if err != nil {
-				return nil, selected, err
-			}
-			for _, required := range hooks.Hooks {
-				if !slices.ContainsFunc(specs, func(spec kitagenthook.Hook) bool { return spec.Event == required.Event }) {
-					specs = append(specs, required)
-				}
-			}
-			hooks.Hooks = specs
-			hooks.Command, hooks.CommandWindows, hooks.Executable, hooks.Arguments = command.Native, command.Windows, "", nil
+		updated, err := agenthook.CommandOptions(command.Native)
+		if err != nil {
+			return nil, err
 		}
+		opts.Executable = updated.Executable
+		for _, required := range hooks.Hooks {
+			if !slices.ContainsFunc(specs, func(spec kitagenthook.Hook) bool { return spec.Event == required.Event }) {
+				specs = append(specs, required)
+			}
+		}
+		hooks.Hooks = specs
+		hooks.Command, hooks.CommandWindows, hooks.Executable, hooks.Arguments = command.Native, command.Windows, "", nil
 	}
 	hookItem := agentsetup.Hooks(name, hooks)
 	if mixed {
@@ -189,34 +183,15 @@ func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item,
 	} else if selected {
 		item, err := agentMCPItem(name, opts.Executable, opts.RoborevServerAddr, registration, registered)
 		if err != nil {
-			return nil, selected, err
+			return nil, err
 		}
 		items = append(items, item)
 	}
-	return items, selected, nil
+	return items, nil
 }
 
 func mixedHookStatus(context.Context) (agentsetup.Status, error) {
 	return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Hook commands differ between events", NextStep: "Inspect the hooks in the agent"}, nil
-}
-
-// installedSetupOptions keeps the selected hook settings and replaces a missing
-// generated executable with the current binary.
-func installedSetupOptions(opts, installed agenthook.InstallOptions, found bool, executable string) agenthook.InstallOptions {
-	if !found {
-		return opts
-	}
-	if _, err := os.Stat(installed.Executable); installed.Command == "" && filepath.IsAbs(installed.Executable) && errors.Is(err, fs.ErrNotExist) {
-		installed.Executable = executable
-	}
-	return installed
-}
-
-func setupHookOptions(agent kitagenthook.Agent, opts agenthook.InstallOptions) (kitagenthook.InstallOptions, error) {
-	if opts.Command != "" {
-		opts.Executable = ""
-	}
-	return agenthook.KitInstallOptions(agent, opts)
 }
 
 // agentMCPItem registers the roborev MCP server, or repairs the connection the

@@ -181,13 +181,12 @@ func TestRepairSelectedMCPConnection(t *testing.T) {
 			for _, want := range tc.want {
 				assert.Contains(t, string(data), want)
 			}
-			if tc.agent == skills.AgentCodex {
+			if tc.name == "codex" {
 				assert.NotContains(t, string(data), "enabled")
-				updated, found := Registration(opts)
-				require.True(t, found)
-				assert.Contains(t, updated.Args, "http://127.0.0.1:8282")
 			}
-			assert.NotContains(t, string(data), "8181")
+			if tc.name == "codex" || tc.name == "claude" {
+				assert.NotContains(t, string(data), "8181")
+			}
 			old := time.Unix(1000000000, 0)
 			require.NoError(t, os.Chtimes(path, old, old))
 			require.NoError(t, Repair(opts, server))

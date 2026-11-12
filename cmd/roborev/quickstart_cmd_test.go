@@ -350,6 +350,10 @@ func TestRenderHumanIncludesGuideAndState(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "How roborev works") // embedded guide
 	assert.Contains(t, out, "daemon_running")    // detected state
+	buf.Reset()
+	renderHuman(&buf, quickstartState{Checks: []quickstartCheck{{ID: "agent_hook_codex", Status: checkStatus("untrusted"), FixCommand: "open codex and run /hooks"}}})
+	assert.Contains(t, buf.String(), "needs you")
+	assert.Contains(t, buf.String(), "open codex and run /hooks")
 }
 
 func TestQuickstartJSONOmitsGuide(t *testing.T) {
@@ -398,11 +402,4 @@ func TestQuickstartOutsideGitRepo(t *testing.T) {
 		cmd.SetErr(&errBuf)
 		require.Error(t, cmd.Execute())
 	})
-}
-
-func TestQuickstartRendersUntrustedHook(t *testing.T) {
-	var out bytes.Buffer
-	renderHuman(&out, quickstartState{Checks: []quickstartCheck{{ID: "agent_hook_codex", Status: checkStatus("untrusted"), FixCommand: "open codex and run /hooks"}}})
-	assert.Contains(t, out.String(), "needs you")
-	assert.Contains(t, out.String(), "open codex and run /hooks")
 }
