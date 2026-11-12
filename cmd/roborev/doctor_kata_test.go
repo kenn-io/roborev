@@ -64,10 +64,10 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 	}{
 		{"ready with replies", ready, doctorOK, []string{`project "reviews"`, "v0.19.0", "server stores typed replies"}, ""},
 		{"ready on an older server", oldServer, doctorInfo, []string{"server does not store typed replies", "0.27.0", "0.28.0"}, "upgrade Kata"},
-		{"unreachable", withState("unreachable", "The Kata server is unavailable."), doctorWarn, []string{"unreachable"}, "endpoint"},
-		{"authentication required", withState("authentication_required", "Kata rejected the credential."), doctorWarn, []string{"authentication_required"}, "api_key_file"},
-		{"incompatible", withState("incompatible", "not a compatible Kata API"), doctorWarn, []string{"incompatible"}, "0.21.0"},
-		{"project not found", withState("project_not_found", "The Kata project was not found on the server."), doctorWarn, []string{"project_not_found", `project: "reviews"`}, "default_project"},
+		{"unreachable", withState("unreachable", "The Kata server is unavailable."), doctorWarn, []string{"The Kata server is unavailable."}, "endpoint"},
+		{"authentication required", withState("authentication_required", "Kata rejected the credential."), doctorWarn, []string{"Kata rejected the credential."}, "api_key_file"},
+		{"incompatible", withState("incompatible", "not a compatible Kata API"), doctorWarn, []string{"not a compatible Kata API"}, "0.21.0"},
+		{"project not found", withState("project_not_found", "The Kata project was not found on the server."), doctorWarn, []string{"The Kata project was not found on the server.", `project: "reviews"`}, "default_project"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,6 +75,10 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 			got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
 			assert.Equal(t, tt.wantStatus, got.Status)
 			assert.Equal(t, "integrations", got.Category)
+			if tt.status.State != "ready" {
+				assert.Equal(t, tt.status.Message, got.Summary)
+				assert.NotContains(t, got.Details, tt.status.Message)
+			}
 			text := got.Summary + " " + strings.Join(got.Details, " ")
 			for _, want := range tt.wantIn {
 				assert.Contains(t, text, want)

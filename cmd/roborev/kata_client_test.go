@@ -201,6 +201,10 @@ func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T
 		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues",
 		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/abc4",
 	}, paths, "committed aliases resolve canonically")
+
+	fake.Token = "rotated-credential"
+	_, err = c.Binding(t.Context())
+	require.EqualError(t, err, "Kata: Kata rejected the credential, or no usable credential is configured.")
 }
 
 func TestKataClientProbesOnFirstUse(t *testing.T) {
