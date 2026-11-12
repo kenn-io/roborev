@@ -346,32 +346,33 @@ jobs:
             else error("missing run/pass evidence for Kata through daemon") end
           ' gotestsum/kata-daemon.json
 
-      - name: Test typed replies with pinned Kata (Linux)
+      - name: Test typed replies with pinned and current Kata (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           set -o pipefail
-          # Install only the producer version required by this checkout.
           kata_version="$(go mod edit -json | jq -er '[.Require[] | select(.Path == "go.kenn.io/kata") | .Version] | if length == 1 then .[0] else error("missing Kata module pin") end')"
-          GOBIN="$RUNNER_TEMP/kata-bin" kit-retry 3 5 go install "go.kenn.io/kata/cmd/kata@$kata_version"
-          test -x "$RUNNER_TEMP/kata-bin/kata"
-          export PATH="$RUNNER_TEMP/kata-bin:$PATH"
+          for producer in "$kata_version" v0.23.0; do
+            GOBIN="$RUNNER_TEMP/kata-bin" kit-retry 3 5 go install "go.kenn.io/kata/cmd/kata@$producer"
+            test -x "$RUNNER_TEMP/kata-bin/kata"
+            export PATH="$RUNNER_TEMP/kata-bin:$PATH"
+            result="gotestsum/kata-real-$producer.json"
+            go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+              --jsonfile "$result" \
+              --packages "./internal/kata ./cmd/roborev" \
+              -- -timeout 15m -race -count=1 -tags integration,kata \
+              -run '^(TestTypedReplyRealKataLostReceiptAndRetry|TestKataTypedReplyThroughDaemonE2E)$'
 
-          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-            --jsonfile gotestsum/kata-real.json \
-            --packages "./internal/kata ./cmd/roborev" \
-            -- -timeout 15m -race -count=1 -tags integration,kata \
-            -run '^(TestTypedReplyRealKataLostReceiptAndRetry|TestKataTypedReplyThroughDaemonE2E)$'
-
-          # A skipped test exits successfully, so require both actual run and pass events.
-          for pair in \
-            'go.kenn.io/roborev/internal/kata/TestTypedReplyRealKataLostReceiptAndRetry' \
-            'go.kenn.io/roborev/cmd/roborev/TestKataTypedReplyThroughDaemonE2E'; do
-            jq -ser --arg pkg "${pair%/*}" --arg test "${pair##*/}" '
-              [ .[] | select(.Package == $pkg and .Test == $test) | .Action ] |
-              if index("run") != null and index("pass") != null and index("skip") == null
-              then "RUN and PASS: \($pkg)/\($test)"
-              else error("missing run/pass evidence for \($pkg)/\($test)") end
-            ' gotestsum/kata-real.json
+            # Require both named tests to run and pass for each producer.
+            for pair in \
+              'go.kenn.io/roborev/internal/kata/TestTypedReplyRealKataLostReceiptAndRetry' \
+              'go.kenn.io/roborev/cmd/roborev/TestKataTypedReplyThroughDaemonE2E'; do
+              jq -ser --arg pkg "${pair%/*}" --arg test "${pair##*/}" '
+                [ .[] | select(.Package == $pkg and .Test == $test) | .Action ] |
+                if index("run") != null and index("pass") != null and index("skip") == null
+                then "RUN and PASS: \($pkg)/\($test)"
+                else error("missing run/pass evidence for \($pkg)/\($test)") end
+              ' "$result"
+            done
           done
 
       - name: Search mirror growth (Linux)
@@ -450,7 +451,7 @@ jobs:
           name: ${{ matrix.shard || matrix.os }}-test-json
           path: |
             gotestsum/${{ matrix.shard || matrix.os }}.json
-            gotestsum/kata-real.json
+            gotestsum/kata-real-*.json
           if-no-files-found: ignore
 
       - name: Upload gotestsum results
