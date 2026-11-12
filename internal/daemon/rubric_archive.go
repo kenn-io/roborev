@@ -68,7 +68,7 @@ func archiveRubric(ctx context.Context, client kata.Client, job storage.ReviewJo
 }
 
 func prepareRubricArchive(job *storage.ReviewJob, enabled bool, data []byte) bool {
-	if !enabled || job.IsCIReview() || job.Source == "ci_branch" || job.IsDirtyJob() || !job.IsReviewJob() || job.IsGoalReviewJob() || job.PromptPrebuilt || job.Source == storage.JobSourceReviewPrompt || hasSuppliedReviewSettings(job) {
+	if !enabled || job.IsCIReview() || job.Source == "ci_branch" || job.IsDirtyJob() || !job.IsReviewJob() || job.IsGoalReviewJob() || job.PromptPrebuilt || job.Source == storage.JobSourceReviewPrompt {
 		return false
 	}
 	if len(data) > rubricArchiveMaxBytes {
