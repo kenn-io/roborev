@@ -130,6 +130,10 @@ type CIConfig struct {
 	// SkipDrafts prevents CI reviews of draft pull requests. Default: false.
 	SkipDrafts bool `toml:"skip_drafts"`
 
+	// ReviewDefaultBranch also reviews each commit that lands on a polled
+	// repository's default branch. Default: false.
+	ReviewDefaultBranch bool `toml:"review_default_branch"`
+
 	// AllowedAuthors and AllowedAuthorAssociations limit CI reviews to PRs
 	// from trusted authors. When either is set, a PR is reviewed only if its
 	// author's login is in AllowedAuthors (case-insensitive) or its GitHub
@@ -571,6 +575,9 @@ type RepoCIConfig struct {
 	Check   *bool `toml:"check" comment:"Check CI findings before posting."`
 	Rewrite *bool `toml:"rewrite" comment:"Rewrite checked CI findings in plain words."`
 
+	// ReviewDefaultBranch can turn off default-branch commit reviews for this repo.
+	ReviewDefaultBranch *bool `toml:"review_default_branch" comment:"Set false to skip CI reviews of commits landing on this repo's default branch."`
+
 	// Agents overrides the list of agents for CI reviews of this repo.
 	Agents []string `toml:"agents" comment:"Override the agents used by CI for this repo."`
 
@@ -875,6 +882,19 @@ func ResolveCICheck(repoCfg *RepoConfig, globalCfg *Config) bool {
 		globalVal = &globalCfg.CI.Check
 	}
 	return resolveBool(false, repoVal, globalVal)
+}
+
+// ResolveCIReviewDefaultBranch reports whether the CI poller reviews commits
+// that land on the repository's default branch. The global switch enables the
+// feature; a repository can only turn it off.
+func ResolveCIReviewDefaultBranch(repoCfg *RepoConfig, globalCfg *Config) bool {
+	if globalCfg == nil || !globalCfg.CI.ReviewDefaultBranch {
+		return false
+	}
+	if repoCfg != nil && repoCfg.CI.ReviewDefaultBranch != nil {
+		return *repoCfg.CI.ReviewDefaultBranch
+	}
+	return true
 }
 
 // ResolveCIRewrite lets the repository override the global rewrite switch.

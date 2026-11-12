@@ -1,0 +1,289 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
+)
+
+const branchReviewRepo = "acme/api"
+
+type branchStatus struct {
+	SHA, State, Description string
+}
+
+// branchReviewHarness polls a real clone of a local origin repository. Only
+// GitHub writes, PR listing, and the review agent are fakes.
+type branchReviewHarness struct {
+	origin   *testutil.TestRepo
+	db       *storage.DB
+	cfg      *config.Config
+	poller   *CIPoller
+	pool     *WorkerPool
+	mu       sync.Mutex
+	statuses []branchStatus
+	findings bool
+	fail     bool
+	reviewed []string
+}
+
+func newBranchReviewHarness(t *testing.T) *branchReviewHarness {
+	t.Helper()
+	testenv.SetDataDir(t)
+	h := &branchReviewHarness{origin: testutil.NewGitRepo(t)}
+	h.origin.CommitFile("app.txt", "start\n", "initial")
+
+	clone := filepath.Join(t.TempDir(), "clone")
+	out, err := exec.CommandContext(t.Context(), "git", "clone", "--quiet", h.origin.Path(), clone).CombinedOutput()
+	require.NoError(t, err, "%s", out)
+
+	h.db = testutil.OpenTestDB(t)
+	_, err = h.db.GetOrCreateRepo(clone, "git@github.com:"+branchReviewRepo+".git")
+	require.NoError(t, err)
+
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "branch-reviewer", ReviewFn: func(_ context.Context, _, gitRef, _ string, _ io.Writer) (string, error) {
+		h.mu.Lock()
+		h.reviewed = append(h.reviewed, gitRef)
+		findings, fail := h.findings, h.fail
+		h.mu.Unlock()
+		if fail {
+			return "", errors.New("agent unavailable")
+		}
+		if findings {
+			return string(testutil.ReviewFixtureJSON("## Findings\n- [P1] Missing validation")), nil
+		}
+		return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+	}})
+
+	h.cfg = config.DefaultConfig()
+	h.cfg.CI.Enabled = true
+	h.cfg.CI.ReviewDefaultBranch = true
+	h.cfg.CI.Agents = []string{"branch-reviewer"}
+	h.cfg.CI.ReviewTypes = []string{"default"}
+	h.cfg.CI.SynthesisAgent = "branch-reviewer"
+	h.poller = NewCIPoller(h.db, NewStaticConfig(h.cfg), nil)
+	stubCIPollerGitHubSideEffects(h.poller)
+	h.poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
+	h.poller.agentResolverFn = func(name string) (string, error) { return name, nil }
+	h.poller.buildReviewPromptFn = func(_ context.Context, _, gitRef string, _ int64, _ int, _, _, _, _ string, _ prompt.PullRequest, _ *config.RepoConfig, _ string, _ *config.Config) (string, error) {
+		return "Review " + gitRef, nil
+	}
+	h.poller.setBranchStatusFn = func(_, sha, state, description string) error {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.statuses = append(h.statuses, branchStatus{SHA: sha, State: state, Description: description})
+		return nil
+	}
+	h.pool = NewWorkerPool(h.db, NewStaticConfig(h.cfg), 1, NewBroadcaster(), nil, nil)
+	h.pool.retryBackoff = 0
+	return h
+}
+
+func (h *branchReviewHarness) poll(t *testing.T) {
+	t.Helper()
+	require.NoError(t, h.poller.pollRepo(t.Context(), branchReviewRepo, h.cfg))
+}
+
+// runJobs executes queued reviews, members before the synthesis they release.
+func (h *branchReviewHarness) runJobs(t *testing.T) {
+	t.Helper()
+	for {
+		job, err := h.db.ClaimJob(testWorkerID)
+		require.NoError(t, err)
+		if job == nil {
+			return
+		}
+		h.pool.processJob(testWorkerID, job)
+	}
+}
+
+func (h *branchReviewHarness) synthesisJobs(t *testing.T) []storage.ReviewJob {
+	t.Helper()
+	jobs, err := h.db.ListJobs("", "", 100, 0)
+	require.NoError(t, err)
+	var synth []storage.ReviewJob
+	for _, job := range jobs {
+		if job.IsSynthesisJob() {
+			synth = append(synth, job)
+		}
+	}
+	return synth
+}
+
+func (h *branchReviewHarness) takeStatuses() []branchStatus {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	statuses := h.statuses
+	h.statuses = nil
+	return statuses
+}
+
+func TestCIDefaultBranchReviewsEachLandedCommitOnce(t *testing.T) {
+	assert := assert.New(t)
+	h := newBranchReviewHarness(t)
+	start := h.origin.HeadSHA()
+
+	h.poll(t)
+	assert.Empty(h.synthesisJobs(t), "enabling reviews must not review existing history")
+
+	first := h.origin.CommitFile("app.txt", "first\n", "first change")
+	second := h.origin.CommitFile("app.txt", "second\n", "second change")
+	h.poll(t)
+	h.poll(t)
+
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 2, "each landed commit gets exactly one review")
+	refs := []string{runs[0].GitRef, runs[1].GitRef}
+	assert.ElementsMatch([]string{start + ".." + first, first + ".." + second}, refs)
+	for _, run := range runs {
+		assert.Equal(storage.JobSourceCIBranch, run.Source)
+		assert.Equal("main", run.Branch)
+		assert.Equal("main", run.HookBranch())
+	}
+	assert.Equal([]branchStatus{
+		{SHA: first, State: "pending", Description: "Review in progress"},
+		{SHA: second, State: "pending", Description: "Review in progress"},
+	}, h.takeStatuses())
+
+	h.runJobs(t)
+	h.poll(t) // a lost completion event is recovered by the next poll
+	assert.ElementsMatch([]branchStatus{
+		{SHA: first, State: "success", Description: "No issues found"},
+		{SHA: second, State: "success", Description: "No issues found"},
+	}, h.takeStatuses())
+	h.poll(t)
+	assert.Empty(h.takeStatuses(), "a published result is not sent again")
+}
+
+func TestCIDefaultBranchReviewsMergeAgainstFirstParent(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	before := h.origin.HeadSHA()
+	h.origin.CheckoutNewBranch("feature")
+	h.origin.CommitFile("feature.txt", "one\n", "feature one")
+	h.origin.CommitFile("feature.txt", "two\n", "feature two")
+	h.origin.CheckoutBranch("main")
+	h.origin.Run("merge", "--no-ff", "-m", "merge feature", "feature")
+	merge := h.origin.HeadSHA()
+
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "the merged branch is one change to the default branch")
+	assert.Equal(t, before+".."+merge, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewStatusReportsFindings(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.findings = true
+	h.poll(t)
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	h.takeStatuses()
+	h.runJobs(t)
+
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1)
+	h.poller.handleReviewCompleted(Event{Type: "review.completed", JobID: runs[0].ID})
+	assert.Equal(t, []branchStatus{{SHA: landed, State: "success", Description: "Issues found"}}, h.takeStatuses())
+}
+
+func TestCIDefaultBranchReviewsSkipRewrittenHistory(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.origin.CommitFile("app.txt", "reviewed\n", "reviewed")
+	h.poll(t)
+	h.origin.Run("reset", "--hard", "HEAD~1")
+	rewritten := h.origin.CommitFile("app.txt", "rewritten\n", "rewritten")
+
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t), "commits after a rewrite cannot be told apart from reviewed ones")
+	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	assert.Equal(t, rewritten, cursor.HeadSHA)
+
+	next := h.origin.CommitFile("app.txt", "next\n", "next")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1)
+	assert.Equal(t, rewritten+".."+next, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewsRespectRepositoryOptOut(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	h.origin.CommitFile(".roborev.toml", "[ci]\nreview_default_branch = false\n", "opt out")
+	h.origin.CommitFile("app.txt", "skipped\n", "skipped")
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t))
+
+	skipped := h.origin.HeadSHA()
+	optIn := h.origin.CommitFile(".roborev.toml", "[ci]\nreview_default_branch = true\n", "opt in")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "commits landed while opted out stay unreviewed")
+	assert.Equal(t, skipped+".."+optIn, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewsRecordInvalidConfiguration(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	landed := h.origin.CommitFile(".roborev.toml", "[ci]\ncomment_max_findings = -1\n", "invalid config")
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t))
+	assert.Equal(t, []branchStatus{{
+		SHA: landed, State: "error",
+		Description: "Review could not be queued; run roborev config validate",
+	}}, h.takeStatuses())
+	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	require.NoError(t, err)
+	assert.Equal(t, landed, cursor.HeadSHA, "a commit that cannot be reviewed does not block later commits")
+}
+
+func TestCIDefaultBranchReviewFailureReportsError(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.fail = true
+	h.poll(t)
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	h.takeStatuses()
+	h.runJobs(t)
+	h.poll(t)
+
+	statuses := h.takeStatuses()
+	require.Len(t, statuses, 1)
+	assert.Equal(t, landed, statuses[0].SHA)
+	assert.Equal(t, "error", statuses[0].State, "a review that did not run is not reported as clean")
+}
+
+func TestCIDefaultBranchReviewsWaitForQuietHoursToEnd(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	start := h.origin.HeadSHA()
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	now := time.Now()
+	h.poller.nowFn = func() time.Time { return now }
+	h.poller.quietHours = quietWindow(t, now, "1h", true)
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t))
+
+	h.poller.quietHours = nil
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "commits that landed during quiet hours are reviewed afterward")
+	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+}

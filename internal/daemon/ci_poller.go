@@ -129,6 +129,7 @@ type CIPoller struct {
 	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
 	setCommitStatusFn   func(ghRepo, sha, state, description string) error
+	setBranchStatusFn   func(ghRepo, sha, state, description string) error
 	setSkippedCheckFn   func(ghRepo, sha, summary string) error
 	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
@@ -614,6 +615,9 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 		processingErrors = append(processingErrors, err)
 	}
 	p.retryFinalPanelStatuses(ghRepo)
+	if err := p.pollDefaultBranch(ctx, ghRepo, cfg); err != nil {
+		processingErrors = append(processingErrors, fmt.Errorf("default branch: %w", err))
+	}
 	return errors.Join(processingErrors...)
 }
 
@@ -841,33 +845,15 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		}
 		return false, err
 	}
-	repoCfg := repoConfig.Config
-	rawRepoCfg := repoConfig.Raw
-	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
-		Workflow: config.ExperimentWorkflowCI,
-		Subject: config.ExperimentSubject{
-			Repository: repo.Identity,
-			Branch:     pr.HeadRefName,
-		},
-		Global:  cfg,
-		Repo:    repoCfg,
-		RawRepo: rawRepoCfg,
+	plan, err := p.planCIPanel(ctx, cfg, repoConfig, ciPanelTarget{
+		repo: repo, ghRepo: ghRepo, base: mergeBase, head: pr.HeadRefOid,
+		branch: pr.HeadRefName,
+		// Gate hooks on the PR base (target) branch: it is maintainer-
+		// controlled, unlike the fork-author-controlled head ref.
+		baseBranch: pr.BaseRefName,
+		prNumber:   pr.Number, discussion: prDiscussionContext,
+		pullRequest: prompt.PullRequest{Title: pr.Title, Description: pr.Body},
 	})
-	if err != nil {
-		return false, &ciConfigurationError{
-			err: fmt.Errorf("select review experiment: %w", err),
-		}
-	}
-	repoCfg = selection.RepoConfig
-	if selection.RawRepoConfig != nil {
-		rawRepoCfg = selection.RawRepoConfig
-	}
-
-	// Resolve panel members + synthesis: a configured [ci].panel names a panel,
-	// else the agents x review_types matrix is adapted into members.
-	members, synth, err := p.resolveCIMembers(
-		repo, repoCfg, rawRepoCfg, cfg, ghRepo,
-	)
 	if err != nil {
 		// A member's agent could not be resolved (none installed / quota):
 		// surface it on the commit status, mirroring the pre-panel rollback.
@@ -876,7 +862,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		}
 		return false, err
 	}
-	if len(members) == 0 {
+	if len(plan.memberOpts) == 0 {
 		// An empty matrix intentionally disables reviews. Remove a claimed retry
 		// so reconciliation cannot re-arm work that has been explicitly skipped.
 		if err := p.db.DeleteReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid); err != nil {
@@ -886,41 +872,8 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		log.Printf("CI poller: no panel members for %s#%d, skipping", ghRepo, pr.Number)
 		return false, nil
 	}
-
-	// Append one whole-range design member when auto-design warrants it and
-	// no member already covers the design review type (F8, F12).
-	members = p.maybeAppendDesignMember(ctx, members, repo, repoCfg, cfg, mergeBase, pr.HeadRefOid)
-
-	memberOpts, synthOpts, err := p.buildPanelOpts(
-		ctx,
-		buildPanelOptsInput{
-			repo: repo, repoCfg: repoCfg, repoCfgRef: repoConfig.Ref,
-			cfg: cfg, ghRepo: ghRepo, gitRef: gitRef,
-			branch: pr.HeadRefName,
-			// Gate hooks on the PR base (target) branch: it is maintainer-
-			// controlled, unlike the fork-author-controlled head ref.
-			baseBranch: pr.BaseRefName,
-			prNumber:   pr.Number, panelName: ciPanelName(repoCfg, cfg),
-			prDiscussionContext: prDiscussionContext,
-			pullRequest:         prompt.PullRequest{Title: pr.Title, Description: pr.Body},
-			members:             members, synth: synth,
-		})
-	if err != nil {
-		return false, err
-	}
-	if selection.Assignment != nil {
-		plan, planErr := experimentPlanForPanel(memberOpts, synthOpts)
-		if planErr != nil {
-			return false, planErr
-		}
-		assignment, assignErr := storageAssignmentForExperiment(
-			selection.Assignment, plan,
-		)
-		if assignErr != nil {
-			return false, fmt.Errorf("fingerprint experiment plan: %w", assignErr)
-		}
-		synthOpts.Experiment = assignment
-	}
+	memberOpts, synthOpts := plan.memberOpts, plan.synthOpts
+	repoCfg, rawRepoCfg := plan.repoCfg, plan.rawRepoCfg
 	for i := range memberOpts {
 		memberOpts[i].SessionID, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
 			ctx, p.db, repo.RootPath, pr.HeadRefOid, memberOpts[i],
@@ -940,13 +893,108 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 
 	headShort := gitpkg.ShortSHA(pr.HeadRefOid)
 	log.Printf("CI poller: created panel run for %s#%d (HEAD=%s, %d members, range=%s)",
-		ghRepo, pr.Number, headShort, len(members), gitRef)
+		ghRepo, pr.Number, headShort, len(memberOpts), gitRef)
 
 	if err := p.setPendingReviewStatus(ghRepo, pr.Number, pr.HeadRefOid, "Review in progress"); err != nil {
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v", ghRepo, headShort, err)
 	}
 
 	return true, nil
+}
+
+// ciPanelTarget is the commit range one CI panel run reviews. prNumber is zero
+// for a commit on the default branch, which has no pull request.
+type ciPanelTarget struct {
+	repo        *storage.Repo
+	ghRepo      string
+	base, head  string
+	branch      string
+	baseBranch  string
+	prNumber    int
+	discussion  string
+	pullRequest prompt.PullRequest
+}
+
+// ciPanelPlan holds the jobs for one CI panel run. No member options means the
+// repository's CI configuration intentionally selects no reviewers.
+type ciPanelPlan struct {
+	memberOpts []storage.EnqueueOpts
+	synthOpts  storage.EnqueueOpts
+	repoCfg    *config.RepoConfig
+	rawRepoCfg map[string]any
+}
+
+// planCIPanel resolves the members and synthesis for a CI review from the
+// repository's default-branch configuration and prebuilds their prompts. Pull
+// request and default-branch reviews share it so both use the same policy.
+func (p *CIPoller) planCIPanel(
+	ctx context.Context, cfg *config.Config, repoConfig ciRepoConfigSource, t ciPanelTarget,
+) (ciPanelPlan, error) {
+	repoCfg := repoConfig.Config
+	rawRepoCfg := repoConfig.Raw
+	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+		Workflow: config.ExperimentWorkflowCI,
+		Subject: config.ExperimentSubject{
+			Repository: t.repo.Identity,
+			Branch:     t.branch,
+		},
+		Global:  cfg,
+		Repo:    repoCfg,
+		RawRepo: rawRepoCfg,
+	})
+	if err != nil {
+		return ciPanelPlan{}, &ciConfigurationError{
+			err: fmt.Errorf("select review experiment: %w", err),
+		}
+	}
+	repoCfg = selection.RepoConfig
+	if selection.RawRepoConfig != nil {
+		rawRepoCfg = selection.RawRepoConfig
+	}
+
+	// Resolve panel members + synthesis: a configured [ci].panel names a panel,
+	// else the agents x review_types matrix is adapted into members.
+	members, synth, err := p.resolveCIMembers(t.repo, repoCfg, rawRepoCfg, cfg, t.ghRepo)
+	if err != nil {
+		return ciPanelPlan{}, err
+	}
+	plan := ciPanelPlan{repoCfg: repoCfg, rawRepoCfg: rawRepoCfg}
+	if len(members) == 0 {
+		return plan, nil
+	}
+
+	// Append one whole-range design member when auto-design warrants it and
+	// no member already covers the design review type (F8, F12).
+	members = p.maybeAppendDesignMember(ctx, members, t.repo, repoCfg, cfg, t.base, t.head)
+
+	plan.memberOpts, plan.synthOpts, err = p.buildPanelOpts(
+		ctx,
+		buildPanelOptsInput{
+			repo: t.repo, repoCfg: repoCfg, repoCfgRef: repoConfig.Ref,
+			cfg: cfg, ghRepo: t.ghRepo, gitRef: t.base + ".." + t.head,
+			branch: t.branch, baseBranch: t.baseBranch,
+			prNumber: t.prNumber, panelName: ciPanelName(repoCfg, cfg),
+			prDiscussionContext: t.discussion,
+			pullRequest:         t.pullRequest,
+			members:             members, synth: synth,
+		})
+	if err != nil {
+		return ciPanelPlan{}, err
+	}
+	if selection.Assignment != nil {
+		experimentPlan, planErr := experimentPlanForPanel(plan.memberOpts, plan.synthOpts)
+		if planErr != nil {
+			return ciPanelPlan{}, planErr
+		}
+		assignment, assignErr := storageAssignmentForExperiment(
+			selection.Assignment, experimentPlan,
+		)
+		if assignErr != nil {
+			return ciPanelPlan{}, fmt.Errorf("fingerprint experiment plan: %w", assignErr)
+		}
+		plan.synthOpts.Experiment = assignment
+	}
+	return plan, nil
 }
 
 // Reruns and their retries keep a delivered result visible. Canceling a retry
@@ -2515,6 +2563,7 @@ func (p *CIPoller) listenForEvents(eventCh <-chan Event, doneCh chan<- struct{})
 // — so they fall through silently.
 func (p *CIPoller) handleReviewCompleted(event Event) {
 	p.routePanelEvent(event.JobID)
+	p.routeBranchReviewEvent(event.JobID)
 }
 
 // handleReviewFailed routes a review.failed event to panel posting when the job
@@ -2527,6 +2576,7 @@ func (p *CIPoller) handleReviewFailed(event Event) {
 		return
 	}
 	p.routePanelEvent(event.JobID)
+	p.routeBranchReviewEvent(event.JobID)
 	p.notifyDiscordCIJobFailed(event)
 }
 
@@ -2538,6 +2588,7 @@ func (p *CIPoller) handleReviewCanceled(event Event) {
 	if event.Type != "review.canceled" {
 		return
 	}
+	p.routeBranchReviewEvent(event.JobID)
 	row, err := p.db.GetCIPanelBySynthesisJobID(event.JobID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return
