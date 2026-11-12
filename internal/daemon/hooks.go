@@ -24,37 +24,52 @@ import (
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/procutil"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // HookRunner listens for broadcaster events and runs configured hooks.
 type HookRunner struct {
-	cfgGetter     ConfigGetter
-	broadcaster   Broadcaster
-	logger        *log.Logger
-	subID         int
-	stopCh        chan struct{}
-	idleCh        chan chan struct{}
-	wg            sync.WaitGroup
-	newKataClient func(workdir string) kata.Client
+	cfgGetter          ConfigGetter
+	broadcaster        Broadcaster
+	logger             *log.Logger
+	subID              int
+	stopCh             chan struct{}
+	idleCh             chan chan struct{}
+	wg                 sync.WaitGroup
+	newKataClient      func(workdir string) kata.Client
+	publisher          *kataPublisher
+	publicationCtx     context.Context //nolint:containedctx // owns the hook runner's publication lifetime
+	cancelPublications context.CancelFunc
+	startupCh          chan struct{}
+	doneCh             chan struct{}
+	manualKataCh       chan kataManualRequest
 }
 
 // NewHookRunner creates a new HookRunner that subscribes to events from the broadcaster.
-func NewHookRunner(cfgGetter ConfigGetter, broadcaster Broadcaster, logger *log.Logger) *HookRunner {
+func NewHookRunner(cfgGetter ConfigGetter, broadcaster Broadcaster, logger *log.Logger, databases ...*storage.DB) *HookRunner {
 	if logger == nil {
 		logger = log.Default()
 	}
 	subID, eventCh := broadcaster.Subscribe("")
 
 	hr := &HookRunner{
-		cfgGetter:     cfgGetter,
-		broadcaster:   broadcaster,
-		logger:        logger,
-		subID:         subID,
-		stopCh:        make(chan struct{}),
-		idleCh:        make(chan chan struct{}),
-		newKataClient: func(workdir string) kata.Client { return kata.NewCLIClient(workdir) },
+		cfgGetter:   cfgGetter,
+		broadcaster: broadcaster,
+		logger:      logger,
+		subID:       subID,
+		stopCh:      make(chan struct{}),
+		idleCh:      make(chan chan struct{}),
 	}
+	hr.newKataClient = hr.defaultKataClient
 
+	// The runner is a lifecycle root; it has no caller context at construction.
+	hr.publicationCtx, hr.cancelPublications = context.WithCancel(context.Background())
+	hr.startupCh = make(chan struct{}, 1)
+	hr.doneCh = make(chan struct{})
+	hr.manualKataCh = make(chan kataManualRequest)
+	if len(databases) != 0 && databases[0] != nil {
+		hr.publisher = newKataPublisher(databases[0], cfgGetter)
+	}
 	go hr.listen(eventCh)
 
 	return hr
@@ -62,6 +77,7 @@ func NewHookRunner(cfgGetter ConfigGetter, broadcaster Broadcaster, logger *log.
 
 // listen processes events from the broadcaster and fires matching hooks.
 func (hr *HookRunner) listen(eventCh <-chan Event) {
+	defer close(hr.doneCh)
 	for {
 		// Prioritize processing events
 		select {
@@ -79,6 +95,14 @@ func (hr *HookRunner) listen(eventCh <-chan Event) {
 		select {
 		case <-hr.stopCh:
 			return
+		case req := <-hr.manualKataCh:
+			hr.wg.Add(1)
+			go hr.runManualKata(req)
+		case <-hr.startupCh:
+			if hr.publisher != nil {
+				hr.wg.Add(1)
+				go hr.recoverKataPublications()
+			}
 		case req := <-hr.idleCh:
 			// Drain any currently queued events before acknowledging idle
 		drainLoop:
@@ -131,8 +155,10 @@ func (hr *HookRunner) WaitUntilIdle() {
 // prevent the broadcaster from blocking on a full channel after the
 // event loop exits.
 func (hr *HookRunner) Stop() {
+	hr.cancelPublications()
 	close(hr.stopCh)
 	hr.broadcaster.Unsubscribe(hr.subID)
+	<-hr.doneCh
 	hr.wg.Wait()
 }
 
@@ -170,6 +196,7 @@ func (hr *HookRunner) handleEvent(event Event) {
 	}
 
 	fired := 0
+	publicationScheduled := false
 	for _, hook := range hooks {
 		if !matchEvent(hook.Event, event.Type) {
 			continue
@@ -191,6 +218,18 @@ func (hr *HookRunner) handleEvent(event Event) {
 		}
 
 		if hook.Type == "kata" {
+			if event.SuppressKataHooks {
+				continue
+			}
+			if hook.Findings != "" && event.Type == "review.completed" {
+				if hr.publisher != nil && event.Verdict == "F" && !publicationScheduled {
+					publicationScheduled = true
+					fired++
+					hr.wg.Add(1)
+					go hr.publishKata(event.JobID)
+				}
+				continue
+			}
 			fired++
 			hr.wg.Add(1)
 			go hr.runKataHook(hook, event, effectiveRepo)
@@ -473,7 +512,7 @@ func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, boo
 
 	return kata.CreateReq{
 		Title:          title,
-		Body:           buildKataHookBody(event),
+		Body:           buildKataHookBody(event, hook.Findings),
 		Project:        hook.Project,
 		Labels:         dedupeStrings(append([]string{kata.RoborevLabel, marker}, hook.Labels...)),
 		Priority:       &priority,
@@ -481,7 +520,7 @@ func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, boo
 	}, true
 }
 
-func buildKataHookBody(event Event) string {
+func buildKataHookBody(event Event, findings string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "- repo: %s\n", event.RepoName)
 	fmt.Fprintf(&b, "- commit: %s\n", event.SHA)
@@ -499,7 +538,7 @@ func buildKataHookBody(event Event) string {
 	if event.Type == "review.completed" && event.Verdict == "F" {
 		fmt.Fprintf(&b, "\nFix: `roborev fix %d`\n", event.JobID)
 	}
-	if event.Error != "" {
+	if event.Error != "" && findings != "summary" {
 		fmt.Fprintf(&b, "\n## Error\n\n%s\n", event.Error)
 	}
 	if event.Findings != "" {
@@ -532,6 +571,18 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
+// defaultKataClient builds the Kata client for workdir from the current
+// configuration: the API connection when [integrations.kata] is enabled, the
+// kata CLI otherwise. Configuration is read per call, so a reloaded connection
+// applies to the next hook run.
+func (hr *HookRunner) defaultKataClient(workdir string) kata.Client {
+	var cfg *config.Config
+	if hr.cfgGetter != nil {
+		cfg = hr.cfgGetter.Config()
+	}
+	return kata.NewFromConfig(workdir, cfg)
+}
+
 // runKataHook files a kata issue for the event. Every failure is logged
 // visibly because the hook is explicitly configured.
 func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir string) {
@@ -544,7 +595,7 @@ func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir s
 
 	factory := hr.newKataClient
 	if factory == nil {
-		factory = func(wd string) kata.Client { return kata.NewCLIClient(wd) }
+		factory = hr.defaultKataClient
 	}
 	client := factory(workdir)
 
@@ -567,5 +618,93 @@ func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir s
 		hr.logger.Printf("kata hook: reused issue %s (job %d)", res.ShortID, event.JobID)
 		return
 	}
+	if author := res.Attribution.Author; author != "" {
+		hr.logger.Printf("kata hook: created issue %s (job %d) as %s", res.ShortID, event.JobID, author)
+		return
+	}
 	hr.logger.Printf("kata hook: created issue %s (job %d)", res.ShortID, event.JobID)
+}
+
+// startKataRecovery requests one startup pass through the listener, which owns
+// all wait-group registrations.
+func (hr *HookRunner) startKataRecovery() {
+	select {
+	case hr.startupCh <- struct{}{}:
+	default:
+	}
+}
+
+func (hr *HookRunner) publishKata(jobID int64) {
+	defer hr.wg.Done()
+	if _, err := hr.publisher.Publish(hr.publicationCtx, jobID); err != nil {
+		hr.logger.Printf("Kata publication for job %d: %v", jobID, err)
+	}
+}
+
+func (hr *HookRunner) recoverKataPublications() {
+	defer hr.wg.Done()
+	records, err := hr.publisher.db.PendingKataPublications(hr.publicationCtx)
+	if err != nil {
+		hr.logger.Printf("Kata publication recovery: %v", err)
+		return
+	}
+	for _, record := range records {
+		if hr.publicationCtx.Err() != nil {
+			return
+		}
+		_, err := hr.publisher.Publish(hr.publicationCtx, record.JobID)
+		if err != nil {
+			hr.logger.Printf("Kata publication recovery for job %d: %v", record.JobID, err)
+		}
+	}
+}
+
+type kataManualRequest struct {
+	ctx    context.Context //nolint:containedctx // caller request lifetime is passed to the queued publication attempt
+	jobID  int64
+	policy string
+	result chan kataManualResult
+}
+type kataManualResult struct {
+	status *KataPublicationStatus
+	err    error
+}
+
+func (hr *HookRunner) publishKataManual(ctx context.Context, jobID int64, policy string) (*KataPublicationStatus, error) {
+	if hr.publisher == nil {
+		return nil, errors.New("kata publisher unavailable")
+	}
+	req := kataManualRequest{ctx: ctx, jobID: jobID, policy: policy, result: make(chan kataManualResult, 1)}
+	select {
+	case hr.manualKataCh <- req:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-hr.stopCh:
+		return nil, context.Canceled
+	}
+	select {
+	case result := <-req.result:
+		return result.status, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-hr.stopCh:
+		return nil, context.Canceled
+	}
+}
+
+func (hr *HookRunner) runManualKata(req kataManualRequest) {
+	defer hr.wg.Done()
+	ctx, cancel := context.WithCancel(req.ctx)
+	stop := context.AfterFunc(hr.publicationCtx, cancel)
+	defer stop()
+	defer cancel()
+	var status *KataPublicationStatus
+	var err error
+	if req.policy != "" {
+		err = hr.publisher.Authorize(ctx, req.jobID, req.policy)
+	}
+	if err == nil {
+		status, err = hr.publisher.Publish(ctx, req.jobID)
+	}
+	req.result <- kataManualResult{status: status, err: err}
 }

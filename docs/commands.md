@@ -1415,6 +1415,17 @@ roborev repo merge source target          # Merge reviews between repos
 
 See: [Repository Management](/docs/guides/repository-management/)
 
+## Kata findings
+
+Use `roborev kata show JOB` to inspect the issue, finding handles, replies, and
+publication status for a review. Use `roborev kata create JOB` to resume a
+previously authorized publication. For an unmarked eligible review, supply
+`--findings comments` or `--findings summary` matching its configured hook. The
+original seven-day retry window still applies. These commands use the local or
+tunneled daemon's Kata API connection; signed remote HTTPS does not expose Kata
+operations. See
+[Kata findings publication](/docs/integrations/kata/#publish-individual-findings).
+
 ## Daemon & Hooks
 
 Automatic daemon discovery uses live runtime records from the selected data
@@ -1588,7 +1599,7 @@ hooks, or edits config.
 | Recent failures | Failed jobs queued in the last 7 days, grouped by agent; post-commit hook runs that failed to queue a review |
 | Repository | Registered with the daemon; git hooks installed and current; `snapshot_dir` usable |
 | Review guidelines | `review_guidelines` or `REVIEW.md` exist; when security reviews are enabled, the guidelines describe security or a threat model |
-| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and CI poller settings and per-PR CI run bursts |
+| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH` (a `kata` hook does not need the CLI when the Kata API connection is on), the daemon's Kata API connection (`integrations.kata`): its state, the project this repo's binding selects, the server version, and typed-reply support, `[sync]` problems, and CI poller settings and per-PR CI run bursts |
 
 Each check reports `ok`, `info`, `warn`, or `fail`. The command exits `1` when
 any check fails and `0` otherwise, including when there are only warnings.

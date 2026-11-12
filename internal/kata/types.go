@@ -43,9 +43,18 @@ type LinkPeer struct {
 	Status      string `json:"status,omitempty"`
 }
 
-// Binding identifies the kata project a workspace is bound to.
+// ProjectAlias identifies a workspace independently of its current project name.
+type ProjectAlias struct {
+	Identity string
+	Kind     string
+}
+
+// Binding identifies the Kata project a workspace is bound to. Alias is set
+// for a committed workspace binding so a remote daemon can resolve the
+// registered project after a rename. Local overrides remain name-based.
 type Binding struct {
 	Project string
+	Alias   *ProjectAlias
 }
 
 // ListOpts controls a List call.
@@ -69,6 +78,16 @@ type CreateReq struct {
 type CreateResult struct {
 	ShortID string
 	Reused  bool
+	// Attribution is who Kata says wrote the issue. The kata CLI client leaves
+	// it empty; the API client records what the server returned.
+	Attribution Attribution
+}
+
+// Attribution is who Kata says wrote an issue. An authenticated credential can
+// override the actor a request names, so callers record this, never what they
+// asked for.
+type Attribution struct {
+	Author string
 }
 
 // Client is the kata interface roborev depends on.
