@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func kataTestSeed() KataPublicationSeed {
@@ -302,14 +303,21 @@ func TestKataBothReviewPullPathsWaitForPublication(t *testing.T) {
 
 func TestKataDocumentHashPreservesStoredSchema(t *testing.T) {
 	t.Parallel()
-	first := []byte(`{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":"a.go:3"}]}`)
-	reordered := []byte(`{ "findings": [{"location":"a.go:3", "fix":"f", "problem":"p", "severity":"low"}], "summary":"s", "schema_version":1 }`)
+	first := []byte(`{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":"a.go:3"}]}`)
+	reordered := []byte(`{ "findings": [{"location":"a.go:3", "fix":"f", "problem":"p", "severity":"low"}], "verdict":"fail", "summary":"s", "schema_version":2 }`)
+	current := []byte(`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":"a.go:3"}]}`)
+	oldDoc, err := structuredreview.Decode(first)
+	require.NoError(t, err)
+	currentDoc, err := structuredreview.Decode(current)
+	require.NoError(t, err)
+	oldDoc.SchemaVersion = currentDoc.SchemaVersion
+	assert.Equal(t, oldDoc, currentDoc)
 	a, err := KataDocumentHash(first)
 	require.NoError(t, err)
 	b, err := KataDocumentHash(reordered)
 	require.NoError(t, err)
 	assert.Equal(t, a, b)
-	other, err := KataDocumentHash([]byte(`{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null}]}`))
+	other, err := KataDocumentHash(current)
 	require.NoError(t, err)
 	assert.NotEqual(t, a, other)
 	_, err = KataDocumentHash([]byte(`{"schema_version":1`))
