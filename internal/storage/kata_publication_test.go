@@ -263,7 +263,7 @@ func TestKataBothReviewPullPathsWaitForPublication(t *testing.T) {
 				require.NoError(t, err)
 				_, err = h.db.ExecContext(t.Context(), `UPDATE reviews SET synced_at = '2020-01-01T00:00:00Z', updated_at = '2020-01-01T00:00:00Z' WHERE job_id = ?`, job.ID)
 				require.NoError(t, err)
-				now := time.Now().UTC().Add(time.Hour)
+				now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 				pulled := PulledReview{UUID: record.ReviewUUID, JobUUID: *job.UUID, Agent: "test", JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: peer, StructuredOutput: reviewFixtureJSON("FAIL: changed"), UpdatedByMachineID: peer, CreatedAt: now, UpdatedAt: now}
 				s, err := h.db.newPullSession(t.Context())
 				require.NoError(t, err)
