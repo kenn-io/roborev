@@ -12,7 +12,7 @@ import (
 )
 
 // ErrReviewChanged means a guarded operation targeted an earlier review.
-var ErrReviewChanged = errors.New("review changed since rebuttal was queued")
+var ErrReviewChanged = errors.New("review changed since the guarded operation began")
 
 // GetReviewByJobID finds a review by its job ID
 func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
