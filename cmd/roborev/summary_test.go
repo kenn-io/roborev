@@ -220,14 +220,14 @@ func TestPrintFindingSummary(t *testing.T) {
 			cmd.SetOut(&out)
 			f := storage.FindingStats{GroupBy: "arm", Rows: []storage.FindingStatsRow{{Key: tc.key, Cost: storage.CostAggregate{TotalUSD: 3, JobsTotal: 2, JobsWithCost: 1}}}}
 			printFindingSummary(cmd, &f)
-			a.Contains(out.String(), "  "+tc.want+" ")
-			a.NotContains(out.String(), definitionHash)
-			a.NotContains(out.String(), footer)
+			assert.Contains(out.String(), "  "+tc.want+" ")
+			assert.NotContains(out.String(), definitionHash)
+			assert.NotContains(out.String(), footer)
 
 			out.Reset()
 			f.GroupBy = "model"
 			printFindingSummary(cmd, &f)
-			a.Contains(out.String(), "  "+tc.key+" ")
+			assert.Contains(out.String(), "  "+tc.key+" ")
 		})
 	}
 }
