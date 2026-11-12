@@ -197,33 +197,6 @@ func TestKataPublicationGuardBlocksMutationsAndAllowsMarkerUpdate(t *testing.T) 
 	})
 }
 
-func TestKataReviewPullAcquiresAttemptLockBeforeTransaction(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		h := newSyncTestHelper(t)
-		s, err := h.db.newPullSession(t.Context())
-		require.NoError(t, err)
-		defer s.close()
-		h.db.attempts.mu.RLock()
-		done := make(chan error, 1)
-		go func() {
-			done <- NewSyncWorker(h.db, testSyncConfig()).pullReview(t.Context(), s, PulledReview{})
-		}()
-		synctest.Wait()
-		assert.Empty(t, done, "review pull must wait for the attempt lock")
-		assert.True(t, s.started.IsZero(), "transaction must not start before the attempt lock")
-		h.db.attempts.mu.RUnlock()
-		require.NoError(t, <-done)
-		require.NoError(t, s.commit(t.Context()))
-		// Unlocked batches must finish before acquiring the attempt lock.
-		require.NoError(t, s.begin(t.Context(), false))
-		s.budget = time.Hour
-		require.NoError(t, s.begin(t.Context(), true))
-		assert.True(t, s.jobs)
-		require.NoError(t, s.commit(t.Context()))
-	})
-}
-
 func TestKataPublicationPullKeepsAuthorizationLocalAndGuardsEdits(t *testing.T) {
 	t.Parallel()
 	for _, batched := range []bool{false, true} {
@@ -279,6 +252,19 @@ func TestKataBothReviewPullPathsWaitForPublication(t *testing.T) {
 		t.Run(map[bool]string{false: "single", true: "batched"}[batched], func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				h := newSyncTestHelper(t)
+				job := h.createPendingJob("guarded-publication-pull")
+				setJobStatus(t, h.db, job.ID, JobStatusRunning)
+				seed := kataTestSeed()
+				require.NoError(t, h.db.CompleteJobResult(job.ID, "test", ReviewCompletion{StructuredOutput: reviewFixtureJSON("FAIL: first"), KataPublication: &seed}))
+				record, err := h.db.GetKataPublication(t.Context(), job.ID)
+				require.NoError(t, err)
+				peer := testUUID("guarded-publication-peer")
+				_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, peer, job.ID)
+				require.NoError(t, err)
+				_, err = h.db.ExecContext(t.Context(), `UPDATE reviews SET synced_at = '2020-01-01T00:00:00Z', updated_at = '2020-01-01T00:00:00Z' WHERE job_id = ?`, job.ID)
+				require.NoError(t, err)
+				now := time.Now().UTC().Add(time.Hour)
+				pulled := PulledReview{UUID: record.ReviewUUID, JobUUID: *job.UUID, Agent: "test", JobEnqueuedAt: storedJobEnqueuedAt(t, h.db, job.ID), JobSourceMachineID: peer, StructuredOutput: reviewFixtureJSON("FAIL: changed"), UpdatedByMachineID: peer, CreatedAt: now, UpdatedAt: now}
 				s, err := h.db.newPullSession(t.Context())
 				require.NoError(t, err)
 				defer s.close()
@@ -286,16 +272,29 @@ func TestKataBothReviewPullPathsWaitForPublication(t *testing.T) {
 				done := make(chan error, 1)
 				go func() {
 					if batched {
-						done <- NewSyncWorker(h.db, testSyncConfig()).pullReview(t.Context(), s, PulledReview{})
+						done <- NewSyncWorker(h.db, testSyncConfig()).pullReview(t.Context(), s, pulled)
 						return
 					}
-					done <- h.db.UpsertPulledReview(PulledReview{})
+					done <- h.db.UpsertPulledReview(pulled)
 				}()
 				synctest.Wait()
 				assert.Empty(t, done, "review pull must wait for the publication guard")
+				assert.True(t, s.started.IsZero(), "transaction must not start before the attempt lock")
 				h.db.attempts.mu.RUnlock()
 				require.NoError(t, <-done)
 				require.NoError(t, s.commit(t.Context()))
+				if batched {
+					// Unlocked batches must finish before acquiring the attempt lock.
+					require.NoError(t, s.begin(t.Context(), false))
+					s.budget = time.Hour
+					require.NoError(t, s.begin(t.Context(), true))
+					assert.True(t, s.jobs)
+					require.NoError(t, s.commit(t.Context()))
+				}
+				edited, err := h.db.GetKataPublication(t.Context(), job.ID)
+				require.NoError(t, err)
+				require.NotNil(t, edited.Marker)
+				assert.NotEqual(t, edited.DocumentHash, edited.Marker.DocumentHash)
 			})
 		})
 	}
