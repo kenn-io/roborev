@@ -368,10 +368,8 @@ Doctor may omit the connection row; absence does not mean disabled. Query the
 actual daemon selected by the client: its explicit `--server` if used, otherwise
 the running daemon's runtime records (in the selected data directory's `runtime`
 directory) and the client's socket/TCP selection. Use the published socket or
-address, not a guessed port. The endpoint is local; the remote listener does not
-expose Kata routes. These templates use placeholders and make no request until
-run. `--data-urlencode` encodes the selected project; omit that option and
-`--get` when no project is selected:
+address, not a guessed port. `--data-urlencode` encodes the selected project;
+omit that option and `--get` when no project is selected:
 
 ```bash
 curl -i --get --data-urlencode 'project=<selected-project>' \
@@ -383,31 +381,23 @@ curl -i --unix-socket '<daemon-socket-path>' --get \
  'http://localhost/api/kata/status'
 ```
 
-For TCP use the selected daemon's URL. Supply the configured Bearer key only
-when required and use HTTPS and the configured CA and client certificate options
-when TLS is enabled, as in
-[daemon authentication](../configuration.md#daemon-authentication). Do not copy
-credentials between daemons. A successful `enabled: false`, `state: "disabled"`
-response permits native roots. An actual 404 for the unsupported status route
+For TCP use the selected daemon's URL; for the Bearer key, HTTPS and
+certificates follow [daemon authentication](../configuration.md#daemon-authentication),
+and do not copy credentials between daemons. A successful `enabled: false`,
+`state: "disabled"` response permits native roots. An actual 404 for the unsupported status route
 also permits the existing legacy native fallback when local API integration is
 off. Authentication, network and other errors or an unreadable response are
 unknown: stop and report why, not disabled. If needed, start or restart the
-daemon with approval and recheck. After the user agrees to a run,
-`roborev kata show <job-id>` can also establish disabled only through its
-specific `kata integration disabled` diagnostic when a current publication
-record can be inspected; other failures do not establish disabled.
+daemon with approval and recheck.
 
 On the published path only, after the user agrees to the run, inspect
 `roborev kata show <job-id>`. If publication is in progress, report it and
 reinspect after it completes. Before posting a charter or any native top-level
 comment, require `Status: complete` and match every root to the full result and
 native issue. Stop and report missing, ambiguous, truncated, edited or otherwise
-incomplete publication. If root text does not match the full findings, request a
-fresh review under the approved comments hook, or offer the user-approved create
-below when allowed. For an earlier review without published roots, offer
-`roborev kata create <job-id> --findings comments` with user approval, or
-request a fresh review after the hook upgrade. Inspect again before a charter;
-never post duplicate roots.
+incomplete publication. If root text does not match the full findings, or an
+earlier review has no published roots, request a fresh review under the approved
+comments hook. Never post duplicate roots.
 
 On the published path, verify server routing before assignment. Identify the
 actual active roborev daemon and the global config selected by its launcher or
@@ -463,14 +453,10 @@ outcomes forward:
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
   --idempotency-key 'swarm:<result>:charter' --agent
-kata --teammate=lead show '<issue>' --agent
-```
-
-On the native path only, post each root:
-
-```bash
+# Native path only:
 kata --teammate=lead comment '<issue>' --body-file finding-1.md \
   --idempotency-key 'swarm:<result>:f1' --agent
+kata --teammate=lead show '<issue>' --agent
 ```
 
 The user starts fresh sessions and assigns findings to each teammate. Five
