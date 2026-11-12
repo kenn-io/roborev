@@ -196,15 +196,18 @@ another actor.
 
 The project must exist on the server and be active. A binding file that exists
 but cannot be read stops the lookup instead of falling through to
-`default_project`. With no project at all, the hook is skipped, as it is with
-the CLI and no binding.
+`default_project`. For an unbound repository, the default also selects the
+project used by task context, commit references, and goal review snapshots;
+those snapshots include the project's open issues. With no project at all, the
+hook is skipped, as it is with the CLI and no binding.
 
 ### Commands and remote daemons
 
 Only the daemon holds the Kata credential. When the connection is enabled,
 `roborev review --local` and goal reviews that need Kata ask the daemon to read
-it through its Kata endpoints. The CLI reads the repo's binding itself and sends
-the project name, because the daemon may not see the same files.
+it through its Kata endpoints. Because the daemon may not see the same files,
+the CLI reads the repo's binding itself. It sends a workspace alias for a
+committed binding and a project name for a local override or configured default.
 
 Cross-machine access requires a tunnel from a loopback address to the daemon's
 local API. Point the CLI at that address; it needs neither the Kata endpoint nor
@@ -235,11 +238,11 @@ be read is reported separately.
 | `ready` | The server is compatible and the project exists | Nothing |
 | `unreachable` | The server did not answer | Check that Kata is running and the endpoint is right |
 | `authentication_required` | Kata rejected the credential, or none could be read | Set `api_key_file` to a credential for roborev |
-| `incompatible` | Not a Kata API, an old Kata, or an endpoint that is not allowed | Use Kata with API schema 0.21.0 through 0.28.0 |
+| `incompatible` | Not a Kata API, an old Kata, or an endpoint that is not allowed | Use Kata with API schema 0.21.0 through 0.43.0 |
 | `project_not_found` | The project does not exist or is not active | Create it, bind the repo, or set `default_project` |
 | `disabled` | The connection is off | Set `enabled = true` to use it |
 
-The connection needs Kata API schema 0.21.0 through 0.28.0. Typed comment
+The connection needs Kata API schema 0.21.0 through 0.43.0. Typed comment
 replies need 0.28.0, which Kata v0.19.0 reports. A `ready` connection to an
 older server is shown as ready without typed reply support.
 
