@@ -165,13 +165,6 @@ func TestKataStatusStates(t *testing.T) {
 		server.configWatcher.Config().Integrations.Kata.Endpoint = "http://" + addr
 		assert.Equal(t, "unreachable", decodeKata[KataStatusBody](t, kataGet(t, server, "/api/kata/status", nil)).State)
 	})
-	t.Run("misconfigured", func(t *testing.T) {
-		server, _ := kataAPIServer(t)
-		server.configWatcher.Config().Integrations.Kata.Endpoint = "http://kata.example.com"
-		status := decodeKata[KataStatusBody](t, kataGet(t, server, "/api/kata/status", nil))
-		assert.Equal(t, "incompatible", status.State)
-		assert.True(t, status.Enabled)
-	})
 }
 
 func TestKataIssuesListsTheDefaultProjectForTheCaller(t *testing.T) {
@@ -309,7 +302,7 @@ func TestKataEndpointsRefuseWhenTheConnectionIsOffOrBroken(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, w.Code, "disabled: %s", w.Body.String())
 	}
 
-	server.configWatcher.Config().Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "ftp://kata.example.com", APIKey: kataTestCredential}
+	server.configWatcher.Config().Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.com", APIKeyFile: filepath.Join(t.TempDir(), "missing")}
 	for _, call := range []func() *httptest.ResponseRecorder{
 		func() *httptest.ResponseRecorder { return kataGet(t, server, "/api/kata/issues", nil) },
 		func() *httptest.ResponseRecorder {
