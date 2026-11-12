@@ -415,6 +415,8 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		RepoName:          job.RepoName,
 		SHA:               job.GitRef,
 		Branch:            job.HookBranch(),
+		Source:            job.Source,
+		PanelRole:         job.PanelRole,
 		Agent:             agentName,
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 		Verdict:           string(verdict),
@@ -454,6 +456,8 @@ func (wp *WorkerPool) runSynthesisAgent(
 		RepoName:          job.RepoName,
 		SHA:               job.GitRef,
 		Branch:            job.HookBranch(),
+		Source:            job.Source,
+		PanelRole:         job.PanelRole,
 		Agent:             agentName,
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 	})

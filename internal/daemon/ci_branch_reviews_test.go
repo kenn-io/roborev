@@ -30,16 +30,18 @@ type branchStatus struct {
 // branchReviewHarness polls a real clone of a local origin repository. Only
 // GitHub writes, PR listing, and the review agent are fakes.
 type branchReviewHarness struct {
-	origin   *testutil.TestRepo
-	db       *storage.DB
-	cfg      *config.Config
-	poller   *CIPoller
-	pool     *WorkerPool
-	mu       sync.Mutex
-	statuses []branchStatus
-	findings bool
-	fail     bool
-	reviewed []string
+	origin *testutil.TestRepo
+	db     *storage.DB
+	cfg    *config.Config
+	poller *CIPoller
+	pool   *WorkerPool
+	// broadcaster carries the worker's review events, as hooks receive them.
+	broadcaster Broadcaster
+	mu          sync.Mutex
+	statuses    []branchStatus
+	findings    bool
+	fail        bool
+	reviewed    []string
 }
 
 func newBranchReviewHarness(t *testing.T) *branchReviewHarness {
@@ -89,7 +91,8 @@ func newBranchReviewHarness(t *testing.T) *branchReviewHarness {
 		h.statuses = append(h.statuses, branchStatus{SHA: sha, State: state, Description: description})
 		return nil
 	}
-	h.pool = NewWorkerPool(h.db, NewStaticConfig(h.cfg), 1, NewBroadcaster(), nil, nil)
+	h.broadcaster = NewBroadcaster()
+	h.pool = NewWorkerPool(h.db, NewStaticConfig(h.cfg), 1, h.broadcaster, nil, nil)
 	h.pool.retryBackoff = 0
 	return h
 }
@@ -286,4 +289,29 @@ func TestCIDefaultBranchReviewsWaitForQuietHoursToEnd(t *testing.T) {
 	runs := h.synthesisJobs(t)
 	require.Len(t, runs, 1, "commits that landed during quiet hours are reviewed afterward")
 	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewEventsIdentifyLandedCommitResult(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.findings = true
+	h.poll(t)
+	h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	_, events := h.broadcaster.Subscribe("")
+	h.runJobs(t)
+
+	roles := map[string]string{}
+	for len(events) > 0 {
+		event := <-events
+		if event.Type != "review.completed" {
+			continue
+		}
+		assert.Equal(t, storage.JobSourceCIBranch, event.Source,
+			"hooks can select landed-commit reviews by source")
+		roles[event.PanelRole] = event.Verdict
+	}
+	assert.Equal(t, map[string]string{
+		storage.PanelRoleMember:    "F",
+		storage.PanelRoleSynthesis: "F",
+	}, roles)
 }

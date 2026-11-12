@@ -97,6 +97,7 @@ func markConfigValidationError(err error) error {
 type HookConfig struct {
 	Event    string   `toml:"event"`                // "review.failed", "review.completed", "review.*"
 	Branches []string `toml:"branches"`             // optional branch globs (path.Match); empty = all branches
+	Sources  []string `toml:"sources"`              // optional job sources such as "ci"; empty = every review
 	Command  string   `toml:"command"`              // shell command with {var} templates
 	Type     string   `toml:"type"`                 // "beads", "kata", or "webhook"; empty or "command" runs Command
 	URL      string   `toml:"url" sensitive:"true"` // webhook destination URL when Type is "webhook"

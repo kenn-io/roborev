@@ -80,6 +80,14 @@ priority = 2
 | `review.completed` | `F` (fail) | Creates a priority-2 Kata issue for the review findings, including compatible `roborev show` and `roborev fix` commands |
 | `review.completed` | `P` (pass) | No action |
 
+A review panel files one issue, from its synthesis review. The issue names the
+reviewed commit and, for GitHub repos, links to the commit and its pull request.
+
+To file issues only for the daemon's reviews of commits that landed on the
+default branch, add `sources = ["ci_branch"]` and use
+`event = "review.completed"`; see
+[Review commits on the default branch](/docs/integrations/github/#review-commits-on-the-default-branch).
+
 The hook uses the repo's committed `.kata.toml` binding by default; set
 `project = "myproj"` to override. Every issue receives the `roborev` label plus
 a marker label (`review-failed` or `review-finding`) and any extra `labels` you

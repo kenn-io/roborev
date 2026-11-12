@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -22,8 +23,10 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	ghpkg "go.kenn.io/roborev/internal/github"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/procutil"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // HookRunner listens for broadcaster events and runs configured hooks.
@@ -179,6 +182,10 @@ func (hr *HookRunner) handleEvent(event Event) {
 			continue
 		}
 
+		if !matchSource(hook.Sources, event.Source) {
+			continue
+		}
+
 		if hook.Type == "webhook" {
 			if hook.URL == "" {
 				continue
@@ -266,6 +273,13 @@ func matchBranch(patterns []string, branch string) bool {
 		}
 	}
 	return false
+}
+
+// matchSource reports whether an event's job source satisfies a hook's sources
+// allowlist. An empty allowlist matches every event. Explicit reviews have no
+// source, so a non-empty allowlist never matches them.
+func matchSource(sources []string, source string) bool {
+	return len(sources) == 0 || (source != "" && slices.Contains(sources, source))
 }
 
 // resolveCommand builds the shell command for a hook, handling built-in types
@@ -436,29 +450,60 @@ func redactURLError(err error) error {
 
 const kataHookMaxBodyBytes = 16384
 
+// kataCommit identifies the reviewed commit in issue text. Fields the
+// repository cannot supply stay empty and are left out of the issue.
+type kataCommit struct {
+	SHA            string
+	Subject        string
+	URL            string
+	PullRequestURL string
+}
+
+// kataEventFiles reports whether an event should open an issue: a failed
+// review, or a completed review with findings.
+func kataEventFiles(event Event) bool {
+	// The synthesis review carries the panel's result; filing for each member
+	// too would open duplicate issues for the same findings.
+	if event.PanelRole == storage.PanelRoleMember {
+		return false
+	}
+	switch event.Type {
+	case "review.failed":
+		return true
+	case "review.completed":
+		return event.Verdict == "F"
+	}
+	return false
+}
+
 // kataCreateRequest builds the kata issue for an event, or ok=false when no
 // issue should be filed (e.g. a passing review).
-func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, bool) {
+func kataCreateRequest(hook config.HookConfig, event Event, commit kataCommit) (kata.CreateReq, bool) {
+	if !kataEventFiles(event) {
+		return kata.CreateReq{}, false
+	}
 	repoName := event.RepoName
 	if repoName == "" {
 		repoName = filepath.Base(event.Repo)
 	}
-	shortSHA := gitpkg.ShortSHA(event.SHA)
+	if commit.SHA == "" {
+		commit.SHA = reviewedHead(event.SHA)
+	}
+	shortSHA := gitpkg.ShortSHA(commit.SHA)
 
-	var title, marker string
+	var summary, marker string
 	defaultPriority := 0
 	switch event.Type {
 	case "review.failed":
-		title = fmt.Sprintf("Review failed for %s (%s): roborev show %d", repoName, shortSHA, event.JobID)
+		summary = "Review failed"
 		marker, defaultPriority = "review-failed", 1
 	case "review.completed":
-		if event.Verdict != "F" {
-			return kata.CreateReq{}, false
-		}
-		title = fmt.Sprintf("Review findings for %s (%s): roborev show %d", repoName, shortSHA, event.JobID)
+		summary = "Review findings"
 		marker, defaultPriority = "review-finding", 2
-	default:
-		return kata.CreateReq{}, false
+	}
+	title := fmt.Sprintf("%s for %s (%s): roborev show %d", summary, repoName, shortSHA, event.JobID)
+	if commit.Subject != "" {
+		title = fmt.Sprintf("%s for %s (%s): %s", summary, repoName, shortSHA, commit.Subject)
 	}
 
 	priority := defaultPriority
@@ -473,7 +518,7 @@ func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, boo
 
 	return kata.CreateReq{
 		Title:          title,
-		Body:           buildKataHookBody(event),
+		Body:           buildKataHookBody(event, commit),
 		Project:        hook.Project,
 		Labels:         dedupeStrings(append([]string{kata.RoborevLabel, marker}, hook.Labels...)),
 		Priority:       &priority,
@@ -481,10 +526,21 @@ func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, boo
 	}, true
 }
 
-func buildKataHookBody(event Event) string {
+func buildKataHookBody(event Event, commit kataCommit) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "- repo: %s\n", event.RepoName)
-	fmt.Fprintf(&b, "- commit: %s\n", event.SHA)
+	if commit.SHA != "" && commit.SHA != event.SHA {
+		fmt.Fprintf(&b, "- commit: %s\n", commit.SHA)
+		fmt.Fprintf(&b, "- reviewed: %s\n", event.SHA)
+	} else {
+		fmt.Fprintf(&b, "- commit: %s\n", event.SHA)
+	}
+	if commit.URL != "" {
+		fmt.Fprintf(&b, "- commit link: %s\n", commit.URL)
+	}
+	if commit.PullRequestURL != "" {
+		fmt.Fprintf(&b, "- pull request: %s\n", commit.PullRequestURL)
+	}
 	if event.Agent != "" {
 		fmt.Fprintf(&b, "- agent: %s\n", event.Agent)
 	}
@@ -506,6 +562,68 @@ func buildKataHookBody(event Event) string {
 		fmt.Fprintf(&b, "\n## Findings\n\n%s\n", event.Findings)
 	}
 	return capBody(b.String(), event.JobID)
+}
+
+// reviewedHead returns the newest commit of a reviewed git ref: the end of a
+// range, or the ref itself.
+func reviewedHead(gitRef string) string {
+	if _, head, ok := strings.Cut(gitRef, ".."); ok {
+		return strings.TrimPrefix(head, ".")
+	}
+	return gitRef
+}
+
+// pullRequestSubject matches the subjects GitHub writes for squash merges,
+// "Title (#123)", and merge commits, "Merge pull request #123 from ...".
+var pullRequestSubject = regexp.MustCompile(`\(#(\d+)\)$|^Merge pull request #(\d+) `)
+
+// lookupKataCommit describes the reviewed commit from the local repository.
+// Links are added only for a GitHub remote, so they never point at a host
+// whose URL layout is unknown.
+func lookupKataCommit(ctx context.Context, workdir string, event Event) kataCommit {
+	commit := kataCommit{SHA: reviewedHead(event.SHA)}
+	if workdir == "" || !gitpkg.LooksLikeSHA(commit.SHA) {
+		return commit
+	}
+	if out, err := gitOutput(ctx, workdir, "log", "-1", "--format=%H%x00%s", commit.SHA, "--"); err == nil {
+		if sha, subject, ok := strings.Cut(strings.TrimSpace(string(out)), "\x00"); ok {
+			commit.SHA, commit.Subject = sha, subject
+		}
+	}
+	base := githubWebURL(gitpkg.GetRemoteURL(workdir, ""))
+	if base == "" {
+		return commit
+	}
+	commit.URL = base + "/commit/" + commit.SHA
+	if m := pullRequestSubject.FindStringSubmatch(commit.Subject); m != nil {
+		commit.PullRequestURL = base + "/pull/" + m[1] + m[2]
+	}
+	return commit
+}
+
+// githubWebURL turns a GitHub remote URL into the repository's web URL, or
+// returns "" for other remotes. It keeps only the host and path, so
+// credentials embedded in a clone URL never reach issue text.
+func githubWebURL(remote string) string {
+	var host, repoPath string
+	if rest, ok := strings.CutPrefix(remote, "git@"); ok && !strings.Contains(remote, "://") {
+		host, repoPath, _ = strings.Cut(rest, ":")
+	} else if parsed, err := neturl.Parse(remote); err == nil && parsed.Host != "" {
+		host, repoPath = parsed.Hostname(), parsed.Path
+		if parsed.Scheme == "https" || parsed.Scheme == "http" {
+			host = parsed.Host
+		}
+	}
+	host = strings.ToLower(host)
+	if host != "github.com" && host != strings.ToLower(ghpkg.DefaultGitHubHost()) {
+		return ""
+	}
+	repoPath = strings.TrimSuffix(strings.Trim(repoPath, "/"), ".git")
+	owner, name, ok := strings.Cut(repoPath, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	return "https://" + host + "/" + owner + "/" + name
 }
 
 func capBody(body string, jobID int64) string {
@@ -536,9 +654,7 @@ func dedupeStrings(in []string) []string {
 // visibly because the hook is explicitly configured.
 func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir string) {
 	defer hr.wg.Done()
-
-	req, ok := kataCreateRequest(hook, event)
-	if !ok {
+	if !kataEventFiles(event) {
 		return
 	}
 
@@ -550,6 +666,11 @@ func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir s
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	req, ok := kataCreateRequest(hook, event, lookupKataCommit(ctx, workdir, event))
+	if !ok {
+		return
+	}
 
 	if req.Project == "" {
 		if _, err := client.Binding(ctx); err != nil {

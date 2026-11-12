@@ -352,16 +352,18 @@ func (wp *WorkerPool) broadcastClassifyFailed(job *storage.ReviewJob, errMsg str
 		return
 	}
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.failed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		JobUUID:  job.UUID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    job.Agent,
-		Error:    errMsg,
+		Type:      "review.failed",
+		TS:        time.Now(),
+		JobID:     job.ID,
+		JobUUID:   job.UUID,
+		Repo:      job.RepoPath,
+		RepoName:  job.RepoName,
+		SHA:       job.GitRef,
+		Branch:    job.HookBranch(),
+		Source:    job.Source,
+		PanelRole: job.PanelRole,
+		Agent:     job.Agent,
+		Error:     errMsg,
 	})
 }
 
@@ -377,15 +379,17 @@ func (wp *WorkerPool) broadcastClassifyTerminal(job *storage.ReviewJob) {
 		return
 	}
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.completed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		JobUUID:  job.UUID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    job.Agent,
+		Type:      "review.completed",
+		TS:        time.Now(),
+		JobID:     job.ID,
+		JobUUID:   job.UUID,
+		Repo:      job.RepoPath,
+		RepoName:  job.RepoName,
+		SHA:       job.GitRef,
+		Branch:    job.HookBranch(),
+		Source:    job.Source,
+		PanelRole: job.PanelRole,
+		Agent:     job.Agent,
 	})
 }
 
