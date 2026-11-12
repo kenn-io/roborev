@@ -408,7 +408,8 @@ refuses this agentic mode.
 
 Tests that start a loopback server, such as `httptest.NewServer`, fail inside
 this sandbox. Run `make test-sandbox-integration` with nono and Codex on PATH to
-exercise the policy with real binaries and a local stand-in Responses server.
+exercise the policy with real binaries and a local stand-in Responses server. On
+Linux x86_64, `mise install` in a roborev checkout installs the pinned nono.
 
 ## Pi
 

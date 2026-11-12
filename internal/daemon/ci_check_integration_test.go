@@ -26,6 +26,7 @@ import (
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -306,6 +307,16 @@ echo 'OK rewrite read-only'
 	assert.Equal(t, "Users lose their files.", checked.Findings[0].Problem)
 	assert.Equal(t, "Keep the saved files. **Where:** `saveFile`", checked.Findings[0].Fix)
 	assert.NotContains(t, string(log), "CI checker failed;")
+	// The stored record keeps the refuted finding and the text the checker tried, not the rewrite.
+	require.NotNil(t, checked.Check)
+	assert.Equal(t, structuredreview.CheckCompleted, checked.Check.Status)
+	require.Len(t, checked.Check.Findings, 3)
+	refuted := checked.Check.Findings[0]
+	assert.Equal(t, structuredreview.CheckDropped, refuted.Outcome)
+	assert.Equal(t, "build claim", refuted.Finding.Problem)
+	assert.Equal(t, []structuredreview.CheckVerdict{{Keep: new(false), Evidence: "go build succeeded", Reason: "Build claim refuted"}}, refuted.Verdicts)
+	assert.Equal(t, structuredreview.CheckKept, checked.Check.Findings[1].Outcome)
+	assert.Equal(t, "data loss", checked.Check.Findings[1].Finding.Problem)
 
 	calls.Store(0)
 	kept, err := tc.Pool.runCICheck(t.Context(), job, ciCheckConfig{Model: "test-model", Reasoning: "high"}, doc, nil, io.Discard)
@@ -366,6 +377,7 @@ func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 					t.Skip("requires mise")
 				}
 				versionCmd := exec.CommandContext(t.Context(), mise, "exec", "--", "go", "env", "GOVERSION")
+				versionCmd.Env = testenv.UserEnv()
 				versionCmd.Dir = "/"
 				version, err := versionCmd.Output()
 				if err != nil {

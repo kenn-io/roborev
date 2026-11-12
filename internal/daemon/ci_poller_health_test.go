@@ -28,6 +28,7 @@ func newCIHealthHarness(t *testing.T) (*ciPollerHarness, *Server) {
 	t.Helper()
 	t.Setenv("GH_TOKEN", "test-token")
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.Cost.Endpoint = "https://usage.example.test/{session_id}"
 	h.Poller.repoResolver.canonicalRepoFn = nil
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	server.SetCIPoller(h.Poller)

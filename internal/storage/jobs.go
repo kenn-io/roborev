@@ -403,9 +403,10 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 // synthesis with job_type=synthesis, panel_role=synthesis, claim_blocked=1 — so
 // a caller that forgets the gate still cannot let the synthesis row be claimed
 // before its members run. On any insert error the whole run rolls back and no
-// rows persist.
+// rows persist. The older enqueue entry points below have no caller context;
+// request-aware enqueue passes its handler context into the shared transaction.
 func (db *DB) EnqueuePanelRun(members []EnqueueOpts, synthesis EnqueueOpts) ([]*ReviewJob, *ReviewJob, error) {
-	memberJobs, synthJob, _, err := db.enqueuePanelRun(members, synthesis, false, uuid.Nil(), 0)
+	memberJobs, synthJob, _, err := db.enqueuePanelRun(context.Background(), members, synthesis, false, uuid.Nil(), 0, nil)
 	return memberJobs, synthJob, err
 }
 
@@ -416,7 +417,7 @@ func (db *DB) EnqueuePanelRun(members []EnqueueOpts, synthesis EnqueueOpts) ([]*
 func (db *DB) EnqueuePanelRerun(
 	members []EnqueueOpts, synthesis EnqueueOpts, requestID uuid.UUID, sourceJobID int64,
 ) ([]*ReviewJob, *ReviewJob, bool, error) {
-	return db.enqueuePanelRun(members, synthesis, false, requestID, sourceJobID)
+	return db.enqueuePanelRun(context.Background(), members, synthesis, false, requestID, sourceJobID, nil)
 }
 
 // EnqueuePostCommitPanelRun atomically inserts a hook-originated panel unless
@@ -432,17 +433,17 @@ func (db *DB) EnqueuePostCommitPanelRun(
 		members[i].Source = JobSourcePostCommit
 	}
 	synthesis.Source = JobSourcePostCommit
-	return db.enqueuePanelRun(members, synthesis, true, uuid.Nil(), 0)
+	return db.enqueuePanelRun(context.Background(), members, synthesis, true, uuid.Nil(), 0, nil)
 }
 
 func (db *DB) enqueuePanelRun(
-	members []EnqueueOpts, synthesis EnqueueOpts, deduplicate bool,
+	ctx context.Context, members []EnqueueOpts, synthesis EnqueueOpts, deduplicate bool,
 	rerunRequestID uuid.UUID, rerunSourceJobID int64,
+	enqueueRequest *PanelEnqueueRequest,
 ) ([]*ReviewJob, *ReviewJob, bool, error) {
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 
-	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, nil, false, err
@@ -460,6 +461,19 @@ func (db *DB) enqueuePanelRun(
 			}
 		}
 	}()
+	if enqueueRequest != nil {
+		job, found, err := lookupPanelEnqueueRequest(ctx, conn, *enqueueRequest)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if found {
+			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+				return nil, nil, false, err
+			}
+			committed = true
+			return nil, job, true, nil
+		}
+	}
 	if rerunRequestID != uuid.Nil() {
 		result, found, err := lookupRerunRequest(ctx, conn, rerunRequestID, rerunSourceJobID)
 		if err != nil {
@@ -519,6 +533,14 @@ func (db *DB) enqueuePanelRun(
 	memberJobs, synthJob, err := db.enqueuePanelRunTx(ctx, conn, members, synthesis, machineID, now)
 	if err != nil {
 		return nil, nil, false, err
+	}
+	if enqueueRequest != nil {
+		_, err := conn.ExecContext(ctx, `INSERT INTO panel_enqueue_requests
+ (request_id, request_hash, result_job_id, panel_run_uuid) VALUES (?, ?, ?, ?)`,
+			enqueueRequest.ID, enqueueRequest.Hash, synthJob.ID, synthJob.PanelRunUUID)
+		if err != nil {
+			return nil, nil, false, err
+		}
 	}
 	if rerunSourceJobID != 0 {
 		if err := rerunCIPanelTx(ctx, conn, rerunSourceJobID, synthJob, now); err != nil {

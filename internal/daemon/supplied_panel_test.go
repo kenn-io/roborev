@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -134,6 +135,18 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 		finished, err := db.GetJobByID(job.ID)
 		require.NoError(t, err)
 		require.Equal(t, storage.JobStatusDone, finished.Status, finished.Error)
+		reports, err := client.GetJobInvocations(t.Context(), &generated.GetJobInvocationsRequestOptions{
+			Query: &generated.GetJobInvocationsQuery{JobID: job.ID},
+		})
+		require.NoError(t, err)
+		require.Len(t, reports.Invocations, 1)
+		assert.Equal(t, "succeeded", reports.Invocations[0].Status)
+		assert.Equal(t, "synthesis-model", reports.Invocations[0].Model)
+		assert.Equal(t, ref, reports.Invocations[0].GitRef)
+		assert.Nil(t, reports.Invocations[0].Usage)
+		structured, err := json.Marshal(reports.Invocations[0].StructuredOutput)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[],"source_labels":["supplied-panel-member","supplied-panel-member"]}`, string(structured))
 		runner.WaitUntilIdle()
 		server.hookRunner.WaitUntilIdle()
 		if run == 0 {
@@ -240,6 +253,16 @@ func TestSuppliedPanelRestoresPrimaryAgentsAfterFailover(t *testing.T) {
 		finished, err := db.GetJobByID(panel.ID)
 		require.NoError(t, err)
 		require.Equal(t, storage.JobStatusDone, finished.Status, finished.Error)
+		reports, err := db.ListReviewInvocations(t.Context(), panel.ID)
+		require.NoError(t, err)
+		require.Len(t, reports, 2)
+		assert.Equal(t, "failed", reports[0].Status)
+		assert.Equal(t, "partial", reports[0].RawOutput)
+		assert.Equal(t, "context window exceeded", reports[0].Error)
+		assert.Equal(t, "synthesis-primary-model", reports[0].Model)
+		assert.Equal(t, "succeeded", reports[1].Status)
+		assert.Equal(t, "synthesis-backup", reports[1].Agent)
+		assert.Equal(t, "synthesis-backup-model", reports[1].Model)
 		if run == 0 {
 			rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: panel.ID}})
 			require.NoError(t, err)
@@ -247,6 +270,69 @@ func TestSuppliedPanelRestoresPrimaryAgentsAfterFailover(t *testing.T) {
 		}
 	}
 	assert.Equal(t, map[string]int{"panel-primary": 2, "panel-backup": 2, "synthesis-primary": 2, "synthesis-backup": 2}, calls)
+}
+
+func TestSuppliedPanelRecordsUnavailablePrimarySynthesisModel(t *testing.T) {
+	for _, backupModel := range []string{"backup-model", ""} {
+		t.Run("backup_model="+backupModel, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			assert := assert.New(t)
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			head := repo.CommitFile("file.txt", "target", "target")
+			primary := &synthesisEntrypointTestAgent{name: "available-primary", result: string(testutil.ReviewFixtureJSON("No issues found."))}
+			backup := &synthesisEntrypointTestAgent{name: "available-backup", result: primary.result}
+			agent.RegisterForTest(t, primary)
+			agent.RegisterForTest(t, backup)
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "availability-member", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+				return string(testutil.ReviewFixtureJSON("## Findings\n- [P1] Missing validation")), nil
+			}})
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/panel/enqueue", map[string]any{
+				"repo_path": repo.Path(), "git_ref": head,
+				"members":   []any{map[string]any{"name": "reviewer", "agent": "availability-member", "review_prompt": "Review.", "review_settings": map[string]any{}}},
+				"synthesis": map[string]any{"agent": primary.name, "model": "primary-model", "backup_agent": backup.name, "backup_model": backupModel, "instructions": "Verify."},
+			}))
+			require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+			var panel PanelEnqueueResponse
+			testutil.DecodeJSON(t, w, &panel)
+			// Enqueue resolved an available primary; execution now finds its command missing.
+			agent.Register(&unavailableSynthesisCommandAgent{name: primary.name, command: filepath.Join(t.TempDir(), "missing-agent")})
+			for run := range 2 {
+				for range 2 {
+					job, err := db.ClaimJob(testWorkerID)
+					require.NoError(t, err)
+					require.NotNil(t, job)
+					server.workerPool.processJob(testWorkerID, job)
+				}
+				stored, err := db.GetJobByID(panel.ID)
+				require.NoError(t, err)
+				require.Equal(t, storage.JobStatusDone, stored.Status, stored.Error)
+				assert.Equal(primary.name, stored.Agent, "fallback must not rewrite the configured agent")
+				assert.Equal("primary-model", stored.Model, "reruns retain their primary model")
+				reports, err := db.ListReviewInvocations(t.Context(), panel.ID)
+				require.NoError(t, err)
+				require.Len(t, reports, 1)
+				assert.Equal("succeeded", reports[0].Status)
+				if run == 0 {
+					assert.True(backup.reviewCalled)
+					assert.False(primary.reviewCalled)
+					assert.Equal(backupModel, backup.model, "execution uses the backup's model, including an empty default")
+					assert.Equal(backup.name, reports[0].Agent)
+					assert.Equal(backupModel, reports[0].Model, "history must describe the model used for this call")
+					agent.Register(primary)
+					rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: panel.ID}})
+					require.NoError(t, err)
+					panel.ID = rerun.Body.JobID
+				} else {
+					assert.True(primary.reviewCalled)
+					assert.Equal("primary-model", primary.model)
+					assert.Equal(primary.name, reports[0].Agent)
+					assert.Equal("primary-model", reports[0].Model)
+				}
+			}
+		})
+	}
 }
 
 func TestSuppliedPanelRejectsInvalidPlanWithoutQueueingMembers(t *testing.T) {
@@ -345,6 +431,18 @@ func TestSuppliedPanelRecordsStrictClaudeSynthesisUsage(t *testing.T) {
 				wantStatus = storage.JobStatusFailed
 			}
 			require.Equal(t, wantStatus, stored.Status, stored.Error)
+			reports, err := db.ListReviewInvocations(t.Context(), panel.ID)
+			require.NoError(t, err)
+			require.Len(t, reports, 1)
+			wantInvocationStatus := "succeeded"
+			if failed {
+				wantInvocationStatus = "failed"
+			}
+			assert.Equal(t, wantInvocationStatus, reports[0].Status)
+			require.NotNil(t, reports[0].Usage)
+			assert.Equal(t, int64(100), reports[0].Usage.InputTokens)
+			assert.Equal(t, int64(20), reports[0].Usage.OutputTokens)
+			assert.InDelta(t, 0.25, reports[0].Usage.CostUSD, 1e-9)
 			assertStrictClaudeUsage(t, stored)
 			assert.Zero(t, sessionLookups, "restricted Claude must not need a saved session for usage")
 			assert.Empty(t, stored.SessionID)

@@ -2282,6 +2282,15 @@ with the agent session ID. If both `endpoint` and `agentsview.url` are empty,
 roborev uses the `agentsview` CLI path. `timeout` defaults to `10s`; invalid,
 zero, or negative values also fall back to `10s`.
 
+If neither HTTP provider is configured and `agentsview` is missing from the
+daemon's PATH, `roborev status` reports an unhealthy `cost` component. The
+daemon also logs one actionable warning at startup. Health checks use the
+current configuration, so configuring a provider clears this warning from
+status. A missing cost source makes overall health unhealthy but does not block
+readiness or hide CI recovery information, because reviews can still run. This
+availability check does not execute the CLI, read usage data, or test an HTTP
+provider's reachability or authentication.
+
 Usage indexing can lag behind job completion. The daemon retries fresh misses
 and periodically revisits terminal jobs from the past week that still lack a
 recorded price. With AgentsView v0.47.0 or later, a successful periodic page

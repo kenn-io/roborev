@@ -11,7 +11,6 @@ import (
 )
 
 // Measure a full scan on 8,000 reviews, 4,000 comments, and 500 MiB of prompts.
-// Run with CGO_ENABLED=0 to measure the same SQLite driver used by release builds.
 func BenchmarkReconcilerReviewEvent(b *testing.B) {
 	b.Run("full", func(b *testing.B) {
 		db, r := seedReconcilerHistory(b, 8000, 65536)

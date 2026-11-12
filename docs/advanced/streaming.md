@@ -113,6 +113,9 @@ keep `healthy` false while their retries run, but do not prevent `ready` from
 becoming true. Deployment checks may use `ready`; availability monitoring must
 use `healthy`.
 
+A missing cost usage source makes `healthy` false, but does not block `ready` or
+suppress CI recovery information. Reviews can run without cost accounting.
+
 Polling continues for other pull requests and repositories after a failure. Each
 repository stays unhealthy until its next successful poll or until a successful
 discovery removes it from the configured set. Discovery failures remain

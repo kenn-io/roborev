@@ -555,6 +555,36 @@ func TestNormalizeMSYSPath(t *testing.T) {
 	}
 }
 
+// Exercise the production runner after TestMain selects fixture configuration.
+func TestGitFixtureHostileHome(t *testing.T) {
+	if os.Getenv("ROBOREV_TEST_HOSTILE_HOME") == "1" {
+		repo := NewTestRepo(t)
+		got, err := GetHooksPath(repo.Dir)
+		require.NoError(t, err)
+		resolved, err := filepath.EvalSymlinks(repo.Dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(resolved, ".git", "hooks"), got)
+		return
+	}
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
+		[]byte("[core]\n hooksPath = hostile-hooks\n"), 0o600))
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	repo := NewTestRepo(t)
+	got, err := GetHooksPath(repo.Dir)
+	require.NoError(t, err)
+	resolved, err := filepath.EvalSymlinks(repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(resolved, "hostile-hooks"), got)
+	t.Setenv("ROBOREV_TEST_HOSTILE_HOME", "1")
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestGitFixtureHostileHome$", "-test.v")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+}
+
 func TestGetHooksPath(t *testing.T) {
 	t.Run("default hooks path", func(t *testing.T) {
 		repo := NewTestRepo(t)

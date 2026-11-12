@@ -2506,20 +2506,22 @@ func (wp *WorkerPool) collectTokenUsageForSession(
 ) sessionTokenUsage {
 	// Only fetch agentsview usage for fresh sessions (where we captured a new
 	// session ID). Resumed-session agentsview totals are cumulative across
-	// turns, but Codex job-log turn.completed usage belongs to this job's
-	// stream and is safe to parse below.
+	// turns, but usage events in the job log belong to this job's stream and
+	// are safe to parse below.
 	collected := sessionTokenUsage{
 		capturedSession: capturedSession,
 		wasResumed:      job.SessionID != "" && capturedSession == job.SessionID,
 	}
-	logUsage, logErr := tokens.ParseCodexUsageFile(JobLogPath(job.ID))
+	logUsage, logErr := parseJobLogUsage(job.ID, job.Agent)
 	if logErr != nil {
 		log.Printf("[%s] Warning: parse token usage from job log for job %d: %v",
 			workerID, job.ID, logErr)
 	}
 	collected.logUsage = logUsage
 
-	if capturedSession != "" && !collected.wasResumed {
+	// A log that sums several sessions is stored as it is. When it carries no
+	// cost, reconciliation prices every session it names.
+	if capturedSession != "" && !collected.wasResumed && !logUsageCoversSeveralSessions(logUsage) {
 		fetched, tokenErr := wp.fetchFreshSessionUsage(
 			ctx, wp.fetchTokenUsage, capturedSession,
 		)

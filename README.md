@@ -10,7 +10,7 @@ last_edited: 2026-11-08
 </p>
 
 <p align="center">
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.27.3+-00ADD8?logo=go&logoColor=white" alt="Go 1.27.3+"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.27.4+-00ADD8?logo=go&logoColor=white" alt="Go 1.27.4+"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://roborev.io"><img src="https://img.shields.io/badge/Docs-roborev.io-blue" alt="Docs"></a>
 </p>
@@ -126,9 +126,12 @@ closing the loop.
 CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, Grok Build, and ZCode
 harnesses
 and adds optional hooks after configured turn, commit, or failed-review
-thresholds are met. Reminders name exact review IDs, invoke the bundled
-`roborev-fix` skill, and never run `roborev fix --open`. Hook installation
-updates bundled skills for every supported profile. Hermes delivers queued
+thresholds are met.
+Reminders name exact review IDs and invoke the bundled `roborev-fix` skill.
+<!-- release-commands: expected-failure -->
+Never run `roborev fix --open`.
+
+Hook installation updates bundled skills for every supported profile. Hermes delivers queued
 post-tool reminders at `Stop`; Cursor records the same events but emits no control
 response.
 Installed hooks post events to the regular roborev daemon. That daemon evaluates

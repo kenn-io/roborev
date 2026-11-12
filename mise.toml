@@ -3,4 +3,7 @@ lockfile = true
 
 [tools]
 "github:jdx/jactionlint" = "2.3.0"
+# The CI checker sandbox runs only on Linux x86_64 and accepts only this build;
+# internal/sandbox/sandbox.go checks its SHA-256.
+nono = { version = "0.80.0", os = ["linux/x64"] }
 uv = "0.13.4"
