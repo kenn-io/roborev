@@ -79,7 +79,7 @@ func TestArchiveRubricListsAndAddsExactBytes(t *testing.T) {
 		return []byte(`{"results":[{"attachment_id":"attachment.test"}]}`), nil
 	}
 	stubArchiveIdentity(c)
-	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "roborev-rubric.example.0123456789abcdef.md", []byte("rubric\n")))
+	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "uid1", "roborev-rubric.example.0123456789abcdef.md", []byte("rubric\n")))
 	assert.Equal(t, 2, calls)
 }
 
@@ -91,7 +91,7 @@ func TestArchiveRubricSkipsExisting(t *testing.T) {
 		return []byte(`{"attachments":{"attachment.test":{"name":"rubric.md"}}}`), nil
 	}
 	stubArchiveIdentity(c)
-	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")))
+	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric\n")))
 }
 
 func TestArchiveRubricReportsAddFailure(t *testing.T) {
@@ -104,10 +104,10 @@ func TestArchiveRubricReportsAddFailure(t *testing.T) {
 		if calls == 1 {
 			return []byte(`{"attachments":{}}`), nil
 		}
-		return []byte(`{"results":[{"error":"docbank_not_configured"}]}`), nil
+		return nil, ErrDocbankNotConfigured
 	}
 	stubArchiveIdentity(c)
-	require.ErrorContains(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")), "docbank_not_configured")
+	require.ErrorIs(t, c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric\n")), ErrDocbankNotConfigured)
 }
 
 func TestArchiveRubricSerializesConcurrentAdds(t *testing.T) {
@@ -140,13 +140,18 @@ func TestArchiveRubricSerializesConcurrentAdds(t *testing.T) {
 		return []byte(`{"results":[{"attachment_id":"attachment.test"}]}`), nil
 	}
 	stubArchiveIdentity(c)
+	first, err := c.ResolveArchiveIssue(t.Context(), "demo", "uid1")
+	require.NoError(t, err)
+	second, err := c.ResolveArchiveIssue(t.Context(), "demo", "abc4")
+	require.NoError(t, err)
+	require.Equal(t, first.UID, second.UID)
 	synctest.Test(t, func(t *testing.T) {
 		firstList = make(chan struct{})
 		release = make(chan struct{})
 		result := make(chan error, 2)
-		go func() { result <- c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric\n")) }()
+		go func() { result <- c.ArchiveRubric(t.Context(), "demo", first.UID, "rubric.md", []byte("rubric\n")) }()
 		<-firstList
-		go func() { result <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
+		go func() { result <- c.ArchiveRubric(t.Context(), "demo", second.UID, "rubric.md", []byte("rubric\n")) }()
 		synctest.Wait()
 		close(release)
 		require.NoError(t, <-result)
@@ -172,11 +177,46 @@ func TestArchiveRubricCancelWaitingForLock(t *testing.T) {
 	}
 	stubArchiveIdentity(c)
 	done := make(chan error, 1)
-	go func() { done <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
+	go func() { done <- c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric\n")) }()
 	<-started
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	require.ErrorIs(t, c.ArchiveRubric(ctx, "demo", "abc4", "rubric.md", []byte("rubric\n")), context.Canceled)
+	require.ErrorIs(t, c.ArchiveRubric(ctx, "demo", "uid1", "rubric.md", []byte("rubric\n")), context.Canceled)
 	close(release)
 	require.NoError(t, <-done)
+}
+
+func TestArchiveRubricRejectsIdentityChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		changedResolve int
+	}{
+		{"after lock", 1},
+		{"before add", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewCLIClient(t.TempDir())
+			resolves, adds := 0, 0
+			c.run = func(_ context.Context, _ *CLIClient, args []string, _ io.Reader) ([]byte, error) {
+				switch args[0] {
+				case "projects":
+					return []byte(`{"project":{"id":1}}`), nil
+				case "show":
+					resolves++
+					if resolves == tc.changedResolve {
+						return []byte(`{"issue":{"project_id":2,"uid":"uid1","short_id":"abc4"}}`), nil
+					}
+					return []byte(`{"issue":{"project_id":1,"uid":"uid1","short_id":"abc4"}}`), nil
+				default:
+					if args[2] == "add" {
+						adds++
+					}
+					return []byte(`{"attachments":{}}`), nil
+				}
+			}
+			err := c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric"))
+			require.ErrorContains(t, err, "moved outside")
+			assert.Equal(t, 0, adds)
+		})
+	}
 }

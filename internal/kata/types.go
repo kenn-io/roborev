@@ -84,7 +84,8 @@ type CreateResult struct {
 // Client is the kata interface roborev depends on.
 type Client interface {
 	ResolveArchiveIssue(ctx context.Context, project, ref string) (ArchiveIssue, error)
-	ArchiveRubric(ctx context.Context, project, ref, name string, data []byte) error
+	// ArchiveRubric accepts a canonical UID returned by ResolveArchiveIssue.
+	ArchiveRubric(ctx context.Context, project, uid, name string, data []byte) error
 	Binding(ctx context.Context) (Binding, error)
 	List(ctx context.Context, opts ListOpts) ([]Issue, error)
 	Show(ctx context.Context, ref string) (Issue, error)
