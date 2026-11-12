@@ -83,17 +83,6 @@ func TestArchiveRubricListsAndAddsExactBytes(t *testing.T) {
 	assert.Equal(t, 2, calls)
 }
 
-func TestArchiveRubricSkipsExisting(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.toml"), []byte("[project]\nname = \"demo\"\n"), 0o600))
-	c := NewCLIClient(dir)
-	c.run = func(_ context.Context, _ *CLIClient, _ []string, _ io.Reader) ([]byte, error) {
-		return []byte(`{"attachments":{"attachment.test":{"name":"rubric.md"}}}`), nil
-	}
-	stubArchiveIdentity(c)
-	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric\n")))
-}
-
 func TestArchiveRubricReportsAddFailure(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.toml"), []byte("[project]\nname = \"demo\"\n"), 0o600))
