@@ -235,8 +235,8 @@ main() {
     echo "  roborev init"
     echo
     echo "Connect Claude Code or Codex:"
-    echo "  roborev agent hook install --agent all"
-    # Not in the latest release yet: roborev agent setup
+    # Not in the latest release yet
+    echo "  roborev agent setup"
 }
 
 main "$@"

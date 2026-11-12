@@ -310,7 +310,7 @@ func TestAgentSetupKeepsCustomCommands(t *testing.T) {
 	})
 }
 
-func TestAgentSetupKeepsMCPExecutableWhenHookMoves(t *testing.T) {
+func TestAgentSetupRepairsMCPExecutableWhenHookMoves(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", home)
 	fakeAgent(t, "claude")
@@ -325,16 +325,21 @@ func TestAgentSetupKeepsMCPExecutableWhenHookMoves(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 	out, err := runSetup("--agent", "claude", "--mcp")
-	require.ErrorIs(t, err, agentsetup.ErrNotReady, out)
+	require.NoError(t, err, out)
 	exe, err := os.Executable()
 	require.NoError(t, err)
 	assert.Contains(t, readFile(t, filepath.Join(home, "settings.json")), exe)
 	registration, found, err := mcpconfig.Registration(mcpconfig.Options{Agent: skills.AgentClaude})
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.Equal(t, missing, registration.Command)
+	assert.Equal(t, exe, registration.Command)
 	assert.Equal(t, []string{"--server", "http://127.0.0.1:8181", "mcp", "serve"}, registration.Args)
 	assert.Equal(t, map[string]string{"TOKEN": "example"}, registration.Env)
+	out, err = runSetup("--agent", "claude", "--mcp")
+	require.NoError(t, err, out)
+	got, _, err := mcpconfig.Registration(mcpconfig.Options{Agent: skills.AgentClaude})
+	require.NoError(t, err)
+	assert.Equal(t, registration, got)
 }
 
 func TestQuickstartCodexTrust(t *testing.T) {
@@ -526,6 +531,73 @@ func TestSetupLeavesMixedHookCommandsUnchanged(t *testing.T) {
 	assert.Equal(t, agentsetup.StateOK, states["skills"])
 	assert.Equal(t, string(data), readFile(t, path))
 	assert.Equal(t, mcp, readFile(t, mcpPath))
+}
+
+func TestSetupMixedHooksKeepsCLISkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	fakeAgent(t, "claude")
+	out, err := runSetup("--agent", "claude")
+	require.NoError(t, err, out)
+	hookPath := filepath.Join(home, "settings.json")
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, hookPath)), &doc))
+	handler := doc["hooks"].(map[string]any)["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	handler["command"] = handler["command"].(string) + " --turn-threshold 7"
+	data, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(hookPath, data, 0o600))
+	skillPath := filepath.Join(home, "skills", "roborev-fix", "SKILL.md")
+	before := readFile(t, skillPath)
+	states, err := setupReport(t, "--agent", "claude", "--mcp")
+	require.ErrorIs(t, err, agentsetup.ErrNotReady)
+	assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
+	assert.Equal(t, agentsetup.StateUnknown, states["skills"])
+	assert.Equal(t, agentsetup.StateUnknown, states["mcp roborev"])
+	assert.Equal(t, before, readFile(t, skillPath))
+	assert.Equal(t, string(data), readFile(t, hookPath))
+	_, err = os.Stat(filepath.Join(home, ".claude.json"))
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestSetupMCPInstallFailureKeepsCLIMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permissions differ on Windows")
+	}
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	fakeAgent(t, "claude")
+	out, err := runSetup("--agent", "claude")
+	require.NoError(t, err, out)
+	hookPath := filepath.Join(home, "settings.json")
+	skillPath := filepath.Join(home, "skills", "roborev-fix", "SKILL.md")
+	hooks, skill := readFile(t, hookPath), readFile(t, skillPath)
+	require.NoError(t, os.Chmod(home, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(home, 0o700) })
+	out, err = runSetup("--agent", "claude", "--mcp")
+	require.ErrorIs(t, err, agentsetup.ErrNotReady, out)
+	assert.Equal(t, hooks, readFile(t, hookPath))
+	assert.Equal(t, skill, readFile(t, skillPath))
+}
+
+func TestSetupHookInstallFailureKeepsMCPSkills(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permissions differ on Windows")
+	}
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	fakeAgent(t, "claude")
+	out, err := runSetup("--agent", "claude", "--mcp")
+	require.NoError(t, err, out)
+	hookPath := filepath.Join(home, "settings.json")
+	skillPath := filepath.Join(home, "skills", "roborev-fix", "SKILL.md")
+	hooks, skill := readFile(t, hookPath), readFile(t, skillPath)
+	require.NoError(t, os.Chmod(home, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(home, 0o700) })
+	out, err = runSetup("--agent", "claude", "--mcp=false")
+	require.ErrorIs(t, err, agentsetup.ErrNotReady, out)
+	assert.Equal(t, hooks, readFile(t, hookPath))
+	assert.Equal(t, skill, readFile(t, skillPath))
 }
 
 func TestSetupContinuesAfterOtherAgentConfigFails(t *testing.T) {

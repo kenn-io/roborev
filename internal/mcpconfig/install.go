@@ -242,10 +242,8 @@ func patchJSON(data []byte, pointer string, value any) ([]byte, error) {
 	return root.Pack(), nil
 }
 
-// Repair writes the selected server's daemon field into the existing entry,
-// re-enables a disabled Codex entry. Every other field and comment stays as
-// the user wrote it, which Kit's
-// writer would replace.
+// Repair updates the selected server's endpoint or executable and re-enables a
+// disabled Codex entry. Other fields and comments remain unchanged.
 func Repair(opts Options, server RegisteredServer) error {
 	path, err := ConfigPath(opts)
 	if err != nil {
@@ -261,6 +259,9 @@ func Repair(opts Options, server RegisteredServer) error {
 	}
 	changed := false
 	fields := map[string]any{}
+	if server.Command != current.Command {
+		fields["command"] = server.Command
+	}
 	if server.URL != current.URL {
 		fields["url"] = server.URL
 	}

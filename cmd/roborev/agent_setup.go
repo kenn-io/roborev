@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"time"
@@ -124,7 +125,9 @@ func agentSetupItems(name string, mcp *bool, server *string, hooksOnly bool) ([]
 		}
 		opts.Executable, opts.MCP, opts.RoborevServerAddr = installed.Executable, installed.MCP, installed.RoborevServerAddr
 	}
-	selected := opts.MCP
+	installedMode := opts.MCP
+	installedExecutable := opts.Executable
+	selected := installedMode
 	if mcp != nil {
 		selected = *mcp
 	}
@@ -174,7 +177,7 @@ func agentSetupItems(name string, mcp *bool, server *string, hooksOnly bool) ([]
 			return nil, err
 		}
 	}
-	items := []agentsetup.Item{hookItem, {
+	skillItem := agentsetup.Item{
 		Name:    "skills",
 		Install: func(context.Context) error { return agenthook.InstallSkills(agent, path, selected) },
 		Check: func(context.Context) (agentsetup.Status, error) {
@@ -188,7 +191,32 @@ func agentSetupItems(name string, mcp *bool, server *string, hooksOnly bool) ([]
 			}
 			return agentsetup.Status{State: agentsetup.StateOK, Reason: "Bundled skills are current"}, nil
 		},
-	}}
+	}
+	if mixed {
+		skillItem.Install = nil
+		if selected != installedMode {
+			skillItem.Check = mixedHookStatus
+		}
+	}
+	var dependencyErr error
+	if !mixed {
+		installHook := hookItem.Install
+		hookItem.Install = func(ctx context.Context) error {
+			if dependencyErr != nil {
+				return fmt.Errorf("MCP setup failed: %w", dependencyErr)
+			}
+			dependencyErr = installHook(ctx)
+			return dependencyErr
+		}
+		installSkills := skillItem.Install
+		skillItem.Install = func(ctx context.Context) error {
+			if dependencyErr != nil {
+				return fmt.Errorf("integration setup failed: %w", dependencyErr)
+			}
+			return installSkills(ctx)
+		}
+	}
+	items := []agentsetup.Item{hookItem, skillItem}
 	if mixed && (selected || registered) {
 		items = append(items, agentsetup.Item{Name: "mcp roborev", Check: mixedHookStatus})
 	} else if selected {
@@ -196,11 +224,21 @@ func agentSetupItems(name string, mcp *bool, server *string, hooksOnly bool) ([]
 		if registered && server == nil {
 			address = ""
 		}
+		if registered && opts.Executable != installedExecutable && registration.Command == installedExecutable && filepath.IsAbs(registration.Command) {
+			if i := slices.Index(registration.Args, "mcp"); i >= 0 && i+1 < len(registration.Args) && registration.Args[i+1] == "serve" {
+				registration.Command = opts.Executable
+			}
+		}
 		item, err := agentMCPItem(name, opts.Executable, address, registration, registered)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		installMCP := item.Install
+		item.Install = func(ctx context.Context) error {
+			dependencyErr = installMCP(ctx)
+			return dependencyErr
+		}
+		items = append([]agentsetup.Item{item}, items...)
 	}
 	return items, nil
 }
@@ -246,7 +284,7 @@ func agentMCPItem(name, executable, address string, server mcpconfig.RegisteredS
 			}
 		}
 		if status.State == agentsetup.StateOK && !isRoborevMCP(server) {
-			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Cannot verify that the server provides RoboRev tools", NextStep: "Inspect the MCP server in the agent"}, nil
+			return agentsetup.Status{State: agentsetup.StateUnknown, Reason: "Cannot verify that the server provides RoboRev tools", NextStep: "Confirm the server provides RoboRev tools in the agent"}, nil
 		}
 		return status, nil
 	}
