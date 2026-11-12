@@ -330,6 +330,22 @@ jobs:
             ' gotestsum/kata-connection.json
           done
 
+      - name: Test Kata through daemon with current producer (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -o pipefail
+          export PATH="$RUNNER_TEMP/kata-bin:$PATH"
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+            --jsonfile gotestsum/kata-daemon.json \
+            --packages "./cmd/roborev" \
+            -- -timeout 15m -race -count=1 -tags kata -run '^TestKataThroughTheDaemonE2E$'
+          jq -ser '
+            [ .[] | select(.Package == "go.kenn.io/roborev/cmd/roborev" and .Test == "TestKataThroughTheDaemonE2E") | .Action ] |
+            if index("run") != null and index("pass") != null and index("skip") == null
+            then "RUN and PASS: Kata through daemon"
+            else error("missing run/pass evidence for Kata through daemon") end
+          ' gotestsum/kata-daemon.json
+
       - name: Search mirror growth (Linux)
         if: matrix.os == 'ubuntu-latest'
         timeout-minutes: 12
