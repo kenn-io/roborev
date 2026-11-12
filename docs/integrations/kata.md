@@ -128,9 +128,10 @@ and member job results from `roborev job show` when needed. Assign every
 identified source reviewer. If the mapping is ambiguous, such as the same agent
 and type with different member instructions, do not assign that finding; report
 it unchecked. Keep one root and outcome row per finding. Reconcile every
-full-result finding to a root and outcome. Record complete comment references
-from `kata show`. For `<result>`, use the top-level `uuid` from the JSON output;
-if absent, use exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys
+full-result finding to a root and outcome. Record full root UIDs from
+`comments[].uid` in `kata show --json`. For `<result>`, use the top-level
+`uuid` from the JSON output; if absent, use exactly
+`<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys
 only for identical retries of the same result. A rerun has a new result: leave
 old roots, replies and outcomes as history, post a new charter and roots with
 new keys, and never carry outcomes forward:
@@ -181,8 +182,8 @@ the finding unchecked and actionable.
 
 The lead checks that cited paths and lines exist at the reviewed commit and
 posts a swarm verification outcome comment whose first line is exactly
-`swarm:<result>`, followed by one row per finding with its position, complete
-root reference and outcome (for example, `1 | <comment-ref> | confirmed`):
+`swarm:<result>`, followed by one row per finding with its position, full
+root UID and outcome (for example, `1 | <root-uid> | confirmed`):
 confirmed for confirms only, refuted for refutes only, contested for both, and
 unchecked for neither or incomplete threads. A resolving citation alone does not
 prove a conclusion. The lead never confirms or refutes; the user decides what to
@@ -191,7 +192,7 @@ or the roborev review. With user approval, refuted findings can inform rubric
 tuning. Main fix, refine and later review prompts do not consume typed swarm
 outcomes; pass them to the user or fixing agent before any edit.
 
-Post `outcome.md` with a stable key; reuse the key for an identical retry:
+Post `outcome.md` with a stable key:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file outcome.md \
@@ -205,9 +206,14 @@ output says `Comments truncated`), repeat with
 beginning on each freshness check, since editing an old comment does not create
 a new one. If a page fails or the cursor cannot advance, report uncertainty.
 
-Keep one outcome comment for this result. Before handoff, and when later replies
-or a newly readable thread change a row, lead re-reads current threads and
-reclassifies affected rows. Find the comment's UID in a complete fresh issue
+Keep one outcome comment for this result. After an uncertain or lost creation
+response, start a fresh complete issue read before retrying. If exactly one
+comment matches `swarm:<result>`, reuse its UID and edit it. If the read is
+incomplete or the match is multiple or ambiguous, Ask. Retry creation only if
+the complete read establishes that no matching outcome exists; a retry key alone
+does not guarantee permanent deduplication. Before handoff, and when later
+replies or a newly readable thread change a row, lead re-reads current threads
+and reclassifies affected rows. Find the comment's UID in a complete fresh issue
 read and edit it, preserving the `swarm:<result>` first line and position/root
 columns. Re-read the edited comment and current replies before handoff; if a
 read or edit fails, report uncertainty instead of presenting the old row as
@@ -221,11 +227,13 @@ kata --teammate=lead comment edit '<issue>' '<outcome-comment-uid>' \
 
 When a repository also uses an Agent Hook review flow, start a fresh complete
 issue read as above. Match the current result's outcome comment by its exact
-first line `swarm:<result>`, then match the finding's position and complete root
-reference; ignore older results. Before using a row, re-read all pages of the
-current finding thread using the last non-root cursor rule above. If the row
-disagrees with current replies or its currency cannot be established, Ask for
-lead to correct the existing comment. Route Contested, malformed, unknown,
+first line `swarm:<result>`, then match the finding's position and full root
+UID from `comments[].uid`; ignore older results. Use the approved Kata route
+and qualify issue discovery, reads, and thread pages with `--project <name>`.
+Ask if that route is unavailable or the issue is missing or ambiguous. Before
+using a row, re-read all pages of the current finding thread using the last
+non-root cursor rule above. If the row disagrees with current replies or its
+currency cannot be established, Ask for lead to correct the existing comment. Route Contested, malformed, unknown,
 missing or ambiguous rows, multiple matching comments, and incomplete reads to
 Ask with the reason. Unchecked or no outcome on a complete read continues
 ordinary source triage, as Confirmed and Refuted do; check sources before
