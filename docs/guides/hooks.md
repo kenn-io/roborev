@@ -260,9 +260,10 @@ url = "https://example.com/roborev-webhook"
 The webhook sends a JSON POST with a 5-second timeout. The payload is the full
 review event as JSON (`type`, `ts`, `job_id`, `job_uuid`, `repo`, `repo_name`,
 `sha`, `branch`, `agent`, `review_type`, `rubric_sha256`, `verdict`, `findings`,
-`error`, `worktree_path`), with unset fields omitted. See [Event Fields](/docs/advanced/streaming/#event-fields)
-for field semantics. The `url` field is treated as sensitive and is masked in
-`roborev config list` output. Webhook URLs are redacted in daemon logs (only the
+`error`, `worktree_path`), with unset fields omitted. See
+[Event Fields](/docs/advanced/streaming/#event-fields) for field semantics. The
+`url` field is treated as sensitive and is masked in `roborev config list`
+output. Webhook URLs are redacted in daemon logs (only the
 scheme and host are shown).
 
 Webhook delivery is asynchronous and never blocks the review pipeline. Failed

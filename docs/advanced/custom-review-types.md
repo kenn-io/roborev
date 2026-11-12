@@ -39,7 +39,7 @@ rendered template and includes, trimmed and followed by one newline. The full
 identifies the rubric used by the review attempt; changing a template or an
 include can change it. CI custom reviews record the digest of their prebuilt
 prompt. Built-in types, supplied prompts, and panel synthesis have no rubric
-digest. Panel output lists each member’s rubric ID when available.
+digest.
 
 You can [archive custom rubrics onto Kata issues](/docs/integrations/kata/#archiving-custom-rubrics).
 

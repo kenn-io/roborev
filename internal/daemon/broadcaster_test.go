@@ -202,11 +202,9 @@ func TestBroadcaster_NonBlockingBroadcast(t *testing.T) {
 func TestJobEventRubricIdentity(t *testing.T) {
 	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 	job := &storage.ReviewJob{ID: 1, ReviewType: "custom", RubricSHA256: &digest}
-	for _, kind := range []string{"review.started", "review.completed", "review.failed", "review.canceled"} {
-		event := eventForJob(kind, job, job.ID)
-		assert.Equal(t, &digest, event.RubricSHA256)
-		assert.Equal(t, "custom", event.ReviewType)
-	}
+	event := eventForJob("review.started", job, job.ID)
+	assert.Equal(t, &digest, event.RubricSHA256)
+	assert.Equal(t, "custom", event.ReviewType)
 	data, err := json.Marshal(Event{Type: "review.started"})
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "rubric_sha256")

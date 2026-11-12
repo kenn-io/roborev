@@ -276,14 +276,6 @@ func (r *BuildResult) setRubric(rubric []byte) {
 	r.RubricSHA256 = fmt.Sprintf("%x", sha256.Sum256(r.Rubric))
 }
 
-// BuildResultForReview builds a review prompt and retains its rendered rubric.
-func (b *Builder) BuildResultForReview(gitRef string, contextCount int, agentName, reviewType, minSeverity string) (BuildResult, error) {
-	var result BuildResult
-	var err error
-	result.Prompt, err = b.buildWithOpts(gitRef, contextCount, agentName, reviewType, buildOpts{minSeverity: minSeverity, result: &result})
-	return result, err
-}
-
 // BuildResultWithAdditionalContext retains the rubric rendered for a prebuilt prompt.
 func (b *Builder) BuildResultWithAdditionalContext(gitRef string, contextCount int, agentName, reviewType, minSeverity, additionalContext string) (BuildResult, error) {
 	var result BuildResult

@@ -2809,15 +2809,14 @@ func (s *Server) broadcastRerunEnqueued(
 	jobID int64, jobUUID *uuid.UUID, source *storage.ReviewJob,
 ) {
 	s.broadcaster.Broadcast(Event{
-		Type:       "job.enqueued",
-		ReviewType: source.ReviewType,
-		TS:         time.Now(),
-		JobID:      jobID,
-		JobUUID:    jobUUID,
-		Repo:       source.RepoPath,
-		RepoName:   source.RepoName,
-		SHA:        source.GitRef,
-		Agent:      source.Agent,
+		Type:     "job.enqueued",
+		TS:       time.Now(),
+		JobID:    jobID,
+		JobUUID:  jobUUID,
+		Repo:     source.RepoPath,
+		RepoName: source.RepoName,
+		SHA:      source.GitRef,
+		Agent:    source.Agent,
 	})
 	s.workerPool.wake()
 }
@@ -3553,15 +3552,13 @@ func (s *Server) logEnqueueSideEffects(
 	}
 
 	s.broadcaster.Broadcast(Event{
-		Type:         "job.enqueued",
-		ReviewType:   job.ReviewType,
-		RubricSHA256: job.RubricSHA256,
-		TS:           time.Now(),
-		JobID:        job.ID,
-		Repo:         in.repo.RootPath,
-		RepoName:     in.repo.Name,
-		SHA:          job.GitRef,
-		Agent:        in.agentName,
+		Type:     "job.enqueued",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     in.repo.RootPath,
+		RepoName: in.repo.Name,
+		SHA:      job.GitRef,
+		Agent:    in.agentName,
 	})
 	s.workerPool.wake()
 }

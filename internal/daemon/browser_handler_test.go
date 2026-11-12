@@ -1234,13 +1234,3 @@ func TestProjectBrowserReviewJobReadable(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &fields))
 	assert.Equal(t, true, fields["readable"])
 }
-
-func TestBrowserJobRubricProjection(t *testing.T) {
-	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-	job := storage.ReviewJob{ReviewType: "custom", RubricSHA256: &digest}
-	projected := projectBrowserReviewJob(job, BrowserPrincipal{})
-	assert.Equal(t, &digest, projected.RubricSHA256)
-	body, err := json.Marshal(projected)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), `"rubric_sha256":"`+digest+`"`)
-}

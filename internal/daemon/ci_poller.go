@@ -3766,11 +3766,6 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
-func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
-	built, err := p.callBuildReviewPromptResult(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
-	return built.Prompt, err
-}
-
 func (p *CIPoller) callBuildReviewPromptResult(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (prompt.BuildResult, error) {
 	if p.buildReviewPromptFn != nil {
 		text, err := p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
