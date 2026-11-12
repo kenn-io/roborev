@@ -462,12 +462,22 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		}
 		seed = &record.Marker.KataPublicationSeed
 	} else {
-		if _, err := os.Stat(checkout); errors.Is(err, os.ErrNotExist) {
-			// A sync-only repository has no local hooks or workspace binding.
-			checkout = ""
-			missingCheckout = true
-		} else if err != nil {
+		repo, err := p.db.GetRepoByID(review.Job.RepoID)
+		if err != nil {
 			return nil, err
+		}
+		// Sync placeholders store their identity as the root path. A validated
+		// worktree, when present, remains the checkout used for inspection.
+		missingCheckout = repo.Identity != "" && repo.RootPath == repo.Identity && checkout == repo.RootPath
+		if !missingCheckout {
+			if _, err := os.Stat(checkout); errors.Is(err, os.ErrNotExist) {
+				missingCheckout = true
+			} else if err != nil {
+				return nil, err
+			}
+		}
+		if missingCheckout {
+			checkout = ""
 		}
 		name, err := kataInspectionProject(cfg, review.Job, checkout)
 		if err != nil {
