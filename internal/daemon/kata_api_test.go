@@ -586,6 +586,27 @@ func TestKataPublicationDiscoversUnmarkedReview(t *testing.T) {
 	}
 }
 
+func TestKataPromptContextWithoutDestination(t *testing.T) {
+	fake := katafake.New(t)
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "unbound-review", "worker")
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "high", Problem: "problem", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.CompleteJobResult(job.ID, "test", storage.ReviewCompletion{StructuredOutput: raw, Verdict: storage.VerdictFail}))
+	review, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	review.Job = job
+	cfg := kataConnectionConfig(fake)
+	cfg.Integrations.Kata.DefaultProject = ""
+	server := newServerWithLogs(tc.DB, cfg, "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = server.Close() })
+
+	decorated, err := prompt.NewKataContextCache(server.readKataPromptContext).Decorate(t.Context(), review)
+	require.NoError(t, err)
+	assert.Equal(t, review.Output, decorated.Output)
+}
+
 func TestKataInspectionReadsOversizedUnmarkedPublication(t *testing.T) {
 	fake := katafake.New(t)
 	tc := newWorkerTestContext(t, 1)
