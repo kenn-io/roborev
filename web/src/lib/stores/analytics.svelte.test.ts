@@ -1,3 +1,4 @@
+import { offlineRead } from "../testing/network";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AnalyticsSnapshot } from "../api/generated/models";
@@ -263,6 +264,31 @@ describe("analytics store request ownership", () => {
     expect(store.isStale()).toBe(true);
     expect(store.getError()).toBe("offline");
     store.dispose();
+  });
+
+  it("keeps a same-query snapshot while a lost refresh recovers", async () => {
+    const loader = vi
+      .fn<AnalyticsLoader>()
+      .mockResolvedValueOnce(snapshot(4))
+      .mockImplementationOnce(offlineRead)
+      .mockResolvedValue(snapshot(5));
+    const store = createAnalyticsStore({ loader });
+    await store.refresh();
+    vi.useFakeTimers();
+    try {
+      const refresh = store.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot()?.summary.reviews.total).toBe(4);
+      expect(store.isLoading()).toBe(true);
+      expect(store.isStale()).toBe(false);
+      await vi.runAllTimersAsync();
+      await refresh;
+      expect(store.getSnapshot()?.summary.reviews.total).toBe(5);
+      expect(store.getError()).toBeNull();
+    } finally {
+      store.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("never displays the old snapshot under failed new filters", async () => {

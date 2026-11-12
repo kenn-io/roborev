@@ -6,7 +6,11 @@ package testenv
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -100,6 +104,7 @@ func unsetAgentConfigDirEnv() func() {
 		if !has {
 			continue
 		}
+		userAgentEnv = append(userAgentEnv, key+"="+orig)
 		_ = os.Unsetenv(key)
 		restores = append(restores, func() {
 			_ = os.Setenv(key, orig)
@@ -112,7 +117,108 @@ func unsetAgentConfigDirEnv() func() {
 	}
 }
 
+var userEnv, userAgentEnv []string
+
+func goFileValue(key, goenv, root string) string {
+	var files []string
+	if goenv != "" && goenv != "off" {
+		files = append(files, goenv)
+	}
+	if root != "" {
+		files = append(files, filepath.Join(root, "go.env"))
+	}
+	for _, file := range files {
+		data, _ := os.ReadFile(file)
+		value, found := "", false
+		for line := range strings.SplitSeq(string(data), "\n") {
+			if v, ok := strings.CutPrefix(line, key+"="); ok {
+				value, found = v, true
+			}
+		}
+		if found {
+			return value
+		}
+	}
+	return ""
+}
+
+// UserEnv restores the original home and config paths for tool subprocesses.
+func UserEnv() []string {
+	return append(os.Environ(), userEnv...)
+}
+
+// UserAgentEnv returns the original paths needed by an authenticated adapter.
+func UserAgentEnv() []string {
+	return append(append([]string(nil), userEnv...), userAgentEnv...)
+}
+
 func configureGitForTests(tmpDir string) {
+	for _, key := range []string{"HOME", "USERPROFILE"} {
+		userEnv = append(userEnv, key+"="+os.Getenv(key))
+	}
+	home, _ := os.UserHomeDir()
+	cache, _ := os.UserCacheDir()
+	config, _ := os.UserConfigDir()
+	goenv := os.Getenv("GOENV")
+	if goenv == "" && config != "" {
+		goenv = filepath.Join(config, "go", "env")
+		_ = os.Setenv("GOENV", goenv)
+	}
+	root := goFileValue("GOROOT", goenv, "")
+	if root == "" {
+		root = os.Getenv("GOROOT")
+	}
+	if root == "" {
+		// PATH may resolve a version-manager shim rather than the toolchain.
+		root = runtime.GOROOT() //nolint:staticcheck
+	}
+	if root == "" {
+		// A trimpath test binary has no runtime GOROOT; go test puts Go first on PATH.
+		if goBin, err := exec.LookPath("go"); err == nil {
+			candidate := filepath.Dir(filepath.Dir(goBin))
+			if info, err := os.Stat(filepath.Join(candidate, "pkg", "tool")); err == nil && info.IsDir() {
+				root = candidate
+			}
+		}
+	}
+	for _, entry := range [][3]string{{"GOPATH", home, "go"}, {"GOCACHE", cache, "go-build"}} {
+		path := filepath.Join(entry[1], entry[2])
+		if os.Getenv(entry[0]) == "" && entry[1] != "" && goFileValue(entry[0], goenv, root) == "" && (entry[0] != "GOPATH" || path != root) {
+			_ = os.Setenv(entry[0], path)
+		}
+	}
+	miseHome := home
+	if runtime.GOOS == "windows" {
+		if u, err := user.Current(); err == nil {
+			miseHome = u.HomeDir
+		}
+	}
+	// Mise selects tools and trusts config from these directories before it
+	// reads its own configuration. Keep their original locations across HOME.
+	for _, entry := range [][3]string{
+		{"MISE_CONFIG_DIR", "XDG_CONFIG_HOME", ".config"},
+		{"MISE_DATA_DIR", "XDG_DATA_HOME", ".local/share"},
+		{"MISE_STATE_DIR", "XDG_STATE_HOME", ".local/state"},
+		{"MISE_CACHE_DIR", "XDG_CACHE_HOME", ".cache"},
+	} {
+		base := os.Getenv(entry[1])
+		if base == "" {
+			base = miseHome
+			switch {
+			case runtime.GOOS == "windows" && entry[0] == "MISE_DATA_DIR":
+				base = os.Getenv("LOCALAPPDATA")
+			case runtime.GOOS == "windows" && entry[0] == "MISE_CACHE_DIR":
+				base = os.Getenv("TEMP")
+			case runtime.GOOS == "darwin" && entry[0] == "MISE_CACHE_DIR" && base != "":
+				base = filepath.Join(base, "Library", "Caches")
+			case base != "":
+				base = filepath.Join(base, entry[2])
+			}
+		}
+		if base != "" && os.Getenv(entry[0]) == "" {
+			_ = os.Setenv(entry[0], filepath.Join(base, "mise"))
+		}
+	}
 	// Prevent global/system git config from leaking into tests.
 	// Without this, commit.gpgsign=true in global config triggers
 	// gpg-agent/pinentry during test commits.
@@ -124,12 +230,16 @@ func configureGitForTests(tmpDir string) {
 	// git invocation in the suite on Windows (notably Windows-on-ARM). An empty
 	// file is a valid, no-op global config on every platform. On Unix
 	// /dev/null happens to work, but the empty file is correct everywhere.
-	emptyGlobalConfig := filepath.Join(tmpDir, "gitconfig-global")
+	emptyGlobalConfig := filepath.Join(tmpDir, ".gitconfig")
 	if f, err := os.OpenFile(emptyGlobalConfig, os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 		_ = f.Close()
 	}
 	_ = os.Setenv("GIT_CONFIG_GLOBAL", emptyGlobalConfig)
 	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// Git runners strip GIT_* variables, so the empty file must also be the
+	// default global config under HOME.
+	_ = os.Setenv("HOME", tmpDir)
+	_ = os.Setenv("USERPROFILE", tmpDir)
 	// Git also reads the default global ignore file from XDG_CONFIG_HOME
 	// independently of GIT_CONFIG_GLOBAL. Keep that out of the user's real
 	// ~/.config so personal excludes cannot change test behavior.

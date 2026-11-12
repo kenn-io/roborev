@@ -64,9 +64,9 @@ jobs:
 
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
 
       - name: Download v0.56 Windows release archive
         shell: bash

@@ -163,7 +163,7 @@ func (hr *HookRunner) handleEvent(event Event) {
 
 	// Collect hooks: copy global slice to avoid aliasing, then append repo-specific.
 	hooks := append([]config.HookConfig{}, cfg.Hooks...)
-	if effectiveRepo != "" {
+	if effectiveRepo != "" && !event.SuppressRepoHooks {
 		if repoCfg, err := config.LoadRepoConfig(effectiveRepo); err == nil && repoCfg != nil {
 			hooks = append(hooks, repoCfg.Hooks...)
 		}

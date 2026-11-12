@@ -134,7 +134,7 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 		var logUsage *tokens.Usage
 		currentLog, logErr := JobLogIsCurrentAttempt(job.ID, job.StartedAt)
 		if logErr == nil && currentLog {
-			logUsage, logErr = tokens.ParseCodexUsageFile(JobLogPath(job.ID))
+			logUsage, logErr = parseJobLogUsage(job.ID, job.Agent)
 		}
 		if logErr != nil {
 			log.Printf("job %d: parse job log: %v", job.ID, logErr)
@@ -146,6 +146,17 @@ func (s *Server) humaScanTokenUsage(ctx context.Context, input *ScanTokenUsageIn
 		expectedProviderSessions := 0
 		if hasCandidate {
 			providerSessionIDs, expectedProviderSessions = backfill.TokenUsageProviderSessions(candidate)
+		}
+		// A log can sum more sessions than the row names. Looking up only the
+		// row's sessions would replace that sum with their share, so this pass
+		// stores the log alone. A priced log is then complete; an unpriced one
+		// is priced once the row names every session.
+		logIsFuller := logUsageCoversSeveralSessions(logUsage) &&
+			(logUsage.HasCost || logUsage.ExpectedProviderSessions > expectedProviderSessions)
+		if logIsFuller {
+			providerSessionIDs, expectedProviderSessions = nil, 0
+		}
+		if hasCandidate && !logIsFuller {
 			if expectedProviderSessions <= len(providerSessionIDs) {
 				phaseUsages := make([]*tokens.Usage, 0, expectedProviderSessions)
 				complete := true

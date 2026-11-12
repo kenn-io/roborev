@@ -23,6 +23,7 @@ type TokenCostCandidate struct {
 // session from a terminal job's JSONL log.
 type TokenUsageLogCandidate struct {
 	JobID        int64
+	Agent        string
 	TokenUsage   string
 	StartedAt    time.Time
 	StartedAtRaw string
@@ -318,7 +319,7 @@ func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 
 func listTokenUsageLogCandidatesQuery(afterJobID int64, limit int, startedAfter time.Time, machineID uuid.UUID) (string, []any) {
 	return listTokenCandidatesQuery(
-		`j.id, COALESCE(j.token_usage, ''), j.started_at`, "",
+		`j.id, j.agent, COALESCE(j.token_usage, ''), j.started_at`, "",
 		tokenUsageLogCandidatePredicate, nil,
 		afterJobID, limit, startedAfter, machineID,
 	)
@@ -353,6 +354,7 @@ func (db *DB) ListTokenUsageLogCandidates(
 		var startedAt string
 		if err := rows.Scan(
 			&candidate.JobID,
+			&candidate.Agent,
 			&candidate.TokenUsage,
 			&startedAt,
 		); err != nil {

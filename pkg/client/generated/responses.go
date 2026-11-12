@@ -246,6 +246,16 @@ type BackfillVerdictsResponse = BackfillVerdictsOutputBody
 
 type BackfillVerdictsErrorResponse = ErrorModel
 
+type EnqueueSuppliedPanelResponse = PanelEnqueueResponse
+
+type EnqueueSuppliedPanelErrorResponse = ErrorResponse
+
+type EnqueueSuppliedPanelErrorResponseJSON = ErrorResponse
+
+type EnqueueSuppliedPanelErrorResponseJSON410 = ErrorResponse
+
+type EnqueueSuppliedPanelErrorResponseJSON500 = ErrorResponse
+
 type StartPanelSynthesisResponse = ReviewJob
 
 type StartPanelSynthesisErrorResponse = ErrorModel
@@ -735,6 +745,17 @@ type BackfillVerdictsResp struct {
 	StatusCode                        int
 	JSON200                           *BackfillVerdictsResponse
 	ApplicationProblemPlusJSONDefault *BackfillVerdictsErrorResponse
+}
+
+type EnqueueSuppliedPanelResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *EnqueueSuppliedPanelResponse
+	JSON400      *EnqueueSuppliedPanelErrorResponse
+	JSON409      *EnqueueSuppliedPanelErrorResponseJSON
+	JSON410      *EnqueueSuppliedPanelErrorResponseJSON410
+	JSON500      *EnqueueSuppliedPanelErrorResponseJSON500
 }
 
 type StartPanelSynthesisResp struct {
@@ -1592,6 +1613,22 @@ func (c *RawClient) BackfillVerdictsRaw(ctx context.Context, reqEditors ...runti
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/maintenance/verdicts/backfill",
 		Method:     "POST",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) EnqueueSuppliedPanelRaw(ctx context.Context, options *EnqueueSuppliedPanelRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &EnqueueSuppliedPanelRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/panel/enqueue",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

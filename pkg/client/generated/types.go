@@ -1374,6 +1374,60 @@ func (e EnqueueSkippedResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
+type EnqueueSuppliedPanelInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// GitRef Commit or range resolved once for every reviewer and synthesis
+	GitRef        string                `json:"git_ref" validate:"required,min=1"`
+	HoldSynthesis *bool                 `json:"hold_synthesis,omitempty"`
+	Members       []SuppliedPanelMember `json:"members" validate:"required"`
+	RepoPath      string                `json:"repo_path" validate:"required,min=1"`
+
+	// RequestID Retry an identical submission with this ID to recover its original panel
+	RequestID *uuid.UUID             `json:"request_id,omitempty"`
+	Synthesis SuppliedPanelSynthesis `json:"synthesis"`
+}
+
+func (e EnqueueSuppliedPanelInputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.GitRef, "required,min=1"); err != nil {
+		errors = errors.Append("GitRef", err)
+	}
+	if err := typesValidator.Var(e.Members, "required"); err != nil {
+		errors = errors.Append("Members", err)
+	}
+	if e.Members != nil && len(e.Members) < 1 {
+		errors = errors.Add("Members", fmt.Sprintf("must have at least 1 items, got %d", len(e.Members)))
+	}
+	for i, item := range e.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.RepoPath, "required,min=1"); err != nil {
+		errors = errors.Append("RepoPath", err)
+	}
+	if e.RequestID != nil {
+		if v, ok := any(e.RequestID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RequestID", err)
+			}
+		}
+	}
+	if v, ok := any(e.Synthesis).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Synthesis", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ErrorDetail struct {
 	// Location Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'
 	Location *string `json:"location,omitempty"`
@@ -2865,6 +2919,8 @@ type OverviewStats struct {
 }
 
 type PanelEnqueueResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema                *string                `json:"$schema,omitempty"`
 	Agent                 string                 `json:"agent" validate:"required"`
 	Agentic               bool                   `json:"agentic"`
 	AnalysisCommitSha     *string                `json:"analysis_commit_sha,omitempty"`
@@ -4261,8 +4317,90 @@ func (s StartPanelSynthesisInputBody) Validate() error {
 	return errors
 }
 
+// StructuredReviewCheck How the CI checker judged the review's findings before roborev stored and posted it.
+type StructuredReviewCheck struct {
+	// Findings One entry per finding the checker received, in that order. Kept entries keep their order in the document's findings. Empty when status is failed.
+	Findings []StructuredReviewCheckedFinding `json:"findings" validate:"required"`
+
+	// Status completed when the checker returned verdicts, or failed when it ran but the review was stored unchecked.
+	Status string `json:"status" validate:"required"`
+}
+
+func (s StructuredReviewCheck) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Findings, "required"); err != nil {
+		errors = errors.Append("Findings", err)
+	}
+	for i, item := range s.Findings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Findings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(s.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+// StructuredReviewCheckVerdict One verdict as the CI checker returned it. A member the checker left blank is omitted.
+type StructuredReviewCheckVerdict struct {
+	// Evidence The command the checker ran and its output, or what refutes the finding.
+	Evidence *string `json:"evidence,omitempty"`
+
+	// Keep The checker's decision to keep the finding.
+	Keep *bool `json:"keep,omitempty"`
+
+	// Reason The checker's one-sentence explanation.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// StructuredReviewCheckedFinding One finding the CI checker tried and what became of it.
+type StructuredReviewCheckedFinding struct {
+	// Finding One finding in a structured review document.
+	Finding StructuredReviewFinding `json:"finding"`
+
+	// Outcome kept when the finding stayed in the review, or dropped when the checker refuted it and roborev removed it.
+	Outcome string `json:"outcome" validate:"required"`
+
+	// Verdicts Every verdict the checker returned for this finding. A finding drops only with exactly one verdict whose keep is false and whose evidence and reason are both set; otherwise it is kept, including when this list is empty.
+	Verdicts []StructuredReviewCheckVerdict `json:"verdicts" validate:"required"`
+}
+
+func (s StructuredReviewCheckedFinding) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.Finding).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Finding", err)
+		}
+	}
+	if err := typesValidator.Var(s.Outcome, "required"); err != nil {
+		errors = errors.Append("Outcome", err)
+	}
+	if err := typesValidator.Var(s.Verdicts, "required"); err != nil {
+		errors = errors.Append("Verdicts", err)
+	}
+	for i, item := range s.Verdicts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Verdicts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 // StructuredReviewDocument The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.
 type StructuredReviewDocument struct {
+	// Check How the CI checker judged the review's findings before roborev stored and posted it.
+	Check    *StructuredReviewCheck    `json:"check,omitempty"`
 	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
 
 	// SchemaVersion Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3.
@@ -4278,6 +4416,13 @@ type StructuredReviewDocument struct {
 
 func (s StructuredReviewDocument) Validate() error {
 	var errors runtime.ValidationErrors
+	if s.Check != nil {
+		if v, ok := any(s.Check).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Check", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(s.Findings, "required"); err != nil {
 		errors = errors.Append("Findings", err)
 	}
@@ -4316,7 +4461,7 @@ type StructuredReviewFinding struct {
 	Kind *string `json:"kind,omitempty"`
 
 	// Location Where the problem is, or null when the finding has no location. Derived from file, start_line, and end_line when file is set; otherwise free text.
-	Location *string `json:"location" validate:"required"`
+	Location *string `json:"location" validate:"-"`
 	Problem  string  `json:"problem" validate:"required"`
 
 	// Severity One of critical, high, medium, or low.
@@ -4415,6 +4560,69 @@ func (s Summary) Validate() error {
 	if v, ok := any(s.Verdicts).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Verdicts", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SuppliedPanelMember struct {
+	Agent          string                 `json:"agent" validate:"required,min=1"`
+	MinSeverity    *string                `json:"min_severity,omitempty"`
+	Model          *string                `json:"model,omitempty"`
+	Name           string                 `json:"name" validate:"required,min=1"`
+	Provider       *string                `json:"provider,omitempty"`
+	Reasoning      *string                `json:"reasoning,omitempty"`
+	ReviewPrompt   string                 `json:"review_prompt" validate:"required,min=1"`
+	ReviewSettings SuppliedReviewSettings `json:"review_settings"`
+	ReviewType     *string                `json:"review_type,omitempty"`
+}
+
+func (s SuppliedPanelMember) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Agent, "required,min=1"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if err := typesValidator.Var(s.Name, "required,min=1"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if err := typesValidator.Var(s.ReviewPrompt, "required,min=1"); err != nil {
+		errors = errors.Append("ReviewPrompt", err)
+	}
+	if v, ok := any(s.ReviewSettings).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewSettings", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SuppliedPanelSynthesis struct {
+	Agent        string            `json:"agent" validate:"required,min=1"`
+	BackupAgent  *string           `json:"backup_agent,omitempty"`
+	BackupModel  *string           `json:"backup_model,omitempty"`
+	Instructions *string           `json:"instructions,omitempty"`
+	Model        *string           `json:"model,omitempty"`
+	Provider     *string           `json:"provider,omitempty"`
+	Reasoning    *string           `json:"reasoning,omitempty"`
+	Tools        *ReviewToolPolicy `json:"tools,omitempty"`
+}
+
+func (s SuppliedPanelSynthesis) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Agent, "required,min=1"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if s.Tools != nil {
+		if v, ok := any(s.Tools).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Tools", err)
+			}
 		}
 	}
 	if len(errors) == 0 {

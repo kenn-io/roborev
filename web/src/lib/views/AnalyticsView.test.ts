@@ -125,7 +125,7 @@ describe("AnalyticsView", () => {
     ).toBeTruthy();
     expect(screen.getAllByText("22%").length).toBeGreaterThan(1);
     expect(
-      screen.getByText("2 failed verdicts of 9 rated reviews"),
+      screen.getByText("2 failed reviews out of 9 reviews with a verdict"),
     ).toBeTruthy();
     expect(
       screen.getByRole("img", {
@@ -201,7 +201,7 @@ describe("AnalyticsView", () => {
     });
 
     expect(screen.getByRole("status").textContent).toContain(
-      "Showing stale data",
+      "Showing earlier analytics",
     );
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(store.refresh).toHaveBeenCalledOnce();

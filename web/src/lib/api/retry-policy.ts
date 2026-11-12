@@ -1,6 +1,6 @@
 import { Duration, Effect, Schedule } from "effect";
 
-import { TransientTransportError } from "./effect-errors";
+import { NetworkRequestError, TransientTransportError } from "./effect-errors";
 
 export const transientRetrySchedule = Schedule.exponential("500 millis").pipe(
   Schedule.jittered,
@@ -20,7 +20,9 @@ export function isTransientFailure(
     typeof failure === "object" &&
     failure !== null &&
     "_tag" in failure &&
-    failure._tag === "TransientTransportError"
+    failure._tag === "TransientTransportError" &&
+    "cause" in failure &&
+    failure.cause instanceof NetworkRequestError
   );
 }
 

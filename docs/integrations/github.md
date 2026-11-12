@@ -502,11 +502,15 @@ Patterns use Go's `path.Match` syntax (`*` matches any sequence of characters,
 `?` matches a single character, `[...]` matches character classes). Matching is
 case-insensitive.
 
-Wildcard expansion calls the GitHub API and caches results for one hour.
-Archived repos and repos with pull requests explicitly disabled are excluded.
-Repos remain eligible when the API omits the pull-request setting. If you enable
-pull requests later, the next discovery refresh includes the repo again.
-Explicit (non-wildcard) repos always take priority when `max_repos` is reached.
+Wildcard expansion calls the GitHub API and caches results for one hour. For an
+organization, it lists every repository the token can reach. For a personal
+account, it lists the public repositories plus the private ones the token can
+reach: with a GitHub App, the repositories the app is installed on; with a user
+token, those the user owns or collaborates on. Archived repos and repos with
+pull requests explicitly disabled are excluded. Repos remain eligible when the
+API omits the pull-request setting. If you enable pull requests later, the next
+discovery refresh includes the repo again. Explicit (non-wildcard) repos always
+take priority when `max_repos` is reached.
 
 Failed repository lookups retry on the first poll after 15 minutes, then after
 30 minutes, and then hourly. Other lookups keep their hourly cache, and the
@@ -910,9 +914,16 @@ that start TCP loopback servers cannot run in this sandbox; the checker keeps
 findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
-Missing or duplicate verdicts keep the finding. The job log records the
-verdicts. If every finding drops, the stored review says "No issues found." A
-checker failure or timeout posts the original review unchanged.
+Missing or duplicate verdicts keep the finding. If every finding drops, the
+stored review says "No issues found." A checker failure or timeout posts the
+original review unchanged.
+
+The stored review document records the check in its `check` member: whether the
+checker completed or failed, and for every finding it received, whether the
+finding was kept or dropped, with the checker's evidence and reason. Sync,
+`roborev export reviews`, and the API carry this record; the posted PR comment
+does not. See the [review document format](/docs/commands/#exporting-reviews).
+The job log also records each verdict.
 
 ## Rewriting checked findings
 
