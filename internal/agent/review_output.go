@@ -38,6 +38,26 @@ func (t *trailingReviewText) AddWithID(id, text string) {
 	t.parts = append(t.parts, text)
 }
 
+func (t *trailingReviewText) AppendWithID(id, delta string) {
+	if delta == "" {
+		return
+	}
+	if id == "" {
+		if len(t.parts) == 0 {
+			t.parts = append(t.parts, delta)
+			return
+		}
+		t.parts[len(t.parts)-1] += delta
+		return
+	}
+	if idx, ok := t.indexByID[id]; ok {
+		t.parts[idx] += delta
+		return
+	}
+	t.indexByID[id] = len(t.parts)
+	t.parts = append(t.parts, delta)
+}
+
 func (t *trailingReviewText) ResetAfterTool() {
 	t.parts = nil
 	if len(t.indexByID) > 0 {

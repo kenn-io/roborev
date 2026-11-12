@@ -357,8 +357,8 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 		{
 			name: "AntigravityNestedResultObject",
 			input: `{"event":"init","session_id":"agy-sess-123"}
-{"event":"step_update","step_update":{"step_index":1,"type":"planner_response","text_delta":"No issues ","content":"No issues "}}
-{"event":"step_update","step_update":{"step_index":1,"type":"planner_response","text_delta":"found.","content":"No issues found."}}
+{"event":"step_update","step_update":{"step_index":1,"type":"planner_response","text_delta":"Drafting ","content":"Drafting "}}
+{"event":"step_update","step_update":{"step_index":1,"type":"planner_response","text_delta":"review...","content":"Drafting review..."}}
 {"event":"result","result":{"status":"SUCCESS","response":"No issues found."}}
 `,
 			assertResult: func(t *testing.T, res string) {
@@ -376,6 +376,24 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			assertResult: func(t *testing.T, res string) {
 				assert.Equal(t, "Final review.", res)
 			},
+		},
+		{
+			name: "AntigravityChunkOnlySplitTokenJSONReview",
+			input: `{"event":"init","session_id":"agy-sess-123"}
+{"event":"step_update","step_update":{"step_index":1,"type":"planner_response","text_delta":"Provisional chunk"}}
+{"event":"step_update","step_update":{"step_index":2,"type":"tool_call","tool_name":"read_file"}}
+{"event":"step_update","step_update":{"step_index":3,"type":"planner_response","text_delta":"{\"ver"}}
+{"event":"step_update","step_update":{"step_index":3,"type":"planner_response","text_delta":"dict\":\"pass\",\"summary\":\"No issues\"}"}}
+`,
+			assertResult: func(t *testing.T, res string) {
+				assert.Equal(t, `{"verdict":"pass","summary":"No issues"}`, res)
+			},
+		},
+		{
+			name: "StandaloneJSONObjectWithoutEventMarkerReturnsNoStreamJSON",
+			input: `{"verdict":"pass","findings":[]}
+`,
+			wantErr: errNoStreamJSON,
 		},
 		{
 			name: "GeminiMessageFormat",
@@ -580,6 +598,7 @@ if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
 cat > "$STDIN_FILE"
 printf '%s\n' "$@" > "$ARGS_FILE"
 echo "Plain text review output"
+echo '{"example":"json-snippet","findings":[]}'
 echo "No issues found."
 `)
 
@@ -595,7 +614,7 @@ echo "No issues found."
 	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
 
 	require.NoError(t, err)
-	assert.Equal(t, "Plain text review output\nNo issues found.", res)
+	assert.Equal(t, "Plain text review output\n{\"example\":\"json-snippet\",\"findings\":[]}\nNo issues found.", res)
 	assert.Contains(t, output.String(), "Plain text review output")
 
 	// agy >= 1.1.1 takes the prompt as the value of --prompt, not from stdin.

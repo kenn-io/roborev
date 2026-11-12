@@ -548,6 +548,16 @@ func isGeminiStepTool(msg geminiStreamMessage) bool {
 		msg.StepUpdate.ToolName != "" || len(msg.StepUpdate.ToolCalls) > 0 || len(msg.ToolCall) > 0
 }
 
+func isGeminiStreamEvent(msg geminiStreamMessage) bool {
+	for _, kind := range []string{msg.Type, msg.Event} {
+		switch kind {
+		case "init", "system", "message", "assistant", "step_update", "tool", "tool_result", "tool_call", "result", "error":
+			return true
+		}
+	}
+	return false
+}
+
 func extractGeminiResultText(msg geminiStreamMessage) string {
 	if msg.Response != "" {
 		return msg.Response
@@ -586,7 +596,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 
 	err := scanStreamJSONLines(r, sw, func(trimmed string) error {
 		var msg geminiStreamMessage
-		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
+		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil && isGeminiStreamEvent(msg) {
 			validEventsParsed = true
 
 			if (msg.Type == "message" || msg.Event == "message") && msg.Role == "assistant" && msg.Content != "" {
@@ -599,7 +609,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 				if isGeminiStepTool(msg) {
 					assistantMessages.ResetAfterTool()
 				} else {
-					stepID := ""
+					stepID := "_step"
 					if msg.StepUpdate.StepIndex != nil {
 						stepID = strconv.Itoa(*msg.StepUpdate.StepIndex)
 					} else if msg.StepIndex != nil {
@@ -608,7 +618,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 					if text := firstNonEmptyString(msg.StepUpdate.Content, msg.StepUpdate.Text, msg.Text, msg.Content); text != "" {
 						assistantMessages.AddWithID(stepID, text)
 					} else if delta := firstNonEmptyString(msg.StepUpdate.TextDelta, msg.StepUpdate.Delta); delta != "" {
-						assistantMessages.Add(delta)
+						assistantMessages.AppendWithID(stepID, delta)
 					}
 				}
 			}
