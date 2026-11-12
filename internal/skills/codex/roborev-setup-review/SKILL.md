@@ -271,9 +271,8 @@ Rules that matter:
     for the same workflow and PR. Existing workflows need
     `roborev init gh-action --force` to adopt the behavior; add
     `--include-drafts` if the user wants draft reviews.
-- A `type = "kata"` hook files an issue for each reviewer's failing review as
-    well as for the combined review. With a panel of several reviewers, one
-    failing commit can open several issues. Say so when proposing it.
+- A `type = "kata"` hook skips panel members and files an issue for an
+    eligible failing standalone or combined review. Say so when proposing it.
 
 Example: a legal brief checked every five commits by two reviewers. It leaves
 the agent to the repository or machine default. Adapt it; do not copy names
@@ -541,10 +540,14 @@ pass `--project <name>` to every native Kata command. When doctor reports
 `findings = "comments"` on the existing covering hook under that approval;
 do not leave a duplicate legacy hook. Doctor checks the binding or default project,
 not an explicit hook project; verify that destination separately before a run.
-If the connection is disabled, use the native root path below. If the daemon is
-down or its status cannot be read, explain that the daemon needs to be started
-or restarted with approval and doctor rechecked. Do not assume it is disabled
-or failed. Stop and report a reported unhealthy connection or missing typed replies.
+Doctor absence does not prove the connection disabled. Query the selected
+roborev daemon with `GET /api/kata/status` using the documented
+[daemon API authentication](https://roborev.io/docs/configuration/#daemon-authentication).
+Only an explicit `enabled: false` and `state: "disabled"` permits the native
+root path. A missing response, 404, error or unreadable status is unknown: stop
+and report why. If needed, start or restart the daemon with approval and recheck.
+Stop on an unhealthy connection or missing typed replies; ready and typed
+replies must still be reported by doctor for the published path.
 Do not read Kata issues until the user agrees to a run.
 
 Ask how many teammates check each reviewer, which agents they use, and who
@@ -635,13 +638,17 @@ If neither is established, reply with what you checked and what was missing.
    may be truncated; use the full job result. For a `findings = "comments"`
    hook, run `roborev kata show <job-id>`. Publication runs asynchronously;
    if it is in progress, report it and reinspect after it completes. Before any
-   charter or other native top-level comment, require `Status: complete` and
-   every matched finding root `complete`; match every root to the full result
-   and native issue. Stop and report missing, ambiguous, truncated, edited or
-   otherwise incomplete publication. Never post duplicate roots. From the
-   checkout run `kata show '<issue>' --json` and compare `issue.uid` and project
-   with roborev's output. Confirm the native routing and daemon endpoint select
-   the same server. Stop on mismatch or unverifiable identity. Use native
+   charter or other native top-level comment, require `Status: complete`; match
+   every root to the full result and native issue. Stop and report missing, ambiguous, truncated, edited or
+   otherwise incomplete publication. For an earlier review with no published
+   roots, offer user-approved `roborev kata create <job-id> --findings comments` or a
+   fresh review after the hook upgrade; inspect again before any charter. Never
+   post duplicate roots. From the checkout run `kata show '<issue>' --json` and
+   compare `issue.uid` and project with roborev's output. Verify native routing
+   against the active roborev daemon global config using
+   `kata daemon locate --json` as described in the Kata walkthrough. Select the
+   same verified endpoint explicitly if needed; stop on mismatch or missing
+   evidence. Use native
    `kata show '<issue>' --agent` for complete comment references.
 2. For synthesis, match each Markdown `Reported by` agent and review type to
    panel member metadata and member job results from `roborev job show` when
@@ -688,8 +695,13 @@ kata --teammate=facts-codex comment '<issue>' --confirm '<comment-ref>' \
 kata --teammate=lead show '<issue>' --thread '<comment-ref>' --agent
 ```
 
-On the native path only, post each root with `kata --teammate=lead comment
-'<issue>' --body-file finding-1.md --idempotency-key 'swarm:<result>:f1' --agent`.
+On the native path only, post each root:
+
+```bash
+kata --teammate=lead comment '<issue>' --body-file finding-1.md \
+  --idempotency-key 'swarm:<result>:f1' --agent
+```
+
 Use `--refute` or `--reply` when evidence calls for it, with the kind in the
 key. Never use `--force` or close a Kata issue or roborev review for a reply.
 When providers are restricted, name an approved agent for each teammate and
