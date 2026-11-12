@@ -216,16 +216,9 @@ func TestWorkerCanceledEventIncludesRubric(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	_, events := tc.Broadcaster.Subscribe("")
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	_, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: sha, Agent: "test", ReviewType: "custom"})
-	require.NoError(t, err)
-	job, err := tc.DB.ClaimJob(testWorkerID)
-	require.NoError(t, err)
-	require.NotNil(t, job)
+	job := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID)
+	job.ReviewType = "custom"
 	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-	saved, err := tc.DB.SaveJobPromptForAttempt(t.Context(), job, testWorkerID, "prompt", &digest)
-	require.NoError(t, err)
-	require.True(t, saved)
 	job.RubricSHA256 = &digest
 	tc.Pool.finishCanceledAttempt(testWorkerID, job, job.Agent, "")
 	require.Len(t, events, 1)

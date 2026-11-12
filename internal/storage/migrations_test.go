@@ -340,9 +340,11 @@ func TestRubricDigestMigration18(t *testing.T) {
 	exists, err := hasColumn(t.Context(), db, "review_jobs", "rubric_sha256")
 	require.NoError(t, err)
 	assert.False(t, exists)
+	require.Equal(t, 18, schemaMigrations[17].version)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:18]))
 	require.NoError(t, migrateRubricDigest(t.Context(), db))
 	exists, err = hasColumn(t.Context(), db, "review_jobs", "rubric_sha256")
 	require.NoError(t, err)
 	assert.True(t, exists)
+	assert.Equal(t, 18, appliedVersions(t, db)[17])
 }

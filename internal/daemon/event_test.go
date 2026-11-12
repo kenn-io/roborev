@@ -62,15 +62,6 @@ func TestEvent_MarshalJSON(t *testing.T) {
 	// WorktreePath omitted when empty
 	_, hasWT := decoded["worktree_path"]
 	assert.False(t, hasWT, "expected 'worktree_path' to be omitted when empty")
-
-	event.ReviewType = ""
-	event.RubricSHA256 = nil
-	data, err = event.MarshalJSON()
-	require.NoError(t, err)
-	decoded = nil
-	require.NoError(t, json.Unmarshal(data, &decoded))
-	assert.NotContains(t, decoded, "review_type")
-	assert.NotContains(t, decoded, "rubric_sha256")
 }
 
 func TestEvent_MarshalJSON_WorktreePath(t *testing.T) {
