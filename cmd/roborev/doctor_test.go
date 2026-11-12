@@ -406,7 +406,10 @@ func TestDoctorCommandJSONFailsOnBrokenConfig(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	assert.Equal(t, doctorFail, findDoctorCheck(t, report.Checks, "config.global").Status)
 	assert.Equal(t, doctorWarn, findDoctorCheck(t, report.Checks, "daemon.running").Status)
-	assert.Equal(t, doctorInfo, findDoctorCheck(t, report.Checks, "integrations.kata_rubrics").Status)
+	assert.Equal(t, doctorInfo, findDoctorCheck(t, report.Checks, "config.repo").Status)
+	assert.Equal(t, -1, slices.IndexFunc(report.Checks, func(c doctorCheck) bool {
+		return c.ID == "integrations.kata_rubrics"
+	}))
 	assert.Positive(t, report.Summary.Fail)
 }
 
