@@ -5618,11 +5618,11 @@ func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
 	cfg.KataContext.Mode = config.KataModeOpen
 	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
 
-	out, err := p.callBuildReviewPrompt(t.Context(), repo.Path(), sha, 0, 0, "test", "", "", "", prompt.PullRequest{}, nil, "", cfg)
+	out, err := p.callBuildReviewPromptResult(t.Context(), repo.Path(), sha, 0, 0, "test", "", "", "", prompt.PullRequest{}, nil, "", cfg)
 	require.NoError(t, err)
-	assert.NotContains(t, out, "Task Context (kata)",
+	assert.NotContains(t, out.Prompt, "Task Context (kata)",
 		"CI prompt prebuilds must never include kata task-ledger content")
-	assert.NotContains(t, out, "Secret kata body.",
+	assert.NotContains(t, out.Prompt, "Secret kata body.",
 		"fake kata output must never reach the prompt")
 }
 
