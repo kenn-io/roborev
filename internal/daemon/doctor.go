@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 )
@@ -54,6 +56,9 @@ func (s *Server) humaDoctorAgents(
 	if repoCfg != nil {
 		hooks = append(hooks, repoCfg.Hooks...)
 	}
+	if config.ResolveKataRubricsMode(repoCfg, cfg) == "current" {
+		hooks = append(hooks, config.HookConfig{Type: "kata"})
+	}
 	seen := map[string]bool{}
 	for _, h := range hooks {
 		tool, ok := hookTools[h.Type]
@@ -69,6 +74,36 @@ func (s *Server) humaDoctorAgents(
 			d.Path = path
 		}
 		resp.Body.HookTools = append(resp.Body.HookTools, d)
+	}
+	if repo != "" {
+		result := &DoctorRubricSetup{Mode: config.ResolveKataRubricsMode(repoCfg, cfg), State: "off"}
+		resp.Body.RubricSetup = result
+		if result.Mode == "current" {
+			result.State = "kata_missing"
+			for _, d := range resp.Body.HookTools {
+				if d.Name == "kata" && d.Available {
+					result.State = "unknown"
+					c := kata.NewCLIClient(repo)
+					binding, err := c.Binding(ctx)
+					switch {
+					case errors.Is(err, kata.ErrNoBinding):
+						result.State = "binding_missing"
+					case err != nil:
+						result.State, result.Error = "binding_error", err.Error()
+					default:
+						result.Project = binding.Project
+						health, err := c.DocbankHealth(ctx)
+						if err == nil && (health.Credential == "ok" || health.Credential == "missing") {
+							result.State = health.Credential
+						} else if err != nil {
+							// Kata stderr may contain credentials; do not return it.
+							result.Error = "Kata health could not be read"
+						}
+					}
+					break
+				}
+			}
+		}
 	}
 	panels, err := ResolveDoctorPanels(repo, repoCfg, rawRepo, cfg)
 	if err != nil {

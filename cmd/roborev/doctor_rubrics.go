@@ -1,59 +1,39 @@
 package main
 
-import (
-	"context"
-	"os/exec"
-	"time"
-
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/kata"
-)
-
-// probeRubricKata uses Kata's read-only health command, which does not start a daemon.
-func probeRubricKata(ctx context.Context, repo string) (kata.Binding, kata.DocbankHealth, error, error, error) {
-	if _, err := exec.LookPath("kata"); err != nil {
-		return kata.Binding{}, kata.DocbankHealth{}, err, nil, nil
-	}
-	if repo == "" {
-		return kata.Binding{}, kata.DocbankHealth{}, nil, kata.ErrNoBinding, nil
-	}
-	c := kata.NewCLIClient(repo)
-	binding, err := c.Binding(ctx)
-	if err != nil {
-		return kata.Binding{}, kata.DocbankHealth{}, nil, err, nil
-	}
-	// Match the existing doctor daemon probe's two-second deadline.
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	health, err := c.DocbankHealth(ctx)
-	return binding, health, nil, nil, err
-}
+import "go.kenn.io/roborev/internal/config"
 
 func checkDoctorKataRubrics(env *doctorEnv) []doctorCheck {
+	if env.repoPath == "" {
+		return nil
+	}
+	mode := config.ResolveKataRubricsMode(env.repoCfg, env.global)
 	result := doctorCheck{ID: "integrations.kata_rubrics", Category: "integrations"}
-	if config.ResolveKataRubricsMode(env.repoCfg, env.global) == "off" {
-		result.Status, result.Summary = doctorInfo, "Kata rubric archiving is off"
+	if env.daemonAgents == nil || env.daemonAgents.RubricSetup == nil {
+		result.Status, result.Summary = doctorInfo, "Kata rubric archiving: mode "+mode+", daemon setup unverified"
+		result.Fix = "start or restart the roborev daemon to verify its Kata setup"
 		return []doctorCheck{result}
 	}
-	probe := env.rubricKata
-	if probe == nil {
-		probe = probeRubricKata
-	}
-	binding, health, cliErr, bindingErr, healthErr := probe(env.ctx, env.repoPath)
-	switch {
-	case cliErr != nil:
-		result.Status, result.Summary, result.Fix = doctorFail, "Kata rubric archiving: kata CLI not found on this shell PATH", "install kata on PATH"
-	case bindingErr != nil:
-		result.Status, result.Summary, result.Fix = doctorFail, "Kata rubric archiving: project binding unavailable", "bind this repository to a Kata project"
-	case healthErr != nil || (health.Credential != "ok" && health.Credential != "missing"):
-		result.Status, result.Summary, result.Fix = doctorInfo, "Kata rubric archiving: Docbank state unknown", "check Kata daemon health and Docbank setup"
-	case health.Credential == "missing":
-		result.Status, result.Summary, result.Fix = doctorFail, "Kata rubric archiving: Docbank credential unavailable", "check kata docbank setup and the daemon's credential"
+	probe := env.daemonAgents.RubricSetup
+	result.Details = []string{"Vault rubrics are readable by all issue readers and metadata writers."}
+	switch probe.State {
+	case "off":
+		result.Status, result.Summary = doctorInfo, "Kata rubric archiving: mode off"
+		result.Details = nil
+	case "kata_missing":
+		result.Status, result.Summary, result.Fix = doctorFail, "Kata rubric archiving: mode current, kata CLI unavailable on daemon PATH", "install kata on the daemon's PATH and restart the daemon"
+	case "binding_missing":
+		result.Status, result.Summary, result.Fix = doctorFail, "Kata rubric archiving: mode current, project binding missing", "bind this repository to a Kata project"
+	case "binding_error":
+		result.Status, result.Summary, result.Fix = doctorFail, "Kata rubric archiving: mode current, project binding invalid", "repair the Kata binding configuration"
+	case "missing":
+		result.Status, result.Summary, result.Fix = doctorFail, "Kata rubric archiving: mode current, Docbank credential missing", "check kata docbank setup and the daemon's credential"
+	case "ok":
+		result.Status, result.Summary = doctorOK, "Kata rubric archiving: mode current, Docbank key resolves for "+probe.Project
 	default:
-		result.Status, result.Summary = doctorOK, "Kata rubric archiving: Docbank key resolves for "+binding.Project
+		result.Status, result.Summary = doctorInfo, "Kata rubric archiving: mode current, Docbank state unknown"
 	}
-	if result.Status != doctorOK {
-		result.Details = []string{"Mode: current. Vault rubrics are readable by all issue readers and metadata writers."}
+	if probe.Error != "" {
+		result.Details = append(result.Details, probe.Error)
 	}
 	return []doctorCheck{result}
 }

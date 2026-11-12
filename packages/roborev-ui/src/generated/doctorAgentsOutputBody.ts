@@ -3,6 +3,7 @@
  */
 import type { Diagnosis } from "./diagnosis";
 import type { DoctorPanel } from "./doctorPanel";
+import type { DoctorRubricSetup } from "./doctorRubricSetup";
 import type { DoctorUsageProvider } from "./doctorUsageProvider";
 
 export interface DoctorAgentsOutputBody {
@@ -23,5 +24,6 @@ export interface DoctorAgentsOutputBody {
   /** The requested agent names, resolved by the daemon; unknown names report an error */
   requested: Diagnosis[];
   /** Usage provider and authenticated probe result from the daemon process */
+  rubric_setup?: DoctorRubricSetup;
   usage_provider?: DoctorUsageProvider;
 }

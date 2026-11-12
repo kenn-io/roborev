@@ -1034,6 +1034,7 @@ type DoctorAgentsOutputBody struct {
 
 	// Requested The requested agent names, resolved by the daemon; unknown names report an error
 	Requested     []Diagnosis          `json:"requested" validate:"required"`
+	RubricSetup   *DoctorRubricSetup   `json:"rubric_setup,omitempty"`
 	UsageProvider *DoctorUsageProvider `json:"usage_provider,omitempty"`
 }
 
@@ -1079,6 +1080,13 @@ func (d DoctorAgentsOutputBody) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Requested[%d]", i), err)
+			}
+		}
+	}
+	if d.RubricSetup != nil {
+		if v, ok := any(d.RubricSetup).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RubricSetup", err)
 			}
 		}
 	}
@@ -1144,6 +1152,24 @@ type DoctorPanelMember struct {
 }
 
 func (d DoctorPanelMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DoctorRubricSetup struct {
+	// ErrorData Safe binding or health error
+	ErrorData *string `json:"error,omitempty"`
+
+	// Mode Resolved rubric archiving mode
+	Mode string `json:"mode" validate:"required"`
+
+	// Project Bound Kata project
+	Project *string `json:"project,omitempty"`
+
+	// State Diagnostic state
+	State string `json:"state" validate:"required"`
+}
+
+func (d DoctorRubricSetup) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 

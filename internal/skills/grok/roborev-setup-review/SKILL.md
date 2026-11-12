@@ -148,6 +148,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | They want | Configure |
 |-----------|-----------|
 | One kind of check | One `[review.types.<name>]` with a rubric `template` |
+| Keep rubrics with Kata issues | Global `[kata_rubrics] mode = "current"`; repositories may opt out |
 | Several checks | One type per check, one `[review.subagents.<name>]` per type, and a `[review.panels.<name>]` listing them |
 | Context every reviewer needs | `review_guidelines` in `.roborev.toml`, or `REVIEW.md` |
 | A source reviewers compare against | Commit its text and name the path in the rubric |
@@ -193,8 +194,8 @@ Rules that matter:
     default. Explain that every issue reader and metadata writer served by the
     Kata daemon can read the vault rubric. If the user wants it, propose
     `kata docbank setup` and `[kata_rubrics] mode = "current"` in global
-    `~/.roborev/config.toml`; only global config can enable it. A repository
-    may opt out with `[kata_rubrics] mode = "off"` in `.roborev.toml`.
+    `~/.roborev/config.toml`. This enables all eligible repositories. A
+    repository may opt out with `[kata_rubrics] mode = "off"` in `.roborev.toml`.
     Kata issue attachments are named `roborev-rubric.<type>.<sha16>.md`;
     `roborev show` identifies the rubric as `<type>@<sha16>`. Use
     `roborev doctor --from-skill --json` to check the setup. An unknown
