@@ -60,7 +60,14 @@ func (s *pullSession) close() {
 
 func (s *pullSession) begin(ctx context.Context, jobs bool) error {
 	if !s.started.IsZero() {
-		return nil
+		if !jobs || s.jobs {
+			return nil
+		}
+		// A review/job mutation needs the attempt lock before the write gate.
+		// Finish an unlocked batch instead of trying to acquire it inside SQLite.
+		if err := s.commit(ctx); err != nil {
+			return err
+		}
 	}
 	// Attempt changes always lock attempts before entering the write gate.
 	if jobs {

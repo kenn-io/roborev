@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"uuid"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -17,7 +21,9 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestFixPlanFlags(t *testing.T) {
@@ -457,4 +463,182 @@ func TestFixPlanCompletePromptTransport(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 	}
 	assert.Empty(t, repo.Run("status", "--porcelain"))
+}
+
+func kataPromptFixture(t *testing.T, finding string) (storage.StructuredOutput, string) {
+	t.Helper()
+	raw := testutil.ReviewFixtureJSON(finding)
+	var document storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &document))
+	hash, err := storage.KataDocumentHash(raw)
+	require.NoError(t, err)
+	return document, hash
+}
+
+func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode        string
+		batch, plan, only bool
+	}{
+		{"single", "evidence", false, false, false},
+		{"single planned", "evidence", false, true, false},
+		{"single plan only", "evidence", false, true, true},
+		{"batch", "evidence", true, false, false},
+		{"batch planned", "evidence", true, true, false},
+		{"batch plan only", "evidence", true, true, true},
+		{"authentication", "auth", false, true, false},
+		{"middleware authentication at status", "auth-status", false, true, false},
+		{"middleware authentication at publication", "auth-publication", false, true, false},
+		{"outage", "outage", false, true, false},
+		{"replacement", "replacement", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
+			require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte("max_prompt_size = 1000\n"), 0o600))
+			repo.Run("add", ".roborev.toml")
+			repo.Run("commit", "-m", "Set prompt transport threshold")
+			id := uuid.New()
+			finding := "High: original finding " + strings.Repeat("source context ", 200)
+			document, hash := kataPromptFixture(t, finding)
+			evidence := strings.Repeat("conflicting attributed evidence ", 200)
+			reads := 0
+			var reviewReads, commentReads atomic.Int32
+			ts, state := newMockServer(t, MockServerOpts{
+				OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
+				},
+				OnReview: func(w http.ResponseWriter, _ *http.Request) {
+					reviewReads.Add(1)
+					writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: finding, StructuredOutput: document, VerdictBool: new(0)})
+				},
+				OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
+					if tc.mode == "auth-status" || tc.mode == "auth-publication" {
+						assert.Positive(t, reviewReads.Load())
+						assert.Positive(t, commentReads.Load())
+					}
+					if tc.mode == "auth-status" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusUnauthorized)
+						fmt.Fprint(w, `{"error":"daemon authentication required"}`)
+						return
+					}
+					writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
+				},
+				OnKataPublication: func(w http.ResponseWriter, r *http.Request) {
+					reads++
+					assert.Equal(t, "7", r.URL.Query().Get("job_id"))
+					assert.Equal(t, id.String(), r.URL.Query().Get("review_uuid"))
+					switch tc.mode {
+					case "auth-publication":
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusUnauthorized)
+						fmt.Fprint(w, `{"error":"daemon authentication required"}`)
+						return
+					case "auth", "outage":
+						w.Header().Set("Content-Type", "application/problem+json")
+						if tc.mode == "auth" {
+							w.WriteHeader(http.StatusUnauthorized)
+							fmt.Fprint(w, `{"status":401,"detail":"authentication required"}`)
+						} else {
+							w.WriteHeader(http.StatusServiceUnavailable)
+							fmt.Fprint(w, `{"status":503,"detail":"temporary outage"}`)
+						}
+						return
+					case "replacement":
+						writeJSON(w, map[string]any{"state": "unavailable", "message": "review changed", "review_uuid": "", "document_hash": "", "roots": []any{}, "comments": []any{}})
+						return
+					}
+					link := map[string]any{"uid": "foreign-link", "kind": "refute", "author": "foreign-author", "teammate": "foreign-team", "issue_uid": "foreign-issue", "project_uid": "foreign-project", "body": "foreign complete evidence"}
+					comment := map[string]any{"uid": "reply", "author": "reviewer", "body": evidence, "backlinks": []any{link}, "backlinks_truncated": true}
+					comments := []any{comment}
+					roots := []any{map[string]any{"position": 0, "state": "complete", "comment": comment}}
+					writeJSON(w, map[string]any{"state": "partial", "review_uuid": id.String(), "document_hash": hash, "source_document": document, "source_output": "duplicate source marker", "roots": roots, "comments": comments, "issue": map[string]any{"title": "issue title", "body": "issue body", "comments": comments, "roots": roots}})
+				},
+			})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/comments" {
+					commentReads.Add(1)
+					writeJSON(w, map[string]any{"responses": []any{}})
+					return
+				}
+				ts.Config.Handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(server.Close)
+			patchServerAddr(t, server.URL)
+			calls := 0
+			var paths []string
+			a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, p string, _ io.Writer) (string, error) {
+				calls++
+				if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
+					quoted, _, _ := strings.Cut(rest, " and carry out")
+					path, err := strconv.Unquote(quoted)
+					require.NoError(t, err)
+					rel, err := filepath.Rel(dir, path)
+					require.NoError(t, err)
+					assert.True(t, filepath.IsLocal(rel))
+					paths = append(paths, path)
+					data, err := os.ReadFile(path)
+					require.NoError(t, err)
+					p = string(data)
+				}
+				assert.Contains(t, p, finding)
+				switch tc.mode {
+				case "evidence":
+					assert.Equal(t, 1, strings.Count(p, evidence))
+					assert.NotContains(t, p, "duplicate source marker")
+					assert.Contains(t, p, "issue body")
+					assert.Contains(t, p, "reviewer")
+					assert.Contains(t, p, "untrusted-kata-discussion")
+					for _, part := range []string{"foreign-link", "foreign-author", "foreign-team", "foreign-issue", "foreign-project", "foreign complete evidence", "backlinks_truncated"} {
+						assert.Contains(t, p, part)
+					}
+				case "outage":
+					assert.Contains(t, p, "Kata discussion unavailable")
+				case "replacement":
+					assert.Contains(t, p, "review changed")
+					assert.NotContains(t, p, "replacement finding")
+				}
+				return "Check the finding", nil
+			}}
+			cmd, _ := newTestCmd(t)
+			tracker := &fixSessionTracker{base: a, out: io.Discard}
+			opts := fixOptions{plan: tc.plan, planOnly: tc.only, quiet: true}
+			var err error
+			if tc.batch {
+				err = processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{7}, 0, opts, tracker)
+			} else {
+				err = fixSingleJob(cmd, repo.Dir, 7, opts, tracker)
+			}
+			if tc.mode == "auth-status" {
+				assert.Zero(t, reads)
+			} else {
+				assert.Equal(t, 1, reads)
+			}
+			if tc.mode == "auth" || tc.mode == "auth-status" || tc.mode == "auth-publication" {
+				assert.Positive(t, reviewReads.Load())
+				assert.Positive(t, commentReads.Load())
+				require.ErrorIs(t, err, prompt.ErrKataContextFatal)
+				assert.Zero(t, calls)
+				assert.Zero(t, state.Closes())
+				return
+			}
+			require.NoError(t, err)
+			if tc.plan && !tc.only {
+				assert.Equal(t, 2, calls)
+			} else {
+				assert.Equal(t, 1, calls)
+			}
+			if tc.only {
+				assert.Zero(t, state.Closes())
+			}
+			if tc.mode == "evidence" {
+				require.NotEmpty(t, paths)
+			}
+			for _, path := range paths {
+				_, err := os.Stat(path)
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+			assert.Empty(t, repo.Run("status", "--porcelain"))
+		})
+	}
 }

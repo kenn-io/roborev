@@ -1,6 +1,7 @@
 package kata
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -13,8 +14,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
+	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/procutil"
 )
@@ -34,8 +37,9 @@ func NewCLIClient(workdir string) *CLIClient {
 	return &CLIClient{bin: "kata", workdir: workdir, run: realRun}
 }
 
-// NewCLIClientWithEnv is NewCLIClient plus extra environment entries appended to
-// the process environment (used by tests to set KATA_HOME).
+// NewCLIClientWithEnv is NewCLIClient with env as the complete environment of
+// every kata subprocess. Nothing is inherited from the process, so a test can
+// keep the caller's Kata routing, token, and attribution out of the run.
 func NewCLIClientWithEnv(workdir string, env []string) *CLIClient {
 	c := NewCLIClient(workdir)
 	c.env = env
@@ -46,8 +50,8 @@ func buildKataCmd(ctx context.Context, c *CLIClient, args []string, stdin io.Rea
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	procutil.HideConsole(cmd)
 	cmd.Dir = c.workdir
-	if len(c.env) > 0 {
-		cmd.Env = append(os.Environ(), c.env...)
+	if c.env != nil {
+		cmd.Env = c.env
 	}
 	cmd.Stdin = stdin
 	return cmd
@@ -83,41 +87,114 @@ func realRun(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) 
 
 // Binding resolves the workspace project by reading .kata.local.toml (local
 // override) then .kata.toml, from workdir upward. It does not require the kata
-// binary. A present-but-unreadable config file stops the search with an error
+// binary. A present-but-unreadable or unsupported config file stops the search
 // rather than silently binding to a parent project.
 func (c *CLIClient) Binding(_ context.Context) (Binding, error) {
-	dir := c.workdir
-	if dir == "" {
-		dir = "."
-	}
-	abs, err := filepath.Abs(dir)
+	return workspaceBinding(c.workdir)
+}
+
+// workspaceBinding reads the binding for workdir. Both clients use it, so the
+// API connection resolves a workspace exactly as the kata CLI does.
+func workspaceBinding(workdir string) (Binding, error) {
+	selection, err := discoverWorkspace(workdir)
+	return Binding{Project: selection.name}, err
+}
+
+// WorkspaceBinding resolves the workspace selection for a daemon proxy. It
+// includes the registered alias for committed bindings, while local overrides
+// keep selecting their project name directly.
+func WorkspaceBinding(ctx context.Context, workdir string) (Binding, error) {
+	selection, err := discoverWorkspace(workdir)
 	if err != nil {
 		return Binding{}, err
 	}
+	binding := Binding{Project: selection.name}
+	if selection.local {
+		return binding, nil
+	}
+	alias, err := workspaceAlias(ctx, selection)
+	if err != nil {
+		return Binding{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
+	}
+	binding.Alias = &ProjectAlias{Identity: alias.Identity, Kind: alias.Kind}
+	return binding, nil
+}
+
+type workspaceProject struct {
+	name, root, gitRoot string
+	local               bool
+}
+
+func discoverWorkspace(workdir string) (workspaceProject, error) {
+	abs, err := filepath.Abs(cmp.Or(workdir, "."))
+	if err != nil {
+		return workspaceProject{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return workspaceProject{}, fmt.Errorf("kata: stat workspace: %w", err)
+	}
+	resolved, err := pathresolve.EvalSymlinks(abs)
+	if err != nil {
+		return workspaceProject{}, fmt.Errorf("kata: resolve workspace: %w", err)
+	}
+	if !info.IsDir() {
+		abs, resolved = filepath.Dir(abs), filepath.Dir(resolved)
+	}
+	lexicalGit, err := workspaceGitRoot(abs)
+	if err != nil {
+		return workspaceProject{}, err
+	}
+	physicalGit, err := workspaceGitRoot(resolved)
+	if err != nil {
+		return workspaceProject{}, err
+	}
+	gitRoot := lexicalGit
+	if physicalGit != "" {
+		resolvedLexical, resolveErr := pathresolve.EvalSymlinks(lexicalGit)
+		if resolveErr != nil || resolvedLexical != physicalGit {
+			abs, gitRoot = resolved, physicalGit
+		}
+	}
 	for {
 		for _, base := range []string{".kata.local.toml", ".kata.toml"} {
-			name, found, err := readKataProjectName(filepath.Join(abs, base))
+			local := base == ".kata.local.toml"
+			name, found, err := readKataProjectName(filepath.Join(abs, base), local)
 			if err != nil {
-				return Binding{}, err
+				return workspaceProject{}, err
 			}
 			if found {
-				return Binding{Project: name}, nil
+				return workspaceProject{name: name, root: abs, gitRoot: gitRoot, local: local}, nil
 			}
+		}
+		if abs == gitRoot {
+			break
 		}
 		parent := filepath.Dir(abs)
 		if parent == abs {
-			return Binding{}, ErrNoBinding
+			break
 		}
 		abs = parent
 	}
+	return workspaceProject{}, ErrNoBinding
 }
 
-// readKataProjectName reads [project].name from a kata config file. found is
-// true only when the file exists, parses, and carries a non-empty name. A
-// missing file returns (found=false, err=nil) so the caller keeps searching; a
-// present-but-unreadable or malformed file returns a non-nil err so the caller
-// stops rather than silently binding to a parent project.
-func readKataProjectName(path string) (name string, found bool, err error) {
+func workspaceGitRoot(start string) (string, error) {
+	for {
+		_, err := os.Stat(filepath.Join(start, ".git"))
+		switch {
+		case err == nil:
+			return start, nil
+		case !errors.Is(err, fs.ErrNotExist):
+			return "", fmt.Errorf("kata: discover .git: %w", err)
+		case filepath.Dir(start) == start:
+			return "", nil
+		}
+		start = filepath.Dir(start)
+	}
+}
+
+func readKataProjectName(path string, local bool) (name string, found bool, err error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", false, nil
@@ -126,27 +203,51 @@ func readKataProjectName(path string) (name string, found bool, err error) {
 		return "", false, fmt.Errorf("kata: read %s: %w", path, err)
 	}
 	var doc struct {
+		Version int `toml:"version"`
 		Project struct {
-			Name string `toml:"name"`
+			Name     string `toml:"name"`
+			Identity string `toml:"identity"`
 		} `toml:"project"`
 	}
 	if _, err := toml.Decode(string(data), &doc); err != nil {
 		return "", false, fmt.Errorf("kata: parse %s: %w", path, err)
 	}
-	return doc.Project.Name, doc.Project.Name != "", nil
+	if doc.Version != 1 {
+		return "", false, fmt.Errorf("kata: unsupported binding version %d (expected 1)", doc.Version)
+	}
+	name = strings.TrimSpace(doc.Project.Name)
+	identity := strings.TrimSpace(doc.Project.Identity)
+	if !local && name == "" && identity != "" {
+		name = identity[strings.LastIndexAny(identity, "/:")+1:]
+	}
+	if name == "" {
+		if local {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("kata: %s: project.name must be non-empty", path)
+	}
+	for _, r := range name {
+		if !unicode.IsPrint(r) {
+			return "", false, fmt.Errorf("kata: %s: project.name contains non-printable character %U", path, r)
+		}
+	}
+	return name, true, nil
 }
 
 type listEnvelope struct {
 	Issues []Issue `json:"issues"`
 }
 
+// linkEdge is one link of an issue as Kata reports it.
+type linkEdge struct {
+	Type string   `json:"type"`
+	From LinkPeer `json:"from"`
+	To   LinkPeer `json:"to"`
+}
+
 type showEnvelope struct {
-	Issue Issue `json:"issue"`
-	Links []struct {
-		Type string   `json:"type"`
-		From LinkPeer `json:"from"`
-		To   LinkPeer `json:"to"`
-	} `json:"links"`
+	Issue  Issue      `json:"issue"`
+	Links  []linkEdge `json:"links"`
 	Labels []struct {
 		Label string `json:"label"`
 	} `json:"labels"`
@@ -225,34 +326,8 @@ func (c *CLIClient) Show(ctx context.Context, ref string) (Issue, error) {
 			return Issue{}, err
 		}
 		iss.QualifiedID = currentID
-		for _, link := range env.Links {
-			fromID := qualifiedLinkPeerID(link.From)
-			toID := qualifiedLinkPeerID(link.To)
-			outgoing := fromID == currentID
-			if !outgoing && toID != currentID {
-				return Issue{}, fmt.Errorf("kata show returned a link that cannot be resolved against %q", currentID)
-			}
-			if fromID == "" || toID == "" {
-				return Issue{}, fmt.Errorf("kata show returned a link without a qualified issue identity")
-			}
-			peer := link.From
-			if outgoing {
-				peer = link.To
-			}
-			switch link.Type {
-			case "parent":
-				if outgoing {
-					iss.Parent = &peer
-				}
-			case "blocks":
-				if outgoing {
-					iss.Blocks = append(iss.Blocks, peer)
-				} else {
-					iss.BlockedBy = append(iss.BlockedBy, peer)
-				}
-			case "related":
-				iss.Related = append(iss.Related, peer)
-			}
+		if err := attachLinks(&iss, currentID, env.Links); err != nil {
+			return Issue{}, err
 		}
 	}
 	for _, l := range env.Labels {
@@ -261,6 +336,41 @@ func (c *CLIClient) Show(ctx context.Context, ref string) (Issue, error) {
 		}
 	}
 	return iss, nil
+}
+
+// attachLinks sorts an issue's links into parent, blocks, blocked-by, and
+// related, using currentID to tell which end of each link is this issue.
+func attachLinks(iss *Issue, currentID string, links []linkEdge) error {
+	for _, link := range links {
+		fromID := qualifiedLinkPeerID(link.From)
+		toID := qualifiedLinkPeerID(link.To)
+		outgoing := fromID == currentID
+		if !outgoing && toID != currentID {
+			return fmt.Errorf("kata show returned a link that cannot be resolved against %q", currentID)
+		}
+		if fromID == "" || toID == "" {
+			return fmt.Errorf("kata show returned a link without a qualified issue identity")
+		}
+		peer := link.From
+		if outgoing {
+			peer = link.To
+		}
+		switch link.Type {
+		case "parent":
+			if outgoing {
+				iss.Parent = &peer
+			}
+		case "blocks":
+			if outgoing {
+				iss.Blocks = append(iss.Blocks, peer)
+			} else {
+				iss.BlockedBy = append(iss.BlockedBy, peer)
+			}
+		case "related":
+			iss.Related = append(iss.Related, peer)
+		}
+	}
+	return nil
 }
 
 func (c *CLIClient) qualifiedShownIssueID(ctx context.Context, ref string, iss Issue) (string, error) {

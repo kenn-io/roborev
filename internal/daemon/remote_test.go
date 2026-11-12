@@ -76,12 +76,24 @@ func TestRemoteRequiredSigningAndDeniedRoutes(t *testing.T) {
 	out = httptest.NewRecorder()
 	remote.ServeHTTP(out, r)
 	assert.Equal(t, 401, out.Code)
-	for _, path := range []string{"/api/shutdown", "/api/enqueue", "/api/config", "/mcp", "/debug/pprof/", "/api/events", "/api/jobs?panel_run=synthetic"} {
+	for _, path := range []string{"/api/shutdown", "/api/enqueue", "/api/kata/publication?job_id=1", "/api/config", "/mcp", "/debug/pprof/", "/api/events", "/api/jobs?panel_run=synthetic"} {
 		r = remoteRequest(t, key, path)
 		out = httptest.NewRecorder()
 		remote.ServeHTTP(out, r)
 		assert.Equal(t, 403, out.Code, path+": "+out.Body.String())
 	}
+	for _, path := range []string{"/api/kata/publication", "/api/kata/response"} {
+		post, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://reviews.example.com/history"+path, strings.NewReader(`{"job_id":1}`))
+		require.NoError(t, err)
+		require.NoError(t, requestsigning.Sign(post, key, time.Now()))
+		post.URL.Scheme, post.URL.Host = "", ""
+		post.URL.Path = path
+		post.Host, post.RequestURI = "internal.example", post.URL.RequestURI()
+		out = httptest.NewRecorder()
+		remote.ServeHTTP(out, post)
+		assert.Equal(t, http.StatusForbidden, out.Code)
+	}
+
 	r = remoteRequest(t, key, "/api/ping")
 	r.Header.Set("X-Forwarded-Host", "evil.example")
 	r.Header.Set("X-Forwarded-Prefix", "/evil")

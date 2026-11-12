@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"strconv"
@@ -102,6 +103,22 @@ func (b mcpBackend) GetReview(ctx context.Context, ref mcpserver.ReviewRef) (*st
 	return out.Body, nil
 }
 
+func (b mcpBackend) GetKataContext(ctx context.Context, q mcpserver.KataContextQuery) (map[string]any, error) {
+	out, err := b.server.humaKataPublication(ctx, &KataPublicationInput{JobID: q.JobID, ReviewUUID: q.ReviewUUID, Issue: q.Issue, Project: q.Project})
+	if err != nil {
+		return nil, mcpError(err)
+	}
+	raw, err := json.Marshal(out.Body)
+	if err != nil {
+		return nil, mcpError(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, mcpError(err)
+	}
+	return result, nil
+}
+
 func (b mcpBackend) ListComments(ctx context.Context, ref mcpserver.CommentRef) ([]storage.Response, error) {
 	input := &ListCommentsInput{JobID: -1, CommitID: -1, SHA: ref.SHA}
 	switch {
@@ -195,11 +212,19 @@ func mcpError(err error) error {
 		message = model.Detail
 	}
 	switch statusErr.GetStatus() {
+	case http.StatusUnauthorized:
+		return mcpserver.NewError(mcpserver.ErrorCodeAuthentication, message)
+	case http.StatusForbidden:
+		return mcpserver.NewError(mcpserver.ErrorCodeAccess, message)
+	case http.StatusRequestTimeout:
+		return mcpserver.NewError(mcpserver.ErrorCodeCanceled, message)
+	case http.StatusGatewayTimeout:
+		return mcpserver.NewError(mcpserver.ErrorCodeDeadline, message)
 	case http.StatusNotFound:
 		return mcpserver.NewError(mcpserver.ErrorCodeNotFound, message)
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		return mcpserver.NewError(mcpserver.ErrorCodeInvalidArgument, message)
-	case http.StatusServiceUnavailable, http.StatusConflict:
+	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusConflict:
 		return mcpserver.NewError(mcpserver.ErrorCodeUnavailable, message)
 	default:
 		return mcpserver.NewError(mcpserver.ErrorCodeInternal, message)

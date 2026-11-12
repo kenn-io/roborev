@@ -644,7 +644,7 @@ func TestBudgetRoutingInvalidatesSpendAfterSynthesisCompletionWithoutUsage(t *te
 	assert.Equal(t, queued.ID, job.ID)
 	require.NoError(t, tc.DB.MarkJobAgentInvoked(job.ID, testWorkerID, "budget synthesis"))
 
-	tc.Pool.completeSynthesisContext(testWorkerID, job, synthesisResult{
+	tc.Pool.completeSynthesisContext(t.Context(), testWorkerID, job, synthesisResult{
 		review: reviewpkg.ReviewResult{
 			Agent: "codex", Verdict: storage.VerdictPass,
 			StructuredOutput: testutil.ReviewFixtureJSON("No issues found."),

@@ -28,3 +28,9 @@ actions:
     update:
       x-oapi-codegen-extra-tags:
         validate: '-'
+  # Kata publication metadata contains values of several JSON types.
+  - target: '$.components.schemas.KataIssue.properties.metadata'
+    update:
+      x-go-type: jsontext.Value
+      x-go-type-import:
+        path: encoding/json/jsontext

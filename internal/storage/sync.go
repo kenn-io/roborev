@@ -1195,7 +1195,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 // upsertPulledReview reports whether the canonical review row committed a
 // change. A skipped orphan or stale timestamp is a successful no-op.
 func (db *DB) upsertPulledReview(r PulledReview) (bool, error) {
-	return pullOne(db, false, func(ctx context.Context, s *pullSession) (bool, error) {
+	return pullOne(db, true, func(ctx context.Context, s *pullSession) (bool, error) {
 		return s.upsertPulledReview(ctx, r)
 	})
 }

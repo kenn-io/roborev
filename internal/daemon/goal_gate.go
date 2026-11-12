@@ -150,7 +150,7 @@ func (s *Server) humaGoalGate(ctx context.Context, input *goalGateInput) (*goalG
 	defer cancel()
 	stopCancel := context.AfterFunc(s.goalGate.ctx, cancel)
 	defer stopCancel()
-	snapshot, err := goalreview.Capture(runCtx, root, selection, kata.NewCLIClient(root))
+	snapshot, err := goalreview.Capture(runCtx, root, selection, kata.NewFromConfig(root, cfg))
 	if err != nil {
 		return completedError(err)
 	}

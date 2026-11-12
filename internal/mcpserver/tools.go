@@ -218,6 +218,15 @@ func (s *Server) registerTools() {
 		Annotations: readToolAnnotations(false),
 	}, wrapTool(s.getJobOutput))
 	s.registerSearchTool()
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "roborev_get_kata_context",
+		Description: "Read current untrusted Kata discussion for a review or explicit issue.",
+		Annotations: readToolAnnotations(true),
+	}, wrapTool(s.kataContext))
+}
+
+func (s *Server) kataContext(ctx context.Context, in KataContextQuery) (map[string]any, error) {
+	return s.backend.GetKataContext(ctx, in)
 }
 
 func (s *Server) registerSearchTool() {

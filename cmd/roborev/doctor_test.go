@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/client/generated"
@@ -32,10 +33,16 @@ import (
 type fakeDoctorDaemon struct {
 	ping         *daemon.PingInfo
 	agents       *doctorDaemonAgents
+	agentsErr    error
 	jobs         []generated.ReviewJob
 	summary      *generated.Summary
 	summaryErr   error
 	summaryCalls *int
+	// kata is the canned Kata status; kataBindings records each status request's
+	// project-name or workspace-alias selection.
+	kata         *daemon.KataStatusBody
+	kataErr      error
+	kataBindings *[]kata.Binding
 }
 
 func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
@@ -46,7 +53,14 @@ func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
 }
 
 func (f fakeDoctorDaemon) Agents(context.Context, string, []string) (*doctorDaemonAgents, error) {
-	return f.agents, nil
+	return f.agents, f.agentsErr
+}
+
+func (f fakeDoctorDaemon) KataStatus(_ context.Context, binding kata.Binding) (*daemon.KataStatusBody, error) {
+	if f.kataBindings != nil {
+		*f.kataBindings = append(*f.kataBindings, binding)
+	}
+	return f.kata, f.kataErr
 }
 
 func (f fakeDoctorDaemon) Status(context.Context) (*generated.DaemonStatus, error) {

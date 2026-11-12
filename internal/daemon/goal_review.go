@@ -62,7 +62,7 @@ func (s *Server) enqueueGoalReviewWithConfig(ctx context.Context, req EnqueueReq
 		if err != nil {
 			return bad(err)
 		}
-		snapshot, err = goalreview.Capture(ctx, root, selection, kata.NewCLIClient(configRoot))
+		snapshot, err = goalreview.Capture(ctx, root, selection, kata.NewFromConfig(configRoot, s.configWatcher.Config()))
 		if err != nil {
 			return bad(err)
 		}
@@ -202,7 +202,7 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	}
 	completed := false
 	wp.runAttemptTransition(workerID, job, func() {
-		if err := wp.db.CompleteJobResult(job.ID, a.Name(), storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)}); err != nil {
+		if err := wp.completeReviewResult(job, a.Name(), storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)}, nil); err != nil {
 			log.Printf("[%s] store goal review: %v", workerID, err)
 			return
 		}

@@ -42,6 +42,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/yuin/goldmark/v2 v2.1.13
 	gitlab.com/gitlab-org/api/client-go/v3 v3.40.0
+	go.kenn.io/kata v0.19.0
 	go.kenn.io/kit v0.52.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.62.0
@@ -54,7 +55,7 @@ require (
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
-	dario.cat/mergo v1.0.0 // indirect
+	dario.cat/mergo v1.0.2 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/TwiN/go-color v1.4.1 // indirect

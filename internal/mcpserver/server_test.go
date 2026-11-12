@@ -28,6 +28,14 @@ type fakeBackend struct {
 	listCommentsFn func(context.Context, CommentRef) ([]storage.Response, error)
 	getJobOutputFn func(context.Context, int64) (JobOutput, error)
 	searchFn       func(context.Context, SearchQuery) (storage.SearchResponse, error)
+	kataFn         func(context.Context, KataContextQuery) (map[string]any, error)
+}
+
+func (f *fakeBackend) GetKataContext(ctx context.Context, q KataContextQuery) (map[string]any, error) {
+	if f.kataFn == nil {
+		return nil, nil
+	}
+	return f.kataFn(ctx, q)
 }
 
 func (f *fakeBackend) Status(ctx context.Context) (*storage.DaemonStatus, error) {
@@ -219,6 +227,7 @@ func TestRegisteredToolsAndGuidance(t *testing.T) {
 		"roborev_close_review",
 		"roborev_complete_fix",
 		"roborev_get_job_output",
+		"roborev_get_kata_context",
 		"roborev_get_review",
 		"roborev_list_branches",
 		"roborev_list_comments",
@@ -719,4 +728,19 @@ func TestGetJobOutputReportsAvailableLines(t *testing.T) {
 	assert.Equal(t, maxOutputLines+5, out.AvailableLines)
 	assert.Len(t, out.Lines, maxOutputLines)
 	assert.True(t, out.Truncated)
+}
+
+func TestMCPKataContextDelegatesSelectorAndEvidence(t *testing.T) {
+	var got KataContextQuery
+	backend := &fakeBackend{kataFn: func(_ context.Context, query KataContextQuery) (map[string]any, error) {
+		got = query
+		return map[string]any{"state": "partial", "comments": []any{map[string]any{"body": "complete evidence", "author": "reviewer"}}}, nil
+	}}
+	result := callTool(t, connectSession(t, backend), "roborev_get_kata_context", map[string]any{"issue": "issue-uid", "project": "reviews"})
+	require.False(t, result.IsError)
+	assert.Equal(t, KataContextQuery{Issue: "issue-uid", Project: "reviews"}, got)
+	var body map[string]any
+	decodeText(t, result, &body)
+	assert.Equal(t, "partial", body["state"])
+	assert.Contains(t, fmt.Sprint(body["comments"]), "complete evidence")
 }

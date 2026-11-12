@@ -344,6 +344,7 @@ func TestRebuttalWorkerNeverStartsFreshOrRetries(t *testing.T) {
 			for len(events) > 0 {
 				e := <-events
 				assert.True(t, e.SuppressHooks, "rebuttal %s event must not run hooks", e.Type)
+				assert.True(t, e.SuppressKataHooks)
 				terminal[e.Type] = e
 			}
 			if tc.name == "success" {
