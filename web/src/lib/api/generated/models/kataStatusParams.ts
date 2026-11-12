@@ -4,15 +4,11 @@
 
 export type KataStatusParams = {
   /**
-   * Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project
-   */
-  repo?: string;
-  /**
-   * Project to check instead of the repository's binding or the default project
+   * Project to check instead of the default project
    */
   project?: string;
   /**
-   * Registered workspace alias identity; use with workspace_alias_kind instead of repo or project
+   * Registered workspace alias identity; use with workspace_alias_kind instead of project
    */
   workspace_alias_identity?: string;
   /**

@@ -116,8 +116,6 @@ export * from "./jobStats";
 export * from "./jobStatusOutputBody";
 export * from "./jobTypeStats";
 export * from "./jobWithReview";
-export * from "./kataCreateRequest";
-export * from "./kataCreateResponse";
 export * from "./kataIssue";
 export * from "./kataIssuesOutputBody";
 export * from "./kataLinkPeer";
