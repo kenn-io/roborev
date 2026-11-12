@@ -89,8 +89,8 @@ type WorkerPool struct {
 	updateInterruptTargets map[int64]struct{}
 	failedUpdateRequeues   map[int64]string
 	runningJobsMu          sync.Mutex
-	// attemptTransitionsMu linearizes update-target registration with every
-	// attempt-scoped retry, failover, failure, or completion transition.
+	// attemptTransitionsMu linearizes update-target registration and HTTP
+	// cancellation ownership publication with attempt-scoped transitions.
 	attemptTransitionsMu sync.RWMutex
 
 	// Agent cooldowns for quota exhaustion
@@ -1933,12 +1933,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 }
 
 // savePromptOrFinish stores the prompt and digest for a running claim and
-// reports whether the worker may continue. A canceled row means the save lost to
-// cancellation: the worker waits for the cancellation to reach its context,
-// which records who owns the event, and then emits the event it owns. Any other
-// failed save retries the job, and a replaced claim does nothing. A failed
-// status read is logged only: the claim is unknown, so nothing is emitted or
-// retried, and the finalizer still verifies the claim.
+// reports whether the worker may continue. For a canceled row, it waits for
+// the context and emits its event. Explicit delivery records ownership before
+// cancellation; the HTTP transition lock orders independent deadlines. Other
+// save errors retry; a replaced claim does nothing. A failed status read is
+// logged without emitting or retrying; the finalizer still verifies the claim.
 func (wp *WorkerPool) savePromptOrFinish(
 	ctx context.Context, workerID string, job *storage.ReviewJob, text string,
 	digest *string, eventWorktreePath string,
@@ -1950,8 +1949,9 @@ func (wp *WorkerPool) savePromptOrFinish(
 	current, getErr := wp.db.GetJobByIDContext(context.WithoutCancel(ctx), job.ID)
 	switch {
 	case getErr == nil && current.Status == storage.JobStatusCanceled:
-		// A caller that wrote the cancellation may not have registered event
-		// ownership yet. It does so before canceling this context.
+		// Explicit cancellation delivery records ownership before canceling the
+		// context. The context may also expire independently; the HTTP writer
+		// lock orders ownership publication before worker finalization in that case.
 		<-ctx.Done()
 		wp.finishCanceledAttempt(workerID, job, job.Agent, eventWorktreePath)
 	case err != nil:
