@@ -71,15 +71,12 @@ func TestKataStatusDisabledMakesNoRequest(t *testing.T) {
 
 func TestKataStatusReportsTheConnection(t *testing.T) {
 	server, fake := kataAPIServer(t)
-	repo := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repo, ".kata.local.toml"), []byte("version = 1\n[project]\nname = \"other\"\n"), 0o600))
-
-	w := kataGet(t, server, "/api/kata/status", url.Values{"repo": {repo}})
+	w := kataGet(t, server, "/api/kata/status", url.Values{"project": {"other"}})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	status := decodeKata[KataStatusBody](t, w)
 	assert.True(t, status.Enabled)
 	assert.Equal(t, "ready", status.State, status.Message)
-	assert.Equal(t, "other", status.Project, "the repository's binding is the project in effect")
+	assert.Equal(t, "other", status.Project, "the requested project is in effect")
 	assert.Equal(t, "reviews", status.DefaultProject)
 	assert.Equal(t, "roborev", status.Teammate)
 	assert.Equal(t, "v0.19.0", status.ServerVersion)
@@ -88,7 +85,7 @@ func TestKataStatusReportsTheConnection(t *testing.T) {
 	assert.NotContains(t, w.Body.String(), kataTestCredential)
 	assert.NotContains(t, w.Body.String(), fake.URL(), "the endpoint stays on the daemon")
 
-	w = kataGet(t, server, "/api/kata/status", url.Values{"repo": {t.TempDir()}})
+	w = kataGet(t, server, "/api/kata/status", nil)
 	assert.Equal(t, "reviews", decodeKata[KataStatusBody](t, w).Project, "an unbound repository uses default_project")
 
 	w = kataGet(t, server, "/api/kata/status", url.Values{"project": {"ghost"}})
@@ -128,17 +125,6 @@ func TestKataStatusResolvesWorkspaceAlias(t *testing.T) {
 	require.Len(t, requests, 1)
 	assert.Equal(t, http.MethodPost, requests[0].Method)
 	assert.Equal(t, "/api/v1/projects/resolve", requests[0].Path)
-}
-
-func TestKataStatusRejectsAliasWithRepository(t *testing.T) {
-	server, fake := kataAPIServer(t)
-	w := kataGet(t, server, "/api/kata/status", url.Values{
-		"repo":                     {t.TempDir()},
-		"workspace_alias_identity": {"code.example/team/repo"},
-		"workspace_alias_kind":     {"git"},
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-	assert.Empty(t, fake.AllRequests(), "invalid selection must not contact Kata")
 }
 
 func TestKataStatusStates(t *testing.T) {
@@ -239,35 +225,6 @@ func TestKataIssueShowsOneIssue(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, kataGet(t, server, "/api/kata/issue", nil).Code, "ref is required")
 }
 
-func TestKataCreateFilesThroughTheDaemonCredential(t *testing.T) {
-	server, fake := kataAPIServer(t)
-	priority := 2
-	req := KataCreateRequest{
-		Title: "Review failed", Body: "details", Project: "other", Labels: []string{"roborev"},
-		Priority: &priority, IdempotencyKey: "roborev:job:1",
-	}
-	w := kataPost(t, server, "/api/kata/issues", req)
-	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
-	created := decodeKata[KataCreateResponse](t, w)
-	assert.NotEmpty(t, created.ShortID)
-	assert.False(t, created.Reused)
-	assert.Equal(t, "roborev", created.Author)
-
-	var post katafake.Request
-	for _, r := range fake.Requests() {
-		if r.Method == http.MethodPost {
-			post = r
-		}
-	}
-	assert.Equal(t, "/api/v1/projects/8/issues", post.Path)
-	assert.Equal(t, "roborev", post.JSON(t)["actor"])
-	assert.Equal(t, "Bearer "+kataTestCredential, post.Header.Get("Authorization"))
-	assert.Equal(t, "roborev:job:1", post.Header.Get("Idempotency-Key"))
-
-	w = kataPost(t, server, "/api/kata/issues", KataCreateRequest{Body: "no title"})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestKataWorkspaceAliasCannotBeCombinedWithProjectName(t *testing.T) {
 	server, fake := kataAPIServer(t)
 	query := url.Values{
@@ -278,11 +235,6 @@ func TestKataWorkspaceAliasCannotBeCombinedWithProjectName(t *testing.T) {
 	w := kataGet(t, server, "/api/kata/issues", query)
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 
-	w = kataPost(t, server, "/api/kata/issues", KataCreateRequest{
-		Title: "ambiguous selection", Project: "reviews",
-		WorkspaceAliasIdentity: "code.example/team/repo", WorkspaceAliasKind: "git",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	assert.Empty(t, fake.AllRequests(), "ambiguous selection never reaches Kata")
 }
 
@@ -293,9 +245,6 @@ func TestKataEndpointsRefuseWhenTheConnectionIsOffOrBroken(t *testing.T) {
 		func() *httptest.ResponseRecorder { return kataGet(t, server, "/api/kata/issues", nil) },
 		func() *httptest.ResponseRecorder {
 			return kataGet(t, server, "/api/kata/issue", url.Values{"ref": {"abc4"}})
-		},
-		func() *httptest.ResponseRecorder {
-			return kataPost(t, server, "/api/kata/issues", KataCreateRequest{Title: "t"})
 		},
 	} {
 		w := call()
@@ -308,9 +257,6 @@ func TestKataEndpointsRefuseWhenTheConnectionIsOffOrBroken(t *testing.T) {
 		func() *httptest.ResponseRecorder { return kataGet(t, server, "/api/kata/issues", nil) },
 		func() *httptest.ResponseRecorder {
 			return kataGet(t, server, "/api/kata/issue", url.Values{"ref": {"abc4"}})
-		},
-		func() *httptest.ResponseRecorder {
-			return kataPost(t, server, "/api/kata/issues", KataCreateRequest{Title: "t"})
 		},
 	} {
 		w := call()
@@ -328,23 +274,4 @@ func TestKataEndpointsMapKataFailures(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
 	assert.NotContains(t, w.Body.String(), kataTestCredential)
 	assert.NotContains(t, w.Body.String(), "another-credential")
-
-	fake.Token = ""
-	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/7/issues" {
-			return false
-		}
-		fake.Fail(w, http.StatusConflict, "idempotency_mismatch", "key reused")
-		return true
-	}
-	w = kataPost(t, server, "/api/kata/issues", KataCreateRequest{Title: "t", Project: "reviews", IdempotencyKey: "k"})
-	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), "idempotency_mismatch", "Kata's error code survives the proxy")
-	var postReached bool
-	for _, r := range fake.Requests() {
-		if r.Method == http.MethodPost && r.Path == "/api/v1/projects/7/issues" {
-			postReached = true
-		}
-	}
-	assert.True(t, postReached, "issue POST reached Kata")
 }

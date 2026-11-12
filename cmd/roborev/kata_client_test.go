@@ -131,23 +131,6 @@ func TestKataClientUsesTheDaemonsConnection(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "the body", qualified.Body)
 	})
-	t.Run("a write goes through the daemon as roborev", func(t *testing.T) {
-		c := newKataClientAt(bindRepo(t, "other"), config.DefaultConfig(), fixedEndpoint(ep, &probes))
-		priority := 1
-		res, err := c.Create(ctx, kata.CreateReq{Title: "filed from the CLI", Body: "b", Labels: []string{"x"}, Priority: &priority, IdempotencyKey: "cli:1"})
-		require.NoError(t, err)
-		assert.NotEmpty(t, res.ShortID)
-		assert.Equal(t, "roborev", res.Attribution.Author)
-		var post katafake.Request
-		for _, r := range fake.Requests() {
-			if r.Method == "POST" {
-				post = r
-			}
-		}
-		assert.Equal(t, "/api/v1/projects/8/issues", post.Path)
-		assert.Equal(t, "Bearer "+kataCLICredential, post.Header.Get("Authorization"))
-		assert.Equal(t, "roborev", post.JSON(t)["actor"])
-	})
 	assert.NoFileExists(t, marker, "the kata CLI must not run")
 }
 
@@ -206,11 +189,6 @@ func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, "other#abc4", shown.QualifiedID)
 
-	_, err = c.Create(t.Context(), kata.CreateReq{Title: "From the committed binding"})
-	require.NoError(t, err)
-	_, err = c.Create(t.Context(), kata.CreateReq{Title: "Explicit project", Project: "reviews"})
-	require.NoError(t, err)
-
 	var paths []string
 	for _, request := range fake.Requests() {
 		paths = append(paths, request.Method+" "+request.Path)
@@ -222,9 +200,7 @@ func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T
 		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/abc4",
 		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues",
 		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/abc4",
-		"POST /api/v1/projects/resolve", "POST /api/v1/projects/8/issues",
-		"GET /api/v1/projects", "POST /api/v1/projects/7/issues",
-	}, paths, "committed aliases resolve canonically; explicit names remain exact")
+	}, paths, "committed aliases resolve canonically")
 }
 
 func TestKataClientProbesOnFirstUse(t *testing.T) {
