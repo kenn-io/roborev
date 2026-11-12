@@ -161,6 +161,24 @@ func TestLegacyKataHookEligibility(t *testing.T) {
 	}
 }
 
+func TestFindingsHookPreservesFailedReviewDiagnostic(t *testing.T) {
+	env := newWorkerTestContext(t, 1)
+	job := env.createAndClaimJob(t, "failed-with-findings-hook", "worker")
+	cfg := config.DefaultConfig()
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Project: "reviews", Findings: "comments"}}
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	runner := NewHookRunner(NewStaticConfig(cfg), env.Broadcaster, log.New(io.Discard, "", 0), env.DB)
+	t.Cleanup(runner.Stop)
+	runner.newKataClient = func(string) kata.Client { return fake }
+	event := eventForJob("review.failed", job, job.ID)
+	event.Error = "review execution failed"
+	env.Broadcaster.Broadcast(event)
+	runner.WaitUntilIdle()
+	require.Len(t, fake.CreateReqs, 1)
+	assert.Contains(t, fake.CreateReqs[0].Body, "review execution failed")
+	assert.Contains(t, fake.CreateReqs[0].Labels, "review-failed")
+}
+
 func TestLegacyKataEventSurvivesMissingJob(t *testing.T) {
 	for _, failure := range []string{"deleted", "closed database"} {
 		for _, eventType := range []string{"review.completed", "review.failed"} {
