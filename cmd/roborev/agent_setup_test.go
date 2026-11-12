@@ -102,7 +102,6 @@ func TestAgentSetupMCPReruns(t *testing.T) {
 	registration, found := mcpconfig.Registration(mcpconfig.Options{Agent: skills.AgentCodex})
 	require.True(t, found)
 	assert.Contains(t, registration.Args, "http://127.0.0.1:8282")
-
 }
 
 func TestClaudeMCPUsesKitCheck(t *testing.T) {
@@ -398,7 +397,7 @@ func TestSetupPreservesEventSettings(t *testing.T) {
 	hooks = doc["hooks"].(map[string]any)
 	group = hooks["PreToolUse"].([]any)[0].(map[string]any)
 	assert.Equal(t, "Bash|Write", group["matcher"])
-	assert.Equal(t, float64(23), group["hooks"].([]any)[0].(map[string]any)["timeout"])
+	assert.InDelta(t, 23, group["hooks"].([]any)[0].(map[string]any)["timeout"], 0.001)
 	assert.Contains(t, group["hooks"].([]any)[0].(map[string]any)["command"], "http://127.0.0.1:8282")
 	require.Contains(t, hooks, "Stop")
 	stop := hooks["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
