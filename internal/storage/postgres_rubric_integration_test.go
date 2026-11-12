@@ -23,8 +23,10 @@ func TestIntegrationRubricDigestStorageRoundTrip(t *testing.T) { //nolint:parall
 	changed := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 	for _, mode := range []string{"single", "batch"} {
 		t.Run(mode, func(t *testing.T) {
-			job := SyncableJob{UUID: uuid.New(), GitRef: mode, Agent: "test", JobType: JobTypeReview,
-				ReviewType: "custom", Status: "done", SourceMachineID: machine}
+			job := SyncableJob{
+				UUID: uuid.New(), GitRef: mode, Agent: "test", JobType: JobTypeReview,
+				ReviewType: "custom", Status: "done", SourceMachineID: machine,
+			}
 			base := time.Now().UTC().Add(-time.Hour)
 			for i, digest := range []*string{&first, &changed, nil} {
 				job.EnqueuedAt = base.Add(time.Duration(i) * time.Second)

@@ -284,6 +284,45 @@ func TestMarkJobsSyncedSkipsRowsChangedSinceSnapshot(t *testing.T) {
 	assert.Empty(t, done, "job marked with the matching updated_at must be synced")
 }
 
+// A digest save must invalidate an earlier mark and defeat a stale mark even
+// when updated_at has the same second precision as the pushed snapshot.
+func TestPromptDigestSaveInvalidatesSyncMark(t *testing.T) {
+	for _, markFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mark-first=%t", markFirst), func(t *testing.T) {
+			h := newSyncTestHelper(t)
+			job := h.createCompletedJob("digest-sync-sha")
+			snapshot, err := h.db.GetJobsToSync(h.machineID, 100)
+			require.NoError(t, err)
+			require.Len(t, snapshot, 1)
+			mark := NewJobSyncMark(snapshot[0])
+			_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', worker_id = 'worker' WHERE id = ?`, job.ID)
+			require.NoError(t, err)
+			mark.Status = "running"
+			claimed, err := h.db.GetJobByIDContext(t.Context(), job.ID)
+			require.NoError(t, err)
+			if markFirst {
+				require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{mark}))
+				var marked sql.NullString
+				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&marked))
+				require.True(t, marked.Valid)
+			}
+			digest := "digest"
+			saved, err := h.db.SaveJobPromptForAttempt(t.Context(), claimed, "worker", "prompt", &digest)
+			require.NoError(t, err)
+			require.True(t, saved)
+			// Force identical timestamps so the digest itself must guard the mark.
+			_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET updated_at = ? WHERE id = ?`, mark.UpdatedAt, job.ID)
+			require.NoError(t, err)
+			if !markFirst {
+				require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{mark}))
+			}
+			var syncedAt sql.NullString
+			require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
+			assert.False(t, syncedAt.Valid)
+		})
+	}
+}
+
 // TestMarkJobsSyncedSkipsCostWrittenInSameSecond covers the same-second case:
 // a job is marked terminal and its token usage is captured within the same
 // RFC3339 second, so updated_at is byte-identical between the pushed snapshot

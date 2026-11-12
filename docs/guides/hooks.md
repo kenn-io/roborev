@@ -233,6 +233,8 @@ project. Every issue receives the `roborev` label plus a marker label
 (`review-failed` or `review-finding`) and any extra `labels` you configure.
 roborev uses an idempotency key per job/event so reruns do not create duplicate
 Kata issues.
+When a custom rubric digest is available, the issue body includes
+`rubric: <type>@<digest>`, using the first 16 hexadecimal characters.
 
 The `kata` CLI must be on `PATH`. If it is missing, or the repo is not bound to
 a Kata project, the hook is skipped. If you explicitly configured the hook but

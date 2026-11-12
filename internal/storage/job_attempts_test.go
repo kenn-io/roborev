@@ -81,6 +81,25 @@ func TestJobAttemptPromptRequiresClaimIdentity(t *testing.T) {
 	assert.Nil(t, current.RubricSHA256)
 }
 
+func TestJobAttemptPromptRejectsLateCanceledSave(t *testing.T) {
+	t.Parallel()
+	env := setupJobEnv(t, t.TempDir(), "canceled-prompt")
+	job := claimJob(t, env.db, "worker")
+	digest := "original-digest"
+	saved, err := env.db.SaveJobPromptForAttempt(t.Context(), job, "worker", "original prompt", &digest)
+	require.NoError(t, err)
+	require.True(t, saved)
+	require.NoError(t, env.db.CancelJob(job.ID))
+	lateDigest := "late-digest"
+	saved, err = env.db.SaveJobPromptForAttempt(t.Context(), job, "worker", "late prompt", &lateDigest)
+	require.NoError(t, err)
+	assert.False(t, saved)
+	current, err := env.db.GetJobByIDContext(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "original prompt", current.Prompt)
+	assert.Equal(t, &digest, current.RubricSHA256)
+}
+
 func TestPulledCanceledAttemptReleasesUnregisteredClaim(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "unregistered-claim")
@@ -200,8 +219,9 @@ func TestStartJobAttemptStopsWaitingForTransitionWhenContextEnds(t *testing.T) {
 }
 
 func TestRetryAndFailoverPreserveOnlyCIPrebuiltRubric(t *testing.T) {
+	t.Parallel()
 	for _, prebuilt := range []bool{false, true} {
-		for _, action := range []string{"retry", "failover", "reset"} {
+		for _, action := range []string{"retry", "failover", "reset", "interrupted", "rerun", "promote"} {
 			t.Run(fmt.Sprintf("prebuilt=%t/%s", prebuilt, action), func(t *testing.T) {
 				env := setupJobEnv(t, t.TempDir(), "retry-rubric")
 				job := claimJob(t, env.db, "worker")
@@ -222,12 +242,23 @@ func TestRetryAndFailoverPreserveOnlyCIPrebuiltRubric(t *testing.T) {
 				case "reset":
 					err = env.db.ResetStaleJobs()
 					changed = true
+				case "interrupted":
+					changed, err = env.db.RequeueUpdateInterruptedJob(job.ID, "worker")
+				case "rerun":
+					require.NoError(t, env.db.CancelJob(job.ID))
+					err = env.db.ReenqueueJob(job.ID, ReenqueueOpts{})
+					changed = true
+				case "promote":
+					_, err = env.db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'classify', source = 'auto_design' WHERE id = ?`, job.ID)
+					require.NoError(t, err)
+					err = env.db.PromoteClassifyToDesignReview(job.ID, "worker", "test", "")
+					changed = true
 				}
 				require.NoError(t, err)
 				require.True(t, changed)
 				current, err := env.db.GetJobByID(job.ID)
 				require.NoError(t, err)
-				if prebuilt {
+				if prebuilt && action != "rerun" && action != "promote" {
 					assert.Equal(t, &digest, current.RubricSHA256)
 				} else {
 					assert.Nil(t, current.RubricSHA256)
