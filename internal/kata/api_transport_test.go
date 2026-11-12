@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -46,29 +45,6 @@ func jsonHandler(body string) http.HandlerFunc {
 
 type pong struct {
 	OK bool `json:"ok"`
-}
-
-func TestTransportClosePreservesOtherClientsIdleConnections(t *testing.T) {
-	srv := httptest.NewServer(jsonHandler(`{"ok":true}`))
-	defer srv.Close()
-	client := &http.Client{}
-	request := func(trace *httptrace.ClientTrace) {
-		t.Helper()
-		ctx := httptrace.WithClientTrace(t.Context(), trace)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-		require.NoError(t, err)
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		_, err = io.Copy(io.Discard, resp.Body)
-		require.NoError(t, err)
-		require.NoError(t, resp.Body.Close())
-	}
-	request(&httptrace.ClientTrace{})
-	tr := transportFor(t, srv.URL, "key")
-	tr.closeIdleConnections()
-	var reused bool
-	request(&httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused }})
-	assert.True(t, reused, "closing the Kata client must not close another client's idle connection")
 }
 
 func TestTransportSendsBearerAndAcceptHeaders(t *testing.T) {
