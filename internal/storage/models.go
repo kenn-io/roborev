@@ -540,9 +540,10 @@ type ErrorEntry struct {
 	JobID     int64     `json:"job_id,omitempty"`
 }
 
-// RubricID formats the review type and digest prefix for display.
+// RubricID formats the review type and digest prefix for display. It returns
+// empty unless the digest is 64 lowercase hex characters, the SHA-256 form.
 func RubricID(reviewType string, digest *string) string {
-	if digest == nil || len(*digest) < 16 || reviewType == "" {
+	if digest == nil || len(*digest) != 64 || strings.Trim(*digest, "0123456789abcdef") != "" || reviewType == "" {
 		return ""
 	}
 	return reviewType + "@" + (*digest)[:16]

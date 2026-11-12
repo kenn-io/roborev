@@ -37,9 +37,17 @@ where the digest is the first 16 hexadecimal characters of the SHA-256 of the
 rendered template and includes, trimmed and followed by one newline. The full
 `rubric_sha256` is available in job JSON and review hook events. The digest
 identifies the rubric used by the review attempt; changing a template or an
-include can change it. CI custom reviews record the digest of their prebuilt
-prompt. Built-in types, supplied prompts, and panel synthesis have no rubric
-digest.
+include can change it. Built-in types, supplied prompts, and panel synthesis
+have no rubric digest, and neither do reviews recorded before this feature.
+
+Local retries, failovers, and restart recovery clear the digest before the
+prompt is rendered again, and a manual rerun clears it too. CI custom reviews
+record the digest of their prebuilt prompt and keep it across retries and
+failovers, because those attempts reuse that prompt.
+
+The digest needs a newer database schema. Older binaries refuse a schema newer
+than they support, including the shared PostgreSQL schema, so upgrade every sync
+peer.
 
 You can
 [archive custom rubrics onto Kata issues](/docs/integrations/kata/#archiving-custom-rubrics).
