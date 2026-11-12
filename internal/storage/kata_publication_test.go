@@ -34,13 +34,13 @@ func TestKataPublicationSeedSupportsAliasWithoutProjectName(t *testing.T) {
 func TestKataPublicationMigrationIsRepeatable(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:16]))
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:17]))
 	for range 2 {
 		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
 		var count int
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM pragma_table_info('reviews') WHERE name = 'kata_publication' AND type = 'TEXT'`).Scan(&count))
 		assert.Equal(t, 1, count)
-		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 17`)
+		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 18`)
 		require.NoError(t, err)
 	}
 }
