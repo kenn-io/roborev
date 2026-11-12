@@ -22,6 +22,7 @@ vi.mock("../../stores/context", () => ({
       reportRendererFailure: errorReports,
       retryRenderer: rendererRetries,
       getSelectedJob: () => ({ status: state.status, error: state.error }),
+      getError: () => null,
     },
   }),
 }));

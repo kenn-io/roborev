@@ -66,6 +66,8 @@ closed review, `no` for an open review, and `--` when no closed state is
 available. Panel member rows show `--` because the synthesis row owns the
 panel's closed state.
 
+If loading branches or a review fails, use **Retry** in the affected view.
+
 Ref search previews results as you type. Press Enter to submit the current text
 immediately, without waiting for the preview delay.
 
@@ -211,9 +213,11 @@ Agent and model filters apply to attempt metrics. Logical-review metrics retain
 their review-based population rather than silently changing meaning.
 
 Analytics refresh when the page opens, when its filters change, when the browser
-regains focus, or when **Refresh** is selected. If a refresh for the current
-filters fails, the page labels the existing snapshot as stale and offers a
-retry. It never displays results from old filters under a new filter selection.
+regains focus, or when **Refresh** is selected. The browser retries brief
+connection failures when loading jobs, reviews, branches, or analytics. If a
+refresh for the current filters fails, the page labels the existing snapshot as
+stale and offers a retry. It never displays results from old filters under a new
+filter selection.
 
 ## Private Network Access
 
