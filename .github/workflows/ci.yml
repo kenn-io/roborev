@@ -418,7 +418,12 @@ jobs:
       - name: Install pinned Kata into runner scratch
         run: |
           mkdir -p "$RUNNER_TEMP/kata/bin"
-          GOBIN="$RUNNER_TEMP/kata/bin" kit-retry 3 5 go install go.kenn.io/kata/cmd/kata@591bf1e9939a30c315ef6345fbc8a39ad4f52643
+          printf '%s\n' \
+            'module kata-ci' \
+            'require go.kenn.io/kata v0.0.0' \
+            'replace go.kenn.io/kata => github.com/salmonumbrella/kata v0.12.2-0.20261112075432-591bf1e9939a' \
+            > "$RUNNER_TEMP/kata/go.mod"
+          GOBIN="$RUNNER_TEMP/kata/bin" kit-retry 3 5 go install -C "$RUNNER_TEMP/kata" -mod=mod go.kenn.io/kata/cmd/kata
       - name: Exercise pinned Kata archive transport
         run: ROBOREV_KATA_TEST_BINARY="$RUNNER_TEMP/kata/bin/kata" go test -tags kata ./internal/kata -run '^TestArchiveRubricPinnedCLI$'
 
