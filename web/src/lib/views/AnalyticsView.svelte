@@ -412,7 +412,7 @@
     {#if stale && snapshot}
       <div class="stale-notice" role="status">
         <span
-          >Showing stale data because the latest refresh failed{error
+          >Showing earlier analytics because the latest refresh failed{error
             ? `: ${error}`
             : "."}</span
         >
@@ -448,7 +448,7 @@
         <MetricCard
           label="Failure rate"
           value={percentage(verdicts.failure_rate)}
-          detail={`${failedVerdicts} failed verdicts of ${verdicts.rated} rated reviews`}
+          detail={`${failedVerdicts} failed reviews out of ${verdicts.rated} reviews with a verdict`}
         >
           {#if verdicts.rated > 0}
             <div
@@ -578,7 +578,7 @@
         <Card
           level="raised"
           title="Review failure rate"
-          meta="Failed verdicts of rated reviews"
+          meta="Failed reviews out of reviews with a verdict"
         >
           <AnalyticsChart
             label="Review failure rate over time"

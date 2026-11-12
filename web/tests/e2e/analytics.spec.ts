@@ -27,7 +27,9 @@ test.describe("native analytics workspace", () => {
       page.getByText("Estimated cost is a lower bound"),
     ).toBeVisible();
     await expect(
-      page.getByText("8 failed verdicts of 27 rated reviews").first(),
+      page
+        .getByText("8 failed reviews out of 27 reviews with a verdict")
+        .first(),
     ).toBeVisible();
     await expect(
       page.getByText("6 run errors · 6 canceled · 5 skipped"),
@@ -133,7 +135,9 @@ test.describe("native analytics workspace", () => {
 
     await page.getByRole("button", { name: "Refresh analytics" }).click();
 
-    await expect(page.getByRole("status")).toContainText("Showing stale data");
+    await expect(page.getByRole("status")).toContainText(
+      "Showing earlier analytics",
+    );
     await expect(
       page.getByRole("cell", { name: "project-alpha" }),
     ).toBeVisible();

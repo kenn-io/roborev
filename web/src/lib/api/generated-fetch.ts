@@ -1,5 +1,6 @@
 import { appPath, stripBasePath } from "../base-path";
 import { authenticatedFetch, type Fetch } from "./session";
+import { NetworkRequestError } from "./effect-errors";
 
 export interface RoborevTransport {
   readonly baseUrl: string;
@@ -30,11 +31,24 @@ export async function roborevFetch(
     `${baseUrl.replace(/\/$/, "")}${path}`,
     globalThis.location.origin,
   );
-  const response = await authenticatedFetch(fetchFn)(new Request(url, init));
+  const transport: Fetch = async (request, requestInit) => {
+    try {
+      return await fetchFn(request, requestInit);
+    } catch (cause) {
+      if (cause instanceof TypeError && !init.signal?.aborted)
+        throw new NetworkRequestError(cause);
+      throw cause;
+    }
+  };
+  const response = await authenticatedFetch(transport)(new Request(url, init));
   if (!response.ok) throw response;
   if ([204, 205, 304].includes(response.status)) return undefined;
 
-  const body = await response.text();
+  const body = await response.text().catch((cause: unknown) => {
+    if (cause instanceof TypeError && !init.signal?.aborted)
+      throw new NetworkRequestError(cause);
+    throw cause;
+  });
   if (body === "") return undefined;
   if (response.headers.get("Content-Type")?.includes("json")) {
     return JSON.parse(body);

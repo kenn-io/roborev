@@ -119,6 +119,13 @@
 
   const hasReview = $derived(stores.roborevReview?.getReview() != null);
 
+  const loadFailure = $derived(stores.roborevReview?.getError());
+
+  function retryReview(): void {
+    const jobId = stores.roborevReview?.getSelectedJobId();
+    if (jobId !== undefined) stores.roborevReview?.loadReview(jobId);
+  }
+
   const reviewIsClosed = $derived(stores.roborevReview?.isClosed() ?? false);
 
   // Shared by both footer stages so the accessible name of an action never
@@ -313,9 +320,15 @@
   {:else if activeTab === "log"}
     {#if selectedJob}
       <LogViewer jobId={selectedJob.id} jobStatus={selectedJob.status} />
+    {:else if loadFailure}
+      {@render loadRetry()}
     {/if}
   {:else if activeTab === "prompt"}
-    <PromptViewer />
+    {#if loadFailure && !stores.roborevReview?.getPrompt()}
+      {@render loadRetry()}
+    {:else}
+      <PromptViewer />
+    {/if}
   {/if}
 
   {#snippet footer()}
@@ -407,6 +420,13 @@
     </div>
   {/snippet}
 </BottomDock>
+
+{#snippet loadRetry()}
+  <div class="load-retry" role="alert">
+    <p>{loadFailure}</p>
+    <Button size="sm" onclick={retryReview} label="Retry" />
+  </div>
+{/snippet}
 
 <style>
   :global(.review-drawer) {
@@ -521,6 +541,22 @@
     padding: 8px 12px;
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
+  }
+
+  /* Matches the review tab's error row: message and Retry share one line. */
+  .load-retry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2) var(--space-3);
+    padding: 24px;
+    font-size: var(--font-size-md);
+    color: var(--text-muted);
+  }
+
+  .load-retry p {
+    margin: 0;
   }
 
   .tab-bar {
