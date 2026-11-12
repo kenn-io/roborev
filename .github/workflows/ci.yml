@@ -410,6 +410,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.4'
@@ -417,7 +418,7 @@ jobs:
       - name: Install pinned Kata into runner scratch
         run: |
           mkdir -p "$RUNNER_TEMP/kata/bin"
-          GOBIN="$RUNNER_TEMP/kata/bin" go install go.kenn.io/kata/cmd/kata@591bf1e9939a30c315ef6345fbc8a39ad4f52643
+          GOBIN="$RUNNER_TEMP/kata/bin" kit-retry 3 5 go install go.kenn.io/kata/cmd/kata@591bf1e9939a30c315ef6345fbc8a39ad4f52643
       - name: Exercise pinned Kata archive transport
         run: ROBOREV_KATA_TEST_BINARY="$RUNNER_TEMP/kata/bin/kata" go test -tags kata ./internal/kata -run '^TestArchiveRubricPinnedCLI$'
 

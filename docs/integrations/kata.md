@@ -120,7 +120,7 @@ Roborev archives after the review completes, subject to these rules:
     review records the full digest. A moved issue is skipped if it now belongs
     to another project. A move between the last check and the attachment write
     can still change the destination.
-- Repeated reviews reuse an existing reference with the same name. Editing a
+- Repeated reviews can reuse an existing reference with the same name. Editing a
     rubric adds a new reference and retains the old ones. When the Kata CLI
     supports `docbank attachments add --reuse-existing`, roborev uses atomic
     reuse without listing attachments. This requires daemon API 0.45.0 or
