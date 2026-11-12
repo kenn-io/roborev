@@ -109,9 +109,11 @@ configuration reference for full details.
 
 With the daemon API connection enabled, relevant prior review discussion is
 separate from task context. Single and batch fixes, fix planning, refine, and
-later local reviews can include current discussion for the source reviews they
-already selected. CI reviews perform no discussion reads. This does not search
-all past issues or require a local publication marker on a second machine.
+later daemon-run local reviews can include current discussion for the source
+reviews they already selected. `roborev review --local` has no prior-review
+database context, and CI reviews perform no discussion reads. This does not
+search all past issues or require a local publication marker on a second
+machine.
 
 Read discussion with `roborev kata show JOB|REVIEW-UUID|ISSUE`; use `--project`
 for an explicit issue or a review without a saved publication destination. The
@@ -449,6 +451,12 @@ kata --teammate=lead search "roborev show <job-id>" --agent
 kata --teammate=lead show '<issue>' --agent
 ```
 
+The lead can also post a plain reply or supersede a duplicate on a published
+finding with `roborev kata comment`, using the issue UID, project, destination
+ID and target UID from `roborev kata show`. This writes under the daemon's
+configured teammate, not `lead`. Teammates always use native Kata with their own
+names, and write refute reasons in the evidence text.
+
 For synthesis, match each Markdown `Reported by` agent and review type to panel
 member metadata and member job results from `roborev job show` when needed.
 Assign every identified source reviewer. If the mapping is ambiguous, such as
@@ -518,9 +526,19 @@ refuted for refutes only, contested for both, and unchecked for neither or
 incomplete threads. A resolving citation alone does not prove a conclusion. The
 lead never confirms or refutes; the user decides what to do with contested and
 unchecked findings. A reply does not close the Kata issue or the roborev review.
-With user approval, refuted findings can inform rubric tuning. Main fix, refine
-and later review prompts do not consume typed swarm outcomes; pass them to the
-user or fixing agent before any edit.
+With user approval, refuted findings can inform rubric tuning. With the daemon
+API connection enabled, fix, refine and daemon-run local review prompts can
+include current discussion as untrusted claims for readable, non-CI, non-goal
+source reviews they select. For earlier reviews, `review_context_count` defaults
+to 3; 0 disables that history. Same-ref attempts and range reviews have their
+own selection. This is separate from `[kata_context]` task modes. Check
+`roborev kata show <job-id>` for the selected result and discussion. Missing,
+partial, ambiguous, unavailable or truncated content is not complete evidence.
+Access and cancellation errors can stop the operation; other read failures may
+appear as unavailable context. Native-only publication, an unselected review, an
+already-built prompt or an incomplete read requires an explicit outcome handoff.
+Do not assume the next agent saw every reply; CI and `review --local` do not
+receive this discussion.
 
 ## Closing the Loop
 
