@@ -123,11 +123,11 @@ Roborev archives after the review completes, subject to these rules:
 - Repeated reviews can reuse an existing reference with the same name. Editing a
     rubric adds a new reference and retains the old ones. When the Kata CLI
     supports `docbank attachments add --reuse-existing`, roborev uses atomic
-    reuse without listing attachments. This requires daemon API 0.45.0 or
-    later; an older daemon rejects the upload until upgraded. Older CLIs use
-    list then add, so concurrent archives can create duplicates. Atomic reuse
-    applies to the same resolved Docbank version; changed Docbank state can
-    resolve a different version.
+    reuse without listing attachments. This requires daemon API 0.45.0 or later;
+    an older daemon rejects the upload until upgraded. Older CLIs use list then
+    add, so concurrent archives can create duplicates. Atomic reuse applies to
+    the same resolved Docbank version; changed Docbank state can resolve a
+    different version.
 - A repository-defined type is eligible only when its template and all includes
     resolve inside the repository, including through symlinks. Untracked and
     ignored files are eligible. Global types are operator-owned and can use
