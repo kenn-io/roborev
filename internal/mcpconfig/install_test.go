@@ -160,12 +160,13 @@ func TestRepairSelectedMCPConnection(t *testing.T) {
 		agent  skills.Agent
 		config string
 		want   []string
+		absent []string
 	}{
-		{"codex", skills.AgentCodex, "[mcp_servers.roborev]\ncommand = 'custom'\nargs = ['--server', 'http://127.0.0.1:8181', 'serve'] # keep\nenabled = false\nstartup_timeout_sec = 120\n[mcp_servers.roborev.env]\nTOKEN = 'example'\n", []string{"custom", "serve", "# keep", "startup_timeout_sec = 120", "TOKEN = 'example'", "http://127.0.0.1:8282"}},
-		{"codex without args", skills.AgentCodex, "[mcp_servers.roborev]\ncommand = 'custom' # keep\nstartup_timeout_sec = 120\n[mcp_servers.roborev.env]\nTOKEN = 'example'\n", []string{"custom", "# keep", "startup_timeout_sec = 120", "TOKEN = 'example'", "http://127.0.0.1:8282"}},
-		{"codex inline without args", skills.AgentCodex, "[mcp_servers]\nroborev = { command = 'custom', startup_timeout_sec = 120 }\n", []string{"custom", "startup_timeout_sec", "http://127.0.0.1:8282"}},
-		{"codex dotted without args", skills.AgentCodex, "mcp_servers.roborev.command = 'custom'\nmcp_servers.roborev.startup_timeout_sec = 120\n", []string{"custom", "startup_timeout_sec", "http://127.0.0.1:8282"}},
-		{"claude", skills.AgentClaude, `{"mcpServers":{"roborev":{"type":"http","url":"http://127.0.0.1:8181/mcp","headers":{"Authorization":"example"},"headersHelper":"helper"}}}`, []string{"http://127.0.0.1:8282/mcp", "Authorization", "example", "headersHelper", "helper"}},
+		{"codex", skills.AgentCodex, "[mcp_servers.roborev]\ncommand = 'custom'\nargs = ['--server', 'http://127.0.0.1:8181', 'serve'] # keep\nenabled = false\nstartup_timeout_sec = 120\n[mcp_servers.roborev.env]\nTOKEN = 'example'\n", []string{"custom", "serve", "# keep", "startup_timeout_sec = 120", "TOKEN = 'example'", "http://127.0.0.1:8282"}, []string{"enabled", "8181"}},
+		{"codex without args", skills.AgentCodex, "[mcp_servers.roborev]\ncommand = 'custom' # keep\nstartup_timeout_sec = 120\n[mcp_servers.roborev.env]\nTOKEN = 'example'\n", []string{"custom", "# keep", "startup_timeout_sec = 120", "TOKEN = 'example'", "http://127.0.0.1:8282"}, nil},
+		{"codex inline without args", skills.AgentCodex, "[mcp_servers]\nroborev = { command = 'custom', startup_timeout_sec = 120 }\n", []string{"custom", "startup_timeout_sec", "http://127.0.0.1:8282"}, nil},
+		{"codex dotted without args", skills.AgentCodex, "mcp_servers.roborev.command = 'custom'\nmcp_servers.roborev.startup_timeout_sec = 120\n", []string{"custom", "startup_timeout_sec", "http://127.0.0.1:8282"}, nil},
+		{"claude", skills.AgentClaude, `{"mcpServers":{"roborev":{"type":"http","url":"http://127.0.0.1:8181/mcp","headers":{"Authorization":"example"},"headersHelper":"helper"}}}`, []string{"http://127.0.0.1:8282/mcp", "Authorization", "example", "headersHelper", "helper"}, []string{"8181"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config")
@@ -182,11 +183,8 @@ func TestRepairSelectedMCPConnection(t *testing.T) {
 			for _, want := range tc.want {
 				assert.Contains(t, string(data), want)
 			}
-			if tc.name == "codex" {
-				assert.NotContains(t, string(data), "enabled")
-			}
-			if tc.name == "codex" || tc.name == "claude" {
-				assert.NotContains(t, string(data), "8181")
+			for _, absent := range tc.absent {
+				assert.NotContains(t, string(data), absent)
 			}
 			old := time.Unix(1000000000, 0)
 			require.NoError(t, os.Chtimes(path, old, old))

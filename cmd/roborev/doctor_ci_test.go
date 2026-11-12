@@ -124,6 +124,9 @@ func TestDoctorCIBurstsReadOnlyReportKeepsFailures(t *testing.T) {
 	for i := range jobs {
 		jobs[i] = generated.ReviewJob{Agent: "codex", ErrorData: new("provider unavailable"), EnqueuedAt: time.Now()}
 	}
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
 	env := loadDoctorEnv(t.Context(), "", fakeDoctorDaemon{
 		ping: &daemon.PingInfo{OK: true}, agents: &doctorDaemonAgents{}, jobs: jobs,
 		summary: &generated.Summary{Ci: &generated.CISummary{TotalPanels: 11, Prs: []generated.CIPRSummary{{GithubRepo: "acme/api", PrNumber: 1, Runs: 11, PeakHourRuns: 11}}}},

@@ -403,3 +403,26 @@ func TestQuickstartOutsideGitRepo(t *testing.T) {
 		require.Error(t, cmd.Execute())
 	})
 }
+
+func TestQuickstartCodexTrust(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	fakeAgent(t, "codex")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	_, err := runSetup("--agent", "codex", "--mcp")
+	require.NoError(t, err)
+	marker := filepath.Join(t.TempDir(), "mcp-probe")
+	t.Setenv("ROBOREV_TEST_MCP_MARKER", marker)
+	check := checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
+	assert.Equal(t, statusOK, check.Status)
+	assert.NotContains(t, check.Details, "mcp roborev")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "untrusted")
+	check = checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
+	assert.Equal(t, checkStatus("untrusted"), check.Status)
+	assert.Contains(t, check.FixCommand, "/hooks")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	require.NoError(t, os.RemoveAll(filepath.Join(os.Getenv("CODEX_HOME"), "skills")))
+	check = checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
+	assert.Equal(t, statusOK, check.Status)
+	_, err = os.Stat(marker)
+	assert.True(t, os.IsNotExist(err))
+}
