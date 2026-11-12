@@ -40,12 +40,6 @@ func TestCLIClientE2EIgnoresInheritedKataRouting(t *testing.T) {
 	runCLIClientE2E(t)
 }
 
-// TestCLIClientE2E exercises the real kata binary against an isolated home.
-// Run with: go test -tags kata ./internal/kata/.
-func TestCLIClientE2E(t *testing.T) {
-	runCLIClientE2E(t)
-}
-
 func runCLIClientE2E(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
