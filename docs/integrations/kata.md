@@ -180,7 +180,8 @@ do not use the root as the cursor. If completeness cannot be established, leave
 the finding unchecked and actionable.
 
 The lead checks that cited paths and lines exist at the reviewed commit and
-posts an outcome comment with one row per finding: confirmed for confirms only,
+posts a swarm verification outcome comment whose first line is exactly
+`swarm:<result>`, followed by one row per finding: confirmed for confirms only,
 refuted for refutes only, contested for both, and unchecked for neither or
 incomplete threads. A resolving citation alone does not prove a conclusion. The
 lead never confirms or refutes; the user decides what to do with contested and
@@ -189,10 +190,15 @@ With user approval, refuted findings can inform rubric tuning. Main fix, refine
 and later review prompts do not consume typed swarm outcomes; pass them to the
 user or fixing agent before any edit.
 
-When a repository also uses an Agent Hook review flow, the flow can read the
-outcome comment for the current result before choosing a disposition. Route
-contested, unchecked, missing, or incomplete outcomes to Ask so the user can
-decide; check confirmed and refuted findings against the sources before acting.
+When a repository also uses an Agent Hook review flow, apply it separately to
+each finding. Get the current result's top-level `uuid` from `roborev job show
+--job <id> --json`, or use the fallback above if absent. Match a swarm outcome
+comment by its exact first line `swarm:<result>`, then match the finding's row.
+Ignore historical outcomes. Route Contested and malformed, unknown, missing-row,
+or ambiguous current outcome rows, or multiple matching current comments, to Ask
+with the reason. For Unchecked or no current outcome, continue ordinary source
+triage, as for Confirmed and Refuted. Check sources before acting. The swarm verification outcome is separate from
+the agent's disposition comment on the issue.
 
 ## Closing the Loop
 

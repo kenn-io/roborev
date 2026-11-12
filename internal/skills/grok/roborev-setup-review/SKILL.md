@@ -410,13 +410,20 @@ Build the flow from the approved setup:
 - Include the commit batch size: each job covers a range. Fix in a new commit;
     never amend reviewed commits.
 - When a Kata hook is configured, find the matching issue labeled
-    `review-finding` for each job and comment the outcome there. If none exists,
-    tell the user and ask how to track the finding; do not create an issue in
-    place of the hook. Leave unresolved Ask findings open.
-- When a swarm is also configured, read the outcome comment for the current
-    result before choosing a disposition. Route contested, unchecked, missing,
-    or incomplete outcomes to Ask; the user decides. Check confirmed and
-    refuted findings against the sources before acting.
+    `review-finding` for each job and comment the agent disposition there. If
+    none exists, tell the user and ask how to track the finding; do not create
+    an issue in place of the hook. Leave unresolved Ask findings open.
+- When a swarm is also configured, apply the flow separately to each finding.
+    Get the current result's top-level `uuid` from `roborev job show --job
+    <id> --json`, or use `<review-id>-<job-id>-<full-reviewed-SHA>` if absent.
+    Match the swarm verification outcome comment by its exact first line
+    `swarm:<result>`, then match the finding's row. Ignore historical results.
+    Route Contested and malformed, unknown, missing-row, or ambiguous current
+    outcome rows or multiple matching current comments to Ask, explaining why.
+    For Unchecked or no current outcome, continue ordinary source triage, as
+    for Confirmed and Refuted. Always check
+    sources before acting. The swarm outcome is separate from the agent's
+    disposition comment.
 
 The flow refines the Which disposition step of `roborev_triage`. Use `Fix:`,
 `Decline:`, `Invalid:`, and `Ask:` action labels. End at an oval labeled
@@ -691,10 +698,10 @@ members = ["facts", "quotes"]
 review_flow = '''
 digraph roborev_brief {
   node [shape=box];
-  start [shape=oval label="Findings from the brief panel;\neach job covers up to 5 commits"];
+  start [shape=oval label="Findings from the brief panel;\ncheck each job's actual commit range"];
   read [label="Read each: roborev show --from-skill --job <job_id>"];
-  outcome [label="Find the matching Kata issue and read the\nswarm outcome comment for this result"];
-  swarm [shape=diamond label="What is the swarm outcome?"];
+  outcome [label="For each finding, get top-level uuid with roborev job show\n--job <id> --json; if absent use <review-id>-<job-id>-<full-reviewed-SHA>.\nMatch Kata outcome first line swarm:<result>, then row; ignore stale comments"];
+  swarm [shape=diamond label="What is this finding's swarm outcome?"];
   who [shape=diamond label="Which reviewer reported it?"];
   facts [label="Compare with evidence/timeline.md\nand the exhibit text copy"];
   quotes [label="Compare with the exhibit text copy,\nword for word"];
@@ -705,8 +712,8 @@ digraph roborev_brief {
   ask [label="Ask: tell the user what is unresolved;\nleave the finding open"];
   back [shape=oval label="Back to roborev_triage:\nrecord each disposition"];
   start -> read -> outcome -> swarm;
-  swarm -> ask [label="contested, unchecked,\nmissing or incomplete"];
-  swarm -> who [label="confirmed or refuted"];
+  swarm -> ask [label="contested, malformed, unknown,\nmissing row or ambiguous comments/rows: explain why"];
+  swarm -> who [label="confirmed, refuted, unchecked\nor no current outcome"];
   who -> facts [label="facts"];
   who -> quotes [label="quotes"];
   facts -> holds; quotes -> holds;
@@ -780,8 +787,10 @@ If neither is established, reply with what you checked and what was missing.
    never use it as the cursor. If completeness cannot be established, leave the
    finding unchecked and actionable. Lead checks cited `path:line` locations at
    the reviewed commit; a resolving citation alone does not prove the
-   conclusion. Post one outcome row per finding: confirmed (confirm only), refuted (refute only, record why),
-   contested (both), or unchecked (neither or incomplete). Only lead may
+   conclusion. Post an outcome comment whose first line is exactly
+   `swarm:<result>`, followed by one row per finding: confirmed (confirm only),
+   refuted (refute only, record why), contested (both), or unchecked (neither
+   or incomplete). Only lead may
    supersede duplicates. Contested and unchecked stay actionable. Tell the user the outcomes or pass
    them to the fixing agent before edits. With user approval, tune the rubric
    using refuted findings.

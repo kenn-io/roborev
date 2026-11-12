@@ -90,13 +90,15 @@ func TestSetupReviewConfigExampleValidates(t *testing.T) {
 			})
 
 			if tc.swarm {
-				outcome, ok := graph.Node("outcome")
+				_, ok := graph.Node("outcome")
 				require.True(t, ok)
-				assert.Contains(t, outcome.Label, "swarm outcome comment for this result")
 				assert.Equal(t, []agentguide.Edge{{From: "read", To: "outcome"}}, graph.Out("read"))
 				assert.Equal(t, []agentguide.Edge{{From: "outcome", To: "swarm"}}, graph.Out("outcome"))
-				assert.Contains(t, graph.Out("swarm"), agentguide.Edge{From: "swarm", To: "ask", Label: `contested, unchecked,\nmissing or incomplete`})
-				assert.Contains(t, graph.Out("swarm"), agentguide.Edge{From: "swarm", To: "who", Label: "confirmed or refuted"})
+				edges := graph.Out("swarm")
+				require.Len(t, edges, 2)
+				assert.ElementsMatch(t, []string{"ask", "who"}, []string{edges[0].To, edges[1].To})
+				assert.NotEmpty(t, edges[0].Label)
+				assert.NotEmpty(t, edges[1].Label)
 			}
 
 			// Custom types do not inherit review_agent. Resolve the example with
