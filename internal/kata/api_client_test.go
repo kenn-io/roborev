@@ -141,6 +141,12 @@ func TestAPIClientSchemaGate(t *testing.T) {
 		{"banana", true},
 		{"0.21", true},
 	} {
+		assert.Equal(t, !tc.wantErr, compatibleAPISchema(tc.schema), "schema %q", tc.schema)
+	}
+	for _, tc := range []struct {
+		schema  string
+		wantErr bool
+	}{{"0.20.9", true}, {"0.28.0", false}} {
 		f := katafake.New(t)
 		f.APISchema = tc.schema
 		_, err := apiClientFor(t, f, namedWorkspace(t, "reviews")).List(t.Context(), ListOpts{})
