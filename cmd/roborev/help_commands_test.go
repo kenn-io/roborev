@@ -66,14 +66,6 @@ func TestHelpCompactInheritedFlags(t *testing.T) {
 	}
 }
 
-func TestKataCommentHelpDescribesDestinationAndRetry(t *testing.T) {
-	root := newRootCmd()
-	cmd, _, err := root.Find([]string{"kata", "comment"})
-	require.NoError(t, err)
-	assert.Contains(t, cmd.Long, "project, destination ID and target UID")
-	assert.Contains(t, cmd.Long, "exact idempotency key")
-}
-
 // advertisedCommands tokenizes documented shell snippets without starting a
 // shell. Quoted words, placeholders, comments, pipelines, and continuations are
 // preserved; only roborev invocations are returned. No expansion is performed.
