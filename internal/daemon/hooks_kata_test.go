@@ -170,3 +170,25 @@ func TestRunKataHookFilesPanelResultOnce(t *testing.T) {
 	assert.Len(t, runKataHookFor(t, synthesis, filepath.Join(t.TempDir(), "missing")), 1,
 		"an issue is filed even when the commit cannot be read")
 }
+
+func TestPanelFailureSummaryReachesOnlyKataHooks(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "command-hook-fired")
+	cfg := &config.Config{Hooks: []config.HookConfig{
+		{Event: "review.failed", Type: "kata", Project: "p"},
+		{Event: "review.failed", Command: touchCmd(marker)},
+	}}
+	hr, broadcaster := setupRunner(t, cfg)
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	hr.newKataClient = func(string) kata.Client { return fake }
+
+	broadcaster.Broadcast(Event{
+		Type: "review.failed", JobID: 8, SHA: "x", Repo: t.TempDir(),
+		PanelRole: storage.PanelRoleSynthesis, Error: "all review agents failed",
+		SuppressHooks: true, PanelFailureSummary: true,
+	})
+	hr.WaitUntilIdle()
+
+	require.Len(t, fake.CreateReqs, 1, "Kata hooks skip reviewer failures, so the panel failure is their issue")
+	assert.Contains(t, fake.CreateReqs[0].Body, "all review agents failed")
+	assert.NoFileExists(t, marker, "command hooks already ran for each reviewer's failure")
+}

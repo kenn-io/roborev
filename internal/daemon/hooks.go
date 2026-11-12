@@ -141,7 +141,7 @@ func (hr *HookRunner) Stop() {
 
 // handleEvent checks all configured hooks against the event and fires matches.
 func (hr *HookRunner) handleEvent(event Event) {
-	if event.SuppressHooks {
+	if event.SuppressHooks && !event.PanelFailureSummary {
 		return
 	}
 	// Goal reviews use their own event names and require explicit hooks.
@@ -183,6 +183,10 @@ func (hr *HookRunner) handleEvent(event Event) {
 		}
 
 		if !matchSource(hook.Sources, event.Source) {
+			continue
+		}
+
+		if event.PanelFailureSummary && hook.Type != "kata" {
 			continue
 		}
 

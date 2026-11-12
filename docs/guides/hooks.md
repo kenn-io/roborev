@@ -252,7 +252,8 @@ What the `type = "kata"` hook does for each event:
 
 For a [review panel](/docs/advanced/subagent-review-panels/), only the synthesis
 review files an issue, so each panel run opens at most one. Its findings already
-combine the members' findings.
+combine the members' findings. When every reviewer fails, the panel's failure
+opens one `review-failed` issue instead.
 
 The issue title names the reviewed commit and its subject. For a range, that is
 the newest commit. When the repo's `origin` remote is on GitHub, the body links

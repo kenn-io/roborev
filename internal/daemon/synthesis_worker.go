@@ -321,6 +321,7 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 		event.Agent = ""
 		event.Error = errorMsg
 		event.SuppressHooks = true
+		event.PanelFailureSummary = true
 		wp.broadcaster.Broadcast(event)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker",

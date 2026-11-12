@@ -28,6 +28,11 @@ type Event struct {
 	WorktreePath      string     `json:"worktree_path,omitempty"`
 	SuppressRepoHooks bool       `json:"-"`
 	SuppressHooks     bool       `json:"-"`
+	// PanelFailureSummary marks a panel failure that no synthesis agent caused.
+	// It lets Kata hooks receive the event despite SuppressHooks: they skip
+	// reviewer events, so it is their one issue for the panel, while other
+	// hooks and alerts already saw the reviewers' own failures.
+	PanelFailureSummary bool `json:"-"`
 }
 
 func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Event {

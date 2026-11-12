@@ -16,6 +16,8 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/kata/katatest"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
@@ -430,4 +432,29 @@ func TestCIDefaultBranchReviewsApplyBatchTimeout(t *testing.T) {
 	job, err := h.db.GetJobByID(hung)
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusCanceled, job.Status, "a reviewer past ci.batch_timeout no longer holds the result")
+}
+
+func TestCIDefaultBranchReviewFilesOneKataIssueWhenEveryReviewerFails(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.fail = true
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "branch-reviewer-2", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		return "", errors.New("agent unavailable")
+	}})
+	h.cfg.CI.Agents = []string{"branch-reviewer", "branch-reviewer-2"}
+	h.cfg.Hooks = []config.HookConfig{{
+		Event: "review.*", Type: "kata", Project: "p", Sources: []string{storage.JobSourceCIBranch},
+	}}
+	hooks := NewHookRunner(NewStaticConfig(h.cfg), h.broadcaster, nil)
+	t.Cleanup(hooks.Stop)
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	hooks.newKataClient = func(string) kata.Client { return fake }
+
+	h.poll(t)
+	h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	h.runJobs(t)
+	hooks.WaitUntilIdle()
+
+	require.Len(t, fake.CreateReqs, 1, "one failed panel opens one issue, not one per reviewer or none")
+	assert.Contains(t, fake.CreateReqs[0].Labels, "review-failed")
 }
