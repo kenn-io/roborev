@@ -302,7 +302,8 @@ func TestKataEndpointsRefuseWhenTheConnectionIsOffOrBroken(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, w.Code, "disabled: %s", w.Body.String())
 	}
 
-	server.configWatcher.Config().Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.com", APIKeyFile: filepath.Join(t.TempDir(), "missing")}
+	credentialPath := filepath.Join(t.TempDir(), "missing")
+	server.configWatcher.Config().Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.com", APIKeyFile: credentialPath}
 	for _, call := range []func() *httptest.ResponseRecorder{
 		func() *httptest.ResponseRecorder { return kataGet(t, server, "/api/kata/issues", nil) },
 		func() *httptest.ResponseRecorder {
@@ -315,6 +316,7 @@ func TestKataEndpointsRefuseWhenTheConnectionIsOffOrBroken(t *testing.T) {
 		w := call()
 		assert.Equal(t, http.StatusBadGateway, w.Code, "broken: %s", w.Body.String())
 		assert.NotContains(t, w.Body.String(), kataTestCredential)
+		assert.NotContains(t, w.Body.String(), credentialPath)
 	}
 	assert.NoFileExists(t, marker, "the daemon never falls back to the kata CLI")
 }
