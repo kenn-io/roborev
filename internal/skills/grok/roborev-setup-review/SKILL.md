@@ -55,8 +55,10 @@ kata comment --help
 Doctor reports which agents are installed, which agent runs reviews here, and
 whether the Git hooks are installed. `core.hooksPath` shows whether the
 repository's hooks come from somewhere else. Also read `.roborev.toml`,
-`REVIEW.md`, existing rubric files, `.kata.toml` or `.kata.local.toml`, and agent instruction files
-such as AGENTS.md. A Kata binding and `--confirm` in the help mean agents can answer findings one by one in Kata.
+`REVIEW.md`, existing rubric files, `.kata.toml` or `.kata.local.toml`, and
+agent instruction files such as AGENTS.md. A `.kata.toml` means the repository
+tracks its work in Kata. A Kata binding and `--confirm` in the help mean agents
+can answer findings one by one in Kata.
 List the layout, file types, headings, and recent commit subjects. Reading the
 material itself, or comparing drafts against sources, is recon that the user
 approves first.
@@ -582,7 +584,7 @@ labels = ["swarm"]
 
 For the legal brief, the swarm brief could say:
 
-```markdown
+````markdown
 # Checking findings from the brief review
 
 ## Question and comparison
@@ -605,17 +607,47 @@ If neither is established, reply with what you checked and what was missing.
 - facts-codex: checks facts using codex.
 - facts-claude-code: checks facts using claude-code.
 - quotes-codex: checks quotes using codex.
+
+## Steps and commands
+
+1. Lead: select the standalone job, or the combined job printed at panel
+   enqueue. Match the hook issue to that job and reviewed commit; read the full
+   result with `roborev job show --job <id>`, since the issue may be truncated.
+2. Lead: post a charter and one unchanged root per full-result finding. Assign
+   five findings per fresh context by default; the user starts teammates.
+3. Teammates: check independently, post evidence, then read other replies.
+4. Lead: reconcile every finding to a root and outcome; pass outcomes to the
+   user or fixing agent before edits. Never close an issue or review for a reply.
+
+Use `roborev job show --job <id> --json` and take `job.uuid` as `<job>`;
+if absent, use `<job-id>-<full-reviewed-SHA>`. Reuse keys only for identical
+retries. Replace placeholders and use the same key each time:
+
+```bash
+kata --teammate=lead comment '<issue>' --body-file finding-1.md \
+  --idempotency-key 'swarm:<job>:f1' --agent
+kata --teammate=facts-codex comment '<issue>' --confirm 'c:<handle>' \
+  -m '<at least 40 characters of evidence>' \
+  --idempotency-key 'swarm:<job>:f1:facts-codex:confirm' --agent
+kata --teammate=lead show '<issue>' --thread 'c:<handle>' --agent
 ```
+
+Use `--refute` or `--reply` when the evidence calls for it, with the kind in
+the key. Never use `--force`.
+````
 
 The brief must also describe these steps and the approved agents. With provider
 restrictions, name an approved agent for every teammate and cite `path:line`
 instead of quoting evidence.
 
-1. After the user agrees to a run, the lead finds the combined review's issue
-    using the job ID. It posts a charter with the question, job, commit, rubric
-    per reviewer, brief at that commit, roster and assignments.
+1. After the user agrees, select the standalone job, or for a panel the
+    combined synthesis job printed at enqueue. Find its issue by job ID, not
+    label; match the job and reviewed commit. Read all findings with
+    `roborev job show --job <id>`; the issue body may be truncated. Post a
+    charter with question, job, commit, rubrics, brief, roster and assignments.
 2. The lead posts one root comment per finding, preserving position, reviewer,
-    severity, location and problem text. Record each comment handle. Use stable
+    severity, location and problem text from the full result. Reconcile every
+    finding to a root and outcome. Record each comment handle. Use stable
     idempotency keys based on the job and finding position for retries.
 3. The user starts fresh teammate sessions. Assign five findings per context by
     default, adjustable by the user; [#1376](https://github.com/kenn-io/roborev/issues/1376)
@@ -649,6 +681,8 @@ Finish with a short summary:
     `roborev job list`, or `roborev job show --job <id>`.
 - How to tune: edit a rubric, commit, and review again.
 - How to start a swarm run, if configured; the user starts the teammates.
+    Main fix, refine and later review prompts do not consume typed swarm
+    outcomes; pass them to the user or fixing agent before any edit.
 - How to add a source document: commit its text where the rubric expects it,
     and update the rubric or include when the path changes.
 - What is still pending, such as hooks, a stopped daemon, guidelines waiting

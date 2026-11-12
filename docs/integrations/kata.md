@@ -102,22 +102,26 @@ restrict access. Use Kata's issue-scoped credentials for that. Before starting,
 agree on the providers and accounts, the Kata server and any federated hubs:
 findings and whatever teammates write as evidence will be stored there.
 
-For a failing review, the lead finds the combined review's issue by job ID. The
-hook also files issues for failing panel members, so select the combined one.
-Replace the quoted placeholders below with actual values. Run commands from the
-bound repository and confirm that the issue and reviewed commit match:
+For a failing standalone review, use that job's issue. For a panel, use the
+combined synthesis job ID printed at enqueue. The hook also files issues for
+failing members, and all may share the swarm label, so find the issue by job ID.
+Run commands from the bound repository and match the issue to the job and
+reviewed commit. Replace the quoted placeholders with actual values:
 
 ```bash
 kata --teammate=lead search "roborev show <job-id>" --agent
 kata --teammate=lead show '<issue>' --agent
+roborev job show --job <job-id>
+roborev job show --job <job-id> --json
 ```
 
 The lead writes a charter with the question, review job and commit, rubric per
-reviewer, brief at that commit, roster and assignments. It copies each finding
-unchanged into its own root comment, including position, reviewer, severity,
-location and problem text. Record the returned handles from `kata show`. Use the
-job UUID for `<job>` when available, otherwise the job ID and reviewed SHA;
-reuse each key only for identical retries:
+reviewer, brief at that commit, roster and assignments. The hook issue body may
+be truncated, so copy every finding from the full job result into its own root,
+including position, reviewer, severity, location and problem text. Reconcile
+every full-result finding to a root and outcome. Record handles from
+`kata show`. For `<job>`, use `job.uuid` from the JSON output; if absent, use
+exactly `<job-id>-<full-reviewed-SHA>`. Reuse keys only for identical retries:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
@@ -160,7 +164,9 @@ refuted for refutes only, contested for both, and unchecked for neither. A
 resolving citation alone does not prove a conclusion. The lead never confirms or
 refutes; the user decides what to do with contested and unchecked findings. A
 reply does not close the Kata issue or the roborev review. With user approval,
-refuted findings can inform rubric tuning.
+refuted findings can inform rubric tuning. Main fix, refine and later review
+prompts do not consume typed swarm outcomes; pass them to the user or fixing
+agent before any edit.
 
 ## Closing the Loop
 

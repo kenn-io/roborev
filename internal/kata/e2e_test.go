@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,8 @@ import (
 // kata namespaces its database, runtime directory, and daemon socket under
 // KATA_HOME (<KATA_HOME>/kata.db and <KATA_HOME>/runtime/<dbhash>), so a
 // KATA_HOME-scoped `kata daemon stop` only stops the daemon this test starts.
-func TestCLIClientE2E(t *testing.T) {
+func isolatedKata(t *testing.T) (context.Context, string, []string, []string) {
+	t.Helper()
 	if _, err := exec.LookPath("kata"); err != nil {
 		t.Skip("kata not on PATH")
 	}
@@ -63,7 +65,7 @@ func TestCLIClientE2E(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 
 	// Bootstrap: register the project and write the committed .kata.toml
 	// binding. kata create rejects an unregistered project, so this must run
@@ -75,6 +77,11 @@ func TestCLIClientE2E(t *testing.T) {
 	out, err := initCmd.CombinedOutput()
 	require.NoError(t, err, "kata init: %s", out)
 
+	return ctx, repo, childEnv, overrides
+}
+
+func TestCLIClientE2E(t *testing.T) {
+	ctx, repo, _, overrides := isolatedKata(t)
 	c := kata.NewCLIClientWithEnv(repo, overrides)
 
 	// Binding reads the .kata.toml that `kata init` wrote.
@@ -110,33 +117,51 @@ func TestCLIClientE2E(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "seed task", iss.Title)
 	assert.Contains(t, iss.Body, "do the thing")
+}
 
-	// Exercise native typed replies with separate teammate identities.
+// This contract test is opt-in: go test -tags kata ./internal/kata/.
+func TestNativeTypedRepliesE2E(t *testing.T) {
+	ctx, repo, childEnv, overrides := isolatedKata(t)
+	c := kata.NewCLIClientWithEnv(repo, overrides)
+	res, err := c.Create(ctx, kata.CreateReq{Title: "synthetic review", Project: "e2etest"})
+	require.NoError(t, err)
+	body := "The draft states a different date from the exhibit."
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "finding.md"), []byte(body), 0o644))
 	run := func(args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "kata", args...)
 		cmd.Dir = repo
 		cmd.Env = childEnv
 		return cmd.CombinedOutput()
 	}
-	out, err = run("--teammate=lead", "comment", res.ShortID, "-m", "The draft states a different date from the exhibit.")
+	rootArgs := []string{"--teammate=lead", "comment", res.ShortID, "--body-file", "finding.md", "--idempotency-key", "swarm:fixture:f1", "--agent"}
+	out, err := run(rootArgs...)
 	require.NoError(t, err, "%s", out)
-	out, err = run("show", res.ShortID, "--json")
+	out, err = run(rootArgs...)
+	require.NoError(t, err, "%s", out)
+	out, err = run("--teammate=lead", "show", res.ShortID, "--json")
 	require.NoError(t, err, "%s", out)
 	var shown struct {
 		Comments []struct {
-			UID string `json:"uid"`
+			Handle string `json:"handle"`
 		} `json:"comments"`
 	}
 	require.NoError(t, json.Unmarshal(out, &shown))
 	require.Len(t, shown.Comments, 1)
-	root := shown.Comments[0].UID
-	require.NotEmpty(t, root)
+	require.NotEmpty(t, shown.Comments[0].Handle)
+	root := "c:" + shown.Comments[0].Handle
 	evidence := "The rubric checks the date and the exhibit gives a different date."
-	out, err = run("--teammate=facts-codex", "comment", res.ShortID, "--confirm", root, "-m", evidence)
+	confirm := []string{"--teammate=facts-codex", "comment", res.ShortID, "--confirm", root, "-m", evidence, "--idempotency-key", "swarm:fixture:f1:facts-codex:confirm", "--agent"}
+	out, err = run(confirm...)
 	require.NoError(t, err, "%s", out)
-	out, err = run("--teammate=facts-claude-code", "comment", res.ShortID, "--refute", root, "-m", "The exhibit supports the draft date and the finding is mistaken.")
+	out, err = run(confirm...)
 	require.NoError(t, err, "%s", out)
-	out, err = run("--teammate=facts-codex", "comment", res.ShortID, "--confirm", root, "-m", evidence)
+	out, err = run("--teammate=facts-claude-code", "comment", res.ShortID, "--refute", root, "-m", "The exhibit supports the draft date and the finding is mistaken.", "--idempotency-key", "swarm:fixture:f1:facts-claude-code:refute", "--agent")
+	require.NoError(t, err, "%s", out)
+	out, err = run("--teammate=lead", "show", res.ShortID, "--thread", root, "--agent")
+	require.NoError(t, err, "%s", out)
+	assert.Equal(t, 1, strings.Count(string(out), evidence), "identical retry must not duplicate the reply")
+	assert.Contains(t, string(out), "The exhibit supports the draft date")
+	out, err = run("--teammate=facts-codex", "comment", res.ShortID, "--confirm", root, "-m", evidence, "--idempotency-key", "swarm:fixture:f1:duplicate", "--agent")
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr, "%s", out)
 	assert.Equal(t, 5, exitErr.ExitCode(), "%s", out)
