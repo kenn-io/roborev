@@ -64,6 +64,16 @@ reaches a route or repository its grants deny. `auth_key` does not isolate
 processes that run as the daemon owner or can read its config, so same-account
 access is not a bypass.
 
+## Rubric archive source authority
+
+Rubric archiving is off by default and requires a global operator opt-in;
+repositories can opt out, and CI reviews are excluded. For archive
+eligibility, files from repository-defined review types must remain inside the
+repository. Global review types are operator-owned and may use external
+files, including targets of repository-relative symlinks. A contributor who
+controls such a path can redirect it to another readable file. The operator's
+grant permits publishing the rendered content to the Kata vault audience.
+
 ## Docs publication assets
 
 Docs media is published from maintainer-controlled orphan branches
