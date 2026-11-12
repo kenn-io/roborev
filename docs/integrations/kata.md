@@ -344,10 +344,10 @@ findings and whatever teammates write as evidence will be stored there.
 
 Run `roborev job list` from the bound repository, then use `roborev job show` to
 identify the standalone or combined synthesis job and reviewed commit. An ID
-printed at enqueue is a shortcut. Use that job's issue; the hook also files
-issues for failing panel members. If the ref is dirty or no committed snapshot
-matches the reviewed changes, stop: commit and request a new review before a
-swarm. Read the full result on either path:
+printed at enqueue is a shortcut. Use that job's issue; Kata hooks skip panel
+members. If the ref is dirty or no committed snapshot matches the reviewed
+changes, stop: commit and request a new review before a swarm. Read the full
+result on either path:
 
 ```bash
 roborev job show --job <job-id>
@@ -359,20 +359,44 @@ replies, propose `findings = "comments"` on the existing covering hook under
 approval; do not leave a duplicate legacy hook. This publishes roots for failing
 local reviews and synthesis, not CI or panel members. Doctor checks the bound or
 default project, not an explicit hook project; verify that destination
-separately. If the daemon is down or its status cannot be read, explain that it
-needs to be started or restarted with approval and doctor rechecked. Stop on a
-reported unhealthy connection or missing typed replies. Only a disabled
-connection uses the native path.
+separately. Doctor absence does not establish that the connection is disabled:
+the status probe can fail without a check. Query `GET /api/kata/status` on the
+selected roborev daemon using its
+[documented API authentication](../configuration.md#daemon-authentication). Only
+a successful response with `enabled: false` and `state: "disabled"` permits the
+native path. An absent response, 404, error or unreadable status is unknown:
+stop and report the reason. If needed, start or restart the daemon with approval
+and recheck. Stop on an unhealthy connection or missing typed replies. The
+published path still requires doctor to report ready and typed replies.
 
 After the user agrees to the run, inspect `roborev kata show <job-id>`. If
 publication is in progress, report it and reinspect after it completes. Before
 posting a charter or any native top-level comment, require `Status: complete`
-and every matched finding root `complete`, and match every root to the full
-result and native issue. Stop and report missing, ambiguous, truncated, edited
-or otherwise incomplete publication. Never post duplicate roots. From the
-checkout, compare the native project and `issue.uid` with roborev's output and
-confirm native routing and the daemon endpoint select the same server. Stop on
-mismatch or unverifiable identity. Use agent output for complete comment refs:
+and match every root to the full result and native issue. Stop and report
+missing, ambiguous, truncated, edited or otherwise incomplete publication. For
+an earlier review without published roots, offer
+`roborev kata create <job-id> --findings comments` with user approval, or
+request a fresh review after the hook upgrade. Inspect again before a charter;
+never post duplicate roots.
+
+Verify server routing before assignment. Identify the actual active roborev
+daemon and the global config selected by its launcher or service, including its
+`ROBOREV_DATA_DIR` if set. Compare its `integrations.kata.endpoint` to native
+routing from the checkout (never expose or copy credentials):
+
+```bash
+kata daemon locate --json
+```
+
+The output provides the effective `address` and, where applicable,
+`request_base_url`. If aliases differ, explicitly select the same verified
+endpoint with per-command `KATA_SERVER` or native daemon catalog selection and
+rerun `locate`; use that selection on subsequent native commands. Do not guess
+that aliases are equivalent or compare the opaque `Destination` hash. If the
+active daemon config or native routing cannot be inspected, stop and report the
+missing evidence. Compare the native project and full `issue.uid` with roborev's
+output; stop on mismatch or unverifiable identity. Use agent output for complete
+comment refs:
 
 ```bash
 kata --teammate=lead show '<issue>' --json
@@ -411,8 +435,12 @@ kata --teammate=lead comment '<issue>' --body-file charter.md \
 kata --teammate=lead show '<issue>' --agent
 ```
 
-On the native path only, post each root with
-`kata --teammate=lead comment '<issue>' --body-file finding-1.md --idempotency-key 'swarm:<result>:f1' --agent`.
+On the native path only, post each root:
+
+```bash
+kata --teammate=lead comment '<issue>' --body-file finding-1.md \
+  --idempotency-key 'swarm:<result>:f1' --agent
+```
 
 The user starts fresh sessions and assigns findings to each teammate. Five
 findings per context is a configurable default based on one
