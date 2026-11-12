@@ -222,19 +222,19 @@ kata --teammate=lead comment edit '<issue>' '<outcome-comment-uid>' \
 When a repository also uses an Agent Hook review flow, start a fresh complete
 issue read as above. Match the current result's outcome comment by its exact
 first line `swarm:<result>`, then match the finding's position and complete root
-reference; ignore older results.
-Before using a row, re-read all pages of the current finding thread using the
-last non-root cursor rule above. If the row disagrees with current replies or
-its currency cannot be established, Ask for lead to correct the existing
-comment. Route Contested, malformed, unknown, missing or ambiguous rows,
-multiple matching comments, and incomplete reads to Ask with the reason.
-Unchecked or no outcome on a complete read continues ordinary source triage, as
-Confirmed and Refuted do; check sources before acting.
+reference; ignore older results. Before using a row, re-read all pages of the
+current finding thread using the last non-root cursor rule above. If the row
+disagrees with current replies or its currency cannot be established, Ask for
+lead to correct the existing comment. Route Contested, malformed, unknown,
+missing or ambiguous rows, multiple matching comments, and incomplete reads to
+Ask with the reason. Unchecked or no outcome on a complete read continues
+ordinary source triage, as Confirmed and Refuted do; check sources before
+acting.
 
-The optional flow does not wait for a swarm. If verification must precede
-edits, the user tells the coding agent to defer edits until the current
-outcomes are handed over. Enabling the flow authorizes matching issue reads
-even when no swarm has run; omit it if the user does not agree.
+The optional flow does not wait for a swarm. If verification must precede edits,
+the user tells the coding agent to defer edits until the current outcomes are
+handed over. Enabling the flow authorizes matching issue reads even when no
+swarm has run; omit it if the user does not agree.
 
 ## Closing the Loop
 
