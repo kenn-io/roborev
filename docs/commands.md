@@ -1551,8 +1551,8 @@ roborev agent hook status               # Tracked session counters as JSON
 roborev agent hook reset example-session   # Reset one session (or --all)
 ```
 
-If Codex asks for review, run `/hooks` in Codex, then recheck. The MCP check
-may start the configured server, and Codex may update its runtime state.
+If Codex asks for review, run `/hooks` in Codex, then recheck. The MCP check may
+start the configured server, and Codex may update its runtime state.
 
 ### Setup flags
 
