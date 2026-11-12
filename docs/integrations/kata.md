@@ -195,18 +195,49 @@ kata --teammate=lead comment '<issue>' --body-file outcome.md \
   --idempotency-key 'swarm:<result>:outcome' --agent
 ```
 
-With user approval, refuted findings can inform rubric tuning. Main fix, refine
-and later review prompts do not consume typed swarm outcomes; pass them to the
-user or fixing agent before any edit.
+For a complete issue read, start with `kata show '<issue>' --json` (or
+`--agent`) and collect all comments. If `comments_truncated` is true (agent
+output says `Comments truncated`), repeat with
+`--since '<last-returned-comment-uid>'` until false or omitted. Start from the
+beginning on each freshness check, since editing an old comment does not create
+a new one. If a page fails or the cursor cannot advance, report uncertainty.
 
-When a repository also uses an Agent Hook review flow, match the current
-result's outcome comment by its exact first line `swarm:<result>`, then match
-the finding's position and complete root reference. Ignore older results. Route
-Contested, malformed, unknown, missing or ambiguous rows, multiple matching
-comments, and uncertain or truncated reads to Ask with the reason. Unchecked or
-a complete read with no outcome continues ordinary source triage, as Confirmed
-and Refuted do; check sources before acting. When verification must precede
-edits, finish the swarm before handing findings to the coding agent.
+Keep one outcome comment for this result. Before handoff, re-read the current
+threads and reclassify affected rows. If replies arrive later or an incomplete
+thread becomes readable, lead refreshes that same comment. Find its UID in a
+complete fresh issue read and edit it, preserving the `swarm:<result>` first
+line and position/root columns. Do not post a second outcome or retry changed
+content under the creation key:
+
+```bash
+kata --teammate=lead comment edit '<issue>' '<outcome-comment-uid>' \
+  --body-file outcome.md --agent
+```
+
+Re-read the edited comment and current replies before handoff. If a read or edit
+fails, report uncertainty instead of presenting the old row as current. With
+user approval, refuted findings can inform rubric tuning. Main fix, refine and
+later review prompts do not consume typed swarm outcomes; pass them to the user
+or fixing agent before any edit.
+
+When a repository also uses an Agent Hook review flow, start a fresh complete
+issue read as above; if it fails, Ask. Match the current result's outcome
+comment by its exact first line `swarm:<result>`, then match the finding's
+position and complete root reference; ignore older results.
+Before using a row, re-read all pages of the current finding thread using the
+last non-root cursor rule above. If the row disagrees with current replies or
+its currency cannot be established, Ask for lead to correct the existing
+comment. Route Contested, malformed, unknown, missing or ambiguous rows,
+multiple matching comments, and incomplete reads to Ask with the reason.
+Unchecked or no outcome on a complete read continues ordinary source triage, as
+Confirmed and Refuted do; check sources before acting.
+
+If verification must precede edits, the user tells the coding agent to defer
+edits until the swarm finishes and its current outcomes are handed over. The
+optional flow does not wait for a swarm; a complete read with no current outcome
+continues ordinary source triage. Enabling the swarm-reading flow authorizes
+matching issue reads even when no swarm has run; omit the integration if the
+user does not agree to those reads.
 
 ## Closing the Loop
 
