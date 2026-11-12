@@ -537,8 +537,13 @@ newer; do not offer the swarm. Check existing Kata hooks for `review.completed`,
 the requested branches and destination. Prefer a hook covering the bound project;
 otherwise propose a suitable hook under the existing approval gate. Never silently
 change a hook. If an explicit project is selected, record it in the brief and
-pass `--project <name>` to every native Kata command. Do not read Kata issues
-until the user agrees to a run.
+pass `--project <name>` to every native Kata command. When doctor reports
+`integrations.kata` ready and that the server stores typed replies, propose
+`findings = "comments"` on the hook. Doctor checks the binding or default project,
+not an explicit hook project; verify that destination separately before a run.
+If the connection is disabled, use the native root path below. If enabled but
+not ready or without typed replies, stop and report the connection problem.
+Do not read Kata issues until the user agrees to a run.
 
 Ask how many teammates check each reviewer, which agents they use, and who
 starts them. Guess two per reviewer on different agents if the user runs two,
@@ -558,7 +563,9 @@ credentials for access control.
 
 Propose a committed brief beside the rubrics, such as
 `review-rubrics/swarm.md`, and a hook if needed. Show both in full for the
-existing approval gate. Adapt this configuration to the approved review:
+existing approval gate. Adapt this configuration to the approved review. The
+`findings` line requires the ready connection described above; omit it for the
+native root path:
 
 ```toml
 # .roborev.toml (swarm)
@@ -585,6 +592,7 @@ members = ["facts", "quotes"]
 [[hooks]]
 event = "review.completed"
 type = "kata"
+findings = "comments"
 labels = ["swarm"]
 ```
 
@@ -618,18 +626,29 @@ If neither is established, reply with what you checked and what was missing.
 
 1. After the user agrees, lead uses `roborev job list` and
    `roborev job show --job <id>` to identify the standalone or combined synthesis
-   job and reviewed commit; an ID printed at enqueue is a shortcut. Find its issue by job ID.
+   job and reviewed commit; an ID printed at enqueue is a shortcut. On the
+   native path, find its issue by job ID.
    If the ref is dirty or no committed snapshot matches the reviewed changes,
    stop: the user must commit and request a new review before a swarm. The issue
-   may be truncated; use the full job result. Post a charter with question, job,
-   commit, rubric paths, brief at that commit, roster and assignments.
+   may be truncated; use the full job result. For a `findings = "comments"`
+   hook, run `roborev kata show <job-id>` and use its project, issue UID and
+   finding positions. From the checkout run native `kata show` on that issue;
+   compare the project and full issue UID and confirm the native server is the
+   same server as the daemon connection (inspect native routing and the daemon
+   endpoint configuration). Stop and report any mismatch or if
+   identity cannot be established, before assigning work. Post a charter with
+   question, job, commit, rubric paths, brief at that commit, roster and assignments.
 2. For synthesis, match each Markdown `Reported by` agent and review type to
    panel member metadata and member job results from `roborev job show` when
    needed. Assign every identified source reviewer; if mapping is ambiguous,
    for example identical agent and type with different member instructions,
-   do not assign that finding and report it unchecked. Lead posts one root per
-   finding, preserving position, sources, severity, location and problem text.
-   Record complete comment references from `kata show` and reconcile every
+   do not assign that finding and report it unchecked. With published roots,
+   use the positions and handles from `roborev kata show`; never post duplicate
+   roots. Stop if publication is incomplete, ambiguous, missing or a root cannot
+   be matched to the full result and native issue. Without a connection, lead
+   posts one root per finding, preserving position, sources, severity, location
+   and problem text. Record complete comment references from `kata show` and
+   reconcile every
    finding to a root and outcome. Assign five findings per fresh context by
    default, adjustable by the user: [#1376](https://github.com/kenn-io/roborev/issues/1376)
    measured this on one workload. The user starts teammates.
@@ -654,20 +673,20 @@ Use the top-level `uuid` from `roborev job show --job <id> --json` as
 `<result>`; if absent, use `<review-id>-<job-id>-<full-reviewed-SHA>`.
 Reuse keys only for identical retries of the same result. A rerun has a new
 result: leave old roots, replies and outcomes as history, post a new charter
-and roots with new keys, and never carry outcomes forward. `<comment-ref>` is
-the complete reference returned by `kata show`. Replace placeholders:
+and never carry outcomes forward. Only on the native path, post new roots with
+new keys. `<comment-ref>` is the complete reference returned by `kata show`. Replace placeholders:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
   --idempotency-key 'swarm:<result>:charter' --agent
-kata --teammate=lead comment '<issue>' --body-file finding-1.md \
-  --idempotency-key 'swarm:<result>:f1' --agent
 kata --teammate=facts-codex comment '<issue>' --confirm '<comment-ref>' \
   -m '<at least 40 characters of evidence>' \
   --idempotency-key 'swarm:<result>:f1:facts-codex:confirm' --agent
 kata --teammate=lead show '<issue>' --thread '<comment-ref>' --agent
 ```
 
+On the native path only, post each root with `kata --teammate=lead comment
+'<issue>' --body-file finding-1.md --idempotency-key 'swarm:<result>:f1' --agent`.
 Use `--refute` or `--reply` when evidence calls for it, with the kind in the
 key. Never use `--force` or close a Kata issue or roborev review for a reply.
 When providers are restricted, name an approved agent for each teammate and

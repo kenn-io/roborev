@@ -50,7 +50,7 @@ func TestSetupReviewConfigExampleValidates(t *testing.T) {
 			require.NoError(t, config.ValidateEffectiveReviewConfig(nil, repoCfg))
 
 			if tc.swarm {
-				require.Contains(t, repoCfg.Hooks, config.HookConfig{Event: "review.completed", Type: "kata", Labels: []string{"swarm"}})
+				require.Contains(t, repoCfg.Hooks, config.HookConfig{Event: "review.completed", Type: "kata", Findings: "comments", Labels: []string{"swarm"}})
 			}
 
 			panel, ok := repoCfg.Review.Panels[repoCfg.Review.HookPanel]

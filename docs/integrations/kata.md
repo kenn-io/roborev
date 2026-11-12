@@ -312,7 +312,9 @@ identify the standalone or combined synthesis job and reviewed commit. An ID
 printed at enqueue is a shortcut. Use that job's issue; the hook also files
 issues for failing panel members. If the ref is dirty or no committed snapshot
 matches the reviewed changes, stop: commit and request a new review before a
-swarm. Match the issue to the job and commit. Replace the quoted placeholders:
+swarm. Match the issue to the job and commit. For the native path, locate the
+issue as follows; for published roots, use `roborev kata show` below instead.
+Replace the quoted placeholders:
 
 ```bash
 kata --teammate=lead search "roborev show <job-id>" --agent
@@ -321,29 +323,45 @@ roborev job show --job <job-id>
 roborev job show --job <job-id> --json
 ```
 
+When doctor reports the Kata connection ready and that the server stores typed
+replies, configure `findings = "comments"` on the hook. This publishes roots for
+failing local reviews and synthesis, not CI or panel members. After the user
+agrees to the run, inspect `roborev kata show <job-id>` for the publication
+status, project, issue UID, positions and handles. From the checkout use native
+`kata show` on the issue and compare the project and full issue UID; confirm the
+native routing and daemon endpoint configuration select the same server. Stop
+before assigning work if they differ, identity cannot be established,
+publication is incomplete or ambiguous, or any root cannot be matched to the
+full result and native issue. The lead never posts duplicate roots. Doctor
+checks the bound or default project, not an explicit hook project; verify that
+destination separately. If the enabled connection is not ready or lacks typed
+replies, stop and report it.
+
 The lead writes a charter with the question, review job and commit, rubric per
-reviewer, brief at that commit, roster and assignments. The hook issue body may
-be truncated, so copy every finding from the full job result into its own root,
-including position, sources, severity, location and problem text. For synthesis,
-match each Markdown `Reported by` agent and review type to panel member metadata
-and member job results from `roborev job show` when needed. Assign every
-identified source reviewer. If the mapping is ambiguous, such as the same agent
-and type with different member instructions, do not assign that finding; report
-it unchecked. Keep one root and outcome row per finding. Reconcile every
-full-result finding to a root and outcome. Record complete comment references
-from `kata show`. For `<result>`, use the top-level `uuid` from the JSON output;
-if absent, use exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys
-only for identical retries of the same result. A rerun has a new result: leave
-old roots, replies and outcomes as history, post a new charter and roots with
-new keys, and never carry outcomes forward:
+reviewer, brief at that commit, roster and assignments. Without a connection,
+use the native path below: the hook issue body may be truncated, so copy every
+finding from the full job result into its own root, including position, sources,
+severity, location and problem text. For synthesis, match each Markdown
+`Reported by` agent and review type to panel member metadata and member job
+results from `roborev job show` when needed. Assign every identified source
+reviewer. If the mapping is ambiguous, such as the same agent and type with
+different member instructions, do not assign that finding; report it unchecked.
+Keep one root and outcome row per finding. Reconcile every full-result finding
+to a root and outcome. Record complete comment references from `kata show`. For
+`<result>`, use the top-level `uuid` from the JSON output; if absent, use
+exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only for
+identical retries of the same result. A rerun has a new result: leave old roots,
+replies and outcomes as history and post a new charter. On the native path post
+new roots with new keys. Never carry outcomes forward:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
   --idempotency-key 'swarm:<result>:charter' --agent
-kata --teammate=lead comment '<issue>' --body-file finding-1.md \
-  --idempotency-key 'swarm:<result>:f1' --agent
 kata --teammate=lead show '<issue>' --agent
 ```
+
+On the native path only, post each root with
+`kata --teammate=lead comment '<issue>' --body-file finding-1.md --idempotency-key 'swarm:<result>:f1' --agent`.
 
 The user starts fresh sessions and assigns findings to each teammate. Five
 findings per context is a configurable default based on one
