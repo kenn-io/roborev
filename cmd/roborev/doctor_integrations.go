@@ -293,12 +293,12 @@ func checkDoctorKata(env *doctorEnv) []doctorCheck {
 	if !status.SupportsReplies {
 		return append(out, doctorCheck{
 			ID: id, Category: "integrations", Status: doctorInfo,
-			Summary: fmt.Sprintf("the Kata connection is ready (%sserver %s), but typed replies are not supported (API schema %s; needs 0.28.0 or later)", project, status.ServerVersion, status.APISchemaVersion),
+			Summary: fmt.Sprintf("the Kata connection is ready (%sserver %s), but the server does not store typed replies (API schema %s; needs 0.28.0 or later)", project, status.ServerVersion, status.APISchemaVersion),
 			Fix:     "upgrade Kata to v0.19.0 or later to use typed replies; everything else works without them",
 		})
 	}
 	return append(out, doctorCheck{
 		ID: id, Category: "integrations", Status: doctorOK,
-		Summary: fmt.Sprintf("the Kata connection is ready (%sserver %s, typed replies supported)", project, status.ServerVersion),
+		Summary: fmt.Sprintf("the Kata connection is ready (%sserver %s, server stores typed replies)", project, status.ServerVersion),
 	})
 }

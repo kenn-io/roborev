@@ -61,8 +61,8 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 		wantIn     []string
 		wantFix    string
 	}{
-		{"ready with replies", ready, doctorOK, []string{`project "reviews"`, "v0.19.0", "typed replies supported"}, ""},
-		{"ready on an older server", oldServer, doctorInfo, []string{"typed replies are not supported", "0.27.0", "0.28.0"}, "upgrade Kata"},
+		{"ready with replies", ready, doctorOK, []string{`project "reviews"`, "v0.19.0", "server stores typed replies"}, ""},
+		{"ready on an older server", oldServer, doctorInfo, []string{"server does not store typed replies", "0.27.0", "0.28.0"}, "upgrade Kata"},
 		{"unreachable", withState("unreachable", "The Kata server is unavailable."), doctorWarn, []string{"unreachable"}, "endpoint"},
 		{"authentication required", withState("authentication_required", "Kata rejected the credential."), doctorWarn, []string{"authentication_required"}, "api_key_file"},
 		{"incompatible", withState("incompatible", "not a compatible Kata API"), doctorWarn, []string{"incompatible"}, "0.21.0"},
