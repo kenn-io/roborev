@@ -1455,6 +1455,8 @@ components:
           type: integer
         review_type:
           type: string
+        rubric_sha256:
+          type: string
         session_id:
           type: string
         skip_reason:
@@ -3096,6 +3098,8 @@ components:
           type: integer
         review_type:
           type: string
+        rubric_sha256:
+          type: string
         session_id:
           type: string
         skip_reason:
@@ -4082,6 +4086,8 @@ components:
           format: int64
           type: integer
         review_type:
+          type: string
+        rubric_sha256:
           type: string
         session_id:
           type: string

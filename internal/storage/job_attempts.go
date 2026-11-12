@@ -193,3 +193,25 @@ func (db *DB) SaveJobPromptForAttempt(job *ReviewJob, workerID, prompt string) (
 	})
 	return current, errors.Join(err, saveErr)
 }
+
+// SaveJobPromptAndRubricForAttempt writes the prompt and digest only for the current attempt.
+func (db *DB) SaveJobPromptAndRubricForAttempt(ctx context.Context, job *ReviewJob, workerID, text string, digest *string) (bool, error) {
+	var saveErr error
+	current, err := db.RunJobAttempt(job, workerID, func() {
+		var tx *sql.Tx
+		tx, saveErr = db.BeginTx(ctx, nil)
+		if saveErr != nil {
+			return
+		}
+		defer tx.Rollback()
+		saveErr = setJobContent(ctx, tx, job.ID, jobContentPrompt, text)
+		if saveErr != nil {
+			return
+		}
+		if _, saveErr = tx.ExecContext(ctx, `UPDATE review_jobs SET rubric_sha256 = ? WHERE id = ?`, digest, job.ID); saveErr != nil {
+			return
+		}
+		saveErr = tx.Commit()
+	})
+	return current, errors.Join(err, saveErr)
+}

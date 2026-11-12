@@ -189,3 +189,27 @@ func TestStartJobAttemptStopsWaitingForTransitionWhenContextEnds(t *testing.T) {
 		release()
 	})
 }
+
+func TestJobAttemptRubricTracksPromptOwner(t *testing.T) {
+	env := setupJobEnv(t, t.TempDir(), "rubric-attempt")
+	job := claimJob(t, env.db, "worker")
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	saved, err := env.db.SaveJobPromptAndRubricForAttempt(t.Context(), job, "worker", "prompt", &digest)
+	require.NoError(t, err)
+	require.True(t, saved)
+	current, err := env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, &digest, current.RubricSHA256)
+	saved, err = env.db.SaveJobPromptAndRubricForAttempt(t.Context(), job, "other", "stale", nil)
+	require.NoError(t, err)
+	assert.False(t, saved)
+	current, err = env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, &digest, current.RubricSHA256)
+	saved, err = env.db.SaveJobPromptAndRubricForAttempt(t.Context(), job, "worker", "replacement", nil)
+	require.NoError(t, err)
+	require.True(t, saved)
+	current, err = env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Nil(t, current.RubricSHA256)
+}

@@ -11,6 +11,8 @@ import (
 
 // Event represents a review event that can be broadcast
 type Event struct {
+	RubricSHA256      *string    `json:"rubric_sha256"`
+	ReviewType        string     `json:"review_type,omitempty"`
 	Type              string     `json:"type"`
 	TS                time.Time  `json:"ts"`
 	JobID             int64      `json:"job_id"`
@@ -40,6 +42,8 @@ func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Eve
 	event.SHA = job.GitRef
 	event.Branch = job.HookBranch()
 	event.Agent = job.Agent
+	event.ReviewType = job.ReviewType
+	event.RubricSHA256 = job.RubricSHA256
 	event.SuppressHooks = suppressJobHooks(job)
 	event.SuppressRepoHooks = hasSuppliedReviewSettings(job)
 	return event

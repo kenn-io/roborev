@@ -96,3 +96,11 @@ func TestRunKataHookLogsNoBinding(t *testing.T) {
 	assert.Empty(t, fake.CreateReqs, "must not create without a binding")
 	assert.Contains(t, buf.String(), "no .kata.toml binding")
 }
+
+func TestKataHookIncludesRubricID(t *testing.T) {
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	event := Event{Type: "review.completed", Verdict: "F", JobID: 1, ReviewType: "custom", RubricSHA256: &digest}
+	req, ok := kataCreateRequest(config.HookConfig{Type: "kata"}, event)
+	require.True(t, ok)
+	assert.Contains(t, req.Body, "- rubric: custom@1234567890abcdef\n")
+}

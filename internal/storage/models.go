@@ -99,10 +99,11 @@ type ReviewJob struct {
 	Error               string     `json:"error,omitempty"`
 	Prompt              string     `json:"prompt,omitempty"`
 	RetryCount          int        `json:"retry_count"`
-	DiffContent         *string    `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
-	DirtyFiles          []string   `json:"dirty_files,omitempty"`   // Unfiltered dirty file names for prompt metadata
-	Agentic             bool       `json:"agentic"`                 // Enable agentic mode (allow file edits)
-	PromptPrebuilt      bool       `json:"prompt_prebuilt"`         // Prompt was set at enqueue time and should be used as-is
+	DiffContent         *string    `json:"diff_content,omitempty"` // For dirty reviews (uncommitted changes)
+	DirtyFiles          []string   `json:"dirty_files,omitempty"`  // Unfiltered dirty file names for prompt metadata
+	Agentic             bool       `json:"agentic"`                // Enable agentic mode (allow file edits)
+	PromptPrebuilt      bool       `json:"prompt_prebuilt"`        // Prompt was set at enqueue time and should be used as-is
+	RubricSHA256        *string    `json:"rubric_sha256,omitempty"`
 	ReviewType          string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt
 	PatchID             string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
 	OutputPrefix        string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
@@ -537,4 +538,12 @@ type ErrorEntry struct {
 	Component string    `json:"component"`
 	Message   string    `json:"message"`
 	JobID     int64     `json:"job_id,omitempty"`
+}
+
+// RubricID formats the review type and digest prefix for display.
+func RubricID(reviewType string, digest *string) string {
+	if digest == nil || len(*digest) < 16 || reviewType == "" {
+		return ""
+	}
+	return reviewType + "@" + (*digest)[:16]
 }

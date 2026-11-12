@@ -1,6 +1,8 @@
 package prompt
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -247,4 +249,37 @@ func TestReconcileStructuredOutputInstruction(t *testing.T) {
 	assert.Equal(prose, ReconcileStructuredOutputInstruction(structured, false),
 		"a prose agent never sees the JSON instruction")
 	assert.Equal(prose, ReconcileStructuredOutputInstruction(prose, false))
+}
+
+func TestRenderedRubricBytes(t *testing.T) {
+	repoPath := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "review.tmpl"), []byte("  Check {{ index .Includes \"rule\" }}  \n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "rule.md"), []byte("safety"), 0o644))
+	cfg := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{
+		"custom": {Template: "review.tmpl", Includes: map[string]string{"rule": "rule.md"}},
+	}}}
+	b := NewBuilder(nil).ForRepo(repoPath, 0).WithRepoConfig(cfg, "")
+	result, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("Check safety\n"), result.Rubric)
+	assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte("Check safety\n"))), result.RubricSHA256)
+	assert.Contains(t, result.Prompt, "Check safety")
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, "review.tmpl"), []byte("  Check {{ index .Includes \"rule\" }}  \n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(other, "rule.md"), []byte("safety"), 0o644))
+	same, err := NewBuilder(nil).ForRepo(other, 0).WithRepoConfig(cfg, "").BuildDirtyResult("different diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.Equal(t, result.RubricSHA256, same.RubricSHA256)
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "rule.md"), []byte("correctness"), 0o644))
+	changed, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.NotEqual(t, result.RubricSHA256, changed.RubricSHA256)
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "review.tmpl"), []byte("Other {{ index .Includes \"rule\" }}"), 0o644))
+	changedTemplate, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.NotEqual(t, changed.RubricSHA256, changedTemplate.RubricSHA256)
+	builtin, err := b.BuildDirtyResult("diff", nil, 0, "test", "security", "")
+	require.NoError(t, err)
+	assert.Nil(t, builtin.Rubric)
+	assert.Empty(t, builtin.RubricSHA256)
 }

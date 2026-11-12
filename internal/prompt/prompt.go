@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log"
@@ -258,6 +259,26 @@ func (b *Builder) buildWithOpts(gitRef string, contextCount int, agentName, revi
 		return b.buildRangePrompt(gitRef, contextCount, agentName, reviewType, opts)
 	}
 	return b.buildSinglePrompt(gitRef, contextCount, agentName, reviewType, opts)
+}
+
+// BuildResult holds the full prompt and the exact rendered custom rubric.
+type BuildResult struct {
+	Prompt       string
+	Rubric       []byte
+	RubricSHA256 string
+}
+
+func (r *BuildResult) setRubric(systemPrompt string) {
+	r.Rubric = []byte(strings.TrimSpace(strings.TrimSuffix(systemPrompt, structuredReviewOutputInstruction)) + "\n")
+	r.RubricSHA256 = fmt.Sprintf("%x", sha256.Sum256(r.Rubric))
+}
+
+// BuildResultForReview builds a review prompt and retains its rendered rubric.
+func (b *Builder) BuildResultForReview(gitRef string, contextCount int, agentName, reviewType, minSeverity string) (BuildResult, error) {
+	var result BuildResult
+	var err error
+	result.Prompt, err = b.buildWithOpts(gitRef, contextCount, agentName, reviewType, buildOpts{minSeverity: minSeverity, result: &result})
+	return result, err
 }
 
 // SnapshotResult holds a prompt and cleanup for its temporary reference files.
@@ -638,10 +659,23 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 // dirty file names for dependency metadata summaries. The diff itself may have
 // review exclusions applied.
 func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
+	result, err := b.BuildDirtyResult(diff, changedFiles, contextCount, agentName, reviewType, minSeverity)
+	return result.Prompt, err
+}
+
+// BuildDirtyResult retains the custom rubric used for a dirty review.
+func (b *Builder) BuildDirtyResult(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string) (BuildResult, error) {
+	var result BuildResult
+	text, err := b.buildDirtyResult(diff, changedFiles, contextCount, agentName, reviewType, minSeverity, &result)
+	result.Prompt = text
+	return result, err
+}
+
+func (b *Builder) buildDirtyResult(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string, result *BuildResult) (string, error) {
 	if b.binaryEvidence {
 		return "", ErrBinaryEvidenceDirty
 	}
-	ctx, err := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
+	ctx, err := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{}, result)
 	if err != nil {
 		return "", err
 	}
@@ -732,6 +766,7 @@ type buildOpts struct {
 	// nil defers review-document creation until a prebuilt prompt is executed.
 	// A non-nil value supplies the prepared path, or an empty string for no history.
 	priorRangeReviewsFile *string
+	result                *BuildResult
 	additionalContext     string
 	// minSeverity is accepted for call-site symmetry. The threshold is applied
 	// after the review runs and is never shown to the agent.
@@ -744,7 +779,7 @@ type promptBuildContext struct {
 	optional       optionalSectionsView
 }
 
-func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defaultPromptType string, optional optionalSectionsView) (promptBuildContext, error) {
+func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defaultPromptType string, optional optionalSectionsView, result *BuildResult) (promptBuildContext, error) {
 	promptType := defaultPromptType
 	if !config.IsGeneralReviewType(reviewType) {
 		promptType = reviewType
@@ -757,6 +792,9 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 	)
 	if err != nil {
 		return promptBuildContext{}, err
+	}
+	if custom && result != nil {
+		result.setRubric(systemPrompt)
 	}
 	requiredPrefix := systemPrompt
 	if !custom && b.structuredOutput {
@@ -941,7 +979,7 @@ func selectRichestRangePromptView(limit int, view TemplateContext, variants []di
 
 // buildSinglePrompt constructs a prompt for a single commit
 func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.resolvedConfigRepoPath(), b.globalCfg, opts.additionalContext))
+	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.resolvedConfigRepoPath(), b.globalCfg, opts.additionalContext), opts.result)
 	if err != nil {
 		return "", err
 	}
@@ -1002,7 +1040,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 
 // buildRangePrompt constructs a prompt for a commit range
 func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.resolvedConfigRepoPath(), b.globalCfg, opts.additionalContext))
+	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.resolvedConfigRepoPath(), b.globalCfg, opts.additionalContext), opts.result)
 	if err != nil {
 		return "", err
 	}

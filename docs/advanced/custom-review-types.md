@@ -30,6 +30,16 @@ still constructs the commit or range context, project guidelines, diff, and
 oversized-diff snapshot instructions. It also owns the output schema, severity
 filtering, pass/fail verdict, and final Markdown rendering.
 
+## Rubric identity
+
+For a custom review type, `roborev show` displays `Rubric: <type>@<digest>`,
+where the digest is the first 16 hexadecimal characters of the SHA-256 of the
+rendered template and includes, trimmed and followed by one newline. The full
+`rubric_sha256` is available in job JSON and review hook events. The digest
+identifies the rubric used by the review attempt; changing a template or an
+include can change it. Built-in types, supplied prompts, and panel synthesis
+have no rubric digest.
+
 ## Configuration reference
 
 Each `[review.types.<name>]` table supports these fields:

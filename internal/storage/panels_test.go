@@ -614,6 +614,9 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 	})
 	require.NoError(t, err)
 	// Only terminal jobs sync.
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET rubric_sha256 = ? WHERE id = ?`, digest, member.ID)
+	require.NoError(t, err)
 	setStatus(t, db, member.ID, JobStatusDone)
 
 	jobs, err := db.GetJobsToSync(machineID, 100)
@@ -627,6 +630,7 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 	assert.Equal(2, s.PanelMemberIndex)
 	assert.JSONEq(`{"agent":"test"}`, s.PanelMemberConfigJSON)
 	assert.True(s.NonVoting)
+	assert.Equal(&digest, s.RubricSHA256)
 }
 
 func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
@@ -636,7 +640,9 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/panel-pull")
 
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 	pulled := PulledJob{
+		RubricSHA256:          &digest,
 		UUID:                  testUUID("uuid-1"),
 		GitRef:                "abc123",
 		Agent:                 "test",
@@ -655,6 +661,9 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 		NonVoting:             true,
 	}
 	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	var storedDigest *string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT rubric_sha256 FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&storedDigest))
+	assert.Equal(&digest, storedDigest)
 
 	var got ReviewJob
 	var cb int

@@ -534,6 +534,7 @@ type SyncableJob struct {
 	Reasoning             string
 	JobType               string
 	ReviewType            string
+	RubricSHA256          *string
 	PatchID               string
 	Status                string
 	Agentic               bool
@@ -571,7 +572,7 @@ var jobsToSyncQuery = `
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
-			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, j.agent_invoked,
+			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), j.rubric_sha256, COALESCE(j.patch_id, ''), j.status, j.agentic, j.agent_invoked,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
 			COALESCE(zstd_decompress(jc.prompt), ''), zstd_decompress(jc.diff_content), j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
@@ -614,7 +615,7 @@ func (db *DB) jobsToSync(machineID uuid.UUID, afterID int64, limit int) ([]Synca
 		err := rows.Scan(
 			&j.ID, &j.UUID, &j.RepoID, &j.RepoIdentity,
 			&commitID, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &commitTimestamp,
-			&j.GitRef, &j.Branch, &j.SessionID, &j.ResumeSourceJobUUID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
+			&j.GitRef, &j.Branch, &j.SessionID, &j.ResumeSourceJobUUID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.RubricSHA256, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
 			&enqueuedAt, &startedAt, &finishedAt,
 			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
@@ -1050,9 +1051,9 @@ func (s *pullSession) upsertPulledJob(ctx context.Context, j PulledJob, repoID i
 			uuid, repo_id, commit_id, git_ref, branch, session_id, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic, agent_invoked,
 			enqueued_at, started_at, finished_at, dirty_files, error, token_usage,
 			worktree_path, source, min_severity, backup_agent, backup_model,
-			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting,
+			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting, rubric_sha256,
 			source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			worker_id = CASE WHEN ? THEN review_jobs.worker_id ELSE NULL END,
@@ -1089,6 +1090,7 @@ func (s *pullSession) upsertPulledJob(ctx context.Context, j PulledJob, repoID i
 			panel_member_index = excluded.panel_member_index,
 			panel_member_config_json = excluded.panel_member_config_json,
 			non_voting = excluded.non_voting,
+			rubric_sha256 = excluded.rubric_sha256,
 			updated_at = excluded.updated_at,
 			synced_at = ?
 			WHERE (? OR review_jobs.status NOT IN ('applied', 'rebased')
@@ -1128,6 +1130,7 @@ func (s *pullSession) upsertPulledJob(ctx context.Context, j PulledJob, repoID i
 				AND review_jobs.panel_member_index IS excluded.panel_member_index
 				AND review_jobs.panel_member_config_json IS excluded.panel_member_config_json
 				AND review_jobs.non_voting IS excluded.non_voting
+				AND review_jobs.rubric_sha256 IS excluded.rubric_sha256
 				AND review_jobs.updated_at IS excluded.updated_at
 			)
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.Branch), nullStr(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
@@ -1135,7 +1138,7 @@ func (s *pullSession) upsertPulledJob(ctx context.Context, j PulledJob, repoID i
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
-		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON), j.NonVoting,
+		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON), j.NonVoting, j.RubricSHA256,
 		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339Nano), now, s.db.attempts.active[localID] != nil, now, attemptOrder < 0)
 	if err != nil {
 		return false, err

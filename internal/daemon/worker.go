@@ -1220,6 +1220,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 	var reviewPrompt string
+	var rubricDigest *string
 	var fileCoverage *storage.ReviewFileCoverage
 	var promptToPersist string
 	effectiveMinSeverity := job.MinSeverity
@@ -1320,17 +1321,27 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			if job.DiffContent != nil {
 				diffContent = *job.DiffContent
 			}
-			reviewPrompt, err = pb.BuildDirtyWithFiles(
+			var built prompt.BuildResult
+			built, err = pb.BuildDirtyResult(
 				diffContent, job.DirtyFiles, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
+			reviewPrompt = built.Prompt
+			if built.RubricSHA256 != "" {
+				rubricDigest = &built.RubricSHA256
+			}
 		} else {
 			// Build the complete prompt; preparation happens after all additions.
 			excludes := config.ResolveExcludePatterns(
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
-			reviewPrompt, err = pb.Build(
+			var built prompt.BuildResult
+			built, err = pb.BuildResultForReview(
 				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
+			reviewPrompt = built.Prompt
+			if built.RubricSHA256 != "" {
+				rubricDigest = &built.RubricSHA256
+			}
 			if err == nil {
 				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
 			}
@@ -1367,13 +1378,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// The job's stored prompt is the only copy the prompt views read, so a
 	// failed save retries the job instead of running the agent without it.
-	if saved, err := wp.db.SaveJobPromptForAttempt(job, workerID, promptToPersist); err != nil {
+	if saved, err := wp.db.SaveJobPromptAndRubricForAttempt(ctx, job, workerID, promptToPersist, rubricDigest); err != nil {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
 		return
 	} else if !saved {
 		return
 	}
+
+	job.RubricSHA256 = rubricDigest
 
 	// Get the configured job agent. Backup failover is handled explicitly by
 	// failOrRetryAgent so jobs never silently run on the hardcoded fallback chain.
@@ -1455,6 +1468,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Broadcast started event
 	wp.broadcaster.Broadcast(Event{
 		Type:              "review.started",
+		ReviewType:        job.ReviewType,
+		RubricSHA256:      job.RubricSHA256,
 		TS:                time.Now(),
 		JobID:             job.ID,
 		Repo:              job.RepoPath,
@@ -1865,6 +1880,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		wp.broadcaster.Broadcast(Event{
 			Type:              "review.completed",
+			ReviewType:        job.ReviewType,
+			RubricSHA256:      job.RubricSHA256,
 			TS:                time.Now(),
 			JobID:             job.ID,
 			JobUUID:           job.UUID,
@@ -2384,6 +2401,8 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 	}
 	wp.broadcaster.Broadcast(Event{
 		Type:              jobEventType(job, "failed"),
+		ReviewType:        job.ReviewType,
+		RubricSHA256:      job.RubricSHA256,
 		TS:                time.Now(),
 		JobID:             job.ID,
 		JobUUID:           job.UUID,
