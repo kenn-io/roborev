@@ -444,7 +444,7 @@ func TestKataInspectionReadsOversizedUnmarkedPublication(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	got := decodeKata[KataPublicationBody](t, w)
 	assert.Equal(t, "complete", got.State)
-	_, err = kata.PreparePublication(record.ReviewUUID, record.DocumentHash, review.CreatedAt, doc, "comments", "reviewer")
+	_, err = kata.PreparePublicationWithOptions(record.ReviewUUID, record.DocumentHash, review.CreatedAt, doc, "comments", "reviewer", kata.PublicationOptions{})
 	require.ErrorIs(t, err, kata.ErrRequestRejected)
 	after, err := tc.DB.GetKataPublication(t.Context(), job.ID)
 	require.NoError(t, err)

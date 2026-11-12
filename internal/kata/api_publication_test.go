@@ -24,7 +24,7 @@ import (
 func publicationFixture(t *testing.T, policy string) *Publication {
 	t.Helper()
 	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "private summary", SourceLabels: []string{"private source"}, Findings: []structuredreview.Finding{{Severity: "high", Problem: "private problem", Fix: "private fix", Location: "private/path.go:4", Sources: []int{1}}}}
-	p, err := PreparePublication(uuid.MustParse("11111111-1111-4111-8111-111111111111"), strings.Repeat("a", 64), time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), doc, policy, "reviewer")
+	p, err := PreparePublicationWithOptions(uuid.MustParse("11111111-1111-4111-8111-111111111111"), strings.Repeat("a", 64), time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), doc, policy, "reviewer", PublicationOptions{})
 	require.NoError(t, err)
 	return p
 }
@@ -56,10 +56,10 @@ func TestPublicationRenderingPreflightAndFingerprint(t *testing.T) {
 
 	// JSON escaping makes the actual request larger than the finding text.
 	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Findings: []structuredreview.Finding{{Severity: "high", Problem: "first", Fix: "fix"}, {Severity: "high", Problem: strings.Repeat("\"", PublicationMaxRequestBytes/2), Fix: "fix"}}}
-	_, err = PreparePublication(comments.ReviewUUID, strings.Repeat("a", 64), comments.CompletedAt, doc, "comments", "reviewer")
+	_, err = PreparePublicationWithOptions(comments.ReviewUUID, strings.Repeat("a", 64), comments.CompletedAt, doc, "comments", "reviewer", PublicationOptions{})
 	require.ErrorIs(t, err, ErrRequestRejected)
 	// Summary mode must not serialize even an oversized finding.
-	_, err = PreparePublication(comments.ReviewUUID, strings.Repeat("a", 64), comments.CompletedAt, doc, "summary", "reviewer")
+	_, err = PreparePublicationWithOptions(comments.ReviewUUID, strings.Repeat("a", 64), comments.CompletedAt, doc, "summary", "reviewer", PublicationOptions{})
 	require.NoError(t, err)
 }
 
@@ -70,7 +70,7 @@ func TestPublicationFindingPositions(t *testing.T) {
 	}}
 	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	for _, policy := range []string{"comments", "summary"} {
-		p, err := PreparePublication(id, strings.Repeat("a", 64), time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), doc, policy, "reviewer")
+		p, err := PreparePublicationWithOptions(id, strings.Repeat("a", 64), time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), doc, policy, "reviewer", PublicationOptions{})
 		require.NoError(t, err)
 		require.Len(t, p.roots, 2)
 		if policy == "comments" {
@@ -135,7 +135,7 @@ func TestPublicationSourceInspectionCannotWrite(t *testing.T) {
 		assert.Equal(t, "edited", roots[1].State)
 		assert.Equal(t, "actual", roots[1].Comment.Author)
 		if policy == "comments" {
-			_, err = PreparePublication(id, strings.Repeat("a", 64), at, doc, policy, "reviewer")
+			_, err = PreparePublicationWithOptions(id, strings.Repeat("a", 64), at, doc, policy, "reviewer", PublicationOptions{})
 			require.ErrorIs(t, err, ErrRequestRejected)
 		}
 	}

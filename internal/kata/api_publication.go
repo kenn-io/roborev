@@ -201,13 +201,9 @@ type PublicationOptions struct {
 	Priority *int
 }
 
-// PreparePublication renders and preflights every issue and root request.
-// Summary mode excludes review text, paths, sources, diagnostics, and fixes.
-func PreparePublication(id uuid.UUID, hash string, completed time.Time, doc structuredreview.Document, policy, teammate string) (*Publication, error) {
-	return PreparePublicationWithOptions(id, hash, completed, doc, policy, teammate, PublicationOptions{})
-}
-
-// PreparePublicationWithOptions includes the selected hook options in the preflight fingerprint.
+// PreparePublicationWithOptions renders and preflights every issue and root
+// request. Summary mode excludes review text, paths, sources, diagnostics, and
+// fixes. The selected hook options are included in the preflight fingerprint.
 func PreparePublicationWithOptions(id uuid.UUID, hash string, completed time.Time, doc structuredreview.Document, policy, teammate string, options PublicationOptions) (*Publication, error) {
 	p, err := PublicationFromSource(id, hash, completed, doc, policy)
 	if err != nil {
