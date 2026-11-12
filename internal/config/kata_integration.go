@@ -177,7 +177,7 @@ func (k KataIntegrationConfig) ResolveAPIKey() (string, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read api_key_file: %w", err)
+		return "", fmt.Errorf("read api_key_file: %w", errors.Unwrap(err))
 	}
 	key := strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
 	switch {
