@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -421,7 +422,7 @@ func TestQuickstartCodexTrust(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
-func TestDoctorChecksMCPBeforeDaemon(t *testing.T) {
+func TestDoctorRefreshesDaemonAfterMCP(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	fakeAgent(t, "codex")
 	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
@@ -429,12 +430,40 @@ func TestDoctorChecksMCPBeforeDaemon(t *testing.T) {
 	require.NoError(t, err)
 	marker := filepath.Join(t.TempDir(), "mcp-probe")
 	t.Setenv("ROBOREV_TEST_MCP_MARKER", marker)
+	pingCalls := 0
 	env := loadDoctorEnv(t.Context(), "", fakeDoctorDaemon{onPing: func() {
+		pingCalls++
 		_, err := os.Stat(marker)
-		assert.NoError(t, err)
+		if pingCalls == 1 {
+			assert.True(t, os.IsNotExist(err))
+		} else {
+			assert.NoError(t, err)
+		}
 	}})
+	assert.Equal(t, 2, pingCalls)
 	require.NotEmpty(t, env.agentReach)
 	assert.Equal(t, "agents.reach.codex", env.agentReach[0].ID)
+}
+
+func TestDoctorReportsDaemonStartedDuringMCPCheck(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	fakeAgent(t, "codex")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	_, err := runSetup("--agent", "codex", "--mcp")
+	require.NoError(t, err)
+	marker := filepath.Join(t.TempDir(), "mcp-probe")
+	t.Setenv("ROBOREV_TEST_MCP_MARKER", marker)
+	env := loadDoctorEnv(t.Context(), "", fakeDoctorDaemon{pingFn: func() (*daemon.PingInfo, error) {
+		if _, err := os.Stat(marker); err != nil {
+			return nil, errors.New("connection refused")
+		}
+		return &daemon.PingInfo{PID: 123}, nil
+	}})
+	check := findDoctorCheck(t, checkDoctorDaemon(env), "daemon.running")
+	assert.Equal(t, doctorWarn, check.Status)
+	assert.Contains(t, check.Summary, "before")
+	assert.Contains(t, check.Summary, "now running")
+	assert.Contains(t, check.Summary, "123")
 }
 
 func TestSetupIgnoresMalformedUnselectedMCP(t *testing.T) {

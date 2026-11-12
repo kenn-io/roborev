@@ -1593,8 +1593,8 @@ roborev doctor --repo /path/to/repo   # Check a different repository
 ```
 
 `roborev doctor` reads configuration and daemon state and reports problems with
-a suggested fix for each. It never starts or restarts the daemon, installs
-hooks, or edits config.
+a suggested fix for each. MCP readiness checks may start the configured server
+and daemon. Doctor reports the daemon's state before and after those checks.
 
 | Area | What doctor checks |
 |------|--------------------|
