@@ -122,6 +122,21 @@ jobs:
       - name: Install frontend dependencies
         run: kit-retry 3 5 bun install --frozen-lockfile
 
+      - name: Generate API artifacts temporarily
+        run: make api-generate
+
+      - name: Upload generated API artifacts temporarily
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kata-r4-generated-api
+          path: |
+            pkg/client/openapi.yaml
+            pkg/client/generated/
+            web/src/lib/api/generated/
+            packages/roborev-ui/src/generated/
+          if-no-files-found: error
+
       - name: Verify generated API contract
         run: make api-check DOWNLOAD_RETRY="kit-retry 3 5"
 
