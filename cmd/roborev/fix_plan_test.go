@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"uuid"
 
@@ -19,6 +21,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -484,6 +487,8 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 		{"batch planned", "evidence", true, true, false},
 		{"batch plan only", "evidence", true, true, true},
 		{"authentication", "auth", false, true, false},
+		{"middleware authentication at status", "auth-status", false, true, false},
+		{"middleware authentication at publication", "auth-publication", false, true, false},
 		{"outage", "outage", false, true, false},
 		{"replacement", "replacement", false, true, false},
 	} {
@@ -497,14 +502,26 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 			document, hash := kataPromptFixture(t, finding)
 			evidence := strings.Repeat("conflicting attributed evidence ", 200)
 			reads := 0
+			var reviewReads, commentReads atomic.Int32
 			ts, state := newMockServer(t, MockServerOpts{
 				OnJobs: func(w http.ResponseWriter, _ *http.Request) {
 					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 7, Status: storage.JobStatusDone, Agent: "test", JobType: storage.JobTypeReview, GitRef: "HEAD"}}})
 				},
 				OnReview: func(w http.ResponseWriter, _ *http.Request) {
+					reviewReads.Add(1)
 					writeJSON(w, storage.Review{JobID: 7, UUID: &id, Output: finding, StructuredOutput: document, VerdictBool: new(0)})
 				},
 				OnKataStatus: func(w http.ResponseWriter, _ *http.Request) {
+					if tc.mode == "auth-status" || tc.mode == "auth-publication" {
+						assert.Positive(t, reviewReads.Load())
+						assert.Positive(t, commentReads.Load())
+					}
+					if tc.mode == "auth-status" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusUnauthorized)
+						fmt.Fprint(w, `{"error":"daemon authentication required"}`)
+						return
+					}
 					writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
 				},
 				OnKataPublication: func(w http.ResponseWriter, r *http.Request) {
@@ -512,6 +529,11 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 					assert.Equal(t, "7", r.URL.Query().Get("job_id"))
 					assert.Equal(t, id.String(), r.URL.Query().Get("review_uuid"))
 					switch tc.mode {
+					case "auth-publication":
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusUnauthorized)
+						fmt.Fprint(w, `{"error":"daemon authentication required"}`)
+						return
 					case "auth", "outage":
 						w.Header().Set("Content-Type", "application/problem+json")
 						if tc.mode == "auth" {
@@ -533,7 +555,16 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 					writeJSON(w, map[string]any{"state": "partial", "review_uuid": id.String(), "document_hash": hash, "source_document": document, "source_output": "duplicate source marker", "roots": roots, "comments": comments, "issue": map[string]any{"title": "issue title", "body": "issue body", "comments": comments, "roots": roots}})
 				},
 			})
-			patchServerAddr(t, ts.URL)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/comments" {
+					commentReads.Add(1)
+					writeJSON(w, map[string]any{"responses": []any{}})
+					return
+				}
+				ts.Config.Handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(server.Close)
+			patchServerAddr(t, server.URL)
 			calls := 0
 			var paths []string
 			a := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, p string, _ io.Writer) (string, error) {
@@ -578,9 +609,15 @@ func TestFixAgentsReceiveCurrentKataEvidence(t *testing.T) {
 			} else {
 				err = fixSingleJob(cmd, repo.Dir, 7, opts, tracker)
 			}
-			assert.Equal(t, 1, reads)
-			if tc.mode == "auth" {
-				require.Error(t, err)
+			if tc.mode == "auth-status" {
+				assert.Zero(t, reads)
+			} else {
+				assert.Equal(t, 1, reads)
+			}
+			if tc.mode == "auth" || tc.mode == "auth-status" || tc.mode == "auth-publication" {
+				assert.Positive(t, reviewReads.Load())
+				assert.Positive(t, commentReads.Load())
+				require.ErrorIs(t, err, prompt.ErrKataContextFatal)
 				assert.Zero(t, calls)
 				assert.Zero(t, state.Closes())
 				return

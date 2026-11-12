@@ -463,11 +463,18 @@ func TestKataClientNamesWhyTheDaemonCannotProvideTheConnection(t *testing.T) {
 		{"predates the endpoint", http.StatusNotFound, "restart", "could not be reached"},
 		{"predates the endpoint and answers in plain text", -http.StatusNotFound, "restart", "could not be reached"},
 		{"refuses the request", http.StatusUnauthorized, "daemon answered", "could not be reached"},
+		{"middleware authentication", http.StatusUnauthorized, "daemon answered", "could not be reached"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// A real old daemon has no such route, so its mux answers
 			// "404 page not found" as plain text; a negative status marks that.
 			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.name == "middleware authentication" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(`{"error":"daemon authentication required"}`))
+					return
+				}
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(`{"title":"Error","status":` + strconv.Itoa(tc.status) + `,"detail":"nope"}`))
