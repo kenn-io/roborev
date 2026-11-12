@@ -179,6 +179,24 @@ func TestFindingsHookPreservesFailedReviewDiagnostic(t *testing.T) {
 	assert.Contains(t, fake.CreateReqs[0].Labels, "review-failed")
 }
 
+func TestSummaryHookDoesNotDiscloseFailedReviewDiagnostic(t *testing.T) {
+	env := newWorkerTestContext(t, 1)
+	job := env.createAndClaimJob(t, "failed-with-summary-hook", "worker")
+	cfg := config.DefaultConfig()
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Project: "reviews", Findings: "summary"}}
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	runner := NewHookRunner(NewStaticConfig(cfg), env.Broadcaster, log.New(io.Discard, "", 0), env.DB)
+	t.Cleanup(runner.Stop)
+	runner.newKataClient = func(string) kata.Client { return fake }
+	event := eventForJob("review.failed", job, job.ID)
+	event.Error = "synthetic private diagnostic"
+	env.Broadcaster.Broadcast(event)
+	runner.WaitUntilIdle()
+	require.Len(t, fake.CreateReqs, 1)
+	assert.NotContains(t, fake.CreateReqs[0].Body, event.Error)
+	assert.Contains(t, fake.CreateReqs[0].Labels, "review-failed")
+}
+
 func TestLegacyKataEventSurvivesMissingJob(t *testing.T) {
 	for _, failure := range []string{"deleted", "closed database"} {
 		for _, eventType := range []string{"review.completed", "review.failed"} {
