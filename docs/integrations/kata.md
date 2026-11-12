@@ -321,10 +321,11 @@ roborev job show --job <job-id> --json
 
 When doctor reports the Kata connection ready and typed replies supported,
 propose `findings = "comments"` on the existing covering hook under approval; do
-not leave a duplicate legacy hook. This publishes roots for failing local
-reviews and synthesis, not CI or panel members. Doctor checks the bound or
-default project. If the hook explicitly selects a different project, check that
-selected destination with the status request below. A `ready` response with
+not leave a duplicate legacy hook. This publishes the full finding text for
+every eligible failing local review, even when no swarm runs, including
+synthesis but not CI or panel members. Doctor checks the bound or default
+project. If the hook explicitly selects a different project, check that selected
+destination with the status request below. A `ready` response with
 `supports_replies: true` for that project permits the proposal even if doctor
 reports `project_not_found` for an unrelated binding. Stop on an unhealthy
 selected destination or missing typed replies.
@@ -350,9 +351,11 @@ For TCP use the selected daemon's URL; for the Bearer key, HTTPS and
 certificates follow
 [daemon authentication](../configuration.md#daemon-authentication), and do not
 copy credentials between daemons. A successful `enabled: false`,
-`state: "disabled"` response permits native roots. An actual 404 for the
-unsupported status route also permits the existing legacy native fallback when
-local API integration is off. Authentication, network and other errors or an
+`state: "disabled"` response permits native roots when a covering legacy Kata
+hook exists. An actual 404 for the unsupported status route also permits that
+fallback when local API integration is off. A retained `findings = "comments"`
+hook will not file a legacy issue: stop and repair the approved setup before
+requesting a fresh review. Authentication, network and other errors or an
 unreadable response are unknown: stop and report why, not disabled. If needed,
 start or restart the daemon with approval and recheck.
 
@@ -411,10 +414,10 @@ Reconcile every full-result finding to a root and outcome. Record complete
 comment references from `kata show`. For `<result>`, use the top-level `uuid`
 from the JSON output; if absent, use exactly
 `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only for identical
-retries of the same result. A rerun has a new result: identify its new job
-result and issue, leave old roots, replies and outcomes as history, and post a
-new charter. On the native path post new roots with new keys. Never carry
-outcomes forward:
+retries of the same result. For a rerun, identify its new result and matching
+hook issue, which may be reused. Leave old roots, replies and outcomes as
+history, and post a new charter. On the native path post new roots with new
+keys. Never carry outcomes forward:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
