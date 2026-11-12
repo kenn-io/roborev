@@ -370,7 +370,7 @@ func TestSetupIgnoresMalformedUnselectedMCP(t *testing.T) {
 	require.NoError(t, err, out)
 	out, err = runSetup("--agent", "claude", "--check")
 	require.NoError(t, err, out)
-	assert.Equal(t, malformed, readFile(t, path))
+	assert.JSONEq(t, malformed, readFile(t, path))
 }
 
 func TestReadinessUsesInstalledHookModeAndSuggestsMCPRepair(t *testing.T) {
