@@ -539,13 +539,21 @@ pass `--project <name>` to every native Kata command. When doctor reports
 `integrations.kata` ready and that the server stores typed replies, propose
 `findings = "comments"` on the existing covering hook under that approval. It
 publishes full finding text for every eligible failing local review, even when
-no swarm runs. Do not leave a duplicate legacy hook. Doctor checks the bound or
+no swarm runs. Name the current disclosure policy: `summary` withholds finding
+text, paths, fixes, review summaries and diagnostics; `comments` widens disclosure.
+If the user declines, leave the policy unchanged. This full-finding swarm needs
+approved full-text publication; do not copy withheld text into native roots.
+Each machine running the committed comments hook needs its own enabled, ready
+Kata connection; without it, the hook does not fall back to legacy issue
+creation. Do not leave a duplicate legacy hook. Doctor checks the bound or
 default project; for a different explicit hook project, check that project's
 status and typed replies as the Kata walkthrough says, ignoring an unrelated
-binding error. Doctor absence is not proof of disabled. Stop on unknown,
-unhealthy or missing typed replies; only the native-path conditions in brief
-step 2 permit native roots. Do not read Kata issues until the user agrees to a
-run.
+binding error. An enabled connection needs readiness and typed replies for the
+selected destination; a no-project status response alone does not prove a bound
+destination ready. Doctor absence is not proof of disabled. Stop and recheck
+if readiness is unknown; stop on unhealthy or missing typed replies. Only the
+native-path conditions in brief step 2 permit native roots. Do not read Kata
+issues until the user agrees to a run.
 
 Ask how many teammates check each reviewer, which agents they use, and who
 starts them. Guess two per reviewer on different agents if the user runs two,
@@ -636,18 +644,23 @@ If neither is established, reply with what you checked and what was missing.
    not file a legacy issue: stop and repair the approved setup before requesting
    a fresh review. Unknown or unhealthy status stops. For an explicit hook
    project, check that destination's readiness and typed replies; see the Kata
-   walkthrough for status transport and routing.
+   walkthrough for status transport and routing. An enabled connection needs
+   readiness and typed replies for the selected destination; a no-project status
+   response alone does not prove a bound destination ready. Stop and recheck if
+   unknown. Full finding publication must be approved; do not bypass a retained
+   summary policy with native roots.
 3. Published path only: run `roborev kata show <job-id>`; wait and reinspect
-   while publication is in progress. Before any charter or other top-level
-   comment, require `Status: complete` and match every root to the full finding
-   text. Stop on missing, ambiguous, truncated, edited or mismatched roots and
-   request a fresh review under the approved comments hook; never post
-   duplicate roots. Compare native `kata show '<issue>' --json` project and full
-   `issue.uid` with roborev output. Compare `kata daemon locate --json`
-   `address` and `request_base_url` with the active roborev daemon's global
-   `integrations.kata.endpoint` from its actual launcher or service config. For
-   aliases explicitly select the same verified endpoint; never infer equivalence
-   from a destination hash. Stop on mismatch or missing evidence.
+   while publication is in progress, and require `Status: complete`. Compare
+   `kata daemon locate --json` `address` and `request_base_url` with the active
+   roborev daemon's global `integrations.kata.endpoint` from its actual launcher
+   or service config. For aliases explicitly select the same verified endpoint;
+   never infer equivalence from a destination hash. Stop on mismatch or missing
+   evidence. Using that route, compare native `kata show '<issue>' --json`
+   project and full `issue.uid` with roborev output. Then match every root to
+   the full finding text and obtain complete comment references. Before any
+   charter or other top-level comment, stop on missing, ambiguous, truncated,
+   edited or mismatched roots and request a fresh review under the approved
+   comments hook; never post duplicate roots.
 4. Native path only: find the hook issue by job ID and match it to the full
    result, job and commit; it needs no publication output or endpoint comparison.
 5. For synthesis, match each Markdown `Reported by` agent and review type to
