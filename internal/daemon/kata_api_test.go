@@ -17,7 +17,6 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata/katafake"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 const kataTestCredential = "synthetic-kata-credential"
@@ -39,13 +38,6 @@ func kataGet(t *testing.T, server *Server, path string, query url.Values) *httpt
 	}
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
-	return w
-}
-
-func kataPost(t *testing.T, server *Server, path string, body any) *httptest.ResponseRecorder {
-	t.Helper()
-	w := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, path, body))
 	return w
 }
 
