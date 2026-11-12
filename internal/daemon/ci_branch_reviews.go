@@ -29,8 +29,11 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 	// Results can finish after the feature is turned off; still publish them.
 	p.reconcileBranchReviews(ghRepo)
 	if !cfg.CI.ReviewDefaultBranch {
-		return nil
+		// Forget the review position, so turning reviews back on starts from
+		// the branch head instead of reviewing what landed in between.
+		return p.db.DeleteCIBranchCursor(ghRepo)
 	}
+	p.expireTimedOutBranchReviews(ghRepo, cfg)
 	repo, err := p.findOrCloneRepo(ctx, ghRepo)
 	if err != nil {
 		return fmt.Errorf("find local repo for %s: %w", ghRepo, err)
@@ -60,12 +63,6 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 	if err != nil && !config.IsExperimentConfigError(err) && !config.IsConfigValidationError(err) {
 		return err
 	}
-	if configErr == nil && !config.ResolveCIReviewDefaultBranch(repoConfig.Config, scopedCfg) {
-		// An opted-out repository keeps its cursor current, so turning
-		// reviews back on starts from that point instead of reviewing
-		// everything that landed in between.
-		return p.db.SetCIBranchCursor(ghRepo, branch, head)
-	}
 
 	cursor, err := p.db.GetCIBranchCursor(ghRepo)
 	if err != nil {
@@ -78,39 +75,92 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 	if cursor.HeadSHA == head {
 		return nil
 	}
-	if _, err := gitText(ctx, repo.RootPath, "merge-base", "--is-ancestor", cursor.HeadSHA, head); err != nil {
-		// The branch was rewritten. Its new commits cannot be told apart from
-		// commits that were already reviewed, so continue from the new head.
-		log.Printf("CI poller: %s %s no longer contains %s; continuing default-branch reviews after %s",
-			ghRepo, branch, gitpkg.ShortSHA(cursor.HeadSHA), gitpkg.ShortSHA(head))
-		return p.db.SetCIBranchCursor(ghRepo, branch, head)
-	}
 	if q := p.quietHours; q != nil && q.Active(p.nowFn()) {
 		return nil
 	}
-	out, err := gitText(ctx, repo.RootPath, "rev-list", "--first-parent", "--reverse", cursor.HeadSHA+".."+head)
+	landed, onBranch, err := landedCommits(ctx, repo.RootPath, cursor.HeadSHA, head)
 	if err != nil {
 		return fmt.Errorf("list landed commits: %w", err)
 	}
-	parent := cursor.HeadSHA
-	for i, sha := range strings.Fields(out) {
-		if i == ciBranchCommitsPerPoll {
+	if !onBranch {
+		// The branch was rewritten, or the last reviewed commit is reachable
+		// only through a merged branch. Later commits cannot be told apart
+		// from reviewed ones, so continue from the new head.
+		log.Printf("CI poller: %s %s no longer follows %s; continuing default-branch reviews after %s",
+			ghRepo, branch, gitpkg.ShortSHA(cursor.HeadSHA), gitpkg.ShortSHA(head))
+		return p.db.SetCIBranchCursor(ghRepo, branch, head)
+	}
+	queued := 0
+	for _, commit := range landed {
+		if queued == ciBranchCommitsPerPoll {
 			break
 		}
+		if commitOptedOut(repo.RootPath, commit.sha, scopedCfg) {
+			if err := p.db.SetCIBranchCursor(ghRepo, branch, commit.sha); err != nil {
+				return err
+			}
+			continue
+		}
+		queued++
 		if configErr != nil {
-			if err := p.db.RecordCIBranchCommitOutcome(ghRepo, branch, sha, "error",
+			if err := p.db.RecordCIBranchCommitOutcome(ghRepo, branch, commit.sha, "error",
 				"Review could not be queued; run roborev config validate"); err != nil {
 				return err
 			}
 			p.deliverPendingBranchStatuses(ghRepo)
 			continue
 		}
-		if err := p.enqueueBranchCommit(ctx, scopedCfg, repoConfig, repo, ghRepo, branch, parent, sha); err != nil {
-			return fmt.Errorf("review %s@%s: %w", branch, gitpkg.ShortSHA(sha), err)
+		if err := p.enqueueBranchCommit(ctx, scopedCfg, repoConfig, repo, ghRepo, branch, commit.parent, commit.sha); err != nil {
+			return fmt.Errorf("review %s@%s: %w", branch, gitpkg.ShortSHA(commit.sha), err)
 		}
-		parent = sha
 	}
 	return nil
+}
+
+type landedCommit struct {
+	sha, parent string
+}
+
+// landedCommits lists the first-parent commits from cursor to head, oldest
+// first, each with its first parent. onBranch is false when cursor is not on
+// head's first-parent chain: it was rewritten away or is reachable only
+// through a merged branch.
+func landedCommits(ctx context.Context, repoPath, cursor, head string) ([]landedCommit, bool, error) {
+	if _, err := gitText(ctx, repoPath, "cat-file", "-e", cursor+"^{commit}"); err != nil {
+		if ctx.Err() == nil && isGitExitCode(err, 1) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	out, err := gitText(ctx, repoPath, "log", "--first-parent", "--reverse", "--format=%H %P", cursor+".."+head)
+	if err != nil {
+		return nil, false, err
+	}
+	var commits []landedCommit
+	for line := range strings.Lines(out) {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		commit := landedCommit{sha: fields[0]}
+		if len(fields) > 1 {
+			commit.parent = fields[1]
+		}
+		commits = append(commits, commit)
+	}
+	if len(commits) == 0 || commits[0].parent != cursor {
+		return nil, false, nil
+	}
+	return commits, true, nil
+}
+
+// commitOptedOut reports whether the .roborev.toml in a landed commit turns
+// default-branch reviews off, so a commit that lands while a repo has opted
+// out is skipped even when the opt-out was reverted before the next poll. A
+// file that cannot be read leaves the decision to the default-branch config.
+func commitOptedOut(repoPath, sha string, cfg *config.Config) bool {
+	repoCfg, err := config.LoadRepoConfigFromRef(repoPath, sha)
+	return err == nil && !config.ResolveCIReviewDefaultBranch(repoCfg, cfg)
 }
 
 // enqueueBranchCommit reviews one landed commit against its first parent, so
@@ -137,6 +187,18 @@ func (p *CIPoller) enqueueBranchCommit(
 	if len(plan.memberOpts) == 0 {
 		return p.db.SetCIBranchCursor(ghRepo, branch, sha)
 	}
+	existing, err := p.db.GetCIBranchReview(ghRepo, sha)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if existing == nil {
+		// Post pending before the jobs exist. A fast review could otherwise
+		// publish its result first and be overwritten by pending.
+		if err := p.callSetBranchStatus(ghRepo, sha, "pending", "Review in progress"); err != nil {
+			log.Printf("CI poller: failed to set pending default-branch status for %s@%s: %v",
+				ghRepo, gitpkg.ShortSHA(sha), err)
+		}
+	}
 	created, synth, err := p.db.CreateCIBranchReviewRun(ghRepo, branch, sha, plan.memberOpts, plan.synthOpts)
 	if err != nil {
 		return fmt.Errorf("create default-branch panel run: %w", err)
@@ -147,11 +209,30 @@ func (p *CIPoller) enqueueBranchCommit(
 	p.broadcastJobEvent("job.enqueued", synth)
 	log.Printf("CI poller: created default-branch panel run for %s@%s (%s, %d members)",
 		ghRepo, gitpkg.ShortSHA(sha), branch, len(plan.memberOpts))
-	if err := p.callSetBranchStatus(ghRepo, sha, "pending", "Review in progress"); err != nil {
-		log.Printf("CI poller: failed to set pending default-branch status for %s@%s: %v",
-			ghRepo, gitpkg.ShortSHA(sha), err)
-	}
 	return nil
+}
+
+// expireTimedOutBranchReviews applies ci.batch_timeout to default-branch
+// panel runs, as expireTimedOutPanels does for pull requests.
+func (p *CIPoller) expireTimedOutBranchReviews(ghRepo string, cfg *config.Config) {
+	timeout := cfg.CI.ResolvedBatchTimeout()
+	if timeout <= 0 {
+		return
+	}
+	runs, err := p.db.GetTimedOutCIBranchReviewRuns(ghRepo, timeout)
+	if err != nil {
+		log.Printf("CI poller: error listing timed-out default-branch reviews for %s: %v", ghRepo, err)
+		return
+	}
+	expired := 0
+	for _, run := range runs {
+		if p.expireTimedOutRun(run, timeout) {
+			expired++
+		}
+	}
+	if expired > 0 {
+		log.Printf("CI poller: expired hung members in %d timed-out default-branch review(s) for %s", expired, ghRepo)
+	}
 }
 
 // routeBranchReviewEvent records and publishes the result when jobID is the

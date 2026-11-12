@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
 	googlegithub "github.com/google/go-github/v93/github"
 
@@ -3171,31 +3172,37 @@ func (p *CIPoller) expireTimedOutPanels(ghRepo string, cfg *config.Config) {
 	}
 	expired := 0
 	for i := range rows {
-		row := &rows[i]
-		members, err := p.db.GetPanelMemberReviews(row.PanelRunUUID)
-		if err != nil {
-			log.Printf("CI poller: timeout: list members for %s: %v", row.PanelRunUUID, err)
-			continue
-		}
-		now := time.Now()
-		hasMeaningful, hasExpiredRunning := panelMemberTimeoutState(members, timeout, now)
-		if !hasMeaningful || !hasExpiredRunning {
-			continue // all-stuck, all-skip, no expired runtime, or already-terminal: no fake success
-		}
-		canceled := p.expirePanelMembers(members, timeout, now)
-		if canceled == 0 {
-			continue
-		}
-		expired++
-		// Make the synthesis postable now that the hung members are terminal. The
-		// call is idempotent.
-		if err := p.db.MaybeReleasePanelSynthesis(row.PanelRunUUID); err != nil {
-			log.Printf("CI poller: timeout: release synthesis for %s: %v", row.PanelRunUUID, err)
+		if p.expireTimedOutRun(rows[i].PanelRunUUID, timeout) {
+			expired++
 		}
 	}
 	if expired > 0 {
 		log.Printf("CI poller: expired hung members in %d timed-out panel run(s) for %s", expired, ghRepo)
 	}
+}
+
+// expireTimedOutRun cancels a panel run's members that ran past timeout and
+// releases its synthesis, reporting whether any member was canceled.
+func (p *CIPoller) expireTimedOutRun(run uuid.UUID, timeout time.Duration) bool {
+	members, err := p.db.GetPanelMemberReviews(run)
+	if err != nil {
+		log.Printf("CI poller: timeout: list members for %s: %v", run, err)
+		return false
+	}
+	now := time.Now()
+	hasMeaningful, hasExpiredRunning := panelMemberTimeoutState(members, timeout, now)
+	if !hasMeaningful || !hasExpiredRunning {
+		return false // all-stuck, all-skip, no expired runtime, or already-terminal: no fake success
+	}
+	if p.expirePanelMembers(members, timeout, now) == 0 {
+		return false
+	}
+	// Make the synthesis postable now that the hung members are terminal. The
+	// call is idempotent.
+	if err := p.db.MaybeReleasePanelSynthesis(run); err != nil {
+		log.Printf("CI poller: timeout: release synthesis for %s: %v", run, err)
+	}
+	return true
 }
 
 // panelMemberTimeoutState reports the two predicates that gate timeout expiry:

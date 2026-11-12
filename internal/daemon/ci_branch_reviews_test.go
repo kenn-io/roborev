@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"os/exec"
@@ -286,4 +287,119 @@ func TestCIDefaultBranchReviewsWaitForQuietHoursToEnd(t *testing.T) {
 	runs := h.synthesisJobs(t)
 	require.Len(t, runs, 1, "commits that landed during quiet hours are reviewed afterward")
 	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewsRestartAfterBeingTurnedOff(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	h.cfg.CI.ReviewDefaultBranch = false
+	h.origin.CommitFile("app.txt", "while off\n", "landed while off")
+	h.poll(t)
+	h.cfg.CI.ReviewDefaultBranch = true
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t), "turning reviews back on does not review what landed while off")
+
+	start := h.origin.HeadSHA()
+	landed := h.origin.CommitFile("app.txt", "after\n", "landed after")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1)
+	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewsResetWhenLastReviewIsOnlyMerged(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	base := h.origin.HeadSHA()
+	h.origin.CommitFile("app.txt", "reviewed\n", "reviewed on main")
+	h.poll(t)
+	// Rebuild main so the reviewed commit survives only as a merged branch:
+	// its first-parent history never contained that commit.
+	h.origin.Run("checkout", "-q", "-b", "other", base)
+	h.origin.CommitFile("other.txt", "other\n", "other line")
+	h.origin.Run("merge", "-q", "--no-ff", "-m", "merge old main", "main")
+	merged := h.origin.HeadSHA()
+	h.origin.Run("checkout", "-q", "main")
+	h.origin.Run("reset", "-q", "--hard", merged)
+
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t), "a merge's second parent is not a review base")
+	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	require.NoError(t, err)
+	assert.Equal(t, merged, cursor.HeadSHA)
+}
+
+func TestCIDefaultBranchCursorSurvivesCanceledHistoryCheck(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	reviewed := h.origin.HeadSHA()
+	h.poll(t)
+	h.origin.CommitFile("app.txt", "landed\n", "landed")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, _, err := landedCommits(ctx, h.origin.Path(), reviewed, h.origin.HeadSHA())
+	require.Error(t, err, "a canceled check is not evidence that history was rewritten")
+	require.Error(t, h.poller.pollRepo(ctx, branchReviewRepo, h.cfg))
+	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	require.NoError(t, err)
+	assert.Equal(t, reviewed, cursor.HeadSHA)
+}
+
+func TestCIDefaultBranchReviewsSkipCommitsLandedWhileOptedOutBetweenPolls(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	h.origin.CommitFile(".roborev.toml", "[ci]\nreview_default_branch = false\n", "opt out")
+	skipped := h.origin.CommitFile("app.txt", "skipped\n", "skipped")
+	optIn := h.origin.CommitFile(".roborev.toml", "[ci]\nreview_default_branch = true\n", "opt in")
+	h.poll(t)
+
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "only the commit that turned reviews back on is reviewed")
+	assert.Equal(t, skipped+".."+optIn, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchPendingStatusPrecedesReviewJobs(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	var jobsAtPending []int
+	h.poller.setBranchStatusFn = func(_, _, state, _ string) error {
+		if state == "pending" {
+			jobs, err := h.db.ListJobs("", "", 100, 0)
+			require.NoError(t, err)
+			jobsAtPending = append(jobsAtPending, len(jobs))
+		}
+		return nil
+	}
+	h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	assert.Equal(t, []int{0}, jobsAtPending,
+		"pending is published before any job can finish and publish its result")
+}
+
+func TestCIDefaultBranchReviewsApplyBatchTimeout(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "branch-reviewer-2"})
+	h.cfg.CI.Agents = []string{"branch-reviewer", "branch-reviewer-2"}
+	h.cfg.CI.BatchTimeout = "1m"
+	h.poll(t)
+	h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1)
+	members, err := h.db.GetPanelMemberReviews(*runs[0].PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+	done, hung := members[0].JobID, members[1].JobID
+	_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running',
+		started_at = datetime('now', '-2 hours') WHERE id IN (?, ?)`, done, hung)
+	require.NoError(t, err)
+	clean := testutil.ReviewFixtureJSON("No issues found.")
+	require.NoError(t, h.db.CompleteJobResult(done, "branch-reviewer", storage.ReviewCompletion{
+		Output: string(clean), Verdict: storage.VerdictPass, StructuredOutput: jsontext.Value(clean),
+	}))
+
+	h.poll(t)
+	job, err := h.db.GetJobByID(hung)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusCanceled, job.Status, "a reviewer past ci.batch_timeout no longer holds the result")
 }

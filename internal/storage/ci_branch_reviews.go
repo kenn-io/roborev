@@ -84,6 +84,13 @@ func (db *DB) SetCIBranchCursor(githubRepo, branch, headSHA string) error {
 	return setCIBranchCursor(context.Background(), db, githubRepo, branch, headSHA, time.Now())
 }
 
+// DeleteCIBranchCursor forgets a repository's review position, so the next
+// enabled poll starts from the branch head again.
+func (db *DB) DeleteCIBranchCursor(githubRepo string) error {
+	_, err := db.Exec(`DELETE FROM ci_branch_cursors WHERE github_repo = ?`, githubRepo)
+	return err
+}
+
 func setCIBranchCursor(ctx context.Context, exec execer, githubRepo, branch, headSHA string, now time.Time) error {
 	_, err := exec.ExecContext(ctx, `INSERT INTO ci_branch_cursors (github_repo, branch, head_sha, updated_at)
 		VALUES (?, ?, ?, ?)
@@ -308,4 +315,61 @@ func (db *DB) FinishCIBranchReviewStatus(id int64, sent bool) error {
 	}
 	_, err := db.Exec(`UPDATE ci_branch_reviews SET status_claimed_at = NULL WHERE id = ?`, id)
 	return err
+}
+
+// GetTimedOutCIBranchReviewRuns returns the panel runs of unfinished
+// default-branch reviews with a member running longer than maxAge, for the
+// same batch-timeout handling as pull request panels.
+func (db *DB) GetTimedOutCIBranchReviewRuns(githubRepo string, maxAge time.Duration) ([]uuid.UUID, error) {
+	rows, err := db.Query(`SELECT b.panel_run_uuid FROM ci_branch_reviews b
+		WHERE b.github_repo = ? AND b.final_state = '' AND b.panel_run_uuid IS NOT NULL
+		  AND EXISTS (
+		      SELECT 1 FROM review_jobs j
+		      WHERE j.panel_run_uuid = b.panel_run_uuid
+		        AND j.panel_role = 'member'
+		        AND j.status = 'running'
+		        AND j.started_at IS NOT NULL
+		        AND datetime(j.started_at) < datetime('now', ?)
+		  )
+		ORDER BY b.id`, githubRepo, fmt.Sprintf("-%d seconds", int64(maxAge.Seconds())))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []uuid.UUID
+	for rows.Next() {
+		var run uuid.UUID
+		if err := rows.Scan(&run); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+// rerunCIBranchReviewTx moves a default-branch review's status publication to
+// an explicit rerun of its panel, in the same transaction as the new jobs, so
+// the rerun's result replaces the published one. found is false when the
+// source job does not belong to a default-branch review.
+func rerunCIBranchReviewTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synth *ReviewJob, now time.Time) (bool, error) {
+	var id int64
+	var claimedAt sql.NullString
+	var sentAt sql.NullString
+	err := conn.QueryRowContext(ctx, `SELECT id, status_claimed_at, status_sent_at
+		FROM ci_branch_reviews WHERE synthesis_job_id = ?`, sourceJobID).Scan(&id, &claimedAt, &sentAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if claimedAt.Valid && !sentAt.Valid &&
+		!parseSQLiteTime(claimedAt.String).Before(now.Add(-PanelPostingStaleWindow)) {
+		return true, ErrCIPanelActive
+	}
+	_, err = conn.ExecContext(ctx, `UPDATE ci_branch_reviews
+		SET panel_run_uuid = ?, synthesis_job_id = ?, final_state = '', final_description = '',
+		    status_claimed_at = NULL, status_sent_at = NULL
+		WHERE id = ?`, synth.PanelRunUUID, synth.ID, id)
+	return true, err
 }
