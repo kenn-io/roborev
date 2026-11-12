@@ -115,12 +115,14 @@ it cannot enable the feature.
 Roborev attaches `roborev-rubric.<type>.<digest>.md` to up to ten referenced
 issues in the bound project. The digest in the name is the first 16 characters
 of the SHA-256 of the file; the full digest is recorded on the review. Repeated
-reviews reuse an existing reference with the same name. Concurrent archiving
+reviews reuse an existing reference with the same name. Editing a rubric adds a
+new reference and retains the old references. Concurrent archiving
 from separate machines can still create duplicate references. A repository's
 custom type is eligible only if its template and all includes resolve inside the
-repository, including through symlinks. Global types are operator-owned.
+repository, including through symlinks; untracked and ignored files are eligible.
+Global types are operator-owned.
 Rubrics larger than 1 MiB are skipped. Built-in types, supplied prompts or
 settings, dirty reviews, CI reviews and synthesis are excluded. Archiving is
-best effort after the review completes; failures are logged and a later review
-can retry. Before Kata's federated evidence support ships, a relayed project
+best effort after the review completes. Failures are logged with no durable retry;
+the next review referencing the issue tries again. Before Kata's federated evidence support ships, a relayed project
 uploads to the serving daemon's vault, which other hubs may not be able to read.

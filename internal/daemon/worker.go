@@ -1917,18 +1917,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	if completed && archiveEligible {
 		archiveJob := *job
-		client := kata.Client(kata.NewCLIClient(archiveJob.RepoPath))
+		archivePath := checkout.resolvedConfigRepoPath()
+		client := kata.Client(kata.NewCLIClient(archivePath))
 		if wp.archiveClient != nil {
-			client = wp.archiveClient(archiveJob.RepoPath)
+			client = wp.archiveClient(archivePath)
 		}
-		go func() {
+		wp.wg.Go(func() {
 			// Archiving outlives the review attempt but has its own deadline.
 			archiveCtx, archiveCancel := context.WithTimeout(context.WithoutCancel(ctx), rubricArchiveTimeout)
 			defer archiveCancel()
-			archiveRubric(archiveCtx, client, archiveJob, rubricBytes, *rubricDigest, func(err error) {
+			archiveRubric(archiveCtx, client, archiveJob, archivePath, rubricBytes, *rubricDigest, func(err error) {
 				log.Printf("rubric archive for job %d failed; check Kata binding and Docbank setup: %v", archiveJob.ID, err)
 			})
-		}()
+		})
 	}
 	if completed && wp.captureSetupFinished != nil {
 		wp.captureSetupFinished()

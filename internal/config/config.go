@@ -718,8 +718,8 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
-	if mode := c.KataRubrics.Mode; mode != "" && mode != "off" && mode != "current" {
-		return fmt.Errorf("kata_rubrics.mode must be off or current")
+	if err := validateKataRubricsMode(c.KataRubrics.Mode, true, false); err != nil {
+		return err
 	}
 	if err := validateReviewMCPAllowedTools(c.ReviewMCPAllowedTools); err != nil {
 		return err
@@ -966,8 +966,8 @@ func (c *RepoConfig) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
-	if mode := c.KataRubrics.Mode; mode != "" && mode != "off" {
-		return fmt.Errorf("kata_rubrics.mode in repository configuration must be off")
+	if err := validateKataRubricsMode(c.KataRubrics.Mode, false, false); err != nil {
+		return err
 	}
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
@@ -1142,14 +1142,17 @@ func parseGlobalFrom(path string) (*Config, error) {
 	if err != nil {
 		return nil, safeGlobalConfigError(path, err)
 	}
-	if md.IsDefined("kata_rubrics", "mode") && cfg.KataRubrics.Mode != "off" && cfg.KataRubrics.Mode != "current" {
-		return nil, safeGlobalConfigError(path, fmt.Errorf("kata_rubrics.mode must be off or current"))
+	if err := validateKataRubricsMode(cfg.KataRubrics.Mode, true, md.IsDefined("kata_rubrics", "mode")); err != nil {
+		return nil, safeGlobalConfigError(path, err)
 	}
 	cfg.migrateDeprecated(md)
 	return cfg, nil
 }
 
 func normalizeGlobalConfig(cfg *Config) error {
+	if err := validateKataRubricsMode(cfg.KataRubrics.Mode, true, false); err != nil {
+		return err
+	}
 	if err := normalizeClientConfig(cfg); err != nil {
 		return err
 	}
@@ -1497,8 +1500,8 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	if md.IsDefined("kata_rubrics", "mode") && cfg.KataRubrics.Mode != "off" {
-		return nil, nil, fmt.Errorf("kata_rubrics.mode in repository configuration must be off")
+	if err := validateKataRubricsMode(cfg.KataRubrics.Mode, false, md.IsDefined("kata_rubrics", "mode")); err != nil {
+		return nil, nil, err
 	}
 	if err := validateRepoConfigScope(md); err != nil {
 		return nil, nil, err
@@ -1752,8 +1755,8 @@ func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string
 	if err != nil {
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
 	}
-	if md.IsDefined("kata_rubrics", "mode") && cfg.KataRubrics.Mode != "off" {
-		return nil, nil, &ConfigParseError{Ref: ref, Err: fmt.Errorf("kata_rubrics.mode in repository configuration must be off")}
+	if err := validateKataRubricsMode(cfg.KataRubrics.Mode, false, md.IsDefined("kata_rubrics", "mode")); err != nil {
+		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	if err := validateRepoConfigScope(md); err != nil {
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
@@ -2529,6 +2532,13 @@ func SaveRepoConfigTo(path string, cfg *RepoConfig) error {
 // SaveRepoConfigToWithExplicitKeys saves a per-repo configuration while
 // preserving explicit zero-valued keys named in explicitKeys.
 func SaveRepoConfigToWithExplicitKeys(path string, cfg *RepoConfig, explicitKeys ...string) error {
+	for _, key := range explicitKeys {
+		if key == "kata_rubrics.mode" {
+			if err := validateKataRubricsMode(cfg.KataRubrics.Mode, false, true); err != nil {
+				return fmt.Errorf("config: %w", err)
+			}
+		}
+	}
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -2771,7 +2781,20 @@ func stripURLCredentials(rawURL string) string {
 
 // KataRubricsConfig controls opt-in archival of custom review rubrics.
 type KataRubricsConfig struct {
-	Mode string `toml:"mode" comment:"Archive custom rubrics to referenced Kata issues: off or current (global only)."`
+	Mode string `toml:"mode,omitempty" comment:"Archive custom rubrics to referenced Kata issues: off or current (global only)."`
+}
+
+func validateKataRubricsMode(mode string, global, present bool) error {
+	if mode == "" && !present {
+		return nil
+	}
+	if mode == "off" || (global && mode == "current") {
+		return nil
+	}
+	if global {
+		return fmt.Errorf("kata_rubrics.mode must be off or current")
+	}
+	return fmt.Errorf("kata_rubrics.mode in repository configuration must be off")
 }
 
 // ResolveKataRubricsMode applies the repository opt-out to the global setting.

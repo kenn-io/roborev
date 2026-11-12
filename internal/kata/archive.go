@@ -20,15 +20,8 @@ var archiveLocks = struct {
 }{locks: make(map[string]*archiveLock)}
 
 // ArchiveRubric serializes the list/add pair for an issue and exact file name.
-func (c *CLIClient) ArchiveRubric(ctx context.Context, ref, name string, data []byte) error {
-	if filepath.Base(name) != name || name == "." || name == "" {
-		return fmt.Errorf("invalid rubric filename")
-	}
-	binding, err := c.Binding(ctx)
-	if err != nil {
-		return err
-	}
-	key := binding.Project + "#" + ref + "/" + name
+func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string, data []byte) error {
+	key := project + "#" + ref + "/" + name
 	archiveLocks.Lock()
 	lock := archiveLocks.locks[key]
 	if lock == nil {
