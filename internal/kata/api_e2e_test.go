@@ -39,7 +39,7 @@ func TestAPIClientCurrentProducer(t *testing.T) {
 // the connection makes: health and project checks, create with an idempotency
 // key, list, and show.
 func TestAPIClientE2E(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	k := katatest.StartReal(t, ctx)
 	cfg := config.KataIntegrationConfig{
