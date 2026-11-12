@@ -25,9 +25,10 @@ func TestKataThroughTheDaemonE2E(t *testing.T) {
 
 	ctx := t.Context()
 	k := katatest.StartReal(t, ctx)
-	ep := kataDaemon(t, config.KataIntegrationConfig{
+	producerConfig := config.KataIntegrationConfig{
 		Enabled: true, Endpoint: k.SocketEndpoint(t, ctx), DefaultProject: "e2etest", Teammate: "roborev",
-	})
+	}
+	ep := kataDaemon(t, producerConfig)
 	var probes atomic.Int32
 	c := newKataClientAt(k.Repo, config.DefaultConfig(), fixedEndpoint(ep, &probes))
 
@@ -35,19 +36,22 @@ func TestKataThroughTheDaemonE2E(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "e2etest", b.Project, "the workspace binding written by kata init")
 
-	req := kata.CreateReq{Title: "created through the daemon", Body: "details", Labels: []string{"roborev"}, IdempotencyKey: "e2e:daemon:1"}
-	created, err := c.Create(ctx, req)
+	producer, err := kata.NewAPIClient(k.Repo, producerConfig)
+	require.NoError(t, err)
+	defer producer.CloseIdleConnections()
+	req := kata.CreateReq{Title: "daemon read fixture", Body: "details", Labels: []string{"roborev"}, IdempotencyKey: "e2e:daemon:1"}
+	created, err := producer.Create(ctx, req)
 	require.NoError(t, err)
 	require.NotEmpty(t, created.ShortID)
 	assert.False(t, created.Reused)
 	assert.Equal(t, "roborev", created.Attribution.Author)
-	again, err := c.Create(ctx, req)
+	again, err := producer.Create(ctx, req)
 	require.NoError(t, err)
 	assert.True(t, again.Reused)
 
 	shown, err := c.Show(ctx, created.ShortID)
 	require.NoError(t, err)
-	assert.Equal(t, "created through the daemon", shown.Title)
+	assert.Equal(t, "daemon read fixture", shown.Title)
 	assert.Equal(t, "e2etest#"+created.ShortID, shown.QualifiedID)
 
 	listed, err := c.List(ctx, kata.ListOpts{Unlimited: true})
