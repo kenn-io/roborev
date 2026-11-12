@@ -48,6 +48,13 @@ func kataGet(t *testing.T, server *Server, path string, query url.Values) *httpt
 	return w
 }
 
+func kataPost(t *testing.T, server *Server, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, path, body))
+	return w
+}
+
 func decodeKata[T any](t *testing.T, w *httptest.ResponseRecorder) T {
 	t.Helper()
 	var out T
