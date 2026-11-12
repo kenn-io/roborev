@@ -506,18 +506,25 @@ Expect this behavior:
 
 - **History is not reviewed.** The first poll after you turn the option on
     records the branch head and reviews nothing. Only commits that land after
-    that poll are reviewed. Commits that land while a repo has opted out are
-    never reviewed.
+    that poll are reviewed. Turning the option off forgets this position, so
+    turning it back on starts from the head again.
+- **Opted-out commits are skipped.** A commit whose own `.roborev.toml` sets
+    `review_default_branch = false` is never reviewed, even when a later commit
+    turns reviews back on before the next poll.
 - **Each commit is reviewed once.** The poller records each reviewed commit in
     its local database. A restart or a repeated poll does not queue it again.
-- **One poll queues at most 20 commits per repo.** Later commits wait for the
+    Rerunning a default-branch review updates its commit status when the new
+    result arrives.
+- **One poll queues at most 20 reviews per repo.** Later commits wait for the
     next poll.
 - **Quiet hours delay the reviews.** Commits that land during
     [quiet hours](#quiet-hours) are reviewed after quiet hours end.
+- **`batch_timeout` applies.** As with pull requests, a reviewer that runs past
+    `batch_timeout` is canceled once another reviewer has a result.
 - **A rewritten branch restarts from its new head.** When the last reviewed
-    commit is no longer on the branch, for example after a force push, the
-    poller cannot tell new commits from reviewed ones. It reviews nothing and
-    continues with the commits that land next.
+    commit is no longer in the branch's first-parent history, for example after
+    a force push, the poller cannot tell new commits from reviewed ones. It
+    reviews nothing and continues with the commits that land next.
 - **Every poll fetches every repo.** With the option on, the poller runs
     `git fetch` for each configured repo on each interval, even when no pull
     request changed.
