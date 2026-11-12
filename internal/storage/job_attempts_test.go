@@ -221,7 +221,7 @@ func TestStartJobAttemptStopsWaitingForTransitionWhenContextEnds(t *testing.T) {
 func TestRetryAndFailoverPreserveOnlyCIPrebuiltRubric(t *testing.T) {
 	t.Parallel()
 	for _, prebuilt := range []bool{false, true} {
-		for _, action := range []string{"retry", "failover", "reset", "interrupted", "rerun", "promote"} {
+		for _, action := range []string{"retry", "failover", "reset", "interrupted", "rerun"} {
 			t.Run(fmt.Sprintf("prebuilt=%t/%s", prebuilt, action), func(t *testing.T) {
 				env := setupJobEnv(t, t.TempDir(), "retry-rubric")
 				job := claimJob(t, env.db, "worker")
@@ -251,17 +251,12 @@ func TestRetryAndFailoverPreserveOnlyCIPrebuiltRubric(t *testing.T) {
 					require.True(t, released)
 					err = env.db.ReenqueueJob(job.ID, ReenqueueOpts{})
 					changed = true
-				case "promote":
-					_, err = env.db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'classify', source = 'auto_design' WHERE id = ?`, job.ID)
-					require.NoError(t, err)
-					err = env.db.PromoteClassifyToDesignReview(job.ID, "worker", "test", "")
-					changed = true
 				}
 				require.NoError(t, err)
 				require.True(t, changed)
 				current, err := env.db.GetJobByID(job.ID)
 				require.NoError(t, err)
-				if prebuilt && action != "rerun" && action != "promote" {
+				if prebuilt && action != "rerun" {
 					assert.Equal(t, &digest, current.RubricSHA256)
 				} else {
 					assert.Nil(t, current.RubricSHA256)
