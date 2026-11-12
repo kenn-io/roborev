@@ -526,7 +526,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	defer client.CloseIdleConnections()
 	project, err := client.ResolvePublicationProject(ctx, name)
 	if err != nil {
-		return nil, err
+		return kataNoDestination(record, review, seed == nil, err)
 	}
 	if record.Marker != nil && record.Marker.ProjectUID != "" && record.Marker.ProjectUID != project.UID {
 		return nil, errors.New("kata publication destination changed")
@@ -578,6 +578,17 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		}
 	}
 	return status, nil
+}
+
+// kataNoDestination reports a review with no marker, no explicit project and
+// no binding or default as having no discussion. Every other failure to resolve
+// the destination stays an error. The status carries the source so readers can
+// still verify it.
+func kataNoDestination(record *storage.KataPublicationRecord, review *storage.Review, implicit bool, err error) (*KataPublicationStatus, error) {
+	if implicit && errors.Is(err, kata.ErrNoBinding) {
+		return &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, State: "missing", Source: review}, nil
+	}
+	return nil, err
 }
 
 // kataDestinationID identifies the configured service and project without exposing the endpoint.
