@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -26,75 +25,50 @@ import (
 )
 
 func agentSetupCmd() *cobra.Command {
-	var agents []string
-	var mcp, check, asJSON, printOnly bool
-	cmd := &cobra.Command{
-		Use: "setup", Short: "Set up agent integrations", Args: cobra.NoArgs, Example: "  roborev agent setup --check",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			for _, name := range agents {
-				profile, err := kitagenthook.ParseAgent(name)
-				if err != nil {
-					return err
-				}
-				if profile != kitagenthook.AgentClaude && profile != kitagenthook.AgentCodex {
-					return errors.New("setup covers Claude and Codex")
-				}
+	var cmd *cobra.Command
+	var mcp bool
+	setup := agentsetup.Options{SetupCommand: "roborev agent setup", Items: func(name string) ([]agentsetup.Item, error) {
+		if name != "claude" && name != "codex" {
+			return nil, errors.New("setup covers Claude and Codex")
+		}
+		check, _ := cmd.Flags().GetBool("check")
+		printOnly, _ := cmd.Flags().GetBool("print")
+		var server *string
+		if cmd.Flags().Changed("server") && !check {
+			server = &serverAddr
+		}
+		if printOnly {
+			binary, err := githook.ResolveRoborevPath("")
+			if err != nil {
+				return nil, err
 			}
-			var server *string
-			if cmd.Flags().Changed("server") && !check {
-				server = &serverAddr
+			address := ""
+			if server != nil {
+				address = *server
 			}
-			if printOnly {
-				binary, err := githook.ResolveRoborevPath("")
-				if err != nil {
-					return err
-				}
-				address := ""
-				if server != nil {
-					address = *server
-				}
-				return agentsetup.Print(cmd.OutOrStdout(), agentsetup.Options{Agents: agents, Items: func(name string) ([]agentsetup.Item, error) {
-					return []agentsetup.Item{agentsetup.MCP(name, "roborev", mcpconfig.Server(mcpconfig.Options{Executable: binary.Path, Server: address}))}, nil
-				}})
-			}
-			var selected *bool
-			if cmd.Flags().Changed("mcp") && !check {
-				selected = &mcp
-			}
-			report, runErr := runAgentSetup(cmd.Context(), agents, selected, check, server)
-			if runErr != nil && len(report.Rows) == 0 {
-				return runErr
-			}
-			if asJSON {
-				err := json.MarshalWrite(cmd.OutOrStdout(), report)
-				if err != nil {
-					return err
-				}
-			} else {
-				checkCommand := "roborev agent setup"
-				checkCommand += " --check"
-				if len(agents) > 0 {
-					checkCommand += " --agent " + strings.Join(agents, ",")
-				}
-				if err := report.WriteText(cmd.OutOrStdout(), checkCommand); err != nil {
-					return err
-				}
-			}
-			if err := runErr; err != nil {
-				return err
-			}
-			if report.ExitCode() != 0 {
-				cmd.SilenceUsage, cmd.SilenceErrors = true, true
-				return &exitError{code: 1, cause: agentsetup.ErrNotReady, silent: true}
-			}
-			return nil
-		},
-	}
-	cmd.Flags().StringSliceVar(&agents, "agent", nil, "agent to configure (repeatable)")
-	cmd.Flags().BoolVar(&check, "check", false, "check without installing")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
-	cmd.Flags().BoolVar(&printOnly, "print", false, "print manual Claude or Codex MCP commands")
+			return []agentsetup.Item{agentsetup.MCP(name, "roborev", mcpconfig.Server(mcpconfig.Options{Executable: binary.Path, Server: address}))}, nil
+		}
+		var selected *bool
+		if cmd.Flags().Changed("mcp") && !check {
+			selected = &mcp
+		}
+		items, _, err := agentSetupItems(name, selected, server)
+		if err != nil {
+			return []agentsetup.Item{{Name: "setup", Check: func(context.Context) (agentsetup.Status, error) { return agentsetup.Status{}, err }}}, nil
+		}
+		return items, nil
+	}}
+	cmd = agentsetup.NewCommand(setup)
+	cmd.Example = "  roborev agent setup --check"
 	cmd.Flags().BoolVar(&mcp, "mcp", false, "register MCP and use MCP skills")
+	run := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		err := run(cmd, args)
+		if errors.Is(err, agentsetup.ErrNotReady) {
+			return &exitError{code: 1, cause: err, silent: true}
+		}
+		return err
+	}
 	return cmd
 }
 
@@ -169,44 +143,31 @@ func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item,
 	if err != nil {
 		return nil, selected, err
 	}
-	hookItem := agentsetup.Hooks(name, hooks)
 	mixed := false
 	if found {
-		_, _, mixed, err = agenthook.InstalledCommand(agent)
+		command, specs, different, err := agenthook.InstalledCommand(agent)
 		if err != nil {
 			return nil, selected, err
 		}
-	}
-	if mixed {
-		hookItem.Install = nil
-		hookItem.Check = mixedHookStatus
-	} else if found {
-		hookItem.Install = func(context.Context) error { return agenthook.UpdateInstalled(agent, opts, binary.Path) }
-		hookItem.Check = func(ctx context.Context) (agentsetup.Status, error) {
-			observed, exists, err := agenthook.InstalledOptions(agent)
+		mixed = different
+		if !mixed {
+			command, err = agenthook.RewriteCommand(command, agent, opts, binary.Path)
 			if err != nil {
-				return agentsetup.Status{}, err
-			}
-			if !exists || observed.MCP != opts.MCP || observed.RoborevServerAddr != opts.RoborevServerAddr {
-				return agentsetup.Status{State: agentsetup.StateOutdated, Reason: "Hook connection differs from the selected connection", NextStep: "roborev agent setup"}, nil
-			}
-			command, specs, mixed, err := agenthook.InstalledCommand(agent)
-			if err != nil {
-				return agentsetup.Status{}, err
-			}
-			if mixed {
-				return mixedHookStatus(ctx)
+				return nil, selected, err
 			}
 			for _, required := range hooks.Hooks {
 				if !slices.ContainsFunc(specs, func(spec kitagenthook.Hook) bool { return spec.Event == required.Event }) {
-					return agentsetup.Status{State: agentsetup.StateOutdated, Reason: "A hook event is missing", NextStep: "roborev agent setup"}, nil
+					specs = append(specs, required)
 				}
 			}
-			current := hooks
-			current.Hooks = specs
-			current.Command, current.CommandWindows, current.Executable, current.Arguments = command.Native, command.Windows, "", nil
-			return agentsetup.Hooks(name, current).Check(ctx)
+			hooks.Hooks = specs
+			hooks.Command, hooks.CommandWindows, hooks.Executable, hooks.Arguments = command.Native, command.Windows, "", nil
 		}
+	}
+	hookItem := agentsetup.Hooks(name, hooks)
+	if mixed {
+		hookItem.Install = nil
+		hookItem.Check = mixedHookStatus
 	}
 	items := []agentsetup.Item{hookItem, {
 		Name:    "skills",
@@ -226,7 +187,7 @@ func agentSetupItems(name string, mcp *bool, server *string) ([]agentsetup.Item,
 	if mixed && (selected || registered) {
 		items = append(items, agentsetup.Item{Name: "mcp roborev", Check: mixedHookStatus})
 	} else if selected {
-		item, err := agentMCPItem(name, opts.Executable, opts.RoborevServerAddr)
+		item, err := agentMCPItem(name, opts.Executable, opts.RoborevServerAddr, registration, registered)
 		if err != nil {
 			return nil, selected, err
 		}
@@ -260,9 +221,8 @@ func setupHookOptions(agent kitagenthook.Agent, opts agenthook.InstallOptions) (
 
 // agentMCPItem registers the roborev MCP server, or repairs the connection the
 // user already has so its transport and other settings survive.
-func agentMCPItem(name, executable, address string) (agentsetup.Item, error) {
+func agentMCPItem(name, executable, address string, server mcpconfig.RegisteredServer, registered bool) (agentsetup.Item, error) {
 	opts := mcpconfig.Options{Agent: skills.Agent(name)}
-	server, registered := mcpconfig.Registration(opts)
 	if !registered {
 		return agentsetup.MCP(name, "roborev", mcpconfig.Server(mcpconfig.Options{Executable: executable, Server: address})), nil
 	}
@@ -271,11 +231,6 @@ func agentMCPItem(name, executable, address string) (agentsetup.Item, error) {
 		if server, err = server.WithServer(address); err != nil {
 			return agentsetup.Item{}, err
 		}
-		opts.DryRun = true
-		if err := mcpconfig.Repair(opts, server); err != nil {
-			return agentsetup.Item{}, err
-		}
-		opts.DryRun = false
 	}
 	item := agentsetup.MCP(name, "roborev", server.Server())
 	item.Install = func(context.Context) error { return mcpconfig.Repair(opts, server) }

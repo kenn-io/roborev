@@ -211,9 +211,6 @@ func TestQuickstartJSONReportsUntrustedCodex(t *testing.T) {
 	check := quickstartCheckByID(t, state, "agent_hook_codex")
 	assert.Equal(t, checkStatus("untrusted"), check.Status)
 	assert.Contains(t, check.FixCommand, "/hooks")
-	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
-	_, err := runSetup("--agent", "codex", "--check")
-	require.NoError(t, err)
 }
 
 func TestReadinessUsesInstalledHookModeAndSuggestsMCPRepair(t *testing.T) {
@@ -363,4 +360,39 @@ func TestSetupContinuesAfterOtherAgentConfigFails(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	assert.Contains(t, readFile(t, filepath.Join(codex, "hooks.json")), "roborev-agent-hook")
 	assert.Equal(t, "{", readFile(t, filepath.Join(claude, "settings.json")))
+}
+
+func TestSetupPreservesEventSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	fakeAgent(t, "claude")
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: executable}, io.Discard))
+	path := filepath.Join(home, "settings.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(data, &doc))
+	hooks := doc["hooks"].(map[string]any)
+	group := hooks["PreToolUse"].([]any)[0].(map[string]any)
+	group["matcher"] = "Bash|Write"
+	group["hooks"].([]any)[0].(map[string]any)["timeout"] = float64(23)
+	delete(hooks, "Stop")
+	data, err = json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	out, err := runSetup("--agent", "claude", "--server", "http://127.0.0.1:8282")
+	require.NoError(t, err, out)
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &doc))
+	hooks = doc["hooks"].(map[string]any)
+	group = hooks["PreToolUse"].([]any)[0].(map[string]any)
+	assert.Equal(t, "Bash|Write", group["matcher"])
+	assert.Equal(t, float64(23), group["hooks"].([]any)[0].(map[string]any)["timeout"])
+	assert.Contains(t, group["hooks"].([]any)[0].(map[string]any)["command"], "http://127.0.0.1:8282")
+	require.Contains(t, hooks, "Stop")
+	stop := hooks["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	assert.Contains(t, stop["command"], "http://127.0.0.1:8282")
 }

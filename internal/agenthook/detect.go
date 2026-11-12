@@ -1,7 +1,6 @@
 package agenthook
 
 import (
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"maps"
@@ -13,8 +12,6 @@ import (
 	"time"
 
 	kitagenthook "go.kenn.io/kit/agenthook"
-
-	"go.kenn.io/roborev/internal/agentconfig"
 )
 
 func Installed(agent kitagenthook.Agent, path string) (bool, error) {
@@ -68,8 +65,6 @@ func InstalledOptions(agent kitagenthook.Agent) (InstallOptions, bool, error) {
 		}
 		if !found {
 			result, found = next, true
-		} else if result.RoborevServerAddr == "" {
-			result.RoborevServerAddr = next.RoborevServerAddr
 		}
 	}
 	return result, found, nil
@@ -98,31 +93,20 @@ func hookArgs(args []string) (mcp bool, server string, extra []string, err error
 }
 
 func withoutHookMarker(command string) string {
-	for _, marker := range []string{" '" + agentHookMarker + "'", " \"" + agentHookMarker + "\"", " " + agentHookMarker} {
-		if before, after, found := strings.Cut(command, marker); found {
-			args, _ := splitHookCommand(after)
-			_, _, extra, _ := hookArgs(args)
-			if len(extra) > 0 {
-				quoted, err := kitagenthook.BuildCommand(extra[0], extra[1:]...)
-				if err == nil {
-					before += " " + quoted.POSIX
-				}
-			}
-			args, err := splitHookCommand(before)
-			if err == nil {
-				filtered := slices.DeleteFunc(args, func(arg string) bool {
-					return arg == "--mcp" || strings.HasPrefix(arg, "--mcp=")
-				})
-				if len(filtered) != len(args) {
-					if rebuilt, err := kitagenthook.BuildCommand(filtered[0], filtered[1:]...); err == nil {
-						return rebuilt.POSIX
-					}
-				}
-			}
-			return before
-		}
+	args, err := splitHookCommand(command)
+	if err != nil || len(args) == 0 {
+		return command
 	}
-	return command
+	_, _, rest, err := hookArgs(args[1:])
+	if err != nil {
+		return command
+	}
+	rest = slices.DeleteFunc(rest, func(arg string) bool { return arg == agentHookMarker })
+	built, err := kitagenthook.BuildCommand(args[0], rest...)
+	if err != nil {
+		return command
+	}
+	return built.POSIX
 }
 
 func InstalledForAgent(path, agent string) (bool, error) {
@@ -208,103 +192,37 @@ func isOwnedHookCommand(command string, agent kitagenthook.Agent) bool {
 	return err == nil && selected == agent
 }
 
-// UpdateInstalled changes the connection flags in each owned command while
-// preserving the rest of the agent's hook configuration.
-func UpdateInstalled(agent kitagenthook.Agent, opts InstallOptions, executable string) error {
-	path, err := kitagenthook.ConfigPath(agent)
+// RewriteCommand changes the selected connection in a shared hook command.
+func RewriteCommand(command kitagenthook.Commands, agent kitagenthook.Agent, opts InstallOptions, executable string) (kitagenthook.Commands, error) {
+	args, err := splitHookCommand(command.Native)
 	if err != nil {
-		return err
+		return command, err
 	}
-	data, err := os.ReadFile(path)
+	mcp, server, rest, err := hookArgs(args[1:])
 	if err != nil {
-		return err
+		return command, err
 	}
-	var root any
-	if err := json.Unmarshal(data, &root); err != nil {
-		return err
+	moved := false
+	generated := []string{"agent-hook", "run", "--agent", string(agent), agentHookMarker}
+	if slices.Equal(rest, generated) && filepath.IsAbs(args[0]) {
+		if _, err := os.Stat(args[0]); os.IsNotExist(err) {
+			args[0], moved = executable, true
+		}
 	}
-	changed := false
-	for _, hook := range ownedHooks(root, agent) {
-		command := hook["command"].(string)
-		args, err := splitHookCommand(command)
-		if err != nil {
-			return err
-		}
-		mcp, server, rest, err := hookArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		moved := false
-		generated := []string{"agent-hook", "run", "--agent", string(agent), agentHookMarker}
-		if len(rest) == len(generated) && slices.Equal(rest, generated) && filepath.IsAbs(args[0]) {
-			if _, err := os.Stat(args[0]); os.IsNotExist(err) {
-				args[0], moved = executable, true
-			}
-		}
-		if mcp == opts.MCP && server == opts.RoborevServerAddr && !moved {
-			continue
-		}
-		if opts.RoborevServerAddr != "" {
-			rest = append(rest, "--roborev-server", opts.RoborevServerAddr)
-		}
-		if opts.MCP {
-			rest = append(rest, "--mcp")
-		}
-		built, err := kitagenthook.BuildCommand(args[0], rest...)
-		if err != nil {
-			return err
-		}
-		hook["command"] = built.POSIX
-		if _, ok := hook["commandWindows"]; ok {
-			hook["commandWindows"] = built.Windows
-		}
-		changed = true
+	if mcp == opts.MCP && server == opts.RoborevServerAddr && !moved {
+		return command, nil
 	}
-	// Kit supplies the standard registrations for any missing events.
-	kitOpts, err := KitInstallOptions(agent, opts)
-	if err != nil {
-		return err
+	if opts.RoborevServerAddr != "" {
+		rest = append(rest, "--roborev-server", opts.RoborevServerAddr)
 	}
-	owned := ownedHooks(root, agent)
-	if len(owned) > 0 {
-		kitOpts.Executable, kitOpts.Arguments = "", nil
-		kitOpts.Command = owned[0]["command"].(string)
-		kitOpts.CommandWindows, _ = owned[0]["commandWindows"].(string)
+	if opts.MCP {
+		rest = append(rest, "--mcp")
 	}
-	planned, err := kitagenthook.PlanInstall(agent, kitOpts)
-	if err != nil {
-		return err
+	updated, err := kitagenthook.BuildCommand(args[0], rest...)
+	if command.Windows == "" {
+		updated.Windows = ""
 	}
-	var desired map[string]any
-	if err := json.Unmarshal(planned.Data, &desired); err != nil {
-		return err
-	}
-	object, _ := root.(map[string]any)
-	events, _ := object["hooks"].(map[string]any)
-	plannedEvents, _ := desired["hooks"].(map[string]any)
-	for _, spec := range kitOpts.Hooks {
-		name := string(spec.Event)
-		if len(ownedHooks(events[name], agent)) > 0 {
-			continue
-		}
-		groups, _ := events[name].([]any)
-		plannedGroups, _ := plannedEvents[name].([]any)
-		for _, group := range plannedGroups {
-			if len(ownedHooks(group, agent)) > 0 {
-				groups = append(groups, group)
-				changed = true
-			}
-		}
-		events[name] = groups
-	}
-	if !changed {
-		return nil
-	}
-	data, err = json.Marshal(root, jsontext.WithIndent("  "))
-	if err != nil {
-		return err
-	}
-	return agentconfig.Write(path, append(data, '\n'))
+	return updated, err
 }
 
 // InstalledCommand returns the shared command and each event's settings.

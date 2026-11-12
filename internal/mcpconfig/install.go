@@ -235,9 +235,6 @@ func Repair(opts Options, server RegisteredServer) error {
 	current, _ := Registration(opts)
 	changed := false
 	fields := map[string]any{}
-	if server.Command != current.Command {
-		fields["command"] = server.Command
-	}
 	if server.URL != current.URL {
 		fields["url"] = server.URL
 	}
