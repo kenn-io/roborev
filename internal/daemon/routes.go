@@ -330,6 +330,53 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Get(api, "/api/kata/status", s.humaKataStatus,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-status"
+			o.Summary = "Report the daemon's Kata connection"
+			o.Tags = []string{"kata"}
+		})
+
+	huma.Get(api, "/api/kata/issues", s.humaKataIssues,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-list-issues"
+			o.Summary = "List Kata issues through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
+	huma.Get(api, "/api/kata/issue", s.humaKataIssue,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-show-issue"
+			o.Summary = "Show one Kata issue through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
+	huma.Get(api, "/api/kata/publication", s.humaKataPublication,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-publication"
+			o.Summary = "Inspect finding publication"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{400, 404, 409, 502}
+		})
+	huma.Post(api, "/api/kata/publication", s.humaKataPublish,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-publish"
+			o.Summary = "Create or resume finding publication"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{400, 404, 409, 502}
+		})
+
+	huma.Post(api, "/api/kata/response", s.humaKataResponse,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-response"
+			o.MaxBodyBytes = -1
+			o.Summary = "Reply to a Kata finding"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{400, 404, 409, 502}
+		})
+
 	huma.Get(api, "/api/ping", s.humaPing,
 		func(o *huma.Operation) {
 			o.OperationID = "ping"

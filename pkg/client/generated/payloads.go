@@ -30,6 +30,10 @@ type UpdateJobBranchBody = UpdateJobBranchRequest
 
 type BatchJobsBody = BatchJobsRequest
 
+type KataPublishBody = KataPublicationRequest
+
+type KataResponseBody = KataResponseRequest
+
 type CleanJobLogsBody = CleanJobLogsInputBody
 
 type ConvertLegacyReviewsBody = ConvertLegacyReviewsInputBody

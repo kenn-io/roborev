@@ -1,0 +1,129 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"uuid"
+
+	"github.com/spf13/cobra"
+
+	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/pkg/client/generated"
+)
+
+func kataResponseCmd() *cobra.Command {
+	var project, destination, key, body, teammate string
+	kinds := map[string]*string{}
+	cmd := &cobra.Command{Use: "comment ISSUE", Short: "Reply to a published Kata finding", Args: cobra.ExactArgs(1)}
+	for _, kind := range []string{"reply", "confirm", "refute", "supersede"} {
+		value := new(string)
+		kinds[kind] = value
+		cmd.Flags().StringVar(value, kind, "", "reply kind and target comment UID or c: handle")
+	}
+	cmd.Flags().StringVarP(&body, "message", "m", "", "reply text or evidence")
+	cmd.Flags().StringVar(&project, "project", "", "Kata project")
+	cmd.Flags().StringVar(&destination, "destination-id", "", "expected destination from show or a previous attempt")
+	cmd.Flags().StringVar(&key, "idempotency-key", "", "opaque key for retrying this reply")
+	cmd.Flags().StringVar(&teammate, "expected-teammate", "", "expected teammate from a previous attempt")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		kind, target := "", ""
+		for name, value := range kinds {
+			if cmd.Flags().Changed(name) {
+				if kind != "" || *value == "" {
+					return validationErr(cmd, errors.New("select exactly one nonempty reply target"))
+				}
+				kind, target = name, *value
+			}
+		}
+		if kind == "" {
+			return validationErr(cmd, errors.New("select exactly one reply kind"))
+		}
+		if !cmd.Flags().Changed("idempotency-key") {
+			key = uuid.New().String()
+		}
+		ref := args[0]
+		if name, _, qualified := strings.Cut(ref, "#"); qualified && project != "" && name != project {
+			return validationErr(cmd, errors.New("conflicting project selectors"))
+		}
+		if err := ensureDaemon(); err != nil {
+			return fmt.Errorf("connect to daemon: %w", err)
+		}
+		ep := getDaemonEndpoint()
+		api := ep.APIClient(0)
+		query := &generated.KataShowIssueQuery{Ref: ref}
+		if project != "" {
+			query.Project = &project
+		} else if !strings.Contains(ref, "#") {
+			dir, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			binding, err := localKataBinding(cmd.Context(), dir)
+			if err == nil {
+				query.Project, query.WorkspaceAliasIdentity, query.WorkspaceAliasKind = kataSelectionFields(binding)
+			} else if !errors.Is(err, kata.ErrNoBinding) {
+				return err
+			}
+		}
+		issue, err := api.KataShowIssue(cmd.Context(), &generated.KataShowIssueRequestOptions{Query: query})
+		if err != nil {
+			return kataResponseError("read Kata issue", err)
+		}
+		if issue.UID == nil || *issue.UID == "" || issue.Project == nil || *issue.Project == "" || issue.DestinationID == nil || *issue.DestinationID == "" || issue.ReplyTeammate == nil || *issue.ReplyTeammate == "" || issue.CommentsComplete == nil || !*issue.CommentsComplete {
+			return errors.New("kata issue lacks complete publication identity or comments")
+		}
+		if destination != "" && destination != *issue.DestinationID {
+			return errors.New("kata destination changed")
+		}
+		if cmd.Flags().Changed("expected-teammate") && teammate != *issue.ReplyTeammate {
+			return errors.New("kata teammate changed; inspect the thread before retrying")
+		}
+		teammate = *issue.ReplyTeammate
+		uids := make([]string, 0, len(issue.Comments))
+		for _, comment := range issue.Comments {
+			uids = append(uids, comment.UID)
+		}
+		selected, err := kata.SelectPublicationTarget(uids, target)
+		if err != nil {
+			return err
+		}
+		server := ""
+		if serverAddr != "" {
+			server = " --server " + daemon.ShellEscape(ep.ConfigAddr())
+		}
+		retry := fmt.Sprintf("roborev%s kata comment %s --project %s --destination-id %s --expected-teammate %s --%s %s --idempotency-key %s -m %s", server, daemon.ShellEscape(*issue.UID), daemon.ShellEscape(*issue.Project), daemon.ShellEscape(*issue.DestinationID), daemon.ShellEscape(teammate), kind, daemon.ShellEscape(selected), daemon.ShellEscape(key), daemon.ShellEscape(body))
+		instructions := fmt.Sprintf("Issue: %s\nTarget: %s\nKind: %s\nKey: %s\nDestination: %s\nProject: %s\nTeammate: %s\nRetry: %s\n", *issue.UID, selected, kind, key, *issue.DestinationID, *issue.Project, teammate, retry)
+		n, err := io.WriteString(cmd.OutOrStdout(), instructions)
+		if err == nil && n != len(instructions) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			return fmt.Errorf("write retry instructions: %w", err)
+		}
+		request := generated.KataResponseRequest{Project: *issue.Project, DestinationID: *issue.DestinationID, Generation: issue.Generation, IssueUID: *issue.UID, TargetUID: selected, Kind: kind, Body: body, IdempotencyKey: key, Teammate: teammate}
+		receipt, err := api.KataResponse(cmd.Context(), &generated.KataResponseRequestOptions{Body: &request})
+		if err != nil {
+			return kataResponseError("send Kata reply", err)
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Comment: %s\nAuthor: %s\nTeammate: %s\nChanged: %t\n", receipt.UID, sanitizeSearchSingleLine(receipt.Author), receipt.Teammate, receipt.Changed)
+		if err == nil && receipt.EditedAt != nil {
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Current body (edited):\n%s\n", sanitizeSearchExcerpt(receipt.Body))
+		}
+		return err
+	}
+	return cmd
+}
+
+func kataResponseError(action string, err error) error {
+	if status, answered := daemonAnswerStatus(err); answered && status == http.StatusNotFound {
+		if _, structured := errors.AsType[generated.ErrorModel](err); !structured {
+			return errors.New("daemon does not support Kata replies; restart it")
+		}
+	}
+	return kataDaemonError(action, err)
+}

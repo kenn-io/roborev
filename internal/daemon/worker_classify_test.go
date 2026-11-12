@@ -520,3 +520,30 @@ func TestCompleteClassifyAsSkip_MarkFailureMarksJobFailed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusFailed, got.Status)
 }
+
+func TestClassifyEventsCarryKataSuppression(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		job  storage.ReviewJob
+		want bool
+	}{
+		{"local", storage.ReviewJob{}, false},
+		{"ci source", storage.ReviewJob{Source: storage.JobSourceCI}, true},
+		{"ci base", storage.ReviewJob{CIBaseBranch: "main"}, true},
+		{"panel member", storage.ReviewJob{PanelRole: "member"}, true},
+		{"rebuttal", storage.ReviewJob{Source: storage.JobSourceRebuttal}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewBroadcaster()
+			_, events := b.Subscribe("")
+			wp := &WorkerPool{broadcaster: b}
+			wp.broadcastClassifyTerminal(&tc.job)
+			wp.broadcastClassifyFailed(&tc.job, "failed")
+			completed, failed := <-events, <-events
+			assert.Equal(t, "review.completed", completed.Type)
+			assert.Equal(t, tc.want, completed.SuppressKataHooks)
+			assert.Equal(t, "review.failed", failed.Type)
+			assert.Equal(t, tc.want, failed.SuppressKataHooks)
+		})
+	}
+}

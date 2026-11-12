@@ -310,3 +310,10 @@ func logConfigChanges(old, new *config.Config) {
 		log.Printf("Config change: ci.github_api_url %q -> %q (requires daemon restart to take effect)", old.CI.GitHubAPIURL, new.CI.GitHubAPIURL)
 	}
 }
+
+// kataSnapshot keeps the connection and its generation in one atomic read.
+func (cw *ConfigWatcher) kataSnapshot() (config.KataIntegrationConfig, uint64) {
+	cw.cfgMu.RLock()
+	defer cw.cfgMu.RUnlock()
+	return cw.cfg.Integrations.Kata, cw.reloadCounter
+}

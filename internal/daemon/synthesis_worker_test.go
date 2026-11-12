@@ -1536,3 +1536,52 @@ func TestSynthesisNeutralFramingUsesVotingMembers(t *testing.T) {
 		})
 	}
 }
+
+func TestKataMarkerCapturedBySynthesisBranches(t *testing.T) {
+	for _, tcCase := range []struct{ useAgent, ci bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		t.Run(fmt.Sprintf("agent=%t/ci=%t", tcCase.useAgent, tcCase.ci), func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.test"}
+			cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "comments", Project: "reviews"}}
+			tc.Pool.cfgGetter = NewStaticConfig(cfg)
+			const member = "kata-marker-member"
+			registerPassingAgent(t, member)
+			const synthAgent = "kata-marker-synthesis"
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: synthAgent, ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+				return `{"schema_version":3,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Nil map write.","fix":"Initialize the map.","file":"alpha.go","start_line":3,"end_line":3,"sources":[1]}]}`, nil
+			}})
+			run, members, _ := enqueuePanelRun(t, tc, "kata-marker-panel", []memberSpec{{name: "m0", agent: member}, {name: "m1", agent: member}})
+			setSynthesisAgent(t, tc, run, synthAgent)
+			if tcCase.useAgent {
+				setSynthesisInstructions(t, tc, run, "Summarize findings.")
+			}
+			completeMember(t, tc, members[0].ID, member, "High: nil map write in alpha.go:3")
+			failMember(t, tc, members[1].ID)
+			synth := releaseAndClaimSynthesis(t, tc, run)
+			if tcCase.ci {
+				synth.Source = storage.JobSourceCI
+			}
+			_, events := tc.Broadcaster.Subscribe("")
+			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
+			tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+			seen := false
+			for len(events) > 0 {
+				event := <-events
+				if event.JobID == synth.ID {
+					assert.Equal(t, tcCase.ci, event.SuppressKataHooks)
+					seen = seen || event.Type == "review.completed"
+				}
+			}
+			assert.True(t, seen)
+			record, err := tc.DB.GetKataPublication(t.Context(), synth.ID)
+			require.NoError(t, err)
+			if tcCase.ci {
+				assert.Nil(t, record.Marker)
+			} else {
+				require.NotNil(t, record.Marker)
+				assert.Equal(t, "comments", record.Marker.Policy)
+			}
+		})
+	}
+}

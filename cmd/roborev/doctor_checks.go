@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/kata"
 )
 
 // doctorRecentWindow is how far back the failure and CI burst checks look.
@@ -42,6 +44,15 @@ type doctorEnv struct {
 	daemonAgents    *doctorDaemonAgents
 	daemonAgentsErr error
 
+	// kata is the daemon's Kata connection evaluated for kataBinding. Committed
+	// bindings retain their workspace alias so the daemon resolves renamed
+	// projects; nil when the daemon could not say, with kataErr. kataBindingErr
+	// is set when the binding file cannot be read.
+	kata           *daemon.KataStatusBody
+	kataErr        error
+	kataBinding    kata.Binding
+	kataBindingErr error
+
 	postCommitLog string
 }
 
@@ -68,8 +79,28 @@ func loadDoctorEnv(ctx context.Context, repoPath string, d doctorDaemon) *doctor
 	env.ping, env.pingErr = d.Ping()
 	if env.pingErr == nil {
 		env.daemonAgents, env.daemonAgentsErr = d.Agents(ctx, repoPath, doctorAgentNames(env))
+		env.kataBinding, env.kataBindingErr = doctorKataBinding(ctx, repoPath)
+		env.kata, env.kataErr = d.KataStatus(ctx, env.kataBinding)
 	}
 	return env
+}
+
+// doctorKataBinding is the selection `roborev review --local` would send to
+// the daemon: the repository's local binding, including its alias when the
+// committed name may have changed, else an empty selection for the default.
+// An unreadable binding file is returned so the doctor can say so.
+func doctorKataBinding(ctx context.Context, repoPath string) (kata.Binding, error) {
+	if repoPath == "" {
+		return kata.Binding{}, nil
+	}
+	binding, err := localKataBinding(ctx, repoPath)
+	if err != nil {
+		if errors.Is(err, kata.ErrNoBinding) {
+			return kata.Binding{}, nil
+		}
+		return kata.Binding{}, err
+	}
+	return binding, nil
 }
 
 // doctorAgentNames lists the agent names the doctor asks the daemon to
