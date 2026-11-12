@@ -1902,12 +1902,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 }
 
 // savePromptOrFinish stores the prompt and digest for a running claim and
-// reports whether the worker may continue. A canceled row means the save lost to
-// cancellation: the worker waits for the cancellation to reach its context,
-// which records who owns the event, and then emits the event it owns. Any other
-// failed save retries the job, and a replaced claim does nothing. A failed
-// status read is logged only: the claim is unknown, so nothing is emitted or
-// retried, and the finalizer still verifies the claim.
+// reports whether the worker may continue. For a canceled row, it waits for
+// the context and emits its event. Explicit delivery records ownership before
+// cancellation; the HTTP transition lock orders independent deadlines. Other
+// save errors retry; a replaced claim does nothing. A failed status read is
+// logged without emitting or retrying; the finalizer still verifies the claim.
 func (wp *WorkerPool) savePromptOrFinish(
 	ctx context.Context, workerID string, job *storage.ReviewJob, text string,
 	digest *string, eventWorktreePath string,

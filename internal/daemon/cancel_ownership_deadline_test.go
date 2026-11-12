@@ -59,7 +59,7 @@ func TestCancelOwnershipBeforeIndependentDeadline(t *testing.T) {
 	for _, panel := range []bool{false, true} {
 		name := "direct"
 		if panel {
-			name = "panel member"
+			name = "panel cascade"
 		}
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
