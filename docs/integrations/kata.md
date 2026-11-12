@@ -28,8 +28,8 @@ them because it cannot verify the required socket ownership and permissions.
 The API client checks the current server and active project before each
 operation. It accepts API schemas from 0.21.0 through 0.43.0, the contract
 checked through Kata v0.23.0. Unknown newer schemas require compatibility
-verification before use. Invalid credential headers are authentication errors; invalid
-retry-key headers are request errors. Workspace discovery stops at the nearest
+verification before use. Invalid credential headers are authentication errors;
+invalid retry-key headers are request errors. Workspace discovery stops at the nearest
 `.git` file or directory. Binding files must use version 1; an unsupported
 version stops lookup instead of selecting a parent project or the configured
 default. Discovery follows the physical Git boundary when a symlink crosses into
