@@ -347,13 +347,14 @@ curl -i --unix-socket '<daemon-socket-path>' --get \
 ```
 
 For TCP use the selected daemon's URL; for the Bearer key, HTTPS and
-certificates follow [daemon authentication](../configuration.md#daemon-authentication),
-and do not copy credentials between daemons. A successful `enabled: false`,
-`state: "disabled"` response permits native roots. An actual 404 for the unsupported status route
-also permits the existing legacy native fallback when local API integration is
-off. Authentication, network and other errors or an unreadable response are
-unknown: stop and report why, not disabled. If needed, start or restart the
-daemon with approval and recheck.
+certificates follow
+[daemon authentication](../configuration.md#daemon-authentication), and do not
+copy credentials between daemons. A successful `enabled: false`,
+`state: "disabled"` response permits native roots. An actual 404 for the
+unsupported status route also permits the existing legacy native fallback when
+local API integration is off. Authentication, network and other errors or an
+unreadable response are unknown: stop and report why, not disabled. If needed,
+start or restart the daemon with approval and recheck.
 
 On the published path only, after the user agrees to the run, inspect
 `roborev kata show <job-id>`. If publication is in progress, report it and
