@@ -66,7 +66,7 @@ func (c *CLIClient) supportsAttachmentReuse(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("probe attachment reuse: %w", err)
 	}
 	state := uint32(1)
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) > 0 && fields[0] == "--reuse-existing" {
 			state = 2
