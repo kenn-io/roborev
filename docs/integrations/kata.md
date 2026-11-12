@@ -130,10 +130,10 @@ and type with different member instructions, do not assign that finding; report
 it unchecked. Keep one root and outcome row per finding. Reconcile every
 full-result finding to a root and outcome. Record complete comment references
 from `kata show`. For `<result>`, use the top-level `uuid` from the JSON output;
-if absent, use exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only for
-identical retries of the same result. A rerun has a new result: leave old roots,
-replies and outcomes as history, post a new charter and roots with new keys, and
-never carry outcomes forward:
+if absent, use exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys
+only for identical retries of the same result. A rerun has a new result: leave
+old roots, replies and outcomes as history, post a new charter and roots with
+new keys, and never carry outcomes forward:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
@@ -182,12 +182,12 @@ the finding unchecked and actionable.
 The lead checks that cited paths and lines exist at the reviewed commit and
 posts an outcome comment with one row per finding: confirmed for confirms only,
 refuted for refutes only, contested for both, and unchecked for neither or
-incomplete threads. A resolving citation alone does not prove a conclusion. The lead never confirms or
-refutes; the user decides what to do with contested and unchecked findings. A
-reply does not close the Kata issue or the roborev review. With user approval,
-refuted findings can inform rubric tuning. Main fix, refine and later review
-prompts do not consume typed swarm outcomes; pass them to the user or fixing
-agent before any edit.
+incomplete threads. A resolving citation alone does not prove a conclusion. The
+lead never confirms or refutes; the user decides what to do with contested and
+unchecked findings. A reply does not close the Kata issue or the roborev review.
+With user approval, refuted findings can inform rubric tuning. Main fix, refine
+and later review prompts do not consume typed swarm outcomes; pass them to the
+user or fixing agent before any edit.
 
 ## Closing the Loop
 
