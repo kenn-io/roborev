@@ -43,7 +43,8 @@ func TestKataCreateRequestPrefersUUID(t *testing.T) {
 func TestKataCreateRequestFindings(t *testing.T) {
 	p := 4
 	hook := config.HookConfig{Type: "kata", Project: "proj", Labels: []string{"team"}, Priority: &p}
-	event := Event{Type: "review.completed", Verdict: "F", JobID: 9, RepoName: "r", SHA: "deadbeef", Findings: "## Bug\nbad"}
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	event := Event{Type: "review.completed", Verdict: "F", JobID: 9, ReviewType: "custom", RubricSHA256: &digest, RepoName: "r", SHA: "deadbeef", Findings: "## Bug\nbad"}
 
 	req, ok := kataCreateRequest(hook, event)
 	require.True(t, ok)
@@ -53,6 +54,7 @@ func TestKataCreateRequestFindings(t *testing.T) {
 	assert.Contains(t, req.Labels, "review-finding")
 	assert.Contains(t, req.Body, "roborev fix 9")
 	assert.Contains(t, req.Body, "bad")
+	assert.Contains(t, req.Body, "- rubric: custom@1234567890abcdef\n")
 	assert.Contains(t, req.Body, "\n\nFix:")
 }
 
@@ -95,12 +97,4 @@ func TestRunKataHookLogsNoBinding(t *testing.T) {
 
 	assert.Empty(t, fake.CreateReqs, "must not create without a binding")
 	assert.Contains(t, buf.String(), "no .kata.toml binding")
-}
-
-func TestKataHookIncludesRubricID(t *testing.T) {
-	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-	event := Event{Type: "review.completed", Verdict: "F", JobID: 1, ReviewType: "custom", RubricSHA256: &digest}
-	req, ok := kataCreateRequest(config.HookConfig{Type: "kata"}, event)
-	require.True(t, ok)
-	assert.Contains(t, req.Body, "- rubric: custom@1234567890abcdef\n")
 }

@@ -315,12 +315,7 @@ func interpolate(cmd string, event Event) string {
 		"{repo_name}", ShellEscape(event.RepoName),
 		"{sha}", ShellEscape(event.SHA),
 		"{agent}", ShellEscape(event.Agent),
-		"{rubric_sha256}", ShellEscape(func() string {
-			if event.RubricSHA256 != nil {
-				return *event.RubricSHA256
-			}
-			return ""
-		}()),
+		"{rubric_sha256}", ShellEscape(derefString(event.RubricSHA256)),
 		"{verdict}", ShellEscape(event.Verdict),
 		"{findings}", ShellEscape(event.Findings),
 		"{error}", ShellEscape(event.Error),

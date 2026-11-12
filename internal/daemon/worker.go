@@ -1338,8 +1338,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
 			var built prompt.BuildResult
-			built, err = pb.BuildResultForReview(
-				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
+			built, err = pb.BuildResultWithAdditionalContext(
+				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity, "",
 			)
 			reviewPrompt = built.Prompt
 			if built.RubricSHA256 != "" {

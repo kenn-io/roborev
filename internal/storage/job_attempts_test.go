@@ -65,12 +65,20 @@ func TestJobAttemptPromptRequiresClaimIdentity(t *testing.T) {
 	saved, err = env.db.SaveJobPromptForAttempt(t.Context(), &stale, "worker", "old attempt", nil)
 	require.NoError(t, err)
 	assert.False(t, saved)
-	saved, err = env.db.SaveJobPromptForAttempt(t.Context(), job, "worker", "current prompt", nil)
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	saved, err = env.db.SaveJobPromptForAttempt(t.Context(), job, "worker", "current prompt", &digest)
 	require.NoError(t, err)
 	assert.True(t, saved)
 	current, err := env.db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "current prompt", current.Prompt)
+	assert.Equal(t, &digest, current.RubricSHA256)
+	saved, err = env.db.SaveJobPromptForAttempt(t.Context(), job, "worker", "replacement", nil)
+	require.NoError(t, err)
+	require.True(t, saved)
+	current, err = env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Nil(t, current.RubricSHA256)
 }
 
 func TestPulledCanceledAttemptReleasesUnregisteredClaim(t *testing.T) {
@@ -191,59 +199,10 @@ func TestStartJobAttemptStopsWaitingForTransitionWhenContextEnds(t *testing.T) {
 	})
 }
 
-func TestJobAttemptRubricTracksPromptOwner(t *testing.T) {
-	env := setupJobEnv(t, t.TempDir(), "rubric-attempt")
-	job := claimJob(t, env.db, "worker")
-	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-	saved, err := env.db.SaveJobPromptForAttempt(t.Context(), job, "worker", "prompt", &digest)
-	require.NoError(t, err)
-	require.True(t, saved)
-	current, err := env.db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, &digest, current.RubricSHA256)
-	saved, err = env.db.SaveJobPromptForAttempt(t.Context(), job, "other", "stale", nil)
-	require.NoError(t, err)
-	assert.False(t, saved)
-	current, err = env.db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, &digest, current.RubricSHA256)
-	saved, err = env.db.SaveJobPromptForAttempt(t.Context(), job, "worker", "replacement", nil)
-	require.NoError(t, err)
-	require.True(t, saved)
-	current, err = env.db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Nil(t, current.RubricSHA256)
-}
-
-func TestResetStaleJobsRubricIdentity(t *testing.T) {
-	for _, prebuilt := range []bool{false, true} {
-		t.Run(map[bool]string{false: "local", true: "ci prebuilt"}[prebuilt], func(t *testing.T) {
-			env := setupJobEnv(t, t.TempDir(), "stale-rubric")
-			job := claimJob(t, env.db, "worker")
-			digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-			saved, err := env.db.SaveJobPromptForAttempt(t.Context(), job, "worker", "prompt", &digest)
-			require.NoError(t, err)
-			require.True(t, saved)
-			if prebuilt {
-				_, err = env.db.ExecContext(t.Context(), `UPDATE review_jobs SET source = 'ci', prompt_prebuilt = 1 WHERE id = ?`, job.ID)
-				require.NoError(t, err)
-			}
-			require.NoError(t, env.db.ResetStaleJobs())
-			current, err := env.db.GetJobByID(job.ID)
-			require.NoError(t, err)
-			if prebuilt {
-				assert.Equal(t, &digest, current.RubricSHA256)
-			} else {
-				assert.Nil(t, current.RubricSHA256)
-			}
-		})
-	}
-}
-
 func TestRetryAndFailoverPreserveOnlyCIPrebuiltRubric(t *testing.T) {
 	for _, prebuilt := range []bool{false, true} {
-		for _, failover := range []bool{false, true} {
-			t.Run(fmt.Sprintf("prebuilt=%t/failover=%t", prebuilt, failover), func(t *testing.T) {
+		for _, action := range []string{"retry", "failover", "reset"} {
+			t.Run(fmt.Sprintf("prebuilt=%t/%s", prebuilt, action), func(t *testing.T) {
 				env := setupJobEnv(t, t.TempDir(), "retry-rubric")
 				job := claimJob(t, env.db, "worker")
 				digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -255,10 +214,14 @@ func TestRetryAndFailoverPreserveOnlyCIPrebuiltRubric(t *testing.T) {
 					require.NoError(t, err)
 				}
 				var changed bool
-				if failover {
+				switch action {
+				case "failover":
 					changed, err = env.db.FailoverJob(job.ID, "worker", "backup", "")
-				} else {
+				case "retry":
 					changed, err = env.db.RetryJob(job.ID, "worker", 1, 0)
+				case "reset":
+					err = env.db.ResetStaleJobs()
+					changed = true
 				}
 				require.NoError(t, err)
 				require.True(t, changed)

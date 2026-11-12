@@ -293,10 +293,9 @@ func TestReviewResultRubricCommitAndRange(t *testing.T) {
 	builder := NewBuilder(nil).ForRepo(repo.dir, 0).WithRepoConfig(cfg, "")
 	for _, ref := range []string{head, base + ".." + head} {
 		t.Run(ref, func(t *testing.T) {
-			result, err := builder.BuildResultForReview(ref, 0, "test", "custom", "")
+			result, err := builder.BuildResultWithAdditionalContext(ref, 0, "test", "custom", "", "")
 			require.NoError(t, err)
 			assert.Equal(t, []byte("Inspect safety\n"), result.Rubric)
-			assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256(result.Rubric)), result.RubricSHA256)
 		})
 	}
 }

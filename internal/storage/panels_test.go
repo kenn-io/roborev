@@ -1239,6 +1239,11 @@ func TestRubricDigestSyncRoundTrip(t *testing.T) {
 	got, err = db.GetJobByID(id)
 	require.NoError(t, err)
 	assert.Equal(t, &changed, got.RubricSHA256)
+	pulled.RubricSHA256 = nil
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	got, err = db.GetJobByID(id)
+	require.NoError(t, err)
+	assert.Nil(t, got.RubricSHA256)
 }
 
 func TestRubricIDRequiresTypeAndFullPrefix(t *testing.T) {
