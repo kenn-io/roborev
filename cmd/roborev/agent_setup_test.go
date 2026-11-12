@@ -23,8 +23,8 @@ import (
 
 // runSetup runs roborev agent setup and returns its stdout.
 func runSetup(args ...string) (string, error) {
-	previousServer := serverAddr
-	defer func() { serverAddr = previousServer }()
+	previousServer, previousEndpoint := serverAddr, parsedServerEndpoint
+	defer func() { serverAddr, parsedServerEndpoint = previousServer, previousEndpoint }()
 	cmd := newRootCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -73,8 +73,11 @@ func TestAgentSetupMCPReruns(t *testing.T) {
 	t.Setenv("CODEX_HOME", home)
 	fakeAgent(t, "codex")
 	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	previousServer, previousEndpoint := serverAddr, parsedServerEndpoint
 	_, err := runSetup("--agent", "codex", "--mcp", "--server", "http://127.0.0.1:8181")
 	require.NoError(t, err)
+	assert.Equal(t, previousServer, serverAddr)
+	assert.Equal(t, previousEndpoint, parsedServerEndpoint)
 	path := filepath.Join(home, "config.toml")
 	hooks := readFile(t, filepath.Join(home, "hooks.json"))
 	config := readFile(t, path)
