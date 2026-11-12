@@ -99,3 +99,24 @@ func setupReviewTOMLExample(t *testing.T, content, marker string) string {
 	require.Len(t, matches, 1, "want exactly one TOML example marked %q", marker)
 	return matches[0]
 }
+
+func TestSetupReviewSwarmConfigExampleValidates(t *testing.T) {
+	content, err := fs.ReadFile(codexSkills, path.Join("codex", "roborev-setup-review", "SKILL.md"))
+	require.NoError(t, err)
+	example := setupReviewTOMLExample(t, string(content), "# .roborev.toml (swarm)")
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(example), 0o644))
+	cfg, err := config.LoadRepoConfig(repo)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.NoError(t, config.ValidateEffectiveReviewConfig(nil, cfg))
+	panel, ok := cfg.Review.Panels[cfg.Review.HookPanel]
+	require.True(t, ok)
+	require.NotEmpty(t, panel.Members)
+	for _, member := range panel.Members {
+		subagent, ok := cfg.Review.Subagents[member]
+		require.True(t, ok)
+		_, ok = config.ResolveCustomReviewTypeFromConfig(subagent.ReviewType, cfg, nil)
+		assert.True(t, ok, "member %s uses undefined custom type %q", member, subagent.ReviewType)
+	}
+}
