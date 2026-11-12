@@ -218,6 +218,7 @@ type browserReviewJob struct {
 	Agentic          bool                  `json:"agentic"`
 	PromptPrebuilt   bool                  `json:"prompt_prebuilt"`
 	ReviewType       string                `json:"review_type,omitempty"`
+	RubricSHA256     *string               `json:"rubric_sha256,omitempty"`
 	PatchID          string                `json:"patch_id,omitempty"`
 	OutputPrefix     string                `json:"output_prefix,omitempty"`
 	SkipReason       string                `json:"skip_reason,omitempty"`
@@ -296,7 +297,7 @@ func projectBrowserReviewJob(job storage.ReviewJob, principal BrowserPrincipal) 
 		EnqueuedAt: job.EnqueuedAt, StartedAt: job.StartedAt,
 		FinishedAt: job.FinishedAt, Prompt: displayPrompt,
 		RetryCount: job.RetryCount, Agentic: job.Agentic,
-		PromptPrebuilt: job.PromptPrebuilt, ReviewType: job.ReviewType,
+		PromptPrebuilt: job.PromptPrebuilt, ReviewType: job.ReviewType, RubricSHA256: job.RubricSHA256,
 		PatchID: job.PatchID, OutputPrefix: job.OutputPrefix,
 		SkipReason: job.SkipReason, Source: job.Source, ParentJobID: job.ParentJobID,
 		MinSeverity: job.MinSeverity, PanelRunUUID: job.PanelRunUUID,

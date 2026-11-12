@@ -184,18 +184,9 @@ func (db *DB) RunJobAttempt(job *ReviewJob, workerID string, transition func()) 
 	return true, nil
 }
 
-// SaveJobPromptForAttempt prevents a prompt built by a displaced worker from
-// replacing the sole prompt belonging to the newly pulled attempt.
-func (db *DB) SaveJobPromptForAttempt(job *ReviewJob, workerID, prompt string) (bool, error) {
-	var saveErr error
-	current, err := db.RunJobAttempt(job, workerID, func() {
-		saveErr = db.SaveJobPrompt(job.ID, prompt)
-	})
-	return current, errors.Join(err, saveErr)
-}
-
-// SaveJobPromptAndRubricForAttempt writes the prompt and digest only for the current attempt.
-func (db *DB) SaveJobPromptAndRubricForAttempt(ctx context.Context, job *ReviewJob, workerID, text string, digest *string) (bool, error) {
+// SaveJobPromptForAttempt atomically stores the prompt and optional rubric digest
+// only while the worker still owns the attempt.
+func (db *DB) SaveJobPromptForAttempt(ctx context.Context, job *ReviewJob, workerID, text string, digest *string) (bool, error) {
 	var saveErr error
 	current, err := db.RunJobAttempt(job, workerID, func() {
 		var tx *sql.Tx

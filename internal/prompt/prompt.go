@@ -271,8 +271,8 @@ type BuildResult struct {
 	RubricArchiveSkipReason string
 }
 
-func (r *BuildResult) setRubric(systemPrompt string) {
-	r.Rubric = []byte(strings.TrimSpace(strings.TrimSuffix(systemPrompt, structuredReviewOutputInstruction)) + "\n")
+func (r *BuildResult) setRubric(rubric []byte) {
+	r.Rubric = rubric
 	r.RubricSHA256 = fmt.Sprintf("%x", sha256.Sum256(r.Rubric))
 }
 
@@ -281,6 +281,14 @@ func (b *Builder) BuildResultForReview(gitRef string, contextCount int, agentNam
 	var result BuildResult
 	var err error
 	result.Prompt, err = b.buildWithOpts(gitRef, contextCount, agentName, reviewType, buildOpts{minSeverity: minSeverity, result: &result})
+	return result, err
+}
+
+// BuildResultWithAdditionalContext retains the rubric rendered for a prebuilt prompt.
+func (b *Builder) BuildResultWithAdditionalContext(gitRef string, contextCount int, agentName, reviewType, minSeverity, additionalContext string) (BuildResult, error) {
+	var result BuildResult
+	var err error
+	result.Prompt, err = b.buildWithOpts(gitRef, contextCount, agentName, reviewType, buildOpts{additionalContext: additionalContext, minSeverity: minSeverity, result: &result})
 	return result, err
 }
 
@@ -790,14 +798,14 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	systemPrompt, custom, err := b.resolveSystemPromptForResult(
+	systemPrompt, custom, rubric, err := b.resolveSystemPromptWithRubric(
 		agentName, reviewType, promptType, result,
 	)
 	if err != nil {
 		return promptBuildContext{}, err
 	}
 	if custom && result != nil {
-		result.setRubric(systemPrompt)
+		result.setRubric(rubric)
 	}
 	requiredPrefix := systemPrompt
 	if !custom && b.structuredOutput {

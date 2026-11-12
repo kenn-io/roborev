@@ -11,7 +11,7 @@ import (
 
 // Event represents a review event that can be broadcast
 type Event struct {
-	RubricSHA256      *string    `json:"rubric_sha256"`
+	RubricSHA256      *string    `json:"rubric_sha256,omitempty"`
 	ReviewType        string     `json:"review_type,omitempty"`
 	Type              string     `json:"type"`
 	TS                time.Time  `json:"ts"`
