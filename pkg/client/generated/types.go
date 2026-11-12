@@ -2599,19 +2599,14 @@ func (j JobWithReview) Validate() error {
 }
 
 type KataComment struct {
-	Author      string     `json:"author" validate:"required"`
-	Body        string     `json:"body" validate:"required"`
-	EditedAt    *time.Time `json:"edited_at,omitempty"`
-	Handle      *string    `json:"handle,omitempty"`
-	IssueID     int64      `json:"issue_id"`
-	IssueUID    *string    `json:"issue_uid,omitempty"`
-	ProjectID   *int64     `json:"project_id,omitempty"`
-	ProjectName *string    `json:"project_name,omitempty"`
-	ProjectUID  *string    `json:"project_uid,omitempty"`
-	ReplyKind   *string    `json:"reply_kind,omitempty"`
-	ReplyToUID  *string    `json:"reply_to_uid,omitempty"`
-	Teammate    *string    `json:"teammate,omitempty"`
-	UID         string     `json:"uid" validate:"required"`
+	Author     string     `json:"author" validate:"required"`
+	Body       string     `json:"body" validate:"required"`
+	EditedAt   *time.Time `json:"edited_at,omitempty"`
+	Handle     *string    `json:"handle,omitempty"`
+	ReplyKind  *string    `json:"reply_kind,omitempty"`
+	ReplyToUID *string    `json:"reply_to_uid,omitempty"`
+	Teammate   *string    `json:"teammate,omitempty"`
+	UID        string     `json:"uid" validate:"required"`
 }
 
 func (k KataComment) Validate() error {
@@ -2629,12 +2624,10 @@ type KataIssue struct {
 	CommentsComplete    *bool                `json:"comments_complete,omitempty"`
 	DestinationID       *string              `json:"destination_id,omitempty"`
 	Generation          int64                `json:"generation" validate:"gte=0"`
-	IssueID             *int64               `json:"issue_id,omitempty"`
 	Labels              []string             `json:"labels" validate:"required"`
 	Metadata            jsontext.Value       `json:"metadata,omitempty"`
 	Parent              *KataLinkPeer        `json:"parent,omitempty"`
 	Project             *string              `json:"project,omitempty"`
-	ProjectID           *int64               `json:"project_id,omitempty"`
 	ProjectUID          *string              `json:"project_uid,omitempty"`
 	PublicationEnvelope *PublicationEnvelope `json:"publication_envelope,omitempty"`
 	QualifiedID         string               `json:"qualified_id" validate:"required"`

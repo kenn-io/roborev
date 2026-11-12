@@ -2611,18 +2611,6 @@ components:
           type: string
         handle:
           type: string
-        issue_id:
-          format: int64
-          type: integer
-        issue_uid:
-          type: string
-        project_id:
-          format: int64
-          type: integer
-        project_name:
-          type: string
-        project_uid:
-          type: string
         reply_kind:
           type: string
         reply_to_uid:
@@ -2632,7 +2620,6 @@ components:
         uid:
           type: string
       required:
-        - issue_id
         - uid
         - body
         - author
@@ -2671,9 +2658,6 @@ components:
           format: int64
           minimum: 0
           type: integer
-        issue_id:
-          format: int64
-          type: integer
         labels:
           items:
             type: string
@@ -2685,9 +2669,6 @@ components:
           $ref: "#/components/schemas/KataLinkPeer"
         project:
           type: string
-        project_id:
-          format: int64
-          type: integer
         project_uid:
           type: string
         publication_envelope:
