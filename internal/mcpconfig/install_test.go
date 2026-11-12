@@ -205,6 +205,8 @@ func TestWithServer(t *testing.T) {
 		{"path and query", "http://127.0.0.1:7373/custom/mcp?token=abc", "http://127.0.0.1:8181", "http://127.0.0.1:8181/custom/mcp?token=abc"},
 		{"bare address", "http://127.0.0.1:7373/custom?x=1", "127.0.0.1:8181", "http://127.0.0.1:8181/custom?x=1"},
 		{"https", "https://example.com:443/custom?x=1", "https://other.example.com:443", "https://other.example.com:443/custom?x=1"},
+		{"http to https", "http://example.com/custom?x=1", "https://other.example.com", "https://other.example.com/custom?x=1"},
+		{"https to http", "https://example.com/custom?x=1", "http://127.0.0.1:8282", "http://127.0.0.1:8282/custom?x=1"},
 		{"unix address", "http://127.0.0.1:8181/mcp", "unix:///tmp/example.sock", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

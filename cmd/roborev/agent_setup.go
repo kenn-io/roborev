@@ -235,10 +235,15 @@ func agentMCPItem(name, executable, address string, server mcpconfig.RegisteredS
 	item := agentsetup.MCP(name, "roborev", server.Server())
 	item.Install = func(context.Context) error { return mcpconfig.Repair(opts, server) }
 	if name == "claude" {
+		kitCheck := item.Check
 		item.Check = func(ctx context.Context) (agentsetup.Status, error) {
+			status, err := kitCheck(ctx)
+			if err != nil || status.State != agentsetup.StateOutdated {
+				return status, err
+			}
 			current, found := mcpconfig.Registration(opts)
 			if !found || !reflect.DeepEqual(current, server) {
-				return agentsetup.Status{State: agentsetup.StateOutdated, Reason: "MCP connection differs from the hook", NextStep: "roborev agent setup"}, nil
+				return status, nil
 			}
 			return checkClaudeMCPWithHeadersHelper(ctx)
 		}
@@ -246,8 +251,8 @@ func agentMCPItem(name, executable, address string, server mcpconfig.RegisteredS
 	return item, nil
 }
 
-// Kit cannot represent Claude's dynamic headers helper. Ask Claude directly
-// when the existing registration uses it, keeping the configuration intact.
+// Kit reports entries with unmodeled fields as outdated. Ask Claude directly
+// when the modeled fields match, keeping the configuration intact.
 func checkClaudeMCPWithHeadersHelper(ctx context.Context) (agentsetup.Status, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

@@ -172,11 +172,12 @@ func (r RegisteredServer) DaemonAddress() string {
 // transport and other settings.
 func (r RegisteredServer) WithServer(address string) (RegisteredServer, error) {
 	if r.URL != "" {
-		host := ""
+		host, scheme := "", "http"
 		if strings.HasPrefix(address, "https://") {
 			endpoint, err := url.Parse(address)
 			if err == nil {
 				host = endpoint.Host
+				scheme = endpoint.Scheme
 			}
 		} else if endpoint, err := kitdaemon.ParseEndpoint(address, kitdaemon.ParseEndpointOptions{}); err == nil && !endpoint.IsUnix() {
 			host = endpoint.Address
@@ -189,6 +190,7 @@ func (r RegisteredServer) WithServer(address string) (RegisteredServer, error) {
 			return r, err
 		}
 		current.Host = host
+		current.Scheme = scheme
 		r.URL = current.String()
 	} else {
 		args := []string{"--server", address}

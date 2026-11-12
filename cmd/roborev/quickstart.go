@@ -71,7 +71,8 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 }
 
 func checkNativeAgentHook(ctx context.Context, id, agent string) quickstartCheck {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	// Kit can spend up to 10 seconds on each of the sequential hook and MCP probes.
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	worst, details := agentReadiness(ctx, agent)
 	return quickstartCheck{ID: id, Status: checkStatus(worst.State), Details: strings.Join(details, "; "), FixCommand: worst.NextStep}

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,53 @@ func TestAgentSetupMCPReruns(t *testing.T) {
 	installed, _, err = agenthook.InstalledOptions(kitagenthook.AgentCodex)
 	require.NoError(t, err)
 	assert.False(t, installed.MCP)
+}
+
+func TestQuickstartWaitsForCodexMCP(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	fakeAgent(t, "codex")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	_, err := runSetup("--agent", "codex", "--mcp")
+	require.NoError(t, err)
+	t.Setenv("ROBOREV_TEST_SLOW_MCP", "1")
+	check := checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
+	assert.Equal(t, statusOK, check.Status, check.Details)
+	assert.Contains(t, check.Details, "mcp roborev: ok")
+}
+
+func TestClaudeMCPUsesKitCheck(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	fakeAgent(t, "claude")
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	opts := mcpconfig.Options{Agent: skills.AgentClaude, Executable: exe}
+	result, err := mcpconfig.Install(opts)
+	require.NoError(t, err)
+	server, found := mcpconfig.Registration(opts)
+	require.True(t, found)
+	item, err := agentMCPItem("claude", exe, "", server, true)
+	require.NoError(t, err)
+	status, err := item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateOK, status.State)
+	assert.Equal(t, result.Path, status.ConfigPath)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, result.Path)), &doc))
+	doc["mcpServers"].(map[string]any)["roborev"].(map[string]any)["extra"] = "preserved"
+	data, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(result.Path, data, 0o600))
+	status, err = item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateOK, status.State)
+	assert.Equal(t, string(data), readFile(t, result.Path))
+
+	item, err = agentMCPItem("claude", exe, "http://127.0.0.1:8282", server, true)
+	require.NoError(t, err)
+	status, err = item.Check(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, agentsetup.StateOutdated, status.State)
 }
 
 func TestAgentSetupKeepsCustomCommands(t *testing.T) {
@@ -307,6 +355,9 @@ func fakeCodexAppServer() int {
 			}
 			result = map[string]any{"data": []any{map[string]any{"hooks": hooks}}}
 		case "mcpServerStatus/list":
+			if os.Getenv("ROBOREV_TEST_SLOW_MCP") != "" {
+				time.Sleep(3 * time.Second)
+			}
 			result = map[string]any{"data": []any{map[string]any{"name": "roborev", "tools": map[string]any{"read_review": map[string]any{}}}}}
 		default:
 			return 2
