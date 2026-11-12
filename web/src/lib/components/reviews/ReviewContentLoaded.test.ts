@@ -1,37 +1,48 @@
-import { cleanup, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { tick } from "svelte";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import ReviewContent from "./ReviewContent.svelte";
 
 const state = vi.hoisted(() => ({
   error: "provider rejected the request",
+  loadError: null as string | null,
+  output: "",
+  status: "failed",
+  notFound: true,
   loaded: Promise.withResolvers<void>(),
 }));
+const reviewLoads = vi.hoisted(() => vi.fn());
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
     roborevReview: {
-      getOutput: () => "",
+      getOutput: () => state.output,
       isLoading: () => false,
-      isReviewNotFound: () => true,
-      getSelectedJob: () => ({ status: "failed", error: state.error }),
+      isReviewNotFound: () => state.notFound,
+      getSelectedJob: () => ({ status: state.status, error: state.error }),
+      getSelectedJobId: () => 42,
+      getError: () => state.loadError,
+      loadReview: reviewLoads,
     },
   }),
 }));
 
-vi.mock("@kenn-io/roborev-ui/review-content", async (importOriginal) => {
-  const module = await importOriginal();
+vi.mock("@kenn-io/roborev-ui/review-content", () => {
   state.loaded.resolve();
-  return module;
+  return { default: () => {} };
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  state.loadError = null;
+  state.output = "";
+  state.status = "failed";
+  state.notFound = true;
 });
 
-it("keeps the failure reason visible after the rich renderer loads", async () => {
+beforeEach(() => {
   vi.stubGlobal(
     "requestIdleCallback",
     (callback: IdleRequestCallback): number => {
@@ -40,10 +51,27 @@ it("keeps the failure reason visible after the rich renderer loads", async () =>
     },
   );
   vi.stubGlobal("cancelIdleCallback", vi.fn());
+});
+
+it("keeps the failure reason visible after the rich renderer loads", async () => {
   render(ReviewContent);
 
   await state.loaded.promise;
   await tick();
   expect(screen.getByRole("alert")).toHaveTextContent("Review failed");
   expect(screen.getByRole("alert")).toHaveTextContent(state.error);
+});
+
+it("shows the load error after the renderer loads", async () => {
+  state.loadError = "Failed to load review";
+  state.output = "Existing review output";
+  state.status = "done";
+  state.notFound = false;
+  render(ReviewContent);
+
+  await vi.dynamicImportSettled();
+  await tick();
+  expect(screen.getByRole("alert")).toHaveTextContent("Failed to load review");
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(reviewLoads).toHaveBeenCalledExactlyOnceWith(42);
 });

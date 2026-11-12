@@ -1,3 +1,4 @@
+import { offlineRead } from "../../testing/network";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnedAppRuntime } from "../../runtime/runtime";
@@ -197,6 +198,27 @@ describe("submitted search telemetry", () => {
 });
 
 describe("createJobsStore filter preferences", () => {
+  it("retries a lost list request and shows the recovered jobs", async () => {
+    const api = {
+      listJobs: vi
+        .fn()
+        .mockImplementationOnce(offlineRead)
+        .mockResolvedValue({ jobs: [makeJob(1)] }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    vi.useFakeTimers();
+    try {
+      const load = loadJobs(store);
+      await vi.runAllTimersAsync();
+      await load;
+      expect(store.getJobs()).toEqual([makeJob(1)]);
+      expect(store.getError()).toBeNull();
+      expect(api.listJobs).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("maps the branchless display sentinel to the empty branch query", async () => {
     const api = {
       listJobs: vi.fn().mockResolvedValue({
@@ -1880,6 +1902,35 @@ describe("createJobsStore panel expansion", () => {
       panel_member_name: index === 0 ? "default" : "security",
     };
   }
+
+  it("recovers panel members after a lost request", async () => {
+    const parent = makePanelParent(10);
+    let panelCalls = 0;
+    const api = {
+      listJobs: vi.fn().mockImplementation((query: Record<string, unknown>) => {
+        if (query.panel_run === "run-10") {
+          panelCalls++;
+          if (panelCalls === 1) return offlineRead();
+          return Promise.resolve({ jobs: [makeMember(11, "run-10", 0)] });
+        }
+        return Promise.resolve({ jobs: [parent] });
+      }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+    vi.useFakeTimers();
+    try {
+      store.togglePanel(parent);
+      await vi.runAllTimersAsync();
+      expect(store.getPanelMembers("run-10")?.map((job) => job.id)).toEqual([
+        11,
+      ]);
+      expect(store.getPanelMemberError("run-10")).toBeUndefined();
+      expect(panelCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("lazily fetches members sorted by panel_member_index on first expand", async () => {
     const parent = makePanelParent(10);

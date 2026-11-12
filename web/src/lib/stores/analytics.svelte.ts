@@ -1,5 +1,8 @@
 import { appPath } from "../base-path";
-import { normalizeRoborevHTTPError, RoborevHTTPError } from "../api/client";
+import { Effect } from "effect";
+import { executeRoborevRequest, RoborevHTTPError } from "../api/client";
+import { TransientTransportError } from "../api/effect-errors";
+import { retryIdempotentRead } from "../api/retry-policy";
 import {
   GetWebAnalyticsSplit,
   type AnalyticsSnapshot,
@@ -65,9 +68,7 @@ const BUCKET_ORDER: Record<Exclude<AnalyticsBucket, "auto">, number> = {
 };
 
 const loadGeneratedAnalytics: AnalyticsLoader = (query, signal) =>
-  getWebAnalytics(query, { signal }).catch((cause: unknown) =>
-    normalizeRoborevHTTPError("load Roborev analytics", cause),
-  );
+  getWebAnalytics(query, { signal });
 
 export function createAnalyticsStore(options: AnalyticsStoreOptions) {
   const loader = options.loader ?? loadGeneratedAnalytics;
@@ -90,14 +91,18 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions) {
     const key = analyticsFilterKey(filters);
     const generation = ++requestGeneration;
     controller?.abort();
-    controller = new AbortController();
+    const requestController = new AbortController();
+    controller = requestController;
+    const query = analyticsRequestQuery(filters, now());
     loading = true;
     stale = false;
     error = null;
     try {
-      const result = await loader(
-        analyticsRequestQuery(filters, now()),
-        controller.signal,
+      const result = await Effect.runPromise(
+        executeRoborevRequest("load Roborev analytics", (signal) =>
+          loader(query, signal),
+        ).pipe(retryIdempotentRead),
+        { signal: requestController.signal },
       );
       if (
         generation !== requestGeneration ||
@@ -109,8 +114,11 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions) {
       snapshotKey = key;
       lastUpdatedAt = Date.now();
     } catch (cause) {
-      if (generation !== requestGeneration || controller.signal.aborted) return;
-      error = analyticsErrorMessage(cause);
+      if (generation !== requestGeneration || requestController.signal.aborted)
+        return;
+      error = analyticsErrorMessage(
+        cause instanceof TransientTransportError ? cause.cause : cause,
+      );
       if (snapshot !== null && snapshotKey === key) {
         stale = true;
       } else {
