@@ -115,11 +115,11 @@ database context, and CI reviews perform no discussion reads. This does not
 search all past issues or require a local publication marker on a second
 machine.
 
-Only readable, non-CI, non-goal source reviews are eligible. For earlier
-reviews, `review_context_count` defaults to 3; 0 disables that history. Same-ref
-attempts and range reviews have their own selection. This is separate from
-`[kata_context]` task modes. Access and cancellation errors can stop the
-operation; other read failures may appear as unavailable context.
+Only readable, non-CI, non-goal source reviews are eligible. For earlier reviews
+added to a review prompt, `review_context_count` defaults to 3; 0 disables that
+history. Same-ref attempts and range reviews have their own selection. This is
+separate from `[kata_context]` task modes. Access and cancellation errors can
+stop the operation; other read failures may appear as unavailable context.
 
 Read discussion with `roborev kata show JOB|REVIEW-UUID|ISSUE`; use `--project`
 for an explicit issue or a review without a saved publication destination. The

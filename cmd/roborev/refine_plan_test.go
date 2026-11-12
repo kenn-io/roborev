@@ -163,7 +163,7 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 					p = string(data)
 				}
 				assert.Contains(t, p, evidence)
-				assert.Contains(t, p, "reviewer")
+				assert.Contains(t, p, `"author": "reviewer"`)
 				assert.Contains(t, p, "missing cancellation")
 				return "Add cancellation check", nil
 			}})
