@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	kitagenthook "go.kenn.io/kit/agenthook"
 )
@@ -220,8 +219,7 @@ func InstalledCommand(agent kitagenthook.Agent) (kitagenthook.Commands, []kitage
 					return command, specs, true, nil
 				}
 				command = next
-				timeout, _ := hook["timeout"].(float64)
-				specs = append(specs, kitagenthook.Hook{Event: kitagenthook.Event(event), Matcher: matcher, Timeout: time.Duration(timeout) * time.Second})
+				specs = append(specs, kitagenthook.Hook{Event: kitagenthook.Event(event), Matcher: matcher})
 			}
 		}
 	}

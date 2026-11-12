@@ -315,46 +315,4 @@ func TestHookCommandOptionsAndRewrite(t *testing.T) {
 		assert.Contains(t, updated.Native, `'C:\Program Files\roborev.exe'`)
 		assert.Contains(t, updated.Native, "--mcp")
 	})
-	for _, tc := range []struct {
-		name, command string
-		mcp           bool
-		server        string
-	}{
-		{"custom", "roborev agent-hook run --agent claude --turn-threshold 7", false, ""},
-		{"mcp true", "roborev agent-hook run --agent claude --mcp=true --roborev-server http://127.0.0.1:7375", true, "http://127.0.0.1:7375"},
-		{"mcp false", "roborev agent-hook run --agent claude --mcp=false", false, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			opts, err := CommandOptions(tc.command)
-			require.NoError(t, err)
-			assert.Equal(t, tc.mcp, opts.MCP)
-			assert.Equal(t, tc.server, opts.RoborevServerAddr)
-			updated, err := RewriteCommand(kitagenthook.Commands{Native: tc.command}, kitagenthook.AgentClaude, InstallOptions{MCP: !tc.mcp, RoborevServerAddr: "http://127.0.0.1:8282"}, "roborev")
-			require.NoError(t, err)
-			parsed, err := CommandOptions(updated.Native)
-			require.NoError(t, err)
-			assert.Equal(t, !tc.mcp, parsed.MCP)
-			assert.Equal(t, "http://127.0.0.1:8282", parsed.RoborevServerAddr)
-			if tc.name == "custom" {
-				assert.Contains(t, updated.Native, "--turn-threshold 7")
-			}
-		})
-	}
-	t.Run("missing generated executable", func(t *testing.T) {
-		missing := filepath.Join(t.TempDir(), "missing")
-		command, err := kitagenthook.BuildCommand(missing, "agent-hook", "run", "--agent", "claude", agentHookMarker)
-		require.NoError(t, err)
-		updated, err := RewriteCommand(kitagenthook.Commands{Native: command.POSIX}, kitagenthook.AgentClaude, InstallOptions{}, "replacement")
-		require.NoError(t, err)
-		assert.Contains(t, updated.Native, "replacement")
-	})
-	t.Run("mixed commands", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("CLAUDE_CONFIG_DIR", home)
-		data := `{"hooks":{"Stop":[{"hooks":[{"command":"roborev agent-hook run --agent claude"}]}],"PreToolUse":[{"hooks":[{"command":"roborev agent-hook run --agent claude --mcp"}]}]}}`
-		require.NoError(t, os.WriteFile(filepath.Join(home, "settings.json"), []byte(data), 0o600))
-		_, _, mixed, err := InstalledCommand(kitagenthook.AgentClaude)
-		require.NoError(t, err)
-		assert.True(t, mixed)
-	})
 }

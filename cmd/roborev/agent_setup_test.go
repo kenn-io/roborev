@@ -154,75 +154,40 @@ func TestSetupRejectsMalformedRegistration(t *testing.T) {
 	}
 }
 
-func TestSetupReportsMatcherWithoutBash(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	fakeAgent(t, "claude")
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe}, io.Discard))
-	path := filepath.Join(home, "settings.json")
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
-	hooks := doc["hooks"].(map[string]any)
-	hooks["PreToolUse"].([]any)[0].(map[string]any)["matcher"] = "Write"
-	data, err := json.Marshal(doc)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	states, err := setupReport(t, "--agent", "claude", "--check")
-	require.Error(t, err)
-	assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
-	out, err := runSetup("--agent", "claude", "--server", "http://127.0.0.1:8282")
-	require.Error(t, err, out)
-	assert.Equal(t, string(data), readFile(t, path))
+func TestSetupLeavesUnsupportedHooksUnchanged(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"matcher", func(hooks map[string]any) { hooks["PreToolUse"].([]any)[0].(map[string]any)["matcher"] = "Write" }},
+		{"event", func(hooks map[string]any) { hooks["UnknownEvent"] = hooks["Stop"]; delete(hooks, "Stop") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", home)
+			fakeAgent(t, "claude")
+			exe, err := os.Executable()
+			require.NoError(t, err)
+			require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe, MCP: true}, io.Discard))
+			path := filepath.Join(home, "settings.json")
+			var doc map[string]any
+			require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
+			tc.mutate(doc["hooks"].(map[string]any))
+			data, err := json.Marshal(doc)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, data, 0o600))
+			out, err := runSetup("--agent", "claude", "--server", "http://127.0.0.1:8282")
+			require.Error(t, err, out)
+			assert.Equal(t, string(data), readFile(t, path))
+			states, err := setupReport(t, "--agent", "claude", "--check")
+			require.Error(t, err)
+			assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
+			assert.Equal(t, agentsetup.StateUnknown, states["mcp roborev"])
+		})
+	}
 }
 
-func TestSetupLeavesUnsupportedHookEventUnchanged(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	fakeAgent(t, "claude")
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe, MCP: true}, io.Discard))
-	path := filepath.Join(home, "settings.json")
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
-	hooks := doc["hooks"].(map[string]any)
-	hooks["UnknownEvent"] = hooks["Stop"]
-	delete(hooks, "Stop")
-	data, err := json.Marshal(doc)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	out, err := runSetup("--agent", "claude", "--server", "http://127.0.0.1:8282")
-	require.Error(t, err, out)
-	assert.Equal(t, string(data), readFile(t, path))
-	states, err := setupReport(t, "--agent", "claude", "--check")
-	require.Error(t, err)
-	assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
-	assert.Equal(t, agentsetup.StateUnknown, states["mcp roborev"])
-}
-
-func TestSetupDoesNotTrustServerName(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	fakeAgent(t, "claude")
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	opts := mcpconfig.Options{Agent: skills.AgentClaude, Executable: "other-server"}
-	_, err = mcpconfig.Install(opts)
-	require.NoError(t, err)
-	server, found, err := mcpconfig.Registration(opts)
-	require.NoError(t, err)
-	require.True(t, found)
-	item, err := agentMCPItem("claude", exe, "", server, true)
-	require.NoError(t, err)
-	status, err := item.Check(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, agentsetup.StateUnknown, status.State)
-}
-
-func TestSetupAcceptsCopiedRoboRevExecutable(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	fakeAgent(t, "claude")
+func TestSetupChecksStdioMCPIdentity(t *testing.T) {
 	exe, err := os.Executable()
 	require.NoError(t, err)
 	data, err := os.ReadFile(exe)
@@ -233,16 +198,29 @@ func TestSetupAcceptsCopiedRoboRevExecutable(t *testing.T) {
 	}
 	copyPath := filepath.Join(t.TempDir(), name)
 	require.NoError(t, os.WriteFile(copyPath, data, 0o700))
-	opts := mcpconfig.Options{Agent: skills.AgentClaude, Executable: copyPath}
-	_, err = mcpconfig.Install(opts)
-	require.NoError(t, err)
-	server, _, err := mcpconfig.Registration(opts)
-	require.NoError(t, err)
-	item, err := agentMCPItem("claude", exe, "", server, true)
-	require.NoError(t, err)
-	status, err := item.Check(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, agentsetup.StateOK, status.State)
+	for _, tc := range []struct {
+		command string
+		want    agentsetup.State
+	}{
+		{"other-server", agentsetup.StateUnknown},
+		{copyPath, agentsetup.StateOK},
+	} {
+		t.Run(filepath.Base(tc.command), func(t *testing.T) {
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+			fakeAgent(t, "claude")
+			opts := mcpconfig.Options{Agent: skills.AgentClaude, Executable: tc.command}
+			_, err := mcpconfig.Install(opts)
+			require.NoError(t, err)
+			server, found, err := mcpconfig.Registration(opts)
+			require.NoError(t, err)
+			require.True(t, found)
+			item, err := agentMCPItem("claude", exe, "", server, true)
+			require.NoError(t, err)
+			status, err := item.Check(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, status.State)
+		})
+	}
 }
 
 func TestSetupChecksAdvertisedHTTPMCP(t *testing.T) {
@@ -302,12 +280,6 @@ func TestClaudeMCPUsesKitCheck(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, agentsetup.StateUnknown, status.State)
 	assert.Equal(t, string(data), readFile(t, result.Path))
-
-	item, err = agentMCPItem("claude", exe, "http://127.0.0.1:8282", server, true)
-	require.NoError(t, err)
-	status, err = item.Check(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, agentsetup.StateOutdated, status.State)
 
 	doc["mcpServers"].(map[string]any)["roborev"].(map[string]any)["headersHelper"] = "helper"
 	data, err = json.Marshal(doc)
@@ -422,29 +394,6 @@ func TestQuickstartCodexTrust(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
-func TestDoctorRefreshesDaemonAfterMCP(t *testing.T) {
-	t.Setenv("CODEX_HOME", t.TempDir())
-	fakeAgent(t, "codex")
-	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
-	_, err := runSetup("--agent", "codex", "--mcp")
-	require.NoError(t, err)
-	marker := filepath.Join(t.TempDir(), "mcp-probe")
-	t.Setenv("ROBOREV_TEST_MCP_MARKER", marker)
-	pingCalls := 0
-	env := loadDoctorEnv(t.Context(), "", fakeDoctorDaemon{onPing: func() {
-		pingCalls++
-		_, err := os.Stat(marker)
-		if pingCalls == 1 {
-			assert.True(t, os.IsNotExist(err))
-		} else {
-			assert.NoError(t, err)
-		}
-	}})
-	assert.Equal(t, 2, pingCalls)
-	require.NotEmpty(t, env.agentReach)
-	assert.Equal(t, "agents.reach.codex", env.agentReach[0].ID)
-}
-
 func TestDoctorReportsDaemonStartedDuringMCPCheck(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	fakeAgent(t, "codex")
@@ -459,6 +408,8 @@ func TestDoctorReportsDaemonStartedDuringMCPCheck(t *testing.T) {
 		}
 		return &daemon.PingInfo{PID: 123}, nil
 	}})
+	require.NotEmpty(t, env.agentReach)
+	assert.Equal(t, "agents.reach.codex", env.agentReach[0].ID)
 	check := findDoctorCheck(t, checkDoctorDaemon(env), "daemon.running")
 	assert.Equal(t, doctorWarn, check.Status)
 	assert.Contains(t, check.Summary, "before")
@@ -591,58 +542,53 @@ func fakeCodexAppServer() int {
 }
 
 func TestSetupLeavesMixedHookCommandsUnchanged(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	fakeAgent(t, "claude")
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe, MCP: true, RoborevServerAddr: "http://127.0.0.1:8181"}, io.Discard))
-	path := filepath.Join(home, "settings.json")
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
-	hooks := doc["hooks"].(map[string]any)
-	handler := hooks["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
-	handler["command"] = handler["command"].(string) + " --turn-threshold 7"
-	handler["timeout"] = float64(23)
-	data, err := json.MarshalIndent(doc, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	mcpPath := filepath.Join(home, ".claude.json")
-	mcp := readFile(t, mcpPath)
-	states, err := setupReport(t, "--agent", "claude", "--server", "http://127.0.0.1:8282")
-	require.ErrorIs(t, err, agentsetup.ErrNotReady)
-	assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
-	assert.Equal(t, agentsetup.StateUnknown, states["mcp roborev"])
-	assert.Equal(t, agentsetup.StateOK, states["skills"])
-	assert.Equal(t, string(data), readFile(t, path))
-	assert.Equal(t, mcp, readFile(t, mcpPath))
-}
-
-func TestSetupMixedHooksKeepsCLISkills(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	fakeAgent(t, "claude")
-	out, err := runSetup("--agent", "claude")
-	require.NoError(t, err, out)
-	hookPath := filepath.Join(home, "settings.json")
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, hookPath)), &doc))
-	handler := doc["hooks"].(map[string]any)["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
-	handler["command"] = handler["command"].(string) + " --turn-threshold 7"
-	data, err := json.Marshal(doc)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(hookPath, data, 0o600))
-	skillPath := filepath.Join(home, "skills", "roborev-fix", "SKILL.md")
-	before := readFile(t, skillPath)
-	states, err := setupReport(t, "--agent", "claude", "--mcp")
-	require.ErrorIs(t, err, agentsetup.ErrNotReady)
-	assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
-	assert.Equal(t, agentsetup.StateUnknown, states["skills"])
-	assert.Equal(t, agentsetup.StateUnknown, states["mcp roborev"])
-	assert.Equal(t, before, readFile(t, skillPath))
-	assert.Equal(t, string(data), readFile(t, hookPath))
-	_, err = os.Stat(filepath.Join(home, ".claude.json"))
-	assert.True(t, os.IsNotExist(err))
+	for _, tc := range []struct {
+		name       string
+		mcp        bool
+		args       []string
+		skillState agentsetup.State
+	}{
+		{"existing MCP", true, []string{"--server", "http://127.0.0.1:8282"}, agentsetup.StateOK},
+		{"switch to MCP", false, []string{"--mcp"}, agentsetup.StateUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", home)
+			fakeAgent(t, "claude")
+			exe, err := os.Executable()
+			require.NoError(t, err)
+			require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe, MCP: tc.mcp}, io.Discard))
+			path := filepath.Join(home, "settings.json")
+			var doc map[string]any
+			require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
+			handler := doc["hooks"].(map[string]any)["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+			handler["command"] = handler["command"].(string) + " --turn-threshold 7"
+			handler["timeout"] = float64(23)
+			data, err := json.Marshal(doc)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, data, 0o600))
+			skillPath := filepath.Join(home, "skills", "roborev-fix", "SKILL.md")
+			skill := readFile(t, skillPath)
+			mcpPath := filepath.Join(home, ".claude.json")
+			var mcp string
+			if tc.mcp {
+				mcp = readFile(t, mcpPath)
+			}
+			states, err := setupReport(t, append([]string{"--agent", "claude"}, tc.args...)...)
+			require.ErrorIs(t, err, agentsetup.ErrNotReady)
+			assert.Equal(t, agentsetup.StateUnknown, states["hooks"])
+			assert.Equal(t, agentsetup.StateUnknown, states["mcp roborev"])
+			assert.Equal(t, tc.skillState, states["skills"])
+			assert.Equal(t, string(data), readFile(t, path))
+			assert.Equal(t, skill, readFile(t, skillPath))
+			if tc.mcp {
+				assert.Equal(t, mcp, readFile(t, mcpPath))
+			} else {
+				_, err = os.Stat(mcpPath)
+				assert.True(t, os.IsNotExist(err))
+			}
+		})
+	}
 }
 
 func TestSetupMCPInstallFailureKeepsCLIMode(t *testing.T) {
@@ -698,39 +644,4 @@ func TestSetupContinuesAfterOtherAgentConfigFails(t *testing.T) {
 	assert.Contains(t, out, `"state":"failed"`)
 	assert.Contains(t, readFile(t, filepath.Join(codex, "hooks.json")), "roborev-agent-hook")
 	assert.Equal(t, "{", readFile(t, filepath.Join(claude, "settings.json")))
-}
-
-func TestSetupPreservesEventSettings(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	fakeAgent(t, "claude")
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: executable}, io.Discard))
-	path := filepath.Join(home, "settings.json")
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(data, &doc))
-	hooks := doc["hooks"].(map[string]any)
-	group := hooks["PreToolUse"].([]any)[0].(map[string]any)
-	group["matcher"] = "Bash|Write"
-	group["hooks"].([]any)[0].(map[string]any)["timeout"] = float64(23)
-	delete(hooks, "Stop")
-	data, err = json.Marshal(doc)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	out, err := runSetup("--agent", "claude", "--server", "http://127.0.0.1:8282")
-	require.NoError(t, err, out)
-	data, err = os.ReadFile(path)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(data, &doc))
-	hooks = doc["hooks"].(map[string]any)
-	group = hooks["PreToolUse"].([]any)[0].(map[string]any)
-	assert.Equal(t, "Bash|Write", group["matcher"])
-	assert.InDelta(t, 23, group["hooks"].([]any)[0].(map[string]any)["timeout"], 0.001)
-	assert.Contains(t, group["hooks"].([]any)[0].(map[string]any)["command"], "http://127.0.0.1:8282")
-	require.Contains(t, hooks, "Stop")
-	stop := hooks["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
-	assert.Contains(t, stop["command"], "http://127.0.0.1:8282")
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -154,12 +153,6 @@ func agentSetupItems(name string, mcp *bool, server *string, hooksOnly bool) ([]
 			return nil, err
 		}
 		opts.Executable = updated.Executable
-		for _, required := range hooks.Hooks {
-			if !slices.ContainsFunc(specs, func(spec kitagenthook.Hook) bool { return spec.Event == required.Event }) {
-				specs = append(specs, required)
-			}
-		}
-		hooks.Hooks = specs
 		hooks.Command, hooks.CommandWindows, hooks.Executable, hooks.Arguments = command.Native, command.Windows, "", nil
 	}
 	hookItem := agentsetup.Hooks(name, hooks)
@@ -303,20 +296,8 @@ func isRoborevMCP(server mcpconfig.RegisteredServer) bool {
 	}
 	name := filepath.Base(server.Command)
 	if !strings.EqualFold(name, "roborev") && !strings.EqualFold(name, "roborev.exe") {
-		path, err := exec.LookPath(server.Command)
-		if err != nil {
-			return false
-		}
-		actual, err := os.Stat(path)
-		if err != nil {
-			return false
-		}
 		binary, err := githook.ResolveRoborevPath("")
-		if err != nil {
-			return false
-		}
-		expected, err := os.Stat(binary.Path)
-		if err != nil || !os.SameFile(actual, expected) {
+		if err != nil || server.Command != binary.Path {
 			return false
 		}
 	}
