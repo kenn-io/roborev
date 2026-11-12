@@ -7,7 +7,6 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
-- Route contested swarm outcomes to Ask in the example Agent Hook review flow.
 - Set up an optional Kata swarm to confirm or refute review findings with
     independent evidence.
 - Receive failed-review reminders only for commits the session gains during

@@ -413,20 +413,14 @@ Build the flow from the approved setup:
     `review-finding` for each job and comment the outcome there. If none exists,
     tell the user and ask how to track the finding; do not create an issue in
     place of the hook. Leave unresolved Ask findings open.
-- When a swarm is also configured, start a fresh `kata show '<issue>' --json`
-    (or `--agent`) issue read and collect all comments. If `comments_truncated`
-    is true (agent output says `Comments truncated`), repeat with `--since`
-    set to the last returned comment's full UID until false or omitted. If a
-    page fails or the cursor cannot advance, Ask. Match the exact first line
-    `swarm:<result>` (see the swarm brief), then the finding's position and
-    complete root reference; ignore older results. Re-read all pages of the
-    current finding thread before using a row, continuing truncated threads
-    from the last non-root comment. If it disagrees with current replies or
-    currency is uncertain, Ask for lead to correct the comment.
-    Route Contested, malformed, unknown, missing or ambiguous rows, multiple
-    matching comments, and incomplete reads to Ask with the reason. Unchecked
-    or no outcome on a complete read continues ordinary source triage, as
-    Confirmed and Refuted do; check sources before acting.
+- When a swarm is also configured, read the current result's outcome comment
+    and re-read the finding's current thread before the disposition, paging
+    both as the swarm brief's steps say. Match the exact first line
+    `swarm:<result>`, then position and complete root reference; ignore older
+    results. Route Contested, malformed, unknown, missing or ambiguous rows,
+    multiple matching comments, incomplete reads, and stale or uncertain rows
+    (ask lead for a correction) to Ask with the reason. Unchecked or no outcome
+    on a complete read continues ordinary source triage; check sources first.
 
 The flow refines the Which disposition step of `roborev_triage`. Use `Fix:`,
 `Decline:`, `Invalid:`, and `Ask:` action labels. End at an oval labeled
@@ -651,10 +645,9 @@ newer; do not offer the swarm. Check existing Kata hooks for `review.completed`,
 the requested branches and destination. Prefer a hook covering the bound project;
 otherwise propose a suitable hook under the existing approval gate. Never silently
 change a hook. If an explicit project is selected, record it in the brief and
-pass `--project <name>` to every native Kata command. During setup, do not read
-Kata issues until the user agrees to a run. Explain that enabling a swarm-reading
-review flow also authorizes matching issue reads even when no swarm has run; if
-the user does not agree to those reads, omit that flow integration.
+pass `--project <name>` to every native Kata command. Do not read Kata issues
+until the user agrees to a run. A swarm-reading review flow reads matching
+issues even when no swarm has run; say so, and omit it if the user declines.
 
 Ask how many teammates check each reviewer, which agents they use, and who
 starts them. Guess two per reviewer on different agents if the user runs two,
@@ -792,10 +785,10 @@ If neither is established, reply with what you checked and what was missing.
    finding unchecked and actionable. Lead checks cited `path:line` locations at
    the reviewed commit; a resolving citation alone does not prove the
    conclusion. Post an outcome comment whose first line is exactly
-   `swarm:<result>`, followed by one row per finding with position, complete root
+   `swarm:<result>`, then one row per finding with position, complete root
    reference and outcome (for example, `1 | <comment-ref> | confirmed`):
-   confirmed (confirm only), refuted (refute only, record why), contested (both), or unchecked (neither
-   or incomplete). Only lead may
+   confirmed (confirm only), refuted (refute only, record why), contested
+   (both), or unchecked (neither or incomplete). Only lead may
    supersede duplicates. Contested and unchecked stay actionable. Tell the user the outcomes or pass
    them to the fixing agent before edits. With user approval, tune the rubric
    using refuted findings.
@@ -822,17 +815,17 @@ kata --teammate=lead comment edit '<issue>' '<outcome-comment-uid>' \
   --body-file outcome.md --agent
 ```
 
-Keep one outcome comment per result. Before handoff, re-read current threads
-and reclassify affected rows. If replies arrive later or an incomplete thread
-becomes readable, lead refreshes the same comment: find its UID in a complete
-fresh issue read, edit it as above, and preserve `swarm:<result>` and the
-position/root columns. Start each issue read from the beginning; if
-`comments_truncated` is true (agent output says `Comments truncated`), collect
-pages using `--since` with the last returned comment's full UID until false or
-omitted. If a page fails or the cursor cannot advance, report uncertainty. Do
-not post a second outcome or retry changed content under the creation key.
-Re-read the edited comment and current replies before handoff; if a read or edit
-fails, report uncertainty instead of presenting the old row as current.
+Keep one outcome comment per result. Before handoff, and when later replies
+or a newly readable thread change a row, lead re-reads current threads and
+reclassifies affected rows. Find the comment's UID in a complete fresh issue
+read and edit it as above, preserving `swarm:<result>` and the position/root
+columns; then re-read the edited comment and current replies before handoff.
+Start each issue read from the beginning; if `comments_truncated` is true
+(agent output says `Comments truncated`), continue with `--since` set to the
+last returned comment's full UID until false or omitted. If a page, read or
+edit fails, or the cursor cannot advance, report uncertainty instead of
+presenting the old row as current. Never post a second outcome or retry
+changed content under the creation key.
 
 Use `--refute` or `--reply` when evidence calls for it, with the kind in the
 key. Never use `--force` or close a Kata issue or roborev review for a reply.
@@ -854,11 +847,9 @@ Finish with a short summary:
 - How to tune: edit a rubric, commit, and review again.
 - How to start a swarm run, if configured; the user starts the teammates.
     Main fix, refine and later review prompts do not consume typed swarm
-    outcomes; pass them to the user or fixing agent. If verification must
-    precede edits, the user tells the coding agent to defer edits until the
-    swarm finishes and its current outcomes are handed over. The optional flow
-    does not wait for a swarm; a complete read with no outcome continues
-    ordinary source triage.
+    outcomes; pass them to the user or fixing agent. The review flow does not
+    wait for a swarm: to verify before edits, the user tells the coding agent
+    to defer edits until the current outcomes are handed over.
 - How to add a source document: commit its text where the rubric expects it,
     and update the rubric or include when the path changes.
 - Whether the Agent Hook is installed for their coding agent. Ask; if it is

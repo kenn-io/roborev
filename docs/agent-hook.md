@@ -499,8 +499,6 @@ text or the reserved graph name `roborev_triage`. Invalid flows fail repository
 configuration validation. Keep flows compact and refer to source files instead
 of repeating rubrics. `roborev doctor` reports the source, working-tree changes,
 and custom instructions that suppress the flow.
-For an optional flow that reads Kata swarm outcomes, see the
-[Kata swarm walkthrough](integrations/kata.md#confirm-or-refute-findings-with-a-swarm).
 
 The reminder eligibility check ignores only `agent_hook.review_flow` while
 loading repository settings. An invalid flow value therefore does not hide
