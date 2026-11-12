@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -19,12 +21,16 @@ func ClassifyKataContextError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var problem generated.ErrorModel
-	if !errors.As(err, &problem) || problem.Status == nil {
+	var status int
+	if apiErr, ok := errors.AsType[*runtime.ClientAPIError](err); ok && apiErr.StatusCode() != 0 {
+		status = apiErr.StatusCode()
+	} else if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Status != nil {
+		status = int(*problem.Status)
+	} else {
 		return err
 	}
 	var class error
-	switch int(*problem.Status) {
+	switch status {
 	case http.StatusUnauthorized:
 		class = ErrKataAuthentication
 	case http.StatusForbidden:

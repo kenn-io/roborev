@@ -136,6 +136,9 @@ func kataProbeFailure(err error) error {
 // daemonAnswerStatus returns the HTTP status of a reply the generated client
 // could not use, whether the body was the API's error model or something else.
 func daemonAnswerStatus(err error) (int, bool) {
+	if apiErr, ok := errors.AsType[*runtime.ClientAPIError](err); ok && apiErr.StatusCode() != 0 {
+		return apiErr.StatusCode(), true
+	}
 	if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Status != nil {
 		return int(*problem.Status), true
 	}
