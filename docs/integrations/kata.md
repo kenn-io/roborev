@@ -32,13 +32,13 @@ verification before use. Invalid credential headers are authentication errors;
 invalid retry-key headers are request errors. Workspace discovery stops at the
 nearest `.git` file or directory. Binding files must use version 1; an
 unsupported version stops lookup instead of selecting a parent project or the
-configured default. Discovery follows the physical Git boundary when a symlink crosses into
-a different repository. Version-1 names are trimmed; a committed legacy
-`project.identity` can supply the name. Invalid names stop lookup, while an
-empty local name or local legacy identity leaves the committed binding intact.
-An empty committed binding stops lookup rather than selecting a parent project
-or the configured default. Existing CLI-based workflows use the same workspace
-discovery and binding rules.
+configured default. Discovery follows the physical Git boundary when a symlink
+crosses into a different repository. Version-1 names are trimmed; a committed
+legacy `project.identity` can supply the name. Invalid names stop lookup, while
+an empty local name or local legacy identity leaves the committed binding
+intact. An empty committed binding stops lookup rather than selecting a parent
+project or the configured default. Existing CLI-based workflows use the same
+workspace discovery and binding rules.
 
 Implicit API selection uses the workspace's registered Git or local alias and
 returns its current canonical project name. The lookup never registers an alias
