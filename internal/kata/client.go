@@ -94,6 +94,8 @@ func realRun(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) 
 					return nil, ErrDocbankNotConfigured
 				case "daemon_unavailable":
 					return nil, ErrDaemonUnavailable
+				case "daemon_api_too_old":
+					return nil, ErrDaemonAPITooOld
 				}
 			}
 			return nil, fmt.Errorf("kata %s: exit %d: %s", verb, ee.ExitCode(), stderr)

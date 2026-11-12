@@ -58,18 +58,12 @@ func (c *CLIClient) ResolveArchiveIssue(ctx context.Context, project, ref string
 // supportsAttachmentReuse caches only successful help probes. Concurrent first
 // probes may run independently so one caller's context never blocks another.
 func (c *CLIClient) supportsAttachmentReuse(ctx context.Context) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
 	if state := c.archiveReuse.Load(); state != 0 {
 		return state == 2, nil
 	}
 	out, err := c.run(ctx, c, []string{"docbank", "attachments", "add", "--help"}, nil)
 	if err != nil {
 		return false, fmt.Errorf("probe attachment reuse: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return false, err
 	}
 	state := uint32(1)
 	for _, line := range strings.Split(string(out), "\n") {
@@ -115,8 +109,6 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string
 		case <-lock.token:
 		}
 		defer func() { lock.token <- struct{}{} }()
-	}
-	if !reuse {
 		issue, err := c.ResolveArchiveIssue(ctx, project, uid)
 		if err != nil {
 			return err

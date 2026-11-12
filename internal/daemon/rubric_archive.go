@@ -53,7 +53,7 @@ func archiveRubricMessages(ctx context.Context, client kata.Client, project stri
 }
 
 func archiveGlobalFailure(ctx context.Context, err error) bool {
-	return ctx.Err() != nil || errors.Is(err, kata.ErrUnavailable) || errors.Is(err, kata.ErrDaemonUnavailable) || errors.Is(err, kata.ErrDocbankNotConfigured)
+	return ctx.Err() != nil || errors.Is(err, kata.ErrUnavailable) || errors.Is(err, kata.ErrDaemonUnavailable) || errors.Is(err, kata.ErrDaemonAPITooOld) || errors.Is(err, kata.ErrDocbankNotConfigured)
 }
 
 func archiveRubric(ctx context.Context, client kata.Client, job storage.ReviewJob, repoPath string, data []byte, digest string, report func(error)) {

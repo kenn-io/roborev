@@ -19,6 +19,8 @@ var (
 	ErrNoBinding = errors.New("kata: no .kata.toml binding for workdir")
 	// ErrDaemonUnavailable means the Kata daemon could not be reached.
 	ErrDaemonUnavailable = errors.New("kata: daemon unavailable; check the Kata daemon")
+	// ErrDaemonAPITooOld means the Kata daemon must be upgraded.
+	ErrDaemonAPITooOld = errors.New("kata: daemon API too old; upgrade the Kata daemon and retry")
 	// ErrDocbankNotConfigured means the Kata daemon has no Docbank configured.
 	ErrDocbankNotConfigured = errors.New("kata: Docbank not configured; run kata docbank setup")
 )

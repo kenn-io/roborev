@@ -29,6 +29,7 @@ func TestRealRunErrorTransport(t *testing.T) {
 	}{
 		{name: "docbank", stderr: `{"error":{"code":"docbank_not_configured"}}`, want: ErrDocbankNotConfigured},
 		{name: "daemon", stderr: `{"error":{"code":"daemon_unavailable"}}`, want: ErrDaemonUnavailable},
+		{name: "old daemon API", stderr: `{"error":{"code":"daemon_api_too_old"}}`, want: ErrDaemonAPITooOld},
 		{name: "warning prefix", stderr: "kata: ignoring invalid KATA_HTTP_TIMEOUT=\"30\" (expected a Go duration like 30s or 2m); using default 30s\n" + `{"error":{"code":"docbank_not_configured"}}` + "\n", want: ErrDocbankNotConfigured},
 		{name: "malformed", stderr: `not json`},
 		{name: "unknown", stderr: `{"error":{"code":"unknown"}}`},
@@ -49,6 +50,7 @@ func TestRealRunErrorTransport(t *testing.T) {
 				require.ErrorContains(t, err, tc.stderr)
 				require.NotErrorIs(t, err, ErrDocbankNotConfigured)
 				require.NotErrorIs(t, err, ErrDaemonUnavailable)
+				require.NotErrorIs(t, err, ErrDaemonAPITooOld)
 			}
 		})
 	}

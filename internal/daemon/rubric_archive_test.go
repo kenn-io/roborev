@@ -52,7 +52,7 @@ func TestArchiveRubricDeduplicatesAliases(t *testing.T) {
 }
 
 func TestArchiveRubricStopsForGlobalFailure(t *testing.T) {
-	for _, failure := range []error{kata.ErrUnavailable, kata.ErrDaemonUnavailable, kata.ErrDocbankNotConfigured} {
+	for _, failure := range []error{kata.ErrUnavailable, kata.ErrDaemonUnavailable, kata.ErrDaemonAPITooOld, kata.ErrDocbankNotConfigured} {
 		fake := &katatest.FakeClient{ArchiveErr: failure}
 		var failures []error
 		archiveRubricMessages(t.Context(), fake, "demo", []string{"kata#abc4 kata#def5"}, "rubric.md", []byte("rubric"), func(err error) { failures = append(failures, err) })
