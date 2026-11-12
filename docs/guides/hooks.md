@@ -165,6 +165,7 @@ command = 'echo "{error}"'
 | `{repo_name}` | Display name for the repo | Always |
 | `{sha}` | Commit SHA or git ref | Always |
 | `{agent}` | Agent that ran the review (e.g., `codex`, `claude-code`) | Always |
+| `{rubric_sha256}` | Full SHA-256 digest of the rendered custom rubric | When available |
 | `{verdict}` | `P` (pass) or `F` (fail) | `review.completed` only |
 | `{findings}` | Full review output from the agent | `review.completed` only |
 | `{error}` | Error message describing why the job failed | `review.failed` only |
@@ -258,8 +259,8 @@ url = "https://example.com/roborev-webhook"
 
 The webhook sends a JSON POST with a 5-second timeout. The payload is the full
 review event as JSON (`type`, `ts`, `job_id`, `job_uuid`, `repo`, `repo_name`,
-`sha`, `branch`, `agent`, `verdict`, `findings`, `error`, `worktree_path`), with
-unset fields omitted. See [Event Fields](/docs/advanced/streaming/#event-fields)
+`sha`, `branch`, `agent`, `review_type`, `rubric_sha256`, `verdict`, `findings`,
+`error`, `worktree_path`), with unset fields omitted. See [Event Fields](/docs/advanced/streaming/#event-fields)
 for field semantics. The `url` field is treated as sensitive and is masked in
 `roborev config list` output. Webhook URLs are redacted in daemon logs (only the
 scheme and host are shown).

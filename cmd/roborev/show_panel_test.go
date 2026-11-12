@@ -108,3 +108,12 @@ func TestFormatReviewersSummaryMarksNonVoting(t *testing.T) {
 	assert.False(t, block.Members[0].NonVoting)
 	assert.True(t, block.Members[1].NonVoting)
 }
+
+func TestPanelMemberRubricIdentity(t *testing.T) {
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	members := []storage.ReviewJob{{ID: 1, PanelMemberName: "custom", ReviewType: "audit", RubricSHA256: &digest}}
+	block := buildShowPanelBlock(2, testUUID("run-rubric"), "panel", members)
+	require.Len(t, block.Members, 1)
+	assert.Equal(t, &digest, block.Members[0].RubricSHA256)
+	assert.Equal(t, "1 reviewers: custom (audit@1234567890abcdef) -", formatReviewersSummary(members))
+}

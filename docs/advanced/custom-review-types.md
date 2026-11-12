@@ -37,8 +37,9 @@ where the digest is the first 16 hexadecimal characters of the SHA-256 of the
 rendered template and includes, trimmed and followed by one newline. The full
 `rubric_sha256` is available in job JSON and review hook events. The digest
 identifies the rubric used by the review attempt; changing a template or an
-include can change it. Built-in types, supplied prompts, and panel synthesis
-have no rubric digest.
+include can change it. CI custom reviews record the digest of their prebuilt
+prompt. Built-in types, supplied prompts, and panel synthesis have no rubric
+digest. Panel output lists each member’s rubric ID when available.
 
 ## Configuration reference
 

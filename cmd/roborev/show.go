@@ -50,13 +50,14 @@ func openReviewHint(review storage.Review, command string) *cliHint {
 
 // showPanelMember is one reviewer in the additive show --json panel block.
 type showPanelMember struct {
-	JobID      int64  `json:"job_id"`
-	Name       string `json:"name"`
-	Agent      string `json:"agent"`
-	ReviewType string `json:"review_type"`
-	Status     string `json:"status"`
-	Verdict    string `json:"verdict,omitempty"`
-	NonVoting  bool   `json:"non_voting,omitempty"`
+	JobID        int64   `json:"job_id"`
+	Name         string  `json:"name"`
+	Agent        string  `json:"agent"`
+	ReviewType   string  `json:"review_type"`
+	RubricSHA256 *string `json:"rubric_sha256,omitempty"`
+	Status       string  `json:"status"`
+	Verdict      string  `json:"verdict,omitempty"`
+	NonVoting    bool    `json:"non_voting,omitempty"`
 }
 
 // showPanelBlock is the additive "panel" object on show --json for a synthesis
@@ -74,12 +75,13 @@ func buildShowPanelBlock(synthesisJobID int64, runUUID uuid.UUID, name string, m
 	block := showPanelBlock{RunUUID: runUUID, Name: name, SynthesisJobID: synthesisJobID}
 	for _, m := range members {
 		member := showPanelMember{
-			JobID:      m.ID,
-			Name:       m.PanelMemberName,
-			Agent:      m.Agent,
-			ReviewType: m.ReviewType,
-			Status:     string(m.Status),
-			NonVoting:  m.NonVoting,
+			JobID:        m.ID,
+			Name:         m.PanelMemberName,
+			Agent:        m.Agent,
+			ReviewType:   m.ReviewType,
+			RubricSHA256: m.RubricSHA256,
+			Status:       string(m.Status),
+			NonVoting:    m.NonVoting,
 		}
 		if m.Verdict != nil {
 			member.Verdict = *m.Verdict
@@ -101,6 +103,9 @@ func formatReviewersSummary(members []storage.ReviewJob) string {
 		name := m.PanelMemberName
 		if name == "" {
 			name = m.Agent
+		}
+		if id := storage.RubricID(m.ReviewType, m.RubricSHA256); id != "" {
+			name += " (" + id + ")"
 		}
 		if m.NonVoting {
 			name += " (non-voting)"

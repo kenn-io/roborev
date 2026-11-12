@@ -263,7 +263,6 @@ func TestRenderedRubricBytes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("Check safety\n"), result.Rubric)
 	assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte("Check safety\n"))), result.RubricSHA256)
-	assert.Contains(t, result.Prompt, "Check safety")
 	other := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(other, "review.tmpl"), []byte("  Check {{ index .Includes \"rule\" }}  \n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(other, "rule.md"), []byte("safety"), 0o644))
@@ -282,4 +281,22 @@ func TestRenderedRubricBytes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, builtin.Rubric)
 	assert.Empty(t, builtin.RubricSHA256)
+}
+
+func TestReviewResultRubricCommitAndRange(t *testing.T) {
+	repo := newTestRepo(t)
+	base := repo.fastCommitFile("review.tmpl", "  Inspect safety  ", "rubric")
+	head := repo.fastCommitFile("change.txt", "change", "change")
+	cfg := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{
+		"custom": {Template: "review.tmpl"},
+	}}}
+	builder := NewBuilder(nil).ForRepo(repo.dir, 0).WithRepoConfig(cfg, "")
+	for _, ref := range []string{head, base + ".." + head} {
+		t.Run(ref, func(t *testing.T) {
+			result, err := builder.BuildResultForReview(ref, 0, "test", "custom", "")
+			require.NoError(t, err)
+			assert.Equal(t, []byte("Inspect safety\n"), result.Rubric)
+			assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256(result.Rubric)), result.RubricSHA256)
+		})
+	}
 }

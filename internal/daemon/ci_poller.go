@@ -236,22 +236,6 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	// task-ledger content stays out of CI prompts entirely (it could
 	// otherwise surface in publicly posted PR comments). Kata context is a
 	// local-review feature; the worker also skips it for CI jobs.
-	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
-		builder := prompt.NewBuilderWithConfig(p.db, cfg).
-			WithContext(ctx).
-			ForRepo(repoPath, repoID).
-			WithRepoConfig(repoCfg, repoCfgRef).
-			WithStructuredOutput(true).
-			WithPullRequest(pr)
-		return builder.BuildWithAdditionalContext(
-			gitRef,
-			contextCount,
-			agentName,
-			reviewType,
-			minSeverity,
-			additionalContext,
-		)
-	}
 	p.postPRCommentFn = p.postPRComment
 
 	if cfg.CI.GitHubAppConfigured() {
@@ -1777,7 +1761,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	contextCount := config.ResolveReviewContextCount(in.repoCfg, in.cfg)
 	memberOpts := make([]storage.EnqueueOpts, 0, len(in.members))
 	for i, m := range in.members {
-		storedPrompt, err := p.callBuildReviewPrompt(
+		built, err := p.callBuildReviewPromptResult(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, contextCount,
 			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext,
 			in.pullRequest, in.repoCfg, in.repoCfgRef, in.cfg,
@@ -1790,7 +1774,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			}
 			log.Printf("CI poller: failed to prebuild prompt for %s#%d (member=%s, agent=%s): %v; enqueuing without stored prompt",
 				in.ghRepo, in.prNumber, m.Name, m.Agent, err)
-			storedPrompt = ""
+			built = prompt.BuildResult{}
 		}
 		acpSnapshot, err := snapshotACPExecutionConfig(
 			in.repoCfg, in.cfg, m.Agent, m.BackupAgent,
@@ -1809,6 +1793,10 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 				"snapshot ACP config for panel member %q: %w", m.Name, err,
 			)
 		}
+		var digest *string
+		if built.RubricSHA256 != "" {
+			digest = &built.RubricSHA256
+		}
 		memberOpts = append(memberOpts, storage.EnqueueOpts{
 			RepoID:                in.repo.ID,
 			GitRef:                in.gitRef,
@@ -1822,8 +1810,9 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			Reasoning:             m.Reasoning,
 			ReviewType:            m.ReviewType,
 			MinSeverity:           reviewMinSeverity,
-			Prompt:                storedPrompt,
-			PromptPrebuilt:        storedPrompt != "",
+			Prompt:                built.Prompt,
+			PromptPrebuilt:        built.Prompt != "",
+			RubricSHA256:          digest,
 			JobType:               storage.JobTypeRange,
 			Source:                storage.JobSourceCI,
 			PanelRole:             storage.PanelRoleMember,
@@ -3778,8 +3767,14 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 }
 
 func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
+	built, err := p.callBuildReviewPromptResult(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
+	return built.Prompt, err
+}
+
+func (p *CIPoller) callBuildReviewPromptResult(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (prompt.BuildResult, error) {
 	if p.buildReviewPromptFn != nil {
-		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
+		text, err := p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
+		return prompt.BuildResult{Prompt: text}, err
 	}
 	builder := prompt.NewBuilderWithConfig(p.db, cfg).
 		WithContext(ctx).
@@ -3787,7 +3782,7 @@ func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef s
 		WithRepoConfig(repoCfg, repoCfgRef).
 		WithStructuredOutput(true).
 		WithPullRequest(pr)
-	return builder.BuildWithAdditionalContext(
+	return builder.BuildResultWithAdditionalContext(
 		gitRef,
 		contextCount,
 		agentName,

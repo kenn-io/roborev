@@ -1246,6 +1246,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
+		if job.Source == storage.JobSourceCI || job.Source == "ci_branch" {
+			rubricDigest = job.RubricSHA256
+		}
 		// CI jobs store their threshold at enqueue. A supplied prompt replaces
 		// only the prompt, so its threshold resolves like an ordinary review's.
 		if job.Source == storage.JobSourceReviewPrompt && !hasSuppliedReviewSettings(job) && effectiveMinSeverity == "" {
@@ -1378,7 +1381,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// The job's stored prompt is the only copy the prompt views read, so a
 	// failed save retries the job instead of running the agent without it.
-	if saved, err := wp.db.SaveJobPromptAndRubricForAttempt(ctx, job, workerID, promptToPersist, rubricDigest); err != nil {
+	if saved, err := wp.db.SaveJobPromptForAttempt(ctx, job, workerID, promptToPersist, rubricDigest); err != nil {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
 		return
@@ -1910,6 +1913,8 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 		if !wp.cancellationEventOwnedByCaller(job.ID) {
 			wp.broadcaster.Broadcast(Event{
 				Type:              jobEventType(job, "canceled"),
+				ReviewType:        job.ReviewType,
+				RubricSHA256:      job.RubricSHA256,
 				TS:                time.Now(),
 				JobID:             job.ID,
 				Repo:              job.RepoPath,
