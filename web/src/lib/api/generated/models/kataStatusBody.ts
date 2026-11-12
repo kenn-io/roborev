@@ -13,7 +13,7 @@ export interface KataStatusBody {
   enabled: boolean;
   /** Plain description of the state */
   message: string;
-  /** Project in effect: the requested one, the repository's binding, or the default project */
+  /** Project in effect: the requested one or the default project */
   project?: string;
   /** Reduced security guarantee on this platform, if any */
   security_note?: string;

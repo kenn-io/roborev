@@ -2589,53 +2589,6 @@ func (j JobWithReview) Validate() error {
 	return errors
 }
 
-type KataCreateRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-
-	// Body Issue body
-	Body *string `json:"body,omitempty"`
-
-	// IdempotencyKey Makes a retry return the issue the first request created
-	IdempotencyKey *string  `json:"idempotency_key,omitempty"`
-	Labels         []string `json:"labels,omitempty"`
-
-	// Priority Priority 0 to 4
-	Priority *int64 `json:"priority,omitempty"`
-
-	// Project Project to file into; empty selects the default project
-	Project *string `json:"project,omitempty"`
-
-	// Title Issue title
-	Title string `json:"title" validate:"required"`
-
-	// WorkspaceAliasIdentity Registered workspace alias identity; use with workspace_alias_kind instead of project
-	WorkspaceAliasIdentity *string `json:"workspace_alias_identity,omitempty"`
-
-	// WorkspaceAliasKind Registered workspace alias kind: git or local
-	WorkspaceAliasKind *string `json:"workspace_alias_kind,omitempty"`
-}
-
-func (k KataCreateRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(k))
-}
-
-type KataCreateResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-
-	// Author The actor Kata recorded; an authenticated credential overrides roborev's requested actor
-	Author *string `json:"author,omitempty"`
-
-	// Reused Whether Kata answered with an issue an earlier request under the same key created
-	Reused  bool   `json:"reused"`
-	ShortID string `json:"short_id" validate:"required"`
-}
-
-func (k KataCreateResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(k))
-}
-
 type KataIssue struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema      *string        `json:"$schema,omitempty"`
@@ -2756,7 +2709,7 @@ type KataStatusBody struct {
 	// Message Plain description of the state
 	Message string `json:"message" validate:"required"`
 
-	// Project Project in effect: the requested one, the repository's binding, or the default project
+	// Project Project in effect: the requested one or the default project
 	Project *string `json:"project,omitempty"`
 
 	// SecurityNote Reduced security guarantee on this platform, if any
