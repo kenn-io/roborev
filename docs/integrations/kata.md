@@ -347,47 +347,63 @@ identify the standalone or combined synthesis job and reviewed commit. An ID
 printed at enqueue is a shortcut. Use that job's issue; the hook also files
 issues for failing panel members. If the ref is dirty or no committed snapshot
 matches the reviewed changes, stop: commit and request a new review before a
-swarm. Match the issue to the job and commit. For the native path, locate the
-issue as follows; for published roots, use `roborev kata show` below instead.
-Replace the quoted placeholders:
+swarm. Read the full result on either path:
 
 ```bash
-kata --teammate=lead search "roborev show <job-id>" --agent
-kata --teammate=lead show '<issue>' --agent
 roborev job show --job <job-id>
 roborev job show --job <job-id> --json
 ```
 
 When doctor reports the Kata connection ready and that the server stores typed
-replies, configure `findings = "comments"` on the hook. This publishes roots for
-failing local reviews and synthesis, not CI or panel members. After the user
-agrees to the run, inspect `roborev kata show <job-id>` for the publication
-status, project, issue UID, positions and handles. From the checkout use native
-`kata show` on the issue and compare the project and full issue UID; confirm the
-native routing and daemon endpoint configuration select the same server. Stop
-before assigning work if they differ, identity cannot be established,
-publication is incomplete or ambiguous, or any root cannot be matched to the
-full result and native issue. The lead never posts duplicate roots. Doctor
-checks the bound or default project, not an explicit hook project; verify that
-destination separately. If the enabled connection is not ready or lacks typed
-replies, stop and report it.
+replies, propose `findings = "comments"` on the existing covering hook under
+approval; do not leave a duplicate legacy hook. This publishes roots for failing
+local reviews and synthesis, not CI or panel members. Doctor checks the bound or
+default project, not an explicit hook project; verify that destination
+separately. If the daemon is down or its status cannot be read, explain that it
+needs to be started or restarted with approval and doctor rechecked. Stop on a
+reported unhealthy connection or missing typed replies. Only a disabled
+connection uses the native path.
 
-The lead writes a charter with the question, review job and commit, rubric per
-reviewer, brief at that commit, roster and assignments. Without a connection,
-use the native path below: the hook issue body may be truncated, so copy every
-finding from the full job result into its own root, including position, sources,
-severity, location and problem text. For synthesis, match each Markdown
-`Reported by` agent and review type to panel member metadata and member job
-results from `roborev job show` when needed. Assign every identified source
-reviewer. If the mapping is ambiguous, such as the same agent and type with
-different member instructions, do not assign that finding; report it unchecked.
-Keep one root and outcome row per finding. Reconcile every full-result finding
-to a root and outcome. Record complete comment references from `kata show`. For
-`<result>`, use the top-level `uuid` from the JSON output; if absent, use
-exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only for
-identical retries of the same result. A rerun has a new result: leave old roots,
-replies and outcomes as history and post a new charter. On the native path post
-new roots with new keys. Never carry outcomes forward:
+After the user agrees to the run, inspect `roborev kata show <job-id>`. If
+publication is in progress, report it and reinspect after it completes. Before
+posting a charter or any native top-level comment, require `Status: complete`
+and every matched finding root `complete`, and match every root to the full
+result and native issue. Stop and report missing, ambiguous, truncated, edited
+or otherwise incomplete publication. Never post duplicate roots. From the
+checkout, compare the native project and `issue.uid` with roborev's output and
+confirm native routing and the daemon endpoint select the same server. Stop on
+mismatch or unverifiable identity. Use agent output for complete comment refs:
+
+```bash
+kata --teammate=lead show '<issue>' --json
+kata --teammate=lead show '<issue>' --agent
+```
+
+On the disabled-connection native path, locate the issue by job ID and match it
+to the job and commit:
+
+```bash
+kata --teammate=lead search "roborev show <job-id>" --agent
+kata --teammate=lead show '<issue>' --agent
+```
+
+For synthesis, match each Markdown `Reported by` agent and review type to panel
+member metadata and member job results from `roborev job show` when needed.
+Assign every identified source reviewer. If the mapping is ambiguous, such as
+the same agent and type with different member instructions, do not assign that
+finding; report it unchecked. Once the published-root preconditions are met, the
+lead posts a charter with the question, review job and commit, rubric per
+reviewer, brief at that commit, roster and assignments. On the native path the
+hook issue body may be truncated: post one root per finding from the full job
+result, including position, sources, severity, location and problem text.
+Reconcile every full-result finding to a root and outcome. Record complete
+comment references from `kata show`. For `<result>`, use the top-level `uuid`
+from the JSON output; if absent, use exactly
+`<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only for identical
+retries of the same result. A rerun has a new result: identify its new job
+result and issue, leave old roots, replies and outcomes as history, and post a
+new charter. On the native path post new roots with new keys. Never carry
+outcomes forward:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
