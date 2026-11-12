@@ -465,6 +465,9 @@ type Config struct {
 
 	// Kata task-context integration for review prompts
 	KataContext KataContextConfig `toml:"kata_context"`
+	// Optional connections to other services. Global-only: credentials and
+	// endpoints are the daemon owner's choice, never a repository's.
+	Integrations IntegrationsConfig `toml:"integrations"`
 	// Candidate-gate policy. Keep this global so checkout config cannot weaken it.
 	GoalReview GoalReviewPolicyConfig `toml:"goal_review"`
 
@@ -737,6 +740,9 @@ func (c *Config) Validate() (err error) {
 	}
 	if err := validateSearchConfig(c.Search); err != nil {
 		return err
+	}
+	if err := c.Integrations.Kata.Validate(); err != nil {
+		return fmt.Errorf("integrations.kata: %w", err)
 	}
 	reasoning := []namedConfigValue{
 		{key: "ci.check_reasoning", value: c.CI.CheckReasoning},
@@ -1053,7 +1059,8 @@ func DefaultConfig() *Config {
 			FailedReviewThreshold: 4,
 			Instruction:           DefaultAgentHookInstruction,
 		},
-		KataContext: KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
+		KataContext:  KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
+		Integrations: IntegrationsConfig{Kata: KataIntegrationConfig{Teammate: DefaultKataTeammate}},
 		Agent: AgentConfig{
 			Codex: CodexConfig{
 				DisableReviewSkills:    true,
@@ -1178,6 +1185,7 @@ func applyDaemonSections(c *Config) []error {
 		{"search", func() error { return validateSearchConfig(c.Search) }},
 		{"remote", func() error { return validateRemoteConfig(c.Remote) }},
 		{"web", func() error { return normalizeWebConfig(&c.Web, c.AuthKey) }},
+		{"integrations.kata", c.Integrations.Kata.Validate},
 	} {
 		if err := section.validate(); err != nil {
 			errs = append(errs, fmt.Errorf("[%s]: %w", section.name, err))
@@ -1511,6 +1519,12 @@ func validateRepoConfigScope(md toml.MetaData) error {
 		return fmt.Errorf(
 			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
 			"fix_guidelines",
+		)
+	}
+	if md.IsDefined("integrations", "kata") {
+		return fmt.Errorf(
+			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
+			"integrations.kata",
 		)
 	}
 	if md.IsDefined("goal_review", "kata_gate") {

@@ -332,6 +332,52 @@ func (l ListJobsQuery) Validate() error {
 	return errors
 }
 
+type KataShowIssueQuery struct {
+	// Ref Issue short ID, UID, or project#short ID
+	Ref string `json:"ref" validate:"required"`
+
+	// Project Project for a bare ref; empty selects the default project
+	Project *string `json:"project,omitempty"`
+
+	// WorkspaceAliasIdentity Registered workspace alias identity; use with workspace_alias_kind instead of project
+	WorkspaceAliasIdentity *string `json:"workspace_alias_identity,omitempty"`
+
+	// WorkspaceAliasKind Registered workspace alias kind: git or local
+	WorkspaceAliasKind *string `json:"workspace_alias_kind,omitempty"`
+}
+
+func (k KataShowIssueQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataListIssuesQuery struct {
+	// Project Project to read; empty selects the default project
+	Project *string `json:"project,omitempty"`
+
+	// WorkspaceAliasIdentity Registered workspace alias identity; use with workspace_alias_kind instead of project
+	WorkspaceAliasIdentity *string `json:"workspace_alias_identity,omitempty"`
+
+	// WorkspaceAliasKind Registered workspace alias kind: git or local
+	WorkspaceAliasKind *string `json:"workspace_alias_kind,omitempty"`
+
+	// Status Issue status filter: open (default), closed, or all
+	Status *string `json:"status,omitempty"`
+
+	// Unlimited Read the complete set instead of the first 200 issues
+	Unlimited *bool `json:"unlimited,omitempty"`
+}
+
+type KataStatusQuery struct {
+	// Project Project to check instead of the default project
+	Project *string `json:"project,omitempty"`
+
+	// WorkspaceAliasIdentity Registered workspace alias identity; use with workspace_alias_kind instead of project
+	WorkspaceAliasIdentity *string `json:"workspace_alias_identity,omitempty"`
+
+	// WorkspaceAliasKind Registered workspace alias kind: git or local
+	WorkspaceAliasKind *string `json:"workspace_alias_kind,omitempty"`
+}
+
 type ListReposQuery struct {
 	// Branch Filter to repos with jobs on this branch
 	Branch *string `json:"branch,omitempty"`
