@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -447,6 +448,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		return nil, err
 	}
 	var seed *storage.KataPublicationSeed
+	missingCheckout := false
 	if record.Marker != nil {
 		if record.Marker.Version != 1 || record.Marker.DocumentHash != record.DocumentHash {
 			return nil, storage.ErrReviewChanged
@@ -460,6 +462,13 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		}
 		seed = &record.Marker.KataPublicationSeed
 	} else {
+		if _, err := os.Stat(checkout); errors.Is(err, os.ErrNotExist) {
+			// A sync-only repository has no local hooks or workspace binding.
+			checkout = ""
+			missingCheckout = true
+		} else if err != nil {
+			return nil, err
+		}
 		name, err := kataInspectionProject(cfg, review.Job, checkout)
 		if err != nil {
 			return nil, err
@@ -470,7 +479,9 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	}
 	var client *kata.APIClient
 	var name string
-	if seed == nil {
+	if seed == nil && missingCheckout {
+		client, err = kata.NewAPIClient("", cfg.Integrations.Kata, kata.WithoutWorkspace())
+	} else if seed == nil {
 		client, err = kata.NewAPIClient(checkout, cfg.Integrations.Kata)
 	} else {
 		client, name, err = kataSelectionClient(cfg.Integrations.Kata, *seed)
