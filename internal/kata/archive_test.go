@@ -194,6 +194,10 @@ func TestArchiveRubricRejectsIdentityChanges(t *testing.T) {
 			t.Run(fmt.Sprintf("reuse=%t/%s", reuse, tc.name), func(t *testing.T) {
 				c := NewCLIClient(t.TempDir())
 				resolves, adds := 0, 0
+				changedResolve := tc.changedResolve
+				if reuse {
+					changedResolve = 1
+				}
 				c.run = func(_ context.Context, _ *CLIClient, args []string, _ io.Reader) ([]byte, error) {
 					if len(args) == 4 && args[3] == "--help" {
 						if reuse {
@@ -206,7 +210,7 @@ func TestArchiveRubricRejectsIdentityChanges(t *testing.T) {
 						return []byte(`{"project":{"id":1}}`), nil
 					case "show":
 						resolves++
-						if resolves == tc.changedResolve {
+						if resolves == changedResolve {
 							return []byte(`{"issue":` + tc.issue + `}`), nil
 						}
 						return []byte(`{"issue":{"project_id":1,"uid":"uid1","short_id":"abc4"}}`), nil
@@ -219,6 +223,7 @@ func TestArchiveRubricRejectsIdentityChanges(t *testing.T) {
 				}
 				err := c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric"))
 				require.ErrorContains(t, err, tc.failure)
+				assert.Equal(t, changedResolve, resolves)
 				assert.Equal(t, 0, adds)
 			})
 		}
@@ -284,7 +289,9 @@ func TestArchiveRubricAtomicConcurrentClients(t *testing.T) {
 		release := make(chan struct{})
 		results := make(chan error, 2)
 		var mu sync.Mutex
-		refs := map[string]string{}
+		type identity struct{ project, issue, name, content string }
+		refs := map[identity]string{}
+		creations := 0
 		var paths []string
 		run := func(_ context.Context, _ *CLIClient, args []string, _ io.Reader) ([]byte, error) {
 			if args[3] == "--help" {
@@ -303,9 +310,15 @@ func TestArchiveRubricAtomicConcurrentClients(t *testing.T) {
 			entered <- append([]string(nil), args...)
 			<-release
 			mu.Lock()
-			refs[string(data)] = "attachment.test"
+			key := identity{args[7], args[3], filepath.Base(args[4]), string(data)}
+			id := refs[key]
+			if len(args) != 9 || args[8] != "--reuse-existing" || id == "" {
+				creations++
+				id = fmt.Sprintf("attachment.%d", creations)
+				refs[key] = id
+			}
 			mu.Unlock()
-			return []byte(`{"results":[{"attachment_id":"attachment.test"}]}`), nil
+			return []byte(fmt.Sprintf(`{"results":[{"attachment_id":%q}]}`, id)), nil
 		}
 		for range 2 {
 			c := NewCLIClient(t.TempDir())
@@ -334,7 +347,8 @@ func TestArchiveRubricAtomicConcurrentClients(t *testing.T) {
 			assert.Equal(t, []string{"docbank", "attachments", "add", "abc4", args[4], "--json", "--project", "demo", "--reuse-existing"}, args)
 			assert.Equal(t, "rubric.md", filepath.Base(args[4]))
 		}
-		assert.Equal(t, map[string]string{"rubric\n": "attachment.test"}, refs)
+		assert.Equal(t, 1, creations)
+		assert.Equal(t, map[identity]string{{"demo", "abc4", "rubric.md", "rubric\n"}: "attachment.1"}, refs)
 		for _, path := range paths {
 			_, err := os.Stat(path)
 			assert.ErrorIs(t, err, os.ErrNotExist)

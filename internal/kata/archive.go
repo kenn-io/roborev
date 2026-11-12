@@ -116,16 +116,15 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string
 		}
 		defer func() { lock.token <- struct{}{} }()
 	}
-	issue, err := c.ResolveArchiveIssue(ctx, project, uid)
-	if err != nil {
-		return err
-	}
-	if issue.UID != uid {
-		return fmt.Errorf("resolve issue: identity changed; retry archive")
-	}
-	ref := issue.ShortID
 	if !reuse {
-		out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", ref, "--json", "--project", project}, nil)
+		issue, err := c.ResolveArchiveIssue(ctx, project, uid)
+		if err != nil {
+			return err
+		}
+		if issue.UID != uid {
+			return fmt.Errorf("resolve issue: identity changed; retry archive")
+		}
+		out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", issue.ShortID, "--json", "--project", project}, nil)
 		if err != nil {
 			return fmt.Errorf("list attachments: %w", err)
 		}
@@ -155,7 +154,7 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string
 	if err := os.WriteFile(file, data, 0o600); err != nil {
 		return fmt.Errorf("write rubric: %w", err)
 	}
-	issue, err = c.ResolveArchiveIssue(ctx, project, uid)
+	issue, err := c.ResolveArchiveIssue(ctx, project, uid)
 	if err != nil {
 		return err
 	}
