@@ -13,19 +13,14 @@ import (
 )
 
 type KataComment struct {
-	IssueID     int64      `json:"issue_id"`
-	IssueUID    *string    `json:"issue_uid,omitempty"`
-	ProjectID   *int64     `json:"project_id,omitempty"`
-	ProjectUID  *string    `json:"project_uid,omitempty"`
-	ProjectName *string    `json:"project_name,omitempty"`
-	UID         string     `json:"uid"`
-	Handle      *string    `json:"handle,omitempty"`
-	Body        string     `json:"body"`
-	Author      string     `json:"author"`
-	Teammate    *string    `json:"teammate,omitempty"`
-	ReplyToUID  *string    `json:"reply_to_uid,omitempty"`
-	ReplyKind   *string    `json:"reply_kind,omitempty"`
-	EditedAt    *time.Time `json:"edited_at,omitempty"`
+	UID        string     `json:"uid"`
+	Handle     *string    `json:"handle,omitempty"`
+	Body       string     `json:"body"`
+	Author     string     `json:"author"`
+	Teammate   *string    `json:"teammate,omitempty"`
+	ReplyToUID *string    `json:"reply_to_uid,omitempty"`
+	ReplyKind  *string    `json:"reply_kind,omitempty"`
+	EditedAt   *time.Time `json:"edited_at,omitempty"`
 }
 type KataRoot struct {
 	Position    int          `json:"position"`
@@ -63,7 +58,7 @@ type (
 )
 
 func kataComment(c gen.CommentOut) KataComment {
-	return KataComment{IssueID: c.IssueID, IssueUID: c.IssueUID, ProjectID: c.ProjectID, ProjectUID: c.ProjectUID, ProjectName: c.ProjectName, UID: c.UID, Handle: c.Handle, Body: c.Body, Author: c.Author, Teammate: c.Teammate, ReplyToUID: c.ReplyToUID, ReplyKind: c.ReplyKind, EditedAt: c.EditedAt}
+	return KataComment{UID: c.UID, Handle: c.Handle, Body: c.Body, Author: c.Author, Teammate: c.Teammate, ReplyToUID: c.ReplyToUID, ReplyKind: c.ReplyKind, EditedAt: c.EditedAt}
 }
 
 func kataPublicationBody(status *KataPublicationStatus) KataPublicationBody {

@@ -57,8 +57,6 @@ type KataIssue struct {
 	Project          string                    `json:"project,omitempty"`
 	Generation       uint64                    `json:"generation"`
 	ReplyTeammate    string                    `json:"reply_teammate,omitempty"`
-	ProjectID        int64                     `json:"project_id,omitempty"`
-	IssueID          int64                     `json:"issue_id,omitempty"`
 	ProjectUID       string                    `json:"project_uid,omitempty"`
 	DestinationID    string                    `json:"destination_id,omitempty"`
 	Metadata         map[string]any            `json:"metadata,omitempty"`
@@ -285,8 +283,6 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 	}
 	result := kataIssueFromClient(full.Legacy)
 	result.UID = full.Issue.UID
-	result.IssueID = full.Issue.ID
-	result.ProjectID = destination.ID
 	result.Project = destination.Name
 	result.Generation = generation
 	result.ReplyTeammate = cfg.ResolvedTeammate()
