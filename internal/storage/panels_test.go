@@ -1240,3 +1240,12 @@ func TestRubricDigestSyncRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, &changed, got.RubricSHA256)
 }
+
+func TestRubricIDRequiresTypeAndFullPrefix(t *testing.T) {
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	short := "1234"
+	assert.Empty(t, RubricID("custom", nil))
+	assert.Empty(t, RubricID("", &digest))
+	assert.Empty(t, RubricID("custom", &short))
+	assert.Equal(t, "custom@1234567890abcdef", RubricID("custom", &digest))
+}
