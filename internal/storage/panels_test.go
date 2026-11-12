@@ -1254,5 +1254,15 @@ func TestRubricIDRequiresTypeAndFullPrefix(t *testing.T) {
 	assert.Empty(t, RubricID("custom", nil))
 	assert.Empty(t, RubricID("", &digest))
 	assert.Empty(t, RubricID("custom", &short))
+	for name, bad := range map[string]string{
+		"long":      digest + "0",
+		"short":     digest[:63],
+		"uppercase": strings.ToUpper(digest),
+		"non-hex":   "g" + digest[1:],
+		"control":   "\x1b[31m" + digest[:58],
+		"newline":   digest[:63] + "\n",
+	} {
+		assert.Empty(t, RubricID("custom", &bad), name)
+	}
 	assert.Equal(t, "custom@1234567890abcdef", RubricID("custom", &digest))
 }

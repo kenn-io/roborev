@@ -145,9 +145,8 @@ func (b *Builder) resolveSystemPromptWithRubric(
 	if result != nil {
 		result.RubricArchiveEnabled = archiveAllowed
 	}
-	rubric := []byte(strings.TrimSpace(rendered.String()) + "\n")
-	text := strings.TrimSuffix(string(rubric), "\n") + structuredReviewOutputInstruction
-	return text, true, rubric, nil
+	trimmed := strings.TrimSpace(rendered.String())
+	return trimmed + structuredReviewOutputInstruction, true, []byte(trimmed + "\n"), nil
 }
 
 func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
