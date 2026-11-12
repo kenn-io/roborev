@@ -283,3 +283,60 @@ func TestRenderedRubricBytes(t *testing.T) {
 	assert.Nil(t, builtin.Rubric)
 	assert.Empty(t, builtin.RubricSHA256)
 }
+
+func TestRubricArchiveEligibilityCapturedAtRender(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not reliably available on Windows")
+	}
+	root := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "inside.md"), []byte("inside"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "outside.md"), []byte("outside"), 0o600))
+	link := filepath.Join(root, "rubric.md")
+	require.NoError(t, os.Symlink(filepath.Join(root, "inside.md"), link))
+	repo := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{"custom": {Template: "rubric.md"}}}}
+	global := &config.Config{KataRubrics: config.KataRubricsConfig{Mode: "current"}}
+	b := NewBuilderWithConfig(nil, global).ForRepo(root, 0).WithRepoConfig(repo, "")
+	first, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.True(t, first.RubricArchiveEnabled)
+	assert.Equal(t, []byte("inside\n"), first.Rubric)
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink(filepath.Join(outside, "outside.md"), link))
+	repo.KataRubrics.Mode = "off"
+	second, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.False(t, second.RubricArchiveEnabled)
+	assert.Equal(t, []byte("outside\n"), second.Rubric)
+	assert.True(t, first.RubricArchiveEnabled)
+	assert.Equal(t, []byte("inside\n"), first.Rubric)
+	repo.KataRubrics.Mode = ""
+	third, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.False(t, third.RubricArchiveEnabled)
+}
+
+func TestGlobalRubricMayArchiveExternalFile(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(t.TempDir(), "rubric.md")
+	require.NoError(t, os.WriteFile(file, []byte("operator rubric"), 0o600))
+	cfg := &config.Config{KataRubrics: config.KataRubricsConfig{Mode: "current"}, Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{"custom": {Template: file}}}}
+	result, err := NewBuilderWithConfig(nil, cfg).ForRepo(root, 0).WithRepoConfig(nil, "").BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.True(t, result.RubricArchiveEnabled)
+	assert.Equal(t, []byte("operator rubric\n"), result.Rubric)
+}
+
+func TestRubricArchiveRejectsExternalInclude(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "rule.md")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "template.md"), []byte(`{{ index .Includes "rule" }}`), 0o600))
+	require.NoError(t, os.WriteFile(outside, []byte("outside"), 0o600))
+	repo := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{"custom": {Template: "template.md", Includes: map[string]string{"rule": outside}}}}}
+	global := &config.Config{KataRubrics: config.KataRubricsConfig{Mode: "current"}}
+	result, err := NewBuilderWithConfig(nil, global).ForRepo(root, 0).WithRepoConfig(repo, "").BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("outside\n"), result.Rubric)
+	assert.False(t, result.RubricArchiveEnabled)
+	assert.NotEmpty(t, result.RubricArchiveSkipReason)
+}

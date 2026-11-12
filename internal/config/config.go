@@ -465,6 +465,7 @@ type Config struct {
 
 	// Kata task-context integration for review prompts
 	KataContext KataContextConfig `toml:"kata_context"`
+	KataRubrics KataRubricsConfig `toml:"kata_rubrics"`
 	// Candidate-gate policy. Keep this global so checkout config cannot weaken it.
 	GoalReview GoalReviewPolicyConfig `toml:"goal_review"`
 
@@ -717,6 +718,9 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if mode := c.KataRubrics.Mode; mode != "" && mode != "off" && mode != "current" {
+		return fmt.Errorf("kata_rubrics.mode must be off or current")
+	}
 	if err := validateReviewMCPAllowedTools(c.ReviewMCPAllowedTools); err != nil {
 		return err
 	}
@@ -942,6 +946,7 @@ type RepoConfig struct {
 
 	// Kata task-context integration for review prompts (per-repo)
 	KataContext KataContextConfig `toml:"kata_context"`
+	KataRubrics KataRubricsConfig `toml:"kata_rubrics"`
 
 	// Superpowers intent and open Kata graph review (per-repo, opt-in).
 	GoalReview GoalReviewConfig `toml:"goal_review"`
@@ -961,6 +966,9 @@ func (c *RepoConfig) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if mode := c.KataRubrics.Mode; mode != "" && mode != "off" {
+		return fmt.Errorf("kata_rubrics.mode in repository configuration must be off")
+	}
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
@@ -1054,6 +1062,7 @@ func DefaultConfig() *Config {
 			Instruction:           DefaultAgentHookInstruction,
 		},
 		KataContext: KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
+		KataRubrics: KataRubricsConfig{Mode: KataModeOff},
 		Agent: AgentConfig{
 			Codex: CodexConfig{
 				DisableReviewSkills:    true,
@@ -1132,6 +1141,9 @@ func parseGlobalFrom(path string) (*Config, error) {
 	md, err := toml.DecodeFile(path, cfg)
 	if err != nil {
 		return nil, safeGlobalConfigError(path, err)
+	}
+	if md.IsDefined("kata_rubrics", "mode") && cfg.KataRubrics.Mode != "off" && cfg.KataRubrics.Mode != "current" {
+		return nil, safeGlobalConfigError(path, fmt.Errorf("kata_rubrics.mode must be off or current"))
 	}
 	cfg.migrateDeprecated(md)
 	return cfg, nil
@@ -1485,6 +1497,9 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 	if err != nil {
 		return nil, nil, err
 	}
+	if md.IsDefined("kata_rubrics", "mode") && cfg.KataRubrics.Mode != "off" {
+		return nil, nil, fmt.Errorf("kata_rubrics.mode in repository configuration must be off")
+	}
 	if err := validateRepoConfigScope(md); err != nil {
 		return nil, nil, err
 	}
@@ -1736,6 +1751,9 @@ func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string
 	md, err := toml.Decode(string(data), &cfg)
 	if err != nil {
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
+	}
+	if md.IsDefined("kata_rubrics", "mode") && cfg.KataRubrics.Mode != "off" {
+		return nil, nil, &ConfigParseError{Ref: ref, Err: fmt.Errorf("kata_rubrics.mode in repository configuration must be off")}
 	}
 	if err := validateRepoConfigScope(md); err != nil {
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
@@ -2749,4 +2767,20 @@ func stripURLCredentials(rawURL string) string {
 	// Clear the userinfo
 	parsed.User = nil
 	return parsed.String()
+}
+
+// KataRubricsConfig controls opt-in archival of custom review rubrics.
+type KataRubricsConfig struct {
+	Mode string `toml:"mode" comment:"Archive custom rubrics to referenced Kata issues: off or current (global only)."`
+}
+
+// ResolveKataRubricsMode applies the repository opt-out to the global setting.
+func ResolveKataRubricsMode(repo *RepoConfig, global *Config) string {
+	if repo != nil && repo.KataRubrics.Mode == "off" {
+		return "off"
+	}
+	if global != nil && global.KataRubrics.Mode == "current" {
+		return "current"
+	}
+	return "off"
 }

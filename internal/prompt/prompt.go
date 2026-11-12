@@ -266,6 +266,9 @@ type BuildResult struct {
 	Prompt       string
 	Rubric       []byte
 	RubricSHA256 string
+	// RubricArchiveEnabled is captured with the exact rendered bytes.
+	RubricArchiveEnabled    bool
+	RubricArchiveSkipReason string
 }
 
 func (r *BuildResult) setRubric(systemPrompt string) {
@@ -787,8 +790,8 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 	if promptType == config.ReviewTypeDesign {
 		promptType = "design-review"
 	}
-	systemPrompt, custom, err := b.resolveSystemPrompt(
-		agentName, reviewType, promptType,
+	systemPrompt, custom, err := b.resolveSystemPromptForResult(
+		agentName, reviewType, promptType, result,
 	)
 	if err != nil {
 		return promptBuildContext{}, err

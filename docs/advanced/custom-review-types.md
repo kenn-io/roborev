@@ -40,6 +40,8 @@ identifies the rubric used by the review attempt; changing a template or an
 include can change it. Built-in types, supplied prompts, and panel synthesis
 have no rubric digest.
 
+You can [archive custom rubrics onto Kata issues](/docs/integrations/kata/#archiving-custom-rubrics).
+
 ## Configuration reference
 
 Each `[review.types.<name>]` table supports these fields:

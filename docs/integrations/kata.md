@@ -95,3 +95,32 @@ Together, the two directions form a workflow: a commit references a Kata issue,
 the review prompt includes that issue as task intent, and if the review fails or
 finds problems, the findings land back in the Kata backlog with the commands to
 reproduce and fix them.
+
+## Archiving custom rubrics
+
+Kata can attach the exact rendered custom rubric to issues referenced by a local
+commit or range review. First configure the Kata vault with `kata docbank setup`.
+Then opt in globally in `~/.roborev/config.toml`:
+
+```toml
+[kata_rubrics]
+mode = "current" # off (default) or current
+```
+
+The vault is readable by everyone who can read issues or write metadata on that
+Kata daemon. Enable this only if that audience may read your rubrics. A
+repository can opt out with `[kata_rubrics] mode = "off"` in `.roborev.toml`;
+it cannot enable the feature.
+
+Roborev attaches `roborev-rubric.<type>.<digest>.md` to up to ten referenced
+issues in the bound project. The digest in the name is the first 16 characters
+of the SHA-256 of the file; the full digest is recorded on the review. Repeated
+reviews reuse an existing reference with the same name. Concurrent archiving
+from separate machines can still create duplicate references. A repository's
+custom type is eligible only if its template and all includes resolve inside the
+repository, including through symlinks. Global types are operator-owned.
+Rubrics larger than 1 MiB are skipped. Built-in types, supplied prompts or
+settings, dirty reviews, CI reviews and synthesis are excluded. Archiving is
+best effort after the review completes; failures are logged and a later review
+can retry. Before Kata's federated evidence support ships, a relayed project
+uploads to the serving daemon's vault, which other hubs may not be able to read.

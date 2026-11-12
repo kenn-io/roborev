@@ -59,6 +59,8 @@ type WorkerPool struct {
 	activityLog          *ActivityLog
 	budgetRouter         *BudgetRouter
 	captureSetupFinished func()
+	// archiveClient is replaced by tests; nil uses the Kata CLI.
+	archiveClient func(string) kata.Client
 
 	// workersMu guards numWorkers, liveWorkers, claimCancels, started, and
 	// stopped so a resize never adds to wg after Stop has begun waiting on it.
@@ -1221,6 +1223,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	var reviewPrompt string
 	var rubricDigest *string
+	var rubricBytes []byte
+	var rubricArchiveEnabled bool
+	var rubricArchiveSkipReason string
 	var fileCoverage *storage.ReviewFileCoverage
 	var promptToPersist string
 	effectiveMinSeverity := job.MinSeverity
@@ -1328,6 +1333,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			reviewPrompt = built.Prompt
 			if built.RubricSHA256 != "" {
 				rubricDigest = &built.RubricSHA256
+				rubricBytes = built.Rubric
+				rubricArchiveEnabled = built.RubricArchiveEnabled
+				rubricArchiveSkipReason = built.RubricArchiveSkipReason
 			}
 		} else {
 			// Build the complete prompt; preparation happens after all additions.
@@ -1341,6 +1349,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			reviewPrompt = built.Prompt
 			if built.RubricSHA256 != "" {
 				rubricDigest = &built.RubricSHA256
+				rubricBytes = built.Rubric
+				rubricArchiveEnabled = built.RubricArchiveEnabled
+				rubricArchiveSkipReason = built.RubricArchiveSkipReason
 			}
 			if err == nil {
 				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
@@ -1387,6 +1398,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	job.RubricSHA256 = rubricDigest
+	archiveEligible := prepareRubricArchive(job, rubricArchiveEnabled, rubricBytes)
 
 	// Get the configured job agent. Backup failover is handled explicitly by
 	// failOrRetryAgent so jobs never silently run on the hardcoded fallback chain.
@@ -1897,6 +1909,24 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			SuppressRepoHooks: hasSuppliedReviewSettings(job),
 		})
 	})
+	if completed && rubricArchiveSkipReason != "" {
+		log.Printf("rubric archive for job %d skipped: %s", job.ID, rubricArchiveSkipReason)
+	}
+	if completed && archiveEligible {
+		archiveJob := *job
+		client := kata.Client(kata.NewCLIClient(archiveJob.RepoPath))
+		if wp.archiveClient != nil {
+			client = wp.archiveClient(archiveJob.RepoPath)
+		}
+		go func() {
+			// Archiving outlives the review attempt but has its own deadline.
+			archiveCtx, archiveCancel := context.WithTimeout(context.WithoutCancel(ctx), rubricArchiveTimeout)
+			defer archiveCancel()
+			archiveRubric(archiveCtx, client, archiveJob, rubricBytes, *rubricDigest, func(err error) {
+				log.Printf("rubric archive for job %d failed; check Kata binding and Docbank setup: %v", archiveJob.ID, err)
+			})
+		}()
+	}
 	if completed && wp.captureSetupFinished != nil {
 		wp.captureSetupFinished()
 	}
