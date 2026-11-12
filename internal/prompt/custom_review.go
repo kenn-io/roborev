@@ -135,9 +135,8 @@ func (b *Builder) resolveSystemPromptWithRubric(
 			"review type %q render template: %w", reviewType, err,
 		)
 	}
-	rubric := []byte(strings.TrimSpace(rendered.String()) + "\n")
-	result := strings.TrimSuffix(string(rubric), "\n") + structuredReviewOutputInstruction
-	return result, true, rubric, nil
+	trimmed := strings.TrimSpace(rendered.String())
+	return trimmed + structuredReviewOutputInstruction, true, []byte(trimmed + "\n"), nil
 }
 
 func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
