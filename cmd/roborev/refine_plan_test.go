@@ -133,10 +133,7 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 					writeJSON(w, map[string]any{"jobs": jobs})
 				}).
 				WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-					review := storage.Review{JobID: 7, Output: "High: missing cancellation check", StructuredOutput: document}
-					if mode == "failed" {
-						review.UUID = &reviewID
-					}
+					review := storage.Review{JobID: 7, UUID: &reviewID, Output: "High: missing cancellation check", StructuredOutput: document}
 					writeJSON(w, review)
 				}).
 				WithHandler("/api/kata/status", func(w http.ResponseWriter, r *http.Request) {
@@ -157,18 +154,16 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 				calls++
 				assert.NotEqual(t, repo.Dir, path)
 				assert.Equal(t, targetHead, sha)
-				if mode == "failed" {
-					if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
-						quoted, _, _ := strings.Cut(rest, " and carry out")
-						file, err := strconv.Unquote(quoted)
-						require.NoError(t, err)
-						data, err := os.ReadFile(file)
-						require.NoError(t, err)
-						p = string(data)
-					}
-					assert.Contains(t, p, evidence)
-					assert.Contains(t, p, "reviewer")
+				if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
+					quoted, _, _ := strings.Cut(rest, " and carry out")
+					file, err := strconv.Unquote(quoted)
+					require.NoError(t, err)
+					data, err := os.ReadFile(file)
+					require.NoError(t, err)
+					p = string(data)
 				}
+				assert.Contains(t, p, evidence)
+				assert.Contains(t, p, "reviewer")
 				assert.Contains(t, p, "missing cancellation")
 				return "Add cancellation check", nil
 			}})
@@ -197,11 +192,7 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 				expected = 0
 			}
 			assert.Equal(t, expected, calls)
-			if mode == "failed" {
-				assert.Equal(t, 1, kataReads)
-			} else {
-				assert.Zero(t, kataReads)
-			}
+			assert.Equal(t, expected, kataReads)
 			assert.Equal(t, expected, comments)
 			assert.Equal(t, 1, queries)
 			assert.Zero(t, closes)
