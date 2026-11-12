@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// These operator privacy and best-effort policy limits are not provider maxima.
 const rubricArchiveTimeout = 30 * time.Second
 const rubricArchiveMaxBytes = 1 << 20
 const rubricArchiveMaxIssues = 10
@@ -23,21 +25,33 @@ func archiveRubricMessages(ctx context.Context, client kata.Client, project stri
 			if ctx.Err() != nil {
 				return
 			}
-			if seen[ref] {
+			issue, err := client.ResolveArchiveIssue(ctx, project, ref)
+			if err != nil {
+				report(fmt.Errorf("resolve rubric destination %s#%s: %w", project, ref, err))
+				if archiveGlobalFailure(ctx, err) {
+					return
+				}
+				continue
+			}
+			if seen[issue.UID] {
 				continue
 			}
 			if len(seen) == rubricArchiveMaxIssues {
 				return
 			}
-			seen[ref] = true
-			if err := client.ArchiveRubric(ctx, project, ref, name, data); err != nil {
+			seen[issue.UID] = true
+			if err := client.ArchiveRubric(ctx, project, issue.UID, name, data); err != nil {
 				report(fmt.Errorf("attach rubric to %s#%s: %w", project, ref, err))
-				if ctx.Err() != nil {
+				if archiveGlobalFailure(ctx, err) {
 					return
 				}
 			}
 		}
 	}
+}
+
+func archiveGlobalFailure(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, kata.ErrUnavailable) || errors.Is(err, kata.ErrDaemonUnavailable) || errors.Is(err, kata.ErrDocbankNotConfigured)
 }
 
 func archiveRubric(ctx context.Context, client kata.Client, job storage.ReviewJob, repoPath string, data []byte, digest string, report func(error)) {

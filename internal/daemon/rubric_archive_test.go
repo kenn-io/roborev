@@ -32,6 +32,34 @@ func (f *recordingArchiveClient) ArchiveRubric(_ context.Context, _, ref, _ stri
 	return nil
 }
 
+type aliasArchiveClient struct {
+	*recordingArchiveClient
+}
+
+func (f *aliasArchiveClient) ResolveArchiveIssue(_ context.Context, _, ref string) (kata.ArchiveIssue, error) {
+	if ref == "01arz3ndektsv4rrffq69g5fav" || ref == "abc4" {
+		return kata.ArchiveIssue{UID: "01arz3ndektsv4rrffq69g5fav", ShortID: "abc4"}, nil
+	}
+	return kata.ArchiveIssue{}, errors.New("unknown issue")
+}
+
+func TestArchiveRubricDeduplicatesAliases(t *testing.T) {
+	fake := &aliasArchiveClient{recordingArchiveClient: &recordingArchiveClient{FakeClient: &katatest.FakeClient{}}}
+	archiveRubricMessages(t.Context(), fake, "demo", []string{"kata#abc4 kata#01arz3ndektsv4rrffq69g5fav"}, "rubric.md", []byte("rubric"), func(err error) { assert.NoError(t, err) })
+	assert.Equal(t, []string{"01arz3ndektsv4rrffq69g5fav"}, fake.refs)
+}
+
+func TestArchiveRubricStopsForGlobalFailure(t *testing.T) {
+	for _, failure := range []error{kata.ErrUnavailable, kata.ErrDaemonUnavailable, kata.ErrDocbankNotConfigured} {
+		fake := &katatest.FakeClient{ArchiveErr: failure}
+		var failures []error
+		archiveRubricMessages(t.Context(), fake, "demo", []string{"kata#abc4 kata#def5"}, "rubric.md", []byte("rubric"), func(err error) { failures = append(failures, err) })
+		require.Len(t, failures, 1)
+		assert.ErrorIs(t, failures[0], failure)
+		assert.Equal(t, []string{"abc4"}, fake.ArchiveRefs)
+	}
+}
+
 func TestArchiveRubricRefsAndLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

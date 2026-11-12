@@ -5,11 +5,60 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func stubArchiveIdentity(c *CLIClient) {
+	run := c.run
+	c.run = func(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) ([]byte, error) {
+		switch args[0] {
+		case "projects":
+			return []byte(`{"project":{"id":1}}`), nil
+		case "show":
+			return []byte(`{"issue":{"project_id":1,"uid":"uid1","short_id":"abc4"}}`), nil
+		default:
+			return run(ctx, c, args, stdin)
+		}
+	}
+}
+
+func TestResolveArchiveIssueRequiresCurrentProjectIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		issue string
+		want  kataArchiveIssueExpectation
+	}{
+		{"current", `{"project_id":1,"uid":"uid1","short_id":"new1"}`, kataArchiveIssueExpectation{uid: "uid1", short: "new1"}},
+		{"moved", `{"project_id":2,"uid":"uid1","short_id":"new1"}`, kataArchiveIssueExpectation{failure: "moved outside"}},
+		{"missing identity", `{"short_id":"new1"}`, kataArchiveIssueExpectation{failure: "complete identity"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewCLIClient(t.TempDir())
+			c.run = func(_ context.Context, _ *CLIClient, args []string, _ io.Reader) ([]byte, error) {
+				if args[0] == "projects" {
+					return []byte(`{"project":{"id":1}}`), nil
+				}
+				assert.Equal(t, []string{"show", "old1", "--json", "--project", "demo"}, args)
+				return []byte(`{"issue":` + tc.issue + `}`), nil
+			}
+			issue, err := c.ResolveArchiveIssue(t.Context(), "demo", "old1")
+			if tc.want.failure != "" {
+				require.ErrorContains(t, err, tc.want.failure)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want.uid, issue.UID)
+			assert.Equal(t, tc.want.short, issue.ShortID)
+		})
+	}
+}
+
+type kataArchiveIssueExpectation struct{ uid, short, failure string }
 
 func TestArchiveRubricListsAndAddsExactBytes(t *testing.T) {
 	dir := t.TempDir()
@@ -29,6 +78,7 @@ func TestArchiveRubricListsAndAddsExactBytes(t *testing.T) {
 		assert.Equal(t, []byte("rubric\n"), data)
 		return []byte(`{"results":[{"attachment_id":"attachment.test"}]}`), nil
 	}
+	stubArchiveIdentity(c)
 	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "roborev-rubric.example.0123456789abcdef.md", []byte("rubric\n")))
 	assert.Equal(t, 2, calls)
 }
@@ -40,6 +90,7 @@ func TestArchiveRubricSkipsExisting(t *testing.T) {
 	c.run = func(_ context.Context, _ *CLIClient, _ []string, _ io.Reader) ([]byte, error) {
 		return []byte(`{"attachments":{"attachment.test":{"name":"rubric.md"}}}`), nil
 	}
+	stubArchiveIdentity(c)
 	require.NoError(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")))
 }
 
@@ -55,6 +106,7 @@ func TestArchiveRubricReportsAddFailure(t *testing.T) {
 		}
 		return []byte(`{"results":[{"error":"docbank_not_configured"}]}`), nil
 	}
+	stubArchiveIdentity(c)
 	require.ErrorContains(t, c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")), "docbank_not_configured")
 }
 
@@ -66,26 +118,39 @@ func TestArchiveRubricSerializesConcurrentAdds(t *testing.T) {
 	release := make(chan struct{})
 	calls := 0
 	adds := 0
+	var mu sync.Mutex
 	c.run = func(_ context.Context, _ *CLIClient, args []string, _ io.Reader) ([]byte, error) {
 		if args[2] == "ls" {
+			mu.Lock()
 			calls++
-			if calls == 1 {
+			first := calls == 1
+			added := adds > 0
+			mu.Unlock()
+			if first {
 				close(firstList)
 				<-release
-				return []byte(`{"attachments":{}}`), nil
 			}
-			return []byte(`{"attachments":{"one":{"name":"rubric.md"}}}`), nil
+			if added {
+				return []byte(`{"attachments":{"one":{"name":"rubric.md"}}}`), nil
+			}
+			return []byte(`{"attachments":{}}`), nil
 		}
+		mu.Lock()
 		adds++
+		mu.Unlock()
 		return []byte(`{"results":[{"attachment_id":"attachment.test"}]}`), nil
 	}
-	result := make(chan error, 2)
-	go func() { result <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
-	<-firstList
-	go func() { result <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
-	close(release)
-	require.NoError(t, <-result)
-	require.NoError(t, <-result)
+	stubArchiveIdentity(c)
+	synctest.Test(t, func(t *testing.T) {
+		result := make(chan error, 2)
+		go func() { result <- c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric\n")) }()
+		<-firstList
+		go func() { result <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
+		synctest.Wait()
+		close(release)
+		require.NoError(t, <-result)
+		require.NoError(t, <-result)
+	})
 	assert.Equal(t, 2, calls)
 	assert.Equal(t, 1, adds)
 }
@@ -104,6 +169,7 @@ func TestArchiveRubricCancelWaitingForLock(t *testing.T) {
 		}
 		return nil, nil
 	}
+	stubArchiveIdentity(c)
 	done := make(chan error, 1)
 	go func() { done <- c.ArchiveRubric(t.Context(), "demo", "abc4", "rubric.md", []byte("rubric\n")) }()
 	<-started

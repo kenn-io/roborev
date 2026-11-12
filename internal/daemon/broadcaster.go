@@ -158,6 +158,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		SHA          string     `json:"sha"`
 		Branch       string     `json:"branch,omitempty"`
 		Agent        string     `json:"agent,omitempty"`
+		ReviewType   string     `json:"review_type,omitempty"`
+		RubricSHA256 *string    `json:"rubric_sha256,omitempty"`
 		Verdict      string     `json:"verdict,omitempty"`
 		Findings     string     `json:"findings,omitempty"`
 		Error        string     `json:"error,omitempty"`
@@ -172,6 +174,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		SHA:          e.SHA,
 		Branch:       e.Branch,
 		Agent:        e.Agent,
+		ReviewType:   e.ReviewType,
+		RubricSHA256: e.RubricSHA256,
 		Verdict:      e.Verdict,
 		Findings:     e.Findings,
 		Error:        e.Error,

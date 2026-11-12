@@ -324,6 +324,25 @@ func TestRubricArchiveEligibilityCapturedAtRender(t *testing.T) {
 	}
 }
 
+func TestContainedReviewFileRejectsDirectorySwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not reliably available on Windows")
+	}
+	dir := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "rules"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rules", "rubric.md"), []byte("inside"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "rubric.md"), []byte("outside"), 0o600))
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	defer root.Close()
+	// The check has selected rules/rubric.md; replace its parent before open.
+	require.NoError(t, os.Rename(filepath.Join(dir, "rules"), filepath.Join(dir, "old-rules")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "rules")))
+	_, err = readContainedReviewFile(root, filepath.Join("rules", "rubric.md"))
+	require.Error(t, err)
+}
+
 func TestReviewResultRubricCommitAndRange(t *testing.T) {
 	repo := newTestRepo(t)
 	base := repo.fastCommitFile("review.tmpl", "  Inspect safety  ", "rubric")

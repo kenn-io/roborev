@@ -19,9 +19,48 @@ var archiveLocks = struct {
 	locks map[string]*archiveLock
 }{locks: make(map[string]*archiveLock)}
 
+// ResolveArchiveIssue compares identities returned by Kata, rather than
+// inferring a project from the spelling of a possibly moved reference.
+func (c *CLIClient) ResolveArchiveIssue(ctx context.Context, project, ref string) (ArchiveIssue, error) {
+	out, err := c.run(ctx, c, []string{"projects", "show", project, "--json"}, nil)
+	if err != nil {
+		return ArchiveIssue{}, fmt.Errorf("resolve project: %w", err)
+	}
+	var p struct {
+		Project struct {
+			ID int64 `json:"id"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(out, &p); err != nil || p.Project.ID <= 0 {
+		return ArchiveIssue{}, fmt.Errorf("resolve project: missing project identity")
+	}
+	out, err = c.run(ctx, c, []string{"show", ref, "--json", "--project", project}, nil)
+	if err != nil {
+		return ArchiveIssue{}, fmt.Errorf("resolve issue: %w", err)
+	}
+	var result struct {
+		Issue struct {
+			ProjectID int64  `json:"project_id"`
+			UID       string `json:"uid"`
+			ShortID   string `json:"short_id"`
+		} `json:"issue"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil || result.Issue.ProjectID <= 0 || result.Issue.UID == "" || result.Issue.ShortID == "" {
+		return ArchiveIssue{}, fmt.Errorf("resolve issue: Kata did not return complete identity; update Kata and retry")
+	}
+	if result.Issue.ProjectID != p.Project.ID {
+		return ArchiveIssue{}, fmt.Errorf("issue %s moved outside project %s; update the commit reference", ref, project)
+	}
+	return ArchiveIssue{UID: result.Issue.UID, ShortID: result.Issue.ShortID}, nil
+}
+
 // ArchiveRubric serializes the list/add pair for an issue and exact file name.
 func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string, data []byte) error {
-	key := project + "#" + ref + "/" + name
+	issue, err := c.ResolveArchiveIssue(ctx, project, ref)
+	if err != nil {
+		return err
+	}
+	key := project + "#" + issue.UID + "/" + name
 	archiveLocks.Lock()
 	lock := archiveLocks.locks[key]
 	if lock == nil {
@@ -45,6 +84,15 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string
 	case <-lock.token:
 	}
 	defer func() { lock.token <- struct{}{} }()
+	uid := issue.UID
+	issue, err = c.ResolveArchiveIssue(ctx, project, uid)
+	if err != nil {
+		return err
+	}
+	if issue.UID != uid {
+		return fmt.Errorf("resolve issue: identity changed; retry archive")
+	}
+	ref = issue.ShortID
 	out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", ref, "--json", "--project", project}, nil)
 	if err != nil {
 		return fmt.Errorf("list attachments: %w", err)
@@ -74,7 +122,14 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string
 	if err := os.WriteFile(file, data, 0o600); err != nil {
 		return fmt.Errorf("write rubric: %w", err)
 	}
-	out, err = c.run(ctx, c, []string{"docbank", "attachments", "add", ref, file, "--json", "--project", project}, nil)
+	issue, err = c.ResolveArchiveIssue(ctx, project, uid)
+	if err != nil {
+		return err
+	}
+	if issue.UID != uid {
+		return fmt.Errorf("resolve issue: identity changed; retry archive")
+	}
+	out, err = c.run(ctx, c, []string{"docbank", "attachments", "add", issue.ShortID, file, "--json", "--project", project}, nil)
 	if err != nil {
 		return fmt.Errorf("add attachment: %w", err)
 	}

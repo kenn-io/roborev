@@ -248,10 +248,8 @@ func (b *Builder) Build(gitRef string, contextCount int, agentName, reviewType, 
 // BuildWithAdditionalContext constructs a review prompt with an optional
 // caller-provided markdown context block inserted ahead of the current diff.
 func (b *Builder) BuildWithAdditionalContext(gitRef string, contextCount int, agentName, reviewType, minSeverity, additionalContext string) (string, error) {
-	return b.buildWithOpts(gitRef, contextCount, agentName, reviewType, buildOpts{
-		additionalContext: additionalContext,
-		minSeverity:       minSeverity,
-	})
+	result, err := b.BuildResultWithAdditionalContext(gitRef, contextCount, agentName, reviewType, minSeverity, additionalContext)
+	return result.Prompt, err
 }
 
 func (b *Builder) buildWithOpts(gitRef string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {

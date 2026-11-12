@@ -1213,6 +1213,7 @@ func TestJobReadPathsReturnNonVoting(t *testing.T) {
 }
 
 func TestRubricDigestSyncRoundTrip(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, t.TempDir())
@@ -1247,6 +1248,7 @@ func TestRubricDigestSyncRoundTrip(t *testing.T) {
 }
 
 func TestRubricIDRequiresTypeAndFullPrefix(t *testing.T) {
+	t.Parallel()
 	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 	short := "1234"
 	assert.Empty(t, RubricID("custom", nil))

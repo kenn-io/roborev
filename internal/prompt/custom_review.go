@@ -192,6 +192,17 @@ func (b *Builder) readCustomReviewFile(
 	} else if !filepath.IsAbs(filePath) {
 		resolvedPath = filepath.Join(b.resolvedConfigRepoPath(), filePath)
 	}
+	root, rootErr := filepath.EvalSymlinks(b.resolvedConfigRepoPath())
+	if rootErr == nil {
+		root, rootErr = filepath.Abs(root)
+	}
+	var repoRoot *os.Root
+	if rootErr == nil {
+		repoRoot, rootErr = os.OpenRoot(root)
+		if rootErr == nil {
+			defer repoRoot.Close()
+		}
+	}
 	// Read the canonical path used for the containment decision, so a later
 	// change to the configured symlink cannot change the file we read.
 	canonical, err := filepath.EvalSymlinks(resolvedPath)
@@ -202,17 +213,27 @@ func (b *Builder) readCustomReviewFile(
 	if err != nil {
 		return nil, false, err
 	}
-	root, rootErr := filepath.EvalSymlinks(b.resolvedConfigRepoPath())
-	if rootErr == nil {
-		root, rootErr = filepath.Abs(root)
-	}
 	inside := false
 	if rootErr == nil {
 		rel, relErr := filepath.Rel(root, canonical)
 		inside = relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 	}
+	if inside {
+		// Root confines the actual open even if a directory is replaced after
+		// the containment check. External sources remain renderable below.
+		rel, relErr := filepath.Rel(root, canonical)
+		if relErr != nil {
+			return nil, false, relErr
+		}
+		data, readErr := readContainedReviewFile(repoRoot, rel)
+		return data, true, readErr
+	}
 	data, err := os.ReadFile(canonical)
-	return data, inside, err
+	return data, false, err
+}
+
+func readContainedReviewFile(root *os.Root, rel string) ([]byte, error) {
+	return root.ReadFile(rel)
 }
 
 func (b *Builder) readCustomReviewRefFile(
