@@ -552,6 +552,9 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 	s.agentHealth.start(cfg)
+	if cost := costSourceHealth(cfg); !cost.Healthy {
+		log.Printf("Warning: %s", cost.Message)
+	}
 
 	// Repair stale roborev-managed hooks in registered repos (skip in CI
 	// mode where repos are fetch-only and don't need local hooks).
@@ -4091,7 +4094,8 @@ func (s *Server) humaGetHealth(
 		Message: workersMessage,
 	})
 
-	agents := s.agentHealth.observe(s.configWatcher.Config())
+	cfg := s.configWatcher.Config()
+	agents := s.agentHealth.observe(cfg)
 	if !agents.Healthy {
 		allHealthy = false
 	}
@@ -4122,6 +4126,13 @@ func (s *Server) humaGetHealth(
 		}
 		components = append(components, ci)
 	}
+	// Missing accounting data degrades health without blocking review work
+	// or hiding the CI recovery that explains an outstanding review failure.
+	cost := costSourceHealth(cfg)
+	if !cost.Healthy {
+		allHealthy = false
+	}
+	components = append(components, cost)
 
 	var recentErrors []storage.ErrorEntry
 	var errorCount24h int
