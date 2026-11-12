@@ -307,6 +307,27 @@ jobs:
             --packages "$packages" \
             -- -timeout 15m -race -shuffle=on -tags integration
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Test connection with current Kata (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -o pipefail
+          GOBIN="$RUNNER_TEMP/kata-bin" kit-retry 3 5 go install go.kenn.io/kata/cmd/kata@v0.23.0
+          test -x "$RUNNER_TEMP/kata-bin/kata"
+          export PATH="$RUNNER_TEMP/kata-bin:$PATH"
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+            --jsonfile gotestsum/kata-connection.json \
+            --packages "./internal/kata" \
+            -- -timeout 15m -race -count=1 -tags kata -run '^TestAPIClientCurrentProducer$'
+          jq -ser '
+            [ .[] | select(.Package == "go.kenn.io/roborev/internal/kata" and .Test == "TestAPIClientCurrentProducer") | .Action ] |
+            if index("run") != null and index("pass") != null and index("skip") == null
+            then "RUN and PASS: current Kata connection"
+            else error("missing run/pass evidence for current Kata connection") end
+          ' gotestsum/kata-connection.json
+
       - name: Search mirror growth (Linux)
         if: matrix.os == 'ubuntu-latest'
         timeout-minutes: 12
