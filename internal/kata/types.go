@@ -69,6 +69,16 @@ type CreateReq struct {
 type CreateResult struct {
 	ShortID string
 	Reused  bool
+	// Attribution is who Kata says wrote the issue. The kata CLI client leaves
+	// it empty; the API client records what the server returned.
+	Attribution Attribution
+}
+
+// Attribution is who Kata says wrote an issue. An authenticated credential can
+// override the actor a request names, so callers record this, never what they
+// asked for.
+type Attribution struct {
+	Author string
 }
 
 // Client is the kata interface roborev depends on.
