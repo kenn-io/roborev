@@ -156,7 +156,6 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 		if err := os.WriteFile(helpFile, []byte(opts.HelpOutput), 0o644); err != nil {
 			t.Fatalf("write help output file: %v", err)
 		}
-		script.WriteString("case \"$*\" in *--version*) echo \"Claude Code\"; exit 0;; esac\n")
 		script.WriteString(fmt.Sprintf(`case "$*" in *--help*) cat %q; exit 0;; esac`, helpFile) + "\n")
 	}
 

@@ -47,7 +47,7 @@ func TestCapabilityProbesRefreshAfterUpgrade(t *testing.T) {
 	for name, probe := range probes {
 		t.Run(name, func(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "probes")
-			script := fmt.Sprintf("#!/bin/sh\ncapabilities='%%s'\necho probe >> %q\ncase \"$*\" in *--version*) case \"$capabilities\" in *--tools*|*--bare*) echo \"Claude Code\";; *) exit 0;; esac; exit 0;; *etxtbsy*) exit 0;; esac\necho \"$capabilities\"\n", marker)
+			script := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\necho probe >> %q\necho '%%s'\n", marker)
 			command := writeTempCommand(t, fmt.Sprintf(script, ""))
 			for _, want := range []bool{false, true, false} {
 				if want {
@@ -66,7 +66,7 @@ func TestCapabilityProbesRefreshAfterUpgrade(t *testing.T) {
 			}
 			data, err := os.ReadFile(marker)
 			require.NoError(t, err)
-			assert.Equal(t, 4, strings.Count(string(data), "probe\n"))
+			assert.Equal(t, 3, strings.Count(string(data), "probe\n"))
 		})
 	}
 }
