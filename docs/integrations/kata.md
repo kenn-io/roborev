@@ -98,9 +98,10 @@ reproduce and fix them.
 
 ## Archiving custom rubrics
 
-Kata can attach the exact rendered custom rubric to issues referenced by a local
-commit or range review. First configure the Kata vault with `kata docbank setup`.
-Then opt in globally in `~/.roborev/config.toml`:
+Roborev can attach the exact rendered custom rubric to issues referenced by a
+local commit or range review. This requires Kata 0.21.0 or later, with `kata`
+on the roborev daemon's `PATH`. First configure the Kata vault with
+`kata docbank setup`. Then opt in globally in `~/.roborev/config.toml`:
 
 ```toml
 [kata_rubrics]

@@ -19,8 +19,10 @@ func TestArchiveRubricListsAndAddsExactBytes(t *testing.T) {
 	c.run = func(_ context.Context, _ *CLIClient, args []string, _ io.Reader) ([]byte, error) {
 		calls++
 		if calls == 1 {
+			assert.Equal(t, []string{"docbank", "attachments", "ls", "abc4", "--json", "--project", "demo"}, args)
 			return []byte(`{"attachments":{}}`), nil
 		}
+		assert.Equal(t, []string{"docbank", "attachments", "add", "abc4", args[4], "--json", "--project", "demo"}, args)
 		assert.Equal(t, "roborev-rubric.example.0123456789abcdef.md", filepath.Base(args[4]))
 		data, err := os.ReadFile(args[4])
 		require.NoError(t, err)

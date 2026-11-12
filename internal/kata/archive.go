@@ -45,7 +45,7 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string
 	case <-lock.token:
 	}
 	defer func() { lock.token <- struct{}{} }()
-	out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", ref, "--json"}, nil)
+	out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", ref, "--json", "--project", project}, nil)
 	if err != nil {
 		return fmt.Errorf("list attachments: %w", err)
 	}
@@ -74,7 +74,7 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string
 	if err := os.WriteFile(file, data, 0o600); err != nil {
 		return fmt.Errorf("write rubric: %w", err)
 	}
-	out, err = c.run(ctx, c, []string{"docbank", "attachments", "add", ref, file, "--json"}, nil)
+	out, err = c.run(ctx, c, []string{"docbank", "attachments", "add", ref, file, "--json", "--project", project}, nil)
 	if err != nil {
 		return fmt.Errorf("add attachment: %w", err)
 	}
