@@ -358,19 +358,30 @@ When doctor reports the Kata connection ready and typed replies supported,
 propose `findings = "comments"` on the existing covering hook under approval; do
 not leave a duplicate legacy hook. This publishes the full finding text for
 every eligible failing local review, even when no swarm runs, including
-synthesis but not CI or panel members. Doctor checks the bound or default
-project. If the hook explicitly selects a different project, check that selected
-destination with the status request below. A `ready` response with
-`supports_replies: true` for that project permits the proposal even if doctor
-reports `project_not_found` for an unrelated binding. Stop on an unhealthy
-selected destination or missing typed replies.
+synthesis but not CI or panel members. Name the current disclosure policy:
+`summary` withholds finding text, paths, fixes, review summaries and
+diagnostics; changing to `comments` widens disclosure. If the user declines,
+leave the policy unchanged. This full-finding swarm requires approved full-text
+publication; do not copy withheld text into native roots. Each machine running
+the committed comments hook needs its own enabled, ready Kata connection;
+without it, the hook does not fall back to legacy issue creation. Doctor checks
+the bound or default project. If the hook explicitly selects a different
+project, check that selected destination with the status request below. A
+`ready` response with `supports_replies: true` for that project permits the
+proposal even if doctor reports `project_not_found` for an unrelated binding.
+Stop on an unhealthy selected destination or missing typed replies.
 
 Doctor may omit the connection row; absence does not mean disabled. Query the
 actual daemon selected by the client: its explicit `--server` if used, otherwise
 the running daemon's runtime records (in the selected data directory's `runtime`
 directory) and the client's socket/TCP selection. Use the published socket or
 address, not a guessed port. `--data-urlencode` encodes the selected project;
-omit that option and `--get` when no project is selected:
+omit that option and `--get` when no project is selected. Without a project or
+workspace alias, this request checks the daemon's connection and default
+project, not the bound project. It can establish global disabled state. If
+enabled, do not propose comments until doctor or another authoritative check
+reports the selected destination ready with typed replies; otherwise stop and
+recheck:
 
 ```bash
 curl -i --get --data-urlencode 'project=<selected-project>' \
@@ -396,12 +407,7 @@ start or restart the daemon with approval and recheck.
 
 On the published path only, after the user agrees to the run, inspect
 `roborev kata show <job-id>`. If publication is in progress, report it and
-reinspect after it completes. Before posting a charter or any native top-level
-comment, require `Status: complete` and match every root to the full result and
-native issue. Stop and report missing, ambiguous, truncated, edited or otherwise
-incomplete publication. If root text does not match the full findings, or an
-earlier review has no published roots, request a fresh review under the approved
-comments hook. Never post duplicate roots.
+reinspect after it completes. Require `Status: complete` before proceeding.
 
 On the published path, verify server routing before assignment. Identify the
 actual active roborev daemon and the global config selected by its launcher or
@@ -427,6 +433,13 @@ comment refs:
 kata --teammate=lead show '<issue>' --json
 kata --teammate=lead show '<issue>' --agent
 ```
+
+Then match every root to the full result and obtain complete comment references.
+Before posting a charter or any native top-level comment, stop and report
+missing, ambiguous, truncated, edited or otherwise incomplete publication. If
+root text does not match the full findings, or an earlier review has no
+published roots, request a fresh review under the approved comments hook. Never
+post duplicate roots.
 
 On the native path (explicit disabled or the legacy 404 fallback), locate the
 issue by job ID and match it to the job and commit:
