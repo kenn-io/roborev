@@ -12,15 +12,14 @@ import (
 )
 
 // The daemon owns the Kata connection and its credential. These endpoints let
-// the CLI, including one that talks to a remote daemon, read and write Kata
-// through it when [integrations.kata] is enabled. A CLI never receives the
+// the CLI, including one that talks to a remote daemon, read Kata through it
+// when [integrations.kata] is enabled. A CLI never receives the
 // endpoint or the credential, and the daemon never runs the kata CLI for them.
 
 // KataStatusInput holds query parameters for GET /api/kata/status.
 type KataStatusInput struct {
-	Repo                   string `query:"repo" doc:"Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project"`
-	Project                string `query:"project" doc:"Project to check instead of the repository's binding or the default project"`
-	WorkspaceAliasIdentity string `query:"workspace_alias_identity" doc:"Registered workspace alias identity; use with workspace_alias_kind instead of repo or project"`
+	Project                string `query:"project" doc:"Project to check instead of the default project"`
+	WorkspaceAliasIdentity string `query:"workspace_alias_identity" doc:"Registered workspace alias identity; use with workspace_alias_kind instead of project"`
 	WorkspaceAliasKind     string `query:"workspace_alias_kind" doc:"Registered workspace alias kind: git or local"`
 }
 
@@ -28,7 +27,7 @@ type KataStatusInput struct {
 type KataStatusBody struct {
 	Enabled          bool   `json:"enabled" doc:"Whether [integrations.kata] is enabled on the daemon"`
 	State            string `json:"state" doc:"Connection state: disabled, unreachable, authentication_required, incompatible, project_not_found, or ready"`
-	Project          string `json:"project,omitempty" doc:"Project in effect: the requested one, the repository's binding, or the default project"`
+	Project          string `json:"project,omitempty" doc:"Project in effect: the requested one or the default project"`
 	DefaultProject   string `json:"default_project,omitempty" doc:"The configured default project"`
 	Teammate         string `json:"teammate,omitempty" doc:"Teammate name for roborev's own Kata writes"`
 	ServerVersion    string `json:"server_version,omitempty" doc:"Kata server version"`
@@ -90,44 +89,16 @@ type KataIssueInput struct {
 // KataIssueOutput is the response for GET /api/kata/issue.
 type KataIssueOutput struct{ Body KataIssue }
 
-// KataCreateRequest files one Kata issue as roborev.
-type KataCreateRequest struct {
-	Title                  string   `json:"title" doc:"Issue title"`
-	Body                   string   `json:"body,omitempty" doc:"Issue body"`
-	Project                string   `json:"project,omitempty" doc:"Project to file into; empty selects the default project"`
-	WorkspaceAliasIdentity string   `json:"workspace_alias_identity,omitempty" doc:"Registered workspace alias identity; use with workspace_alias_kind instead of project"`
-	WorkspaceAliasKind     string   `json:"workspace_alias_kind,omitempty" doc:"Registered workspace alias kind: git or local"`
-	Labels                 []string `json:"labels,omitempty"`
-	Priority               *int     `json:"priority,omitempty" doc:"Priority 0 to 4"`
-	IdempotencyKey         string   `json:"idempotency_key,omitempty" doc:"Makes a retry return the issue the first request created"`
-}
-
-// KataCreateInput is the request for POST /api/kata/issues.
-type KataCreateInput struct{ Body KataCreateRequest }
-
-// KataCreateResponse reports the filed issue and who Kata says wrote it.
-type KataCreateResponse struct {
-	ShortID string `json:"short_id"`
-	Reused  bool   `json:"reused" doc:"Whether Kata answered with an issue an earlier request under the same key created"`
-	Author  string `json:"author,omitempty" doc:"The actor Kata recorded; an authenticated credential overrides roborev's requested actor"`
-}
-
-// KataCreateOutput is the response for POST /api/kata/issues.
-type KataCreateOutput struct{ Body KataCreateResponse }
-
-// kataStatus evaluates the connection for a repository on the daemon host, or
-// for an explicit project. It never fails: a broken connection is a state.
-func (s *Server) kataStatus(ctx context.Context, repo, project string, alias *kata.ProjectAlias) KataStatusBody {
+// kataStatus evaluates the connection for an explicit project or alias.
+// It never fails: a broken connection is a state.
+func (s *Server) kataStatus(ctx context.Context, project string, alias *kata.ProjectAlias) KataStatusBody {
 	cfg := s.configWatcher.Config().Integrations.Kata
 	body := KataStatusBody{Enabled: cfg.Enabled, DefaultProject: cfg.DefaultProject, Teammate: cfg.ResolvedTeammate()}
-	var opts []kata.APIOption
-	if repo == "" {
-		opts = append(opts, kata.WithoutWorkspace())
-	}
+	opts := []kata.APIOption{kata.WithoutWorkspace()}
 	if alias != nil {
 		opts = append(opts, kata.WithWorkspaceAlias(*alias))
 	}
-	status := kata.EvaluateWith(ctx, repo, cfg, project, opts...)
+	status := kata.EvaluateWith(ctx, "", cfg, project, opts...)
 	body.State = string(status.State)
 	body.Project = status.Project
 	body.ServerVersion = status.ServerVersion
@@ -139,16 +110,12 @@ func (s *Server) kataStatus(ctx context.Context, repo, project string, alias *ka
 }
 
 func (s *Server) humaKataStatus(ctx context.Context, in *KataStatusInput) (*KataStatusOutput, error) {
-	repo := strings.TrimSpace(in.Repo)
 	project := strings.TrimSpace(in.Project)
 	alias, err := kataWorkspaceAlias(in.WorkspaceAliasIdentity, in.WorkspaceAliasKind, project)
 	if err != nil {
 		return nil, err
 	}
-	if alias != nil && repo != "" {
-		return nil, huma.Error400BadRequest("workspace alias cannot be combined with repository")
-	}
-	return &KataStatusOutput{Body: s.kataStatus(ctx, repo, project, alias)}, nil
+	return &KataStatusOutput{Body: s.kataStatus(ctx, project, alias)}, nil
 }
 
 // kataProxyClient builds the API client for a proxied call. It ignores the
@@ -275,24 +242,4 @@ func (s *Server) humaKataIssue(ctx context.Context, in *KataIssueInput) (*KataIs
 		return nil, kataProxyError(err)
 	}
 	return &KataIssueOutput{Body: kataIssueFromClient(issue)}, nil
-}
-
-func (s *Server) humaKataCreate(ctx context.Context, in *KataCreateInput) (*KataCreateOutput, error) {
-	req := in.Body
-	alias, err := kataWorkspaceAlias(req.WorkspaceAliasIdentity, req.WorkspaceAliasKind, req.Project)
-	if err != nil {
-		return nil, err
-	}
-	client, err := s.kataProxyClient(alias)
-	if err != nil {
-		return nil, err
-	}
-	result, err := client.Create(ctx, kata.CreateReq{
-		Title: req.Title, Body: req.Body, Project: strings.TrimSpace(req.Project), Labels: req.Labels,
-		Priority: req.Priority, IdempotencyKey: req.IdempotencyKey,
-	})
-	if err != nil {
-		return nil, kataProxyError(err)
-	}
-	return &KataCreateOutput{Body: KataCreateResponse{ShortID: result.ShortID, Reused: result.Reused, Author: result.Attribution.Author}}, nil
 }

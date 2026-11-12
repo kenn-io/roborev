@@ -19,8 +19,7 @@ import (
 
 // newKataClient returns the Kata client for a CLI command running in workdir.
 //
-// When the daemon's [integrations.kata] connection is enabled, reads and
-// writes go through the daemon: it holds the credential and the endpoint, so a
+// When the daemon's [integrations.kata] connection is enabled, reads go through the daemon: it holds the credential and the endpoint, so a
 // CLI that tunnels to another machine's local daemon API needs neither.
 // Signed HTTPS remote access does not expose Kata operations. Otherwise the
 // kata CLI is run exactly as before. Which applies is decided on first use,
@@ -272,39 +271,8 @@ func (c *daemonKataClient) Show(ctx context.Context, ref string) (kata.Issue, er
 	return kataIssueFromDaemon(*resp), nil
 }
 
-func (c *daemonKataClient) Create(ctx context.Context, req kata.CreateReq) (kata.CreateResult, error) {
-	var project *string
-	var aliasIdentity, aliasKind *string
-	if req.Project != "" {
-		project = &req.Project
-	} else {
-		b, err := c.selectionBinding(ctx)
-		if err != nil {
-			return kata.CreateResult{}, err
-		}
-		project, aliasIdentity, aliasKind = kataSelectionFields(b)
-	}
-	body := generated.KataCreateRequest{
-		Title: req.Title, Project: project, WorkspaceAliasIdentity: aliasIdentity,
-		WorkspaceAliasKind: aliasKind, Labels: req.Labels,
-	}
-	if req.Body != "" {
-		body.Body = &req.Body
-	}
-	if req.Priority != nil {
-		body.Priority = new(int64(*req.Priority))
-	}
-	if req.IdempotencyKey != "" {
-		body.IdempotencyKey = &req.IdempotencyKey
-	}
-	resp, err := c.api.KataCreateIssue(ctx, &generated.KataCreateIssueRequestOptions{Body: &body})
-	if err != nil {
-		return kata.CreateResult{}, kataDaemonError("file a Kata issue through the daemon", err)
-	}
-	return kata.CreateResult{
-		ShortID: resp.ShortID, Reused: resp.Reused,
-		Attribution: kata.Attribution{Author: deref(resp.Author)},
-	}, nil
+func (c *daemonKataClient) Create(_ context.Context, _ kata.CreateReq) (kata.CreateResult, error) {
+	return kata.CreateResult{}, errors.New("creating Kata issues through the daemon is not supported")
 }
 
 // localKataBinding resolves the repository's local selection and captures the
