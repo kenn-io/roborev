@@ -320,13 +320,15 @@ jobs:
           go tool gotestsum --format pkgname-and-test-fails --format-icons text \
             --jsonfile gotestsum/kata-connection.json \
             --packages "./internal/kata" \
-            -- -timeout 15m -race -count=1 -tags kata -run '^TestAPIClientCurrentProducer$'
-          jq -ser '
-            [ .[] | select(.Package == "go.kenn.io/roborev/internal/kata" and .Test == "TestAPIClientCurrentProducer") | .Action ] |
-            if index("run") != null and index("pass") != null and index("skip") == null
-            then "RUN and PASS: current Kata connection"
-            else error("missing run/pass evidence for current Kata connection") end
-          ' gotestsum/kata-connection.json
+            -- -timeout 15m -race -count=1 -tags kata -run '^TestAPIClient(CurrentProducer|E2E)$'
+          for test in TestAPIClientCurrentProducer TestAPIClientE2E; do
+            jq -ser --arg test "$test" '
+              [ .[] | select(.Package == "go.kenn.io/roborev/internal/kata" and .Test == $test) | .Action ] |
+              if index("run") != null and index("pass") != null and index("skip") == null
+              then "RUN and PASS: \($test)"
+              else error("missing run/pass evidence for \($test)") end
+            ' gotestsum/kata-connection.json
+          done
 
       - name: Search mirror growth (Linux)
         if: matrix.os == 'ubuntu-latest'

@@ -24,7 +24,8 @@ import (
 const (
 	// MinAPISchemaVersion is the oldest Kata API schema the connection accepts.
 	MinAPISchemaVersion = "0.21.0"
-	MaxAPISchemaVersion = "0.28.0"
+	// MaxAPISchemaVersion is the newest producer contract checked against the stack.
+	MaxAPISchemaVersion = "0.43.0"
 	// PaginationAPISchemaVersion is the first schema that honors a list cursor
 	// (Kata v0.19.0's cmd/kata/api_compat.go, apiVersionDiscoveryPagination).
 	// An older server ignores the cursor and would repeat the first page.
