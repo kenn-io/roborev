@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
@@ -151,4 +152,89 @@ func TestInstallPreservesConfigSymlinkAndMode(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &doc))
 	assert.Equal(t, "dark", doc["theme"])
 	assert.Contains(t, doc["mcpServers"], "roborev")
+}
+
+func TestRepairSelectedMCPConnection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		agent  skills.Agent
+		config string
+		want   []string
+	}{
+		{"codex", skills.AgentCodex, "[mcp_servers.roborev]\ncommand = 'custom'\nargs = ['--server', 'http://127.0.0.1:8181', 'serve'] # keep\nenabled = false\nstartup_timeout_sec = 120\n[mcp_servers.roborev.env]\nTOKEN = 'example'\n", []string{"custom", "serve", "# keep", "startup_timeout_sec = 120", "TOKEN = 'example'", "http://127.0.0.1:8282"}},
+		{"codex without args", skills.AgentCodex, "[mcp_servers.roborev]\ncommand = 'custom' # keep\nstartup_timeout_sec = 120\n[mcp_servers.roborev.env]\nTOKEN = 'example'\n", []string{"custom", "# keep", "startup_timeout_sec = 120", "TOKEN = 'example'", "http://127.0.0.1:8282"}},
+		{"codex inline without args", skills.AgentCodex, "[mcp_servers]\nroborev = { command = 'custom', startup_timeout_sec = 120 }\n", []string{"custom", "startup_timeout_sec", "http://127.0.0.1:8282"}},
+		{"codex dotted without args", skills.AgentCodex, "mcp_servers.roborev.command = 'custom'\nmcp_servers.roborev.startup_timeout_sec = 120\n", []string{"custom", "startup_timeout_sec", "http://127.0.0.1:8282"}},
+		{"claude", skills.AgentClaude, `{"mcpServers":{"roborev":{"type":"http","url":"http://127.0.0.1:8181/mcp","headers":{"Authorization":"example"},"headersHelper":"helper"}}}`, []string{"http://127.0.0.1:8282/mcp", "Authorization", "example", "headersHelper", "helper"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config")
+			opts := Options{Agent: tc.agent, ConfigPath: path}
+			require.NoError(t, os.WriteFile(path, []byte(tc.config), 0o600))
+			server, found := Registration(opts)
+			require.True(t, found)
+			server, err := server.WithServer("http://127.0.0.1:8282")
+			require.NoError(t, err)
+			require.NoError(t, Repair(opts, server))
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			for _, want := range tc.want {
+				assert.Contains(t, string(data), want)
+			}
+			if tc.agent == skills.AgentCodex {
+				assert.NotContains(t, string(data), "enabled")
+				updated, found := Registration(opts)
+				require.True(t, found)
+				assert.Contains(t, updated.Args, "http://127.0.0.1:8282")
+			}
+			assert.NotContains(t, string(data), "8181")
+			old := time.Unix(1000000000, 0)
+			require.NoError(t, os.Chtimes(path, old, old))
+			require.NoError(t, Repair(opts, server))
+			info, err := os.Stat(path)
+			require.NoError(t, err)
+			assert.Equal(t, old, info.ModTime())
+		})
+	}
+	t.Run("reject unix address for HTTP", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config")
+		config := `{"mcpServers":{"roborev":{"type":"http","url":"http://127.0.0.1:8181/mcp"}}}`
+		require.NoError(t, os.WriteFile(path, []byte(config), 0o600))
+		server, found := Registration(Options{Agent: skills.AgentClaude, ConfigPath: path})
+		require.True(t, found)
+		_, err := server.WithServer("unix:///tmp/example.sock")
+		require.Error(t, err)
+	})
+	t.Run("restore Claude transport", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config")
+		require.NoError(t, os.WriteFile(path, []byte(`{"mcpServers":{"roborev":{"command":"roborev","args":["mcp","serve"]}}}`), 0o600))
+		opts := Options{Agent: skills.AgentClaude, ConfigPath: path}
+		server, found := Registration(opts)
+		require.True(t, found)
+		require.NoError(t, Repair(opts, server))
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"mcpServers":{"roborev":{"command":"roborev","args":["mcp","serve"]}}}`, string(data))
+	})
+}
+
+func TestWithServerPreservesHTTPPathAndQuery(t *testing.T) {
+	server := RegisteredServer{URL: "http://127.0.0.1:7373/custom/mcp?token=abc"}
+	updated, err := server.WithServer("http://127.0.0.1:8181")
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:8181/custom/mcp?token=abc", updated.URL)
+}
+
+func TestWithServerAcceptsBareAddressForHTTP(t *testing.T) {
+	server := RegisteredServer{URL: "http://127.0.0.1:7373/custom?x=1"}
+	updated, err := server.WithServer("127.0.0.1:8181")
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:8181/custom?x=1", updated.URL)
+}
+
+func TestWithServerAcceptsHTTPSDaemon(t *testing.T) {
+	server := RegisteredServer{URL: "https://example.com:443/custom?x=1"}
+	updated, err := server.WithServer("https://other.example.com:443")
+	require.NoError(t, err)
+	assert.Equal(t, "https://other.example.com:443/custom?x=1", updated.URL)
 }

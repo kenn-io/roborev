@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -39,7 +40,7 @@ func TestKitInstallOptionsUseProfileSpecificRunArguments(t *testing.T) {
 
 func TestKitInstallOptionsUsePOSIXCommandForClaude(t *testing.T) {
 	executable := `C:\Users\example\scoop\apps\roborev\current\roborev.exe`
-	opts, err := validatedKitInstallOptions(kitagenthook.AgentClaude, InstallOptions{
+	opts, err := KitInstallOptions(kitagenthook.AgentClaude, InstallOptions{
 		Executable: executable,
 		Timeout:    10 * time.Second,
 	})
@@ -304,4 +305,18 @@ func TestMCPHookRejectsUnusableDaemonURL(t *testing.T) {
 		opts := InstallOptions{Agent: "qwen", ConfigPath: filepath.Join(t.TempDir(), "settings.json"), MCP: true, MCPTransport: "http", MCPURL: url}
 		require.Error(t, RunInstall(opts, &bytes.Buffer{}))
 	}
+}
+
+func TestSetupPreservesInstalledHookChoices(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	command := "roborev agent-hook run --agent claude --turn-threshold 0"
+	opts := InstallOptions{Agent: "claude", Command: command, RoborevServerAddr: "http://127.0.0.1:7375", Timeout: 30 * time.Second}
+	require.NoError(t, RunInstall(opts, io.Discard))
+	installed, found, err := InstalledOptions(kitagenthook.AgentClaude)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "http://127.0.0.1:7375", installed.RoborevServerAddr)
+	assert.Equal(t, 30*time.Second, installed.Timeout)
+	assert.Equal(t, command, installed.Command)
 }

@@ -18,6 +18,7 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/creachadair/tomledit v0.0.29
 	github.com/danielgtaylor/huma/v2 v2.40.0
 	github.com/doordash-oss/oapi-codegen-dd/v3 v3.76.5
 	github.com/fsnotify/fsnotify v1.10.1
@@ -40,6 +41,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
+	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	github.com/yuin/goldmark/v2 v2.1.13
 	gitlab.com/gitlab-org/api/client-go/v3 v3.40.0
 	go.kenn.io/kit v0.52.0

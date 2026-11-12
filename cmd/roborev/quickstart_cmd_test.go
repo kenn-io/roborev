@@ -11,32 +11,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/skills"
 )
-
-func TestCheckAgentHookUsesKitProfile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hooks.json")
-	_, err := kitagenthook.Install(kitagenthook.AgentCodex, kitagenthook.InstallOptions{
-		ConfigPath: path,
-		Executable: "/opt/bin/roborev",
-		Arguments:  []string{"agent-hook", "run", "--agent", "codex", "--source=roborev-agent-hook"},
-		Marker:     "--source=roborev-agent-hook",
-		Hooks:      []kitagenthook.Hook{{Event: kitagenthook.EventStop}},
-	})
-	require.NoError(t, err)
-
-	check := checkAgentHook(
-		"agent_hook_codex",
-		path,
-		string(kitagenthook.AgentCodex),
-		"roborev agent-hook install --agent codex",
-	)
-
-	assert.Equal(t, statusOK, check.Status)
-}
 
 func TestCheckConfiguredAgentRequiresNonEmptyGlobalDefault(t *testing.T) {
 	assert := assert.New(t)
@@ -420,4 +398,11 @@ func TestQuickstartOutsideGitRepo(t *testing.T) {
 		cmd.SetErr(&errBuf)
 		require.Error(t, cmd.Execute())
 	})
+}
+
+func TestQuickstartRendersUntrustedHook(t *testing.T) {
+	var out bytes.Buffer
+	renderHuman(&out, quickstartState{Checks: []quickstartCheck{{ID: "agent_hook_codex", Status: checkStatus("untrusted"), FixCommand: "open codex and run /hooks"}}})
+	assert.Contains(t, out.String(), "needs you")
+	assert.Contains(t, out.String(), "open codex and run /hooks")
 }

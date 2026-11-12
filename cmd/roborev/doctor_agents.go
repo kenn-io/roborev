@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"strings"
+	"time"
+
+	"go.kenn.io/kit/agentsetup"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -47,6 +52,7 @@ func (v agentView) where() string {
 
 func checkDoctorAgents(env *doctorEnv) []doctorCheck {
 	var out []doctorCheck
+	out = append(out, checkDoctorAgentReach(env)...)
 	local := agent.DiagnoseAll(env.repoCfg, env.global)
 
 	if env.daemonUp() && env.daemonAgentsErr != nil {
@@ -102,6 +108,28 @@ func checkDoctorAgents(env *doctorEnv) []doctorCheck {
 	out = append(out, review...)
 	out = append(out, checkDoctorConfiguredAgents(env, reported)...)
 	return out
+}
+
+// checkDoctorAgentReach reports Claude and Codex readiness. A probe may start
+// the configured MCP server, so each one is bounded.
+func checkDoctorAgentReach(env *doctorEnv) []doctorCheck {
+	var checks []doctorCheck
+	for _, name := range []string{"claude", "codex"} {
+		if _, err := exec.LookPath(name); err != nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(env.ctx, daemonStartTimeout+10*time.Second)
+		worst, details := agentReadiness(ctx, name)
+		cancel()
+		check := doctorCheck{ID: "agents.reach." + name, Category: "agents", Status: doctorOK, Summary: name + " integration readiness", Details: details, Fix: worst.NextStep}
+		if worst.State == agentsetup.StateFailed {
+			check.Status = doctorFail
+		} else if worst.State != agentsetup.StateOK {
+			check.Status = doctorWarn
+		}
+		checks = append(checks, check)
+	}
+	return checks
 }
 
 // checkDoctorPathMismatch finds agents this shell can run but the daemon
