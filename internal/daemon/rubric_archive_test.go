@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katatest"
@@ -55,7 +57,7 @@ func TestArchiveRubricStopsForGlobalFailure(t *testing.T) {
 		var failures []error
 		archiveRubricMessages(t.Context(), fake, "demo", []string{"kata#abc4 kata#def5"}, "rubric.md", []byte("rubric"), func(err error) { failures = append(failures, err) })
 		require.Len(t, failures, 1)
-		assert.ErrorIs(t, failures[0], failure)
+		require.ErrorIs(t, failures[0], failure)
 		assert.Equal(t, []string{"abc4"}, fake.ArchiveRefs)
 	}
 }
@@ -151,6 +153,11 @@ func (f *blockedArchiveClient) ArchiveRubric(ctx context.Context, _, _, _ string
 
 func TestProcessJobArchiveDoesNotDelayCompletion(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
+	const agentName = "rubric-archive-structured"
+	agent.RegisterForTest(t, &structuredWorkerTestAgent{
+		name:   agentName,
+		result: jsontext.Value(`{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`),
+	})
 	cfg := config.DefaultConfig()
 	cfg.KataRubrics.Mode = "current"
 	tc.Pool.cfgGetter = NewStaticConfig(cfg)
@@ -172,7 +179,7 @@ func TestProcessJobArchiveDoesNotDelayCompletion(t *testing.T) {
 	}
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
 	require.NoError(t, err)
-	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", ReviewType: "custom", WorktreePath: worktree})
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: agentName, ReviewType: "custom", WorktreePath: worktree})
 	require.NoError(t, err)
 	claimed, err := tc.DB.ClaimJob(testWorkerID)
 	require.NoError(t, err)
@@ -184,6 +191,9 @@ func TestProcessJobArchiveDoesNotDelayCompletion(t *testing.T) {
 	review, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	require.NotNil(t, review)
+	assert.Contains(t, review.Output, "No findings.")
+	require.NotNil(t, review.VerdictBool)
+	assert.Equal(t, 1, *review.VerdictBool)
 	var completed bool
 	for len(events) > 0 {
 		if (<-events).Type == "review.completed" {
@@ -204,6 +214,7 @@ func TestProcessJobArchiveDoesNotDelayCompletion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claimed.RepoPath, stored.RepoPath)
 	require.NotNil(t, stored.RubricSHA256)
+	assert.Equal(t, []byte("check correctness\n"), fake.data)
 	assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256(fake.data)), *stored.RubricSHA256)
 	close(fake.release)
 	<-fake.finished

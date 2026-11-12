@@ -246,6 +246,9 @@ func TestRetryAndFailoverPreserveOnlyCIPrebuiltRubric(t *testing.T) {
 					changed, err = env.db.RequeueUpdateInterruptedJob(job.ID, "worker")
 				case "rerun":
 					require.NoError(t, env.db.CancelJob(job.ID))
+					released, releaseErr := env.db.ReleaseCanceledJob(job.ID, "worker")
+					require.NoError(t, releaseErr)
+					require.True(t, released)
 					err = env.db.ReenqueueJob(job.ID, ReenqueueOpts{})
 					changed = true
 				case "promote":

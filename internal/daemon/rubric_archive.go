@@ -14,9 +14,11 @@ import (
 )
 
 // These operator privacy and best-effort policy limits are not provider maxima.
-const rubricArchiveTimeout = 30 * time.Second
-const rubricArchiveMaxBytes = 1 << 20
-const rubricArchiveMaxIssues = 10
+const (
+	rubricArchiveTimeout   = 30 * time.Second
+	rubricArchiveMaxBytes  = 1 << 20
+	rubricArchiveMaxIssues = 10
+)
 
 func archiveRubricMessages(ctx context.Context, client kata.Client, project string, messages []string, name string, data []byte, report func(error)) {
 	seen := map[string]bool{}

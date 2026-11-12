@@ -53,10 +53,14 @@ func TestKataRubricsConfigSetAndRoundTrip(t *testing.T) {
 		mode   string
 		valid  bool
 	}{
-		{"global current", true, "current", true}, {"global off", true, "off", true},
-		{"global empty", true, "", false}, {"global invalid", true, "open", false},
-		{"local off", false, "off", true}, {"local current", false, "current", false},
-		{"local empty", false, "", false}, {"local invalid", false, "open", false},
+		{"global current", true, "current", true},
+		{"global off", true, "off", true},
+		{"global empty", true, "", false},
+		{"global invalid", true, "open", false},
+		{"local off", false, "off", true},
+		{"local current", false, "current", false},
+		{"local empty", false, "", false},
+		{"local invalid", false, "open", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var cfg any = &RepoConfig{}
@@ -76,7 +80,7 @@ func TestKataRubricsConfigSetAndRoundTrip(t *testing.T) {
 	require.NoError(t, SaveRepoConfigToWithExplicitKeys(path, &RepoConfig{Agent: "test"}, "agent"))
 	cfg, err := LoadRepoConfig(dir)
 	require.NoError(t, err)
-	assert.Equal(t, "", cfg.KataRubrics.Mode)
+	assert.Empty(t, cfg.KataRubrics.Mode)
 	assert.Equal(t, "current", ResolveKataRubricsMode(cfg, &Config{KataRubrics: KataRubricsConfig{Mode: "current"}}))
 	require.Error(t, SaveRepoConfigToWithExplicitKeys(path, cfg, "kata_rubrics.mode"))
 }
