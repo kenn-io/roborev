@@ -24,6 +24,17 @@ func (s *Server) cascadeCancelPanelMembers(
 	return canceled
 }
 
+// canceledJobSnapshot refreshes the row after cancellation; the earlier row
+// may predate a worker's prompt and rubric save. Preserve it on lookup failure.
+func canceledJobSnapshot(db *storage.DB, job *storage.ReviewJob) *storage.ReviewJob {
+	current, err := db.GetJobByID(job.ID)
+	if err != nil {
+		log.Printf("cancel job %d: refresh snapshot failed: %v", job.ID, err)
+		return job
+	}
+	return current
+}
+
 // retireCIPanelForCanceledSynthesis makes a directly canceled CI synthesis
 // parent non-postable without marking it posted. Non-CI panel runs have no
 // ci_pr_panels mapping and are ignored. This covers queued/API cancellations
@@ -73,6 +84,7 @@ func cascadePanelMembers(
 			}
 			continue
 		}
+		m = canceledJobSnapshot(db, m)
 		if killWorker != nil {
 			killWorker(m.ID)
 		}
@@ -107,7 +119,7 @@ func cancelPanelRunParentFirst(
 			return nil, fmt.Errorf("cancel synthesis %d: %w", synth.ID, err)
 		}
 	} else {
-		canceled = append(canceled, *synth)
+		canceled = append(canceled, *canceledJobSnapshot(db, synth))
 		if killWorker != nil {
 			killWorker(synth.ID)
 		}

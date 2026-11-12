@@ -2655,6 +2655,11 @@ func (s *Server) humaCancelJob(
 			fmt.Sprintf("cancel job: %v", err),
 		)
 	}
+	if current, err := s.db.GetJobByIDContext(lookupCtx, input.Body.JobID); err != nil {
+		log.Printf("cancel job %d: refresh snapshot failed: %v", input.Body.JobID, err)
+	} else {
+		job = current
+	}
 	s.workerPool.cancelJob(input.Body.JobID, true)
 
 	s.retireCIPanelForCanceledSynthesis(job)
@@ -2668,9 +2673,6 @@ func (s *Server) humaCancelJob(
 	canceledMembers := s.cascadeCancelPanelMembers(job, true)
 	s.releaseSynthesisIfCanceledMember(job)
 
-	if job == nil {
-		job, _ = s.db.GetJobByIDContext(lookupCtx, input.Body.JobID)
-	}
 	s.broadcaster.Broadcast(eventForMutationPrincipal(
 		ctx, eventForJob(jobEventType(job, "canceled"), job, input.Body.JobID),
 	))

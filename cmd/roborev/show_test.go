@@ -387,13 +387,16 @@ func TestShowJSONOutput(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")
 
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 	mockReviewDaemon(t, storage.Review{
 		WebURL:      "https://reviews.example/team/reviews/42",
 		VerdictBool: testutil.ReviewFixtureVerdict("LGTM"),
 		ID:          1, JobID: 42, Output: "LGTM", Agent: "test",
+		Job: &storage.ReviewJob{ID: 42, ReviewType: "custom", RubricSHA256: &digest},
 	})
 
 	chdir(t, repo.Dir)
+	assert.Contains(t, runShowCmd(t, "--job", "42"), "Rubric: custom@1234567890abcdef")
 
 	output := runShowCmd(t, "--job", "42", "--json")
 
@@ -405,6 +408,9 @@ func TestShowJSONOutput(t *testing.T) {
 		assert.Equal(t, "LGTM", parsed.Output)
 		assert.Equal(t, "test", parsed.Agent)
 		assert.Equal(t, "https://reviews.example/team/reviews/42", parsed.WebURL)
+		require.NotNil(t, parsed.Job)
+		assert.Equal(t, "custom", parsed.Job.ReviewType)
+		assert.Equal(t, &digest, parsed.Job.RubricSHA256)
 	})
 
 	t.Run("skips formatted header", func(t *testing.T) {

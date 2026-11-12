@@ -229,13 +229,6 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
 	p.loadRepoConfigFn = loadCIRepoConfig
-	// CI prompts deliberately carry no kata context. PR-creator trust does
-	// not extend to whoever controls the reviewed head SHA (any write
-	// collaborator can push to a same-repo PR branch), and GitHub's polling
-	// APIs expose no non-spoofable head-pusher signal to gate on, so kata
-	// task-ledger content stays out of CI prompts entirely (it could
-	// otherwise surface in publicly posted PR comments). Kata context is a
-	// local-review feature; the worker also skips it for CI jobs.
 	p.postPRCommentFn = p.postPRComment
 
 	if cfg.CI.GitHubAppConfigured() {
@@ -3766,6 +3759,8 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
+// CI prompts omit Kata context because the reviewed head may be untrusted and
+// its review can be posted publicly. The worker also skips it for CI jobs.
 func (p *CIPoller) callBuildReviewPromptResult(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (prompt.BuildResult, error) {
 	if p.buildReviewPromptFn != nil {
 		text, err := p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)

@@ -10,16 +10,19 @@ import (
 )
 
 func TestEvent_MarshalJSON(t *testing.T) {
+	digest := "1234567890abcdef"
 	event := Event{
-		Type:     "review.completed",
-		TS:       time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
-		JobID:    42,
-		Repo:     "/path/to/myrepo",
-		RepoName: "myrepo",
-		SHA:      "abc123",
-		Agent:    "claude-code",
-		Verdict:  "F",
-		Findings: "Missing input validation",
+		Type:         "review.completed",
+		TS:           time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
+		JobID:        42,
+		Repo:         "/path/to/myrepo",
+		RepoName:     "myrepo",
+		SHA:          "abc123",
+		Agent:        "claude-code",
+		Verdict:      "F",
+		Findings:     "Missing input validation",
+		ReviewType:   "custom",
+		RubricSHA256: &digest,
 	}
 
 	data, err := event.MarshalJSON()
@@ -40,6 +43,8 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		{"agent", "claude-code"},
 		{"verdict", "F"},
 		{"findings", "Missing input validation"},
+		{"review_type", "custom"},
+		{"rubric_sha256", digest},
 	}
 
 	assert.Len(t, decoded, len(tests)+1, // +1 for job_id which is a float
@@ -57,6 +62,15 @@ func TestEvent_MarshalJSON(t *testing.T) {
 	// WorktreePath omitted when empty
 	_, hasWT := decoded["worktree_path"]
 	assert.False(t, hasWT, "expected 'worktree_path' to be omitted when empty")
+
+	event.ReviewType = ""
+	event.RubricSHA256 = nil
+	data, err = event.MarshalJSON()
+	require.NoError(t, err)
+	decoded = nil
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.NotContains(t, decoded, "review_type")
+	assert.NotContains(t, decoded, "rubric_sha256")
 }
 
 func TestEvent_MarshalJSON_WorktreePath(t *testing.T) {

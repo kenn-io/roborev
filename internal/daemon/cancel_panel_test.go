@@ -161,6 +161,39 @@ func TestCancelSynthesisBroadcastsEveryCanceledJob(t *testing.T) {
 		}
 	}
 	assert.Empty(t, wantIDs)
+
+	t.Run("refreshes snapshots after cancellation", func(t *testing.T) {
+		_, db, _ := newTestServer(t)
+		_, members, synth := enqueueServerPanelRun(t, db, 2)
+		first, err := db.ClaimJobContext(t.Context(), "worker-1")
+		require.NoError(t, err)
+		require.NotNil(t, first)
+		second, err := db.ClaimJobContext(t.Context(), "worker-2")
+		require.NoError(t, err)
+		require.NotNil(t, second)
+		require.Equal(t, members[0].ID, first.ID)
+		require.Equal(t, members[1].ID, second.ID)
+		digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+		laterDigest := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+		// The callback runs after the member list was read and the first member
+		// canceled, but before the second member's cancellation transition.
+		canceled, err := cancelPanelRunParentFirst(db, func(id int64) {
+			switch id {
+			case first.ID:
+				saved, saveErr := db.SaveJobPromptForAttempt(t.Context(), second, "worker-2", "prompt", &digest)
+				require.NoError(t, saveErr)
+				require.True(t, saved)
+			case second.ID:
+				_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs SET rubric_sha256 = ? WHERE id = ?`, laterDigest, id)
+				require.NoError(t, updateErr)
+			}
+		}, synth)
+		require.NoError(t, err)
+		require.Len(t, canceled, 3)
+		event := eventForJob("review.canceled", &canceled[2], canceled[2].ID)
+		assert.Equal(t, second.ID, event.JobID)
+		assert.Equal(t, &digest, event.RubricSHA256)
+	})
 }
 
 func TestCancelCISynthesisRetiresPanelMapping(t *testing.T) {
