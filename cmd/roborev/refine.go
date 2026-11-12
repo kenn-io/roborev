@@ -764,8 +764,12 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 		previousAttempts = append(carriedAttempts, previousAttempts...)
 
 		// Build address prompt
+		currentContext, err := newKataPromptCache().Decorate(ctx, currentFailedReview)
+		if err != nil {
+			return fmt.Errorf("read Kata discussion: %w", err)
+		}
 		builder := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0)
-		addressPrompt, err := builder.BuildAddressPrompt(currentFailedReview, previousAttempts, minSev)
+		addressPrompt, err := builder.BuildAddressPrompt(currentContext, previousAttempts, minSev)
 		if err != nil {
 			return fmt.Errorf("build address prompt: %w", err)
 		}
@@ -786,7 +790,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 		}
 
 		if opts.plan {
-			planningPrompt, planErr := builder.BuildPlanPrompt(currentFailedReview, previousAttempts, minSev)
+			planningPrompt, planErr := builder.BuildPlanPrompt(currentContext, previousAttempts, minSev)
 			if planErr != nil {
 				return planErr
 			}

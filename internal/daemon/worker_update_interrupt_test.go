@@ -312,7 +312,7 @@ func TestUpdateInterruptionPreemptsSynthesisCompletion(t *testing.T) {
 
 	// A valid result would complete the job, so only the interruption can
 	// requeue it, and that must not use up a retry.
-	tc.Pool.completeSynthesisContext("worker-update", job, synthesisResult{
+	tc.Pool.completeSynthesisContext(t.Context(), "worker-update", job, synthesisResult{
 		review: reviewpkg.ReviewResult{
 			Agent: "test", Output: "No issues found.", Verdict: storage.VerdictPass,
 			StructuredOutput: testutil.ReviewFixtureJSON("No issues found."),

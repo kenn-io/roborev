@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -181,6 +182,35 @@ func TestRawHelpersRouteRequests(t *testing.T) {
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
 			assert.Equal("ok", string(body))
+		})
+	}
+}
+
+func TestKataResponsePreservesProblemDetail(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		detail string
+	}{
+		{http.StatusBadRequest, "kata: HTTP 400 validation: evidence too short"},
+		{http.StatusNotFound, "kata: HTTP 404 comment_not_found: target missing"},
+		{http.StatusConflict, "kata: HTTP 409 idempotency_mismatch: key reused"},
+	} {
+		t.Run(tc.detail, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/kata/response", r.URL.Path)
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(tc.status)
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": tc.status, "detail": tc.detail})
+			}))
+			t.Cleanup(server.Close)
+			api, err := NewWithHTTPClient(server.URL, server.Client())
+			require.NoError(t, err)
+			_, err = api.KataResponse(t.Context(), &generated.KataResponseRequestOptions{Body: &generated.KataResponseRequest{}})
+			require.ErrorContains(t, err, tc.detail)
+			var problem generated.ErrorModel
+			require.ErrorAs(t, err, &problem)
+			require.NotNil(t, problem.Status)
+			assert.EqualValues(t, tc.status, *problem.Status)
 		})
 	}
 }

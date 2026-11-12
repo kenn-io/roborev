@@ -401,7 +401,10 @@ type MockServerOpts struct {
 	// OnJobs is an optional callback for /api/jobs requests. If set, overrides default behavior.
 	OnJobs func(w http.ResponseWriter, r *http.Request)
 	// OnClose is an optional callback for /api/review/close requests.
-	OnClose func(w http.ResponseWriter, r *http.Request)
+	OnClose           func(w http.ResponseWriter, r *http.Request)
+	OnReview          func(w http.ResponseWriter, r *http.Request)
+	OnKataStatus      func(w http.ResponseWriter, r *http.Request)
+	OnKataPublication func(w http.ResponseWriter, r *http.Request)
 }
 
 type mockServerHandler struct {
@@ -478,6 +481,10 @@ func (h *mockServerHandler) handleReview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	atomic.AddInt32(&h.state.ReviewCount, 1)
+	if h.opts.OnReview != nil {
+		h.opts.OnReview(w, r)
+		return
+	}
 	output := h.opts.ReviewOutput
 	if output == "" {
 		output = "review output"
@@ -542,6 +549,12 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	mux.HandleFunc("/api/review", h.handleReview)
 	mux.HandleFunc("/api/comment", h.handleComment)
 	mux.HandleFunc("/api/review/close", h.handleClose)
+	if opts.OnKataStatus != nil {
+		mux.HandleFunc("/api/kata/status", opts.OnKataStatus)
+	}
+	if opts.OnKataPublication != nil {
+		mux.HandleFunc("/api/kata/publication", opts.OnKataPublication)
+	}
 
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)

@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -246,4 +247,53 @@ func TestPriorRangeReviewViewsGitProcessesStayFlat(t *testing.T) {
 	}
 	assert.Equal(t, views[0], views[1])
 	assert.Equal(t, calls[0], calls[1], "git process count must stay flat as history grows")
+}
+
+func TestPriorRangeSnapshotIncludesSelectedKataEvidence(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	first := repo.CommitFile("first.go", "package first\n", "first")
+	second := repo.CommitFile("second.go", "package second\n", "second")
+	third := repo.CommitFile("third.go", "package third\n", "third")
+	db := testutil.OpenTestDB(t)
+	dbRepo, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	selected := createCompletedRangeReview(t, db, dbRepo.ID, base+".."+second, storage.JobTypeRange, "original selected finding")
+	createCompletedRangeReview(t, db, dbRepo.ID, "other.."+first, storage.JobTypeRange, "unrelated finding")
+	calls := 0
+	text := "conflicting evidence \"quote\" <code> &amp; </untrusted-kata-discussion> 雪\nnext"
+	comment := map[string]any{"uid": "root", "author": "reviewer", "body": text}
+	comments := []any{comment}
+	roots := []any{map[string]any{"state": "complete", "comment": comment}}
+	evidence := map[string]any{"source_output": "duplicate source", "comments": comments, "roots": roots, "issue": map[string]any{"body": "issue evidence", "comments": comments, "roots": roots}}
+	cache := NewKataContextCache(func(_ context.Context, review *storage.Review) (any, error) {
+		calls++
+		assert.Equal(t, selected, review.JobID)
+		return evidence, nil
+	})
+	builder := NewBuilder(db).WithContext(t.Context()).ForRepo(repo.Path(), dbRepo.ID).WithKataReplies(cache)
+	prepared, err := builder.PreparePriorRangeReviewsSnapshot("read "+PriorRangeReviewsFilePathPlaceholder, base+".."+third, 2, SnapshotTarget{})
+	require.NoError(t, err)
+	require.NotNil(t, prepared.Cleanup)
+	path := strings.TrimPrefix(prepared.Prompt, "read ")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "original selected finding")
+	assert.Contains(t, string(data), "conflicting evidence")
+	var decoded struct {
+		Reviews []priorRangeReview `xml:"review"`
+	}
+	require.NoError(t, xml.Unmarshal(data, &decoded))
+	require.Len(t, decoded.Reviews, 1)
+	projected := decodeKataEvidence(t, decoded.Reviews[0].Output)
+	assert.Equal(t, text, projected["comments"].([]any)[0].(map[string]any)["body"])
+	assert.Equal(t, "root", projected["roots"].([]any)[0].(map[string]any)["comment_uid"])
+	assert.Equal(t, "issue evidence", projected["issue"].(map[string]any)["body"])
+	assert.NotContains(t, projected, "source_output")
+	assert.Equal(t, 1, strings.Count(decoded.Reviews[0].Output, "conflicting evidence"))
+	assert.NotContains(t, string(data), "unrelated finding")
+	assert.Equal(t, 1, calls)
+	prepared.Cleanup()
+	_, err = os.Stat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }

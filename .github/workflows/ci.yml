@@ -307,6 +307,75 @@ jobs:
             --packages "$packages" \
             -- -timeout 15m -race -shuffle=on -tags integration
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.52.0
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Test connection with current Kata (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -o pipefail
+          GOBIN="$RUNNER_TEMP/kata-bin" kit-retry 3 5 go install go.kenn.io/kata/cmd/kata@v0.23.0
+          test -x "$RUNNER_TEMP/kata-bin/kata"
+          export PATH="$RUNNER_TEMP/kata-bin:$PATH"
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+            --jsonfile gotestsum/kata-connection.json \
+            --packages "./internal/kata" \
+            -- -timeout 15m -race -count=1 -tags kata -run '^TestAPIClient(CurrentProducer|E2E)$'
+          for test in TestAPIClientCurrentProducer TestAPIClientE2E; do
+            jq -ser --arg test "$test" '
+              [ .[] | select(.Package == "go.kenn.io/roborev/internal/kata" and .Test == $test) | .Action ] |
+              if index("run") != null and index("pass") != null and index("skip") == null
+              then "RUN and PASS: \($test)"
+              else error("missing run/pass evidence for \($test)") end
+            ' gotestsum/kata-connection.json
+          done
+
+      - name: Test Kata through daemon with current producer (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -o pipefail
+          export PATH="$RUNNER_TEMP/kata-bin:$PATH"
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+            --jsonfile gotestsum/kata-daemon.json \
+            --packages "./cmd/roborev" \
+            -- -timeout 15m -race -count=1 -tags kata -run '^TestKataThroughTheDaemonE2E$'
+          jq -ser '
+            [ .[] | select(.Package == "go.kenn.io/roborev/cmd/roborev" and .Test == "TestKataThroughTheDaemonE2E") | .Action ] |
+            if index("run") != null and index("pass") != null and index("skip") == null
+            then "RUN and PASS: Kata through daemon"
+            else error("missing run/pass evidence for Kata through daemon") end
+          ' gotestsum/kata-daemon.json
+
+      - name: Test replies and feedback with pinned and current Kata (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -o pipefail
+          kata_version="$(go mod edit -json | jq -er '[.Require[] | select(.Path == "go.kenn.io/kata") | .Version] | if length == 1 then .[0] else error("missing Kata module pin") end')"
+          for producer in "$kata_version" v0.23.0; do
+            GOBIN="$RUNNER_TEMP/kata-bin" kit-retry 3 5 go install "go.kenn.io/kata/cmd/kata@$producer"
+            test -x "$RUNNER_TEMP/kata-bin/kata"
+            export PATH="$RUNNER_TEMP/kata-bin:$PATH"
+            result="gotestsum/kata-real-$producer.json"
+            go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+              --jsonfile "$result" \
+              --packages "./internal/kata ./cmd/roborev ./internal/daemon" \
+              -- -timeout 15m -race -count=1 -tags integration,kata \
+              -run '^(TestTypedReplyRealKataLostReceiptAndRetry|TestKataTypedReplyThroughDaemonE2E|TestKataFeedbackAcrossMachinesE2E)$'
+
+            # Require all named tests to run and pass for each producer.
+            for pair in \
+              'go.kenn.io/roborev/internal/kata/TestTypedReplyRealKataLostReceiptAndRetry' \
+              'go.kenn.io/roborev/cmd/roborev/TestKataTypedReplyThroughDaemonE2E' \
+              'go.kenn.io/roborev/internal/daemon/TestKataFeedbackAcrossMachinesE2E'; do
+              jq -ser --arg pkg "${pair%/*}" --arg test "${pair##*/}" '
+                [ .[] | select(.Package == $pkg and .Test == $test) | .Action ] |
+                if index("run") != null and index("pass") != null and index("skip") == null
+                then "RUN and PASS: \($pkg)/\($test)"
+                else error("missing run/pass evidence for \($pkg)/\($test)") end
+              ' "$result"
+            done
+          done
+
       - name: Search mirror growth (Linux)
         if: matrix.os == 'ubuntu-latest'
         timeout-minutes: 12
@@ -381,7 +450,9 @@ jobs:
         uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.shard || matrix.os }}-test-json
-          path: gotestsum/${{ matrix.shard || matrix.os }}.json
+          path: |
+            gotestsum/${{ matrix.shard || matrix.os }}.json
+            gotestsum/kata-real-*.json
           if-no-files-found: ignore
 
       - name: Upload gotestsum results

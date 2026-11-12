@@ -653,9 +653,18 @@ var ErrRepoHasJobs = errors.New("repository has existing jobs; use cascade to de
 // If cascade is true, also deletes all jobs, reviews, and responses for the repo
 // If cascade is false and jobs exist, returns ErrRepoHasJobs
 func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
+	// This legacy entry point has no caller context.
+	return db.DeleteRepoContext(context.Background(), repoID, cascade)
+}
+
+// DeleteRepoContext prevents review publication while a repository is deleted.
+func (db *DB) DeleteRepoContext(ctx context.Context, repoID int64, cascade bool) error {
+	if err := db.attempts.mu.LockContext(ctx); err != nil {
+		return err
+	}
+	defer db.attempts.mu.Unlock()
 	// Use a dedicated connection with BEGIN IMMEDIATE for proper locking
 	// This ensures no job can be enqueued between the count check and delete
-	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err

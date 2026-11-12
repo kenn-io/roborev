@@ -51,6 +51,16 @@ var schemaMigrations = []schemaMigration{
 	{15, "local review invocation reports", migrateReviewInvocations},
 	{16, "token cost lookup state", migrateTokenCostLookups},
 	{17, "supplied panel enqueue receipts", migratePanelEnqueueRequests},
+	{18, "local Kata publication", migrateKataPublication},
+}
+
+func migrateKataPublication(ctx context.Context, db *DB) error {
+	exists, err := hasColumn(ctx, db, "reviews", "kata_publication")
+	if err != nil || exists {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ALTER TABLE reviews ADD COLUMN kata_publication TEXT`)
+	return err
 }
 
 func migrateSyncPendingIndexes(ctx context.Context, db *DB) error {

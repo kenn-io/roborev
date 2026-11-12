@@ -156,8 +156,8 @@ func (s *Server) humaMoveRepo(_ context.Context, input *MoveRepoInput) (*struct{
 	return &struct{}{}, nil
 }
 
-func (s *Server) humaDeleteRepo(_ context.Context, input *DeleteRepoInput) (*struct{}, error) {
-	if err := s.db.DeleteRepo(input.Body.RepoID, input.Body.Cascade); err != nil {
+func (s *Server) humaDeleteRepo(ctx context.Context, input *DeleteRepoInput) (*struct{}, error) {
+	if err := s.db.DeleteRepoContext(ctx, input.Body.RepoID, input.Body.Cascade); err != nil {
 		if errors.Is(err, storage.ErrRepoHasJobs) {
 			return nil, huma.Error409Conflict("cannot delete repository with existing jobs (use --cascade)")
 		}

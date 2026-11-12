@@ -70,6 +70,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(unpauseCmd())
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(showCmd())
+	rootCmd.AddCommand(kataCmd())
 	rootCmd.AddCommand(searchCmd())
 	rootCmd.AddCommand(commentCmd())
 	rootCmd.AddCommand(respondCmd()) // hidden alias for backward compatibility

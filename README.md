@@ -401,11 +401,15 @@ limits it to reviews on matching branches; unset fires on all branches. The
 matched branch is the commit's branch for local reviews and the PR base
 (target) branch for CI pull-request reviews — so `branches = ["main"]` means
 commits on `main` locally but PRs *targeting* `main` in CI, and a fork's head
-branch name cannot satisfy a protected-branch filter. The `kata` CLI must be
-on `PATH`; when it is absent or the repo is unbound, prompt context is
-silently skipped. Any other failure — a broken `.kata.toml`, a failing `kata`
-invocation — is logged by both the prompt builder and the configured `kata`
-hook, so a configured integration never goes dark unnoticed.
+branch name cannot satisfy a protected-branch filter. In default mode, the
+`kata` CLI must be on `PATH`; it is optional when the daemon connects to Kata's
+API. When the CLI is absent or the repo is unbound, prompt context is silently
+skipped. Other failures are logged by the prompt builder and the configured
+hook. Commands using an explicit `--server` report a failed Kata status probe
+instead of silently selecting the local CLI. A disabled connection or an older
+daemon without the status route still uses the CLI when local API config is off.
+See the [Kata integration guide](docs/integrations/kata.md) for connection and
+remote access details.
 
 ### Environment Variables
 
