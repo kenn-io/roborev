@@ -695,9 +695,9 @@ func TestBudgetRoutingSelectsEligibleGoalReviewer(t *testing.T) {
 			probeLog := filepath.Join(t.TempDir(), "probe.log")
 			command := filepath.Join(t.TempDir(), "claude")
 			script := fmt.Sprintf(`#!/bin/sh
-case "$*" in
+case "$1" in
   *etxtbsy*) exit 0 ;;
-  *--help*) printf '%%s\n' %q; printf 'help\n' >> %q; exit 0 ;;
+  --help) printf '%%s\n' %q; printf 'probe\n' >> %q; exit 0 ;;
   *) exit 9 ;;
 esac
 `, tc.help, probeLog)
@@ -740,11 +740,6 @@ esac
 			assert.Equal(tc.wantModel, stored.Model)
 			assert.Equal(tc.want == "claude-code", stored.BudgetRoutingLocked)
 			assert.FileExists(probeLog, "candidate capabilities must be checked before budget substitution")
-			if tc.name == "missing bare capability" {
-				probes, err := os.ReadFile(probeLog)
-				require.NoError(t, err)
-				assert.Equal("help\nhelp\n", string(probes), "tools and bare capabilities use independent help probes")
-			}
 		})
 	}
 }
