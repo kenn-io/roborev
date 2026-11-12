@@ -34,7 +34,7 @@ func checkDoctorKataRubrics(env *doctorEnv) []doctorCheck {
 	case "missing":
 		result.Status, result.Summary, result.Fix = doctorFail, prefix+", Docbank credential missing", "check kata docbank setup and the daemon's credential"
 	case "ok":
-		result.Status, result.Summary = doctorOK, prefix+", Docbank key resolves for "+probe.Project+"; vault rubrics are readable by all issue readers and metadata writers"
+		result.Status, result.Summary = doctorOK, prefix+", Docbank key resolves on the selected Kata daemon; vault rubrics are readable by all issue readers and metadata writers"
 	default:
 		result.Status, result.Summary = doctorInfo, prefix+", Docbank state unknown"
 	}
