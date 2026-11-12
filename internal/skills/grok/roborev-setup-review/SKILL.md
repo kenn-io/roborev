@@ -540,13 +540,13 @@ pass `--project <name>` to every native Kata command. When doctor reports
 `integrations.kata` ready and that the server stores typed replies, propose
 `findings = "comments"` on the existing covering hook under that approval. It
 publishes full finding text for every eligible failing local review, even when
-no swarm runs. Do not leave a duplicate legacy hook. Doctor checks the bound
-or default project; for a different explicit hook project, check that project's
+no swarm runs. Do not leave a duplicate legacy hook. Doctor checks the bound or
+default project; for a different explicit hook project, check that project's
 status and typed replies as the Kata walkthrough says, ignoring an unrelated
-binding error.
-Doctor absence is not proof of disabled. Stop on unknown, unhealthy or missing
-typed replies; only the native-path conditions in brief step 2 permit native
-roots. Do not read Kata issues until the user agrees to a run.
+binding error. Doctor absence is not proof of disabled. Stop on unknown,
+unhealthy or missing typed replies; only the native-path conditions in brief
+step 2 permit native roots. Do not read Kata issues until the user agrees to a
+run.
 
 Ask how many teammates check each reviewer, which agents they use, and who
 starts them. Guess two per reviewer on different agents if the user runs two,
@@ -675,11 +675,11 @@ If neither is established, reply with what you checked and what was missing.
    never use it as the cursor. If completeness cannot be established, leave the
    finding unchecked and actionable. Lead checks cited `path:line` locations at
    the reviewed commit; a resolving citation alone does not prove the
-   conclusion. Post one outcome row per finding: confirmed (confirm only),
-   refuted (refute only, record why), contested (both), or unchecked (neither
-   or incomplete). Only lead may supersede duplicates. Contested and unchecked
-   stay actionable. Tell the user the outcomes or pass them to the fixing agent
-   before edits. With user approval, tune the rubric using refuted findings.
+   conclusion. Post one outcome row per finding: confirmed (confirm only), refuted (refute only, record why),
+   contested (both), or unchecked (neither or incomplete). Only lead may
+   supersede duplicates. Contested and unchecked stay actionable. Tell the user the outcomes or pass
+   them to the fixing agent before edits. With user approval, tune the rubric
+   using refuted findings.
 
 Use the top-level `uuid` from `roborev job show --job <id> --json` as
 `<result>`; if absent, use `<review-id>-<job-id>-<full-reviewed-SHA>`.
