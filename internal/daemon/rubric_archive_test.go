@@ -161,7 +161,6 @@ func TestProcessJobArchiveDoesNotDelayCompletion(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.KataRubrics.Mode = "current"
 	tc.Pool.cfgGetter = NewStaticConfig(cfg)
-	fake := &blockedArchiveClient{FakeClient: &katatest.FakeClient{BindingResult: kata.Binding{Project: "demo"}}, started: make(chan struct{}), release: make(chan struct{}), finished: make(chan struct{})}
 	sha := tc.GitRepo.CommitFile("file.txt", "change", "change\n\nCloses: demo#abc4")
 	worktree := filepath.Join(t.TempDir(), "worktree")
 	tc.GitRepo.RunGit("worktree", "add", "--detach", worktree, sha)
@@ -169,56 +168,136 @@ func TestProcessJobArchiveDoesNotDelayCompletion(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(worktree, ".kata.toml"), []byte("[project]\nname = 'demo'\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(worktree, ".roborev.toml"), []byte("[review.types.custom]\ntemplate = 'rubric.md'\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(worktree, "rubric.md"), []byte("check correctness\n"), 0o600))
-	var archivePath string
-	tc.Pool.archiveClient = func(path string) kata.Client {
-		archivePath = path
-		binding, err := kata.NewCLIClient(path).Binding(t.Context())
-		require.NoError(t, err)
-		fake.BindingResult = binding
-		return fake
-	}
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
 	require.NoError(t, err)
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: agentName, ReviewType: "custom", WorktreePath: worktree})
 	require.NoError(t, err)
-	claimed, err := tc.DB.ClaimJob(testWorkerID)
-	require.NoError(t, err)
 	id, events := tc.Broadcaster.Subscribe("")
 	defer tc.Broadcaster.Unsubscribe(id)
-	tc.Pool.processJob(testWorkerID, claimed)
-	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	assert.Equal(t, worktree, archivePath)
-	review, err := tc.DB.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	require.NotNil(t, review)
-	assert.Contains(t, review.Output, "No findings.")
-	require.NotNil(t, review.VerdictBool)
-	assert.Equal(t, 1, *review.VerdictBool)
-	var completed bool
-	for len(events) > 0 {
-		if (<-events).Type == "review.completed" {
-			completed = true
+
+	synctest.Test(t, func(t *testing.T) {
+		fake := &blockedArchiveClient{FakeClient: &katatest.FakeClient{}, started: make(chan struct{}), release: make(chan struct{}), finished: make(chan struct{})}
+		var archivePath string
+		tc.Pool.archiveClient = func(path string) kata.Client {
+			archivePath = path
+			binding, bindingErr := kata.NewCLIClient(path).Binding(t.Context())
+			if bindingErr != nil {
+				fake.BindingErr = bindingErr
+			} else {
+				fake.BindingResult = binding
+			}
+			return fake
 		}
-	}
-	assert.True(t, completed)
-	// Archive startup includes external Git subprocesses.
-	require.Eventually(t, func() bool {
+		tc.Pool.Start()
+		released := false
+		defer func() {
+			if !released {
+				close(fake.release)
+			}
+			tc.Pool.Stop()
+		}()
+		// Archive startup runs external Git subprocesses and reads SQLite.
+		<-fake.started
+		tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+		assert.Equal(t, worktree, archivePath)
+		review, err := tc.DB.GetReviewByJobID(job.ID)
+		require.NoError(t, err)
+		require.NotNil(t, review)
+		assert.Contains(t, review.Output, "No findings.")
+		require.NotNil(t, review.VerdictBool)
+		assert.Equal(t, 1, *review.VerdictBool)
+		var completed bool
+		for len(events) > 0 {
+			event := <-events
+			if event.Type == "review.completed" {
+				completed = true
+				assert.False(t, event.SuppressHooks)
+				assert.False(t, event.SuppressRepoHooks)
+			}
+		}
+		assert.True(t, completed)
+		stored, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, tc.Repo.RootPath, stored.RepoPath)
+		require.NotNil(t, stored.RubricSHA256)
+		assert.Equal(t, []byte("check correctness\n"), fake.data)
+		assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256(fake.data)), *stored.RubricSHA256)
+
+		stopped := make(chan struct{})
+		go func() { tc.Pool.Stop(); close(stopped) }()
+		synctest.Wait()
+		var stoppedEarly bool
 		select {
-		case <-fake.started:
-			return true
+		case <-stopped:
+			stoppedEarly = true
 		default:
-			return false
 		}
-	}, 10*time.Second, 10*time.Millisecond)
-	stored, err := tc.DB.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, claimed.RepoPath, stored.RepoPath)
-	require.NotNil(t, stored.RubricSHA256)
-	assert.Equal(t, []byte("check correctness\n"), fake.data)
-	assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256(fake.data)), *stored.RubricSHA256)
-	close(fake.release)
-	<-fake.finished
-	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+		assert.False(t, stoppedEarly, "pool stopped while archive was blocked")
+		close(fake.release)
+		released = true
+		<-fake.finished
+		<-stopped
+		tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	})
+}
+
+type panelArchiveRecord struct {
+	ref, name string
+	data      []byte
+}
+
+type panelArchiveClient struct {
+	*katatest.FakeClient
+	records chan panelArchiveRecord
+}
+
+func (f *panelArchiveClient) ArchiveRubric(_ context.Context, _, ref, name string, data []byte) error {
+	f.records <- panelArchiveRecord{ref: ref, name: name, data: append([]byte(nil), data...)}
+	return nil
+}
+
+func TestPanelMembersArchiveDistinctRubrics(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	const agentName = "panel-rubric-structured"
+	agent.RegisterForTest(t, &structuredWorkerTestAgent{
+		name:   agentName,
+		result: jsontext.Value(`{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`),
+	})
+	cfg := config.DefaultConfig()
+	cfg.KataRubrics.Mode = "current"
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	tc.GitRepo.CommitFile("file", "change", "change\n\nCloses: demo#abc4")
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("[review.types.alpha]\ntemplate = 'alpha.md'\n[review.types.beta]\ntemplate = 'beta.md'\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, "alpha.md"), []byte("  alpha checks  \n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, "beta.md"), []byte("beta checks\n\n"), 0o600))
+	_, members, _ := enqueuePanelRun(t, tc, "pair", []memberSpec{
+		{name: "alpha", agent: agentName, reviewType: "alpha"},
+		{name: "beta", agent: agentName, reviewType: "beta"},
+	})
+
+	synctest.Test(t, func(t *testing.T) {
+		fake := &panelArchiveClient{FakeClient: &katatest.FakeClient{BindingResult: kata.Binding{Project: "demo"}}, records: make(chan panelArchiveRecord)}
+		tc.Pool.archiveClient = func(string) kata.Client { return fake }
+		for i, expected := range []struct{ reviewType, content string }{{"alpha", "alpha checks\n"}, {"beta", "beta checks\n"}} {
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			require.Equal(t, members[i].ID, claimed.ID)
+			tc.Pool.processJob(testWorkerID, claimed)
+			// Attachment discovery runs external Git subprocesses.
+			record := <-fake.records
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(expected.content)))
+			assert.Equal(t, "abc4", record.ref)
+			assert.Equal(t, fmt.Sprintf("roborev-rubric.%s.%s.md", expected.reviewType, digest[:16]), record.name)
+			assert.Equal(t, []byte(expected.content), record.data)
+			stored, err := tc.DB.GetJobByID(claimed.ID)
+			require.NoError(t, err)
+			require.NotNil(t, stored.RubricSHA256)
+			assert.Equal(t, digest, *stored.RubricSHA256)
+			tc.assertJobStatus(t, claimed.ID, storage.JobStatusDone)
+		}
+		tc.Pool.wg.Wait()
+	})
 }
 
 func TestArchiveRubricReportsBindingAndAttachmentFailures(t *testing.T) {

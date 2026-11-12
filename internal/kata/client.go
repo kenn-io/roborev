@@ -74,18 +74,27 @@ func realRun(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) 
 			return nil, fmt.Errorf("kata %s: %w", verb, ctxErr)
 		}
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			stderr := strings.TrimSpace(string(ee.Stderr))
+			// The CLI may print warnings before its JSON error, which is the
+			// final line.
+			final := stderr
+			if i := strings.LastIndexByte(final, '\n'); i >= 0 {
+				final = strings.TrimSpace(final[i+1:])
+			}
 			var envelope struct {
 				Error struct {
 					Code string `json:"code"`
 				} `json:"error"`
 			}
-			if json.Unmarshal(ee.Stderr, &envelope) == nil && envelope.Error.Code == "docbank_not_configured" {
-				return nil, ErrDocbankNotConfigured
+			if json.Unmarshal([]byte(final), &envelope) == nil {
+				switch envelope.Error.Code {
+				case "docbank_not_configured":
+					return nil, ErrDocbankNotConfigured
+				case "daemon_unavailable":
+					return nil, ErrDaemonUnavailable
+				}
 			}
-			if envelope.Error.Code == "daemon_unavailable" {
-				return nil, ErrDaemonUnavailable
-			}
-			return nil, fmt.Errorf("kata %s: exit %d: %s", verb, ee.ExitCode(), strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("kata %s: exit %d: %s", verb, ee.ExitCode(), stderr)
 		}
 		return nil, fmt.Errorf("kata %s: %w", verb, err)
 	}

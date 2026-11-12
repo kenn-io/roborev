@@ -54,13 +54,10 @@ func (c *CLIClient) ResolveArchiveIssue(ctx context.Context, project, ref string
 	return ArchiveIssue{UID: result.Issue.UID, ShortID: result.Issue.ShortID}, nil
 }
 
-// ArchiveRubric serializes the list/add pair for an issue and exact file name.
-func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string, data []byte) error {
-	issue, err := c.ResolveArchiveIssue(ctx, project, ref)
-	if err != nil {
-		return err
-	}
-	key := project + "#" + issue.UID + "/" + name
+// ArchiveRubric serializes the list/add pair for a canonical UID returned by
+// ResolveArchiveIssue and an exact file name.
+func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string, data []byte) error {
+	key := project + "#" + uid + "/" + name
 	archiveLocks.Lock()
 	lock := archiveLocks.locks[key]
 	if lock == nil {
@@ -84,15 +81,14 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string
 	case <-lock.token:
 	}
 	defer func() { lock.token <- struct{}{} }()
-	uid := issue.UID
-	issue, err = c.ResolveArchiveIssue(ctx, project, uid)
+	issue, err := c.ResolveArchiveIssue(ctx, project, uid)
 	if err != nil {
 		return err
 	}
 	if issue.UID != uid {
 		return fmt.Errorf("resolve issue: identity changed; retry archive")
 	}
-	ref = issue.ShortID
+	ref := issue.ShortID
 	out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", ref, "--json", "--project", project}, nil)
 	if err != nil {
 		return fmt.Errorf("list attachments: %w", err)
@@ -135,14 +131,13 @@ func (c *CLIClient) ArchiveRubric(ctx context.Context, project, ref, name string
 	}
 	var added struct {
 		Results []struct {
-			ID    string `json:"attachment_id"`
-			Error string `json:"error"`
+			ID string `json:"attachment_id"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(out, &added); err != nil {
 		return fmt.Errorf("parse add attachment: %w", err)
 	}
-	if len(added.Results) != 1 || added.Results[0].Error != "" || added.Results[0].ID == "" {
+	if len(added.Results) != 1 || added.Results[0].ID == "" {
 		return fmt.Errorf("add attachment failed: %s", string(out))
 	}
 	return nil

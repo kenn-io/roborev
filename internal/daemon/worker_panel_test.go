@@ -23,6 +23,7 @@ import (
 // memberSpec describes one panel member to enqueue in a test run.
 type memberSpec struct {
 	name         string
+	reviewType   string
 	agent        string
 	instructions string
 	timeout      string
@@ -45,6 +46,7 @@ func enqueuePanelRun(
 	for i, m := range members {
 		cfgJSON, err := json.Marshal(config.ResolvedMember{
 			Name:         m.name,
+			ReviewType:   m.reviewType,
 			Index:        i,
 			Agent:        m.agent,
 			Instructions: m.instructions,
@@ -57,6 +59,7 @@ func enqueuePanelRun(
 			CommitID:              commit.ID,
 			GitRef:                sha,
 			Agent:                 m.agent,
+			ReviewType:            m.reviewType,
 			JobType:               storage.JobTypeReview,
 			PanelRunUUID:          &runUUID,
 			PanelRole:             storage.PanelRoleMember,
