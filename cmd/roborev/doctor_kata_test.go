@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,7 +204,19 @@ func TestDoctorShowsTheProjectTheDaemonEvaluatedForTheLocalBinding(t *testing.T)
 	assert.Equal(t, kata.Binding{}, env.kataBinding)
 	assert.Equal(t, "reviews", env.kata.Project, "the daemon's default project")
 	assert.True(t, env.kata.SupportsReplies)
-	assert.Contains(t, queries, "/api/kata/status?", "an unbound repository sends no project or workspace selector")
+	var found bool
+	for _, raw := range queries {
+		query, err := url.Parse(raw)
+		require.NoError(t, err)
+		if query.Path == "/api/kata/status" {
+			found = true
+			assert.Empty(t, query.Query().Get("project"))
+			assert.Empty(t, query.Query().Get("workspace_alias_identity"))
+			assert.Empty(t, query.Query().Get("workspace_alias_kind"))
+			assert.Empty(t, query.Query().Get("repo"))
+		}
+	}
+	assert.True(t, found, "doctor requested the Kata status")
 }
 
 func TestDoctorUsesCommittedWorkspaceAliasForKataStatus(t *testing.T) {
