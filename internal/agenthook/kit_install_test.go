@@ -307,7 +307,7 @@ func TestMCPHookRejectsUnusableDaemonURL(t *testing.T) {
 	}
 }
 
-func TestSetupPreservesInstalledHookChoices(t *testing.T) {
+func TestInstalledOptionsRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", home)
 	command := "roborev agent-hook run --agent claude --turn-threshold 0"
@@ -319,4 +319,35 @@ func TestSetupPreservesInstalledHookChoices(t *testing.T) {
 	assert.Equal(t, "http://127.0.0.1:7375", installed.RoborevServerAddr)
 	assert.Equal(t, 30*time.Second, installed.Timeout)
 	assert.Equal(t, command, installed.Command)
+}
+
+func TestUpdateInstalledPreservesEventSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	require.NoError(t, RunInstall(InstallOptions{Agent: "claude", Executable: "roborev"}, io.Discard))
+	path := filepath.Join(home, "settings.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(data, &doc))
+	hooks := doc["hooks"].(map[string]any)
+	group := hooks["PreToolUse"].([]any)[0].(map[string]any)
+	group["matcher"] = "Bash|Write"
+	group["hooks"].([]any)[0].(map[string]any)["timeout"] = float64(23)
+	delete(hooks, "Stop")
+	data, err = json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	require.NoError(t, UpdateInstalled(kitagenthook.AgentClaude, InstallOptions{Agent: "claude", Executable: "roborev", RoborevServerAddr: "http://127.0.0.1:8282"}, "roborev"))
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &doc))
+	hooks = doc["hooks"].(map[string]any)
+	group = hooks["PreToolUse"].([]any)[0].(map[string]any)
+	assert.Equal(t, "Bash|Write", group["matcher"])
+	assert.Equal(t, float64(23), group["hooks"].([]any)[0].(map[string]any)["timeout"])
+	assert.Contains(t, group["hooks"].([]any)[0].(map[string]any)["command"], "http://127.0.0.1:8282")
+	require.Contains(t, hooks, "Stop")
+	stop := hooks["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	assert.Contains(t, stop["command"], "http://127.0.0.1:8282")
 }

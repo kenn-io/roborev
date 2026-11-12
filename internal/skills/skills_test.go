@@ -1450,7 +1450,7 @@ func TestBundledMCPSkillCommandsCarryFromSkill(t *testing.T) {
 	}
 }
 
-func TestSetupChecksSkillMode(t *testing.T) {
+func TestStatusForAgentMode(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", home)
 	dir := filepath.Join(home, "skills")

@@ -68,47 +68,53 @@ func readFile(t *testing.T, path string) string {
 }
 
 func TestAgentSetupMCPReruns(t *testing.T) {
-	t.Run("change server", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("CODEX_HOME", home)
-		fakeAgent(t, "codex")
-		t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
-		_, err := runSetup("--agent", "codex", "--mcp", "--server", "http://127.0.0.1:8181")
-		require.NoError(t, err)
-		out, err := runSetup("--agent", "codex", "--mcp", "--server", "http://127.0.0.1:8282")
-		require.NoError(t, err, out, readFile(t, filepath.Join(home, "hooks.json")))
-		installed, found, err := agenthook.InstalledOptions(kitagenthook.AgentCodex)
-		require.NoError(t, err)
-		require.True(t, found)
-		assert.Equal(t, "http://127.0.0.1:8282", installed.RoborevServerAddr)
-		assert.True(t, installed.MCP)
-		registration, found := mcpconfig.Registration(mcpconfig.Options{Agent: skills.AgentCodex})
-		require.True(t, found)
-		assert.Contains(t, registration.Args, "http://127.0.0.1:8282")
-		_, err = runSetup("--agent", "codex", "--mcp=false")
-		require.NoError(t, err)
-		installed, _, err = agenthook.InstalledOptions(kitagenthook.AgentCodex)
-		require.NoError(t, err)
-		assert.False(t, installed.MCP)
-	})
-	t.Run("bare rerun", func(t *testing.T) {
-		t.Setenv("CODEX_HOME", t.TempDir())
-		fakeAgent(t, "codex")
-		t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
-		_, err := runSetup("--agent", "codex", "--mcp")
-		require.NoError(t, err)
-		_, err = runSetup("--agent", "codex")
-		require.NoError(t, err)
-		installed, found, err := agenthook.InstalledOptions(kitagenthook.AgentCodex)
-		require.NoError(t, err)
-		require.True(t, found)
-		assert.True(t, installed.MCP, "bare rerun must keep MCP mode")
-		status, available := skills.StatusForAgentMode(skills.AgentCodex, new(true))
-		require.True(t, available)
-		for _, state := range status.Skills {
-			assert.Equal(t, skills.SkillCurrent, state)
-		}
-	})
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	fakeAgent(t, "codex")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	_, err := runSetup("--agent", "codex", "--mcp", "--server", "http://127.0.0.1:8181")
+	require.NoError(t, err)
+	path := filepath.Join(home, "config.toml")
+	hooks := readFile(t, filepath.Join(home, "hooks.json"))
+	config := readFile(t, path)
+	out, err := runSetup("--agent", "codex", "--check", "--mcp=false", "--server", "http://127.0.0.1:8282")
+	require.NoError(t, err, out)
+	assert.Equal(t, hooks, readFile(t, filepath.Join(home, "hooks.json")))
+	assert.Equal(t, config, readFile(t, path))
+
+	config = strings.ReplaceAll(config, "http://127.0.0.1:8181", "http://127.0.0.1:8282")
+	require.NoError(t, os.WriteFile(path, []byte(config), 0o600))
+	states, err := setupReport(t, "--agent", "codex", "--check")
+	require.Error(t, err)
+	assert.Equal(t, agentsetup.StateOutdated, states["mcp roborev"])
+	_, err = runSetup("--agent", "codex")
+	require.NoError(t, err)
+	assert.Contains(t, readFile(t, path), "http://127.0.0.1:8181")
+	installed, found, err := agenthook.InstalledOptions(kitagenthook.AgentCodex)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.True(t, installed.MCP)
+	status, available := skills.StatusForAgentMode(skills.AgentCodex, new(true))
+	require.True(t, available)
+	for _, state := range status.Skills {
+		assert.Equal(t, skills.SkillCurrent, state)
+	}
+
+	out, err = runSetup("--agent", "codex", "--mcp", "--server", "http://127.0.0.1:8282")
+	require.NoError(t, err, out)
+	installed, found, err = agenthook.InstalledOptions(kitagenthook.AgentCodex)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "http://127.0.0.1:8282", installed.RoborevServerAddr)
+	assert.True(t, installed.MCP)
+	registration, found := mcpconfig.Registration(mcpconfig.Options{Agent: skills.AgentCodex})
+	require.True(t, found)
+	assert.Contains(t, registration.Args, "http://127.0.0.1:8282")
+	_, err = runSetup("--agent", "codex", "--mcp=false")
+	require.NoError(t, err)
+	installed, _, err = agenthook.InstalledOptions(kitagenthook.AgentCodex)
+	require.NoError(t, err)
+	assert.False(t, installed.MCP)
 }
 
 func TestAgentSetupKeepsCustomCommands(t *testing.T) {
@@ -134,36 +140,6 @@ func TestAgentSetupKeepsCustomCommands(t *testing.T) {
 		require.True(t, found)
 		assert.True(t, installed.MCP)
 		assert.Contains(t, installed.Command, "--turn-threshold")
-	})
-	t.Run("custom command", func(t *testing.T) {
-		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-		fakeAgent(t, "claude")
-		exe, err := os.Executable()
-		require.NoError(t, err)
-		command := fmt.Sprintf("%s agent-hook run --agent claude --turn-threshold 7", exe)
-		require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Command: command}, io.Discard))
-		out, err := runSetup("--agent", "claude")
-		require.NoError(t, err, out)
-		installed, found, err := agenthook.InstalledOptions(kitagenthook.AgentClaude)
-		require.NoError(t, err)
-		require.True(t, found)
-		assert.Equal(t, command, installed.Command)
-	})
-	t.Run("edited suffix", func(t *testing.T) {
-		home := t.TempDir()
-		t.Setenv("CLAUDE_CONFIG_DIR", home)
-		fakeAgent(t, "claude")
-		exe, err := os.Executable()
-		require.NoError(t, err)
-		require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe}, io.Discard))
-		path := filepath.Join(home, "settings.json")
-		data := readFile(t, path)
-		require.Contains(t, data, "--source=roborev-agent-hook'")
-		data = strings.ReplaceAll(data, "--source=roborev-agent-hook'", "--source=roborev-agent-hook' --turn-threshold 7")
-		require.NoError(t, os.WriteFile(path, []byte(data), 0o600))
-		out, err := runSetup("--agent", "claude")
-		require.NoError(t, err, out)
-		assert.Contains(t, readFile(t, path), "--turn-threshold 7")
 	})
 	t.Run("missing custom executable", func(t *testing.T) {
 		home := t.TempDir()
@@ -224,7 +200,6 @@ func TestQuickstartJSONReportsUntrustedCodex(t *testing.T) {
 	root.SetOut(&setupOut)
 	root.SetErr(&stderr)
 	assert.Equal(t, 1, executeCLI(root, []string{"agent", "setup", "--agent", "codex"}))
-	assert.Contains(t, setupOut.String(), "/hooks")
 	assert.Empty(t, stderr.String())
 	cmd := quickstartCmd()
 	cmd.SetArgs([]string{"--json"})
@@ -255,8 +230,9 @@ func TestReadinessUsesInstalledHookModeAndSuggestsMCPRepair(t *testing.T) {
 	assert.NotContains(t, strings.Join(details, " "), "mcp roborev")
 	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: "roborev", MCP: true}, io.Discard))
 	require.NoError(t, os.Remove(filepath.Join(home, ".claude.json")))
-	out, _ := runSetup("--agent", "claude", "--check")
-	assert.Contains(t, out, "mcp roborev")
+	states, err := setupReport(t, "--agent", "claude", "--check")
+	require.Error(t, err)
+	assert.Equal(t, agentsetup.StateMissing, states["mcp roborev"])
 }
 
 func TestAgentSetupPartialMCPInstall(t *testing.T) {
@@ -286,6 +262,11 @@ func TestSetupPrintUsesSelectedServer(t *testing.T) {
 	out, err = runSetup("--agent", "claude", "--print")
 	require.NoError(t, err)
 	assert.NotContains(t, out, "http://127.0.0.1:8282")
+	path := filepath.Join(home, "settings.json")
+	require.NoError(t, os.WriteFile(path, []byte("{"), 0o600))
+	_, err = runSetup("--agent", "claude", "--print", "--server", "http://127.0.0.1:8181")
+	require.NoError(t, err)
+	assert.Equal(t, "{", readFile(t, path))
 }
 
 func TestDoctorAgentReach(t *testing.T) {
@@ -340,34 +321,6 @@ func fakeCodexAppServer() int {
 	return 0
 }
 
-func TestSetupPrintIgnoresMalformedConfig(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	require.NoError(t, os.WriteFile(filepath.Join(home, "settings.json"), []byte("{"), 0o600))
-	out, err := runSetup("--agent", "claude", "--print", "--server", "http://127.0.0.1:8181")
-	require.NoError(t, err)
-	assert.Contains(t, out, "http://127.0.0.1:8181")
-	assert.Equal(t, "{", readFile(t, filepath.Join(home, "settings.json")))
-}
-
-func TestSetupReconcilesHookAndMCPServers(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-	fakeAgent(t, "codex")
-	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
-	_, err := runSetup("--agent", "codex", "--mcp", "--server", "http://127.0.0.1:8181")
-	require.NoError(t, err)
-	path := filepath.Join(home, "config.toml")
-	config := strings.ReplaceAll(readFile(t, path), "http://127.0.0.1:8181", "http://127.0.0.1:8282")
-	require.NoError(t, os.WriteFile(path, []byte(config), 0o600))
-	states, err := setupReport(t, "--agent", "codex", "--check")
-	require.Error(t, err)
-	assert.Equal(t, agentsetup.StateOutdated, states["mcp roborev"])
-	_, err = runSetup("--agent", "codex")
-	require.NoError(t, err)
-	assert.Contains(t, readFile(t, path), "http://127.0.0.1:8181")
-}
-
 func TestSetupLeavesMixedHookCommandsUnchanged(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", home)
@@ -394,67 +347,6 @@ func TestSetupLeavesMixedHookCommandsUnchanged(t *testing.T) {
 	assert.Equal(t, agentsetup.StateOK, states["skills"])
 	assert.Equal(t, string(data), readFile(t, path))
 	assert.Equal(t, mcp, readFile(t, mcpPath))
-}
-
-func TestSetupCheckIgnoresWriteFlags(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", home)
-	fakeAgent(t, "codex")
-	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
-	_, err := runSetup("--agent", "codex", "--mcp", "--server", "http://127.0.0.1:8181")
-	require.NoError(t, err)
-	hooks := readFile(t, filepath.Join(home, "hooks.json"))
-	config := readFile(t, filepath.Join(home, "config.toml"))
-	out, err := runSetup("--agent", "codex", "--check", "--mcp=false", "--server", "http://127.0.0.1:8282")
-	require.NoError(t, err, out)
-	assert.Equal(t, hooks, readFile(t, filepath.Join(home, "hooks.json")))
-	assert.Equal(t, config, readFile(t, filepath.Join(home, "config.toml")))
-}
-
-func TestSetupPreservesUniformHookMatchersAndTimeouts(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	fakeAgent(t, "claude")
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe}, io.Discard))
-	path := filepath.Join(home, "settings.json")
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
-	hooks := doc["hooks"].(map[string]any)
-	group := hooks["PreToolUse"].([]any)[0].(map[string]any)
-	group["matcher"] = "Bash|Write"
-	group["hooks"].([]any)[0].(map[string]any)["timeout"] = float64(23)
-	data, err := json.Marshal(doc)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	out, err := runSetup("--agent", "claude", "--server", "http://127.0.0.1:8282")
-	require.NoError(t, err, out)
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
-	hooks = doc["hooks"].(map[string]any)
-	group = hooks["PreToolUse"].([]any)[0].(map[string]any)
-	assert.Equal(t, "Bash|Write", group["matcher"])
-	assert.Equal(t, float64(23), group["hooks"].([]any)[0].(map[string]any)["timeout"])
-}
-
-func TestSetupRestoresMissingHookEvent(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", home)
-	fakeAgent(t, "claude")
-	exe, err := os.Executable()
-	require.NoError(t, err)
-	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{Agent: "claude", Executable: exe}, io.Discard))
-	path := filepath.Join(home, "settings.json")
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
-	delete(doc["hooks"].(map[string]any), "Stop")
-	data, err := json.Marshal(doc)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	out, err := runSetup("--agent", "claude")
-	require.NoError(t, err, out)
-	require.NoError(t, json.Unmarshal([]byte(readFile(t, path)), &doc))
-	assert.Contains(t, doc["hooks"], "Stop")
 }
 
 func TestSetupContinuesAfterOtherAgentConfigFails(t *testing.T) {

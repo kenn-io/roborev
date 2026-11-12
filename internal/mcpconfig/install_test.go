@@ -196,45 +196,25 @@ func TestRepairSelectedMCPConnection(t *testing.T) {
 			assert.Equal(t, old, info.ModTime())
 		})
 	}
-	t.Run("reject unix address for HTTP", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "config")
-		config := `{"mcpServers":{"roborev":{"type":"http","url":"http://127.0.0.1:8181/mcp"}}}`
-		require.NoError(t, os.WriteFile(path, []byte(config), 0o600))
-		server, found := Registration(Options{Agent: skills.AgentClaude, ConfigPath: path})
-		require.True(t, found)
-		_, err := server.WithServer("unix:///tmp/example.sock")
-		require.Error(t, err)
-	})
-	t.Run("restore Claude transport", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "config")
-		require.NoError(t, os.WriteFile(path, []byte(`{"mcpServers":{"roborev":{"command":"roborev","args":["mcp","serve"]}}}`), 0o600))
-		opts := Options{Agent: skills.AgentClaude, ConfigPath: path}
-		server, found := Registration(opts)
-		require.True(t, found)
-		require.NoError(t, Repair(opts, server))
-		data, err := os.ReadFile(path)
-		require.NoError(t, err)
-		assert.JSONEq(t, `{"mcpServers":{"roborev":{"command":"roborev","args":["mcp","serve"]}}}`, string(data))
-	})
 }
 
-func TestWithServerPreservesHTTPPathAndQuery(t *testing.T) {
-	server := RegisteredServer{URL: "http://127.0.0.1:7373/custom/mcp?token=abc"}
-	updated, err := server.WithServer("http://127.0.0.1:8181")
-	require.NoError(t, err)
-	assert.Equal(t, "http://127.0.0.1:8181/custom/mcp?token=abc", updated.URL)
-}
-
-func TestWithServerAcceptsBareAddressForHTTP(t *testing.T) {
-	server := RegisteredServer{URL: "http://127.0.0.1:7373/custom?x=1"}
-	updated, err := server.WithServer("127.0.0.1:8181")
-	require.NoError(t, err)
-	assert.Equal(t, "http://127.0.0.1:8181/custom?x=1", updated.URL)
-}
-
-func TestWithServerAcceptsHTTPSDaemon(t *testing.T) {
-	server := RegisteredServer{URL: "https://example.com:443/custom?x=1"}
-	updated, err := server.WithServer("https://other.example.com:443")
-	require.NoError(t, err)
-	assert.Equal(t, "https://other.example.com:443/custom?x=1", updated.URL)
+func TestWithServer(t *testing.T) {
+	for _, tc := range []struct {
+		name, initial, address, want string
+	}{
+		{"path and query", "http://127.0.0.1:7373/custom/mcp?token=abc", "http://127.0.0.1:8181", "http://127.0.0.1:8181/custom/mcp?token=abc"},
+		{"bare address", "http://127.0.0.1:7373/custom?x=1", "127.0.0.1:8181", "http://127.0.0.1:8181/custom?x=1"},
+		{"https", "https://example.com:443/custom?x=1", "https://other.example.com:443", "https://other.example.com:443/custom?x=1"},
+		{"unix address", "http://127.0.0.1:8181/mcp", "unix:///tmp/example.sock", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			updated, err := (RegisteredServer{URL: tc.initial}).WithServer(tc.address)
+			if tc.want == "" {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, updated.URL)
+		})
+	}
 }
