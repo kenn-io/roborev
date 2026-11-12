@@ -2645,6 +2645,9 @@ func (s *Server) humaCancelJob(
 			return nil, err
 		}
 	}
+	// Publish cancellation ownership before workers finish a canceled attempt.
+	s.workerPool.attemptTransitionsMu.Lock()
+	defer s.workerPool.attemptTransitionsMu.Unlock()
 	if err := s.db.CancelJob(input.Body.JobID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(

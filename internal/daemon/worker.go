@@ -87,8 +87,8 @@ type WorkerPool struct {
 	updateInterruptTargets map[int64]struct{}
 	failedUpdateRequeues   map[int64]string
 	runningJobsMu          sync.Mutex
-	// attemptTransitionsMu linearizes update-target registration with every
-	// attempt-scoped retry, failover, failure, or completion transition.
+	// attemptTransitionsMu linearizes update-target registration and HTTP
+	// cancellation ownership publication with attempt-scoped transitions.
 	attemptTransitionsMu sync.RWMutex
 
 	// Agent cooldowns for quota exhaustion
@@ -1919,8 +1919,9 @@ func (wp *WorkerPool) savePromptOrFinish(
 	current, getErr := wp.db.GetJobByIDContext(context.WithoutCancel(ctx), job.ID)
 	switch {
 	case getErr == nil && current.Status == storage.JobStatusCanceled:
-		// A caller that wrote the cancellation may not have registered event
-		// ownership yet. It does so before canceling this context.
+		// Explicit cancellation delivery records ownership before canceling the
+		// context. The context may also expire independently; the HTTP writer
+		// lock orders ownership publication before worker finalization in that case.
 		<-ctx.Done()
 		wp.finishCanceledAttempt(workerID, job, job.Agent, eventWorktreePath)
 	case err != nil:
