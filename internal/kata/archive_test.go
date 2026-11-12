@@ -114,8 +114,7 @@ func TestArchiveRubricSerializesConcurrentAdds(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.toml"), []byte("[project]\nname = \"demo\"\n"), 0o600))
 	c := NewCLIClient(dir)
-	firstList := make(chan struct{})
-	release := make(chan struct{})
+	var firstList, release chan struct{}
 	calls := 0
 	adds := 0
 	var mu sync.Mutex
@@ -142,6 +141,8 @@ func TestArchiveRubricSerializesConcurrentAdds(t *testing.T) {
 	}
 	stubArchiveIdentity(c)
 	synctest.Test(t, func(t *testing.T) {
+		firstList = make(chan struct{})
+		release = make(chan struct{})
 		result := make(chan error, 2)
 		go func() { result <- c.ArchiveRubric(t.Context(), "demo", "uid1", "rubric.md", []byte("rubric\n")) }()
 		<-firstList
