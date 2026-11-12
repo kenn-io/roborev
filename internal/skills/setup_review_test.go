@@ -66,30 +66,37 @@ func TestSetupReviewConfigExampleValidates(t *testing.T) {
 				require.True(t, ok, "member %s uses undefined custom type %q", member, subagent.ReviewType)
 			}
 
-			if !tc.swarm {
-				flow := strings.TrimSpace(repoCfg.AgentHook.ReviewFlow)
-				require.NotEmpty(t, flow, "example must show a review flow")
-				graph, err := agentguide.LintDOT(agentguide.FenceDOT(flow))
-				require.NoError(t, err)
-				assert.Equal(t, "roborev_"+strings.ReplaceAll(repoCfg.Review.HookPanel, "-", "_"), graph.Name)
-				readNode, ok := graph.Node("read")
-				require.True(t, ok, "example must include a read node")
-				assert.Equal(t, "Read each: roborev show --from-skill --job <job_id>", readNode.Label)
-				exit := false
-				for _, node := range graph.Nodes {
-					if node.Shape == "oval" && len(graph.Out(node.ID)) == 0 && strings.Contains(node.Label, "roborev_triage") {
-						exit = true
-					}
+			flow := strings.TrimSpace(repoCfg.AgentHook.ReviewFlow)
+			require.NotEmpty(t, flow, "example must show a review flow")
+			graph, err := agentguide.LintDOT(agentguide.FenceDOT(flow))
+			require.NoError(t, err)
+			assert.Equal(t, "roborev_"+strings.ReplaceAll(repoCfg.Review.HookPanel, "-", "_"), graph.Name)
+			readNode, ok := graph.Node("read")
+			require.True(t, ok, "example must include a read node")
+			assert.Equal(t, "Read each: roborev show --from-skill --job <job_id>", readNode.Label)
+			exit := false
+			for _, node := range graph.Nodes {
+				if node.Shape == "oval" && len(graph.Out(node.ID)) == 0 && strings.Contains(node.Label, "roborev_triage") {
+					exit = true
 				}
-				assert.True(t, exit, "flow must hand back to the triage diagram")
-				t.Run("Graphviz", func(t *testing.T) {
-					err := agentguide.CanonWithGraphviz(t.Context(), flow)
-					if errors.Is(err, agentguide.ErrGraphvizUnavailable) {
-						t.Skip("graphviz not installed")
-					}
-					require.NoError(t, err)
-				})
+			}
+			assert.True(t, exit, "flow must hand back to the triage diagram")
+			t.Run("Graphviz", func(t *testing.T) {
+				err := agentguide.CanonWithGraphviz(t.Context(), flow)
+				if errors.Is(err, agentguide.ErrGraphvizUnavailable) {
+					t.Skip("graphviz not installed")
+				}
+				require.NoError(t, err)
+			})
 
+			if tc.swarm {
+				outcome, ok := graph.Node("outcome")
+				require.True(t, ok)
+				assert.Contains(t, outcome.Label, "swarm outcome comment for this result")
+				assert.Equal(t, []agentguide.Edge{{From: "read", To: "outcome"}}, graph.Out("read"))
+				assert.Equal(t, []agentguide.Edge{{From: "outcome", To: "swarm"}}, graph.Out("outcome"))
+				assert.Contains(t, graph.Out("swarm"), agentguide.Edge{From: "swarm", To: "ask", Label: `contested, unchecked,\nmissing or incomplete`})
+				assert.Contains(t, graph.Out("swarm"), agentguide.Edge{From: "swarm", To: "who", Label: "confirmed or refuted"})
 			}
 
 			// Custom types do not inherit review_agent. Resolve the example with

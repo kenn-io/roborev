@@ -412,6 +412,10 @@ Build the flow from the approved setup:
     `review-finding` for each job and comment the outcome there. If none exists,
     tell the user and ask how to track the finding; do not create an issue in
     place of the hook. Leave unresolved Ask findings open.
+- When a swarm is also configured, read the outcome comment for the current
+    result before choosing a disposition. Route contested, unchecked, missing,
+    or incomplete outcomes to Ask; the user decides. Check confirmed and
+    refuted findings against the sources before acting.
 
 The flow refines the Which disposition step of `roborev_triage`. Use `Fix:`,
 `Decline:`, `Invalid:`, and `Ask:` action labels. End at an oval labeled
@@ -680,6 +684,38 @@ review_type = "quotes"
 
 [review.panels.brief]
 members = ["facts", "quotes"]
+
+# Include this flow only when a coding agent handles findings through the hook.
+[agent_hook]
+review_flow = '''
+digraph roborev_brief {
+  node [shape=box];
+  start [shape=oval label="Findings from the brief panel;\neach job covers up to 5 commits"];
+  read [label="Read each: roborev show --from-skill --job <job_id>"];
+  outcome [label="Find the matching Kata issue and read the\nswarm outcome comment for this result"];
+  swarm [shape=diamond label="What is the swarm outcome?"];
+  who [shape=diamond label="Which reviewer reported it?"];
+  facts [label="Compare with evidence/timeline.md\nand the exhibit text copy"];
+  quotes [label="Compare with the exhibit text copy,\nword for word"];
+  holds [shape=diamond label="What does the source show?"];
+  fix [label="Fix: correct the sentence, drafts/ only;\nnew commit, never amend reviewed ones"];
+  invalid [label="Invalid: record the source line\nthat shows the draft is right"];
+  decline [label="Decline: imprecise, misleads no one;\nrecord why it can wait"];
+  ask [label="Ask: tell the user what is unresolved;\nleave the finding open"];
+  back [shape=oval label="Back to roborev_triage:\nrecord each disposition"];
+  start -> read -> outcome -> swarm;
+  swarm -> ask [label="contested, unchecked,\nmissing or incomplete"];
+  swarm -> who [label="confirmed or refuted"];
+  who -> facts [label="facts"];
+  who -> quotes [label="quotes"];
+  facts -> holds; quotes -> holds;
+  holds -> fix [label="finding is right"];
+  holds -> invalid [label="draft is right"];
+  holds -> decline [label="imprecise only"];
+  holds -> ask [label="source missing\nor conflicting"];
+  fix -> back; invalid -> back; decline -> back; ask -> back;
+}
+'''
 
 [[hooks]]
 event = "review.completed"
