@@ -113,13 +113,13 @@ it("reports rendered review content after Retry and ignores job-list refreshes",
   render(ReviewDrawer, { context: new Map([[REVIEW_STORES_KEY, stores]]) });
 
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Could not load the review renderer.",
+    "Could not display the review.",
   );
   // A review reload remounts the same failure; it is not shown anew.
   for (let reload = 0; reload < 2; reload++) {
     await load(stores.roborevReview.loadReviewEffect(42));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not load the review renderer.",
+      "Could not display the review.",
     );
   }
   expect(reportCoreAction).not.toHaveBeenCalled();

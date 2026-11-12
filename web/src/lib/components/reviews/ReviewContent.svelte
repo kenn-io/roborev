@@ -98,7 +98,7 @@
   />
 {:else if loadError && output}
   <div class="review-state" role="alert" {@attach reportRendererFailure}>
-    <p>Could not load the review renderer.</p>
+    <p>Could not display the review.</p>
     <button type="button" onclick={retryRenderer}>Retry</button>
   </div>
 {:else if pending}
