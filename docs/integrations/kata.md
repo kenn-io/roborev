@@ -93,9 +93,12 @@ in the review hooks guide for hook fields and event patterns.
 
 The optional swarm in `/roborev-setup-review` sets up independent agents to
 check findings against their rubrics and sources. It needs a Kata binding, a
-`type = "kata"` hook, and Kata v0.19.0 or newer with typed replies. The user
-starts the teammates in their own harness. The skill writes a committed brief
-with the question, rubrics, sources, roster, and what each answer means.
+`type = "kata"` hook covering `review.completed`, the requested branches and
+destination, and Kata v0.19.0 or newer with typed replies. Prefer the bound
+project. If an explicit project is selected, record it in the brief and pass
+`--project <name>` to every native Kata command. The user starts the teammates
+in their own harness. The skill writes a committed brief with the question,
+rubrics, sources, roster, and what each answer means.
 
 A teammate name records attribution under an accountable actor; it does not
 restrict access. Use Kata's issue-scoped credentials for that. Before starting,
@@ -120,14 +123,17 @@ reviewer, brief at that commit, roster and assignments. The hook issue body may
 be truncated, so copy every finding from the full job result into its own root,
 including position, reviewer, severity, location and problem text. Reconcile
 every full-result finding to a root and outcome. Record handles from
-`kata show`. For `<job>`, use `job.uuid` from the JSON output; if absent, use
-exactly `<job-id>-<full-reviewed-SHA>`. Reuse keys only for identical retries:
+`kata show`. For `<result>`, use the top-level `uuid` from the JSON output; if
+absent, use exactly `<review-id>-<job-id>-<full-reviewed-SHA>`. Reuse keys only
+for identical retries of the same result. A rerun has a new result: leave old
+roots, replies and outcomes as history, post a new charter and roots with new
+keys, and never carry outcomes forward:
 
 ```bash
 kata --teammate=lead comment '<issue>' --body-file charter.md \
-  --idempotency-key 'swarm:<job>:charter' --agent
+  --idempotency-key 'swarm:<result>:charter' --agent
 kata --teammate=lead comment '<issue>' --body-file finding-1.md \
-  --idempotency-key 'swarm:<job>:f1' --agent
+  --idempotency-key 'swarm:<result>:f1' --agent
 kata --teammate=lead show '<issue>' --agent
 ```
 
@@ -142,10 +148,10 @@ characters of evidence:
 ```bash
 kata --teammate=facts-codex comment '<issue>' --confirm 'c:<handle>' \
   -m 'The facts rubric checks dates; the draft and exhibit give different dates.' \
-  --idempotency-key 'swarm:<job>:f1:facts-codex:confirm' --agent
+  --idempotency-key 'swarm:<result>:f1:facts-codex:confirm' --agent
 kata --teammate=facts-claude-code comment '<issue>' --refute 'c:<handle>' \
   -m 'The exhibit supports the date in the draft; the finding is mistaken.' \
-  --idempotency-key 'swarm:<job>:f1:facts-claude-code:refute' --agent
+  --idempotency-key 'swarm:<result>:f1:facts-claude-code:refute' --agent
 kata --teammate=lead show '<issue>' --thread 'c:<handle>' --agent
 ```
 

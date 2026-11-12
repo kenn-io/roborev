@@ -9,7 +9,6 @@ All notable changes to roborev, grouped by minor release.
 
 - Set up an optional Kata swarm to confirm or refute review findings with
     independent evidence.
-
 - Receive failed-review reminders only for commits the session gains during
     `git commit`, `git cherry-pick`, or `git revert`, including amends and
     batched reviews containing them. Find older reviews and reviews moved by a

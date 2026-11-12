@@ -18,13 +18,7 @@ import (
 	"go.kenn.io/roborev/internal/kata"
 )
 
-// TestCLIClientE2E exercises the real kata binary against an isolated
-// KATA_HOME so it never touches a developer's production kata data or
-// daemon. Run with: go test -tags kata ./internal/kata/
-//
-// kata namespaces its database, runtime directory, and daemon socket under
-// KATA_HOME (<KATA_HOME>/kata.db and <KATA_HOME>/runtime/<dbhash>), so a
-// KATA_HOME-scoped `kata daemon stop` only stops the daemon this test starts.
+// isolatedKata starts an isolated Kata fixture and stops its daemon at cleanup.
 func isolatedKata(t *testing.T) (context.Context, string, []string, []string) {
 	t.Helper()
 	if _, err := exec.LookPath("kata"); err != nil {
@@ -80,6 +74,8 @@ func isolatedKata(t *testing.T) (context.Context, string, []string, []string) {
 	return ctx, repo, childEnv, overrides
 }
 
+// TestCLIClientE2E exercises the real kata binary against an isolated home.
+// Run with: go test -tags kata ./internal/kata/.
 func TestCLIClientE2E(t *testing.T) {
 	ctx, repo, _, overrides := isolatedKata(t)
 	c := kata.NewCLIClientWithEnv(repo, overrides)
@@ -161,9 +157,15 @@ func TestNativeTypedRepliesE2E(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 	assert.Equal(t, 1, strings.Count(string(out), evidence), "identical retry must not duplicate the reply")
 	assert.Contains(t, string(out), "The exhibit supports the draft date")
-	out, err = run("--teammate=facts-codex", "comment", res.ShortID, "--confirm", root, "-m", evidence, "--idempotency-key", "swarm:fixture:f1:duplicate", "--agent")
+	out, err = run("--teammate=facts-codex", "comment", res.ShortID, "--confirm", root, "-m", evidence, "--idempotency-key", "swarm:fixture:f1:duplicate", "--json")
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr, "%s", out)
 	assert.Equal(t, 5, exitErr.ExitCode(), "%s", out)
-	assert.Contains(t, string(out), "a reply of this kind already exists")
+	var conflict struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(out, &conflict))
+	assert.Equal(t, "duplicate_reply", conflict.Error.Code)
 }
