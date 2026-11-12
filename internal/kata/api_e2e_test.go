@@ -178,7 +178,7 @@ func TestTypedReplyRealKataLostReceiptAndRetry(t *testing.T) {
 	project, err := c.ResolvePublicationProject(ctx, "e2etest")
 	require.NoError(t, err)
 	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "summary", Findings: []structuredreview.Finding{{Severity: "high", Problem: "first", Fix: "fix"}, {Severity: "medium", Problem: "second", Fix: "fix"}}}
-	publication, err := kata.PreparePublication(uuid.New(), strings.Repeat("a", 64), time.Now().UTC(), doc, "summary", "roborev")
+	publication, err := kata.PreparePublicationWithOptions(uuid.New(), strings.Repeat("a", 64), time.Now().UTC(), doc, "summary", "roborev", kata.PublicationOptions{})
 	require.NoError(t, err)
 	created, err := c.CreatePublicationIssue(ctx, project, publication)
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestTypedReplyRealKataLostReceiptAndRetry(t *testing.T) {
 	for range 6 {
 		boundaryDoc.Findings = append(boundaryDoc.Findings, structuredreview.Finding{Severity: "high", Problem: "problem", Fix: "fix"})
 	}
-	boundaryPub, err := kata.PreparePublication(uuid.New(), strings.Repeat("a", 64), time.Now().UTC(), boundaryDoc, "summary", "roborev")
+	boundaryPub, err := kata.PreparePublicationWithOptions(uuid.New(), strings.Repeat("a", 64), time.Now().UTC(), boundaryDoc, "summary", "roborev", kata.PublicationOptions{})
 	require.NoError(t, err)
 	boundaryIssue, err := c.CreatePublicationIssue(ctx, project, boundaryPub)
 	require.NoError(t, err)

@@ -103,7 +103,7 @@ func TestKataTypedReplyThroughDaemonE2E(t *testing.T) {
 	for range 7 {
 		doc.Findings = append(doc.Findings, structuredreview.Finding{Severity: "high", Problem: "problem", Fix: "fix"})
 	}
-	publication, err := kata.PreparePublication(uuid.New(), strings.Repeat("a", 64), time.Now().UTC(), doc, "summary", "roborev")
+	publication, err := kata.PreparePublicationWithOptions(uuid.New(), strings.Repeat("a", 64), time.Now().UTC(), doc, "summary", "roborev", kata.PublicationOptions{})
 	require.NoError(t, err)
 	created, err := client.CreatePublicationIssue(ctx, project, publication)
 	require.NoError(t, err)
