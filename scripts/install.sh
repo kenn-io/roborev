@@ -235,6 +235,8 @@ main() {
     echo "  roborev init"
     echo
     echo "Connect Claude Code or Codex:"
+    echo "  Not in the latest release yet"
+    # Not in the latest release yet
     echo "  roborev agent setup"
 }
 

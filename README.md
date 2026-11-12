@@ -50,6 +50,8 @@ roborev init                  # layer 1: per-commit reviews
 roborev agent hook install --agent all  # or wire every supported profile
 ```
 
+Not in the latest release yet
+
 ```bash
 roborev agent setup           # layer 2: wire Claude Code and Codex
 ```
@@ -58,6 +60,8 @@ Before you ship, run the `/roborev-refine` skill: it re-reviews and fixes your
 whole branch until every review passes, catching bugs before the PR.
 
 New here? Run `roborev quickstart` and point your agent at it.
+
+Not in the latest release yet
 
 Add `--mcp` to `roborev agent setup` to register MCP. If Codex asks you to
 review hooks, run `/hooks` in Codex, then `roborev agent setup --check`.

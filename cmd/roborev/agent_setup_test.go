@@ -23,6 +23,8 @@ import (
 
 // runSetup runs roborev agent setup and returns its stdout.
 func runSetup(args ...string) (string, error) {
+	previousServer := serverAddr
+	defer func() { serverAddr = previousServer }()
 	cmd := newRootCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)

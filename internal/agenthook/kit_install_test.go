@@ -334,8 +334,9 @@ func TestHookCommandOptionsAndRewrite(t *testing.T) {
 	}
 	t.Run("missing generated executable", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing")
-		command := missing + " agent-hook run --agent claude " + agentHookMarker
-		updated, err := RewriteCommand(kitagenthook.Commands{Native: command}, kitagenthook.AgentClaude, InstallOptions{}, "replacement")
+		command, err := kitagenthook.BuildCommand(missing, "agent-hook", "run", "--agent", "claude", agentHookMarker)
+		require.NoError(t, err)
+		updated, err := RewriteCommand(kitagenthook.Commands{Native: command.POSIX}, kitagenthook.AgentClaude, InstallOptions{}, "replacement")
 		require.NoError(t, err)
 		assert.Contains(t, updated.Native, "replacement")
 	})
