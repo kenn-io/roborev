@@ -181,24 +181,32 @@ the finding unchecked and actionable.
 
 The lead checks that cited paths and lines exist at the reviewed commit and
 posts a swarm verification outcome comment whose first line is exactly
-`swarm:<result>`, followed by one row per finding: confirmed for confirms only,
-refuted for refutes only, contested for both, and unchecked for neither or
-incomplete threads. A resolving citation alone does not prove a conclusion. The
-lead never confirms or refutes; the user decides what to do with contested and
-unchecked findings. A reply does not close the Kata issue or the roborev review.
+`swarm:<result>`, followed by one row per finding with its position, complete
+root reference and outcome (for example, `1 | <comment-ref> | confirmed`):
+confirmed for confirms only, refuted for refutes only, contested for both, and
+unchecked for neither or incomplete threads. A resolving citation alone does not
+prove a conclusion. The lead never confirms or refutes; the user decides what to
+do with contested and unchecked findings. A reply does not close the Kata issue
+or the roborev review. Post `outcome.md` with a stable key; reuse the key for an
+identical retry:
+
+```bash
+kata --teammate=lead comment '<issue>' --body-file outcome.md \
+  --idempotency-key 'swarm:<result>:outcome' --agent
+```
+
 With user approval, refuted findings can inform rubric tuning. Main fix, refine
 and later review prompts do not consume typed swarm outcomes; pass them to the
 user or fixing agent before any edit.
 
-When a repository also uses an Agent Hook review flow, apply it separately to
-each finding. Get the current result's top-level `uuid` from `roborev job show
---job <id> --json`, or use the fallback above if absent. Match a swarm outcome
-comment by its exact first line `swarm:<result>`, then match the finding's row.
-Ignore historical outcomes. Route Contested and malformed, unknown, missing-row,
-or ambiguous current outcome rows, or multiple matching current comments, to Ask
-with the reason. For Unchecked or no current outcome, continue ordinary source
-triage, as for Confirmed and Refuted. Check sources before acting. The swarm verification outcome is separate from
-the agent's disposition comment on the issue.
+When a repository also uses an Agent Hook review flow, match the current
+result's outcome comment by its exact first line `swarm:<result>`, then match
+the finding's position and complete root reference. Ignore older results. Route
+Contested, malformed, unknown, missing or ambiguous rows, multiple matching
+comments, and uncertain or truncated reads to Ask with the reason. Unchecked or
+a complete read with no outcome continues ordinary source triage, as Confirmed
+and Refuted do; check sources before acting. When verification must precede
+edits, finish the swarm before handing findings to the coding agent.
 
 ## Closing the Loop
 
