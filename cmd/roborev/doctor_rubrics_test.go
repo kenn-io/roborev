@@ -69,11 +69,15 @@ func TestDoctorRubricsReportOutput(t *testing.T) {
 			report := doctorReport{Checks: checks}
 			var output bytes.Buffer
 			renderDoctorReport(&output, report)
-			assert.Contains(t, output.String(), "example")
+			wantScope := "example"
+			if state == "ok" {
+				wantScope = "Docbank key resolves on the selected Kata daemon"
+			}
+			assert.Contains(t, output.String(), wantScope)
 			assert.Contains(t, output.String(), "readable by all issue readers and metadata writers")
 			data, err := json.Marshal(report)
 			require.NoError(t, err)
-			assert.Contains(t, string(data), "example")
+			assert.Contains(t, string(data), wantScope)
 			assert.Contains(t, string(data), "readable by all issue readers and metadata writers")
 		})
 	}
