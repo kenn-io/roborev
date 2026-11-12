@@ -135,9 +135,10 @@ so reruns do not create duplicate issues.
 Enable the daemon API connection below and configure a `review.completed` hook
 with `findings = "comments"` to publish one root comment per finding. Use
 `findings = "summary"` for generic notices without finding text, paths, fixes,
-review summaries, or diagnostic text. Replies are supplied explicitly by their
-sender and are not covered by this export setting. Omit `findings` to retain the
-legacy issue-body hook.
+review summaries, or diagnostic text. For a `review.failed` event, `summary`
+still creates the failed-review issue but omits the error diagnostic. Replies
+are supplied explicitly by their sender and are not covered by this export
+setting. Omit `findings` to retain the legacy issue-body hook.
 
 ```toml
 [[hooks]]

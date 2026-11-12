@@ -512,7 +512,7 @@ func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, boo
 
 	return kata.CreateReq{
 		Title:          title,
-		Body:           buildKataHookBody(event),
+		Body:           buildKataHookBody(event, hook.Findings),
 		Project:        hook.Project,
 		Labels:         dedupeStrings(append([]string{kata.RoborevLabel, marker}, hook.Labels...)),
 		Priority:       &priority,
@@ -520,7 +520,7 @@ func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, boo
 	}, true
 }
 
-func buildKataHookBody(event Event) string {
+func buildKataHookBody(event Event, findings string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "- repo: %s\n", event.RepoName)
 	fmt.Fprintf(&b, "- commit: %s\n", event.SHA)
@@ -538,7 +538,7 @@ func buildKataHookBody(event Event) string {
 	if event.Type == "review.completed" && event.Verdict == "F" {
 		fmt.Fprintf(&b, "\nFix: `roborev fix %d`\n", event.JobID)
 	}
-	if event.Error != "" {
+	if event.Error != "" && findings != "summary" {
 		fmt.Fprintf(&b, "\n## Error\n\n%s\n", event.Error)
 	}
 	if event.Findings != "" {
