@@ -242,7 +242,7 @@ func TestQueueListPositionMigrationBackfill(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:11]))
-	_, jobs := seedJobs(t, db, "/tmp/migration-closed", 3)
+	_, jobs := seedHistoricalJobs(t, db, "/tmp/migration-closed", 3)
 	for _, job := range jobs {
 		setStatus(t, db, job.ID, JobStatusDone)
 	}
@@ -267,7 +267,7 @@ func TestSyncPendingMigrationBackfill(t *testing.T) {
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:migrationIndex]))
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
-	_, jobs := seedJobs(t, db, t.TempDir(), 4)
+	_, jobs := seedHistoricalJobs(t, db, t.TempDir(), 4)
 	cases := []struct {
 		name            string
 		sourceMachineID uuid.UUID
@@ -306,7 +306,7 @@ func TestPanelEnqueueRequestMigrationPreservesQueuedReviews(t *testing.T) {
 	db := openUnmigratedDB(t)
 	require.NoError(t, registerContentFunctions())
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:16]))
-	repo, existing := seedJobs(t, db, "/synthetic/panel-upgrade", 1)
+	repo, existing := seedHistoricalJobs(t, db, "/synthetic/panel-upgrade", 1)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
 
 	run := uuid.New()

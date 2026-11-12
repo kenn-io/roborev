@@ -194,7 +194,7 @@ func (db *DB) SaveJobPromptForAttempt(ctx context.Context, job *ReviewJob, worke
 		if saveErr != nil {
 			return
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		saveErr = setJobContent(ctx, tx, job.ID, jobContentPrompt, text)
 		if saveErr != nil {
 			return

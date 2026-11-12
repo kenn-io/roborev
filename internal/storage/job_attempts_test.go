@@ -200,6 +200,7 @@ func TestStartJobAttemptStopsWaitingForTransitionWhenContextEnds(t *testing.T) {
 }
 
 func TestRetryAndFailoverPreserveOnlyCIPrebuiltRubric(t *testing.T) {
+	t.Parallel()
 	for _, prebuilt := range []bool{false, true} {
 		for _, action := range []string{"retry", "failover", "reset"} {
 			t.Run(fmt.Sprintf("prebuilt=%t/%s", prebuilt, action), func(t *testing.T) {
