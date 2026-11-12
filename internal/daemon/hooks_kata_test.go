@@ -210,13 +210,13 @@ func TestKataHookProjectPrecedence(t *testing.T) {
 func TestKataHookWithABrokenConnectionFailsVisiblyAndNeverShellsOut(t *testing.T) {
 	marker := kataOnPathMarker(t)
 	cfg := config.DefaultConfig()
-	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "ftp://kata.example.com", Teammate: "roborev"}
+	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.com", APIKeyFile: filepath.Join(t.TempDir(), "missing"), Teammate: "roborev"}
 	var buf strings.Builder
 	hr := newKataHookRunner(t, cfg, log.New(&buf, "", 0))
 	hr.wg.Add(1)
 	hr.runKataHook(config.HookConfig{Type: "kata", Project: "p"}, Event{Type: "review.failed", JobID: 5, SHA: "x"}, t.TempDir())
 	assert.Contains(t, buf.String(), "kata hook error")
-	assert.Contains(t, buf.String(), "endpoint")
+	assert.Contains(t, buf.String(), "api_key_file")
 	assert.NoFileExists(t, marker)
 }
 

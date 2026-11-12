@@ -98,13 +98,13 @@ func TestGoalEnqueueFailsWhenTheConnectionIsBroken(t *testing.T) {
 	marker := kataOnPathMarker(t)
 	server, _, _ := newTestServer(t)
 	registerGoalReviewPi(t, server.configWatcher.Config())
-	server.configWatcher.Config().Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "ftp://kata.example.com", Teammate: "roborev"}
+	server.configWatcher.Config().Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example.com", APIKeyFile: filepath.Join(t.TempDir(), "missing"), Teammate: "roborev"}
 	repo := testutil.NewGitRepo(t)
 	goalArtifacts(t, repo.Path())
 
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{RepoPath: repo.Path(), ReviewType: config.ReviewTypeGoal, Agent: "pi"}))
 	assert.GreaterOrEqual(t, w.Code, http.StatusBadRequest, w.Body.String())
-	assert.Contains(t, w.Body.String(), "endpoint")
+	assert.Contains(t, w.Body.String(), "api_key_file")
 	assert.NoFileExists(t, marker)
 }
