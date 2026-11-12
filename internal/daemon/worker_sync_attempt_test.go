@@ -232,11 +232,54 @@ func TestSavePromptOrFinishCanceledClaimEmitsWorkerEvent(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name        string
+		callerOwned bool
+		wantEvents  int
+	}{
+		{name: "caller owns event", callerOwned: true},
+		{name: "worker owns event", wantEvents: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				tc := newWorkerTestContext(t, 1)
+				_, events := tc.Broadcaster.Subscribe("")
+				job := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID)
+				require.NoError(t, tc.DB.CancelJob(job.ID))
+				ctx, cancel := context.WithCancel(t.Context())
+				tc.Pool.registerRunningJob(job.ID, cancel, time.Time{})
+				done := make(chan struct{})
+				var continued bool
+				go func() {
+					defer close(done)
+					continued = tc.Pool.savePromptOrFinish(ctx, testWorkerID, job, "prompt", nil, "")
+				}()
+				defer func() { cancel(); <-done }()
+				// The database cancellation precedes delivery to the registered worker.
+				synctest.Wait()
+				returned := false
+				select {
+				case <-done:
+					returned = true
+				default:
+				}
+				assert.False(t, returned, "worker must wait for cancellation delivery")
+				assert.Empty(t, events, "worker must not emit before ownership is decided")
+				assert.True(t, tc.Pool.cancelJob(job.ID, tt.callerOwned))
+				<-done
+				assert.False(t, continued)
+				require.Len(t, events, tt.wantEvents)
+				if tt.wantEvents > 0 {
+					assert.Equal(t, "review.canceled", (<-events).Type)
+				}
+			})
+		})
+	}
+	for _, tt := range []struct {
+		name        string
 		ctxCanceled bool
 		replaced    bool
 		wantEvents  int
 	}{
-		{name: "canceled row live context", wantEvents: 1},
 		{name: "canceled row canceled context", ctxCanceled: true, wantEvents: 1},
 		{name: "replaced claim", replaced: true, wantEvents: 0},
 	} {
@@ -258,7 +301,7 @@ func TestSavePromptOrFinishCanceledClaimEmitsWorkerEvent(t *testing.T) {
 			require.NoError(t, tc.DB.CancelJob(job.ID))
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			if tt.ctxCanceled {
+			if tt.ctxCanceled || tt.replaced {
 				cancel()
 			}
 			assert.False(t, tc.Pool.savePromptOrFinish(ctx, testWorkerID, job, "prompt", nil, ""))
