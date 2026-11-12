@@ -568,6 +568,62 @@ func TestTypedCommentKindsAndReceipts(t *testing.T) {
 	}
 }
 
+func TestPublicationLineageReportsIncompleteThreads(t *testing.T) {
+	project := PublicationProject{ID: 7, UID: "project", Name: "reviews"}
+	root := gen.CommentOut{UID: "root", IssueID: 9}
+	reply := gen.CommentOut{UID: "reply", IssueID: 9, ReplyToUID: new("root")}
+	orphan := gen.CommentOut{UID: "orphan", IssueID: 9, ReplyToUID: new("missing")}
+	cycle := gen.CommentOut{UID: "cycle", IssueID: 9, ReplyToUID: new("cycle")}
+	foreign := gen.CommentOut{UID: "foreign", IssueID: 10}
+	issue := PublicationIssue{Comments: []gen.CommentOut{root, reply, orphan, cycle, foreign}}
+	issue.Issue.ID, issue.Issue.UID, issue.Issue.ProjectID = 9, "issue", 7
+	roots := []PublicationRoot{{Position: 0, State: "complete", Comment: &root}}
+	states := PublicationLineage(project, issue, roots)
+	require.Len(t, states, 5)
+	assert.Equal(t, "complete", states[0].State)
+	assert.Equal(t, "root", states[1].RootUID)
+	assert.Equal(t, "complete", states[1].State)
+	assert.Equal(t, "orphan", states[2].State)
+	assert.Equal(t, "cycle", states[3].State)
+	assert.Equal(t, "foreign", states[4].State)
+	issue.Truncated = true
+	for _, state := range PublicationLineage(project, issue, roots) {
+		assert.Equal(t, "truncated", state.State)
+	}
+}
+
+func TestPublicationLineageSharedDeepAncestry(t *testing.T) {
+	project := PublicationProject{ID: 7, UID: "project", Name: "reviews"}
+	root := gen.CommentOut{UID: "Root", IssueID: 9}
+	issue := PublicationIssue{}
+	issue.Issue.ID, issue.Issue.UID, issue.Issue.ProjectID = 9, "issue", 7
+	comments := []gen.CommentOut{root}
+	parent := root.UID
+	for i := range 100 {
+		uid := fmt.Sprintf("node-%03d", i)
+		comments = append(comments, gen.CommentOut{UID: uid, IssueID: 9, ReplyToUID: new(parent)})
+		parent = uid
+	}
+	comments = append(comments, gen.CommentOut{UID: "shared", IssueID: 9, ReplyToUID: new("NODE-050")})
+	slices.Reverse(comments)
+	issue.Comments = comments
+	roots := []PublicationRoot{{State: "complete", Comment: &root}}
+	for _, state := range PublicationLineage(project, issue, roots) {
+		assert.Equal(t, "complete", state.State)
+		assert.Equal(t, "Root", state.RootUID)
+	}
+	roots[0].State = "edited"
+	for _, state := range PublicationLineage(project, issue, roots) {
+		assert.Equal(t, "unmapped", state.State)
+	}
+	issue.Comments = append(issue.Comments, gen.CommentOut{UID: "root", IssueID: 9})
+	for _, state := range PublicationLineage(project, issue, roots) {
+		assert.Equal(t, "ambiguous", state.State)
+	}
+	issue.Comments = []gen.CommentOut{{IssueID: 9}}
+	assert.Equal(t, "ambiguous", PublicationLineage(project, issue, roots)[0].State)
+}
+
 func TestPublicationProjectSelectionUsesFreshObject(t *testing.T) {
 	for _, alias := range []bool{false, true} {
 		t.Run(fmt.Sprintf("alias=%t", alias), func(t *testing.T) {
@@ -634,60 +690,4 @@ func TestPublicationProjectSelectionUsesFreshObject(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestPublicationLineageReportsIncompleteThreads(t *testing.T) {
-	project := PublicationProject{ID: 7, UID: "project", Name: "reviews"}
-	root := gen.CommentOut{UID: "root", IssueID: 9}
-	reply := gen.CommentOut{UID: "reply", IssueID: 9, ReplyToUID: new("root")}
-	orphan := gen.CommentOut{UID: "orphan", IssueID: 9, ReplyToUID: new("missing")}
-	cycle := gen.CommentOut{UID: "cycle", IssueID: 9, ReplyToUID: new("cycle")}
-	foreign := gen.CommentOut{UID: "foreign", IssueID: 10}
-	issue := PublicationIssue{Comments: []gen.CommentOut{root, reply, orphan, cycle, foreign}}
-	issue.Issue.ID, issue.Issue.UID, issue.Issue.ProjectID = 9, "issue", 7
-	roots := []PublicationRoot{{Position: 0, State: "complete", Comment: &root}}
-	states := PublicationLineage(project, issue, roots)
-	require.Len(t, states, 5)
-	assert.Equal(t, "complete", states[0].State)
-	assert.Equal(t, "root", states[1].RootUID)
-	assert.Equal(t, "complete", states[1].State)
-	assert.Equal(t, "orphan", states[2].State)
-	assert.Equal(t, "cycle", states[3].State)
-	assert.Equal(t, "foreign", states[4].State)
-	issue.Truncated = true
-	for _, state := range PublicationLineage(project, issue, roots) {
-		assert.Equal(t, "truncated", state.State)
-	}
-}
-
-func TestPublicationLineageSharedDeepAncestry(t *testing.T) {
-	project := PublicationProject{ID: 7, UID: "project", Name: "reviews"}
-	root := gen.CommentOut{UID: "Root", IssueID: 9}
-	issue := PublicationIssue{}
-	issue.Issue.ID, issue.Issue.UID, issue.Issue.ProjectID = 9, "issue", 7
-	comments := []gen.CommentOut{root}
-	parent := root.UID
-	for i := range 100 {
-		uid := fmt.Sprintf("node-%03d", i)
-		comments = append(comments, gen.CommentOut{UID: uid, IssueID: 9, ReplyToUID: new(parent)})
-		parent = uid
-	}
-	comments = append(comments, gen.CommentOut{UID: "shared", IssueID: 9, ReplyToUID: new("NODE-050")})
-	slices.Reverse(comments)
-	issue.Comments = comments
-	roots := []PublicationRoot{{State: "complete", Comment: &root}}
-	for _, state := range PublicationLineage(project, issue, roots) {
-		assert.Equal(t, "complete", state.State)
-		assert.Equal(t, "Root", state.RootUID)
-	}
-	roots[0].State = "edited"
-	for _, state := range PublicationLineage(project, issue, roots) {
-		assert.Equal(t, "unmapped", state.State)
-	}
-	issue.Comments = append(issue.Comments, gen.CommentOut{UID: "root", IssueID: 9})
-	for _, state := range PublicationLineage(project, issue, roots) {
-		assert.Equal(t, "ambiguous", state.State)
-	}
-	issue.Comments = []gen.CommentOut{{IssueID: 9}}
-	assert.Equal(t, "ambiguous", PublicationLineage(project, issue, roots)[0].State)
 }

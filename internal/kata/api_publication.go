@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 	"uuid"
 
 	gen "go.kenn.io/kata/pkg/client/generated"
@@ -119,23 +118,17 @@ func (c *APIClient) PublicationEndpoint() string { return c.endpoint }
 // ResolvePublicationProject preserves the client's workspace alias selection,
 // and requires the publication-specific API schema and a stable project UID.
 func (c *APIClient) ResolvePublicationProject(ctx context.Context, name string) (PublicationProject, error) {
-	id, selected, info, err := c.selectProject(ctx, name)
+	project, info, err := c.selectProjectObject(ctx, name)
 	if err != nil {
 		return PublicationProject{}, err
 	}
 	if !schemaAtLeast(info.APISchemaVersion, PublicationAPISchemaVersion) {
 		return PublicationProject{}, fmt.Errorf("%w: publication needs API %s", ErrIncompatible, PublicationAPISchemaVersion)
 	}
-	var projects gen.ListProjectsResponseBody
-	if _, err := c.tr.do(ctx, http.MethodGet, "/api/v1/projects", nil, nil, nil, &projects, http.StatusOK); err != nil {
-		return PublicationProject{}, err
+	if project.ID <= 0 || project.Name == "" || !project.Active || project.DeletedAt != nil || project.UID == "" {
+		return PublicationProject{}, fmt.Errorf("%w: project identity changed or has no UID", ErrProjectNotFound)
 	}
-	for _, p := range projects.Projects {
-		if p.ID == id && p.Name == selected && p.Active && p.DeletedAt == nil && p.UID != "" {
-			return PublicationProject{ID: id, Name: p.Name, UID: p.UID}, nil
-		}
-	}
-	return PublicationProject{}, fmt.Errorf("%w: project identity changed or has no UID", ErrProjectNotFound)
+	return PublicationProject{ID: project.ID, Name: project.Name, UID: project.UID}, nil
 }
 
 func publicationPath(project PublicationProject) (string, error) {
@@ -534,6 +527,35 @@ func ReadPublicationRoots(envelope PublicationEnvelope, issue PublicationIssue) 
 	return roots
 }
 
+// SelectPublicationTarget resolves a full UID or an unambiguous c: suffix
+// within one complete issue comment list, preserving the returned UID's case.
+func SelectPublicationTarget(uids []string, target string) (string, error) {
+	seen := make(map[string]bool, len(uids))
+	var selected string
+	var matches int
+	for _, uid := range uids {
+		if uid == "" {
+			return "", fmt.Errorf("%w: comment missing UID", ErrInvalidResponse)
+		}
+		key := strings.ToLower(uid)
+		if seen[key] {
+			return "", fmt.Errorf("%w: duplicate comment UID", ErrInvalidResponse)
+		}
+		seen[key] = true
+		if strings.EqualFold(uid, target) || (len(target) >= 8 && strings.EqualFold(target[:2], "c:") && strings.HasSuffix(key, strings.ToLower(target[2:]))) {
+			matches++
+			selected = uid
+		}
+	}
+	if matches > 1 {
+		return "", fmt.Errorf("%w: ambiguous target comment", ErrConflict)
+	}
+	if selected == "" {
+		return "", fmt.Errorf("%w: target comment not found", ErrNotFound)
+	}
+	return selected, nil
+}
+
 // ResolvePublicationTarget selects a comment in a verified finding thread in
 // the complete issue. Correlation markers do not establish author trust.
 func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue, target string) (string, error) {
@@ -545,28 +567,17 @@ func ResolvePublicationTarget(project PublicationProject, issue PublicationIssue
 		return "", fmt.Errorf("%w: %w", ErrRequestRejected, err)
 	}
 	roots := ReadPublicationRoots(envelope, issue)
-	byUID, duplicates := publicationCommentIndex(issue.Comments)
-	var matches []gen.CommentOut
+	byUID := make(map[string]gen.CommentOut, len(issue.Comments))
+	uids := make([]string, 0, len(issue.Comments))
 	for _, comment := range issue.Comments {
-		if comment.UID == "" {
-			return "", fmt.Errorf("%w: comment missing UID", ErrInvalidResponse)
-		}
-		if duplicates[strings.ToLower(comment.UID)] {
-			return "", fmt.Errorf("%w: duplicate comment UID", ErrInvalidResponse)
-		}
-		key := strings.ToLower(comment.UID)
-		if strings.EqualFold(comment.UID, target) || (len(target) >= 8 && strings.EqualFold(target[:2], "c:") && strings.HasSuffix(key, strings.ToLower(target[2:]))) {
-			matches = append(matches, comment)
-		}
+		uids = append(uids, comment.UID)
+		byUID[strings.ToLower(comment.UID)] = comment
 	}
-	if len(matches) == 0 {
-		return "", fmt.Errorf("%w: target comment not found", ErrNotFound)
+	selected, err := SelectPublicationTarget(uids, target)
+	if err != nil {
+		return "", err
 	}
-	if len(matches) != 1 {
-		return "", fmt.Errorf("%w: ambiguous target comment", ErrConflict)
-	}
-	selected := matches[0].UID
-	_, state := newPublicationAncestry(project, issue, roots, byUID).resolve(matches[0])
+	_, state := newPublicationAncestry(project, issue, roots, byUID).resolve(byUID[strings.ToLower(selected)])
 	switch state {
 	case "complete":
 		return selected, nil
@@ -666,23 +677,16 @@ func publicationCommentIndex(comments []gen.CommentOut) (map[string]gen.CommentO
 	duplicates := make(map[string]bool)
 	for _, c := range comments {
 		key := strings.ToLower(c.UID)
-		if _, ok := byUID[key]; ok { duplicates[key] = true }
+		if _, ok := byUID[key]; ok {
+			duplicates[key] = true
+		}
 		byUID[key] = c
 	}
 	return byUID, duplicates
 }
 
-// ValidateReply checks the producer's evidence and idempotency constraints.
-func ValidateReply(kind, body, key string) error {
-	switch gen.CommentRequestBodyKind(kind) {
-	case gen.Reply, gen.Confirm, gen.Refute, gen.Supersede:
-	default:
-		return fmt.Errorf("%w: invalid reply kind", ErrRequestRejected)
-	}
-	normalized := strings.Join(strings.Fields(body), " ")
-	if normalized == "" || ((kind == "confirm" || kind == "refute") && utf8.RuneCountInString(normalized) < 40) {
-		return fmt.Errorf("%w: insufficient reply evidence", ErrRequestRejected)
-	}
+// ValidateReplyKey checks the opaque key before it is used as an HTTP header.
+func ValidateReplyKey(key string) error {
 	if key == "" || !httpguts.ValidHeaderFieldValue(key) || strings.TrimSpace(key) != key {
 		return fmt.Errorf("%w: invalid idempotency key", ErrRequestRejected)
 	}
@@ -699,9 +703,9 @@ func (c *APIClient) postComment(ctx context.Context, path, issueUID string, requ
 	return out, err
 }
 
-// Comment submits a typed response. The caller must validate kind, body, and key
-// with ValidateReply and resolve the target against a complete issue immediately
-// before calling it.
+// Comment submits a typed response. The caller must validate the key and resolve
+// the target against a complete issue immediately before calling it. Kata
+// validates the kind and body.
 func (c *APIClient) Comment(ctx context.Context, project PublicationProject, issueUID, target, kind, body, key, teammate string) (gen.CommentResponseBody, error) {
 	var out gen.CommentResponseBody
 	path, err := publicationPath(project)

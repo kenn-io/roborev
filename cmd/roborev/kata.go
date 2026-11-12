@@ -86,11 +86,20 @@ func kataCmd() *cobra.Command {
 				fmt.Fprint(out, " (expired)")
 			}
 			fmt.Fprintln(out)
+			project := sanitizeSearchSingleLine(deref(response.Project))
 			if response.IssueUID != nil {
-				fmt.Fprintf(out, "Issue: %s (%s)\n", sanitizeSearchSingleLine(deref(response.IssueShortID)), sanitizeSearchSingleLine(deref(response.IssueUID)))
+				shortID := sanitizeSearchSingleLine(deref(response.IssueShortID))
+				if project != "" && shortID != "" {
+					shortID = project + "#" + shortID
+				}
+				if shortID == "" {
+					fmt.Fprintf(out, "Issue: %s\n", sanitizeSearchSingleLine(*response.IssueUID))
+				} else {
+					fmt.Fprintf(out, "Issue: %s (%s)\n", shortID, sanitizeSearchSingleLine(*response.IssueUID))
+				}
 			}
-			if response.Project != nil && *response.Project != "" {
-				fmt.Fprintf(out, "Project: %s\n", sanitizeSearchSingleLine(*response.Project))
+			if project != "" {
+				fmt.Fprintf(out, "Project: %s\n", project)
 			}
 			if response.DestinationID != nil {
 				fmt.Fprintf(out, "Destination: %s\n", sanitizeSearchSingleLine(*response.DestinationID))
@@ -124,7 +133,11 @@ func kataCmd() *cobra.Command {
 				if comment.ReplyToUID != nil {
 					label = "Reply"
 				}
-				fmt.Fprintf(out, "\n%s %s (%s; %s) by %s", label, sanitizeSearchSingleLine(deref(comment.Handle)), sanitizeSearchSingleLine(comment.UID), sanitizeSearchSingleLine(deref(comment.ReplyKind)), sanitizeSearchSingleLine(comment.Author))
+				kind := sanitizeSearchSingleLine(deref(comment.ReplyKind))
+				if kind != "" {
+					kind = "; " + kind
+				}
+				fmt.Fprintf(out, "\n%s %s (%s%s) by %s", label, sanitizeSearchSingleLine(deref(comment.Handle)), sanitizeSearchSingleLine(comment.UID), kind, sanitizeSearchSingleLine(comment.Author))
 				if comment.ReplyToUID != nil {
 					fmt.Fprintf(out, " to %s", sanitizeSearchSingleLine(*comment.ReplyToUID))
 				}

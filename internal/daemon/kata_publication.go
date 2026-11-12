@@ -29,6 +29,7 @@ type KataPublicationStatus struct {
 	Roots         []kata.PublicationRoot
 	State         string
 	Generation    uint64
+	ReplyTeammate string
 	Source        *storage.Review
 }
 
@@ -530,7 +531,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	if record.Marker != nil && record.Marker.ProjectUID != "" && record.Marker.ProjectUID != project.UID {
 		return nil, errors.New("kata publication destination changed")
 	}
-	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing", Generation: generation, Source: review}
+	status := &KataPublicationStatus{ReviewUUID: record.ReviewUUID, DocumentHash: record.DocumentHash, DestinationID: kataDestinationID(client.PublicationEndpoint(), project.UID), Project: project, State: "missing", Generation: generation, Source: review, ReplyTeammate: cfg.Integrations.Kata.ResolvedTeammate()}
 	issue, searchMetadata, err := client.ReadPublicationIssue(ctx, project, record.ReviewUUID, "")
 	if errors.Is(err, kata.ErrConflict) {
 		status.State = "ambiguous"
