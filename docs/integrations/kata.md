@@ -40,11 +40,13 @@ intact. An empty committed binding stops lookup rather than selecting a parent
 project or the configured default. Existing CLI-based workflows use the same
 workspace discovery and binding rules.
 
-Implicit API selection uses the workspace's registered Git or local alias and
-returns its current canonical project name. The lookup never registers an alias
-or rewrites binding files. An explicit project, a named `.kata.local.toml`
-override, and the configured default select an exact name. Resolver refusals
-remain errors; the client does not fall back to the old binding name.
+Implicit API selection sends the workspace's Git or local alias without a
+project name and returns its current canonical project name. An unregistered
+alias returns `project_not_found`; the lookup never registers an alias or
+rewrites binding files. Run `kata init` to register the workspace, or set an
+explicit hook `project`. A named `.kata.local.toml` override selects an exact
+name, and the configured default applies when there is no binding. Resolver
+refusals remain errors; the client does not fall back to the old binding name.
 
 ## Superpowers specs, plans and the open graph
 

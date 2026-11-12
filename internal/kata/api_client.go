@@ -62,8 +62,8 @@ func WithHTTPClient(c *http.Client) APIOption { return func(s *apiSettings) { s.
 
 // APIClient implements Client over Kata's HTTP API, using the configured
 // connection. Only the daemon builds one: it holds the credential. It resolves
-// a workspace's project the way the kata CLI does and falls back to the
-// configured default project.
+// a committed workspace alias without registering it; an unbound workspace
+// can use the configured default project.
 type APIClient struct {
 	tr             *transport
 	workdir        string
