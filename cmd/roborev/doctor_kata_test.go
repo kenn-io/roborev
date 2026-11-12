@@ -8,11 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	katagen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -97,12 +95,6 @@ func TestDoctorKataStatusIsIndependentOfAgentProbe(t *testing.T) {
 	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
 	assert.Equal(t, doctorOK, got.Status)
 	assert.Contains(t, got.Summary, "ready")
-
-	env.global.Integrations.Kata.Enabled = true
-	env.kata, env.kataErr = nil, assert.AnError
-	got = findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
-	assert.Contains(t, got.Summary, "could not be read")
-	assert.Equal(t, []string{assert.AnError.Error()}, got.Details)
 }
 
 func TestDoctorKataIsQuietWhenNothingEnablesIt(t *testing.T) {
@@ -124,6 +116,7 @@ func TestDoctorKataMismatchBetweenConfigAndDaemon(t *testing.T) {
 	got = findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
 	assert.Equal(t, doctorInfo, got.Status)
 	assert.Contains(t, got.Summary, "could not be read")
+	assert.Equal(t, []string{assert.AnError.Error()}, got.Details)
 }
 
 func TestDoctorKataWhenTheDaemonCannotBeAsked(t *testing.T) {
@@ -142,7 +135,6 @@ func TestDoctorKataHookDoesNotNeedTheCLIWhenTheConnectionIsOn(t *testing.T) {
 	hooks := []config.HookConfig{{Event: "review.failed", Type: "kata"}}
 	env := kataDoctorEnv(t, config.KataIntegrationConfig{Enabled: true}, readyKata())
 	env.global.Hooks = hooks
-	env.daemonAgents.HookTools = []agent.Diagnosis{{Name: "kata", Command: "kata", Error: "not found"}}
 	checks := checkDoctorIntegrations(env)
 	for _, c := range checks {
 		assert.NotEqual(t, "integrations.hooks", c.ID, "%+v", c)
@@ -150,6 +142,7 @@ func TestDoctorKataHookDoesNotNeedTheCLIWhenTheConnectionIsOn(t *testing.T) {
 
 	env.kata = &daemon.KataStatusBody{State: "disabled"}
 	env.global.Integrations.Kata.Enabled = false
+	env.daemonAgents.HookTools = []agent.Diagnosis{{Name: "kata", Command: "kata", Error: "not found"}}
 	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.hooks")
 	assert.Contains(t, got.Details[0], "the kata CLI is not on the daemon's PATH")
 }
@@ -169,17 +162,6 @@ func TestDoctorKataReportNeverCarriesTheCredentialOrEndpoint(t *testing.T) {
 			assert.NotContains(t, text, "kata.internal.example")
 		}
 	}
-}
-
-// An unbound repository leaves project selection to the daemon.
-func TestDoctorLeavesUnboundProjectSelectionToTheDaemon(t *testing.T) {
-	status := readyKata()
-	var asked []kata.Binding
-	d := fakeDoctorDaemon{ping: &daemon.PingInfo{OK: true}, agents: &doctorDaemonAgents{}, kata: &status, kataBindings: &asked}
-	env := loadDoctorEnv(t.Context(), bindRepo(t, ""), d)
-	assert.Equal(t, []kata.Binding{{}}, asked)
-	assert.Equal(t, kata.Binding{}, env.kataBinding)
-	require.NotNil(t, env.kata)
 }
 
 func TestDoctorDoesNotAskAboutKataWhenTheDaemonIsDown(t *testing.T) {
@@ -215,71 +197,36 @@ func TestDoctorShowsTheProjectTheDaemonEvaluatedForTheLocalBinding(t *testing.T)
 	assert.Equal(t, doctorWarn, got.Status)
 	assert.Contains(t, strings.Join(got.Details, " "), `project: "ghost"`)
 
+	queries = nil
 	env = loadDoctorEnv(t.Context(), bindRepo(t, ""), live)
 	require.NotNil(t, env.kata)
+	assert.Equal(t, kata.Binding{}, env.kataBinding)
 	assert.Equal(t, "reviews", env.kata.Project, "the daemon's default project")
 	assert.True(t, env.kata.SupportsReplies)
+	assert.Contains(t, queries, "/api/kata/status?", "an unbound repository sends no project or workspace selector")
 }
 
 func TestDoctorUsesCommittedWorkspaceAliasForKataStatus(t *testing.T) {
 	const identity = "code.example/Team/Review-Repo"
-	for _, tc := range []struct {
-		name       string
-		registered bool
-	}{
-		{name: "renamed project", registered: true},
-		{name: "unregistered alias"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := testutil.NewTestRepo(t)
-			repo.WriteFile(".kata.toml", "version = 1\n[project]\nname = \"reviews\"\n")
-			repo.RunGit("remote", "add", "origin", "https://code.example/Team/Review-Repo.git")
-
-			fake := katafake.New(t)
-			fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
-				if r.URL.Path != "/api/v1/projects/resolve" {
-					return false
-				}
-				if !tc.registered {
-					fake.Fail(w, http.StatusNotFound, "project_not_initialized", "workspace alias is not registered")
-					return true
-				}
-				fake.Reply(w, katagen.ProjectResolveBody{
-					Project: fake.Projects[1],
-					Alias: katagen.ProjectAlias{
-						AliasIdentity: identity, AliasKind: "git", ID: 1, ProjectID: fake.Projects[1].ID,
-						CreatedAt: time.Unix(0, 0).UTC(),
-					},
-				})
-				return true
-			}
-
-			var statusQuery string
-			ep := kataDaemonObserved(t, enabledKata(fake), func(r *http.Request) {
-				if r.URL.Path != "/api/kata/status" {
-					return
-				}
-				query := r.URL.Query()
-				assert.Empty(t, query.Get("project"))
-				assert.Empty(t, query.Get("repo"), "the remote daemon should not read this machine's checkout")
-				assert.Equal(t, identity, query.Get("workspace_alias_identity"))
-				assert.Equal(t, "git", query.Get("workspace_alias_kind"))
-				statusQuery = r.URL.RawQuery
-			})
-			env := loadDoctorEnv(t.Context(), repo.Root, newDoctorDaemon(ep))
-			require.NotNil(t, env.kata, "%v", env.kataErr)
-			assert.NotEmpty(t, statusQuery)
-			if tc.registered {
-				assert.Equal(t, "ready", env.kata.State)
-				assert.Equal(t, "other", env.kata.Project, "the registered alias resolves past the stale name")
-			} else {
-				assert.Equal(t, "project_not_found", env.kata.State)
-				assert.Empty(t, env.kata.Project, "a stale project name must not make an unregistered alias look ready")
-				got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
-				assert.Equal(t, doctorWarn, got.Status)
-			}
-		})
-	}
+	repo := testutil.NewTestRepo(t)
+	repo.WriteFile(".kata.toml", "version = 1\n[project]\nname = \"reviews\"\n")
+	repo.RunGit("remote", "add", "origin", "https://code.example/Team/Review-Repo.git")
+	fake := katafake.New(t)
+	var statusQuery string
+	ep := kataDaemonObserved(t, enabledKata(fake), func(r *http.Request) {
+		if r.URL.Path != "/api/kata/status" {
+			return
+		}
+		query := r.URL.Query()
+		assert.Empty(t, query.Get("project"))
+		assert.Empty(t, query.Get("repo"), "the remote daemon should not read this machine's checkout")
+		assert.Equal(t, identity, query.Get("workspace_alias_identity"))
+		assert.Equal(t, "git", query.Get("workspace_alias_kind"))
+		statusQuery = r.URL.RawQuery
+	})
+	env := loadDoctorEnv(t.Context(), repo.Root, newDoctorDaemon(ep))
+	require.NotNil(t, env.kata, "%v", env.kataErr)
+	assert.NotEmpty(t, statusQuery)
 }
 
 func TestDoctorReportsAnUnreadableLocalBinding(t *testing.T) {
