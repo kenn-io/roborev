@@ -1017,7 +1017,7 @@ type DoctorAgentsOutputBody struct {
 	// Agents Every agent the daemon knows
 	Agents []Diagnosis `json:"agents" validate:"required"`
 
-	// HookTools CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
+	// HookTools CLI tools used by configured kata and beads hooks or enabled rubric transport, resolved on the daemon PATH
 	HookTools []Diagnosis `json:"hook_tools" validate:"required"`
 
 	// Panels Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review

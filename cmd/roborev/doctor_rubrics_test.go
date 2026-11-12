@@ -23,6 +23,8 @@ func TestDoctorKataRubrics(t *testing.T) {
 	}{
 		{name: "off", mode: "off", probe: &daemon.DoctorRubricSetup{Mode: "off", State: "off"}, status: doctorInfo, summary: "Kata rubric archiving: mode off"},
 		{name: "off without daemon", mode: "off", status: doctorInfo, summary: "Kata rubric archiving: mode off"},
+		{name: "daemon current overrides local off", mode: "off", probe: &daemon.DoctorRubricSetup{Mode: "current", State: "kata_missing"}, status: doctorFail, summary: "Kata rubric archiving: mode current, kata CLI unavailable on daemon PATH", fix: "install kata on the daemon's PATH and restart the daemon", details: []string{audience}},
+		{name: "daemon off overrides local current", mode: "current", probe: &daemon.DoctorRubricSetup{Mode: "off", State: "off"}, status: doctorInfo, summary: "Kata rubric archiving: mode off"},
 		{name: "key", mode: "current", probe: &daemon.DoctorRubricSetup{Mode: "current", State: "ok", Project: "example"}, status: doctorOK, summary: "Kata rubric archiving: mode current, Docbank key resolves for example; vault rubrics are readable by all issue readers and metadata writers", details: []string{audience}},
 		{name: "kata", mode: "current", probe: &daemon.DoctorRubricSetup{Mode: "current", State: "kata_missing"}, status: doctorFail, summary: "Kata rubric archiving: mode current, kata CLI unavailable on daemon PATH", fix: "install kata on the daemon's PATH and restart the daemon", details: []string{audience}},
 		{name: "binding", mode: "current", probe: &daemon.DoctorRubricSetup{Mode: "current", State: "binding_missing"}, status: doctorFail, summary: "Kata rubric archiving: mode current, project binding missing", fix: "bind this repository to a Kata project", details: []string{audience}},

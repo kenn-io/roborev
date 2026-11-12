@@ -11,7 +11,7 @@ export interface DoctorAgentsOutputBody {
   readonly $schema?: string;
   /** Every agent the daemon knows */
   agents: Diagnosis[];
-  /** CLI tools that configured kata and beads hooks run, resolved on the daemon PATH */
+  /** CLI tools used by configured kata and beads hooks or enabled rubric transport, resolved on the daemon PATH */
   hook_tools: Diagnosis[];
   /** Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review */
   panels: DoctorPanel[];

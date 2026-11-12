@@ -842,7 +842,7 @@ type DoctorAgentsOutput struct {
 		PathEnv         string               `json:"path_env" doc:"PATH environment variable of the daemon process"`
 		Agents          []agent.Diagnosis    `json:"agents" doc:"Every agent the daemon knows"`
 		Requested       []agent.Diagnosis    `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
-		HookTools       []agent.Diagnosis    `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
+		HookTools       []agent.Diagnosis    `json:"hook_tools" doc:"CLI tools used by configured kata and beads hooks or enabled rubric transport, resolved on the daemon PATH"`
 		Panels          []DoctorPanel        `json:"panels" doc:"Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review"`
 		RubricSetup     *DoctorRubricSetup   `json:"rubric_setup,omitempty" doc:"Rubric archiving diagnosis from the daemon process"`
 		UsageProvider   *DoctorUsageProvider `json:"usage_provider,omitempty" doc:"Usage provider and authenticated probe result from the daemon process"`

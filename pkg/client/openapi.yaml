@@ -1218,7 +1218,7 @@ components:
             $ref: "#/components/schemas/Diagnosis"
           type: array
         hook_tools:
-          description: CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
+          description: CLI tools used by configured kata and beads hooks or enabled rubric transport, resolved on the daemon PATH
           items:
             $ref: "#/components/schemas/Diagnosis"
           type: array
