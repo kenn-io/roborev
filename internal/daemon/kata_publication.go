@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -267,7 +268,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 					missing = root.Position
 				}
 				if root.State != "missing" {
-					return status, fmt.Errorf("kata root %d is %s", root.Position, root.State)
+					return status, fmt.Errorf("kata finding %d is %s", root.Position+1, root.State)
 				}
 			}
 		}
@@ -284,7 +285,7 @@ func (p *kataPublisher) run(ctx context.Context, jobID int64) (*KataPublicationS
 			return status, nil
 		}
 		if issue.Issue.ClosedAt != nil || issue.Issue.Status == "closed" {
-			return status, errors.New("closed Kata issue has missing roots")
+			return status, errors.New("closed Kata issue has missing findings")
 		}
 		err = p.post(ctx, jobID, record, review, project, publication, attempt, func(ctx context.Context, c *kata.APIClient, dest kata.PublicationProject, pub *kata.Publication) error {
 			_, err := c.CreatePublicationRoot(ctx, dest, issue.Issue.UID, pub, missing)
@@ -447,6 +448,7 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		return nil, err
 	}
 	var seed *storage.KataPublicationSeed
+	missingCheckout := false
 	if record.Marker != nil {
 		if record.Marker.Version != 1 || record.Marker.DocumentHash != record.DocumentHash {
 			return nil, storage.ErrReviewChanged
@@ -460,6 +462,23 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 		}
 		seed = &record.Marker.KataPublicationSeed
 	} else {
+		repo, err := p.db.GetRepoByID(review.Job.RepoID)
+		if err != nil {
+			return nil, err
+		}
+		// Sync placeholders store their identity as the root path. A validated
+		// worktree, when present, remains the checkout used for inspection.
+		missingCheckout = repo.Identity != "" && repo.RootPath == repo.Identity && checkout == repo.RootPath
+		if !missingCheckout {
+			if _, err := os.Stat(checkout); errors.Is(err, os.ErrNotExist) {
+				missingCheckout = true
+			} else if err != nil {
+				return nil, err
+			}
+		}
+		if missingCheckout {
+			checkout = ""
+		}
 		name, err := kataInspectionProject(cfg, review.Job, checkout)
 		if err != nil {
 			return nil, err
@@ -470,7 +489,9 @@ func (p *kataPublisher) inspectPublication(ctx context.Context, record *storage.
 	}
 	var client *kata.APIClient
 	var name string
-	if seed == nil {
+	if seed == nil && missingCheckout {
+		client, err = kata.NewAPIClient("", cfg.Integrations.Kata, kata.WithoutWorkspace())
+	} else if seed == nil {
 		client, err = kata.NewAPIClient(checkout, cfg.Integrations.Kata)
 	} else {
 		client, name, err = kataSelectionClient(cfg.Integrations.Kata, *seed)
