@@ -2365,10 +2365,8 @@ func demoteConflictingAutoDesignJobs(tx *sql.Tx, sourceRepoID, targetRepoID int6
 }
 
 // ResetStaleJobs marks all running jobs as queued (for daemon restart).
-// session_id and token_usage are cleared so a job interrupted mid-run (which
-// may have streamed a session id, or had a late usage write land on it) does
-// not carry the prior attempt's cost into the requeued run, matching the
-// other requeue paths (ReenqueueJob, RetryJob, FailoverJob).
+// Attempt data is cleared so a job does not carry the prior run's cost into
+// the requeued run. Rebuttals keep the session they need as input.
 func (db *DB) ResetStaleJobs() error {
 	if _, err := db.Exec(`
 		UPDATE ci_pr_panels
@@ -2394,10 +2392,12 @@ func (db *DB) ResetStaleJobs() error {
 	_, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL,
-		    session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
+		    session_id = CASE WHEN source = ? THEN session_id ELSE NULL END,
+		    session_resumed = CASE WHEN source = ? THEN session_resumed ELSE 0 END,
+		    resume_source_job_uuid = NULL,
 		    token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL
 		WHERE status = 'running'
-	`)
+	`, JobSourceRebuttal, JobSourceRebuttal)
 	return err
 }
 

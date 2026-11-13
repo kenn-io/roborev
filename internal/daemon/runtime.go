@@ -790,14 +790,6 @@ func killDaemon(info *RuntimeInfo, interrupt bool) error {
 	return fmt.Errorf("daemon shutdown was not accepted")
 }
 
-func requestGracefulDaemonShutdown(
-	ctx context.Context,
-	ep DaemonEndpoint,
-	confirmedDead func() bool,
-) error {
-	return requestDaemonShutdown(ctx, ep, confirmedDead, 0, false)
-}
-
 func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead func() bool, pid int, interrupt bool) error {
 	client := ep.APIClient(0)
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {

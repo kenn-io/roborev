@@ -957,7 +957,7 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
 	done := make(chan error, 1)
-	go func() { done <- requestGracefulDaemonShutdown(ctx, ep, dead.Load) }()
+	go func() { done <- requestDaemonShutdown(ctx, ep, dead.Load, 0, false) }()
 	returnedEarly := false
 	var earlyResult error
 	select {
@@ -986,7 +986,7 @@ func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
 	defer cancel()
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
-	require.NoError(t, requestGracefulDaemonShutdown(ctx, ep, func() bool { return false }))
+	require.NoError(t, requestDaemonShutdown(ctx, ep, func() bool { return false }, 0, false))
 	assert.Equal(t, int32(2), attempts.Load())
 }
 
