@@ -1455,11 +1455,12 @@ roborev hook uninstall           # Remove hook
 
 Restart waits for running jobs to finish by default. Use `--running=interrupt`
 to requeue all running jobs, including reviews, synthesis, and background fixes,
-wait for shutdown, and start the replacement. Interrupted attempts start fresh,
-discarding in-progress work without consuming a retry. If Ctrl-C interrupts a
-waiting restart, rerun it with `--running=interrupt` while the daemon is
-draining. Older daemons do not support interruption; restart them with the
-default `--running=wait`.
+wait for shutdown, and start the replacement. Interrupted jobs start fresh,
+discarding in-progress work, except rebuttals, which preserve and resume their
+original agent session. No retry is consumed. If Ctrl-C interrupts a waiting
+restart, rerun it with `--running=interrupt` while the daemon is draining. Older
+daemons do not support interruption; restart them with the default
+`--running=wait`.
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,
@@ -1794,7 +1795,8 @@ Choice [a]:
 The daemon continues accepting enqueues during an update drain but does not
 claim them until the replacement daemon is ready. A user cancellation remains
 terminal. An update interruption starts a fresh attempt and discards the partial
-attempt log. Non-interactive waits have no updater-specific deadline; they are
+attempt log, except that a rebuttal preserves and resumes its original agent
+session. Non-interactive waits have no updater-specific deadline; they are
 bounded by the configured job timeout (30 minutes by default).
 
 Successful updates use a compact phase summary. The final success line appears

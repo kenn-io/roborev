@@ -466,7 +466,7 @@ func TestDaemonRestartRunningPolicy(t *testing.T) {
 			assert.Zero(t, listCalls)
 			assert.Zero(t, stopCalls)
 			cmd = daemonCmd()
-			cmd.SetArgs([]string{"restart", "--running=interrupt"})
+			cmd.SetArgs([]string{"restart", "--running=interrupt", "extra"})
 			require.NoError(t, cmd.ExecuteContext(t.Context()))
 			assert.Equal(t, 1, interruptCalls)
 			assert.Zero(t, stopCalls)

@@ -61,8 +61,9 @@ leaving the daemon available for reads.`, example: `  roborev daemon stop`},
 If no daemon is running, start it. Review history stays in the data directory.
 By default, running jobs finish before shutdown. With --running=interrupt,
 all running jobs return to the queue, including reviews, synthesis and background
-fixes. Interrupted attempts start fresh, discarding in-progress work without
-consuming a retry.
+fixes. Interrupted jobs start fresh, discarding in-progress work, except
+rebuttals, which preserve and resume their original agent session. No retry is
+consumed.
 If Ctrl-C interrupts a graceful restart, rerun with --running=interrupt.
 Daemons without interrupt support need the default, --running=wait.`, example: `  roborev daemon restart
   roborev daemon restart --running=interrupt`},

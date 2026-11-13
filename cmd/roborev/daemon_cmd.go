@@ -176,7 +176,6 @@ func daemonCmd() *cobra.Command {
 	restartCmd := &cobra.Command{
 		Use:   "restart [flags]",
 		Short: "Restart the daemon",
-		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if runningPolicy != "wait" && runningPolicy != "interrupt" {
 				return fmt.Errorf("invalid --running value %q (use wait or interrupt)", runningPolicy)
