@@ -180,5 +180,9 @@ func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID
 			}
 		}
 	}
-	return after, scanned, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return after, scanned, err
+	}
+	p.legacyProgress.Add(int64(len(updates)))
+	return after, scanned, nil
 }

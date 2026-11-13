@@ -1128,7 +1128,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 
 	reviews := []SyncableReview{
 		{
-			UUID:    uuid.New(),
+			UUID:    uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
 			JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID),
 			Agent:              "test",
 			Output:             "test output 1",
@@ -1141,7 +1141,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) { //nolint:paralleltest //
 			CreatedAt:          time.Now(),
 		},
 		{
-			UUID:    uuid.New(),
+			UUID:    uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 			JobUUID: jobUUID, JobEnqueuedAt: testJobEnqueuedAt(t, pool.Pool(), jobUUID), JobSourceMachineID: testJobSourceMachineID(t, pool.Pool(), jobUUID),
 			Agent:              "test",
 			Output:             "test output 2",

@@ -83,6 +83,9 @@ func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM reviews WHERE uuid = $1 FOR UPDATE`, id); err != nil {
+		return err
+	}
 	var record jsontext.Value
 	var jobUUID uuid.UUID
 	var jobType, threshold string

@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"log"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -492,4 +494,193 @@ func TestIntegrationLegacyMaintenance(t *testing.T) { //nolint:paralleltest // s
 			assert.True(t, archived)
 		})
 	}
+}
+
+func TestIntegrationLegacyReviewOfflineCloseKeepsMirrorOriginal(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	for _, tc := range []struct{ name, document string }{
+		{"structured", `{"schema_version":2,"summary":"Updated review.","verdict":"pass","findings":[]}`},
+		{"legacy", `{"schema_version":0,"legacy":{"markdown":"Local text","recorded_verdict":null}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			db := env.openDB("offline.db")
+			repo, err := db.GetOrCreateRepo(env.TmpDir, "git@example.test:offline/repo.git")
+			require.NoError(t, err)
+			job, review := createCompletedReview(t, db, repo.ID, "abc123", "Author", "Subject", "prompt", "Original")
+			worker := startSyncWorker(t, db, env.pgURL, "offline", "1h")
+			worker.Stop()
+			_, err = env.Pool.Pool().Exec(t.Context(), `DELETE FROM legacy_reviews WHERE uuid = $1`, *review.UUID)
+			require.NoError(t, err)
+			_, err = env.Pool.Pool().Exec(t.Context(), `UPDATE reviews SET prompt = 'mirror prompt', output = 'mirror markdown', structured_output = NULL WHERE uuid = $1`, *review.UUID)
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE uuid = ?`, tc.document, *review.UUID)
+			require.NoError(t, err)
+			require.NoError(t, db.MarkReviewClosedByJobIDIfReviewUUID(job.ID, *review.UUID, true))
+			worker = startSyncWorker(t, db, env.pgURL, "offline", "1h")
+			_, err = worker.SyncNow()
+			require.NoError(t, err)
+			var output, prompt string
+			var closed bool
+			var document string
+			require.NoError(t, env.Pool.Pool().QueryRow(t.Context(), `SELECT record->>'output', record->>'prompt' FROM legacy_reviews WHERE uuid = $1`, *review.UUID).Scan(&output, &prompt))
+			assert.Equal(t, "mirror markdown", output)
+			assert.Equal(t, "mirror prompt", prompt)
+			require.NoError(t, env.Pool.Pool().QueryRow(t.Context(), `SELECT closed, structured_output::text FROM reviews WHERE uuid = $1`, *review.UUID).Scan(&closed, &document))
+			assert.True(t, closed)
+			assert.JSONEq(t, tc.document, document)
+		})
+	}
+}
+
+func TestIntegrationLegacyMaintenancePassProgress(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	archived := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+	_, err := pool.Pool().Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error) SELECT uuid, to_jsonb(r), 'Unstructured historical review' FROM reviews r WHERE uuid = $1`, archived)
+	require.NoError(t, err)
+	_, err = pool.Pool().Exec(ctx, `DELETE FROM reviews WHERE uuid = $1`, archived)
+	require.NoError(t, err)
+	tx, err := pool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+	_, err = tx.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, updated_by_machine_id) SELECT $1, (record->>'job_uuid')::uuid, 'test', 'prompt', '', $2 FROM legacy_reviews WHERE uuid = $1`, archived, defaultTestMachineID)
+	require.NoError(t, err)
+	for range 102 {
+		insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+	}
+	_, err = pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
+	require.NoError(t, err)
+	passCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	err = pool.legacyMaintenancePass(passCtx)
+	var retry *backoff.RetryAfterError
+	require.ErrorAs(t, err, &retry)
+	assert.Zero(t, retry.Duration)
+	passCtx2, cancel2 := context.WithTimeout(ctx, time.Second)
+	defer cancel2()
+	err = pool.legacyMaintenancePass(passCtx2)
+	require.Error(t, err)
+	assert.NotErrorAs(t, err, &retry)
+}
+
+func TestIntegrationMirrorArchivesOriginalBeforeSyncWrite(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	for _, tc := range []struct {
+		name, document  string
+		batch, resolved bool
+	}{
+		{"structured single", `{"schema_version":2,"summary":"Updated review.","verdict":"pass","findings":[]}`, false, true},
+		{"structured batch", `{"schema_version":2,"summary":"Updated review.","verdict":"pass","findings":[]}`, true, true},
+		{"legacy single", `{"schema_version":0,"legacy":{"markdown":"Local text","recorded_verdict":null}}`, false, false},
+		{"legacy batch", `{"schema_version":0,"legacy":{"markdown":"Local text","recorded_verdict":null}}`, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			pool, ctx := env.Pool, t.Context()
+			repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+			commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+			id := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+			var job, owner uuid.UUID
+			var enqueued time.Time
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_uuid, job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, id).Scan(&job, &enqueued, &owner))
+			review := SyncableReview{UUID: id, JobUUID: job, JobEnqueuedAt: enqueued, JobSourceMachineID: owner, Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(), StructuredOutput: jsontext.Value(tc.document)}
+			if tc.batch {
+				_, err := pool.BatchUpsertReviews(ctx, []SyncableReview{review})
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, pool.UpsertReview(ctx, review))
+			}
+			var output, prompt string
+			var resolved, closed bool
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output', record->>'prompt', resolved_at IS NOT NULL FROM legacy_reviews WHERE uuid = $1`, id).Scan(&output, &prompt, &resolved))
+			assert.Equal(t, "Preserve this historical text.", output)
+			assert.Equal(t, "prompt", prompt)
+			assert.Equal(t, tc.resolved, resolved)
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT closed FROM reviews WHERE uuid = $1`, id).Scan(&closed))
+			assert.True(t, closed)
+		})
+	}
+}
+
+func TestIntegrationLegacyReviewConcurrentScan(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	for _, scanFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("scanFirst=%t", scanFirst), func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			pool, ctx := env.Pool, t.Context()
+			repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+			commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+			var reviews []SyncableReview
+			for i := range 250 {
+				id := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+				var job uuid.UUID
+				var enqueued time.Time
+				var owner uuid.UUID
+				require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_uuid, job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, id).Scan(&job, &enqueued, &owner))
+				document := jsontext.Value(`{"schema_version":2,"summary":"Updated review.","verdict":"pass","findings":[]}`)
+				if i%2 == 0 {
+					document = jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"Local text","recorded_verdict":null}}`)
+				}
+				reviews = append(reviews, SyncableReview{UUID: id, JobUUID: job, JobEnqueuedAt: enqueued, JobSourceMachineID: owner, Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(), StructuredOutput: document})
+			}
+			_, err := pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
+			require.NoError(t, err)
+			scan := make(chan error, 1)
+			write := make(chan error, 1)
+			runScan := func() { scan <- pool.migrateLegacyReviews(ctx, false) }
+			runWrite := func() { _, err := pool.BatchUpsertReviews(ctx, reviews); write <- err }
+			if scanFirst {
+				go runScan()
+				go runWrite()
+			} else {
+				go runWrite()
+				go runScan()
+			}
+			require.NoError(t, <-scan)
+			require.NoError(t, <-write)
+			var count int
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM legacy_reviews WHERE record->>'output' = 'Preserve this historical text.' AND record->>'prompt' = 'prompt'`).Scan(&count))
+			assert.Equal(t, 250, count)
+		})
+	}
+}
+
+func TestIntegrationLegacyResolveConcurrentUpload(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	id := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+	var job, owner uuid.UUID
+	var enqueued time.Time
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_uuid, job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, id).Scan(&job, &enqueued, &owner))
+	legacy := `{"schema_version":0,"legacy":{"markdown":"Local text","recorded_verdict":null}}`
+	_, err := pool.Pool().Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error) SELECT uuid, to_jsonb(r), 'Unstructured historical review' FROM reviews r WHERE uuid = $1`, id)
+	require.NoError(t, err)
+	_, err = pool.Pool().Exec(ctx, `UPDATE reviews SET structured_output = $2 WHERE uuid = $1`, id, legacy)
+	require.NoError(t, err)
+	raw := jsontext.Value(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)
+	tx, err := pool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+	_, err = tx.Exec(ctx, `SELECT 1 FROM reviews WHERE uuid = $1 FOR UPDATE`, id)
+	require.NoError(t, err)
+	resolve := make(chan error, 1)
+	upload := make(chan error, 1)
+	go func() { resolve <- pool.ResolveLegacyReview(ctx, id, raw) }()
+	// PostgreSQL owns the row lock and its wait state.
+	waitCondition(t, 10*time.Second, "conversion waiting for review", func() (bool, error) {
+		var waiting bool
+		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%SELECT 1 FROM reviews WHERE uuid%FOR UPDATE%')`).Scan(&waiting)
+		return waiting, err
+	})
+	go func() {
+		upload <- pool.UpsertReview(ctx, SyncableReview{UUID: id, JobUUID: job, JobEnqueuedAt: enqueued, JobSourceMachineID: owner, Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(), StructuredOutput: raw})
+	}()
+	require.NoError(t, tx.Rollback(ctx))
+	require.NoError(t, <-resolve)
+	require.NoError(t, <-upload)
+	var output string
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output' FROM legacy_reviews WHERE uuid = $1`, id).Scan(&output))
+	assert.Equal(t, "Preserve this historical text.", output)
 }

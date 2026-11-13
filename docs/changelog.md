@@ -9,6 +9,11 @@ All notable changes to roborev, grouped by minor release.
 
 - Connect agent hooks and skills with `roborev agent setup`, optionally register
     MCP, and see hook trust and readiness in setup, quickstart, and doctor.
+
+- Sync runs while historical maintenance proceeds, and reconnecting machines keep
+    the original reviews on the PostgreSQL mirror. Maintenance resumes immediately
+    after making progress.
+
 - Receive failed-review reminders only for commits the session gains during
     `git commit`, `git cherry-pick`, or `git revert`, including amends and
     batched reviews containing them. Find older reviews and reviews moved by a
