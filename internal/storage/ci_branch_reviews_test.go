@@ -91,7 +91,9 @@ func TestRerunCIBranchReviewPublishesReplacementResult(t *testing.T) {
 	review := mustBranchReview(t, db)
 	require.NotNil(t, review.SynthesisJobID)
 	assert.Equal(replacement.ID, *review.SynthesisJobID, "the rerun's result owns the commit status")
-	assert.Equal(replacement.PanelRunUUID, review.PanelRunUUID)
+	require.NotNil(t, review.PanelRunUUID)
+	assert.Equal(*replacement.PanelRunUUID, *review.PanelRunUUID, "the review follows the rerun's jobs")
+	assert.NotEqual(*original.PanelRunUUID, *review.PanelRunUUID)
 	assert.Empty(review.FinalState, "the earlier failure no longer stands as the result")
 	require.NoError(t, db.SetCIBranchReviewFinalStatus(*review, "success", "No issues found"))
 	assert.True(mustClaim(t, db, *review), "the replacement result is published")
@@ -110,7 +112,10 @@ func TestReplacedCIBranchReviewRunCannotPublish(t *testing.T) {
 	require.NoError(t, err)
 	publishBranchResult(t, db, "success", "No issues found")
 	stale := mustBranchReview(t, db)
-	rerunBranchReview(t, db, repo.ID, original.ID)
+	replacement := rerunBranchReview(t, db, repo.ID, original.ID)
+	current := mustBranchReview(t, db)
+	require.NotNil(t, current.PanelRunUUID)
+	require.Equal(t, *replacement.PanelRunUUID, *current.PanelRunUUID)
 
 	// The first run's late result and publisher both act on the old run.
 	require.NoError(t, db.SetCIBranchReviewFinalStatus(*stale, "error", "Review failed"))
@@ -119,7 +124,6 @@ func TestReplacedCIBranchReviewRunCannotPublish(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(claimed, "a replaced run's result is not published")
 
-	current := mustBranchReview(t, db)
 	require.NoError(t, db.SetCIBranchReviewFinalStatus(*current, "success", "No issues found"))
 	require.ErrorIs(t, db.FinishCIBranchReviewStatus(*stale, true), ErrCIBranchReviewReplaced)
 	assert.True(mustClaim(t, db, *current), "the rerun's result is still unpublished")
@@ -136,19 +140,33 @@ func TestRerunEarlierCIBranchReviewRun(t *testing.T) {
 		[]EnqueueOpts{{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"}},
 		EnqueueOpts{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"})
 	require.NoError(t, err)
+	finishRun(t, db, original)
 	publishBranchResult(t, db, "error", "Review failed")
-	rerunBranchReview(t, db, repo.ID, original.ID)
+	second := rerunBranchReview(t, db, repo.ID, original.ID)
+	finishRun(t, db, second)
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(*mustBranchReview(t, db), "error", "Review failed"))
+	// Rerunning the current run replaces it before its result is published.
+	latest := rerunBranchReview(t, db, repo.ID, second.ID)
+	finishRun(t, db, latest)
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(*mustBranchReview(t, db), "success", "No issues found"))
+	queued := countJobs(t, db)
 
-	members := []EnqueueOpts{{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test", Source: JobSourceCIBranch}}
-	synthesis := EnqueueOpts{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test", Source: JobSourceCIBranch}
-	_, _, _, err = db.EnqueuePanelRerun(members, synthesis, uuid.New(), original.ID)
-	require.ErrorIs(t, err, ErrCIPanelActive, "an earlier run cannot take over while the current run is unpublished")
+	_, err = tryRerunBranchReview(db, repo.ID, original.ID)
+	require.ErrorIs(t, err, ErrCIPanelActive, "an earlier run cannot take over while the latest result is unpublished")
+	assert.Equal(queued, countJobs(t, db), "a rejected rerun queues no jobs")
+	review := mustBranchReview(t, db)
+	require.NotNil(t, review.SynthesisJobID)
+	assert.Equal(latest.ID, *review.SynthesisJobID, "the latest run still owns the commit status")
+	assert.Equal("success", review.FinalState, "the latest result still waits to be published")
 
 	publishBranchResult(t, db, "success", "No issues found")
 	again := rerunBranchReview(t, db, repo.ID, original.ID)
-	review := mustBranchReview(t, db)
+	review = mustBranchReview(t, db)
 	require.NotNil(t, review.SynthesisJobID)
 	assert.Equal(again.ID, *review.SynthesisJobID, "a published review can be rerun from any of its runs")
+	require.NotNil(t, review.PanelRunUUID)
+	assert.Equal(*again.PanelRunUUID, *review.PanelRunUUID)
+	assert.Empty(review.FinalState)
 }
 
 func TestGetTimedOutCIBranchReviewRunsSelectsHungUnfinishedReviews(t *testing.T) {
@@ -207,11 +225,36 @@ func publishBranchResult(t *testing.T, db *DB, state, description string) {
 	require.NoError(t, db.FinishCIBranchReviewStatus(*review, true))
 }
 
+// rerunBranchReview reruns sourceJobID's panel as the rerun API does: the
+// replacement's jobs share one fresh panel run.
 func rerunBranchReview(t *testing.T, db *DB, repoID, sourceJobID int64) *ReviewJob {
 	t.Helper()
-	members := []EnqueueOpts{{RepoID: repoID, GitRef: "parent..landed", Agent: "test", Source: JobSourceCIBranch}}
-	synthesis := EnqueueOpts{RepoID: repoID, GitRef: "parent..landed", Agent: "test", Source: JobSourceCIBranch}
-	_, replacement, _, err := db.EnqueuePanelRerun(members, synthesis, uuid.New(), sourceJobID)
+	replacement, err := tryRerunBranchReview(db, repoID, sourceJobID)
 	require.NoError(t, err)
+	require.NotNil(t, replacement.PanelRunUUID)
 	return replacement
+}
+
+func tryRerunBranchReview(db *DB, repoID, sourceJobID int64) (*ReviewJob, error) {
+	run := uuid.New()
+	members := []EnqueueOpts{{RepoID: repoID, GitRef: "parent..landed", Agent: "test", Source: JobSourceCIBranch, PanelRunUUID: &run}}
+	synthesis := EnqueueOpts{RepoID: repoID, GitRef: "parent..landed", Agent: "test", Source: JobSourceCIBranch, PanelRunUUID: &run}
+	_, replacement, _, err := db.EnqueuePanelRerun(members, synthesis, uuid.New(), sourceJobID)
+	return replacement, err
+}
+
+// finishRun marks every job of synth's panel run done, as the worker does.
+func finishRun(t *testing.T, db *DB, synth *ReviewJob) {
+	t.Helper()
+	require.NotNil(t, synth.PanelRunUUID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE panel_run_uuid = ?`,
+		*synth.PanelRunUUID)
+	require.NoError(t, err)
+}
+
+func countJobs(t *testing.T, db *DB) int {
+	t.Helper()
+	jobs, err := db.ListJobs("", "", 1000, 0)
+	require.NoError(t, err)
+	return len(jobs)
 }
