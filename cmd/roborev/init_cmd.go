@@ -140,6 +140,7 @@ func initCmd() *cobra.Command {
 			}
 			fmt.Println()
 			fmt.Println("Commands:")
+			fmt.Println("  roborev agent setup - connect coding agents")
 			fmt.Println("  roborev status      - view queue and daemon status")
 			fmt.Println("  roborev show HEAD   - view review for a commit")
 			fmt.Println("  roborev tui         - interactive terminal UI")

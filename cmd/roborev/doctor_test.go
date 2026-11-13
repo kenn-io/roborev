@@ -36,9 +36,13 @@ type fakeDoctorDaemon struct {
 	summary      *generated.Summary
 	summaryErr   error
 	summaryCalls *int
+	pingFn       func() (*daemon.PingInfo, error)
 }
 
 func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
+	if f.pingFn != nil {
+		return f.pingFn()
+	}
 	if f.ping == nil {
 		return nil, errors.New("connection refused")
 	}
@@ -261,6 +265,9 @@ func TestDoctorGuidelines(t *testing.T) {
 				repo.CommitFile(name, content, "add "+name)
 			}
 
+			t.Setenv("PATH", t.TempDir())
+			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+			t.Setenv("CODEX_HOME", t.TempDir())
 			env := loadDoctorEnv(t.Context(), repo.Root, fakeDoctorDaemon{})
 			require.NoError(t, env.globalErr)
 			require.NoError(t, env.repoErr)
@@ -381,6 +388,9 @@ func TestDoctorEnqueueFailures(t *testing.T) {
 func TestDoctorCommandJSONFailsOnBrokenConfig(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("default_agent = [\n"), 0o600))
 
 	// Point at a port nothing listens on so the doctor never reaches a real
@@ -585,6 +595,8 @@ review_agent = "gemini"
 
 	// Narrow PATH only after the repository exists: building it runs git.
 	t.Setenv("PATH", writeFakeAgentBinary(t, "claude"))
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
 	env := loadDoctorEnv(t.Context(), repo.Root, fakeDoctorDaemon{})
 	require.NoError(t, env.repoErr)
 	got := findDoctorCheck(t, checkDoctorConfiguredAgents(env, nil), "agents.configured")
@@ -613,6 +625,9 @@ workflows = ["review"]
 hook_review_panel = "guard"
 `, "add experiment")
 
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
 	env := loadDoctorEnv(t.Context(), repo.Root, fakeDoctorDaemon{})
 	require.NoError(t, env.repoErr)
 	got := findDoctorCheck(t, checkDoctorGuidelines(env), "repo.guidelines")

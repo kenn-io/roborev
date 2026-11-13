@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -15,6 +16,13 @@ import (
 // git subprocesses and exhausting macOS CI runner resources. It also disables
 // kit PostHog telemetry except in the dedicated telemetry test process.
 func TestMain(m *testing.M) {
+	if os.Getenv("ROBOREV_TEST_FAKE_CLAUDE") == "1" {
+		fmt.Println("Scope: User config\nStatus: Connected")
+		os.Exit(0)
+	}
+	if os.Getenv("ROBOREV_TEST_FAKE_CODEX") == "1" {
+		os.Exit(fakeCodexAppServer())
+	}
 	if os.Getenv("ROBOREV_TEST_DAEMON_TELEMETRY") != "1" {
 		kittelemetry.DisableProcess()
 	}

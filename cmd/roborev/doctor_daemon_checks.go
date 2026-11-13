@@ -26,6 +26,11 @@ func checkDoctorDaemon(env *doctorEnv) []doctorCheck {
 		ID: "daemon.running", Category: "daemon", Status: doctorOK,
 		Summary: fmt.Sprintf("daemon is running (pid %d)", env.ping.PID),
 	}}
+	if env.initialPingErr != nil {
+		out[0].Status = doctorWarn
+		out[0].Summary = fmt.Sprintf("daemon was unreachable before agent checks and is now running (pid %d)", env.ping.PID)
+		out[0].Details = []string{env.initialPingErr.Error(), "MCP readiness checks may have started the daemon"}
+	}
 	if env.ping.Version != version.Version {
 		out = append(out, doctorCheck{
 			ID: "daemon.version", Category: "daemon", Status: doctorWarn,

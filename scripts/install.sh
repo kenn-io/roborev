@@ -234,8 +234,9 @@ main() {
     echo "  cd your-repo"
     echo "  roborev init"
     echo
-    echo "For AI agent skills (Claude Code, Codex):"
-    echo "  roborev agent skills install"
+    echo "Connect Claude Code or Codex:"
+    # Not in the latest release yet
+    echo "  roborev agent setup"
 }
 
 main "$@"

@@ -46,7 +46,7 @@ override GOFLAGS += -trimpath
 endif
 export GOFLAGS
 
-.PHONY: build homebrew web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-git-isolation test-codex-skill-eval test-integration test-sandbox-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
+.PHONY: build homebrew web-deps web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-agent-setup test-git-isolation test-codex-skill-eval test-integration test-sandbox-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
 
 build: web-embed
 	@set -e; trap '$(MAKE) web-restore' EXIT; \
@@ -61,7 +61,10 @@ homebrew: web-embed
 		mkdir -p "$(BINDIR)"; \
 		CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" -o "$(BINDIR)/roborev" ./cmd/roborev
 
-web-build:
+web-deps:
+	bun install --frozen-lockfile
+
+web-build: web-deps
 	cd web && bun run build
 
 web-dev:
@@ -172,6 +175,9 @@ api-breaking:
 # Unit tests only (excludes integration and postgres tests)
 test:
 	go test ./...
+
+test-agent-setup:
+	go test ./cmd/roborev ./internal/agenthook ./internal/mcpconfig -run '^(TestAgentSetupMCPReruns|TestAgentSetupPreservesMCPSettings|TestAgentSetupKeepsResolvableHookExecutable|TestAgentReadinessRequiresMatchingHookAndSkillMode|TestAgentSetupReportsUnsupportedAgentUnknown|TestAgentSetupDoesNotInstallHooksWhenMCPFails|TestDoctorReportsDaemonStartedDuringMCPCheck|TestAgentReadinessShowsNextStepOnce|TestQuickstartCodexTrust|TestClaudeKitInstallOptionsKeepExecutableAndArguments|TestInstallMergesAndSwitchesTransports|TestInstallDryRunAndInvalidInputPreserveConfig|TestInstallWhitespaceOnlyConfig|TestInstallPreservesConfigSymlinkAndMode)$$'
 
 .PHONY: test-search-mirror-growth
 # The growth tag keeps full builds and feed paging out of ordinary/race tests.

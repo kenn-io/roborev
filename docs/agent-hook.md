@@ -7,6 +7,9 @@ description: Bring background roborev findings back into active coding-agent ses
 harness hooks. It records shell-tool and stop events, checks for open failed
 reviews, and reminds the active agent to fix them before the session goes cold.
 
+Run `roborev agent setup [--mcp]` to connect Claude Code and Codex. If Codex
+asks for review, run `/hooks` in Codex, then `roborev agent setup --check`.
+
 The integration supports every profile in
 [`go.kenn.io/kit/agenthook`](https://pkg.go.dev/go.kenn.io/kit/agenthook):
 

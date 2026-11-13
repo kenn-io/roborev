@@ -1449,3 +1449,15 @@ func TestBundledMCPSkillCommandsCarryFromSkill(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusForAgentMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	dir := filepath.Join(home, "skills")
+	_, err := InstallToPath(AgentClaude, dir, new(false))
+	require.NoError(t, err)
+	status, found := StatusForAgentMode(AgentClaude, new(true))
+	require.True(t, found)
+	assert.Contains(t, status.Skills, "roborev-review")
+	assert.Equal(t, SkillOutdated, status.Skills["roborev-review"])
+}

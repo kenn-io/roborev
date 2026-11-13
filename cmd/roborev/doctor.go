@@ -91,10 +91,10 @@ func doctorCmd() *cobra.Command {
 		Long: `Check roborev's configuration, daemon, agents, recent failures, and the
 current repository for problems, and suggest fixes.
 
-The doctor only reads state. It never starts or restarts the daemon, installs
-hooks, or edits config. Agent availability is checked from both this shell
-and the running daemon, because the daemon may have started with a different
-PATH.
+MCP readiness checks may start the configured server and daemon. Codex may
+create its own state and bundled skills. Agent availability is checked from
+both this shell and the running daemon, because the daemon may have started
+with a different PATH.
 
 Each check reports ok, info, warn, or fail. The command exits 1 when any check
 fails; warnings alone exit 0.
