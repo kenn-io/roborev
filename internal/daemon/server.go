@@ -3329,11 +3329,11 @@ type singleAgentInputs struct {
 }
 
 type resolvedSingleAgent struct {
-	Agent          string
-	Model          string
-	BackupAgent    string
-	BackupModel    string
-	ReviewSettings config.ReviewSettings
+	Agent       string
+	Model       string
+	BackupAgent string
+	BackupModel string
+	Settings    config.ReviewSettings
 }
 
 // resolveSingleAgent resolves the single-review agent for the no-panel path:
@@ -3415,11 +3415,11 @@ func (s *Server) resolveSingleAgent(
 		resolution, agentName, in.repoCfg, in.cfg,
 	)
 	return resolvedSingleAgent{
-		Agent:          agentName,
-		Model:          resolution.ModelForSelectedAgent(agentName, in.requestedModel),
-		BackupAgent:    backupAgent,
-		BackupModel:    backupModel,
-		ReviewSettings: settings,
+		Agent:       agentName,
+		Model:       resolution.ModelForSelectedAgent(agentName, in.requestedModel),
+		BackupAgent: backupAgent,
+		BackupModel: backupModel,
+		Settings:    settings,
 	}, nil
 }
 
@@ -3460,7 +3460,7 @@ func (s *Server) enqueueSingleAgent(
 		// Freeze the selected arm's review policy alongside its execution plan.
 		target := storage.ReviewJob{JobType: storage.JobTypeForEnqueue(o), ReviewType: o.ReviewType}
 		if target.IsReviewJob() && !target.IsGoalReviewJob() {
-			snapshot, snapshotErr := json.Marshal(execution.ReviewSettings)
+			snapshot, snapshotErr := json.Marshal(execution.Settings)
 			if snapshotErr != nil {
 				return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: snapshotErr.Error()})
 			}
