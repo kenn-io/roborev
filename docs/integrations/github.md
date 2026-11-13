@@ -510,9 +510,9 @@ Expect this behavior:
     turning it back on starts from the head again.
 - **Opted-out commits are skipped.** A commit whose own `.roborev.toml` sets
     `review_default_branch = false` is never reviewed, even when a later commit
-    turns reviews back on before the next poll. When the branch has no
-    committed `.roborev.toml`, the poller's checkout of the repo decides, as it
-    does for pull request reviews.
+    turns reviews back on before the next poll. When the branch has no committed
+    `.roborev.toml`, the poller's checkout of the repo decides, as it does for
+    pull request reviews.
 - **Each commit is reviewed once.** The poller records each reviewed commit in
     its local database. A restart or a repeated poll does not queue it again.
     Rerunning a default-branch review updates its commit status when the new
