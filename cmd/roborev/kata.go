@@ -76,7 +76,7 @@ func kataCmd() *cobra.Command {
 						return fmt.Errorf("daemon does not support Kata publication; restart it")
 					}
 				}
-				return fmt.Errorf("Kata publication: %w", err)
+				return fmt.Errorf("kata publication: %w", err)
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "Status: %s", sanitizeSearchSingleLine(response.State))
