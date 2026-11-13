@@ -3566,9 +3566,8 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 	}
 }
 
-func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
+func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModelAndEvidence(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
-	h.Cfg.Review.BinaryEvidence = new(false)
 	h.Cfg.DefaultAgent = "global-agent"
 	h.Cfg.DefaultModel = "global-model"
 	h.Cfg.CI.Agents = []string{""}
@@ -4278,11 +4277,11 @@ func designMemberCount(members []storage.ReviewJob) int {
 	return n
 }
 
-// TestProcessPRCreatesPanelRun verifies the core cutover: processPR enqueues one
+// TestProcessPRCreatesPanelRunWithFrozenDesignEvidence verifies processPR enqueues one
 // panel run per PR. With auto-design enabled and a design-warranting commit, the
 // run carries the matrix member plus exactly one whole-range design member; every
 // member is role=member and not a classify job.
-func TestProcessPRCreatesPanelRun(t *testing.T) {
+func TestProcessPRCreatesPanelRunWithFrozenDesignEvidence(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	p.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {

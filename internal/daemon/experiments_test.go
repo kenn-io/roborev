@@ -61,8 +61,8 @@ func TestEnqueueSingleReviewPersistsExperiment(t *testing.T) {
 	var plan experimentJobPlan
 	require.NoError(t, json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &plan))
 	assert.JSONEq(t, stored.PanelMemberConfigJSON, plan.PanelMemberConfigJSON)
-	settings, err := reviewJobSettings(stored, repo.Path(), server.configWatcher.Config())
-	require.NoError(t, err)
+	var settings config.ReviewSettings
+	require.NoError(t, json.Unmarshal([]byte(stored.PanelMemberConfigJSON), &settings))
 	assert.True(t, settings.BinaryEvidence)
 
 	repo.CommitFile("review.go", "package review\n\nfunc changed() {}\n", "change review")

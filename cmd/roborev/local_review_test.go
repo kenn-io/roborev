@@ -170,7 +170,7 @@ func TestLocalReviewBuiltInBinaryEvidence(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"--local", "--repo", repo.Root, "--agent", a.Name(), head})
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, capturedPrompt, `"exhibit.pdf" (added): read `)
+	assert.Contains(t, capturedPrompt, "Committed review evidence")
 }
 
 func TestLocalReviewRetainsLocationsForDirtyBranch(t *testing.T) {

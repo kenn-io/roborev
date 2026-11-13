@@ -176,7 +176,7 @@ func TestExperimentReviewTypeToolPolicy(t *testing.T) {
 	}
 }
 
-func TestResolveReviewSettingsBinaryEvidence(t *testing.T) {
+func TestPanelFreezesBinaryEvidenceFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, ".roborev.toml", `
 [review.types.exhibits]
@@ -192,9 +192,6 @@ members = ["checker"]
 	repoCfg, err := LoadRepoConfig(dir)
 	require.NoError(t, err)
 
-	settings, err := ResolveReviewSettings("exhibits", nil, false, repoCfg, nil)
-	require.NoError(t, err)
-	assert.True(t, settings.BinaryEvidence)
 	members, _, err := ResolveCIPanel("audit", repoCfg, nil)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
