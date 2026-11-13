@@ -565,8 +565,6 @@ func TestIntegrationLegacyMaintenancePassProgress(t *testing.T) { //nolint:paral
 			_, err = pool.Pool().Exec(ctx, `DELETE FROM reviews WHERE uuid = $1`, id)
 			require.NoError(t, err)
 		}
-		_, err := pool.Pool().Exec(ctx, `INSERT INTO sync_metadata (key, value) VALUES ($1, '{"Done":"2099-01-01T00:00:00Z"}') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, legacyReviewScanKey)
-		require.NoError(t, err)
 		tx, err := pool.Pool().Begin(ctx)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
