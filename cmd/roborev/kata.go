@@ -62,9 +62,7 @@ func kataCmd() *cobra.Command {
 			}
 			if err != nil {
 				if problem, ok := errors.AsType[generated.ErrorModel](err); ok && problem.Detail != nil {
-					detail := sanitizeSearchSingleLine(*problem.Detail)
-					problem.Detail = &detail
-					err = problem
+					err = kataPublicationError{detail: sanitizeSearchSingleLine(*problem.Detail), cause: err}
 				}
 				if !write {
 					classified := client.ClassifyKataContextError(err)
@@ -78,7 +76,7 @@ func kataCmd() *cobra.Command {
 						return fmt.Errorf("daemon does not support Kata publication; restart it")
 					}
 				}
-				return daemonRequestError("Kata publication", err)
+				return fmt.Errorf("Kata publication: %w", err)
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "Status: %s", sanitizeSearchSingleLine(response.State))
@@ -176,6 +174,16 @@ func kataCmd() *cobra.Command {
 	root.AddCommand(show, create, kataResponseCmd())
 	return root
 }
+
+// kataPublicationError displays sanitized detail while retaining the daemon's
+// original error for HTTP status and cause classification.
+type kataPublicationError struct {
+	detail string
+	cause  error
+}
+
+func (e kataPublicationError) Error() string { return e.detail }
+func (e kataPublicationError) Unwrap() error { return e.cause }
 
 func showKataLink(out io.Writer, label, enclosingUID string, link generated.CommentLink) {
 	fmt.Fprintf(out, "%s for %s: %s (%s; %s)", label, sanitizeSearchSingleLine(enclosingUID), sanitizeSearchSingleLine(deref(link.Handle)), sanitizeSearchSingleLine(deref(link.UID)), sanitizeSearchSingleLine(link.Kind))

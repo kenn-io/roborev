@@ -196,7 +196,7 @@ func TestKataPublicationDetailedErrorsPreserveHTTPStatus(t *testing.T) {
 			err := root.Execute()
 			require.Error(t, err)
 			if tc.class != nil {
-				assert.ErrorIs(t, err, tc.class)
+				require.ErrorIs(t, err, tc.class)
 			}
 			var apiErr *oapiruntime.ClientAPIError
 			if assert.ErrorAs(t, err, &apiErr) {
