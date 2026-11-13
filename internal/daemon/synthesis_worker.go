@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	gitpkg "go.kenn.io/roborev/internal/git"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -320,6 +321,7 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 		event := eventForJob("review.failed", job, job.ID)
 		event.Agent = ""
 		event.Error = errorMsg
+		event.WorktreePath = wp.synthesisEventWorktreePath(job)
 		event.SuppressHooks = true
 		event.PanelFailureSummary = true
 		wp.broadcaster.Broadcast(event)
@@ -422,7 +424,25 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
 		Verdict:           string(verdict),
 		Findings:          output,
+		WorktreePath:      wp.synthesisEventWorktreePath(job),
 	})
+}
+
+// synthesisEventWorktreePath reports the caller's checkout with a combined
+// result, as member results do, so hooks use that checkout's configuration
+// and issue project. A checkout that has gone away falls back to the main
+// repository, and the private checkouts of CI reviews are never reported.
+func (wp *WorkerPool) synthesisEventWorktreePath(job *storage.ReviewJob) string {
+	if job.WorktreePath == "" {
+		return ""
+	}
+	if ci, err := wp.jobRequiresCIExactCheckout(job); err != nil || ci {
+		return ""
+	}
+	if !gitpkg.ValidateWorktreeForRepo(job.WorktreePath, job.RepoPath) {
+		return ""
+	}
+	return job.WorktreePath
 }
 
 // runSynthesisAgent invokes the configured agent read-only (non-agentic) to

@@ -166,9 +166,14 @@ func TestRunKataHookFilesPanelResultOnce(t *testing.T) {
 	failedMember := Event{Type: "review.failed", JobID: 4, SHA: "x", PanelRole: storage.PanelRoleMember, Error: "boom"}
 	assert.Empty(t, runKataHookFor(t, failedMember, t.TempDir()))
 
-	synthesis := Event{Type: "review.completed", Verdict: "F", JobID: 5, SHA: "x", PanelRole: storage.PanelRoleSynthesis}
-	assert.Len(t, runKataHookFor(t, synthesis, filepath.Join(t.TempDir(), "missing")), 1,
-		"an issue is filed even when the commit cannot be read")
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("app.txt", "one\n", "initial")
+	missing := strings.Repeat("0123456789", 4)
+	synthesis := Event{Type: "review.completed", Verdict: "F", JobID: 5, RepoName: "api",
+		SHA: missing, PanelRole: storage.PanelRoleSynthesis}
+	reqs := runKataHookFor(t, synthesis, repo.Path())
+	require.Len(t, reqs, 1, "an issue is filed even when the commit cannot be read")
+	assert.Contains(t, reqs[0].Title, missing[:7], "the issue still names the reviewed commit")
 }
 
 func TestPanelFailureSummaryReachesOnlyKataHooks(t *testing.T) {
