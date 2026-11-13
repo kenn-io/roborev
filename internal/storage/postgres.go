@@ -947,17 +947,21 @@ const pgUpsertReviewSQL = `
  AND (newer.created_at, newer.id) > (r.created_at, r.id))))
  UNION ALL SELECT $13::timestamptz, $15::uuid WHERE NOT EXISTS (SELECT 1 FROM locked_job)
  ), locked_review AS MATERIALIZED (
- SELECT to_jsonb(r) AS record FROM reviews r WHERE r.uuid = $1 FOR UPDATE
+ SELECT r.job_uuid, to_jsonb(r) AS record FROM reviews r WHERE r.uuid = $1 FOR UPDATE
+ ), eligible_review AS (
+ SELECT r.record FROM locked_review r JOIN review_jobs j ON j.uuid = r.job_uuid
+ WHERE j.job_type IN ('review','range','dirty','synthesis','compact')
+ AND r.record->>'output' <> '' AND $7::jsonb IS NOT NULL AND NOT $14::boolean
  ), archived AS (
  INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at)
- SELECT $1, COALESCE((SELECT record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id) FROM locked_review WHERE record->>'output' <> '' AND $7::jsonb IS NOT NULL AND NOT $14::boolean), jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
+ SELECT $1, COALESCE((SELECT record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id) FROM eligible_review), jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
  'prompt', ''::text, 'output', $7::jsonb->'legacy'->>'markdown', 'closed', $5::boolean,
  'verdict_bool', $6::boolean, 'structured_output', $7::jsonb,
  'reviewed_file_count', $8::integer, 'excluded_file_count', $9::integer,
  'updated_by_machine_id', $10::uuid, 'created_at', $11::timestamptz, 'job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id)),
  CASE WHEN $7::jsonb->'legacy' IS NOT NULL THEN 'Unstructured historical review' ELSE '' END,
  CASE WHEN $7::jsonb->'legacy' IS NULL THEN clock_timestamp() ELSE NULL END
- FROM current_attempt a WHERE ($7::jsonb->'legacy' IS NOT NULL OR EXISTS (SELECT 1 FROM locked_review WHERE record->>'output' <> '' AND $7::jsonb IS NOT NULL AND NOT $14::boolean))
+ FROM current_attempt a WHERE ($7::jsonb->'legacy' IS NOT NULL OR EXISTS (SELECT 1 FROM eligible_review))
  AND (SELECT count(*) FROM locked_review) >= 0
  ON CONFLICT DO NOTHING RETURNING 1
  ), resolved AS (

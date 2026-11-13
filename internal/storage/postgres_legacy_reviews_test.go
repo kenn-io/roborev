@@ -603,6 +603,37 @@ func TestIntegrationMirrorArchivesOriginalBeforeSyncWrite(t *testing.T) { //noli
 	}
 }
 
+func TestIntegrationMirrorArchiveSkipsNonReviewJobs(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	for _, jobType := range []string{"task", "insights"} {
+		for _, tc := range []struct {
+			name, document, archivedOutput string
+			archiveCount                   int
+		}{
+			{"structured", `{"schema_version":2,"summary":"Updated.","verdict":"pass","findings":[]}`, "", 0},
+			{"legacy", `{"schema_version":0,"legacy":{"markdown":"Local text","recorded_verdict":null}}`, "Local text", 1},
+		} {
+			t.Run(jobType+"/"+tc.name, func(t *testing.T) {
+				env := newIntegrationEnv(t)
+				pool, ctx := env.Pool, t.Context()
+				repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+				commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+				id := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+				var job, owner uuid.UUID
+				var enqueued time.Time
+				require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_uuid, job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, id).Scan(&job, &enqueued, &owner))
+				_, err := pool.Pool().Exec(ctx, `UPDATE review_jobs SET job_type = $2 WHERE uuid = $1`, job, jobType)
+				require.NoError(t, err)
+				require.NoError(t, pool.UpsertReview(ctx, SyncableReview{UUID: id, JobUUID: job, JobEnqueuedAt: enqueued, JobSourceMachineID: owner, Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(), StructuredOutput: jsontext.Value(tc.document)}))
+				var output string
+				var count int
+				require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*), COALESCE(max(record->>'output'), '') FROM legacy_reviews WHERE uuid = $1`, id).Scan(&count, &output))
+				assert.Equal(t, tc.archiveCount, count)
+				assert.Equal(t, tc.archivedOutput, output)
+			})
+		}
+	}
+}
+
 func TestIntegrationLegacyReviewConcurrentScan(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
 	for _, scanFirst := range []bool{true, false} {
 		t.Run(fmt.Sprintf("scanFirst=%t", scanFirst), func(t *testing.T) {
