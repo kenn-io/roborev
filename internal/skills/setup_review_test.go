@@ -35,41 +35,52 @@ func TestInstallSetupReviewWorkflow(t *testing.T) {
 func TestSetupReviewConfigExampleValidates(t *testing.T) {
 	content, err := fs.ReadFile(codexSkills, path.Join("codex", "roborev-setup-review", "SKILL.md"))
 	require.NoError(t, err)
-	example := setupReviewTOMLExample(t, string(content), "# .roborev.toml")
+	for _, tc := range []struct {
+		name, marker string
+		swarm        bool
+	}{{"base", "# .roborev.toml", false}, {"swarm", "# .roborev.toml (swarm)", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			example := setupReviewTOMLExample(t, string(content), tc.marker)
 
-	repo := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(example), 0o644))
-	repoCfg, err := config.LoadRepoConfig(repo)
-	require.NoError(t, err)
-	require.NotNil(t, repoCfg)
-	require.NoError(t, config.ValidateEffectiveReviewConfig(nil, repoCfg))
-
-	panel, ok := repoCfg.Review.Panels[repoCfg.Review.HookPanel]
-	require.True(t, ok, "example hook panel %q is not defined", repoCfg.Review.HookPanel)
-	require.NotEmpty(t, panel.Members)
-	for _, member := range panel.Members {
-		subagent, ok := repoCfg.Review.Subagents[member]
-		require.True(t, ok, "panel member %s is not defined", member)
-		_, ok = config.ResolveCustomReviewTypeFromConfig(subagent.ReviewType, repoCfg, nil)
-		require.True(t, ok, "member %s uses undefined custom type %q", member, subagent.ReviewType)
-	}
-
-	// Custom types do not inherit review_agent. Resolve the example with
-	// different generic defaults to ensure it follows the selected default
-	// rather than pinning a reviewer in the example.
-	for _, defaultAgent := range []string{"grok", "pi"} {
-		t.Run(defaultAgent, func(t *testing.T) {
-			assert := assert.New(t)
-			members, _, err := config.ResolvePanel(
-				repoCfg.Review.HookPanel,
-				repo,
-				&config.Config{ReviewAgent: "codex", DefaultAgent: defaultAgent},
-			)
+			repo := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(example), 0o644))
+			repoCfg, err := config.LoadRepoConfig(repo)
 			require.NoError(t, err)
-			require.NotEmpty(t, members)
-			for _, member := range members {
-				assert.Equal(defaultAgent, member.Agent,
-					"custom reviewer %s should follow default_agent", member.Name)
+			require.NotNil(t, repoCfg)
+			require.NoError(t, config.ValidateEffectiveReviewConfig(nil, repoCfg))
+
+			if tc.swarm {
+				require.Contains(t, repoCfg.Hooks, config.HookConfig{Event: "review.completed", Type: "kata", Labels: []string{"swarm"}})
+			}
+
+			panel, ok := repoCfg.Review.Panels[repoCfg.Review.HookPanel]
+			require.True(t, ok, "example hook panel %q is not defined", repoCfg.Review.HookPanel)
+			require.NotEmpty(t, panel.Members)
+			for _, member := range panel.Members {
+				subagent, ok := repoCfg.Review.Subagents[member]
+				require.True(t, ok, "panel member %s is not defined", member)
+				_, ok = config.ResolveCustomReviewTypeFromConfig(subagent.ReviewType, repoCfg, nil)
+				require.True(t, ok, "member %s uses undefined custom type %q", member, subagent.ReviewType)
+			}
+
+			// Custom types do not inherit review_agent. Resolve the example with
+			// different generic defaults to ensure it follows the selected default
+			// rather than pinning a reviewer in the example.
+			for _, defaultAgent := range []string{"grok", "pi"} {
+				t.Run(defaultAgent, func(t *testing.T) {
+					assert := assert.New(t)
+					members, _, err := config.ResolvePanel(
+						repoCfg.Review.HookPanel,
+						repo,
+						&config.Config{ReviewAgent: "codex", DefaultAgent: defaultAgent},
+					)
+					require.NoError(t, err)
+					require.NotEmpty(t, members)
+					for _, member := range members {
+						assert.Equal(defaultAgent, member.Agent,
+							"custom reviewer %s should follow default_agent", member.Name)
+					}
+				})
 			}
 		})
 	}

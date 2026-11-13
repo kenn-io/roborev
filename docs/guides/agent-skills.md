@@ -150,7 +150,9 @@ trial review to tune the rubrics. Custom review types need an agent with
 structured output: Codex, Claude Code, Pi, or Grok. Unless a type names its own
 agent, it uses the repository's `agent` or the global `default_agent`, not
 `review_agent`, so the skill checks which agent each reviewer gets and asks
-before changing it.
+before changing it. It can also set up an optional
+[Kata swarm](../integrations/kata.md#confirm-or-refute-findings-with-a-swarm) to
+check findings independently.
 
 ### Review a commit
 
