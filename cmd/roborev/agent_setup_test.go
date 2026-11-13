@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitagenthook "go.kenn.io/kit/agenthook"
 	"go.kenn.io/kit/agentsetup"
 
 	"go.kenn.io/roborev/internal/agenthook"
@@ -150,6 +151,33 @@ func TestAgentSetupKeepsResolvableHookExecutable(t *testing.T) {
 	for _, command := range commands {
 		assert.Contains(t, command, moved)
 	}
+}
+
+func TestAgentReadinessRequiresMatchingHookAndSkillMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", home)
+	fakeAgent(t, "claude")
+	configPath, err := kitagenthook.ConfigPath(kitagenthook.AgentClaude)
+	require.NoError(t, err)
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	require.NoError(t, agenthook.RunInstall(agenthook.InstallOptions{
+		Agent:      "claude",
+		Executable: executable,
+		MCP:        true,
+		Timeout:    10 * time.Second,
+	}, io.Discard))
+	require.NoError(t, agenthook.InstallSkills(kitagenthook.AgentClaude, configPath, false))
+
+	quickstart, _ := agentReadiness(t.Context(), "claude", true)
+	assert.Equal(t, agentsetup.StateOK, quickstart.State)
+	doctor, _ := agentReadiness(t.Context(), "claude", false)
+	assert.Equal(t, agentsetup.StateOutdated, doctor.State)
+	assert.Equal(t, "roborev agent setup --agent claude", doctor.NextStep)
+
+	states, err := setupReport(t, "--agent", "claude", "--check")
+	require.ErrorIs(t, err, agentsetup.ErrNotReady)
+	assert.Equal(t, agentsetup.StateOutdated, states["hooks"])
 }
 
 func TestAgentSetupReportsUnsupportedAgentUnknown(t *testing.T) {

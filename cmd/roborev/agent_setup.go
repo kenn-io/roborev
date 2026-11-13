@@ -121,7 +121,7 @@ func agentSetupItems(name string, mcp *bool, server *string, hooksOnly bool) ([]
 		return nil, err
 	}
 	hookItem := agentsetup.Hooks(name, hooks)
-	if mcp == nil {
+	if mcp == nil && hooksOnly {
 		checkHook := hookItem.Check
 		hookItem.Check = func(ctx context.Context) (agentsetup.Status, error) {
 			status, err := checkHook(ctx)
