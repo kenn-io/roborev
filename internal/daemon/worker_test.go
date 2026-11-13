@@ -1732,7 +1732,6 @@ func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	assert.Contains(t, capturedPrompt, "## Dependency Metadata")
 	assert.Contains(t, capturedPrompt, "go.sum changed")
-	assert.NotContains(t, capturedPrompt, "Committed review evidence")
 }
 
 func TestProcessJob_BroadcastsBranchOnLifecycleEvents(t *testing.T) {

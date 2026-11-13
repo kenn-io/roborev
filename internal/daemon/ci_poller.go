@@ -1664,7 +1664,6 @@ func (p *CIPoller) maybeAppendDesignMember(
 		if !p.commitWarrantsDesign(ctx, repo.RootPath, sha, hh) {
 			continue
 		}
-		settings := config.BuiltInReviewSettings(repoCfg, cfg)
 		reasoning := ciReasoning(repoCfg, cfg)
 		designAgent, designModel := resolveCIAutoDesignAgent(repoCfg, cfg)
 		designAgent = agent.StorageNameFromConfig(designAgent, repoCfg, cfg)
@@ -1680,7 +1679,7 @@ func (p *CIPoller) maybeAppendDesignMember(
 			)
 		}
 		return append(members, config.ResolvedMember{
-			ReviewSettings: settings,
+			ReviewSettings: config.BuiltInReviewSettings(repoCfg, cfg),
 			Name:           "design",
 			Index:          len(members),
 			Agent:          designAgent,

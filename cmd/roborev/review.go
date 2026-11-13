@@ -528,6 +528,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	if err != nil {
 		return err
 	}
+
 	// Resolve and validate reasoning (matches daemon behavior)
 	reasoning, err = config.ResolveReviewReasoningForTypeFromConfig(
 		reasoning, repoCfg, cfg, reviewType,

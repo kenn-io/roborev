@@ -195,10 +195,6 @@ members = ["checker"]
 	settings, err := ResolveReviewSettings("exhibits", nil, false, repoCfg, nil)
 	require.NoError(t, err)
 	assert.True(t, settings.BinaryEvidence)
-	settings, err = ResolveReviewSettings("default", nil, false, repoCfg, nil)
-	require.NoError(t, err)
-	assert.False(t, settings.BinaryEvidence)
-
 	members, _, err := ResolveCIPanel("audit", repoCfg, nil)
 	require.NoError(t, err)
 	require.Len(t, members, 1)

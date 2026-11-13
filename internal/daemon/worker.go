@@ -1210,6 +1210,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
 		return
 	}
+
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
 	// repository review configuration that it no longer needs.
 	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg).WithBinaryEvidence(settings.BinaryEvidence)

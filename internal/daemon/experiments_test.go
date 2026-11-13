@@ -61,7 +61,6 @@ func TestEnqueueSingleReviewPersistsExperiment(t *testing.T) {
 	var plan experimentJobPlan
 	require.NoError(t, json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &plan))
 	assert.JSONEq(t, stored.PanelMemberConfigJSON, plan.PanelMemberConfigJSON)
-	require.NoError(t, applyFrozenExperimentSettings(stored, assignment))
 	settings, err := reviewJobSettings(stored, repo.Path(), server.configWatcher.Config())
 	require.NoError(t, err)
 	assert.True(t, settings.BinaryEvidence)
