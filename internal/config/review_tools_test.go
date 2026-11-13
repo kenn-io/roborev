@@ -70,11 +70,11 @@ members = ["checker", "inherits"]
 	repoCfg, err := LoadRepoConfig(dir)
 	require.NoError(t, err)
 
-	settings, err := ResolveReviewSettings("citations", nil, repoCfg, nil)
+	settings, err := ResolveReviewSettings("citations", nil, false, repoCfg, nil)
 	require.NoError(t, err)
 	assert.Equal(t, &ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"sources": {"find", "read"}}}, settings.Tools)
 
-	settings, err = ResolveReviewSettings("default", nil, repoCfg, nil)
+	settings, err = ResolveReviewSettings("default", nil, false, repoCfg, nil)
 	require.NoError(t, err)
 	assert.Nil(t, settings.Tools)
 
@@ -164,7 +164,7 @@ func TestExperimentReviewTypeToolPolicy(t *testing.T) {
 			resolved, ok := ResolveCustomReviewTypeFromConfig("citations", selection.RepoConfig, global)
 			require.True(t, ok)
 			assert.Equal(t, "rubric-v2.md", resolved.Spec.Template)
-			settings, err := ResolveReviewSettings("citations", nil, selection.RepoConfig, global)
+			settings, err := ResolveReviewSettings("citations", nil, false, selection.RepoConfig, global)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, settings.Tools)
 
@@ -192,10 +192,10 @@ members = ["checker"]
 	repoCfg, err := LoadRepoConfig(dir)
 	require.NoError(t, err)
 
-	settings, err := ResolveReviewSettings("exhibits", nil, repoCfg, nil)
+	settings, err := ResolveReviewSettings("exhibits", nil, false, repoCfg, nil)
 	require.NoError(t, err)
 	assert.True(t, settings.BinaryEvidence)
-	settings, err = ResolveReviewSettings("default", nil, repoCfg, nil)
+	settings, err = ResolveReviewSettings("default", nil, false, repoCfg, nil)
 	require.NoError(t, err)
 	assert.False(t, settings.BinaryEvidence)
 
@@ -215,6 +215,7 @@ func TestResolveReviewSettingsBinaryEvidencePrecedence(t *testing.T) {
 		name         string
 		global, repo *bool
 		custom       bool
+		dirty        bool
 		reviewType   string
 		want         bool
 	}{
@@ -225,13 +226,15 @@ func TestResolveReviewSettingsBinaryEvidencePrecedence(t *testing.T) {
 		{name: "custom ignores global", global: &yes, reviewType: "exhibits"},
 		{name: "custom ignores repo", repo: &yes, reviewType: "exhibits"},
 		{name: "custom on", repo: &no, custom: true, reviewType: "exhibits", want: true},
+		{name: "built-in dirty", global: &yes, repo: &yes, dirty: true, reviewType: "default"},
+		{name: "custom dirty", custom: true, dirty: true, reviewType: "exhibits", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			global := &Config{Review: ReviewConfig{BinaryEvidence: tc.global}}
 			repo := &RepoConfig{Review: ReviewConfig{BinaryEvidence: tc.repo, Types: map[string]ReviewTypeSpec{
 				"exhibits": {Template: "rubric.md", BinaryEvidence: tc.custom},
 			}}}
-			settings, err := ResolveReviewSettings(tc.reviewType, nil, repo, global)
+			settings, err := ResolveReviewSettings(tc.reviewType, nil, tc.dirty, repo, global)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, settings.BinaryEvidence)
 		})

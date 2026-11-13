@@ -414,7 +414,7 @@ func resolveMemberFromConfig(
 	if err := validateSubagentTimeout(spec.Timeout); err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
-	settings, err := ResolveReviewSettings(reviewType, spec.Tools, repoCfg, globalCfg)
+	settings, err := ResolveReviewSettings(reviewType, spec.Tools, false, repoCfg, globalCfg)
 	if err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
