@@ -55,6 +55,12 @@ func migrateCIBranchReviews(ctx context.Context, db *DB) error {
   UNIQUE(github_repo, sha)
 )`,
 		`CREATE INDEX IF NOT EXISTS idx_ci_branch_reviews_synthesis ON ci_branch_reviews(synthesis_job_id)`,
+		// Every synthesis job that ever reviewed a commit, so an explicit rerun
+		// of an earlier run still finds its commit after a newer rerun.
+		`CREATE TABLE IF NOT EXISTS ci_branch_review_runs (
+  synthesis_job_id INTEGER PRIMARY KEY,
+  review_id INTEGER NOT NULL REFERENCES ci_branch_reviews(id)
+)`,
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return err
@@ -155,6 +161,10 @@ func (db *DB) CreateCIBranchReviewRun(githubRepo, branch, sha string,
 			WHERE panel_run_uuid = ?`, synth.ID, runUUID); err != nil {
 			return false, nil, err
 		}
+		if _, err := conn.ExecContext(ctx, `INSERT INTO ci_branch_review_runs (synthesis_job_id, review_id)
+			SELECT ?, id FROM ci_branch_reviews WHERE panel_run_uuid = ?`, synth.ID, runUUID); err != nil {
+			return false, nil, err
+		}
 	}
 	if err := setCIBranchCursor(ctx, conn, githubRepo, branch, sha, now); err != nil {
 		return false, nil, err
@@ -249,12 +259,25 @@ func (db *DB) GetCIBranchReview(githubRepo, sha string) (*CIBranchReview, error)
 	return &review, nil
 }
 
-// SetCIBranchReviewFinalStatus records the result to publish once. A later
-// call for the same review leaves the first result unchanged.
-func (db *DB) SetCIBranchReviewFinalStatus(id int64, state, description string) error {
+// SetCIBranchReviewFinalStatus records the result of review's run to publish
+// once. A later call for the same run leaves the first result unchanged, and
+// a run that a rerun has replaced records nothing.
+func (db *DB) SetCIBranchReviewFinalStatus(review CIBranchReview, state, description string) error {
 	_, err := db.Exec(`UPDATE ci_branch_reviews SET final_state = ?, final_description = ?
-		WHERE id = ? AND final_state = ''`, state, description, id)
+		WHERE id = ? AND synthesis_job_id IS ? AND final_state = ''`,
+		state, description, review.ID, nullableJobID(review.SynthesisJobID))
 	return err
+}
+
+// ErrCIBranchReviewReplaced means a rerun replaced the run whose result was
+// being published, so the publication no longer belongs to it.
+var ErrCIBranchReviewReplaced = errors.New("default-branch review run was replaced by a rerun")
+
+func nullableJobID(id *int64) sql.NullInt64 {
+	if id == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: *id, Valid: true}
 }
 
 // ListCIBranchReviewsAwaitingResult returns reviews whose synthesis job has
@@ -291,13 +314,14 @@ func (db *DB) listCIBranchReviews(query string, args ...any) ([]CIBranchReview, 
 	return reviews, rows.Err()
 }
 
-// ClaimCIBranchReviewStatus leases an unpublished result to one publisher. A
-// crashed publisher's lease becomes claimable after staleWindow.
-func (db *DB) ClaimCIBranchReviewStatus(id int64, staleWindow time.Duration) (bool, error) {
+// ClaimCIBranchReviewStatus leases review's unpublished result to one
+// publisher. A crashed publisher's lease becomes claimable after staleWindow.
+// The claim fails when a rerun has replaced the run that produced the result.
+func (db *DB) ClaimCIBranchReviewStatus(review CIBranchReview, staleWindow time.Duration) (bool, error) {
 	res, err := db.Exec(`UPDATE ci_branch_reviews SET status_claimed_at = datetime('now')
-		WHERE id = ? AND final_state != '' AND status_sent_at IS NULL
+		WHERE id = ? AND synthesis_job_id IS ? AND final_state != '' AND status_sent_at IS NULL
 		  AND (status_claimed_at IS NULL OR datetime(status_claimed_at) < datetime('now', ?))`,
-		id, fmt.Sprintf("-%d seconds", int64(staleWindow.Seconds())))
+		review.ID, nullableJobID(review.SynthesisJobID), fmt.Sprintf("-%d seconds", int64(staleWindow.Seconds())))
 	if err != nil {
 		return false, err
 	}
@@ -306,15 +330,28 @@ func (db *DB) ClaimCIBranchReviewStatus(id int64, staleWindow time.Duration) (bo
 }
 
 // FinishCIBranchReviewStatus releases the publication lease, marking the
-// result published when sent is true.
-func (db *DB) FinishCIBranchReviewStatus(id int64, sent bool) error {
+// result published when sent is true. It returns ErrCIBranchReviewReplaced
+// when a rerun took over the review after its lease went stale, leaving the
+// rerun's publication untouched.
+func (db *DB) FinishCIBranchReviewStatus(review CIBranchReview, sent bool) error {
+	query := `UPDATE ci_branch_reviews SET status_claimed_at = NULL
+		WHERE id = ? AND synthesis_job_id IS ? AND status_sent_at IS NULL`
 	if sent {
-		_, err := db.Exec(`UPDATE ci_branch_reviews SET status_sent_at = datetime('now'),
-			status_claimed_at = NULL WHERE id = ?`, id)
+		query = `UPDATE ci_branch_reviews SET status_sent_at = datetime('now'), status_claimed_at = NULL
+		WHERE id = ? AND synthesis_job_id IS ? AND status_sent_at IS NULL`
+	}
+	res, err := db.Exec(query, review.ID, nullableJobID(review.SynthesisJobID))
+	if err != nil {
 		return err
 	}
-	_, err := db.Exec(`UPDATE ci_branch_reviews SET status_claimed_at = NULL WHERE id = ?`, id)
-	return err
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrCIBranchReviewReplaced
+	}
+	return nil
 }
 
 // GetTimedOutCIBranchReviewRuns returns the panel runs of unfinished
@@ -348,28 +385,41 @@ func (db *DB) GetTimedOutCIBranchReviewRuns(githubRepo string, maxAge time.Durat
 }
 
 // rerunCIBranchReviewTx moves a default-branch review's status publication to
-// an explicit rerun of its panel, in the same transaction as the new jobs, so
-// the rerun's result replaces the published one. found is false when the
-// source job does not belong to a default-branch review.
+// an explicit rerun of any of its earlier runs, in the same transaction as the
+// new jobs, so the rerun's result replaces the published one. found is false
+// when the source job does not belong to a default-branch review.
+//
+// Like a pull request panel, the review stays with its current run while that
+// run's result is unpublished: only a rerun of the current run itself can take
+// over, and never while its result is being published.
 func rerunCIBranchReviewTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synth *ReviewJob, now time.Time) (bool, error) {
 	var id int64
-	var claimedAt sql.NullString
-	var sentAt sql.NullString
-	err := conn.QueryRowContext(ctx, `SELECT id, status_claimed_at, status_sent_at
-		FROM ci_branch_reviews WHERE synthesis_job_id = ?`, sourceJobID).Scan(&id, &claimedAt, &sentAt)
+	var current sql.NullInt64
+	var claimedAt, sentAt sql.NullString
+	err := conn.QueryRowContext(ctx, `SELECT b.id, b.synthesis_job_id, b.status_claimed_at, b.status_sent_at
+		FROM ci_branch_review_runs r JOIN ci_branch_reviews b ON b.id = r.review_id
+		WHERE r.synthesis_job_id = ?`, sourceJobID).Scan(&id, &current, &claimedAt, &sentAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if claimedAt.Valid && !sentAt.Valid &&
-		!parseSQLiteTime(claimedAt.String).Before(now.Add(-PanelPostingStaleWindow)) {
-		return true, ErrCIPanelActive
+	if !sentAt.Valid {
+		if claimedAt.Valid && !parseSQLiteTime(claimedAt.String).Before(now.Add(-PanelPostingStaleWindow)) {
+			return true, ErrCIPanelActive
+		}
+		if !current.Valid || current.Int64 != sourceJobID {
+			return true, ErrCIPanelActive
+		}
 	}
-	_, err = conn.ExecContext(ctx, `UPDATE ci_branch_reviews
+	if _, err := conn.ExecContext(ctx, `UPDATE ci_branch_reviews
 		SET panel_run_uuid = ?, synthesis_job_id = ?, final_state = '', final_description = '',
 		    status_claimed_at = NULL, status_sent_at = NULL
-		WHERE id = ?`, synth.PanelRunUUID, synth.ID, id)
+		WHERE id = ?`, synth.PanelRunUUID, synth.ID, id); err != nil {
+		return true, err
+	}
+	_, err = conn.ExecContext(ctx, `INSERT INTO ci_branch_review_runs (synthesis_job_id, review_id)
+		VALUES (?, ?)`, synth.ID, id)
 	return true, err
 }

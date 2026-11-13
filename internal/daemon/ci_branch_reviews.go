@@ -95,7 +95,7 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 		if queued == ciBranchCommitsPerPoll {
 			break
 		}
-		if commitOptedOut(repo.RootPath, commit.sha, scopedCfg) {
+		if commitOptedOut(repo.RootPath, commit.sha, scopedCfg, repoConfig) {
 			if err := p.db.SetCIBranchCursor(ghRepo, branch, commit.sha); err != nil {
 				return err
 			}
@@ -157,10 +157,18 @@ func landedCommits(ctx context.Context, repoPath, cursor, head string) ([]landed
 // commitOptedOut reports whether the .roborev.toml in a landed commit turns
 // default-branch reviews off, so a commit that lands while a repo has opted
 // out is skipped even when the opt-out was reverted before the next poll. A
-// file that cannot be read leaves the decision to the default-branch config.
-func commitOptedOut(repoPath, sha string, cfg *config.Config) bool {
+// commit without the file follows loaded, the configuration the poll uses,
+// when it came from the poller's checkout because the branch commits none. A
+// file that cannot be read leaves the decision to the global config.
+func commitOptedOut(repoPath, sha string, cfg *config.Config, loaded ciRepoConfigSource) bool {
 	repoCfg, err := config.LoadRepoConfigFromRef(repoPath, sha)
-	return err == nil && !config.ResolveCIReviewDefaultBranch(repoCfg, cfg)
+	if err != nil {
+		return false
+	}
+	if repoCfg == nil && loaded.Ref == "" {
+		repoCfg = loaded.Config
+	}
+	return !config.ResolveCIReviewDefaultBranch(repoCfg, cfg)
 }
 
 // enqueueBranchCommit reviews one landed commit against its first parent, so
@@ -296,7 +304,7 @@ func (p *CIPoller) finishBranchReview(review storage.CIBranchReview) {
 	default:
 		return
 	}
-	if err := p.db.SetCIBranchReviewFinalStatus(review.ID, state, desc); err != nil {
+	if err := p.db.SetCIBranchReviewFinalStatus(review, state, desc); err != nil {
 		log.Printf("CI poller: error recording default-branch result for %s@%s: %v",
 			review.GithubRepo, gitpkg.ShortSHA(review.SHA), err)
 		return
@@ -323,7 +331,7 @@ func (p *CIPoller) deliverPendingBranchStatuses(ghRepo string) {
 		return
 	}
 	for _, review := range reviews {
-		won, err := p.db.ClaimCIBranchReviewStatus(review.ID, panelPostingStaleWindow)
+		won, err := p.db.ClaimCIBranchReviewStatus(review, panelPostingStaleWindow)
 		if err != nil {
 			log.Printf("CI poller: error claiming default-branch status for %s@%s: %v",
 				ghRepo, gitpkg.ShortSHA(review.SHA), err)
@@ -337,7 +345,7 @@ func (p *CIPoller) deliverPendingBranchStatuses(ghRepo string) {
 			log.Printf("CI poller: failed to set default-branch status for %s@%s: %v",
 				ghRepo, gitpkg.ShortSHA(review.SHA), sendErr)
 		}
-		if err := p.db.FinishCIBranchReviewStatus(review.ID, sendErr == nil); err != nil {
+		if err := p.db.FinishCIBranchReviewStatus(review, sendErr == nil); err != nil {
 			log.Printf("CI poller: error acknowledging default-branch status for %s@%s: %v",
 				ghRepo, gitpkg.ShortSHA(review.SHA), err)
 		}

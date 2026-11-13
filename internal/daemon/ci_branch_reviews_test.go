@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -32,6 +33,7 @@ type branchStatus struct {
 // GitHub writes, PR listing, and the review agent are fakes.
 type branchReviewHarness struct {
 	origin   *testutil.TestRepo
+	clone    string
 	db       *storage.DB
 	cfg      *config.Config
 	poller   *CIPoller
@@ -50,6 +52,7 @@ func newBranchReviewHarness(t *testing.T) *branchReviewHarness {
 	h.origin.CommitFile("app.txt", "start\n", "initial")
 
 	clone := filepath.Join(t.TempDir(), "clone")
+	h.clone = clone
 	out, err := exec.CommandContext(t.Context(), "git", "clone", "--quiet", h.origin.Path(), clone).CombinedOutput()
 	require.NoError(t, err, "%s", out)
 
@@ -333,15 +336,38 @@ func TestCIDefaultBranchCursorSurvivesCanceledHistoryCheck(t *testing.T) {
 	reviewed := h.origin.HeadSHA()
 	h.poll(t)
 	h.origin.CommitFile("app.txt", "landed\n", "landed")
-	ctx, cancel := context.WithCancel(t.Context())
+	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-
-	_, _, err := landedCommits(ctx, h.origin.Path(), reviewed, h.origin.HeadSHA())
+	_, _, err := landedCommits(canceled, h.origin.Path(), reviewed, h.origin.HeadSHA())
 	require.Error(t, err, "a canceled check is not evidence that history was rewritten")
+
+	// Cancel after the poll has fetched and resolved the new head, so only
+	// the history check sees the canceled context.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	h.poller.loadRepoConfigFn = func(repoPath string) (ciRepoConfigSource, error) {
+		cancel()
+		return loadCIRepoConfig(repoPath)
+	}
 	require.Error(t, h.poller.pollRepo(ctx, branchReviewRepo, h.cfg))
 	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
 	require.NoError(t, err)
-	assert.Equal(t, reviewed, cursor.HeadSHA)
+	assert.Equal(t, reviewed, cursor.HeadSHA, "the landed commit is still waiting for review")
+	assert.Empty(t, h.synthesisJobs(t))
+}
+
+func TestCIDefaultBranchReviewsHonorUncommittedOptOut(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	require.NoError(t, os.WriteFile(filepath.Join(h.clone, ".roborev.toml"),
+		[]byte("[ci]\nreview_default_branch = false\n"), 0o644))
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+
+	assert.Empty(t, h.synthesisJobs(t), "the poller checkout's configuration opts the repository out")
+	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	require.NoError(t, err)
+	assert.Equal(t, landed, cursor.HeadSHA, "the skipped commit is accounted for")
 }
 
 func TestCIDefaultBranchReviewsSkipCommitsLandedWhileOptedOutBetweenPolls(t *testing.T) {
