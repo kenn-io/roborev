@@ -227,7 +227,7 @@ Track repeated finding files at this full-scope re-review step. The initial
 review is baseline zero. Count one round only after a new fix commit and its
 completed failing full-scope review; do not also count the optional hook review
 or a retry without a new commit. Read
-`roborev show --from-skill --job --json <job_id>` and use all stored severities
+`roborev job show --from-skill --job <job_id> --json` and use all stored severities
 from valid `structured_output` findings. Recognize only repo-relative paths
 (optionally `:line` or
 `:start-end`) that match tracked files at the reviewed endpoint; ignore
