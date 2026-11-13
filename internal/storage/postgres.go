@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -947,11 +946,10 @@ const pgUpsertReviewSQL = `
  AND (newer.created_at, newer.id) > (r.created_at, r.id))))
  UNION ALL SELECT $13::timestamptz, $15::uuid WHERE NOT EXISTS (SELECT 1 FROM locked_job)
  ), locked_review AS MATERIALIZED (
- SELECT r.job_uuid, to_jsonb(r) AS record FROM reviews r WHERE r.uuid = $1 FOR UPDATE
+ SELECT to_jsonb(r) AS record FROM reviews r WHERE r.uuid = $1 FOR UPDATE
  ), eligible_review AS (
- SELECT r.record FROM locked_review r JOIN review_jobs j ON j.uuid = r.job_uuid
- WHERE j.job_type IN ('review','range','dirty','synthesis','compact')
- AND r.record->>'output' <> '' AND $7::jsonb IS NOT NULL AND NOT $14::boolean
+ SELECT record FROM locked_review
+ WHERE record->>'output' <> '' AND $7::jsonb IS NOT NULL AND NOT $14::boolean
  ), archived AS (
  INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at)
  SELECT $1, COALESCE((SELECT record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id) FROM eligible_review), jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
@@ -968,7 +966,7 @@ const pgUpsertReviewSQL = `
  UPDATE legacy_reviews SET record = record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id),
  resolved_at = CASE WHEN NOT $14::boolean AND $7::jsonb IS NOT NULL AND $7::jsonb->'legacy' IS NULL
  THEN COALESCE(resolved_at, clock_timestamp()) ELSE resolved_at END
- FROM current_attempt a WHERE uuid = $1 AND (SELECT count(*) FROM locked_review) >= 0 AND (SELECT count(*) FROM archived) >= 0
+ FROM current_attempt a WHERE uuid = $1 AND (SELECT count(*) FROM locked_review) >= 0
  ), written AS (
  INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
@@ -1647,15 +1645,8 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 		}
 		structuredOutputs[i] = structuredOutput
 	}
-	// Match the scanner's lock order while retaining the caller's result order.
-	order := make([]int, len(reviews))
-	for i := range order {
-		order[i] = i
-	}
-	slices.SortStableFunc(order, func(i, j int) int { return bytes.Compare(reviews[i].UUID[:], reviews[j].UUID[:]) })
 	batch := &pgx.Batch{}
-	for _, i := range order {
-		r := reviews[i]
+	for i, r := range reviews {
 		verdictBool, noReview := syncedReviewVerdict(r)
 		batch.Queue(pgUpsertReviewSQL,
 			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
@@ -1668,7 +1659,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 
 	success := make([]bool, len(reviews))
 	var firstErr error
-	for _, i := range order {
+	for i := range reviews {
 		var awaitingAssociation bool
 		err := br.QueryRow().Scan(&success[i], &awaitingAssociation)
 		if err == nil && awaitingAssociation {

@@ -44,7 +44,7 @@ func (p *PgPool) restoreLegacyReviews(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
-				result, err := p.pool.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, verdict_bool,
+				_, err = p.pool.Exec(ctx, `INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, closed, verdict_bool,
  structured_output, reviewed_file_count, excluded_file_count, updated_by_machine_id, created_at, updated_at, job_enqueued_at, job_source_machine_id)
  SELECT r.uuid, r.job_uuid, r.agent, r.prompt, '', r.closed, r.verdict_bool, $2,
  r.reviewed_file_count, r.excluded_file_count, r.updated_by_machine_id, r.created_at, clock_timestamp(), r.job_enqueued_at, r.job_source_machine_id
@@ -53,9 +53,6 @@ func (p *PgPool) restoreLegacyReviews(ctx context.Context) error {
  ON CONFLICT DO NOTHING`, record.ID, []byte(raw))
 				if err != nil {
 					return err
-				}
-				if result.RowsAffected() == 0 {
-					continue
 				}
 				unstructured++
 			}
