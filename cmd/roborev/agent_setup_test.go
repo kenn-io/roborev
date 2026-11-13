@@ -130,7 +130,26 @@ func TestAgentSetupKeepsResolvableHookExecutable(t *testing.T) {
 	assert.Equal(t, agentsetup.StateOK, row.State, row.Reason)
 	out, err := runSetup("--agent", "claude")
 	require.NoError(t, err, out)
-	assert.Contains(t, readFile(t, filepath.Join(home, "settings.json")), moved)
+	var settings struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, filepath.Join(home, "settings.json"))), &settings))
+	var commands []string
+	for _, groups := range settings.Hooks {
+		for _, group := range groups {
+			for _, hook := range group.Hooks {
+				commands = append(commands, hook.Command)
+			}
+		}
+	}
+	require.NotEmpty(t, commands)
+	for _, command := range commands {
+		assert.Contains(t, command, moved)
+	}
 }
 
 func TestAgentSetupReportsUnsupportedAgentUnknown(t *testing.T) {
