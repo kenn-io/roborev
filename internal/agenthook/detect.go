@@ -3,12 +3,9 @@ package agenthook
 import (
 	"encoding/json/v2"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	kitagenthook "go.kenn.io/kit/agenthook"
@@ -20,41 +17,6 @@ func Installed(agent kitagenthook.Agent, path string) (bool, error) {
 		return false, err
 	}
 	return result.Changed, nil
-}
-
-// CommandOptions reads the executable and connection selected by a hook command.
-func CommandOptions(command string) (InstallOptions, error) {
-	args, err := splitHookCommand(command)
-	if err != nil {
-		return InstallOptions{}, err
-	}
-	if len(args) == 0 {
-		return InstallOptions{}, fmt.Errorf("empty hook command")
-	}
-	mcp, server, _, err := hookArgs(args[1:])
-	return InstallOptions{Executable: args[0], MCP: mcp, RoborevServerAddr: server}, err
-}
-
-func hookArgs(args []string) (mcp bool, server string, extra []string, err error) {
-	for i := 0; i < len(args); i++ {
-		switch arg := args[i]; {
-		case arg == "--mcp":
-			mcp = true
-		case strings.HasPrefix(arg, "--mcp="):
-			mcp, err = strconv.ParseBool(strings.TrimPrefix(arg, "--mcp="))
-			if err != nil {
-				return
-			}
-		case arg == "--roborev-server" && i+1 < len(args):
-			i++
-			server = args[i]
-		case strings.HasPrefix(arg, "--roborev-server="):
-			server = strings.TrimPrefix(arg, "--roborev-server=")
-		default:
-			extra = append(extra, arg)
-		}
-	}
-	return
 }
 
 func InstalledForAgent(path, agent string) (bool, error) {
@@ -113,128 +75,25 @@ func zcodeInstalled(configPath string) (bool, error) {
 // profiles keep hooks at harness-specific depths (ZCode nests event arrays
 // under hooks.events), so a recursive search avoids duplicating each shape.
 func containsOwnedHook(value any, agent kitagenthook.Agent) bool {
-	return len(ownedHooks(value, agent)) > 0
-}
-
-// ownedHooks returns each hook handler whose command selects agent.
-func ownedHooks(value any, agent kitagenthook.Agent) []map[string]any {
-	var hooks []map[string]any
 	switch typed := value.(type) {
 	case []any:
-		for _, child := range typed {
-			hooks = append(hooks, ownedHooks(child, agent)...)
-		}
+		return slices.ContainsFunc(typed, func(child any) bool {
+			return containsOwnedHook(child, agent)
+		})
 	case map[string]any:
 		if command, ok := typed["command"].(string); ok && isOwnedHookCommand(command, agent) {
-			hooks = append(hooks, typed)
+			return true
 		}
-		for _, key := range slices.Sorted(maps.Keys(typed)) {
-			hooks = append(hooks, ownedHooks(typed[key], agent)...)
+		for _, child := range typed {
+			if containsOwnedHook(child, agent) {
+				return true
+			}
 		}
 	}
-	return hooks
+	return false
 }
 
 func isOwnedHookCommand(command string, agent kitagenthook.Agent) bool {
 	selected, err := commandAgent(command)
 	return err == nil && selected == agent
-}
-
-// RewriteCommand changes the selected connection in a shared hook command.
-func RewriteCommand(command kitagenthook.Commands, agent kitagenthook.Agent, opts InstallOptions, executable string) (kitagenthook.Commands, error) {
-	args, err := splitHookCommand(command.Native)
-	if err != nil {
-		return command, err
-	}
-	mcp, server, rest, err := hookArgs(args[1:])
-	if err != nil {
-		return command, err
-	}
-	moved := false
-	generated := []string{"agent-hook", "run", "--agent", string(agent), agentHookMarker}
-	if slices.Equal(rest, generated) && filepath.IsAbs(args[0]) {
-		if _, err := os.Stat(args[0]); os.IsNotExist(err) {
-			args[0], moved = executable, true
-		}
-	}
-	if mcp == opts.MCP && server == opts.RoborevServerAddr && !moved {
-		return command, nil
-	}
-	if opts.RoborevServerAddr != "" {
-		rest = append(rest, "--roborev-server", opts.RoborevServerAddr)
-	}
-	if opts.MCP {
-		rest = append(rest, "--mcp")
-	}
-	updated, err := kitagenthook.BuildCommand(args[0], rest...)
-	if agent == kitagenthook.AgentClaude {
-		updated.Native = updated.POSIX
-	}
-	if command.Windows == "" {
-		updated.Windows = ""
-	}
-	return updated, err
-}
-
-// InstalledCommand returns the shared command and each event's settings.
-func InstalledCommand(agent kitagenthook.Agent) (kitagenthook.Commands, []kitagenthook.Hook, bool, error) {
-	path, err := kitagenthook.ConfigPath(agent)
-	if err != nil {
-		return kitagenthook.Commands{}, nil, false, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return kitagenthook.Commands{}, nil, false, err
-	}
-	var root map[string]any
-	if err := json.Unmarshal(data, &root); err != nil {
-		return kitagenthook.Commands{}, nil, false, err
-	}
-	events, _ := root["hooks"].(map[string]any)
-	var command kitagenthook.Commands
-	var specs []kitagenthook.Hook
-	profile, _ := kitagenthook.LookupProfile(agent)
-	unsupported := false
-	for _, event := range slices.Sorted(maps.Keys(events)) {
-		groups, _ := events[event].([]any)
-		for _, raw := range groups {
-			group, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			matcher, matcherOK := group["matcher"].(string)
-			for _, hook := range ownedHooks(group["hooks"], agent) {
-				if _, exists := group["matcher"]; exists && !matcherOK {
-					unsupported = true
-				}
-				if _, err := regexp.Compile(matcher); err != nil {
-					unsupported = true
-				}
-				if !slices.ContainsFunc(profile.SupportedEvents, func(supported kitagenthook.Event) bool { return strings.EqualFold(string(supported), event) }) {
-					unsupported = true
-				}
-				windows, _ := hook["commandWindows"].(string)
-				next := kitagenthook.Commands{Native: hook["command"].(string), Windows: windows}
-				if len(specs) > 0 && command != next {
-					return command, specs, true, nil
-				}
-				command = next
-				specs = append(specs, kitagenthook.Hook{Event: kitagenthook.Event(event), Matcher: matcher})
-			}
-		}
-	}
-	if agent == kitagenthook.AgentClaude {
-		for _, event := range []kitagenthook.Event{"PreToolUse", "PostToolUse"} {
-			covered, present := false, false
-			for _, spec := range specs {
-				if spec.Event == event {
-					present = true
-					match, _ := regexp.MatchString(spec.Matcher, "Bash")
-					covered = covered || match
-				}
-			}
-			unsupported = unsupported || present && !covered
-		}
-	}
-	return command, specs, unsupported, nil
 }

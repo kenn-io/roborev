@@ -37,20 +37,16 @@ func TestKitInstallOptionsUseProfileSpecificRunArguments(t *testing.T) {
 	}
 }
 
-func TestKitInstallOptionsUsePOSIXCommandForClaude(t *testing.T) {
-	executable := `C:\Users\example\scoop\apps\roborev\current\roborev.exe`
+func TestClaudeKitInstallOptionsKeepExecutableAndArguments(t *testing.T) {
+	executable := `C:\Users\example\roborev.exe`
 	opts, err := KitInstallOptions(kitagenthook.AgentClaude, InstallOptions{
 		Executable: executable,
 		Timeout:    10 * time.Second,
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t,
-		`'C:\Users\example\scoop\apps\roborev\current\roborev.exe' agent-hook run --agent claude '--source=roborev-agent-hook'`,
-		opts.Command,
-	)
-	assert.Empty(t, opts.Executable)
-	assert.Empty(t, opts.Arguments)
+	assert.Equal(t, executable, opts.Executable)
+	assert.Equal(t, []string{"agent-hook", "run", "--agent", "claude", agentHookMarker}, opts.Arguments)
 }
 
 func TestCommandAgentRequiresExactlyOneSelection(t *testing.T) {
@@ -304,55 +300,4 @@ func TestMCPHookRejectsUnusableDaemonURL(t *testing.T) {
 		opts := InstallOptions{Agent: "qwen", ConfigPath: filepath.Join(t.TempDir(), "settings.json"), MCP: true, MCPTransport: "http", MCPURL: url}
 		require.Error(t, RunInstall(opts, &bytes.Buffer{}))
 	}
-}
-
-func TestHookCommandOptionsAndRewrite(t *testing.T) {
-	t.Run("custom mode changes", func(t *testing.T) {
-		command, err := kitagenthook.BuildCommand("roborev", "agent-hook", "run", "--agent", "claude", "--turn-threshold", "7")
-		require.NoError(t, err)
-		for _, mode := range []bool{true, false} {
-			updated, err := RewriteCommand(kitagenthook.Commands{Native: command.POSIX}, kitagenthook.AgentClaude, InstallOptions{MCP: mode}, "roborev")
-			require.NoError(t, err)
-			parsed, err := CommandOptions(updated.Native)
-			require.NoError(t, err)
-			assert.Equal(t, mode, parsed.MCP)
-			assert.Contains(t, updated.Native, "--turn-threshold 7")
-			command.POSIX = updated.Native
-		}
-	})
-	for _, tc := range []struct {
-		name   string
-		custom bool
-	}{{"generated", false}, {"custom", true}} {
-		t.Run(tc.name+" missing executable", func(t *testing.T) {
-			missing := filepath.Join(t.TempDir(), "roborev")
-			args := []string{"agent-hook", "run", "--agent", "claude", agentHookMarker}
-			if tc.custom {
-				args = append(args, "--turn-threshold", "7")
-			}
-			command, err := kitagenthook.BuildCommand(missing, args...)
-			require.NoError(t, err)
-			updated, err := RewriteCommand(kitagenthook.Commands{Native: command.POSIX}, kitagenthook.AgentClaude, InstallOptions{}, "replacement")
-			require.NoError(t, err)
-			parsed, err := CommandOptions(updated.Native)
-			require.NoError(t, err)
-			if tc.custom {
-				assert.Equal(t, missing, parsed.Executable)
-			} else {
-				assert.Equal(t, "replacement", parsed.Executable)
-			}
-		})
-	}
-	t.Run("Claude path with spaces", func(t *testing.T) {
-		executable := filepath.Join(t.TempDir(), "roborev path")
-		require.NoError(t, os.WriteFile(executable, nil, 0o700))
-		command, err := kitagenthook.BuildCommand(executable, "agent-hook", "run", "--agent", "claude", agentHookMarker)
-		require.NoError(t, err)
-		updated, err := RewriteCommand(kitagenthook.Commands{Native: command.POSIX}, kitagenthook.AgentClaude, InstallOptions{MCP: true}, "roborev")
-		require.NoError(t, err)
-		parsed, err := CommandOptions(updated.Native)
-		require.NoError(t, err)
-		assert.Equal(t, executable, parsed.Executable)
-		assert.True(t, parsed.MCP)
-	})
 }

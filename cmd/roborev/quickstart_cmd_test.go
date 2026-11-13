@@ -422,7 +422,7 @@ func TestQuickstartCodexTrust(t *testing.T) {
 	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
 	require.NoError(t, os.RemoveAll(filepath.Join(os.Getenv("CODEX_HOME"), "skills")))
 	check = checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
-	assert.Equal(t, statusOK, check.Status)
+	assert.Equal(t, statusOK, check.Status, check.Details)
 	_, err = os.Stat(marker)
 	assert.True(t, os.IsNotExist(err))
 }
