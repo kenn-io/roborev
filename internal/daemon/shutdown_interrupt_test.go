@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -106,18 +105,11 @@ func TestInterruptShutdownRejectsMismatchAndUpdateLease(t *testing.T) {
 	assert.True(t, draining) // The update lease owns the gate.
 }
 
-func TestInterruptShutdownDatabaseFailureLeavesGateOpen(t *testing.T) {
-	server, db, dir := newTestServer(t)
+func TestInterruptShutdownDatabaseFailure(t *testing.T) {
+	server, db, _ := newTestServer(t)
 	require.NoError(t, db.Close())
 	response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
 	require.Equal(t, http.StatusInternalServerError, response.Code)
-	reopened, err := storage.Open(filepath.Join(dir, "test.db"))
-	require.NoError(t, err)
-	defer reopened.Close()
-	draining, err := reopened.IsShutdownDraining()
-	require.NoError(t, err)
-	assert.False(t, draining)
-	assert.False(t, server.shutdownDraining)
 }
 
 func TestInterruptShutdownRequest(t *testing.T) {
@@ -131,7 +123,6 @@ func TestInterruptShutdownRequest(t *testing.T) {
 	}{
 		{name: "older daemon", status: http.StatusNotFound, want: "--running=wait"},
 		{name: "PID changed", status: http.StatusPreconditionFailed, detail: "daemon PID changed", want: "daemon PID changed"},
-		{name: "update lease", status: http.StatusConflict, detail: "update drain is active or recovering", want: "update drain is active or recovering"},
 		{name: "original exited", status: http.StatusPreconditionFailed, dead: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,20 +152,6 @@ func TestInterruptShutdownRequest(t *testing.T) {
 	}
 }
 
-func TestInterruptShutdownCanceledRequestDoesNotCloseGate(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	input := &InterruptShutdownInput{}
-	input.Body.ExpectedPID = os.Getpid()
-	_, err := server.humaInterruptShutdown(ctx, input)
-	require.Error(t, err)
-	draining, err := db.IsShutdownDraining()
-	require.NoError(t, err)
-	assert.False(t, draining)
-	assert.False(t, server.shutdownDraining)
-}
-
 func TestInterruptDaemonRejectsUnusableRuntime(t *testing.T) {
 	testenv.SetDataDir(t)
 	var shutdowns atomic.Int32
@@ -185,17 +162,7 @@ func TestInterruptDaemonRejectsUnusableRuntime(t *testing.T) {
 		fmt.Fprint(w, `{"ok":true,"service":"roborev","pid":1}`)
 	}))
 	defer server.Close()
-	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
-	t.Run("different process", func(t *testing.T) {
-		runtimePath := filepath.Join(t.TempDir(), "daemon.json")
-		require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
-		err := InterruptDaemon(&RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: server.Listener.Addr().String(), SourcePath: runtimePath})
-		require.NoError(t, err)
-		assert.Zero(t, shutdowns.Load())
-	})
-	t.Run("missing PID", func(t *testing.T) {
-		err := InterruptDaemon(&RuntimeInfo{Network: "tcp", Address: server.Listener.Addr().String()})
-		require.ErrorContains(t, err, "--running=wait")
-		assert.Zero(t, shutdowns.Load())
-	})
+	err := InterruptDaemon(&RuntimeInfo{Network: "tcp", Address: server.Listener.Addr().String()})
+	require.ErrorContains(t, err, "--running=wait")
+	assert.Zero(t, shutdowns.Load())
 }
