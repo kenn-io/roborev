@@ -49,8 +49,45 @@ func TestInterruptShutdownTargetsRunningAttempts(t *testing.T) {
 			default:
 			}
 			assert.True(t, requested)
+			assert.True(t, server.workerPool.handleUpdateInterruption(ctx, "worker-interrupt", job))
+			stored, err := db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, storage.JobStatusQueued, stored.Status)
+			assert.Equal(t, 0, stored.RetryCount)
 		})
 	}
+}
+
+func TestInterruptShutdownStopRetriesFailedRequeue(t *testing.T) {
+	server, db, dir := newTestServer(t)
+	createTestJob(t, db, dir, "interrupt-requeue-retry", "test")
+	job, err := db.ClaimJob("worker-interrupt")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	_, err = db.ExecContext(t.Context(), fmt.Sprintf(`
+		CREATE TRIGGER fail_update_requeue
+		BEFORE UPDATE ON review_jobs
+		WHEN OLD.id = %d AND NEW.status = 'queued'
+		BEGIN
+			SELECT RAISE(FAIL, 'synthetic requeue failure');
+		END
+	`, job.ID))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	assert.True(t, server.workerPool.handleUpdateInterruption(ctx, "worker-interrupt", job))
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusRunning, stored.Status)
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_update_requeue`)
+	require.NoError(t, err)
+	require.NoError(t, server.Stop())
+	stored, err = db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, stored.Status)
+	assert.Equal(t, 0, stored.RetryCount)
 }
 
 func TestInterruptShutdownRejectsMismatchAndUpdateLease(t *testing.T) {
