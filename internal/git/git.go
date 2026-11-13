@@ -1976,7 +1976,9 @@ func ChangedBinaryFiles(ctx context.Context, repoPath, gitRef string, extraExclu
 		args = append([]string{"show", gitRef, "--format=", "--diff-merges=first-parent"}, flags...)
 	}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
-	out, err := reviewDiffOutput(ctx, repoPath, args)
+	cmd := newGitCmdContext(ctx, args...)
+	cmd.Dir = repoPath
+	out, err := gitOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git diff binary files: %w", err)
 	}

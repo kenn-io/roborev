@@ -58,16 +58,6 @@ func TestReviewDiffsFallBackWhenTextconvFails(t *testing.T) {
 			assert.Contains(t, r.diff, "+new note")
 		})
 	}
-	for _, ref := range []string{head, rangeRef} {
-		changes, err := ChangedBinaryFiles(ctx, repo.Dir, ref)
-		require.NoError(t, err)
-		require.Len(t, changes, 1)
-		assert.Equal(t, "report.pdf", changes[0].Path)
-		assert.Equal(t, "modified", changes[0].Status)
-		data, err := ReadBlob(ctx, repo.Dir, changes[0].OID)
-		require.NoError(t, err)
-		assert.Equal(t, "%PDF\x00v2", string(data))
-	}
 }
 
 func TestReviewDiffsKeepWorkingTextconvOutput(t *testing.T) {

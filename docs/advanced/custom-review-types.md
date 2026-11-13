@@ -82,7 +82,9 @@ binary_evidence = true
 ```
 
 The setting defaults to false, and a repository value overrides the global
-value. Custom types use their own setting independently:
+value. Ordinary reviews read the setting when they start. Panel and experiment
+members use the value saved when they were queued. Custom types use their own
+setting independently:
 
 ```toml
 [review.types.exhibits]
