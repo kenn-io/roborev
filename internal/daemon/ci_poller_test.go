@@ -3568,6 +3568,7 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 
 func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.Review.BinaryEvidence = new(false)
 	h.Cfg.DefaultAgent = "global-agent"
 	h.Cfg.DefaultModel = "global-model"
 	h.Cfg.CI.Agents = []string{""}
@@ -3586,6 +3587,7 @@ func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 	repoCfg := &config.RepoConfig{
 		ReviewAgent: "default-branch-agent",
 		ReviewModel: "default-branch-model",
+		Review:      config.ReviewConfig{BinaryEvidence: new(true)},
 		CI: config.RepoCIConfig{
 			Agents:      []string{""},
 			ReviewTypes: []string{"default"},
@@ -3604,6 +3606,7 @@ func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 	require.Len(t, members, 1)
 	assert.Equal(t, "default-branch-agent", members[0].Agent)
 	assert.Equal(t, "default-branch-model", members[0].Model)
+	assert.True(t, members[0].BinaryEvidence)
 }
 
 func TestResolveCIMatrixMembersUsesCustomTypeReasoning(t *testing.T) {

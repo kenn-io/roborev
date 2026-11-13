@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -148,6 +150,38 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 
 	// We don't check output for diff content because agent output is mocked.
 	h.assertOutputContains("No issues found.")
+}
+
+func TestLocalReviewBuiltInBinaryEvidence(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repo.GitDir, "info", "attributes"), []byte("*.pdf -diff\n"), 0o644))
+	head := repo.CommitFile("exhibit.pdf", "%PDF\x00committed", "add exhibit")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root, "exhibit.pdf"), []byte("%PDF\x00edited"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".roborev.toml"), []byte("[review]\nbinary_evidence = true\n"), 0o644))
+
+	var saved string
+	a := &agent.FakeAgent{
+		NameStr: "local-evidence",
+		ReviewFn: func(_ context.Context, _, _ string, prompt string, _ io.Writer) (string, error) {
+			match := regexp.MustCompile(`"exhibit.pdf" \(added\): read ("[^"]+")`).FindStringSubmatch(prompt)
+			require.Len(t, match, 2)
+			var err error
+			saved, err = strconv.Unquote(match[1])
+			require.NoError(t, err)
+			data, err := os.ReadFile(saved)
+			require.NoError(t, err)
+			assert.Equal(t, "%PDF\x00committed", string(data))
+			return `{"schema_version":3,"verdict":"pass","summary":"No findings.","findings":[]}`, nil
+		},
+	}
+	agent.RegisterForTest(t, a)
+	cmd := reviewCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--local", "--repo", repo.Root, "--agent", a.Name(), head})
+	require.NoError(t, cmd.Execute())
+	require.NotEmpty(t, saved)
+	assert.NoFileExists(t, saved)
 }
 
 func TestLocalReviewRetainsLocationsForDirtyBranch(t *testing.T) {
