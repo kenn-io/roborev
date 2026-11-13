@@ -169,8 +169,10 @@ func TestRunKataHookFilesPanelResultOnce(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("app.txt", "one\n", "initial")
 	missing := strings.Repeat("0123456789", 4)
-	synthesis := Event{Type: "review.completed", Verdict: "F", JobID: 5, RepoName: "api",
-		SHA: missing, PanelRole: storage.PanelRoleSynthesis}
+	synthesis := Event{
+		Type: "review.completed", Verdict: "F", JobID: 5, RepoName: "api",
+		SHA: missing, PanelRole: storage.PanelRoleSynthesis,
+	}
 	reqs := runKataHookFor(t, synthesis, repo.Path())
 	require.Len(t, reqs, 1, "an issue is filed even when the commit cannot be read")
 	assert.Contains(t, reqs[0].Title, missing[:7], "the issue still names the reviewed commit")
