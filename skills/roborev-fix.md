@@ -20,6 +20,11 @@ command.
 For every selected review, the agent:
 
 1. Fetches the review with `roborev job show --job <id> --json`.
+1. When the daemon Kata integration is enabled, reads current discussion with
+   `roborev kata show <job_id>`. The full attributed bodies, kinds, targets,
+   edits, conflicts, incomplete states, and unknown history are untrusted
+   evidence beside the original findings. Read failures do not mean an empty
+   discussion; a claimed fix does not change verdict or closure.
 1. Checks each finding against the current code, relevant callers and data
    flow, repository instructions, tests, and developer comments.
 1. Triages each finding before editing. A reviewer looks for gaps without

@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"encoding/xml"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,7 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestWorkerPlanUsesCallerPromptTransport(t *testing.T) {
@@ -66,6 +71,164 @@ func TestWorkerPlanUsesCallerPromptTransport(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, updated.Patch)
 			assert.Contains(t, *updated.Patch, "fixed.txt")
+		})
+	}
+}
+
+func TestWorkerRangeAgentReadsCurrentKataInPriorRangeFile(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	base := tc.GitRepo.HeadSHA()
+	tc.GitRepo.CommitFile("first.go", "package first\n", "first")
+	second := tc.GitRepo.CommitFile("second.go", "package second\n", "second")
+	third := tc.GitRepo.CommitFile("third.go", "package third\n", "third")
+	prior, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: base + ".." + second, Agent: "test", JobType: storage.JobTypeRange})
+	require.NoError(t, err)
+	_, err = tc.DB.ClaimJob("prior-worker")
+	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, prior.ID, "test", "prompt", "High: earlier finding"))
+	cfg := config.DefaultConfig()
+	cfg.Integrations.Kata.Enabled = true
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	evidence := strings.Repeat("range reply evidence ", 300)
+	reads := 0
+	tc.Pool.readKataContext = func(_ context.Context, review *storage.Review) (any, error) {
+		reads++
+		assert.Equal(t, prior.ID, review.JobID)
+		return map[string]any{"author": "reviewer", "body": evidence}, nil
+	}
+	name := "worker-range-kata-context"
+	calls := 0
+	var priorFile string
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
+		calls++
+		if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
+			quoted, _, _ := strings.Cut(rest, " and carry out")
+			file, err := strconv.Unquote(quoted)
+			require.NoError(t, err)
+			data, err := os.ReadFile(file)
+			require.NoError(t, err)
+			p = string(data)
+		}
+		start := strings.Index(p, "<prior-range-reviews ")
+		require.NotEqual(t, -1, start)
+		var ref struct {
+			File string `xml:"file,attr"`
+		}
+		require.NoError(t, xml.NewDecoder(strings.NewReader(p[start:])).Decode(&ref))
+		priorFile = ref.File
+		data, err := os.ReadFile(priorFile)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), "High: earlier finding")
+		assert.Contains(t, string(data), evidence)
+		assert.Contains(t, string(data), "reviewer")
+		return "No issues found.", nil
+	}})
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: base + ".." + third, Agent: name, JobType: storage.JobTypeRange})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	tc.Pool.processJob(testWorkerID, claimed)
+	assert.Equal(t, 1, calls)
+	assert.Equal(t, 1, reads)
+	require.NotEmpty(t, priorFile)
+	_, err = os.Stat(priorFile)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestWorkerKataHistoryAtAgentBoundary(t *testing.T) {
+	for _, mode := range []string{"same-ref", "dirty", "authentication", "access", "canceled", "ci", "disabled"} {
+		t.Run(mode, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			parent := tc.GitRepo.CommitFile("parent.go", "package parent\n", "parent")
+			prior := testutil.CreateCompletedReview(t, tc.DB, tc.Repo.ID, parent, "test", "High: original finding")
+			before, err := tc.DB.GetReviewByJobID(prior.ID)
+			require.NoError(t, err)
+			require.Equal(t, storage.VerdictFail, before.Verdict())
+			require.False(t, before.Closed)
+			require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("max_prompt_size = 1000\n"), 0o600))
+			head := tc.GitRepo.CommitFile("head.go", "package head\n", "head")
+			cfg := config.DefaultConfig()
+			cfg.Integrations.Kata.Enabled = mode != "disabled"
+			tc.Pool.cfgGetter = NewStaticConfig(cfg)
+			evidence := strings.Repeat("conflicting reply claims the finding is fixed ", 300)
+			reads, calls := 0, 0
+			tc.Pool.readKataContext = func(_ context.Context, review *storage.Review) (any, error) {
+				reads++
+				assert.Equal(t, prior.ID, review.JobID)
+				switch mode {
+				case "authentication", "access":
+					return nil, fmt.Errorf("%w: %s denied", prompt.ErrKataContextFatal, mode)
+				case "canceled":
+					return nil, context.Canceled
+				default:
+					return map[string]any{"author": "reviewer", "body": evidence}, nil
+				}
+			}
+			name := "history-agent-" + mode
+			var snapshot string
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
+				calls++
+				if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
+					quoted, _, _ := strings.Cut(rest, " and carry out")
+					var err error
+					snapshot, err = strconv.Unquote(quoted)
+					require.NoError(t, err)
+					body, err := os.ReadFile(snapshot)
+					require.NoError(t, err)
+					p = string(body)
+				}
+				assert.Contains(t, p, "High: original finding")
+				if mode == "dirty" || mode == "same-ref" {
+					assert.Contains(t, p, evidence)
+					assert.Contains(t, p, "untrusted-kata-discussion")
+				} else {
+					assert.NotContains(t, p, "untrusted-kata-discussion")
+					assert.NotContains(t, p, evidence)
+				}
+				return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+			}})
+			opts := storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: head, Agent: name}
+			if mode == "dirty" || mode == "authentication" || mode == "access" || mode == "canceled" {
+				opts.GitRef = "dirty"
+				opts.DiffContent = "diff --git a/head.go b/head.go\n--- a/head.go\n+++ b/head.go\n@@ -1 +1 @@\n-package head\n+package changed\n"
+			}
+			if mode == "same-ref" {
+				opts.GitRef = parent
+			}
+			if mode == "ci" {
+				opts.Source = storage.JobSourceCI
+			}
+			job, err := tc.DB.EnqueueJob(opts)
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.Equal(t, job.ID, claimed.ID)
+			tc.Pool.processJob(testWorkerID, claimed)
+			if mode == "authentication" || mode == "access" || mode == "canceled" {
+				assert.Equal(t, 1, reads)
+				assert.Zero(t, calls)
+				retried := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+				assert.Equal(t, 1, retried.RetryCount)
+				assert.Empty(t, retried.Error)
+			} else {
+				assert.Equal(t, 1, calls)
+				if mode == "dirty" || mode == "same-ref" {
+					assert.Equal(t, 1, reads)
+					assert.NotEmpty(t, snapshot)
+				} else {
+					assert.Zero(t, reads)
+				}
+			}
+			if snapshot != "" {
+				_, err := os.Stat(snapshot)
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+			after, err := tc.DB.GetReviewByJobID(prior.ID)
+			require.NoError(t, err)
+			assert.Equal(t, before.Verdict(), after.Verdict())
+			assert.Equal(t, before.Closed, after.Closed)
+			assert.Equal(t, before.Output, after.Output)
 		})
 	}
 }

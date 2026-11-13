@@ -15,6 +15,24 @@ argument is a job ID, not a git ref. Closing preserves its output and comments;
 --reopen returns it to the open ledger.`, example: `  roborev close 42
   roborev close 42 --reopen`},
 	"cancel": {example: `  roborev cancel 42`},
+	"kata": {long: `Inspect or publish a review's findings in Kata through the local daemon.
+Show reads the existing publication; create explicitly starts or resumes one.
+Publication requires an enabled Kata integration and a configured destination.`, example: `  roborev kata show 42
+  roborev kata create 42 --findings comments`},
+	"kata show": {long: `Show the stored Kata publication for a review job, including its state,
+finding comments and replies. This reads the publication without creating one.`, example: `  roborev kata show 42`},
+	"kata create": {long: `Create or resume the Kata publication for a review job. For a review
+without a recorded disclosure choice, select comments to publish findings as
+comments or summary for generic notices without finding details. The choice
+must match the configured hook. Publication is an explicit action.`, example: `  roborev kata create 42 --findings comments`},
+	"kata comment": {long: `Reply to a published finding or a reply in its thread through the local
+daemon. Use the issue UID, project, destination ID and target UID displayed by
+kata show, especially when a hook selected a different project. Choose one of
+--reply, --confirm, --refute or --supersede; confirm and refute require at
+least 40 normalized Unicode characters. The original message is sent unchanged.
+Keep the printed retry command and exact idempotency key if the result is
+uncertain. It preserves the expected teammate; a change stops the retry. Kata
+reports the actual author and teammate, and an edited replay shows current text.`, example: `  roborev kata comment ISSUE_UID --project PROJECT --destination-id DESTINATION_ID --reply TARGET_UID --idempotency-key my-reply-key -m 'Evidence for this finding'`},
 	"search": {long: `Search completed review history by words or meaning. Use --lexical for
 keyword matches, --semantic for meaning, or --hybrid for both. Filters narrow
 repository, branch, verdict and time. --agent prints concise result rows;

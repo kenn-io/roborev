@@ -94,7 +94,7 @@ func (wp *WorkerPool) processSynthesisJob(
 		wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{review: single}, doc, cfg.Check)
 	default:
 		if allMembersPassed(results, succeeded) && !anyRetainedFindings(succeeded) {
-			wp.completeSynthesisDocument(workerID, job, structuredreview.Document{
+			wp.completeSynthesisDocument(ctx, workerID, job, structuredreview.Document{
 				SchemaVersion: structuredreview.SchemaVersion, Summary: "No issues found.",
 				Verdict: structuredreview.VerdictPass, Findings: []structuredreview.Finding{},
 			})
@@ -347,7 +347,7 @@ type synthesisResult struct {
 // cancel race, and broadcasts review.completed. The done-path mirrors
 // processJob's tail.
 func (wp *WorkerPool) completeSynthesisContext(
-	workerID string, job *storage.ReviewJob, res synthesisResult,
+	ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
 	var tokenUsage *sessionTokenUsage
 	if res.captureUsage || res.checkerUsage != nil {
@@ -358,18 +358,20 @@ func (wp *WorkerPool) completeSynthesisContext(
 		collected.withUnpricedPhase(res.captureUsage, res.checkerUsage)
 		tokenUsage = &collected
 	}
+	checkout := resolveEffectiveRepoPath(workerID, job)
+	seed := wp.prepareKataPublication(ctx, workerID, job, checkout)
 	wp.runAttemptTransition(workerID, job, func() {
-		wp.completeSynthesisLocked(workerID, job, res, tokenUsage)
+		wp.completeSynthesisLocked(ctx, workerID, job, res, tokenUsage, checkout, seed)
 	})
 }
 
 func (wp *WorkerPool) completeSynthesisLocked(
-	workerID string, job *storage.ReviewJob, res synthesisResult, tokenUsage *sessionTokenUsage,
+	ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult, tokenUsage *sessionTokenUsage, checkout string, seed *storage.KataPublicationSeed,
 ) {
 	agentName, output := res.review.Agent, res.review.Output
-	completeErr := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
+	completeErr := wp.completeReviewResult(job, agentName, storage.ReviewCompletion{
 		Output: output, Verdict: res.review.Verdict, StructuredOutput: res.review.StructuredOutput, MinSeverity: res.review.MinSeverity,
-	})
+	}, seed)
 	if completeErr != nil {
 		// Leaving the job running would strand the panel with no comment.
 		// Route the storage failure through the ordinary retry/fail path.
@@ -412,11 +414,13 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		JobID:             job.ID,
 		JobUUID:           job.UUID,
 		Repo:              job.RepoPath,
+		WorktreePath:      checkout,
 		RepoName:          job.RepoName,
 		SHA:               job.GitRef,
 		Branch:            job.HookBranch(),
 		Agent:             agentName,
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
+		SuppressKataHooks: suppressKataHooks(job),
 		Verdict:           string(verdict),
 		Findings:          output,
 	})
@@ -456,6 +460,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		Branch:            job.HookBranch(),
 		Agent:             agentName,
 		SuppressRepoHooks: hasSuppliedReviewSettings(job),
+		SuppressKataHooks: suppressKataHooks(job),
 	})
 
 	cfg := wp.cfgGetter.Config()
@@ -695,13 +700,13 @@ func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {
 	return agent.CanonicalName(selectedAgent) == agent.CanonicalName(resolvedConfigured.Name())
 }
 
-func (wp *WorkerPool) completeSynthesisDocument(workerID string, job *storage.ReviewJob, doc structuredreview.Document) {
+func (wp *WorkerPool) completeSynthesisDocument(ctx context.Context, workerID string, job *storage.ReviewJob, doc structuredreview.Document) {
 	result, err := synthesisDocumentResult(job, doc)
 	if err != nil {
 		wp.failSynthesisWithoutReviewContext(context.Background(), workerID, job, err.Error())
 		return
 	}
-	wp.completeSynthesisContext(workerID, job, synthesisResult{review: result})
+	wp.completeSynthesisContext(ctx, workerID, job, synthesisResult{review: result})
 }
 
 func synthesisDocumentResult(job *storage.ReviewJob, doc structuredreview.Document) (reviewpkg.ReviewResult, error) {

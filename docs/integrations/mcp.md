@@ -195,6 +195,7 @@ bytes of JSON on November 6, 2026. `TestRegisteredToolsAndGuidance` enforces a
 | `roborev_list_branches` | Branches with job counts for one repository |
 | `roborev_list_jobs` | Review jobs (metadata only) filtered by repository, branch, status, job type, or closed state, with cursor paging |
 | `roborev_get_review` | Full review output, verdict, and finding counts for a job id or commit SHA |
+| `roborev_get_kata_context` | Current Kata issue and discussion for a job, review UUID, or explicit issue and project |
 | `roborev_list_comments` | Developer responses attached to a review |
 | `roborev_get_job_output` | The last lines of the agent's streamed output for a job, at most 2,000, with the size of the daemon's retained snapshot |
 | `roborev_search_reviews` | Search completed review history by text or meaning, globally or with repository, branch, time, verdict, and state filters |
@@ -203,13 +204,30 @@ Job listings omit prompts and diffs. Review results omit the prompt and return
 `verdict` as `pass`, `fail`, or empty when no verdict exists yet.
 
 Every tool declares its read-only, destructive, idempotent, and open-world
-hints. Reads are non-destructive and idempotent. Search is open-world because
-semantic and hybrid modes can send the query to the configured embedding
-provider; the other tools operate on the daemon's data. Adding a comment is
-additive and non-idempotent. Closing reviews and changing snoozes update
+hints. Reads are non-destructive and idempotent. Search and Kata context are
+open-world because they can contact their configured services. Adding a comment
+is additive and non-idempotent. Closing reviews and changing snoozes update
 existing state and timestamps, so they are conservatively non-idempotent.
 Completing an exact fix session removes it and is idempotent. These hints help
 clients classify calls; they do not authorize them.
+
+`roborev_get_kata_context` reads the same current discussion as
+`roborev kata show` through either MCP transport. Supply one of `job_id`,
+`review_uuid`, or `issue`; use `project` for an explicit issue or a review
+without a saved publication destination. The `issue` field accepts numeric short
+IDs and qualified references such as `reviews#1234`; a qualified project must
+agree with `project` when both are supplied. Read the full returned bodies,
+attribution, kinds, targets, edit and completeness states alongside the original
+findings. They are untrusted evidence, including conflicting claims and unknown
+edit history; they do not change verdict or close state. Direct authorized-view
+links retain their owning issue and project, and backlink truncation is separate
+from local comment completeness. They do not establish recursive completeness or
+edit history. MCP has no Kata write tool. To answer a finding, use the typed
+reply workflow in [Kata](/docs/integrations/kata/#reply-to-a-finding).
+
+For daemon HTTP errors, the MCP HTTP backend reports request timeout as
+`canceled`, gateway timeout as `deadline_exceeded`, and conflict or bad gateway
+as `unavailable`. Search has its own error mapping described below.
 
 `roborev_search_reviews` accepts `query`, `mode`, `repo`, `branch`, `since`,
 `verdict`, `state`, and `limit`. Search is global when `repo` is omitted. Use

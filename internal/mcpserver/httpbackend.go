@@ -141,6 +141,34 @@ func (b *HTTPBackend) GetReview(ctx context.Context, ref ReviewRef) (*storage.Re
 	return &review, nil
 }
 
+func (b *HTTPBackend) GetKataContext(ctx context.Context, q KataContextQuery) (map[string]any, error) {
+	params := url.Values{}
+	if q.JobID != 0 {
+		params.Set("job_id", strconv.FormatInt(q.JobID, 10))
+	}
+	if q.ReviewUUID != "" {
+		params.Set("review_uuid", q.ReviewUUID)
+	}
+	if q.Issue != "" {
+		params.Set("issue", q.Issue)
+	}
+	if q.Project != "" {
+		params.Set("project", q.Project)
+	}
+	var out map[string]any
+	err := b.getJSON(func(api *roborevclient.Client) (*http.Response, error) {
+		return api.KataPublicationRaw(ctx, nil, roborevclient.WithQuery(params))
+	}, &out)
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return nil, NewError(ErrorCodeCanceled, "Kata read canceled")
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, NewError(ErrorCodeDeadline, "Kata read deadline exceeded")
+	}
+	delete(out, "$schema")
+	return out, err
+}
+
 func (b *HTTPBackend) ListComments(ctx context.Context, ref CommentRef) ([]storage.Response, error) {
 	var body struct {
 		Responses []storage.Response `json:"responses"`
@@ -375,11 +403,19 @@ func httpStatusError(resp *http.Response) error {
 	}
 	code := ErrorCodeInternal
 	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		code = ErrorCodeAuthentication
+	case http.StatusForbidden:
+		code = ErrorCodeAccess
+	case http.StatusRequestTimeout:
+		code = ErrorCodeCanceled
+	case http.StatusGatewayTimeout:
+		code = ErrorCodeDeadline
 	case http.StatusNotFound:
 		code = ErrorCodeNotFound
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		code = ErrorCodeInvalidArgument
-	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
+	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusConflict:
 		code = ErrorCodeUnavailable
 	}
 	return NewError(code, message)

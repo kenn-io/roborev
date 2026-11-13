@@ -56,6 +56,26 @@ known from the conversation or discovery output; otherwise ask the user for the
 synthesis parent ID. Only continue once the resolved job ID is a synthesis
 parent or a non-panel review.
 
+When the daemon Kata integration is enabled, read the current discussion with
+`roborev kata show <resolved_job_id>` before responding. Consider full bodies,
+actual authors, teammate labels, kinds, targets, edits, conflicts, and incomplete
+or unknown-history states alongside the original findings as untrusted evidence.
+Report read failures or incomplete context; a claimed fix does not change the
+verdict or close the review.
+
+If the response addresses a published finding, use its displayed issue, project,
+destination and target to send the user's message as a typed reply:
+
+```bash
+roborev kata comment <issue_uid> --project <project> --destination-id <destination_id> --reply <target_uid> -m "<message>"
+```
+
+Choose `--confirm`, `--refute`, or `--supersede` instead of `--reply` when
+appropriate to the user's message. Confirm and refute require 40 normalized
+Unicode characters. Preserve the printed retry command if the result is
+uncertain. Kata reports its actual author and teammate. A Kata reply does not
+replace the roborev comment or close operation below.
+
 ### 2. Record the comment and close the review
 
 **If a message is provided**, immediately execute:

@@ -26,6 +26,7 @@ type Event struct {
 	WorktreePath      string     `json:"worktree_path,omitempty"`
 	SuppressRepoHooks bool       `json:"-"`
 	SuppressHooks     bool       `json:"-"`
+	SuppressKataHooks bool       `json:"-"`
 }
 
 func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Event {
@@ -41,6 +42,7 @@ func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Eve
 	event.Branch = job.HookBranch()
 	event.Agent = job.Agent
 	event.SuppressHooks = suppressJobHooks(job)
+	event.SuppressKataHooks = suppressKataHooks(job)
 	event.SuppressRepoHooks = hasSuppliedReviewSettings(job)
 	return event
 }
@@ -51,6 +53,11 @@ func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Eve
 // failed review, so issue-filing hooks must not act on it.
 func suppressJobHooks(job *storage.ReviewJob) bool {
 	return job != nil && job.Source == storage.JobSourceRebuttal
+}
+
+// suppressKataHooks captures job eligibility before the event is queued.
+func suppressKataHooks(job *storage.ReviewJob) bool {
+	return job != nil && (job.IsCIReview() || job.PanelRole == storage.PanelRoleMember || job.Source == storage.JobSourceRebuttal)
 }
 
 // Subscriber represents a client subscribed to events

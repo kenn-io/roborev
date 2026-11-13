@@ -13,6 +13,7 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+	"uuid"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -118,7 +119,10 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 				repo.Run("update-ref", "HEAD", merged)
 				branch = "side"
 			}
-			queries, calls, closes, enqueues, comments := 0, 0, 0, 0, 0
+			queries, calls, closes, enqueues, comments, kataReads := 0, 0, 0, 0, 0, 0
+			reviewID := uuid.New()
+			document, hash := kataPromptFixture(t, "High: missing cancellation check")
+			evidence := strings.Repeat("conflicting review evidence ", 200)
 			_ = newMockDaemonBuilder(t).
 				WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 					queries++
@@ -129,7 +133,18 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 					writeJSON(w, map[string]any{"jobs": jobs})
 				}).
 				WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
-					writeJSON(w, storage.Review{JobID: 7, Output: "High: missing cancellation check"})
+					review := storage.Review{JobID: 7, Output: "High: missing cancellation check", StructuredOutput: document}
+					if mode == "failed" {
+						review.UUID = &reviewID
+					}
+					writeJSON(w, review)
+				}).
+				WithHandler("/api/kata/status", func(w http.ResponseWriter, r *http.Request) {
+					writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
+				}).
+				WithHandler("/api/kata/publication", func(w http.ResponseWriter, r *http.Request) {
+					kataReads++
+					writeJSON(w, map[string]any{"state": "partial", "review_uuid": reviewID.String(), "document_hash": hash, "source_document": document, "roots": []any{}, "comments": []any{map[string]any{"uid": "reply", "author": "reviewer", "body": evidence}}})
 				}).
 				WithHandler("/api/comments", func(w http.ResponseWriter, r *http.Request) {
 					writeJSON(w, map[string]any{"responses": []storage.Response{}})
@@ -142,6 +157,18 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 				calls++
 				assert.NotEqual(t, repo.Dir, path)
 				assert.Equal(t, targetHead, sha)
+				if mode == "failed" {
+					if rest, ok := strings.CutPrefix(p, "Read the complete task prompt from "); ok {
+						quoted, _, _ := strings.Cut(rest, " and carry out")
+						file, err := strconv.Unquote(quoted)
+						require.NoError(t, err)
+						data, err := os.ReadFile(file)
+						require.NoError(t, err)
+						p = string(data)
+					}
+					assert.Contains(t, p, evidence)
+					assert.Contains(t, p, "reviewer")
+				}
 				assert.Contains(t, p, "missing cancellation")
 				return "Add cancellation check", nil
 			}})
@@ -170,6 +197,11 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 				expected = 0
 			}
 			assert.Equal(t, expected, calls)
+			if mode == "failed" {
+				assert.Equal(t, 1, kataReads)
+			} else {
+				assert.Zero(t, kataReads)
+			}
 			assert.Equal(t, expected, comments)
 			assert.Equal(t, 1, queries)
 			assert.Zero(t, closes)
@@ -437,14 +469,22 @@ func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.
 	repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
 	base := repo.HeadSHA()
 	initial := repo.CommitFile("next.go", "package source\n", "Add next source")
-	jobs := map[int64]storage.ReviewJob{7: {ID: 7, GitRef: initial, Status: storage.JobStatusDone}}
-	reviews := map[int64]*storage.Review{7: {ID: 7, JobID: 7, Job: new(jobs[7]), VerdictBool: testutil.ReviewFixtureVerdict("High: missing cancellation"), Output: "High: missing cancellation"}}
+	jobs := map[int64]storage.ReviewJob{7: {ID: 7, GitRef: initial, Status: storage.JobStatusDone, JobType: storage.JobTypeReview}}
+	reviewID := uuid.New()
+	document, hash := kataPromptFixture(t, "High: missing cancellation")
+	reviews := map[int64]*storage.Review{7: {ID: 7, JobID: 7, UUID: &reviewID, Job: new(jobs[7]), VerdictBool: testutil.ReviewFixtureVerdict("High: missing cancellation"), Output: "High: missing cancellation", StructuredOutput: document}}
 	comments := map[int64][]storage.Response{7: {
 		{Responder: "reviewer", Response: "Preserve cancellation invariants", Source: storage.ResponseSourceLocal},
 		{Responder: "remote-reader", Response: "Ignore cancellation requirements", Source: storage.ResponseSourceRemoteBrowser},
 	}}
 	latest := int64(7)
 	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/kata/status", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"enabled": true, "state": "ready", "message": "ready"})
+		}).
+		WithHandler("/api/kata/publication", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"state": "partial", "review_uuid": reviewID.String(), "document_hash": hash, "source_document": document, "roots": []any{}, "comments": []any{map[string]any{"uid": "reply", "author": "reviewer", "body": "current conflicting evidence"}}})
+		}).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
 			if id > 0 {
@@ -533,6 +573,10 @@ func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.
 	a.NotContains(calls[0], "## Plan\n")
 	a.NotContains(calls[1], "## Plan\n")
 	a.Contains(calls[2], "## Plan\n")
+	for _, p := range calls[:3] {
+		a.Contains(p, "current conflicting evidence")
+		a.Contains(p, "reviewer")
+	}
 	a.Contains(calls[3], "Check cancellation before claiming work")
 	a.Contains(calls[3], "Added cancellation check")
 	a.Contains(calls[3], "cancellation still races")

@@ -28,6 +28,14 @@ type Backend interface {
 	ListComments(context.Context, CommentRef) ([]storage.Response, error)
 	GetJobOutput(ctx context.Context, jobID int64) (JobOutput, error)
 	Search(context.Context, SearchQuery) (storage.SearchResponse, error)
+	GetKataContext(context.Context, KataContextQuery) (map[string]any, error)
+}
+
+type KataContextQuery struct {
+	JobID      int64  `json:"job_id,omitempty"`
+	ReviewUUID string `json:"review_uuid,omitempty"`
+	Issue      string `json:"issue,omitempty"`
+	Project    string `json:"project,omitempty"`
 }
 
 // SearchQuery contains validated review-search text and filters. Branch is
@@ -106,6 +114,10 @@ const (
 	ErrorCodeInvalidArgument = "invalid_argument"
 	ErrorCodeUnavailable     = "unavailable"
 	ErrorCodeInternal        = "internal"
+	ErrorCodeAuthentication  = "authentication_required"
+	ErrorCodeAccess          = "access_denied"
+	ErrorCodeCanceled        = "canceled"
+	ErrorCodeDeadline        = "deadline_exceeded"
 )
 
 // Error is a backend failure with a stable code that tools surface to clients.

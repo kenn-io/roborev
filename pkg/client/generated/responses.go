@@ -224,6 +224,88 @@ type BatchJobsResponse = BatchJobsOutputBody
 
 type BatchJobsErrorResponse = ErrorModel
 
+type KataShowIssueResponse = KataIssue
+
+type KataShowIssueErrorResponse = ErrorModel
+
+type KataShowIssueErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type KataShowIssueErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type KataShowIssueErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type KataShowIssueErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type KataShowIssueErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
+type KataListIssuesResponse = KataIssuesOutputBody
+
+type KataListIssuesErrorResponse = ErrorModel
+
+type KataListIssuesErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type KataListIssuesErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type KataListIssuesErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type KataListIssuesErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type KataListIssuesErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
+type KataPublicationResponse = KataPublicationBody
+
+type KataPublicationErrorResponse = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON403 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON404 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON408 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
+type KataPublicationErrorResponseApplicationProblemPlusJSON504 = ErrorModel
+
+type KataPublishResponse = KataPublicationBody
+
+type KataPublishErrorResponse = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type KataPublishErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
+type KataResponseResponse = KataReplyReceipt
+
+type KataResponseErrorResponse = ErrorModel
+
+type KataResponseErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type KataResponseErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type KataResponseErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type KataResponseErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type KataResponseErrorResponseApplicationProblemPlusJSON502 = ErrorModel
+
+type KataStatusResponse = KataStatusBody
+
+type KataStatusErrorResponse = ErrorModel
+
 type CleanJobLogsResponse = CleanJobLogsOutputBody
 
 type CleanJobLogsErrorResponse = ErrorModel
@@ -698,6 +780,83 @@ type BatchJobsResp struct {
 	StatusCode                        int
 	JSON200                           *BatchJobsResponse
 	ApplicationProblemPlusJSONDefault *BatchJobsErrorResponse
+}
+
+type KataShowIssueResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *KataShowIssueResponse
+	ApplicationProblemPlusJSON400 *KataShowIssueErrorResponse
+	ApplicationProblemPlusJSON404 *KataShowIssueErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *KataShowIssueErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *KataShowIssueErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *KataShowIssueErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON502 *KataShowIssueErrorResponseApplicationProblemPlusJSON502
+}
+
+type KataListIssuesResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *KataListIssuesResponse
+	ApplicationProblemPlusJSON400 *KataListIssuesErrorResponse
+	ApplicationProblemPlusJSON404 *KataListIssuesErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *KataListIssuesErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *KataListIssuesErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *KataListIssuesErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON502 *KataListIssuesErrorResponseApplicationProblemPlusJSON502
+}
+
+type KataPublicationResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *KataPublicationResponse
+	ApplicationProblemPlusJSON400 *KataPublicationErrorResponse
+	ApplicationProblemPlusJSON401 *KataPublicationErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON403 *KataPublicationErrorResponseApplicationProblemPlusJSON403
+	ApplicationProblemPlusJSON404 *KataPublicationErrorResponseApplicationProblemPlusJSON404
+	ApplicationProblemPlusJSON408 *KataPublicationErrorResponseApplicationProblemPlusJSON408
+	ApplicationProblemPlusJSON409 *KataPublicationErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *KataPublicationErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *KataPublicationErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON502 *KataPublicationErrorResponseApplicationProblemPlusJSON502
+	ApplicationProblemPlusJSON504 *KataPublicationErrorResponseApplicationProblemPlusJSON504
+}
+
+type KataPublishResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *KataPublishResponse
+	ApplicationProblemPlusJSON400 *KataPublishErrorResponse
+	ApplicationProblemPlusJSON404 *KataPublishErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *KataPublishErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *KataPublishErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *KataPublishErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON502 *KataPublishErrorResponseApplicationProblemPlusJSON502
+}
+
+type KataResponseResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *KataResponseResponse
+	ApplicationProblemPlusJSON400 *KataResponseErrorResponse
+	ApplicationProblemPlusJSON404 *KataResponseErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *KataResponseErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *KataResponseErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *KataResponseErrorResponseApplicationProblemPlusJSON500
+	ApplicationProblemPlusJSON502 *KataResponseErrorResponseApplicationProblemPlusJSON502
+}
+
+type KataStatusResp struct {
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *KataStatusResponse
+	ApplicationProblemPlusJSONDefault *KataStatusErrorResponse
 }
 
 type CleanJobLogsResp struct {
@@ -1521,6 +1680,98 @@ func (c *RawClient) BatchJobsRaw(ctx context.Context, options *BatchJobsRequestO
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataShowIssueRaw(ctx context.Context, options *KataShowIssueRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataShowIssueRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/issue",
+		Method:     "GET",
+		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataListIssuesRaw(ctx context.Context, options *KataListIssuesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataListIssuesRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/issues",
+		Method:     "GET",
+		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataPublicationRaw(ctx context.Context, options *KataPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataPublicationRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/publication",
+		Method:     "GET",
+		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataPublishRaw(ctx context.Context, options *KataPublishRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataPublishRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/kata/publication",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataResponseRaw(ctx context.Context, options *KataResponseRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataResponseRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/kata/response",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataStatusRaw(ctx context.Context, options *KataStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataStatusRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/status",
+		Method:     "GET",
+		Options:    options,
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

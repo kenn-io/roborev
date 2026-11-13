@@ -1342,7 +1342,7 @@ func (w *SyncWorker) pullJob(ctx context.Context, s *pullSession, j PulledJob) e
 }
 
 func (w *SyncWorker) pullReview(ctx context.Context, s *pullSession, review PulledReview) error {
-	if err := s.begin(ctx, false); err != nil {
+	if err := s.begin(ctx, true); err != nil {
 		return err
 	}
 	changed, err := s.upsertPulledReview(ctx, review)

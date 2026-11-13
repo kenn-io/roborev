@@ -46,15 +46,29 @@ func (l *attemptLock) wakeLocked() {
 }
 
 func (l *attemptLock) RLock() {
+	_ = l.RLockContext(context.Background())
+}
+
+// RLockContext takes a read lock unless the caller is canceled first.
+func (l *attemptLock) RLockContext(ctx context.Context) error {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	for l.writer || l.waitingWriters > 0 {
 		wait := l.waitLocked()
 		l.mu.Unlock()
-		<-wait
-		l.mu.Lock()
+		select {
+		case <-wait:
+			l.mu.Lock()
+		case <-ctx.Done():
+			l.mu.Lock()
+			return ctx.Err()
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	l.readers++
-	l.mu.Unlock()
+	return nil
 }
 
 func (l *attemptLock) RUnlock() {
@@ -90,6 +104,10 @@ func (l *attemptLock) LockContext(ctx context.Context) error {
 		}
 	}
 	l.waitingWriters--
+	if err := ctx.Err(); err != nil {
+		l.wakeLocked()
+		return err
+	}
 	l.writer = true
 	return nil
 }

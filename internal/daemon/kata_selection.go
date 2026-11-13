@@ -1,0 +1,240 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"slices"
+	"strings"
+
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/storage"
+)
+
+type kataSelection struct {
+	seed        storage.KataPublicationSeed
+	options     kata.PublicationOptions
+	resolvedUID string // populated only when different selections required comparison
+	inputs      *kataSelectionInputs
+}
+
+// sameKataAuthorization treats a registered alias as the selector; its project
+// name is only a hint. Explicit project names remain part of authorization.
+func sameKataAuthorization(a, b storage.KataPublicationSeed) bool {
+	return a.Endpoint == b.Endpoint && a.Policy == b.Policy &&
+		a.AliasKind == b.AliasKind && a.AliasIdentity == b.AliasIdentity &&
+		(a.AliasKind != "" || a.Project == b.Project)
+}
+
+// kataSelectionInputs is an invocation-local snapshot of all effective hooks
+// and connection settings, not a cache of remote observations.
+type kataSelectionInputs struct {
+	connection config.KataIntegrationConfig
+	credential string
+	candidates []kataSelection
+}
+
+func (a *kataSelectionInputs) equal(b *kataSelectionInputs) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.connection != b.connection || a.credential != b.credential || len(a.candidates) != len(b.candidates) {
+		return false
+	}
+	for i, x := range a.candidates {
+		y := b.candidates[i]
+		if !sameKataAuthorization(x.seed, y.seed) || !slices.Equal(x.options.Labels, y.options.Labels) || !sameKataPriority(x.options.Priority, y.options.Priority) {
+			return false
+		}
+	}
+	return true
+}
+
+// collectKataSelection reads only local inputs; it never contacts Kata.
+func collectKataSelection(ctx context.Context, cfg *config.Config, job *storage.ReviewJob, checkout string) (*kataSelectionInputs, error) {
+	if cfg == nil || !cfg.Integrations.Kata.Enabled || job.IsCIReview() || job.PanelRole == storage.PanelRoleMember || job.Source == storage.JobSourceRebuttal {
+		return nil, nil
+	}
+	switch job.JobType {
+	case storage.JobTypeReview, storage.JobTypeRange, storage.JobTypeDirty, storage.JobTypeSynthesis:
+	default:
+		return nil, nil
+	}
+	hooks, err := kataPublicationHooks(cfg, job, checkout)
+	if err != nil {
+		return nil, err
+	}
+	connection := cfg.Integrations.Kata
+	endpoint, err := kata.NormalizePublicationEndpoint(connection.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	inputs := &kataSelectionInputs{connection: connection}
+	for _, hook := range hooks {
+		if hook.Type != "kata" || hook.Findings == "" || !matchEvent(hook.Event, "review.completed") || !matchBranch(hook.Branches, job.HookBranch()) {
+			continue
+		}
+		if hook.Findings != "comments" && hook.Findings != "summary" {
+			return nil, errors.New("invalid Kata findings policy")
+		}
+		candidate := kataSelection{seed: storage.KataPublicationSeed{Endpoint: endpoint, Project: strings.TrimSpace(hook.Project), Policy: hook.Findings}, options: kata.PublicationOptions{Labels: append([]string{kata.RoborevLabel}, hook.Labels...), Priority: hook.Priority}}
+		if hook.Priority != nil {
+			candidate.options.Priority = new(*hook.Priority)
+		}
+		slices.Sort(candidate.options.Labels)
+		candidate.options.Labels = slices.Compact(candidate.options.Labels)
+		if candidate.seed.Project == "" {
+			binding, bindErr := kata.WorkspaceBinding(ctx, checkout)
+			if errors.Is(bindErr, kata.ErrNoBinding) {
+				candidate.seed.Project = strings.TrimSpace(cfg.Integrations.Kata.DefaultProject)
+			} else if bindErr != nil {
+				return nil, bindErr
+			} else {
+				candidate.seed.Project = binding.Project
+				if binding.Alias != nil {
+					candidate.seed.AliasKind, candidate.seed.AliasIdentity = binding.Alias.Kind, binding.Alias.Identity
+				}
+			}
+		}
+		if candidate.seed.Project == "" && candidate.seed.AliasKind == "" {
+			return nil, errors.New("no Kata project selected")
+		}
+		inputs.candidates = append(inputs.candidates, candidate)
+	}
+	return inputs, nil
+}
+
+// Single or identical selections stay offline; distinct selections need a
+// server identity check before they can authorize one destination.
+func selectKataPublication(ctx context.Context, cfg *config.Config, job *storage.ReviewJob, checkout string) (*kataSelection, error) {
+	inputs, err := collectKataSelection(ctx, cfg, job, checkout)
+	if err != nil || inputs == nil {
+		return nil, err
+	}
+	var selected *kataSelection
+	for _, candidate := range inputs.candidates {
+		if selected == nil {
+			selected = &candidate
+			continue
+		}
+		if selected.seed.Policy != candidate.seed.Policy || !slices.Equal(selected.options.Labels, candidate.options.Labels) || !sameKataPriority(selected.options.Priority, candidate.options.Priority) {
+			return nil, errors.New("conflicting Kata publication hooks")
+		}
+		if sameKataAuthorization(selected.seed, candidate.seed) {
+			continue
+		}
+		if selected.seed.AliasKind == "" && candidate.seed.AliasKind == "" {
+			return nil, errors.New("conflicting Kata publication hooks")
+		}
+		uid := selected.resolvedUID
+		if uid == "" {
+			uid, err = resolveKataSelection(ctx, inputs.connection, selected.seed)
+			if err != nil {
+				return nil, fmt.Errorf("resolve Kata publication hook: %w", err)
+			}
+		}
+		otherUID, err := resolveKataSelection(ctx, inputs.connection, candidate.seed)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Kata publication hook: %w", err)
+		}
+		if uid != otherUID {
+			return nil, errors.New("conflicting Kata publication hooks")
+		}
+		// Keep the committed alias authoritative even when the explicit hook
+		// was encountered first. The hint is not used as a destination.
+		if selected.seed.AliasKind == "" && candidate.seed.AliasKind != "" {
+			selected = &candidate
+		}
+		selected.resolvedUID = uid
+	}
+	if selected != nil {
+		selected.inputs = inputs
+	}
+	return selected, nil
+}
+
+func resolveKataSelection(ctx context.Context, cfg config.KataIntegrationConfig, seed storage.KataPublicationSeed) (string, error) {
+	client, name, err := kataSelectionClient(cfg, seed)
+	if err != nil {
+		return "", err
+	}
+	defer client.CloseIdleConnections()
+	project, err := client.ResolvePublicationProject(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return project.UID, nil
+}
+
+func kataSelectionClient(cfg config.KataIntegrationConfig, seed storage.KataPublicationSeed) (*kata.APIClient, string, error) {
+	opts := []kata.APIOption{kata.WithoutWorkspace()}
+	name := seed.Project
+	if seed.AliasKind != "" {
+		opts = []kata.APIOption{kata.WithWorkspaceAlias(kata.ProjectAlias{Kind: seed.AliasKind, Identity: seed.AliasIdentity})}
+		name = ""
+	}
+	client, err := kata.NewAPIClient("", cfg, opts...)
+	return client, name, err
+}
+
+// kataPublicationHooks applies the same supplied-review suppression to reads
+// and writes. Reading chooses a project without conferring authorization.
+func kataPublicationHooks(cfg *config.Config, job *storage.ReviewJob, checkout string) ([]config.HookConfig, error) {
+	hooks := append([]config.HookConfig(nil), cfg.Hooks...)
+	if checkout != "" && !hasSuppliedReviewSettings(job) {
+		rc, err := config.LoadRepoConfig(checkout)
+		if err != nil {
+			return nil, err
+		}
+		if rc != nil {
+			hooks = append(hooks, rc.Hooks...)
+		}
+	}
+	return hooks, nil
+}
+
+func kataInspectionProject(cfg *config.Config, job *storage.ReviewJob, checkout string) (string, error) {
+	hooks, err := kataPublicationHooks(cfg, job, checkout)
+	if err != nil {
+		return "", err
+	}
+	var selected string
+	for _, hook := range hooks {
+		if hook.Type != "kata" || (hook.Findings != "comments" && hook.Findings != "summary") || !matchEvent(hook.Event, "review.completed") || !matchBranch(hook.Branches, job.HookBranch()) {
+			continue
+		}
+		name := strings.TrimSpace(hook.Project)
+		if name == "" {
+			continue
+		}
+		if selected != "" && selected != name {
+			return "", errors.New("ambiguous Kata publication projects")
+		}
+		selected = name
+	}
+	return selected, nil
+}
+
+func sameKataPriority(a, b *int) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+func (wp *WorkerPool) prepareKataPublication(ctx context.Context, workerID string, job *storage.ReviewJob, checkout string) *storage.KataPublicationSeed {
+	selection, err := selectKataPublication(ctx, wp.cfgGetter.Config(), job, checkout)
+	if err != nil {
+		log.Printf("[%s] Kata publication authorization for job %d: %v", workerID, job.ID, err)
+	} else if selection != nil {
+		return &selection.seed
+	}
+	return nil
+}
+
+func (wp *WorkerPool) completeReviewResult(job *storage.ReviewJob, agent string, completion storage.ReviewCompletion, seed *storage.KataPublicationSeed) error {
+	completion.KataPublication = seed
+	if err := wp.db.CompleteJobResult(job.ID, agent, completion); err != nil {
+		return fmt.Errorf("complete review: %w", err)
+	}
+	return nil
+}

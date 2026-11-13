@@ -1817,10 +1817,12 @@ func TestProcessJob_BroadcastsCIBaseBranchOnLifecycleEvents(t *testing.T) {
 	require.True(t, ok, "expected review.started event")
 	require.Equal(t, "review.started", started.Type)
 	assert.Equal(t, "main", started.Branch, "review.started must carry the CI base branch for hook filtering")
+	assert.True(t, started.SuppressKataHooks)
 
 	terminal, ok := waitForEvent(t, eventCh, 2*time.Second)
 	require.True(t, ok, "expected a terminal review event")
 	assert.Equal(t, "main", terminal.Branch, "terminal review event must carry the CI base branch for hook filtering")
+	assert.True(t, terminal.SuppressKataHooks)
 }
 
 func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T) {
