@@ -199,9 +199,8 @@ func TestKataPublicationDetailedErrorsPreserveHTTPStatus(t *testing.T) {
 				require.ErrorIs(t, err, tc.class)
 			}
 			var apiErr *oapiruntime.ClientAPIError
-			if assert.ErrorAs(t, err, &apiErr) {
-				assert.Equal(t, tc.status, apiErr.StatusCode())
-			}
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, tc.status, apiErr.StatusCode())
 			assert.NotContains(t, err.Error(), "\x1b")
 			assert.Contains(t, err.Error(), tc.detail)
 		})
