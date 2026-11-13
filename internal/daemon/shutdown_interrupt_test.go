@@ -74,9 +74,7 @@ func TestInterruptShutdownStopRetriesFailedRequeue(t *testing.T) {
 		END
 	`, job.ID))
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	assert.True(t, server.workerPool.handleUpdateInterruption(ctx, "worker-interrupt", job))
+	assert.True(t, server.workerPool.handleUpdateInterruption(t.Context(), "worker-interrupt", job))
 	stored, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusRunning, stored.Status)
