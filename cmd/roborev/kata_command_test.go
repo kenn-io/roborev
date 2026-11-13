@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	oapiruntime "github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/google/shlex"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,6 +163,49 @@ func TestKataShowSelectorQueries(t *testing.T) {
 	require.ErrorIs(t, err, client.ErrKataAuthentication)
 	assert.NotContains(t, err.Error(), "\x1b")
 	assert.Contains(t, err.Error(), "authentication required")
+}
+
+func TestKataPublicationDetailedErrorsPreserveHTTPStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, verb, body, detail string
+		status                   int
+		class                    error
+	}{
+		{"show authentication without body status", "show", `{"detail":"authentication\u001b[2J required"}`, "authentication required", http.StatusUnauthorized, client.ErrKataAuthentication},
+		{"show access with conflicting body status", "show", `{"status":401,"detail":"access\u001b[2J denied"}`, "access denied", http.StatusForbidden, client.ErrKataAccess},
+		{"show timeout with conflicting body status", "show", `{"status":403,"detail":"request\u001b[2J timed out"}`, "request timed out", http.StatusGatewayTimeout, context.DeadlineExceeded},
+		{"create with conflicting body status", "create", `{"status":401,"detail":"publication\u001b[2J failed"}`, "publication failed", http.StatusConflict, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/ping" {
+					fmt.Fprint(w, `{"ok":true,"service":"roborev","version":"test"}`)
+					return
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
+			t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
+			root := newRootCmd()
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			root.SetArgs([]string{"--server", server.URL, "kata", tc.verb, "42"})
+			err := root.Execute()
+			require.Error(t, err)
+			if tc.class != nil {
+				assert.ErrorIs(t, err, tc.class)
+			}
+			var apiErr *oapiruntime.ClientAPIError
+			if assert.ErrorAs(t, err, &apiErr) {
+				assert.Equal(t, tc.status, apiErr.StatusCode())
+			}
+			assert.NotContains(t, err.Error(), "\x1b")
+			assert.Contains(t, err.Error(), tc.detail)
+		})
+	}
 }
 
 func TestKataRemoteCommandsRejectedThroughRoot(t *testing.T) {
