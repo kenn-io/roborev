@@ -4285,8 +4285,6 @@ func designMemberCount(members []storage.ReviewJob) int {
 func TestProcessPRCreatesPanelRun(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
-	globalEvidence := false
-	cfg.Review.BinaryEvidence = &globalEvidence
 	p.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
