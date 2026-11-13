@@ -530,6 +530,42 @@ func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
 	assert.False(t, getJobAgentInvoked(t, env.db, env.job.ID))
 }
 
+func TestRequeueUpdateInterruptedJobKeepsRebuttalSession(t *testing.T) {
+	t.Parallel()
+	env := setupJobEnv(t, "/tmp/update-requeue-rebuttal", "rebuttal-sha")
+	claimJob(t, env.db, "worker-original")
+	job, err := env.db.EnqueueJob(EnqueueOpts{
+		RepoID: env.repo.ID, CommitID: env.commit.ID, GitRef: "rebuttal-sha",
+		Agent: "test", Source: JobSourceRebuttal, SessionID: "original-session",
+	})
+	require.NoError(t, err)
+	claimed, err := env.db.ClaimJob("worker-A")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, env.db.MarkJobAgentInvoked(job.ID, "worker-A", "test-agent run"))
+	require.NoError(t, env.db.SaveJobTokenUsage(job.ID, "original-session", `{"cost_usd":1.25,"has_cost":true}`))
+
+	requeued, err := env.db.RequeueUpdateInterruptedJob(job.ID, "worker-A")
+	require.NoError(t, err)
+	require.True(t, requeued)
+	got, err := env.db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusQueued, got.Status)
+	assert.Equal(t, 0, got.RetryCount)
+	assert.Equal(t, "original-session", got.SessionID)
+	assert.Empty(t, got.TokenUsage)
+	assert.Empty(t, got.CommandLine)
+	var resumed int
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT session_resumed FROM review_jobs WHERE id = ?`, job.ID).Scan(&resumed))
+	assert.Equal(t, 1, resumed)
+	claimed, err = env.db.ClaimJob("worker-B")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal(t, job.ID, claimed.ID)
+	assert.Equal(t, "original-session", claimed.SessionID)
+}
+
 func TestRequeueUpdateInterruptedJobScopesCurrentAttempt(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/update-requeue-owner", "update-owner-sha")
