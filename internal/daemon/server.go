@@ -353,9 +353,12 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("clear interrupted shutdown drain: %w", err)
 	}
 
-	// Reset stale jobs from previous runs
+	// A stale running job cannot be reclaimed by workers until recovery succeeds.
 	if err := s.db.ResetStaleJobs(); err != nil {
-		log.Printf("Warning: failed to reset stale jobs: %v", err)
+		if listener != nil {
+			_ = listener.Close()
+		}
+		return fmt.Errorf("reset stale jobs: %w", err)
 	}
 
 	// Start config watcher for hot-reloading

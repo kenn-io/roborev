@@ -298,6 +298,54 @@ func TestServerStartRejectsExistingDaemonWithOtherKey(t *testing.T) {
 	assert.Empty(t, server.endpoint.Address)
 }
 
+func TestServerStartFailsWhenStaleJobRecoveryFails(t *testing.T) {
+	testenv.SetDataDir(t)
+	db, dir := testutil.OpenTestDBWithDir(t)
+	job := createTestJob(t, db, dir, "stale-recovery", "test")
+	claimed, err := db.ClaimJob("worker-stale")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	_, err = db.ExecContext(t.Context(), fmt.Sprintf(`
+		CREATE TRIGGER fail_stale_requeue BEFORE UPDATE ON review_jobs
+		WHEN OLD.id = %d AND NEW.status = 'queued'
+		BEGIN SELECT RAISE(FAIL, 'synthetic recovery failure'); END
+	`, job.ID))
+	require.NoError(t, err)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Start(t.Context()) }()
+	var startErr error
+	select {
+	case startErr = <-errCh:
+	case <-time.After(2 * time.Second):
+		_ = server.Stop()
+		<-errCh
+		startErr = errors.New("server started despite failed stale job recovery")
+	}
+	require.ErrorContains(t, startErr, "reset stale jobs")
+	assert.NoFileExists(t, RuntimePath())
+	assert.Empty(t, server.endpoint.Address)
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusRunning, stored.Status)
+
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_stale_requeue`)
+	require.NoError(t, err)
+	require.NoError(t, db.SetQueuePaused(true))
+	replacement := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = replacement.Close() })
+	replacementErr, _ := startServerAndWaitForRuntime(t, replacement)
+	stored, err = db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, stored.Status)
+	assert.Equal(t, claimed.RetryCount, stored.RetryCount)
+	stopTestServer(t, replacement, replacementErr)
+}
+
 func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	serveErrCh := make(chan error, 1)
 	wantErr := errors.New("serve failed")
