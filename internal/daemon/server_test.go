@@ -332,7 +332,6 @@ func TestServerStartFailsWhenStaleJobRecoveryFails(t *testing.T) {
 	stored, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusRunning, stored.Status)
-
 }
 
 func TestWaitForServerReadySurfacesServeError(t *testing.T) {

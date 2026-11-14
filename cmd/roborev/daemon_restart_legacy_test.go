@@ -28,7 +28,7 @@ func TestInterruptDaemonWithUpdateAPI(t *testing.T) {
 					var body struct {
 						Policy string `json:"policy"`
 					}
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 					requests = append(requests, "prepare:"+body.Policy)
 					_, _ = io.WriteString(w, `{"lease_token":"lease-1","policy":"interrupt","expires_at":"2030-01-01T00:00:00Z","running_jobs":1,"targeted_running_jobs":1,"active_workers":1,"recovering":false}`)
 				case "/api/update/renew":
