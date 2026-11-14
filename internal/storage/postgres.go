@@ -889,12 +889,7 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	}
 	verdictBool, noReview := syncedReviewVerdict(r)
 	var persisted, awaitingAssociation bool
-	tx, err := p.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	err = tx.QueryRow(ctx, pgUpsertReviewSQL,
+	err = p.pool.QueryRow(ctx, pgUpsertReviewSQL,
 		r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 		verdictBool, nullJSON(structuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
 		reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID, uuid.New()).Scan(&persisted, &awaitingAssociation)
@@ -904,10 +899,8 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, pgResolveSyncedLegacySQL, r.UUID, nullJSON(structuredOutput), r.MetadataOnly); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	_, err = p.pool.Exec(ctx, pgResolveSyncedLegacySQL, r.UUID, nullJSON(structuredOutput), r.MetadataOnly)
+	return err
 }
 
 const pgResolveSyncedLegacySQL = `UPDATE legacy_reviews SET resolved_at = COALESCE(resolved_at, clock_timestamp())
