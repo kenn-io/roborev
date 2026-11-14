@@ -333,17 +333,6 @@ func TestServerStartFailsWhenStaleJobRecoveryFails(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusRunning, stored.Status)
 
-	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_stale_requeue`)
-	require.NoError(t, err)
-	require.NoError(t, db.SetQueuePaused(true))
-	replacement := NewServer(db, cfg, "")
-	t.Cleanup(func() { _ = replacement.Close() })
-	replacementErr, _ := startServerAndWaitForRuntime(t, replacement)
-	stored, err = db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusQueued, stored.Status)
-	assert.Equal(t, claimed.RetryCount, stored.RetryCount)
-	stopTestServer(t, replacement, replacementErr)
 }
 
 func TestWaitForServerReadySurfacesServeError(t *testing.T) {

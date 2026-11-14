@@ -456,10 +456,6 @@ func TestDaemonRestartRunningPolicy(t *testing.T) {
 		cmd.SetArgs([]string{"restart", "--running=invalid"})
 		require.Error(t, cmd.ExecuteContext(t.Context()))
 		assert.Zero(t, listCalls)
-		cmd = daemonCmd()
-		cmd.SetArgs([]string{"restart", "interrupt"})
-		require.ErrorContains(t, cmd.ExecuteContext(t.Context()), `unknown command "interrupt"`)
-		assert.Zero(t, listCalls)
 	})
 	for _, service := range []bool{false, true} {
 		t.Run(fmt.Sprintf("service=%t", service), func(t *testing.T) {

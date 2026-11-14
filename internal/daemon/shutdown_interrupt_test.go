@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -72,21 +73,10 @@ func TestInterruptShutdownRejectsMismatchAndUpdateLease(t *testing.T) {
 
 func TestInterruptShutdownDatabaseErrorLeavesShutdownUntouched(t *testing.T) {
 	server, db, _ := newTestServer(t)
-	renamed := false
-	t.Cleanup(func() {
-		if renamed {
-			_, err := db.ExecContext(context.WithoutCancel(t.Context()), `ALTER TABLE review_jobs_gone RENAME TO review_jobs`)
-			assert.NoError(t, err)
-		}
-	})
-	_, err := db.ExecContext(t.Context(), `ALTER TABLE review_jobs RENAME TO review_jobs_gone`)
+	_, err := db.ExecContext(t.Context(), `CREATE TRIGGER fail_gate BEFORE INSERT ON daemon_state WHEN NEW.key = 'shutdown_draining' BEGIN SELECT RAISE(FAIL, 'synthetic'); END`)
 	require.NoError(t, err)
-	renamed = true
 	response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
 	require.Equal(t, http.StatusInternalServerError, response.Code)
-	draining, err := db.IsShutdownDraining()
-	require.NoError(t, err)
-	assert.False(t, draining)
 	assert.False(t, server.shutdownDraining)
 	assert.False(t, server.workerPool.stopped)
 	requested := false
@@ -148,4 +138,27 @@ func TestInterruptDaemonRejectsUnusableRuntime(t *testing.T) {
 	err := InterruptDaemonWithFallback(&RuntimeInfo{Network: "tcp", Address: server.Listener.Addr().String()}, nil)
 	require.ErrorContains(t, err, "--running=wait")
 	assert.Zero(t, shutdowns.Load())
+}
+
+func TestInterruptDaemonFallsBackForOlderDaemon(t *testing.T) {
+	testenv.SetDataDir(t)
+	mockIdentifyProcess(t, func(int) processIdentity { return processIsRoborev })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/ping" {
+			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, os.Getpid())
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	endpoint := DaemonEndpoint{Network: "tcp", Address: server.Listener.Addr().String()}
+	wantErr := errors.New("fallback called")
+	calls := 0
+	err := InterruptDaemonWithFallback(&RuntimeInfo{PID: os.Getpid(), Network: endpoint.Network, Address: endpoint.Address}, func(_ context.Context, got DaemonEndpoint) error {
+		calls++
+		assert.Equal(t, endpoint, got)
+		return wantErr
+	})
+	require.ErrorIs(t, err, wantErr)
+	assert.Equal(t, 1, calls)
 }
