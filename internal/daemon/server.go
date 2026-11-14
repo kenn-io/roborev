@@ -1343,6 +1343,11 @@ func findCompatibleReusableSession(
 		!agent.SupportsSessionResume(opts.Agent) {
 		return "", "", nil
 	}
+	resolvedAgent, err := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, opts.Agent, globalCfg)
+	if err != nil {
+		return "", "", nil
+	}
+	wantedSessionCLI := sessionCLIForAgent(resolvedAgent)
 	machineID, err := db.GetMachineID()
 	if err != nil || machineID == uuid.Nil() {
 		return "", "", nil
@@ -1373,6 +1378,9 @@ func findCompatibleReusableSession(
 	}
 	const maxSessionReuseDistance = 50
 	for _, candidate := range candidates {
+		if wantedSessionCLI != "" && candidate.SessionCLI != wantedSessionCLI {
+			continue
+		}
 		candidateSHA := strings.TrimSpace(candidate.ReusableSessionTarget)
 		if candidateSHA == "" {
 			continue

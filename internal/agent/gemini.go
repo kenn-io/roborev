@@ -141,10 +141,16 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 			mode, minimum = "agentic", geminiAgenticVersion
 		}
 		if !versionAtLeast(capabilities.version, minimum) {
-			return "", fmt.Errorf("%s reviews require Gemini CLI %s or newer; detected %q", mode, minimum, capabilities.version)
+			return "", fmt.Errorf(
+				"%s reviews require Gemini CLI %s or newer; detected %q. Check %q --version output",
+				mode, minimum, capabilities.version, a.Command,
+			)
 		}
 	} else if !versionAtLeast(capabilities.version, "0") {
-		return "", errors.New("antigravity CLI version could not be verified; cannot choose a supported prompt contract")
+		return "", fmt.Errorf(
+			"antigravity CLI version could not be verified; cannot choose a supported prompt contract. Check %q --version output",
+			a.Command,
+		)
 	}
 	if a.SessionID != "" && !capabilities.resume {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
@@ -155,6 +161,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	args := a.buildArgsWithModel(a.Model, agenticMode)
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
 	if a.SessionID != "" && !a.Agentic && ctx.Err() == nil &&
+		ClassifyLimit("gemini", stderrStr).Kind == LimitKindNone &&
 		(err != nil || result == "No review output generated") {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
 			return "", errors.Join(err, resetErr)

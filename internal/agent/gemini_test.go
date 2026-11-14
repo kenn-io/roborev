@@ -32,29 +32,30 @@ func writeGeminiTempCommand(t *testing.T, script string) string {
 func TestVersionGatesFeatures(t *testing.T) {
 	skipIfWindows(t)
 	tests := []struct {
-		name              string
-		cli               string
-		version           string
-		agentic           bool
-		sessionID         string
-		resumeFlag        string
-		wantStream        bool
-		wantResult        string
-		wantPrompt        string
-		wantStdin         string
-		wantPrint         bool
-		wantApproval      string
-		wantErrorContains string
+		name                  string
+		cli                   string
+		version               string
+		agentic               bool
+		sessionID             string
+		resumeFlag            string
+		wantStream            bool
+		wantResult            string
+		wantPrompt            string
+		wantStdin             string
+		wantPrint             bool
+		wantApproval          string
+		wantErrorContains     string
+		wantVersionDiagnostic bool
 	}{
 		{name: "Gemini 0.20 read-only requires plan mode", cli: "gemini", version: "0.20.0", wantErrorContains: "read-only reviews require Gemini CLI 0.34.0 or newer"},
-		{name: "Gemini unknown version agentic", cli: "gemini", version: "unknown", agentic: true, wantErrorContains: "agentic reviews require Gemini CLI 0.11.0 or newer"},
+		{name: "Gemini unknown version agentic", cli: "gemini", version: "unknown", agentic: true, wantErrorContains: "agentic reviews require Gemini CLI 0.11.0 or newer", wantVersionDiagnostic: true},
 		{name: "Gemini 0.11 agentic stream without resume", cli: "gemini", version: "0.11.0", agentic: true, sessionID: "old-session", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
 		{name: "Gemini 0.20 agentic resume uses stdin", cli: "gemini", version: "0.20.0", agentic: true, sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
 		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "plan"},
 		{name: "Antigravity 1.0.8 without resume", cli: "agy", version: "1.0.8", sessionID: "old-session", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
-		{name: "Antigravity unknown version", cli: "agy", version: "unknown", wantErrorContains: "antigravity CLI version could not be verified"},
+		{name: "Antigravity unknown version", cli: "agy", version: "unknown", wantErrorContains: "antigravity CLI version could not be verified", wantVersionDiagnostic: true},
 	}
 	geminiFixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
 	require.NoError(t, err)
@@ -99,6 +100,9 @@ esac
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
 			if tc.wantErrorContains != "" {
 				require.ErrorContains(t, err, tc.wantErrorContains)
+				if tc.wantVersionDiagnostic {
+					assert.Contains(t, err.Error(), strconv.Quote(a.Command)+" --version")
+				}
 				_, statErr := os.Stat(argsFile)
 				assert.ErrorIs(t, statErr, os.ErrNotExist, "unsafe command must not be invoked")
 				return
@@ -562,6 +566,15 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			successFixture: "gemini-stream.jsonl",
 			wantResult:     `{"passed":true,"findings":[]}`,
 			wantSessionID:  geminiSessionID,
+		},
+		{
+			name:          "Gemini quota failure does not retry a failed resume",
+			cli:           "gemini",
+			version:       "0.34.0",
+			wantError:     true,
+			resumeError:   "429 Too Many Requests",
+			resumeSession: "failed-session",
+			resumeFlag:    "--resume",
 		},
 		{
 			name:           "Gemini agentic failed resume does not replay",

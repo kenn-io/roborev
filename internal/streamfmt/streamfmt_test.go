@@ -123,6 +123,18 @@ func TestFormatterTTYRendersPlainText(t *testing.T) {
 	fix.assertContains(t, "Summary: Updates docs.")
 }
 
+func TestRenderLogWithPreservesUnknownEventJSONForOtherAgents(t *testing.T) {
+	const line = `{"event":"retrying","attempt":2}`
+	for _, agent := range []string{"claude", "codex", "gemini"} {
+		t.Run(agent, func(t *testing.T) {
+			var output bytes.Buffer
+			fmtr := New(&output, true, DecoderForAgent(agent))
+			require.NoError(t, RenderLogWith(strings.NewReader(line+"\n"), fmtr))
+			assert.Contains(t, output.String(), line)
+		})
+	}
+}
+
 type toolInput struct {
 	FilePath  string `json:"file_path,omitempty"`
 	OldString string `json:"old_string,omitempty"`

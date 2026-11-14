@@ -158,11 +158,12 @@ func RenderLogChunkWith(r io.Reader, fmtr *Formatter) error {
 
 func renderLogWith(r io.Reader, fmtr *Formatter, final bool) error {
 	br := bufio.NewReader(r)
+	_, isGeminiDecoder := fmtr.decoder.(*geminiDecoder)
 	for {
 		line, err := br.ReadString('\n')
 		line = strings.TrimRight(line, "\n\r")
 		if line != "" {
-			if LooksLikeJSON(line) {
+			if LooksLikeJSON(line) || (isGeminiDecoder && isAntigravityEvent(line)) {
 				if _, writeErr := fmtr.Write([]byte(line + "\n")); writeErr != nil {
 					return writeErr
 				}
@@ -191,9 +192,9 @@ func renderLogWith(r io.Reader, fmtr *Formatter, final bool) error {
 	return fmtr.err()
 }
 
-// LooksLikeJSON reports whether line is a JSON object with a non-empty type
-// or event. It separates provider frames from literal stderr; it does not
-// select a provider decoder.
+// LooksLikeJSON reports whether line is a JSON object with a non-empty type.
+// It separates provider frames from literal stderr; it does not select a
+// provider decoder.
 func LooksLikeJSON(line string) bool {
 	for _, c := range line {
 		switch c {
@@ -201,16 +202,25 @@ func LooksLikeJSON(line string) bool {
 			continue
 		case '{':
 			var probe struct {
-				Type  string `json:"type"`
-				Event string `json:"event"`
+				Type string `json:"type"`
 			}
 			if json.Unmarshal([]byte(line), &probe) != nil {
 				return false
 			}
-			return probe.Type != "" || probe.Event != ""
+			return probe.Type != ""
 		default:
 			return false
 		}
 	}
 	return false
+}
+
+func isAntigravityEvent(line string) bool {
+	var probe struct {
+		Event string `json:"event"`
+	}
+	if json.Unmarshal([]byte(line), &probe) != nil {
+		return false
+	}
+	return probe.Event == "init" || probe.Event == "result"
 }
