@@ -754,7 +754,7 @@ func (w *SyncWorker) syncLoop(ctx context.Context, stopCh <-chan struct{}, inter
 				return struct{}{}, pool.legacyMaintenancePass(passCtx)
 			}, backoff.WithBackOff(backoff.NewConstantBackOff(interval)), backoff.WithMaxElapsedTime(0),
 				backoff.WithNotify(func(err error, _ time.Duration) {
-					log.Printf("Sync: historical review maintenance retrying: %v", err)
+					log.Printf("Sync: historical review maintenance paused: %v", err)
 				}))
 		}()
 		defer func() {
