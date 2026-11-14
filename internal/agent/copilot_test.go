@@ -138,8 +138,8 @@ func TestCopilotReviewParsesJSONOutput(t *testing.T) {
 	assert.NotContains(t, output.String(), "assistant.message")
 	assertFileContent(t, mock.StdinFile, "prompt")
 
-	args := readFileContent(t, mock.ArgsFile)
-	assert.Contains(t, args, "--output-format json")
+	args := readMockArgs(t, mock.ArgsFile)
+	assertArgsContainContiguous(t, args, []string{"--output-format", "json"})
 	assert.Contains(t, args, "--disable-builtin-mcps")
 }
 
@@ -346,9 +346,9 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal("review output\n", res)
 
-		args := readFileContent(t, mock.ArgsFile)
+		args := readMockArgs(t, mock.ArgsFile)
 		assert.Contains(args, "--allow-all-tools")
-		assert.Contains(args, "--stream off")
+		assertArgsContainContiguous(t, args, []string{"--stream", "off"})
 		assert.Contains(args, "-s")
 		assert.Contains(args, "--deny-tool")
 		assertFileContent(t, mock.StdinFile, "prompt")
@@ -367,7 +367,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal("fix output\n", res)
 
-		args := readFileContent(t, mock.ArgsFile)
+		args := readMockArgs(t, mock.ArgsFile)
 		assert.Contains(args, "--allow-all-tools")
 		assert.NotContains(args, "--deny-tool")
 	})
@@ -384,7 +384,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 		_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 		require.NoError(t, err)
 
-		args := readFileContent(t, mock.ArgsFile)
+		args := readMockArgs(t, mock.ArgsFile)
 		assert.Contains(t, args, "--allow-all-tools")
 		assert.NotContains(t, args, "--deny-tool")
 	})
@@ -400,7 +400,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 		_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 		require.NoError(t, err)
 
-		args := readFileContent(t, mock.ArgsFile)
+		args := readMockArgs(t, mock.ArgsFile)
 		assert.NotContains(t, args, "--allow-all-tools")
 		assert.NotContains(t, args, "--stream")
 		assert.NotContains(t, args, "--deny-tool")

@@ -93,12 +93,10 @@ func TestClaudeBuildArgs(t *testing.T) {
 			assertContainsArg(t, args, req)
 		}
 		assertNotContainsArg(t, args, claudeDangerousFlag)
-		assertArgsContain(t, strings.Join(args, " "), "--tools", "Read,Glob,Grep")
-		assertArgsContain(t, strings.Join(args, " "), "--disallowedTools", "mcp__*")
+		assertArgsContainContiguous(t, args, []string{"--tools", "Read,Glob,Grep"})
+		assertArgsContainContiguous(t, args, []string{"--disallowedTools", "mcp__*"})
 
-		assertTools(t, args,
-			[]string{"Read", "Glob", "Grep"},
-			[]string{"Edit", "Write", "Bash"})
+		assertArgsContainContiguous(t, args, []string{"--allowedTools", "Read,Glob,Grep"})
 	})
 
 	t.Run("AgenticMode", func(t *testing.T) {
@@ -542,7 +540,7 @@ func TestClaudeReviewPassesArgs(t *testing.T) {
 				assertContainsArg(t, args, "--resume")
 				assertContainsArg(t, args, "session-123")
 			} else {
-				assertArgsContain(t, strings.Join(args, " "), "--tools", "Read,Glob,Grep")
+				assertArgsContainContiguous(t, args, []string{"--tools", "Read,Glob,Grep"})
 			}
 		})
 	}
