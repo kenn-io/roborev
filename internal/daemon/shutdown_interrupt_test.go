@@ -160,9 +160,21 @@ func TestInterruptShutdownRejectsMismatchAndUpdateLease(t *testing.T) {
 
 func TestInterruptShutdownDatabaseErrorLeavesShutdownUntouched(t *testing.T) {
 	server, db, _ := newTestServer(t)
-	require.NoError(t, db.Close())
+	renamed := false
+	t.Cleanup(func() {
+		if renamed {
+			_, err := db.ExecContext(context.Background(), `ALTER TABLE review_jobs_gone RENAME TO review_jobs`)
+			assert.NoError(t, err)
+		}
+	})
+	_, err := db.ExecContext(t.Context(), `ALTER TABLE review_jobs RENAME TO review_jobs_gone`)
+	require.NoError(t, err)
+	renamed = true
 	response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
 	require.Equal(t, http.StatusInternalServerError, response.Code)
+	draining, err := db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.False(t, draining)
 	assert.False(t, server.shutdownDraining)
 	assert.False(t, server.workerPool.stopped)
 	requested := false

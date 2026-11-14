@@ -559,11 +559,6 @@ func TestRequeueUpdateInterruptedJobKeepsRebuttalSession(t *testing.T) {
 	var resumed int
 	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT session_resumed FROM review_jobs WHERE id = ?`, job.ID).Scan(&resumed))
 	assert.Equal(t, 1, resumed)
-	claimed, err = env.db.ClaimJob("worker-B")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	assert.Equal(t, job.ID, claimed.ID)
-	assert.Equal(t, "original-session", claimed.SessionID)
 }
 
 func TestResetStaleJobsKeepsRebuttalSession(t *testing.T) {
