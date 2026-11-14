@@ -349,6 +349,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		Branch:                opts.Branch,
 		CIBaseBranch:          opts.CIBaseBranch,
 		SessionID:             opts.SessionID,
+		SessionCLI:            opts.SessionCLI,
 		ResumeSourceJobUUID:   opts.ResumeSourceJobUUID,
 		Agent:                 opts.Agent,
 		Model:                 opts.Model,
@@ -1005,7 +1006,7 @@ func (db *DB) ClearJobSessionID(jobID int64, workerID string) error {
 func (db *DB) clearJobSession(jobID int64, workerID string, isolate bool) error {
 	result, err := db.Exec(`
 		UPDATE review_jobs
-		SET session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
+		SET session_id = NULL, session_cli = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
 		    session_isolated = CASE WHEN ? THEN 1 ELSE session_isolated END, updated_at = ?, synced_at = NULL
 		WHERE id = ? AND status = 'running' AND worker_id = ?
 	`, isolate, time.Now().Format(time.RFC3339), jobID, workerID)

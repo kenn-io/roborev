@@ -691,6 +691,12 @@ func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
 		notContains []string
 	}{
 		{
+			name:        "captured init",
+			fixture:     "../agent/testdata/antigravity-init-capture.jsonl",
+			contains:    "Antigravity session started",
+			notContains: []string{"conversation_id", "always-proceed"},
+		},
+		{
 			name:     "successful result",
 			fixture:  "../agent/testdata/antigravity-success-result-capture.jsonl",
 			contains: "RESUME_OK",
@@ -723,6 +729,16 @@ func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFormatter_GeminiDeprecatedPromptWarningHidden(t *testing.T) {
+	runStreamTestCase(t, "gemini", streamTestCase{
+		name: "deprecated prompt warning",
+		events: []string{
+			`{"type":"message","role":"assistant","content":"The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information.\n"}`,
+		},
+		empty: true,
+	})
 }
 
 func TestFormatter_OpenCode(t *testing.T) {

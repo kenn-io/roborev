@@ -97,6 +97,7 @@ func TestVersionGatesFeatures(t *testing.T) {
 		resumeFlag    string
 		wantStream    bool
 		wantPrompt    string
+		wantStdin     string
 		wantPrint     bool
 		wantApproval  string
 		wantYolo      bool
@@ -106,15 +107,17 @@ func TestVersionGatesFeatures(t *testing.T) {
 		wantResult    string
 	}{
 		{name: "Gemini 0.9 is too old for safe review", cli: "gemini", version: "0.9.0", wantError: true, wantVersion: "0.9.0"},
-		{name: "Gemini 0.10 plain", cli: "gemini", version: "0.10.0", wantApproval: "default", wantResult: "Plain review"},
-		{name: "Gemini 0.10 agentic", cli: "gemini", version: "0.10.0", agentic: true, wantYolo: true, wantResult: "Plain review"},
-		{name: "Gemini 0.11 stream", cli: "gemini", version: "0.11.0", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
-		{name: "Gemini 0.15 resume", cli: "gemini", version: "0.15.0", resumeFlag: "--resume", wantStream: true, wantPrompt: "Review the supplied input.", wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
-		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", resumeFlag: "--resume", wantStream: true, wantPrompt: "Review the supplied input.", wantApproval: "plan", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
+		{name: "Gemini 0.10 plain", cli: "gemini", version: "0.10.0", wantStdin: "prompt", wantApproval: "default", wantResult: "Plain review"},
+		{name: "Gemini 0.10 agentic", cli: "gemini", version: "0.10.0", agentic: true, wantStdin: "prompt", wantYolo: true, wantResult: "Plain review"},
+		{name: "Gemini 0.11 stream", cli: "gemini", version: "0.11.0", wantStdin: "prompt", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
+		{name: "Gemini 0.15 resume uses prompt flag", cli: "gemini", version: "0.15.0", resumeFlag: "--resume", wantPrompt: "prompt", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
+		{name: "Gemini 0.18.4 resume uses prompt flag", cli: "gemini", version: "0.18.4", resumeFlag: "--resume", wantPrompt: "prompt", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
+		{name: "Gemini 0.20 resume uses stdin", cli: "gemini", version: "0.20.0", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
+		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantApproval: "plan", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
 		{name: "Gemini unknown", cli: "gemini", version: "unknown", wantError: true, wantVersion: "unknown"},
 		{name: "Gemini failed version probe", cli: "gemini", version: "0.34.0", versionFails: true, wantError: true, wantVersion: "unknown"},
-		{name: "Antigravity 1.0.8", cli: "agy", version: "1.0.8", wantPrint: true, wantResult: "Plain review"},
-		{name: "Antigravity 1.0.9 conversation", cli: "agy", version: "1.0.9", resumeFlag: "--conversation", wantPrint: true, wantResult: "Plain review"},
+		{name: "Antigravity 1.0.8", cli: "agy", version: "1.0.8", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
+		{name: "Antigravity 1.0.9 conversation", cli: "agy", version: "1.0.9", resumeFlag: "--conversation", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.7 prompt", cli: "agy", version: "1.1.7", resumeFlag: "--conversation", wantPrompt: "prompt", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", resumeFlag: "--conversation", wantStream: true, wantPrompt: "prompt", streamFixture: "antigravity-success-result-capture.jsonl", wantResult: "RESUME_OK"},
 		{name: "Antigravity failed version probe", cli: "agy", versionFails: true, wantPrompt: "prompt", wantResult: "Plain review"},
@@ -129,6 +132,8 @@ func TestVersionGatesFeatures(t *testing.T) {
 			}
 			t.Setenv("CLI_VERSION_FAIL", versionFail)
 			t.Setenv("ARGS_FILE", argsFile)
+			stdinFile := filepath.Join(t.TempDir(), "stdin")
+			t.Setenv("STDIN_FILE", stdinFile)
 			fixture := ""
 			if tc.streamFixture != "" {
 				var err error
@@ -142,6 +147,7 @@ if [ "$1" = "--version" ]; then
 	echo "$CLI_VERSION"
   exit 0
 fi
+cat > "$STDIN_FILE"
 printf '%s\n' "$@" > "$ARGS_FILE"
 stream=0
 for arg in "$@"; do
@@ -171,6 +177,9 @@ fi
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantResult, result)
+			stdinBytes, readErr := os.ReadFile(stdinFile)
+			require.NoError(t, readErr)
+			assert.Equal(t, tc.wantStdin, string(stdinBytes))
 
 			argsBytes, readErr := os.ReadFile(argsFile)
 			require.NoError(t, readErr)
@@ -442,6 +451,25 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			},
 		},
 		{
+			name: "GeminiDeltaChunksPreserveSplitJSON",
+			input: `{"type":"message","role":"assistant","content":"{\"passed\":true,\"findings\":[{\"title\":\"mis","delta":true}
+{"type":"message","role":"assistant","content":"sing\"}]}","delta":true}
+{"type":"result","status":"success"}
+`,
+			assertResult: func(t *testing.T, res string) {
+				assert.JSONEq(t, `{"passed":true,"findings":[{"title":"missing"}]}`, res)
+			},
+		},
+		{
+			name: "GeminiDeprecatedPromptWarningIsNotReviewText",
+			input: `{"type":"message","role":"assistant","content":"The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information.\n"}
+{"type":"message","role":"assistant","content":"Review result"}
+`,
+			assertResult: func(t *testing.T, res string) {
+				assert.Equal(t, "Review result", res)
+			},
+		},
+		{
 			name: "AssistantFallback",
 			input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"First message"}}
@@ -654,6 +682,106 @@ cat "$SUCCESS_FILE"
 			assert.Equal(t, 2, strings.Count(string(args), "--output-format\nstream-json\n"))
 		})
 	}
+}
+
+func TestAgenticResumeFailureStartsFresh(t *testing.T) {
+	skipIfWindows(t)
+	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
+	require.NoError(t, err)
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("STREAM_FILE", fixture)
+	t.Setenv("ARGS_FILE", argsFile)
+	script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
+printf '%s\n' "$@" >> "$ARGS_FILE"
+for arg in "$@"; do
+  if [ "$arg" = "--resume" ]; then
+    echo "resume failed" >&2
+    exit 1
+  fi
+done
+cat "$STREAM_FILE"
+`)
+	resetCalls := 0
+	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
+		resetCalls++
+		return nil
+	})
+	a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(true).(*GeminiAgent)
+	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
+	assert.Equal(t, 1, resetCalls)
+	assert.Equal(t, "...", capture.SessionID())
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(args), "--resume\n"))
+	assert.Equal(t, 2, strings.Count(string(args), "--output-format\nstream-json\n"))
+	assert.Equal(t, 2, strings.Count(string(args), "--approval-mode\nyolo\n"))
+}
+
+func TestResumeFailureRetriesAtMostOnce(t *testing.T) {
+	skipIfWindows(t)
+	invocations := filepath.Join(t.TempDir(), "invocations")
+	t.Setenv("INVOCATIONS_FILE", invocations)
+	script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
+printf 'review\n' >> "$INVOCATIONS_FILE"
+for arg in "$@"; do
+  if [ "$arg" = "--resume" ]; then
+    echo "resume failed" >&2
+    exit 1
+  fi
+done
+echo "fresh run failed" >&2
+exit 1
+`)
+	resetCalls := 0
+	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
+		resetCalls++
+		return nil
+	})
+	a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
+	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fresh run failed")
+	assert.Equal(t, 1, resetCalls)
+	assert.Empty(t, capture.SessionID())
+	calls, err := os.ReadFile(invocations)
+	require.NoError(t, err)
+	assert.Equal(t, "review\nreview\n", string(calls))
+}
+
+func TestUnsupportedResumeClearsStoredSessionBeforeFreshRun(t *testing.T) {
+	skipIfWindows(t)
+	resetMarker := filepath.Join(t.TempDir(), "session-cleared")
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("RESET_MARKER", resetMarker)
+	t.Setenv("ARGS_FILE", argsFile)
+	script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "0.10.0"; exit 0; fi
+if [ ! -f "$RESET_MARKER" ]; then
+	echo "stored session was not cleared before invocation" >&2
+	exit 1
+fi
+printf '%s\n' "$@" > "$ARGS_FILE"
+cat > /dev/null
+echo "Fresh review"
+`)
+	resetCalls := 0
+	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
+		resetCalls++
+		return os.WriteFile(resetMarker, []byte("cleared"), 0o600)
+	})
+	a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
+	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
+	require.NoError(t, err)
+	assert.Equal(t, "Fresh review", result)
+	assert.Equal(t, 1, resetCalls)
+	assert.Empty(t, capture.SessionID())
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.NotContains(t, string(args), "--resume")
 }
 
 func TestGeminiAntigravityReviewPlainText(t *testing.T) {

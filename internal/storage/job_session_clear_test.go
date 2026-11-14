@@ -64,17 +64,17 @@ func TestIsolateJobSession(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.isolate, isolated)
-			var sessionID, resumeSource sql.NullString
+			var sessionID, sessionCLI, resumeSource sql.NullString
 			var resumed bool
 			require.NoError(t, db.QueryRowContext(t.Context(), `
-				SELECT session_id, session_resumed, resume_source_job_uuid
+				SELECT session_id, session_cli, session_resumed, resume_source_job_uuid
 				FROM review_jobs WHERE id=?`, job.ID,
-			).Scan(&sessionID, &resumed, &resumeSource))
+			).Scan(&sessionID, &sessionCLI, &resumed, &resumeSource))
 			assert.False(t, sessionID.Valid)
+			assert.False(t, sessionCLI.Valid)
 			assert.False(t, resumed)
 			assert.False(t, resumeSource.Valid)
 			require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-a", "new-session", "gemini"))
-			var sessionCLI sql.NullString
 			require.NoError(t, db.QueryRowContext(t.Context(), `
 				SELECT session_id, session_cli FROM review_jobs WHERE id = ?`, job.ID,
 			).Scan(&sessionID, &sessionCLI))

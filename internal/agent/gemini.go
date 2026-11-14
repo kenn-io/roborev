@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/roborev/internal/agent/antigravity"
 	"go.kenn.io/roborev/internal/procutil"
 )
 
@@ -146,10 +147,20 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		}
 		return "", fmt.Errorf("gemini CLI version %q cannot run read-only reviews safely; upgrade to %s or newer", version, geminiSafeApprovalVersion)
 	}
-	args := a.buildArgsWithModel(a.Model, agenticMode, capabilities)
 	runAgent := a
-	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
-	if capabilities.resume && a.SessionID != "" && !agenticMode && ctx.Err() == nil &&
+	if a.SessionID != "" && !capabilities.resume {
+		// A CLI downgrade cannot resume this session. Clear its stored ID before
+		// running fresh so a failed attempt cannot leave it available to reuse.
+		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
+			if resetErr := resetter.ResetSessionID(); resetErr != nil {
+				return "", resetErr
+			}
+		}
+		runAgent = a.WithSessionID("").(*GeminiAgent)
+	}
+	args := runAgent.buildArgsWithModel(runAgent.Model, agenticMode, capabilities)
+	result, stderrStr, err := runAgent.runGemini(ctx, repoPath, prompt, args, capabilities, output)
+	if capabilities.resume && a.SessionID != "" && ctx.Err() == nil &&
 		(err != nil || result == "No review output generated") {
 		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
 			if resetErr := resetter.ResetSessionID(); resetErr != nil {
@@ -209,18 +220,21 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool, capabil
 }
 
 type geminiCLICapabilities struct {
-	streamJSON   bool
-	resume       bool
-	approvalMode string
-	promptFlag   bool
-	version      string
+	streamJSON       bool
+	resume           bool
+	approvalMode     string
+	promptFlag       bool
+	resumePromptFlag bool
+	version          string
 }
 
 const (
-	geminiSafeApprovalVersion = "0.10.0"
-	geminiStreamJSONVersion   = "0.11.0"
-	geminiResumeVersion       = "0.15.0"
-	geminiPlanModeVersion     = "0.34.0" // plan mode became the default in this release
+	geminiSafeApprovalVersion     = "0.10.0"
+	geminiStreamJSONVersion       = "0.11.0"
+	geminiResumeVersion           = "0.15.0"
+	geminiResumeStdinVersion      = "0.20.0"
+	geminiPlanModeVersion         = "0.34.0" // plan mode became the default in this release
+	geminiDeprecatedPromptMessage = "The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information."
 	// Antigravity supports --conversation before adding stream-json.
 	antigravityResumeVersion = "1.0.9"
 )
@@ -242,11 +256,13 @@ func (a *GeminiAgent) capabilities(ctx context.Context) geminiCLICapabilities {
 	} else if versionAtLeast(version, geminiSafeApprovalVersion, false) {
 		approvalMode = "default"
 	}
+	resume := versionAtLeast(version, geminiResumeVersion, false)
 	return geminiCLICapabilities{
-		streamJSON:   versionAtLeast(version, geminiStreamJSONVersion, false),
-		resume:       versionAtLeast(version, geminiResumeVersion, false),
-		approvalMode: approvalMode,
-		version:      version,
+		streamJSON:       versionAtLeast(version, geminiStreamJSONVersion, false),
+		resume:           resume,
+		resumePromptFlag: resume && !versionAtLeast(version, geminiResumeStdinVersion, false),
+		approvalMode:     approvalMode,
+		version:          version,
 	}
 }
 
@@ -283,8 +299,11 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 	if a.usesAntigravity() {
 		return a.runAntigravity(ctx, repoPath, prompt, args, capabilities, output)
 	}
-	if capabilities.resume && a.SessionID != "" {
-		args = append(args, "--prompt", "Review the supplied input.")
+	var stdin io.Reader
+	if capabilities.resumePromptFlag && a.SessionID != "" {
+		args = append(args, "--prompt", prompt)
+	} else {
+		stdin = strings.NewReader(prompt)
 	}
 	parse := parsePlainTextOutput
 	if capabilities.streamJSON {
@@ -299,7 +318,7 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 		Command:      a.Command,
 		Args:         args,
 		Dir:          repoPath,
-		Stdin:        strings.NewReader(prompt),
+		Stdin:        stdin,
 		Output:       output,
 		StreamStderr: true,
 		Parse:        parse,
@@ -611,14 +630,32 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	var lastResult string
 	assistantMessages := newTrailingReviewText()
 	var validEventsParsed bool
+	var delta strings.Builder
+	flushDelta := func() {
+		if delta.Len() == 0 {
+			return
+		}
+		assistantMessages.Add(delta.String())
+		delta.Reset()
+	}
 
 	err := scanStreamJSONLines(r, sw, func(trimmed string) error {
 		var msg geminiStreamMessage
 		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
 			validEventsParsed = true
+			if msg.Type != "message" || msg.Role != "assistant" {
+				flushDelta()
+			}
 
 			if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
-				assistantMessages.Add(msg.Content)
+				if strings.TrimSpace(msg.Content) == geminiDeprecatedPromptMessage {
+					return nil
+				}
+				if msg.Delta {
+					delta.WriteString(msg.Content)
+				} else {
+					assistantMessages.Add(msg.Content)
+				}
 			}
 			if msg.Type == "assistant" && msg.Message.Content != "" {
 				assistantMessages.Add(msg.Message.Content)
@@ -633,6 +670,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 		}
 		return nil
 	})
+	flushDelta()
 	if err != nil {
 		return parseResult{}, err
 	}
@@ -654,12 +692,8 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 }
 
 type antigravityStreamEvent struct {
-	Event  string `json:"event"`
-	Result struct {
-		Status   string `json:"status"`
-		Response string `json:"response"`
-		Error    string `json:"error"`
-	} `json:"result"`
+	Event  string             `json:"event"`
+	Result antigravity.Result `json:"result"`
 }
 
 // parseAntigravityStreamJSON reads the documented result event; the init

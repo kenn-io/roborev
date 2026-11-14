@@ -1,22 +1,23 @@
-# Antigravity stream excerpts
+# Stream output captures
 
 `gemini-stream.jsonl` is a Gemini CLI stdout excerpt captured on 2026-11-14.
 Its timestamp and model are from that run. The session ID is redacted, and
 the CLI version wasn't recorded.
 
-These files preserve public stdout excerpts from Antigravity CLI reports. The
-source reports redact conversation IDs and other local details; those
-redactions remain here. The init report elides the tool list, represented as a
-single string so the line remains valid JSON.
+The Antigravity fixtures come from CLI stdout excerpts in public issue reports.
+Their source reports redact conversation IDs and local details. The init
+report also abbreviates its tool list as `[...]`; the fixture records that
+placeholder as a string so the excerpt remains valid JSON.
 
-- `antigravity-init-capture.jsonl` is the init event shown in [upstream issue
+- `antigravity-init-capture.jsonl` is the redacted `init` line from the
+  Antigravity 1.1.17 report in [upstream issue
   #841](https://github.com/google-antigravity/antigravity-cli/issues/841).
-- `antigravity-resume-error-capture.jsonl` contains the resume `step_update`
-  and `result` lines copied from [upstream issue
+- `antigravity-resume-error-capture.jsonl` contains the captured resumed
+  `step_update` and `result` lines from [upstream issue
   #1048](https://github.com/google-antigravity/antigravity-cli/issues/1048).
-- `antigravity-success-result-capture.jsonl` is the fresh-run result from the
-  same issue.
+- `antigravity-success-result-capture.jsonl` is the fresh-run `result` from
+  that same report. It records Antigravity 1.2.6.
 
-The source reports omit complete streams. Tests use the init and result
-excerpts separately because each behavior needs only one event type. These
-files aren't full stdout transcripts.
+The reports don't include full stdout transcripts. Tests use only the captured
+`init` and `result` lines needed for those behaviors. The `step_update` lines
+remain in the provenance capture and aren't parsed as Antigravity results.
