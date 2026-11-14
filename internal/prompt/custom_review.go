@@ -74,21 +74,21 @@ type customReviewTemplateData struct {
 	Includes   map[string]string
 }
 
-func (b *Builder) resolveSystemPrompt(
+func (b *Builder) resolveSystemPromptWithRubric(
 	agentName, reviewType, promptType string,
-) (string, bool, error) {
+) (string, bool, []byte, error) {
 	if config.IsBuiltInReviewType(reviewType) {
-		return GetSystemPrompt(agentName, promptType), false, nil
+		return GetSystemPrompt(agentName, promptType), false, nil, nil
 	}
 	repoCfg, err := b.resolveRepoConfig()
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	resolved, ok := config.ResolveCustomReviewTypeFromConfig(
 		reviewType, repoCfg, b.globalCfg,
 	)
 	if !ok {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"custom review type %q is not configured", reviewType,
 		)
 	}
@@ -102,7 +102,7 @@ func (b *Builder) resolveSystemPrompt(
 
 	templateText, err := read(resolved.Spec.Template)
 	if err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q template: %w", reviewType, err,
 		)
 	}
@@ -110,7 +110,7 @@ func (b *Builder) resolveSystemPrompt(
 	for name, filePath := range resolved.Spec.Includes {
 		contents, includeErr := read(filePath)
 		if includeErr != nil {
-			return "", true, fmt.Errorf(
+			return "", true, nil, fmt.Errorf(
 				"review type %q include %q: %w",
 				reviewType, name, includeErr,
 			)
@@ -122,7 +122,7 @@ func (b *Builder) resolveSystemPrompt(
 		Option("missingkey=error").
 		Parse(templateText)
 	if err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q parse template: %w", reviewType, err,
 		)
 	}
@@ -131,13 +131,12 @@ func (b *Builder) resolveSystemPrompt(
 		ReviewType: reviewType,
 		Includes:   includes,
 	}); err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q render template: %w", reviewType, err,
 		)
 	}
-	result := strings.TrimSpace(rendered.String()) +
-		structuredReviewOutputInstruction
-	return result, true, nil
+	trimmed := strings.TrimSpace(rendered.String())
+	return trimmed + structuredReviewOutputInstruction, true, []byte(trimmed + "\n"), nil
 }
 
 func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {

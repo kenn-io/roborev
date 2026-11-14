@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -5617,11 +5618,11 @@ func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
 	cfg.KataContext.Mode = config.KataModeOpen
 	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
 
-	out, err := p.callBuildReviewPrompt(t.Context(), repo.Path(), sha, 0, 0, "test", "", "", "", prompt.PullRequest{}, nil, "", cfg)
+	out, err := p.callBuildReviewPromptResult(t.Context(), repo.Path(), sha, 0, 0, "test", "", "", "", prompt.PullRequest{}, nil, "", cfg)
 	require.NoError(t, err)
-	assert.NotContains(t, out, "Task Context (kata)",
+	assert.NotContains(t, out.Prompt, "Task Context (kata)",
 		"CI prompt prebuilds must never include kata task-ledger content")
-	assert.NotContains(t, out, "Secret kata body.",
+	assert.NotContains(t, out.Prompt, "Secret kata body.",
 		"fake kata output must never reach the prompt")
 }
 
@@ -5697,4 +5698,26 @@ func TestPRDiscussionPreservesAllCommentsAndBodies(t *testing.T) {
 	for _, comment := range comments {
 		assert.Contains(t, context, comment.Body)
 	}
+}
+
+func TestCIPanelPrebuildStoresRubricIdentity(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := testutil.GetHeadSHA(t, repo.Path())
+	sha := repo.CommitFile("change.txt", "change", "change")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), "rubric.tmpl"), []byte("  Inspect safety  "), 0o644))
+	cfg := config.DefaultConfig()
+	repoCfg := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{
+		"custom": {Template: "rubric.tmpl"},
+	}}}
+	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
+	members, _, err := p.buildPanelOpts(t.Context(), buildPanelOptsInput{
+		repo: &storage.Repo{ID: 1, RootPath: repo.Path()}, repoCfg: repoCfg, cfg: cfg,
+		gitRef: base + ".." + sha, ghRepo: "example/project", members: []config.ResolvedMember{{Name: "custom", Agent: "test", ReviewType: "custom"}},
+		synth: config.SynthesisSpec{Agent: "test"},
+	})
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	require.NotNil(t, members[0].RubricSHA256)
+	assert.True(t, members[0].PromptPrebuilt)
+	assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte("Inspect safety\n"))), *members[0].RubricSHA256)
 }

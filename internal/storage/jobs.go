@@ -19,6 +19,9 @@ import (
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
+// preservePrebuiltRubricSQL keeps the digest tied to an immutable CI prompt.
+const preservePrebuiltRubricSQL = `CASE WHEN source IN ('ci', 'ci_branch') AND prompt_prebuilt = 1 THEN rubric_sha256 ELSE NULL END`
+
 // preciseTimestampLayout is a fixed-width timestamp layout used for the
 // retry_not_before column, attempt boundaries (started_at), and finished_at.
 // Two reasons it differs from RFC3339Nano:
@@ -84,9 +87,10 @@ type EnqueueOpts struct {
 	RequestedModel      string // Explicitly requested model; empty means reevaluate on rerun
 	RequestedProvider   string // Explicitly requested provider; empty means reevaluate on rerun
 	Reasoning           string
-	ReviewType          string // e.g. "security" — changes which system prompt is used
-	PatchID             string // Stable patch-id for rebase tracking
-	DiffContent         string // For dirty reviews (captured at enqueue time)
+	RubricSHA256        *string // Digest of an immutable prebuilt CI rubric
+	ReviewType          string  // e.g. "security" — changes which system prompt is used
+	PatchID             string  // Stable patch-id for rebase tracking
+	DiffContent         string  // For dirty reviews (captured at enqueue time)
 	DirtyFiles          []string
 	Prompt              string   // For task jobs (pre-stored prompt)
 	OutputPrefix        string   // Prefix to prepend to review output
@@ -317,8 +321,8 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 			status, job_type, review_type, patch_id, dirty_files, agentic, prompt_prebuilt, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting, claim_blocked, source,
-			analysis_type, analysis_files, analysis_commit_sha)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			analysis_type, analysis_files, analysis_commit_sha, rubric_sha256)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.CIBaseBranch), nullString(opts.SessionID),
 		sessionResumedInt, opts.ResumeSourceJobUUID,
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
@@ -328,7 +332,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		uid, machineID, nowStr, opts.WorktreePath, normalizeMinSeverityForWrite(opts.MinSeverity), opts.BackupAgent, opts.BackupModel,
 		opts.PanelRunUUID, nullString(opts.PanelRole), nullString(opts.PanelName),
 		nullString(opts.PanelMemberName), opts.PanelMemberIndex, nullString(opts.PanelMemberConfigJSON), nonVotingInt, claimBlockedInt, nullString(opts.Source),
-		nullString(opts.AnalysisType), nullString(analysisFilesJSON), nullString(opts.AnalysisCommitSHA))
+		nullString(opts.AnalysisType), nullString(analysisFilesJSON), nullString(opts.AnalysisCommitSHA), opts.RubricSHA256)
 	if err != nil {
 		return nil, err
 	}
@@ -357,6 +361,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		Reasoning:             reasoning,
 		JobType:               jobType,
 		ReviewType:            opts.ReviewType,
+		RubricSHA256:          opts.RubricSHA256,
 		PatchID:               opts.PatchID,
 		DirtyFiles:            append([]string(nil), opts.DirtyFiles...),
 		AnalysisType:          opts.AnalysisType,
@@ -871,7 +876,7 @@ func (db *DB) RequeueUpdateInterruptedJob(
 		    resume_source_job_uuid = NULL,
 		    token_usage = NULL,
 		    command_line = NULL,
-		    agent_invoked = 0,
+		    agent_invoked = 0, rubric_sha256 = `+preservePrebuiltRubricSQL+`,
 		    synced_at = NULL
 		WHERE id = ? AND status = 'running' AND worker_id = ?
 	`, jobID, workerID)
@@ -1694,7 +1699,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', budget_routing_locked = 0, enqueued_at = ?, source_machine_id = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL,
+		SET status = 'queued', budget_routing_locked = 0, enqueued_at = ?, source_machine_id = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, rubric_sha256 = NULL, synced_at = NULL,
 		    agent = CASE WHEN ? THEN ? WHEN budget_original_agent != '' THEN budget_original_agent ELSE agent END,
 		    model = ?, provider = ?,
 		    reasoning = CASE WHEN ? THEN ? ELSE reasoning END,
@@ -1886,13 +1891,13 @@ func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int, retryBackof
 	if workerID != "" {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, retry_not_before = ?
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, rubric_sha256 = `+preservePrebuiltRubricSQL+`, synced_at = NULL, retry_not_before = ?
 			WHERE id = ? AND retry_count < ? AND status = 'running' AND worker_id = ?
 		`, notBefore, jobID, maxRetries, workerID)
 	} else {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, retry_not_before = ?
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, rubric_sha256 = `+preservePrebuiltRubricSQL+`, synced_at = NULL, retry_not_before = ?
 			WHERE id = ? AND retry_count < ? AND status = 'running'
 		`, notBefore, jobID, maxRetries)
 	}
@@ -1933,7 +1938,7 @@ func (db *DB) FailoverJob(jobID int64, workerID, backupAgent, backupModel string
 		    resume_source_job_uuid = NULL,
 		    token_usage = NULL,
 		    command_line = NULL,
-		    agent_invoked = 0,
+		    agent_invoked = 0, rubric_sha256 = `+preservePrebuiltRubricSQL+`,
 		    synced_at = NULL,
 		    retry_not_before = NULL
 		WHERE id = ?
@@ -2912,7 +2917,7 @@ func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent
 		    resume_source_job_uuid = NULL,
 		    token_usage = NULL,
 		    command_line = NULL,
-		    agent_invoked = 0,
+		    agent_invoked = 0, rubric_sha256 = NULL,
 		    synced_at = NULL,
 		    prompt_prebuilt = 0,
 		    error = NULL,
