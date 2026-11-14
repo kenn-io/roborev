@@ -1699,7 +1699,7 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
 	assert.Contains(t, stored.Output, "Global review instructions loaded from the default branch.")
 }
 
-func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
+func TestProcessJob_DirtyPromptClearsFrozenBinaryEvidence(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
@@ -1714,11 +1714,12 @@ func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
 	})
 
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-		RepoID:     tc.Repo.ID,
-		GitRef:     "dirty",
-		Agent:      agentName,
-		JobType:    storage.JobTypeDirty,
-		DirtyFiles: []string{"go.sum"},
+		RepoID:                tc.Repo.ID,
+		GitRef:                "dirty",
+		Agent:                 agentName,
+		JobType:               storage.JobTypeDirty,
+		DirtyFiles:            []string{"go.sum"},
+		PanelMemberConfigJSON: `{"binary_evidence":true}`,
 	})
 	require.NoError(t, err)
 

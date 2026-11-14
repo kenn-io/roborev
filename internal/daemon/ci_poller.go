@@ -1314,7 +1314,7 @@ func (p *CIPoller) resolveCIMatrixMembers(
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
-		settings, err := config.ResolveReviewSettings(entry.ReviewType, nil, repoCfg, cfg)
+		settings, err := config.ResolveReviewSettings(entry.ReviewType, nil, false, repoCfg, cfg)
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
@@ -1679,14 +1679,15 @@ func (p *CIPoller) maybeAppendDesignMember(
 			)
 		}
 		return append(members, config.ResolvedMember{
-			Name:        "design",
-			Index:       len(members),
-			Agent:       designAgent,
-			Model:       designModel,
-			ReviewType:  config.ReviewTypeDesign,
-			Reasoning:   reasoning,
-			BackupAgent: backupAgent,
-			BackupModel: backupModel,
+			ReviewSettings: config.BuiltInReviewSettings(repoCfg, cfg),
+			Name:           "design",
+			Index:          len(members),
+			Agent:          designAgent,
+			Model:          designModel,
+			ReviewType:     config.ReviewTypeDesign,
+			Reasoning:      reasoning,
+			BackupAgent:    backupAgent,
+			BackupModel:    backupModel,
 		})
 	}
 	return members

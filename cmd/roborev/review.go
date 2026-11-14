@@ -524,7 +524,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	if err != nil {
 		return fmt.Errorf("load repository config: %w", err)
 	}
-	settings, err := config.ResolveReviewSettings(reviewType, nil, repoCfg, cfg)
+	settings, err := config.ResolveReviewSettings(reviewType, nil, dirty, repoCfg, cfg)
 	if err != nil {
 		return err
 	}

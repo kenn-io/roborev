@@ -150,6 +150,29 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 	h.assertOutputContains("No issues found.")
 }
 
+func TestLocalReviewBuiltInBinaryEvidence(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repo.GitDir, "info", "attributes"), []byte("*.pdf -diff\n"), 0o644))
+	head := repo.CommitFile("exhibit.pdf", "%PDF\x00committed", "add exhibit")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".roborev.toml"), []byte("[review]\nbinary_evidence = true\n"), 0o644))
+
+	var capturedPrompt string
+	a := &agent.FakeAgent{
+		NameStr: "local-evidence",
+		ReviewFn: func(_ context.Context, _, _ string, prompt string, _ io.Writer) (string, error) {
+			capturedPrompt = prompt
+			return `{"schema_version":3,"verdict":"pass","summary":"No findings.","findings":[]}`, nil
+		},
+	}
+	agent.RegisterForTest(t, a)
+	cmd := reviewCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--local", "--repo", repo.Root, "--agent", a.Name(), head})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, capturedPrompt, "Committed review evidence")
+}
+
 func TestLocalReviewRetainsLocationsForDirtyBranch(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	base := repo.HeadSHA()

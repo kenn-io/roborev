@@ -650,6 +650,15 @@ Types that have them — `review`, `refine`, `fix`, `security`, `design` — ign
 Reasoning is unaffected by this block for reviews; it follows `review_reasoning`
 (the block's `reasoning` field applies only to `roborev analyze <type>` runs).
 
+### Binary Evidence
+
+Set `[review] binary_evidence = true` in global or repository configuration to
+include committed changed binary files in built-in reviews. It defaults to
+false; the repository setting overrides the global setting. Custom types use
+their own independent setting. Built-in reviews of uncommitted changes omit the
+evidence. See [Binary evidence](advanced/custom-review-types.md#binary-evidence)
+for details and limitations.
+
 ### Custom Review Types
 
 Custom domain-specific review types are configured under

@@ -3566,7 +3566,7 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 	}
 }
 
-func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
+func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModelAndEvidence(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.DefaultAgent = "global-agent"
 	h.Cfg.DefaultModel = "global-model"
@@ -3586,6 +3586,7 @@ func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 	repoCfg := &config.RepoConfig{
 		ReviewAgent: "default-branch-agent",
 		ReviewModel: "default-branch-model",
+		Review:      config.ReviewConfig{BinaryEvidence: new(true)},
 		CI: config.RepoCIConfig{
 			Agents:      []string{""},
 			ReviewTypes: []string{"default"},
@@ -3604,6 +3605,7 @@ func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 	require.Len(t, members, 1)
 	assert.Equal(t, "default-branch-agent", members[0].Agent)
 	assert.Equal(t, "default-branch-model", members[0].Model)
+	assert.True(t, members[0].BinaryEvidence)
 }
 
 func TestResolveCIMatrixMembersUsesCustomTypeReasoning(t *testing.T) {
@@ -4275,17 +4277,17 @@ func designMemberCount(members []storage.ReviewJob) int {
 	return n
 }
 
-// TestProcessPRCreatesPanelRun verifies the core cutover: processPR enqueues one
-// panel run per PR. With auto-design enabled and a design-warranting commit, the
-// run carries the matrix member plus exactly one whole-range design member; every
-// member is role=member and not a classify job.
-func TestProcessPRCreatesPanelRun(t *testing.T) {
+// TestProcessPRCreatesPanelRunWithFrozenDesignBinaryEvidence checks that
+// auto-design adds one whole-range design member with frozen binary evidence.
+// Every member has role=member and is not a classify job.
+func TestProcessPRCreatesPanelRunWithFrozenDesignBinaryEvidence(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	p.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
+		rc.Review.BinaryEvidence = &enabled
 		return ciRepoConfigSource{Config: rc}, nil
 	}
 
@@ -4312,6 +4314,11 @@ func TestProcessPRCreatesPanelRun(t *testing.T) {
 		assert.Equal(storage.PanelRoleMember, m.PanelRole, "member %d role", m.ID)
 		assert.NotEqual(storage.JobTypeClassify, m.JobType, "member %d must not be classify", m.ID)
 		assert.Equal(base+".."+head, m.GitRef, "member %d covers the frozen range", m.ID)
+		if m.ReviewType == config.ReviewTypeDesign {
+			var settings config.ReviewSettings
+			require.NoError(t, json.Unmarshal([]byte(m.PanelMemberConfigJSON), &settings))
+			assert.True(settings.BinaryEvidence, "design member freezes the repository override")
+		}
 	}
 	assert.Equal(1, designMemberCount(members), "exactly one design member")
 }
