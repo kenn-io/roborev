@@ -824,7 +824,7 @@ func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, 
 	if job == nil || job.PanelRunUUID == nil || job.IsFixJob() {
 		return false, nil
 	}
-	if job.Source == storage.JobSourceCI {
+	if job.Source == storage.JobSourceCI || job.Source == storage.JobSourceCIBranch {
 		return true, nil
 	}
 	if wp.db == nil {

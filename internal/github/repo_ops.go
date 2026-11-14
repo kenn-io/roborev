@@ -187,6 +187,13 @@ func (c *Client) GetRepositoryFullName(ctx context.Context, ghRepo string) (stri
 }
 
 func (c *Client) SetCommitStatus(ctx context.Context, ghRepo, sha, state, description string) error {
+	return c.SetNamedCommitStatus(ctx, ghRepo, sha, "roborev", state, description)
+}
+
+// SetNamedCommitStatus publishes a commit status under statusContext, the name
+// GitHub shows for it, so separate review flows on one commit do not replace
+// each other's results.
+func (c *Client) SetNamedCommitStatus(ctx context.Context, ghRepo, sha, statusContext, state, description string) error {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
 		return err
@@ -195,7 +202,7 @@ func (c *Client) SetCommitStatus(ctx context.Context, ghRepo, sha, state, descri
 	_, _, err = c.api.Repositories.CreateStatus(ctx, owner, repo, sha, googlegithub.RepoStatus{
 		State:       ptr(state),
 		Description: ptr(description),
-		Context:     ptr("roborev"),
+		Context:     ptr(statusContext),
 	})
 	if err != nil {
 		return fmt.Errorf("create commit status: %w", err)

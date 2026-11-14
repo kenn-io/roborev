@@ -51,6 +51,7 @@ var schemaMigrations = []schemaMigration{
 	{15, "local review invocation reports", migrateReviewInvocations},
 	{16, "token cost lookup state", migrateTokenCostLookups},
 	{17, "supplied panel enqueue receipts", migratePanelEnqueueRequests},
+	{18, "CI default-branch commit reviews", migrateCIBranchReviews},
 }
 
 func migrateSyncPendingIndexes(ctx context.Context, db *DB) error {

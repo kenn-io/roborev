@@ -470,6 +470,99 @@ comments are still posted when a reviewer produces usable output.
     whether the review infrastructure completed, not whether the reviewer found code
     issues. Findings are reported in the PR comment.
 
+## Review commits on the default branch
+
+A finding can survive a pull request review and still land. Default-branch
+reviews give each landed change its own review, so the issues that reached the
+branch can be followed up, fixed, or deliberately deferred.
+
+Set `review_default_branch = true` in the daemon's global `[ci]` section. On
+each poll, the poller then:
+
+1. Fetches each configured repo and reads its default branch from `origin/HEAD`
+1. Lists the commits that landed on that branch since the previous poll,
+    following first parents only
+1. Reviews each commit against its first parent, with the same panel or matrix
+    and the same default-branch `.roborev.toml` as pull request reviews
+
+A merge commit is reviewed as the whole change it brought to the branch. Squash
+and rebase merges are reviewed one landed commit at a time.
+
+```toml
+[ci]
+enabled = true
+repos = ["myorg/*"]
+review_default_branch = true
+```
+
+A repo can turn these reviews off in its `.roborev.toml`:
+
+```toml
+[ci]
+review_default_branch = false
+```
+
+Expect this behavior:
+
+- **History is not reviewed.** The first poll after you turn the option on
+    records the branch head and reviews nothing. Only commits that land after
+    that poll are reviewed. Turning the option off forgets this position, so
+    turning it back on starts from the head again. The same happens to a repo
+    that leaves the polled repos and later returns.
+- **Commits that land while the daemon is stopped are reviewed.** The position
+    is saved, so the first poll after a restart queues a review for every commit
+    that landed in between.
+- **Opted-out commits are skipped.** A commit whose own `.roborev.toml` sets
+    `review_default_branch = false` is never reviewed, even when a later commit
+    turns reviews back on before the next poll. When the branch has no committed
+    `.roborev.toml`, the poller's checkout of the repo decides, as it does for
+    pull request reviews.
+- **Each commit is reviewed once.** The poller records each reviewed commit in
+    its local database. A restart or a repeated poll does not queue it again.
+    Rerunning a default-branch review updates its commit status when the new
+    result arrives. Rerunning an earlier run is refused until the latest run's
+    result is published.
+- **A failed review is not retried.** Pull request reviews retry after a
+    reviewer outage or an exhausted quota. A default-branch review reports the
+    failure once; rerun it to review the commit.
+- **Quiet hours delay the reviews.** Commits that land during
+    [quiet hours](#quiet-hours) are reviewed after quiet hours end.
+- **`batch_timeout` applies.** As with pull requests, a reviewer that runs past
+    `batch_timeout` is canceled once another reviewer has a result.
+- **A rewritten branch restarts from its new head.** When the last reviewed
+    commit is no longer in the branch's first-parent history, for example after
+    a force push, the poller cannot tell new commits from reviewed ones. It
+    reviews nothing and continues with the commits that land next. It does the
+    same when its clone of the repo no longer has the last reviewed commit.
+- **A new default branch starts from its head.** When the repo's default branch
+    is renamed, or another branch becomes the default, the poller follows the
+    new default branch and reviews the commits that land on it next.
+- **Every poll fetches every repo.** With the option on, the poller runs
+    `git fetch` for each configured repo on each interval, even when no pull
+    request changed. It also asks the repo's remote which branch is the default,
+    with `git remote set-head origin --auto`.
+- **No PR comment is posted.** The review is stored like any other review. Run
+    `roborev list` or `roborev show <job-id>` to read it, or use a
+    [review hook](/docs/guides/hooks/) to send results elsewhere.
+
+With GitHub credentials, the poller also posts a commit status with the context
+`roborev/default-branch` on each reviewed commit. This context is separate from
+the pull request's `roborev` status, which can be on the same commit after a
+fast-forward merge. It is informational: as with the pull request status, its
+state reports whether the review ran, and its description reports the result.
+
+A status that GitHub does not accept right away is sent again on the next poll.
+The poller stops trying when GitHub will never accept it: the token cannot write
+commit statuses, or GitHub no longer has the commit. The review itself is still
+stored.
+
+| State | Description | When |
+|-------|-------------|------|
+| `pending` | Review in progress | The review is queued or running |
+| `success` | No issues found | The review ran and found no issues at or above `min_severity` |
+| `success` | Issues found | The review ran and found issues at or above `min_severity` |
+| `failure` or `error` | Varies | A reviewer failed, the review was canceled, or the repo's `.roborev.toml` is invalid |
+
 ## Keeping the Daemon Running
 
 `roborev daemon start` runs the daemon in the background, but it won't survive a
@@ -1083,6 +1176,7 @@ set, it takes priority over the matrix fields for that repo.
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
 | `check` | bool | global `check` | Try synthesized findings before posting and keep those that hold up |
 | `rewrite` | bool | global `rewrite` | Rewrite checked findings in plain words; requires `check` |
+| `review_default_branch` | bool | `true` when on globally | Set `false` to skip default-branch reviews for this repo. It cannot turn them on when the global option is off. |
 
 ## CI Options Reference
 
@@ -1096,6 +1190,7 @@ set, it takes priority over the matrix fields for that repo.
 | `exclude_repos` | array | `[]` | Glob patterns to exclude from the resolved repo list |
 | `skip_labels` | array | `[]` | GitHub PR labels that skip CI reviews (case-insensitive) |
 | `skip_drafts` | bool | `false` | Skip draft PRs; global only. Ready PRs become eligible next poll under the normal gates. |
+| `review_default_branch` | bool | `false` | Also review each commit that lands on each repo's default branch. See [Review commits on the default branch](#review-commits-on-the-default-branch). |
 | `allowed_authors` | array | `[]` | GitHub logins whose PRs are reviewed (case-insensitive). See [Author filter](#author-filter). |
 | `allowed_author_associations` | array | `[]` | PR author associations that are reviewed, such as `OWNER`, `MEMBER`, `COLLABORATOR`. With `allowed_authors` also empty and `allow_codeowners` off, every author is reviewed. |
 | `allow_codeowners` | bool | `false` | Also review PRs from users the base branch's `CODEOWNERS` file names, directly or through a team. See [CODEOWNERS](#codeowners). |
