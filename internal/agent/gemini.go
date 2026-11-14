@@ -131,12 +131,25 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
-	args := a.buildArgs(agenticMode)
-
+	capabilities := geminiCLICapabilities{}
+	if a.usesAntigravity() {
+		capabilities = geminiCLICapabilities{streamJSON: true, resume: true, plan: true}
+	} else {
+		capabilities = geminiCapabilitiesFor(geminiVersionOutput(ctx, a.Command))
+	}
 	runAgent := a
-	result, stderrStr, err := runAgent.runGemini(ctx, repoPath, prompt, args, output)
-	resumeFailed := err != nil || (!a.Agentic && result == "No review output generated")
-	if resumeFailed && a.SessionID != "" && ctx.Err() == nil {
+	if !a.usesAntigravity() && !capabilities.resume {
+		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
+			if resetErr := resetter.ResetSessionID(); resetErr != nil {
+				return "", fmt.Errorf("clear unsupported Gemini session before run: %w", resetErr)
+			}
+		}
+		runAgent = a.WithSessionID("").(*GeminiAgent)
+	}
+	args := runAgent.buildArgsWithCapabilities(runAgent.Model, agenticMode, capabilities)
+	result, stderrStr, err := runAgent.runGemini(ctx, repoPath, prompt, args, capabilities.streamJSON, output)
+	resumeFailed := !agenticMode && (err != nil || result == "No review output generated")
+	if resumeFailed && runAgent.SessionID != "" && ctx.Err() == nil {
 		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
 			if resetErr := resetter.ResetSessionID(); resetErr != nil {
 				return "", fmt.Errorf("reset failed session before fresh run: %w", resetErr)
@@ -148,16 +161,35 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 			log.Printf("gemini: resumed session produced no review output, retrying in a fresh session")
 		}
 		runAgent = a.WithSessionID("").(*GeminiAgent)
-		result, stderrStr, err = runAgent.runGemini(ctx, repoPath, prompt, runAgent.buildArgs(agenticMode), output)
+		result, stderrStr, err = runAgent.runGemini(
+			ctx,
+			repoPath,
+			prompt,
+			runAgent.buildArgsWithCapabilities(runAgent.Model, agenticMode, capabilities),
+			capabilities.streamJSON,
+			output,
+		)
 	}
-	if err != nil && runAgent.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
+	if err != nil && runAgent.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) && ctx.Err() == nil {
+		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
+			if resetErr := resetter.ResetSessionID(); resetErr != nil {
+				return "", fmt.Errorf("reset failed model session before fallback: %w", resetErr)
+			}
+		}
 		// Built-in default model may be stale (Google renames
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
 		// config) fail fast so config errors are surfaced.
 		log.Printf("gemini: model %q not found, retrying without -m flag", runAgent.Model)
-		noModelArgs := runAgent.buildArgsWithModel("", agenticMode)
-		result, _, err = runAgent.runGemini(ctx, repoPath, prompt, noModelArgs, output)
+		noModelArgs := runAgent.buildArgsWithCapabilities("", agenticMode, capabilities)
+		result, _, err = runAgent.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities.streamJSON, output)
+	}
+	if !a.usesAntigravity() && !capabilities.resume {
+		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
+			if resetErr := resetter.ResetSessionID(); resetErr != nil {
+				return "", errors.Join(err, fmt.Errorf("clear unsupported Gemini session after run: %w", resetErr))
+			}
+		}
 	}
 	return result, err
 }
@@ -165,11 +197,26 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 // buildArgsWithModel builds CLI args with an explicit model override
 // (empty string omits the -m flag entirely).
 func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []string {
+	return a.buildArgsWithCapabilities(model, agenticMode, geminiCLICapabilities{
+		streamJSON: true,
+		resume:     true,
+		plan:       true,
+	})
+}
+
+func (a *GeminiAgent) buildArgsWithCapabilities(
+	model string,
+	agenticMode bool,
+	capabilities geminiCLICapabilities,
+) []string {
 	if a.usesAntigravity() {
 		return a.buildAntigravityArgs(agenticMode)
 	}
 
-	args := []string{"--output-format", "stream-json"}
+	var args []string
+	if capabilities.streamJSON {
+		args = append(args, "--output-format", "stream-json")
+	}
 
 	if model != "" {
 		args = append(args, "-m", model)
@@ -177,15 +224,48 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []strin
 
 	if agenticMode {
 		args = append(args, "--approval-mode", "yolo")
-	} else {
+	} else if capabilities.plan {
 		args = append(args, "--approval-mode", "plan")
 	}
 
-	if a.SessionID != "" && !strings.HasPrefix(a.SessionID, "-") {
+	if capabilities.resume && a.SessionID != "" && !strings.HasPrefix(a.SessionID, "-") {
 		args = append(args, "--resume", a.SessionID)
 	}
 
 	return args
+}
+
+type geminiCLICapabilities struct {
+	streamJSON bool
+	resume     bool
+	plan       bool
+}
+
+const (
+	geminiStreamJSONVersion   = "0.11.0"
+	geminiResumeVersion       = "0.15.0"
+	geminiPlanModeVersion     = "0.34.0"
+	geminiVersionProbeTimeout = 10 * time.Second
+)
+
+func geminiCapabilitiesFor(versionOutput string) geminiCLICapabilities {
+	streamJSON, _ := versionAtLeast(versionOutput, geminiStreamJSONVersion)
+	resume, _ := versionAtLeast(versionOutput, geminiResumeVersion)
+	plan, _ := versionAtLeast(versionOutput, geminiPlanModeVersion)
+	return geminiCLICapabilities{streamJSON: streamJSON, resume: resume, plan: plan}
+}
+
+func geminiVersionOutput(ctx context.Context, command string) string {
+	vctx, cancel := context.WithTimeout(ctx, geminiVersionProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(vctx, command, "--version")
+	configureCapabilityProbe(ctx, cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		log.Printf("gemini: could not read CLI version (%v)", procutil.WithStderr(err))
+		return ""
+	}
+	return string(out)
 }
 
 func (a *GeminiAgent) usesAntigravity() bool {
@@ -221,11 +301,24 @@ func (a *GeminiAgent) buildAntigravityArgs(agenticMode bool) []string {
 
 // runGemini executes the Gemini CLI with the given args and returns
 // the review result, captured stderr, and any error.
-func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, args []string, output io.Writer) (string, string, error) {
+func (a *GeminiAgent) runGemini(
+	ctx context.Context,
+	repoPath, prompt string,
+	args []string,
+	streamJSON bool,
+	output io.Writer,
+) (string, string, error) {
 	if a.usesAntigravity() {
 		return a.runAntigravity(ctx, repoPath, prompt, args, output)
 	}
 
+	parseOutput := parsePlainTextOutput
+	if streamJSON {
+		parseOutput = func(r io.Reader, sw *syncWriter) (string, error) {
+			parsed, err := a.parseStreamJSON(r, sw)
+			return parsed.result, err
+		}
+	}
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "gemini",
 		Command:      a.Command,
@@ -234,10 +327,7 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 		Stdin:        strings.NewReader(prompt),
 		Output:       output,
 		StreamStderr: true,
-		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			parsed, err := a.parseStreamJSON(r, sw)
-			return parsed.result, err
-		},
+		Parse:        parseOutput,
 	})
 	if runErr != nil {
 		return "", "", runErr
@@ -460,15 +550,23 @@ func antigravityVersionSupports(versionOutput, minimum string) bool {
 }
 
 func antigravityVersionAtLeast(versionOutput, minimum string, unknown bool) bool {
+	supported, known := versionAtLeast(versionOutput, minimum)
+	if !known {
+		return unknown
+	}
+	return supported
+}
+
+func versionAtLeast(versionOutput, minimum string) (bool, bool) {
 	for tok := range strings.FieldsSeq(versionOutput) {
 		if !strings.Contains(tok, ".") {
 			continue
 		}
 		if cmp, ok := compareDotVersion(tok, minimum); ok {
-			return cmp >= 0
+			return cmp >= 0, true
 		}
 	}
-	return unknown
+	return false, false
 }
 
 // compareDotVersion compares two dotted numeric versions (major.minor.patch,

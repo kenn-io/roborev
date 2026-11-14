@@ -1069,14 +1069,14 @@ func (db *DB) SaveJobSessionID(
 	return nil
 }
 
-// ClearResumedJobSessionID drops the inherited session after its resume fails,
-// allowing the fresh attempt to save its own session ID.
-func (db *DB) ClearResumedJobSessionID(jobID int64, workerID string) error {
+// ClearJobSessionID drops the current session when an attempt is abandoned,
+// allowing its replacement to save its own session ID.
+func (db *DB) ClearJobSessionID(jobID int64, workerID string) error {
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
 		    updated_at = ?, synced_at = NULL
-		WHERE id = ? AND status = 'running' AND worker_id = ? AND session_resumed = 1
+		WHERE id = ? AND status = 'running' AND worker_id = ?
 	`, time.Now().Format(time.RFC3339), jobID, workerID)
 	if err != nil {
 		return err

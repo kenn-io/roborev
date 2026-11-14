@@ -1329,6 +1329,11 @@ func findCompatibleReusableSession(
 	experiment *storage.ExperimentAssignmentInput,
 	ciPRNumber int,
 ) (string, *uuid.UUID) {
+	// Gemini sessions can depend on the project root, but CI reviews use a
+	// disposable exact checkout whose path changes for every job.
+	if opts.Source == storage.JobSourceCI && opts.Agent == "gemini" {
+		return "", nil
+	}
 	// A resumed agent session may retain the caller's cwd. Isolated committed
 	// reviews always start fresh; dirty and CI session policies are unchanged.
 	committedReview := opts.JobType == "" || opts.JobType == storage.JobTypeReview || opts.JobType == storage.JobTypeRange

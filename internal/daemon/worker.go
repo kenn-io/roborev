@@ -1521,7 +1521,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			}, false)
 		}
 	}, func() error {
-		if err := wp.db.ClearResumedJobSessionID(job.ID, workerID); err != nil {
+		if err := wp.db.ClearJobSessionID(job.ID, workerID); err != nil {
 			return err
 		}
 		job.SessionID = ""

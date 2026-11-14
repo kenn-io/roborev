@@ -70,7 +70,7 @@ func (w *SessionCaptureWriter) SessionID() string {
 	return w.sessionID
 }
 
-// ResetSessionID clears a reused session before a fresh retry captures its ID.
+// ResetSessionID clears an abandoned attempt before a fresh one captures its ID.
 func (w *SessionCaptureWriter) ResetSessionID() error {
 	if w.onReset != nil {
 		if err := w.onReset(); err != nil {

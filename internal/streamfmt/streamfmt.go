@@ -200,23 +200,13 @@ func LooksLikeJSON(line string) bool {
 			continue
 		case '{':
 			var probe struct {
-				Type           string `json:"type"`
-				Event          string `json:"event"`
-				ConversationID string `json:"conversation_id"`
-				StepUpdate     struct {
-					StepType string `json:"step_type"`
-				} `json:"step_update"`
-				Result struct {
-					Status string `json:"status"`
-				} `json:"result"`
+				Type  string `json:"type"`
+				Event string `json:"event"`
 			}
 			if json.Unmarshal([]byte(line), &probe) != nil {
 				return false
 			}
-			return probe.Type != "" ||
-				(probe.Event == "init" && probe.ConversationID != "") ||
-				(probe.Event == "step_update" && probe.StepUpdate.StepType != "") ||
-				(probe.Event == "result" && probe.Result.Status != "")
+			return probe.Type != "" || probe.Event != ""
 		default:
 			return false
 		}
