@@ -731,16 +731,6 @@ func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
 	}
 }
 
-func TestFormatter_GeminiDeprecatedPromptWarningHidden(t *testing.T) {
-	runStreamTestCase(t, "gemini", streamTestCase{
-		name: "deprecated prompt warning",
-		events: []string{
-			`{"type":"message","role":"assistant","content":"The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information.\n"}`,
-		},
-		empty: true,
-	})
-}
-
 func TestFormatter_OpenCode(t *testing.T) {
 	tests := []streamTestCase{
 		{

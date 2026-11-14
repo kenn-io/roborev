@@ -1408,14 +1408,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job,
 		cfg,
 	)
-	currentSessionCLI := sessionCLIForAgent(a)
-	if job.SessionID != "" && (job.SessionCLI != "" || a.Name() == "gemini") && job.SessionCLI != currentSessionCLI {
+	// A queued session ID only works with the CLI that created it.
+	if job.SessionID != "" && job.SessionCLI != sessionCLIForAgent(a) {
 		if err := wp.db.ClearJobSessionID(job.ID, workerID); err != nil {
 			wp.failOrRetryContext(ctx, workerID, job, a.Name(), fmt.Sprintf("clear incompatible session: %v", err))
 			return
 		}
 		job.SessionID = ""
-		job.SessionCLI = ""
 		job.ResumeSourceJobUUID = nil
 	}
 	if job.SessionID != "" || checkout.isolatedLocalReview {

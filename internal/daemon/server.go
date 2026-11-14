@@ -1347,15 +1347,6 @@ func findCompatibleReusableSession(
 	if err != nil || machineID == uuid.Nil() {
 		return "", "", nil
 	}
-	// Gemini CLI and Antigravity share a roborev agent name, but each resumes
-	// only the session IDs it created.
-	sessionCLI := ""
-	if opts.Agent == "gemini" {
-		resolved, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, opts.Agent, globalCfg)
-		if sessionCLI = sessionCLIForAgent(resolved); err != nil || sessionCLI == "" {
-			return "", "", nil
-		}
-	}
 	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
 		RepoID:                opts.RepoID,
 		Branch:                opts.Branch,
@@ -1366,7 +1357,6 @@ func findCompatibleReusableSession(
 		Reasoning:             opts.Reasoning,
 		ReviewType:            opts.ReviewType,
 		WorktreePath:          opts.WorktreePath,
-		SessionCLI:            sessionCLI,
 		PanelName:             opts.PanelName,
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
@@ -1395,7 +1385,7 @@ func findCompatibleReusableSession(
 		if err != nil || len(commitsSinceCandidate) > maxSessionReuseDistance {
 			continue
 		}
-		return candidate.SessionID, sessionCLI, candidate.UUID
+		return candidate.SessionID, candidate.SessionCLI, candidate.UUID
 	}
 	return "", "", nil
 }

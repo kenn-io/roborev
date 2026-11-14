@@ -82,6 +82,7 @@ func writeTempCommand(t *testing.T, script string) string {
 // MockCLIOpts controls the behavior of a mock agent CLI script.
 type MockCLIOpts struct {
 	HelpOutput   string
+	Version      string
 	ExitCode     int
 	CaptureArgs  bool
 	CaptureStdin bool
@@ -157,6 +158,10 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 			t.Fatalf("write help output file: %v", err)
 		}
 		script.WriteString(fmt.Sprintf(`case "$*" in *--help*) cat %q; exit 0;; esac`, helpFile) + "\n")
+	}
+
+	if opts.Version != "" {
+		fmt.Fprintf(&script, "if [ \"$1\" = \"--version\" ]; then echo %q; exit 0; fi\n", opts.Version)
 	}
 
 	if opts.CaptureArgs {

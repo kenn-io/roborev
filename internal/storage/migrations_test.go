@@ -51,19 +51,6 @@ func TestSchemaMigrationVersionsAreContiguous(t *testing.T) {
 	}
 }
 
-func TestSessionCLIMigrationAddsColumnAndCanRetry(t *testing.T) {
-	t.Parallel()
-	db := openUnmigratedDB(t)
-	_, err := db.ExecContext(t.Context(), `CREATE TABLE review_jobs (id INTEGER PRIMARY KEY)`)
-	require.NoError(t, err)
-
-	require.NoError(t, migrateSessionCLI(t.Context(), db))
-	require.NoError(t, migrateSessionCLI(t.Context(), db))
-	exists, err := hasColumn(t.Context(), db, "review_jobs", "session_cli")
-	require.NoError(t, err)
-	assert.True(t, exists)
-}
-
 func TestRunSchemaMigrationsAppliesEachVersionOnce(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)

@@ -12,12 +12,11 @@ placeholder as a string so the excerpt remains valid JSON.
 - `antigravity-init-capture.jsonl` is the redacted `init` line from the
   Antigravity 1.1.17 report in [upstream issue
   #841](https://github.com/google-antigravity/antigravity-cli/issues/841).
-- `antigravity-resume-error-capture.jsonl` contains the captured resumed
-  `step_update` and `result` lines from [upstream issue
+- `antigravity-resume-error-capture.jsonl` contains the captured error
+  `result` line from [upstream issue
   #1048](https://github.com/google-antigravity/antigravity-cli/issues/1048).
 - `antigravity-success-result-capture.jsonl` is the fresh-run `result` from
   that same report. It records Antigravity 1.2.6.
 
 The reports don't include full stdout transcripts. Tests use only the captured
-`init` and `result` lines needed for those behaviors. The `step_update` lines
-remain in the provenance capture and aren't parsed as Antigravity results.
+`init` and `result` lines needed for those behaviors.

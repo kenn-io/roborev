@@ -3,21 +3,22 @@ package streamfmt
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"strings"
-
-	"go.kenn.io/roborev/internal/agentwire"
 )
 
 type geminiDecoder struct{}
 
 type geminiStreamEvent struct {
-	Type       string                      `json:"type"`
-	Event      string                      `json:"event"`
-	Role       string                      `json:"role,omitempty"`
-	Content    jsontext.Value              `json:"content,omitempty"`
-	ToolName   string                      `json:"tool_name,omitempty"`
-	Parameters jsontext.Value              `json:"parameters,omitempty"`
-	Result     agentwire.AntigravityResult `json:"result"`
+	Type       string         `json:"type"`
+	Event      string         `json:"event"`
+	Role       string         `json:"role,omitempty"`
+	Content    jsontext.Value `json:"content,omitempty"`
+	ToolName   string         `json:"tool_name,omitempty"`
+	Parameters jsontext.Value `json:"parameters,omitempty"`
+	Result     struct {
+		Status   string `json:"status"`
+		Response string `json:"response"`
+		Error    string `json:"error"`
+	} `json:"result"`
 }
 
 func (*geminiDecoder) Decode(line string) []Event {
@@ -44,9 +45,6 @@ func (*geminiDecoder) Decode(line string) []Event {
 		}
 		var text string
 		if err := json.Unmarshal(streamEvent.Content, &text); err != nil {
-			return nil
-		}
-		if strings.TrimSpace(text) == agentwire.GeminiDeprecatedPromptMessage {
 			return nil
 		}
 		return []Event{{Kind: EventText, Text: text}}

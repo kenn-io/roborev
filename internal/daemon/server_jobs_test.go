@@ -930,10 +930,7 @@ func TestFindReusableSessionIDUsesDirtyBaseCommit(t *testing.T) {
 	assert.Equal(t, "session-dirty", reused)
 }
 
-func TestFindCompatibleReusableSessionMatchesGeminiCLI(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses an executable CLI fixture")
-	}
+func TestFindCompatibleReusableSessionReturnsSessionCLI(t *testing.T) {
 	_, db, _ := newTestServer(t)
 	repo := testutil.InitTestRepo(t)
 	targetSHA := repo.HeadSHA()
@@ -942,10 +939,8 @@ func TestFindCompatibleReusableSessionMatchesGeminiCLI(t *testing.T) {
 	commit, err := db.GetOrCreateCommit(storedRepo.ID, targetSHA, "Author", "Subject", time.Now())
 	require.NoError(t, err)
 
-	fakeGemini := filepath.Join(t.TempDir(), "gemini")
-	require.NoError(t, os.WriteFile(fakeGemini, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	reuseSessions := true
-	globalCfg := &config.Config{GeminiCmd: fakeGemini, ReuseReviewSession: &reuseSessions}
+	globalCfg := &config.Config{ReuseReviewSession: &reuseSessions}
 	opts := storage.EnqueueOpts{
 		RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: targetSHA,
 		Branch: "feature/session", Agent: "gemini", Reasoning: "thorough", ReviewType: config.ReviewTypeDefault,
@@ -956,23 +951,12 @@ func TestFindCompatibleReusableSessionMatchesGeminiCLI(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "gemini", "prompt", "No issues found."))
-	setSessionCLI := func(sessionCLI string) {
-		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = 'session', session_cli = ? WHERE id = ?`, sessionCLI, job.ID)
-		require.NoError(t, err)
-	}
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = 'session', session_cli = 'agy' WHERE id = ?`, job.ID)
+	require.NoError(t, err)
 
-	setSessionCLI("agy")
-	got, _, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
-	assert.Empty(t, got, "Gemini must not resume an Antigravity session")
-
-	setSessionCLI("")
-	got, _, _ = findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
-	assert.Empty(t, got, "sessions without CLI provenance are not reusable")
-
-	setSessionCLI("gemini")
 	got, sessionCLI, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
 	assert.Equal(t, "session", got)
-	assert.Equal(t, "gemini", sessionCLI)
+	assert.Equal(t, "agy", sessionCLI, "the worker compares this CLI before resuming")
 }
 
 func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *testing.T) {

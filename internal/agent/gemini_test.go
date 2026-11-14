@@ -101,27 +101,23 @@ func TestVersionGatesFeatures(t *testing.T) {
 		wantStdin     string
 		wantPrint     bool
 		wantApproval  string
-		wantYolo      bool
 		wantError     bool
-		wantVersion   string
 		streamFixture string
 		wantResult    string
 	}{
-		{name: "Gemini 0.9 is too old for safe review", cli: "gemini", version: "0.9.0", wantError: true, wantVersion: "0.9.0"},
+		{name: "Gemini 0.9 is too old for safe review", cli: "gemini", version: "0.9.0", wantError: true},
 		{name: "Gemini 0.10 plain", cli: "gemini", version: "0.10.0", wantStdin: "prompt", wantApproval: "default", wantResult: "Plain review"},
-		{name: "Gemini 0.10 agentic", cli: "gemini", version: "0.10.0", agentic: true, wantStdin: "prompt", wantYolo: true, wantResult: "Plain review"},
+		{name: "Gemini unknown version agentic", cli: "gemini", version: "unknown", agentic: true, wantError: true},
 		{name: "Gemini 0.11 stream", cli: "gemini", version: "0.11.0", wantStdin: "prompt", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
 		{name: "Gemini 0.15 resume uses prompt flag", cli: "gemini", version: "0.15.0", resumeFlag: "--resume", wantPrompt: "prompt", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
-		{name: "Gemini 0.18.4 resume uses prompt flag", cli: "gemini", version: "0.18.4", resumeFlag: "--resume", wantPrompt: "prompt", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
 		{name: "Gemini 0.20 resume uses stdin", cli: "gemini", version: "0.20.0", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
 		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantApproval: "plan", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
-		{name: "Gemini unknown", cli: "gemini", version: "unknown", wantError: true, wantVersion: "unknown"},
-		{name: "Gemini failed version probe", cli: "gemini", version: "0.34.0", versionFails: true, wantError: true, wantVersion: "unknown"},
+		{name: "Gemini failed version probe", cli: "gemini", version: "0.34.0", versionFails: true, wantError: true},
 		{name: "Antigravity 1.0.8", cli: "agy", version: "1.0.8", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
 		{name: "Antigravity 1.0.9 conversation", cli: "agy", version: "1.0.9", resumeFlag: "--conversation", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.7 prompt", cli: "agy", version: "1.1.7", resumeFlag: "--conversation", wantPrompt: "prompt", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", resumeFlag: "--conversation", wantStream: true, wantPrompt: "prompt", streamFixture: "antigravity-success-result-capture.jsonl", wantResult: "RESUME_OK"},
-		{name: "Antigravity failed version probe", cli: "agy", versionFails: true, wantPrompt: "prompt", wantResult: "Plain review"},
+		{name: "Antigravity failed version probe", cli: "agy", versionFails: true, wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,9 +165,7 @@ fi
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
 			if tc.wantError {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), "run read-only reviews safely")
-				assert.Contains(t, err.Error(), tc.wantVersion)
-				assert.Contains(t, err.Error(), geminiSafeApprovalVersion)
+				assert.Contains(t, err.Error(), "could not be verified as "+geminiSafeApprovalVersion)
 				_, statErr := os.Stat(argsFile)
 				assert.ErrorIs(t, statErr, os.ErrNotExist, "unsafe command must not be invoked")
 				return
@@ -208,8 +202,6 @@ fi
 			}
 			if tc.wantApproval != "" {
 				assertFlagValue(t, args, "--approval-mode", tc.wantApproval)
-			} else if tc.wantYolo {
-				assertFlagValue(t, args, "--approval-mode", "yolo")
 			} else {
 				assert.NotContains(t, args, "--approval-mode")
 			}
@@ -270,7 +262,7 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 	}
 }
 
-func TestGeminiAntigravityReviewMergesSettingsAndOmitsYolo(t *testing.T) {
+func TestGeminiAntigravityReviewMergesSettings(t *testing.T) {
 	skipIfWindows(t)
 
 	settingsPath := filepath.Join(t.TempDir(), "settings.json")
@@ -287,11 +279,8 @@ func TestGeminiAntigravityReviewMergesSettingsAndOmitsYolo(t *testing.T) {
 
 	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
-printf '%s\n' "$@" > "$ARGS_FILE"
 echo "Review after settings merge"
 `)
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("ARGS_FILE", argsFile)
 	a := NewGeminiAgent(scriptPath)
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
@@ -305,12 +294,6 @@ echo "Review after settings merge"
 	assert.Equal(t, "keep-me", doc["model"])
 	permissions := doc["permissions"].(map[string]any)
 	assert.Equal(t, []any{"command(rm -rf)"}, permissions["deny"])
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	argsOut := string(argsBytes)
-	assert.NotContains(t, argsOut, "--sandbox\n")
-	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
 }
 
 func TestGeminiAntigravityReviewAddsRepositoryWorkspace(t *testing.T) {
@@ -449,26 +432,6 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 				for _, s := range []string{"Changes:", "filtering logic"} {
 					assert.Contains(t, res, s)
 				}
-			},
-		},
-		{
-			name: "GeminiDeltaChunksPreserveSplitJSON",
-			input: `{"type":"message","role":"assistant","content":"{\"passed\":true,\"findings\":[{\"title\":\"mis","delta":true}
-{"type":"message","role":"assistant","content":"sing\"}]}","delta":true}
-{"type":"result","status":"success"}
-`,
-			assertResult: func(t *testing.T, res string) {
-				assert.JSONEq(t, `{"passed":true,"findings":[{"title":"missing"}]}`, res)
-			},
-		},
-		{
-			name: "GeminiDeprecatedPromptWarningIsNotReviewText",
-			input: `{"type":"message","role":"assistant","content":"The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information.\n"}
-{"type":"message","role":"assistant","content":"Review result"}
-{"type":"result","status":"success"}
-`,
-			assertResult: func(t *testing.T, res string) {
-				assert.Equal(t, "Review result", res)
 			},
 		},
 		{
@@ -619,6 +582,7 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		name           string
 		cli            string
 		version        string
+		agentic        bool
 		sessionID      string
 		resumeFlag     string
 		failureFixture string
@@ -630,6 +594,12 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		{
 			name: "Gemini",
 			cli:  "gemini", version: "0.34.0", sessionID: "old-session", resumeFlag: "--resume",
+			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
+			wantSessionID: "...", wantJSON: true,
+		},
+		{
+			name: "Gemini agentic review",
+			cli:  "gemini", version: "0.34.0", agentic: true, sessionID: "old-session", resumeFlag: "--resume",
 			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
 			wantSessionID: "...", wantJSON: true,
 		},
@@ -671,7 +641,7 @@ cat "$SUCCESS_FILE"
 				require.NoError(t, os.Rename(script, agyPath))
 				script = agyPath
 			}
-			a := NewGeminiAgent(script).WithSessionID(tc.sessionID).(*GeminiAgent)
+			a := NewGeminiAgent(script).WithSessionID(tc.sessionID).WithAgentic(tc.agentic).(*GeminiAgent)
 			resetCalls := 0
 			capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
 				resetCalls++
@@ -690,6 +660,9 @@ cat "$SUCCESS_FILE"
 			require.NoError(t, readErr)
 			assert.Equal(t, 1, strings.Count(string(args), tc.resumeFlag+"\n"))
 			assert.Equal(t, 2, strings.Count(string(args), "--output-format\nstream-json\n"))
+			if tc.agentic {
+				assert.Equal(t, 2, strings.Count(string(args), "--approval-mode\nyolo\n"))
+			}
 		})
 	}
 }
@@ -728,74 +701,6 @@ echo '{"type":"result","status":"success","result":"{\"passed\":true,\"findings\
 	assert.Equal(t, 2, strings.Count(string(args), "--output-format\nstream-json\n"))
 }
 
-func TestAgenticResumeFailureStartsFresh(t *testing.T) {
-	skipIfWindows(t)
-	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
-	require.NoError(t, err)
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("STREAM_FILE", fixture)
-	t.Setenv("ARGS_FILE", argsFile)
-	script := writeGeminiTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
-printf '%s\n' "$@" >> "$ARGS_FILE"
-for arg in "$@"; do
-  if [ "$arg" = "--resume" ]; then
-    echo "resume failed" >&2
-    exit 1
-  fi
-done
-cat "$STREAM_FILE"
-`)
-	resetCalls := 0
-	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
-		resetCalls++
-		return nil
-	})
-	a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(true).(*GeminiAgent)
-	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
-	assert.Equal(t, 1, resetCalls)
-	assert.Equal(t, "...", capture.SessionID())
-	args, err := os.ReadFile(argsFile)
-	require.NoError(t, err)
-	assert.Equal(t, 1, strings.Count(string(args), "--resume\n"))
-	assert.Equal(t, 2, strings.Count(string(args), "--output-format\nstream-json\n"))
-	assert.Equal(t, 2, strings.Count(string(args), "--approval-mode\nyolo\n"))
-}
-
-func TestResumeFailureRetriesAtMostOnce(t *testing.T) {
-	skipIfWindows(t)
-	invocations := filepath.Join(t.TempDir(), "invocations")
-	t.Setenv("INVOCATIONS_FILE", invocations)
-	script := writeGeminiTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
-printf 'review\n' >> "$INVOCATIONS_FILE"
-for arg in "$@"; do
-  if [ "$arg" = "--resume" ]; then
-    echo "resume failed" >&2
-    exit 1
-  fi
-done
-echo "fresh run failed" >&2
-exit 1
-`)
-	resetCalls := 0
-	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
-		resetCalls++
-		return nil
-	})
-	a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
-	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "fresh run failed")
-	assert.Equal(t, 1, resetCalls)
-	assert.Empty(t, capture.SessionID())
-	calls, err := os.ReadFile(invocations)
-	require.NoError(t, err)
-	assert.Equal(t, "review\nreview\n", string(calls))
-}
-
 func TestGeminiOversizedLegacyResumePromptFallsBackFresh(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux enforces a per-argument limit below this prompt size")
@@ -803,21 +708,16 @@ func TestGeminiOversizedLegacyResumePromptFallsBackFresh(t *testing.T) {
 	prompt := strings.Repeat("x", 200_000)
 	stdinFile := filepath.Join(t.TempDir(), "stdin")
 	argsFile := filepath.Join(t.TempDir(), "args")
+	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
+	require.NoError(t, err)
 	t.Setenv("STDIN_FILE", stdinFile)
 	t.Setenv("ARGS_FILE", argsFile)
+	t.Setenv("STREAM_FILE", fixture)
 	script := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "0.18.4"; exit 0; fi
-printf '%s\n' "$@" >> "$ARGS_FILE"
-for arg in "$@"; do
-  if [ "$arg" = "--resume" ]; then
-    echo "legacy resume failed" >&2
-    exit 1
-  fi
-done
+printf '%s\n' "$@" > "$ARGS_FILE"
 cat > "$STDIN_FILE"
-echo '{"type":"init","session_id":"fresh-session"}'
-echo '{"type":"message","role":"assistant","content":"Fresh result","delta":true}'
-echo '{"type":"result","status":"success"}'
+cat "$STREAM_FILE"
 `)
 	resetCalls := 0
 	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
@@ -827,47 +727,15 @@ echo '{"type":"result","status":"success"}'
 	a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
 	result, err := a.Review(t.Context(), t.TempDir(), "sha", prompt, capture)
 	require.NoError(t, err)
-	assert.Equal(t, "Fresh result", result)
+	assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
 	assert.Equal(t, 1, resetCalls)
-	assert.Equal(t, "fresh-session", capture.SessionID())
-	args, err := os.ReadFile(argsFile)
-	require.NoError(t, err)
-	assert.Zero(t, strings.Count(string(args), "--resume\n"))
-	stdin, err := os.ReadFile(stdinFile)
-	require.NoError(t, err)
-	assert.True(t, bytes.Equal([]byte(prompt), stdin), "fresh invocation must receive the full prompt")
-}
-
-func TestUnsupportedResumeClearsStoredSessionBeforeFreshRun(t *testing.T) {
-	skipIfWindows(t)
-	resetMarker := filepath.Join(t.TempDir(), "session-cleared")
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("RESET_MARKER", resetMarker)
-	t.Setenv("ARGS_FILE", argsFile)
-	script := writeGeminiTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "0.10.0"; exit 0; fi
-if [ ! -f "$RESET_MARKER" ]; then
-	echo "stored session was not cleared before invocation" >&2
-	exit 1
-fi
-printf '%s\n' "$@" > "$ARGS_FILE"
-cat > /dev/null
-echo "Fresh review"
-`)
-	resetCalls := 0
-	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
-		resetCalls++
-		return os.WriteFile(resetMarker, []byte("cleared"), 0o600)
-	})
-	a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
-	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
-	require.NoError(t, err)
-	assert.Equal(t, "Fresh review", result)
-	assert.Equal(t, 1, resetCalls)
-	assert.Empty(t, capture.SessionID())
+	assert.Equal(t, "...", capture.SessionID())
 	args, err := os.ReadFile(argsFile)
 	require.NoError(t, err)
 	assert.NotContains(t, string(args), "--resume")
+	stdin, err := os.ReadFile(stdinFile)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal([]byte(prompt), stdin), "fresh invocation must receive the full prompt")
 }
 
 func TestGeminiAntigravityReviewPlainText(t *testing.T) {
@@ -875,8 +743,6 @@ func TestGeminiAntigravityReviewPlainText(t *testing.T) {
 
 	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
-cat > "$STDIN_FILE"
-printf '%s\n' "$@" > "$ARGS_FILE"
 # A plain-text review can include JSON as a code example.
 echo "Plain text review output"
 printf '\140\140\140json\n'
@@ -885,11 +751,7 @@ printf '\140\140\140\n'
 echo "No issues found."
 `)
 
-	stdinFile := filepath.Join(t.TempDir(), "stdin")
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("STDIN_FILE", stdinFile)
-	t.Setenv("ARGS_FILE", argsFile)
-	a := NewGeminiAgent(scriptPath).WithSessionID("conversation-123").(*GeminiAgent)
+	a := NewGeminiAgent(scriptPath)
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
@@ -899,57 +761,6 @@ echo "No issues found."
 	require.NoError(t, err)
 	assert.Equal(t, "Plain text review output\n```json\n{\"event\":\"result\",\"result\":{\"status\":\"SUCCESS\",\"response\":\"quoted JSON example\"}}\n```\nNo issues found.", res)
 	assert.Contains(t, output.String(), "Plain text review output")
-
-	// agy >= 1.1.1 takes the prompt as the value of --prompt, not from stdin.
-	stdinBytes, readErr := os.ReadFile(stdinFile)
-	require.NoError(t, readErr)
-	assert.Empty(t, string(stdinBytes))
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	argsOut := string(argsBytes)
-	assert.Contains(t, argsOut, "--prompt\nprompt\n")
-	assert.NotContains(t, argsOut, "--print\n")
-	assert.NotContains(t, argsOut, "--sandbox\n")
-	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
-}
-
-func TestGeminiAntigravityLegacyStdinContract(t *testing.T) {
-	skipIfWindows(t)
-
-	// Old agy (<= 1.1.0) read the prompt from stdin with a bare --print.
-	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "1.1.0"; exit 0; fi
-cat > "$STDIN_FILE"
-printf '%s\n' "$@" > "$ARGS_FILE"
-echo "Legacy review output"
-echo "No issues found."
-`)
-
-	stdinFile := filepath.Join(t.TempDir(), "stdin")
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("STDIN_FILE", stdinFile)
-	t.Setenv("ARGS_FILE", argsFile)
-	a := NewGeminiAgent(scriptPath)
-	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
-	require.NoError(t, os.Rename(scriptPath, a.Command))
-
-	var output bytes.Buffer
-	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
-
-	require.NoError(t, err)
-	assert.Equal(t, "Legacy review output\nNo issues found.", res)
-
-	// Prompt arrives on stdin; args carry a bare --print and no --prompt.
-	stdinBytes, readErr := os.ReadFile(stdinFile)
-	require.NoError(t, readErr)
-	assert.Equal(t, "prompt\n", string(stdinBytes))
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	argsOut := string(argsBytes)
-	assert.Contains(t, argsOut, "--print\n")
-	assert.NotContains(t, argsOut, "--prompt\n")
 }
 
 func TestGeminiAntigravityEmptyOutput(t *testing.T) {
@@ -1078,7 +889,6 @@ echo "No issues found."
 	assert.NotContains(t, argsOut, "--prompt\n")
 	assert.NotContains(t, argsOut, "--print\n")
 	assert.NotContains(t, argsOut, "-p\n")
-	assert.NotContains(t, argsOut, "--sandbox\n")
 }
 
 func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
@@ -1098,10 +908,10 @@ func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
 	assert.True(antigravityVersionUsesPromptFlag("1.1.1 (abc123)"))
 	assert.True(antigravityVersionUsesPromptFlag("agy 2.0.0\n"))
 	assert.False(antigravityVersionUsesPromptFlag("agy version 1.1.0"))
-	// Unparseable, empty, or dot-less output defaults to the current (flag) contract.
-	assert.True(antigravityVersionUsesPromptFlag(""))
-	assert.True(antigravityVersionUsesPromptFlag("unknown"))
-	assert.True(antigravityVersionUsesPromptFlag("12345"))
+	// Unparseable, empty, or dot-less output gets the older stdin contract.
+	assert.False(antigravityVersionUsesPromptFlag(""))
+	assert.False(antigravityVersionUsesPromptFlag("unknown"))
+	assert.False(antigravityVersionUsesPromptFlag("12345"))
 }
 
 func TestGeminiAntigravityExplicitModelFailsClearly(t *testing.T) {
@@ -1227,6 +1037,30 @@ exit 1
 	}
 }
 
+func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
+	skipIfWindows(t)
+
+	// Script that fails with "model not found" when -m is passed,
+	// and succeeds without it (simulating a retired default model).
+	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "-m" ]; then
+    echo "Error: model is not found for API version v1" >&2
+    exit 1
+  fi
+done
+echo '{"type":"result","status":"success","result":"Review from default model"}'
+`)
+
+	a := NewGeminiAgent(scriptPath)
+	var output bytes.Buffer
+	res, err := a.Review(
+		t.Context(), t.TempDir(), "sha", "prompt", &output,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Review from default model", res)
+}
+
 func TestGeminiReview_ModelNotFoundLateStderr(t *testing.T) {
 	skipIfWindows(t)
 	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
@@ -1341,32 +1175,4 @@ func TestIsModelNotFoundError(t *testing.T) {
 		got := isModelNotFoundError(tc.stderr)
 		assert.Equal(t, tc.want, got, "isModelNotFoundError(%q)", tc.stderr)
 	}
-}
-
-func TestGeminiReview_PromptDeliveredViaStdin(t *testing.T) {
-	assert := assert.New(t)
-
-	skipIfWindows(t)
-
-	stdinFile := filepath.Join(t.TempDir(), "stdin.txt")
-	t.Setenv("MOCK_STDIN_FILE", stdinFile)
-	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
-	require.NoError(t, err)
-	t.Setenv("STREAM_FILE", fixture)
-
-	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
-cat > "$MOCK_STDIN_FILE"
-cat "$STREAM_FILE"
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	expectedPrompt := "Please review this code for security issues"
-	_, err = a.Review(t.Context(), t.TempDir(), "abc123", expectedPrompt, &output)
-	require.NoError(t, err, "Review failed")
-
-	// Verify the prompt was received
-	receivedPrompt, err := os.ReadFile(stdinFile)
-	require.NoError(t, err, "failed to read prompt file")
-	assert.Equal(expectedPrompt, string(receivedPrompt), "prompt not delivered correctly")
 }

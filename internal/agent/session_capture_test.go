@@ -38,7 +38,7 @@ func TestExtractSessionID(t *testing.T) {
 		},
 		{
 			name: "conversation_id outside an init event is ignored",
-			line: `{"event":"step_update","conversation_id":"agy-step-789"}`,
+			line: `{"event":"other","conversation_id":"agy-event-789"}`,
 			want: "",
 		},
 		{
