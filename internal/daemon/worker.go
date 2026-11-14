@@ -1611,7 +1611,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		implementationRef, err = gitrepo.Resolve(ctx, reviewRepoPath, "HEAD")
 		if err == nil {
 			planningSessionWriter = agent.NewSessionCaptureWriter(
-				io.MultiWriter(jobLog, outputWriter, planningUsageCapture), nil,
+				io.MultiWriter(jobLog, outputWriter, planningUsageCapture), nil, nil,
 			)
 			fixPlan, reviewPrompt, err = wp.prepareFixPlan(
 				ctx, planningTimeout, workerID, a, job, reviewRepoPath,

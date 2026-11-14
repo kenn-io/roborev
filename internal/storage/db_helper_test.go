@@ -213,3 +213,27 @@ func seedJobs(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob
 	}
 	return repo, jobs
 }
+
+func seedJobsBeforeSessionCLIMigration(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob) {
+	t.Helper()
+	repo := createRepo(t, db, repoPath)
+	jobs := make([]*ReviewJob, n)
+	for i := range n {
+		sha := fmt.Sprintf("%s-sha%d", filepath.Base(repoPath), i)
+		commit := createCommit(t, db, repo.ID, sha)
+		job := enqueueJobBeforeSessionCLIMigration(t, db, repo.ID, commit.ID, sha)
+		jobs[i] = job
+	}
+	return repo, jobs
+}
+
+func enqueueJobBeforeSessionCLIMigration(t *testing.T, db *DB, repoID, commitID int64, sha string) *ReviewJob {
+	t.Helper()
+	result, err := db.ExecContext(t.Context(), `
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent)
+		VALUES (?, ?, ?, 'codex')`, repoID, commitID, sha)
+	require.NoError(t, err, "failed to seed a job before session_cli exists")
+	id, err := result.LastInsertId()
+	require.NoError(t, err)
+	return &ReviewJob{ID: id, RepoID: repoID, CommitID: &commitID, GitRef: sha, Agent: "codex", Status: JobStatusQueued}
+}

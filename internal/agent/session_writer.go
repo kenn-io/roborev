@@ -26,12 +26,8 @@ type SessionCaptureWriter struct {
 // NewSessionCaptureWriter wraps dst and reports the first captured
 // session ID via onCapture (if non-nil). Bytes pass through to dst
 // unchanged.
-func NewSessionCaptureWriter(dst io.Writer, onCapture func(string), onReset ...func() error) *SessionCaptureWriter {
-	w := &SessionCaptureWriter{dst: dst, onCapture: onCapture}
-	if len(onReset) > 0 {
-		w.onReset = onReset[0]
-	}
-	return w
+func NewSessionCaptureWriter(dst io.Writer, onCapture func(string), onReset func() error) *SessionCaptureWriter {
+	return &SessionCaptureWriter{dst: dst, onCapture: onCapture, onReset: onReset}
 }
 
 func (w *SessionCaptureWriter) Write(p []byte) (int, error) {

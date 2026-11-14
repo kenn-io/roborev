@@ -5,21 +5,19 @@ import (
 	"encoding/json/v2"
 	"strings"
 
-	"go.kenn.io/roborev/internal/agent/antigravity"
+	"go.kenn.io/roborev/internal/agentwire"
 )
 
 type geminiDecoder struct{}
 
-const geminiDeprecatedPromptMessage = "The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information."
-
 type geminiStreamEvent struct {
-	Type       string             `json:"type"`
-	Event      string             `json:"event"`
-	Role       string             `json:"role,omitempty"`
-	Content    jsontext.Value     `json:"content,omitempty"`
-	ToolName   string             `json:"tool_name,omitempty"`
-	Parameters jsontext.Value     `json:"parameters,omitempty"`
-	Result     antigravity.Result `json:"result"`
+	Type       string                      `json:"type"`
+	Event      string                      `json:"event"`
+	Role       string                      `json:"role,omitempty"`
+	Content    jsontext.Value              `json:"content,omitempty"`
+	ToolName   string                      `json:"tool_name,omitempty"`
+	Parameters jsontext.Value              `json:"parameters,omitempty"`
+	Result     agentwire.AntigravityResult `json:"result"`
 }
 
 func (*geminiDecoder) Decode(line string) []Event {
@@ -48,7 +46,7 @@ func (*geminiDecoder) Decode(line string) []Event {
 		if err := json.Unmarshal(streamEvent.Content, &text); err != nil {
 			return nil
 		}
-		if strings.TrimSpace(text) == geminiDeprecatedPromptMessage {
+		if strings.TrimSpace(text) == agentwire.GeminiDeprecatedPromptMessage {
 			return nil
 		}
 		return []Event{{Kind: EventText, Text: text}}

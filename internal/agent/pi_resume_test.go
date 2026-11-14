@@ -66,7 +66,7 @@ printf '%s\n' "$result" > "$output"
 `
 	a := NewPiAgent(writeTempCommand(t, script))
 	repoDir := t.TempDir()
-	capture := NewSessionCaptureWriter(&bytes.Buffer{}, nil)
+	capture := NewSessionCaptureWriter(&bytes.Buffer{}, nil, nil)
 	result, err := a.ReviewWithSchema(t.Context(), repoDir, "HEAD", "original review", jsontext.Value(`{}`), capture)
 	require.NoError(t, err)
 	assert.JSONEq(`{"review":"fresh"}`, string(result))
@@ -74,7 +74,7 @@ printf '%s\n' "$result" > "$output"
 	sessionPath := filepath.Join(dataDir, "sessions", "--repo--", "review_"+sessionID+".jsonl")
 	require.FileExists(t, sessionPath)
 	resumed := a.WithSessionID(capture.SessionID()).(*PiAgent)
-	resumeCapture := NewSessionCaptureWriter(&bytes.Buffer{}, nil)
+	resumeCapture := NewSessionCaptureWriter(&bytes.Buffer{}, nil, nil)
 	result, err = resumed.ReviewWithSchema(t.Context(), repoDir, "HEAD", "focused follow-up", jsontext.Value(`{}`), resumeCapture)
 	require.NoError(t, err)
 	assert.JSONEq(`{"review":"resumed"}`, string(result))

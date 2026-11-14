@@ -14,13 +14,15 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/roborev/internal/agent/antigravity"
+	"go.kenn.io/roborev/internal/agentwire"
 	"go.kenn.io/roborev/internal/procutil"
 )
 
 // errNoStreamJSON indicates no valid stream-json events were parsed.
 // Stream-json output is required; this error means the Gemini CLI may need to be upgraded.
 var errNoStreamJSON = errors.New("no valid stream-json events parsed from output")
+
+var errIncompleteGeminiStream = errors.New("Gemini stream ended without a successful result event")
 
 // defaultGeminiModel is the built-in default that may be auto-retried
 // without -m if Google retires the model name.
@@ -151,10 +153,8 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if a.SessionID != "" && !capabilities.resume {
 		// A CLI downgrade cannot resume this session. Clear its stored ID before
 		// running fresh so a failed attempt cannot leave it available to reuse.
-		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
-			if resetErr := resetter.ResetSessionID(); resetErr != nil {
-				return "", resetErr
-			}
+		if resetErr := resetSessionCapture(output); resetErr != nil {
+			return "", resetErr
 		}
 		runAgent = a.WithSessionID("").(*GeminiAgent)
 	}
@@ -162,10 +162,8 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	result, stderrStr, err := runAgent.runGemini(ctx, repoPath, prompt, args, capabilities, output)
 	if capabilities.resume && a.SessionID != "" && ctx.Err() == nil &&
 		(err != nil || result == "No review output generated") {
-		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
-			if resetErr := resetter.ResetSessionID(); resetErr != nil {
-				return "", errors.Join(err, resetErr)
-			}
+		if resetErr := resetSessionCapture(output); resetErr != nil {
+			return "", errors.Join(err, resetErr)
 		}
 		log.Printf("gemini: resumed session failed (%v), retrying in a fresh session", err)
 		runAgent = a.WithSessionID("").(*GeminiAgent)
@@ -177,10 +175,8 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
 		// config) fail fast so config errors are surfaced.
-		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
-			if resetErr := resetter.ResetSessionID(); resetErr != nil {
-				return "", errors.Join(err, resetErr)
-			}
+		if resetErr := resetSessionCapture(output); resetErr != nil {
+			return "", errors.Join(err, resetErr)
 		}
 		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
 		runAgent = runAgent.WithSessionID("").(*GeminiAgent)
@@ -188,6 +184,13 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		result, _, err = runAgent.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities, output)
 	}
 	return result, err
+}
+
+func resetSessionCapture(output io.Writer) error {
+	if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
+		return resetter.ResetSessionID()
+	}
+	return nil
 }
 
 // buildArgsWithModel builds CLI args with an explicit model override
@@ -229,12 +232,11 @@ type geminiCLICapabilities struct {
 }
 
 const (
-	geminiSafeApprovalVersion     = "0.10.0"
-	geminiStreamJSONVersion       = "0.11.0"
-	geminiResumeVersion           = "0.15.0"
-	geminiResumeStdinVersion      = "0.20.0"
-	geminiPlanModeVersion         = "0.34.0" // plan mode became the default in this release
-	geminiDeprecatedPromptMessage = "The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information."
+	geminiSafeApprovalVersion = "0.10.0"
+	geminiStreamJSONVersion   = "0.11.0"
+	geminiResumeVersion       = "0.15.0"
+	geminiResumeStdinVersion  = "0.20.0"
+	geminiPlanModeVersion     = "0.34.0" // plan mode became the default in this release
 	// Antigravity supports --conversation before adding stream-json.
 	antigravityResumeVersion = "1.0.9"
 )
@@ -606,6 +608,7 @@ func isModelNotFoundError(stderr string) bool {
 type geminiStreamMessage struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype,omitempty"`
+	Status  string `json:"status,omitempty"`
 	// Top-level fields for "message" type events
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content,omitempty"`
@@ -630,6 +633,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	var lastResult string
 	assistantMessages := newTrailingReviewText()
 	var validEventsParsed bool
+	var successfulResult bool
 	var delta strings.Builder
 	flushDelta := func() {
 		if delta.Len() == 0 {
@@ -648,7 +652,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 			}
 
 			if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
-				if strings.TrimSpace(msg.Content) == geminiDeprecatedPromptMessage {
+				if strings.TrimSpace(msg.Content) == agentwire.GeminiDeprecatedPromptMessage {
 					return nil
 				}
 				if msg.Delta {
@@ -665,7 +669,12 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 			}
 
 			if msg.Type == "result" && msg.Result != "" {
-				lastResult = msg.Result
+				if msg.Status == "success" {
+					lastResult = msg.Result
+				}
+			}
+			if msg.Type == "result" {
+				successfulResult = msg.Status == "success"
 			}
 		}
 		return nil
@@ -678,6 +687,9 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	// If no valid events were parsed, return error
 	if !validEventsParsed {
 		return parseResult{}, errNoStreamJSON
+	}
+	if !successfulResult {
+		return parseResult{}, errIncompleteGeminiStream
 	}
 
 	// Prefer the result field if present, otherwise join assistant messages
@@ -692,8 +704,8 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 }
 
 type antigravityStreamEvent struct {
-	Event  string             `json:"event"`
-	Result antigravity.Result `json:"result"`
+	Event  string                      `json:"event"`
+	Result agentwire.AntigravityResult `json:"result"`
 }
 
 // parseAntigravityStreamJSON reads the documented result event; the init

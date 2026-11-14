@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -464,6 +465,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			name: "GeminiDeprecatedPromptWarningIsNotReviewText",
 			input: `{"type":"message","role":"assistant","content":"The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information.\n"}
 {"type":"message","role":"assistant","content":"Review result"}
+{"type":"result","status":"success"}
 `,
 			assertResult: func(t *testing.T, res string) {
 				assert.Equal(t, "Review result", res)
@@ -474,6 +476,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			input: `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":"First message"}}
 {"type":"assistant","message":{"content":"Second message"}}
+{"type":"result","status":"success"}
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "First message\nSecond message"
@@ -486,6 +489,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 {"type":"assistant","message":{"content":"I am checking the relevant files first."}}
 {"type":"tool","name":"Read"}
 {"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Final finding."}}
+{"type":"result","status":"success"}
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "## Review Findings\n- **Severity**: Low; **Problem**: Final finding."
@@ -498,6 +502,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 {"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."}}
 {"type":"tool","name":"Read"}
 {"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}}
+{"type":"result","status":"success"}
 `,
 			assertResult: func(t *testing.T, res string) {
 				want := "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."
@@ -512,13 +517,18 @@ still not json
 			wantErr: errNoStreamJSON,
 		},
 		{
-			name: "EmptyResult",
+			name: "IncompleteStreamWithoutTerminalResult",
 			input: `{"type":"system","subtype":"init"}
 {"type":"tool","name":"Read"}
 `,
-			assertResult: func(t *testing.T, res string) {
-				assert.Empty(t, res)
-			},
+			wantErr: errIncompleteGeminiStream,
+		},
+		{
+			name: "UnsuccessfulResultDoesNotAcceptPartialText",
+			input: `{"type":"message","role":"assistant","content":"Partial review"}
+{"type":"result","status":"error"}
+`,
+			wantErr: errIncompleteGeminiStream,
 		},
 		{
 			name: "PlainTextError",
@@ -684,6 +694,40 @@ cat "$SUCCESS_FILE"
 	}
 }
 
+func TestGeminiIncompleteResumeStartsFresh(t *testing.T) {
+	skipIfWindows(t)
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("ARGS_FILE", argsFile)
+	script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
+printf '%s\n' "$@" >> "$ARGS_FILE"
+for arg in "$@"; do
+  if [ "$arg" = "--resume" ]; then
+    echo '{"type":"init","session_id":"partial-session"}'
+    echo '{"type":"message","role":"assistant","content":"partial review","delta":true}'
+    exit 0
+  fi
+done
+echo '{"type":"init","session_id":"fresh-session"}'
+echo '{"type":"result","status":"success","result":"{\"passed\":true,\"findings\":[]}"}'
+`)
+	resetCalls := 0
+	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
+		resetCalls++
+		return nil
+	})
+	a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
+	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
+	assert.Equal(t, 1, resetCalls)
+	assert.Equal(t, "fresh-session", capture.SessionID())
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(args), "--resume\n"))
+	assert.Equal(t, 2, strings.Count(string(args), "--output-format\nstream-json\n"))
+}
+
 func TestAgenticResumeFailureStartsFresh(t *testing.T) {
 	skipIfWindows(t)
 	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
@@ -750,6 +794,48 @@ exit 1
 	calls, err := os.ReadFile(invocations)
 	require.NoError(t, err)
 	assert.Equal(t, "review\nreview\n", string(calls))
+}
+
+func TestGeminiOversizedLegacyResumePromptFallsBackFresh(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux enforces a per-argument limit below this prompt size")
+	}
+	prompt := strings.Repeat("x", 200_000)
+	stdinFile := filepath.Join(t.TempDir(), "stdin")
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("STDIN_FILE", stdinFile)
+	t.Setenv("ARGS_FILE", argsFile)
+	script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "0.18.4"; exit 0; fi
+printf '%s\n' "$@" >> "$ARGS_FILE"
+for arg in "$@"; do
+  if [ "$arg" = "--resume" ]; then
+    echo "legacy resume failed" >&2
+    exit 1
+  fi
+done
+cat > "$STDIN_FILE"
+echo '{"type":"init","session_id":"fresh-session"}'
+echo '{"type":"message","role":"assistant","content":"Fresh result","delta":true}'
+echo '{"type":"result","status":"success"}'
+`)
+	resetCalls := 0
+	capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
+		resetCalls++
+		return nil
+	})
+	a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
+	result, err := a.Review(t.Context(), t.TempDir(), "sha", prompt, capture)
+	require.NoError(t, err)
+	assert.Equal(t, "Fresh result", result)
+	assert.Equal(t, 1, resetCalls)
+	assert.Equal(t, "fresh-session", capture.SessionID())
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.Zero(t, strings.Count(string(args), "--resume\n"))
+	stdin, err := os.ReadFile(stdinFile)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal([]byte(prompt), stdin), "fresh invocation must receive the full prompt")
 }
 
 func TestUnsupportedResumeClearsStoredSessionBeforeFreshRun(t *testing.T) {
