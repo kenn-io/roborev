@@ -28,14 +28,20 @@ type legacyReviewScanRun struct {
 	After *uuid.UUID
 }
 
-func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
+func (p *PgPool) migrateLegacyReviews(ctx context.Context, noWait bool) (err error) {
+	total := 0
+	defer func() {
+		if err != nil && total > 0 {
+			p.legacyProgress.Add(int64(total))
+		}
+	}()
 	if _, err := p.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS legacy_reviews (
  uuid UUID PRIMARY KEY, record JSONB NOT NULL, migration_error TEXT NOT NULL, resolved_at TIMESTAMPTZ)`); err != nil {
 		return err
 	}
 	var state legacyReviewScanState
 	var stored string
-	err := p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored)
+	err = p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("read historical mirror scan state: %w", err)
 	}
@@ -45,15 +51,15 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 			state = legacyReviewScanState{}
 		}
 	}
+	firstScan := state.Done == nil
 	if state.Run == nil {
 		state.Run = &legacyReviewScanRun{}
 		if err := p.pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&state.Run.Start); err != nil {
 			return fmt.Errorf("start historical mirror scan: %w", err)
 		}
 	}
-	total := 0
 	for {
-		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, state.Run.After, state.Done)
+		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, state.Run.After, state.Done, noWait)
 		if err != nil {
 			return fmt.Errorf("archive historical mirror reviews: %w", err)
 		}
@@ -72,6 +78,9 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 			return fmt.Errorf("save historical mirror scan state: %w", err)
 		}
 		if scanned == 0 {
+			if firstScan {
+				p.legacyProgress.Add(1)
+			}
 			return nil
 		}
 		total += scanned
@@ -79,20 +88,24 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context) error {
 	}
 }
 
-func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID, since *time.Time) (*uuid.UUID, int, error) {
+func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID, since *time.Time, noWait bool) (*uuid.UUID, int, error) {
 	scanned := 0
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return after, scanned, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	lockClause := " FOR UPDATE OF r"
+	if noWait {
+		lockClause += " NOWAIT"
+	}
 	rows, err := tx.Query(ctx, `SELECT r.uuid, r.output, r.structured_output, j.job_type, j.uuid,
  COALESCE(j.min_severity, ''), r.verdict_bool
  FROM reviews r JOIN review_jobs j ON j.uuid = r.job_uuid
  WHERE j.job_type IN ('review','range','dirty','synthesis','compact')
  AND ($1::uuid IS NULL OR r.uuid > $1)
  AND ($3::timestamptz IS NULL OR r.updated_at >= $3)
- ORDER BY r.uuid LIMIT $2 FOR UPDATE OF r`, after, legacyReviewBatchSize, since)
+ ORDER BY r.uuid LIMIT $2`+lockClause, after, legacyReviewBatchSize, since)
 	if err != nil {
 		return after, scanned, err
 	}
@@ -176,5 +189,9 @@ func (p *PgPool) migrateLegacyReviewsBatch(ctx context.Context, after *uuid.UUID
 			}
 		}
 	}
-	return after, scanned, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return after, scanned, err
+	}
+	p.legacyProgress.Add(int64(len(updates)))
+	return after, scanned, nil
 }

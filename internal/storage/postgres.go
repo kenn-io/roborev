@@ -11,9 +11,11 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 	"uuid"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -56,9 +58,10 @@ func pgSchemaStatements() []string {
 
 // PgPool wraps a pgx connection pool with reconnection logic
 type PgPool struct {
-	pool       *pgxpool.Pool
-	connString string
-	config     PgPoolConfig
+	legacyProgress atomic.Int64
+	pool           *pgxpool.Pool
+	connString     string
+	config         PgPoolConfig
 }
 
 // PgPoolConfig configures the PostgreSQL connection pool
@@ -535,16 +538,31 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 	}
 	p.ensureSearchVectorsSchema(ctx)
 
-	if err := p.migrateLegacyReviews(ctx); err != nil {
+	if currentVersion >= 24 {
+		return nil
+	}
+	if err := p.maintainLegacyReviews(ctx, false); err != nil {
 		return err
 	}
-	if err := p.restoreLegacyReviews(ctx); err != nil {
+	return p.migrateReviewAttempts(ctx)
+}
+
+// maintainLegacyReviews archives and restores historical reviews. Background scans
+// use NOWAIT so a contended row rolls back the whole batch for retry.
+func (p *PgPool) maintainLegacyReviews(ctx context.Context, noWait bool) error {
+	if err := p.migrateLegacyReviews(ctx, noWait); err != nil {
 		return err
 	}
-	if currentVersion < 24 {
-		return p.migrateReviewAttempts(ctx)
+	return p.restoreLegacyReviews(ctx)
+}
+
+func (p *PgPool) legacyMaintenancePass(ctx context.Context) error {
+	before := p.legacyProgress.Load()
+	err := p.maintainLegacyReviews(ctx, true)
+	if err != nil && p.legacyProgress.Load() != before {
+		return backoff.RetryAfter(0, err)
 	}
-	return nil
+	return err
 }
 
 // GetDatabaseID returns the unique ID for this Postgres database.
@@ -878,8 +896,16 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	if err == nil && awaitingAssociation {
 		return errReviewAttemptPending
 	}
+	if err != nil {
+		return err
+	}
+	_, err = p.pool.Exec(ctx, pgResolveSyncedLegacySQL, r.UUID, nullJSON(structuredOutput), r.MetadataOnly)
 	return err
 }
+
+const pgResolveSyncedLegacySQL = `UPDATE legacy_reviews SET resolved_at = COALESCE(resolved_at, clock_timestamp())
+ WHERE uuid = $1 AND $2::jsonb IS NOT NULL AND $2::jsonb->'legacy' IS NULL AND NOT $3::boolean
+ AND EXISTS (SELECT 1 FROM reviews WHERE reviews.uuid = $1 AND reviews.structured_output = $2::jsonb)`
 
 // errSyncRowRejected marks a row that sync cannot upload for an application
 // reason, such as failed local checks or a conflicting experiment, rather
@@ -927,20 +953,27 @@ const pgUpsertReviewSQL = `
  AND newer.job_enqueued_at = r.job_enqueued_at AND newer.job_source_machine_id = r.job_source_machine_id
  AND (newer.created_at, newer.id) > (r.created_at, r.id))))
  UNION ALL SELECT $13::timestamptz, $15::uuid WHERE NOT EXISTS (SELECT 1 FROM locked_job)
+ ), locked_review AS MATERIALIZED (
+ SELECT to_jsonb(r) AS record FROM reviews r WHERE r.uuid = $1 FOR UPDATE
+ ), eligible_review AS (
+ SELECT record FROM locked_review
+ WHERE record->>'output' <> '' AND $7::jsonb IS NOT NULL AND NOT $14::boolean
  ), archived AS (
- INSERT INTO legacy_reviews (uuid, record, migration_error)
- SELECT $1, jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
+ INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at)
+ SELECT $1, COALESCE((SELECT record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id) FROM eligible_review), jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
  'prompt', ''::text, 'output', $7::jsonb->'legacy'->>'markdown', 'closed', $5::boolean,
  'verdict_bool', $6::boolean, 'structured_output', $7::jsonb,
  'reviewed_file_count', $8::integer, 'excluded_file_count', $9::integer,
- 'updated_by_machine_id', $10::uuid, 'created_at', $11::timestamptz, 'job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id), 'Unstructured historical review'
- FROM current_attempt a WHERE $7::jsonb->'legacy' IS NOT NULL
- ON CONFLICT DO NOTHING
+ 'updated_by_machine_id', $10::uuid, 'created_at', $11::timestamptz, 'job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id)),
+ CASE WHEN $7::jsonb->'legacy' IS NOT NULL THEN 'Unstructured historical review' ELSE '' END,
+ CASE WHEN $7::jsonb->'legacy' IS NULL THEN clock_timestamp() ELSE NULL END
+ FROM current_attempt a WHERE ($7::jsonb->'legacy' IS NOT NULL OR EXISTS (SELECT 1 FROM eligible_review))
+ ON CONFLICT DO NOTHING RETURNING 1
  ), resolved AS (
  UPDATE legacy_reviews SET record = record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id),
  resolved_at = CASE WHEN NOT $14::boolean AND $7::jsonb IS NOT NULL AND $7::jsonb->'legacy' IS NULL
  THEN COALESCE(resolved_at, clock_timestamp()) ELSE resolved_at END
- FROM current_attempt a WHERE uuid = $1
+ FROM current_attempt a WHERE uuid = $1 AND (SELECT count(*) FROM locked_review) >= 0
  ), written AS (
  INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
@@ -952,6 +985,7 @@ const pgUpsertReviewSQL = `
 			$7, $8, $9, $10, $11, clock_timestamp(), a.enqueued_at, a.source_machine_id
  FROM current_attempt a WHERE ($7::jsonb IS NOT NULL OR NOT EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
  AND j.job_type IN ('review','range','dirty','synthesis','compact','goal_review')))
+ AND (SELECT count(*) FROM archived) >= 0
  ON CONFLICT (uuid) DO UPDATE SET
 			job_enqueued_at = EXCLUDED.job_enqueued_at,
 			job_source_machine_id = EXCLUDED.job_source_machine_id,
@@ -1625,6 +1659,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 			verdictBool, nullJSON(structuredOutputs[i]), r.ReviewedFileCount, r.ExcludedFileCount,
 			reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID, uuid.New())
+		batch.Queue(pgResolveSyncedLegacySQL, r.UUID, nullJSON(structuredOutputs[i]), r.MetadataOnly)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
@@ -1639,6 +1674,9 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 			err = errReviewAttemptPending
 		}
 		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if _, err := br.Exec(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

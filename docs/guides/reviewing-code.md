@@ -691,8 +691,12 @@ repository.
 The PostgreSQL mirror restores legacy records through the same conversion and
 preservation rules. Its archive retains the original row as JSON in
 `legacy_reviews.record`. The mirror upgrade converts the same formats
-automatically. Use `--postgres-url` to ask the daemon to convert, export, and
-import these records. PostgreSQL archive IDs are UUIDs:
+automatically. On an up-to-date mirror, a resumable background scan performs
+conversion after connection; restored reviews become visible on the next
+scheduled or manual sync. Archive listings and exports can be partial while the
+background conversion processes rows, with progress recorded in daemon logs. Use
+`--postgres-url` to ask the daemon to convert, export, and import these records.
+PostgreSQL archive IDs are UUIDs:
 
 ```bash
 roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" convert --dry-run
