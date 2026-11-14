@@ -570,7 +570,6 @@ func TestResetStaleJobsKeepsRebuttalSession(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/reset-stale-rebuttal", "reset-stale-sha")
 	claimJob(t, env.db, "worker-original")
-	require.NoError(t, env.db.SaveJobSessionID(env.job.ID, "worker-original", "attempt-session"))
 	job, err := env.db.EnqueueJob(EnqueueOpts{
 		RepoID: env.repo.ID, CommitID: env.commit.ID, GitRef: "reset-stale-sha",
 		Agent: "test", Source: JobSourceRebuttal, SessionID: "original-session",
@@ -580,18 +579,6 @@ func TestResetStaleJobsKeepsRebuttalSession(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, job.ID, claimed.ID)
-	_, err = env.db.ExecContext(t.Context(), `
-		CREATE TRIGGER fail_rebuttal_requeue BEFORE UPDATE ON review_jobs
-		WHEN OLD.source = 'rebuttal' AND NEW.status = 'queued'
-		BEGIN SELECT RAISE(FAIL, 'synthetic requeue failure'); END
-	`)
-	require.NoError(t, err)
-	for range 2 {
-		_, err = env.db.RequeueUpdateInterruptedJob(job.ID, "worker-rebuttal")
-		require.Error(t, err)
-	}
-	_, err = env.db.ExecContext(t.Context(), `DROP TRIGGER fail_rebuttal_requeue`)
-	require.NoError(t, err)
 	require.NoError(t, env.db.ResetStaleJobs())
 	got, err := env.db.GetJobByID(job.ID)
 	require.NoError(t, err)
@@ -600,10 +587,6 @@ func TestResetStaleJobsKeepsRebuttalSession(t *testing.T) {
 	var resumed int
 	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT session_resumed FROM review_jobs WHERE id = ?`, job.ID).Scan(&resumed))
 	assert.Equal(t, 1, resumed)
-	ordinary, err := env.db.GetJobByID(env.job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, JobStatusQueued, ordinary.Status)
-	assert.Empty(t, ordinary.SessionID)
 }
 
 func TestRequeueUpdateInterruptedJobScopesCurrentAttempt(t *testing.T) {

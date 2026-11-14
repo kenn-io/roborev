@@ -935,7 +935,7 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 	require.NoError(t, result)
 }
 
-func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *testing.T) {
+func TestRequestDaemonShutdownUsesSharedContextForDelayedAcceptance(t *testing.T) {
 	var dead atomic.Bool
 	received := make(chan struct{}, 1)
 	accept := make(chan struct{})
@@ -971,7 +971,7 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 	assert.NoError(t, <-done)
 }
 
-func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
+func TestRequestDaemonShutdownRetriesServerErrors(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if attempts.Add(1) == 1 {
