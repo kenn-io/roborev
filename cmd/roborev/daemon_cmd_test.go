@@ -458,8 +458,8 @@ func TestDaemonRestartRunningPolicy(t *testing.T) {
 			info := &daemon.RuntimeInfo{PID: os.Getpid()}
 			oldList, oldInterrupt := listAllRuntimes, interruptDaemon
 			t.Cleanup(func() { listAllRuntimes, interruptDaemon = oldList, oldInterrupt })
-			listCalls, interruptCalls, stopCalls := 0, 0, 0
-			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { listCalls++; return []*daemon.RuntimeInfo{info}, nil }
+			interruptCalls, stopCalls := 0, 0
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{info}, nil }
 			interruptDaemon = func(got *daemon.RuntimeInfo) error { assert.Same(t, info, got); interruptCalls++; return nil }
 			if service {
 				owner := ownedDaemonService(t)
