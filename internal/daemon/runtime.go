@@ -49,6 +49,10 @@ const (
 // permissions prevented every usable endpoint from being probed.
 var ErrDaemonAccessDenied = errors.New("daemon access denied")
 
+// ErrInterruptShutdownUnsupported means the daemon does not have the
+// interrupt-shutdown endpoint.
+var ErrInterruptShutdownUnsupported = errors.New("daemon does not support interrupt shutdown; use --running=wait")
+
 var probeRuntimeEndpoint = probeRuntimeRecord
 
 // RuntimeInfo stores daemon runtime state
@@ -669,7 +673,21 @@ func InterruptDaemon(info *RuntimeInfo) error {
 	return killDaemon(info, true)
 }
 
+// InterruptDaemonWithFallback interrupts a daemon and calls fallback only
+// when its interrupt-shutdown endpoint returns 404.
+func InterruptDaemonWithFallback(
+	info *RuntimeInfo, fallback func(context.Context, DaemonEndpoint) error,
+) error {
+	return killDaemonWithFallback(info, true, fallback)
+}
+
 func killDaemon(info *RuntimeInfo, interrupt bool) error {
+	return killDaemonWithFallback(info, interrupt, nil)
+}
+
+func killDaemonWithFallback(
+	info *RuntimeInfo, interrupt bool, fallback func(context.Context, DaemonEndpoint) error,
+) error {
 	if info == nil {
 		return nil
 	}
@@ -780,7 +798,12 @@ func killDaemon(info *RuntimeInfo, interrupt bool) error {
 			context.Background(), shutdownCleanupTimeout,
 		)
 		defer cancelShutdownCleanup()
-		if err := requestDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead, info.PID, interrupt); err != nil {
+		err := requestDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead, info.PID, interrupt)
+		if errors.Is(err, ErrInterruptShutdownUnsupported) && fallback != nil {
+			if err := fallback(shutdownCleanupCtx, ep); err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
 		}
 		waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
@@ -814,7 +837,7 @@ func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead
 				return struct{}{}, backoff.Permanent(ErrDaemonAccessDenied)
 			}
 			if interrupt && resp.StatusCode == http.StatusNotFound {
-				return struct{}{}, backoff.Permanent(fmt.Errorf("daemon does not support interrupt shutdown; use --running=wait"))
+				return struct{}{}, backoff.Permanent(ErrInterruptShutdownUnsupported)
 			}
 			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
 			if interrupt {
