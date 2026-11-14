@@ -5,6 +5,7 @@ import ReleaseNotesModal from "./ReleaseNotesModal.svelte";
 
 describe("ReleaseNotesModal", () => {
   it("shows recent releases and switches the selected notes", async () => {
+    await import("@kenn-io/roborev-ui/review-content");
     render(ReleaseNotesModal, {
       open: true,
       loading: false,
