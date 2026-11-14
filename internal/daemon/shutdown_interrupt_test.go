@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,10 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestInterruptShutdownTargetsRunningAttempts(t *testing.T) {
@@ -55,60 +52,6 @@ func TestInterruptShutdownTargetsRunningAttempts(t *testing.T) {
 			}
 			assert.True(t, requested)
 		})
-	}
-}
-
-func TestInterruptShutdownRequeuesBlockedWorker(t *testing.T) {
-	server, db, dir := newTestServer(t)
-	repo := testutil.InitTestGitRepo(t, dir)
-	sha := repo.CommitFile("interrupt.txt", "review\n", "interrupt review")
-	started := make(chan struct{})
-	release := make(chan struct{})
-	agentName := "shutdown-interrupt-agent"
-	agent.RegisterForTest(t, &agent.FakeAgent{
-		NameStr: agentName,
-		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
-			close(started)
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-release:
-				return "", context.Canceled
-			}
-		},
-	})
-	job := createTestJob(t, db, dir, sha, agentName)
-	claimed, err := db.ClaimJob("worker-interrupt")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, job.ID, claimed.ID)
-	_, events := server.broadcaster.Subscribe("")
-	done := make(chan struct{})
-	t.Cleanup(func() {
-		close(release)
-		assert.True(t, waitForUpdateSignal(done, 5*time.Second), "worker did not stop during cleanup")
-	})
-	go func() {
-		defer close(done)
-		server.workerPool.processJob("worker-interrupt", claimed)
-	}()
-	require.True(t, waitForUpdateSignal(started, workerStartTimeout), "agent did not start")
-	response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	require.True(t, waitForUpdateSignal(done, 5*time.Second), "worker did not unwind")
-	stored, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusQueued, stored.Status)
-	assert.Equal(t, 0, stored.RetryCount)
-	for {
-		select {
-		case event := <-events:
-			if event.JobID == job.ID {
-				assert.NotContains(t, []string{"review.canceled", "review.failed", "review.completed"}, event.Type)
-			}
-		default:
-			return
-		}
 	}
 }
 

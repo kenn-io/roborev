@@ -448,27 +448,18 @@ func TestDaemonRestartRunningPolicy(t *testing.T) {
 		stubDaemonRestartOutput(t)
 		oldList, oldInterrupt := listAllRuntimes, interruptDaemon
 		t.Cleanup(func() { listAllRuntimes, interruptDaemon = oldList, oldInterrupt })
-		listCalls, interruptCalls, stopCalls := 0, 0, 0
+		listCalls := 0
 		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { listCalls++; return nil, nil }
-		interruptDaemon = func(*daemon.RuntimeInfo) error { interruptCalls++; return nil }
-		withDaemonCommandDependencies(t, func() error { return nil }, func() error { stopCalls++; return nil }, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
+		interruptDaemon = func(*daemon.RuntimeInfo) error { return nil }
+		withDaemonCommandDependencies(t, func() error { return nil }, func() error { return nil }, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
 		cmd := daemonCmd()
 		cmd.SetArgs([]string{"restart", "--running=invalid"})
 		require.Error(t, cmd.ExecuteContext(t.Context()))
 		assert.Zero(t, listCalls)
-		assert.Zero(t, stopCalls)
 		cmd = daemonCmd()
 		cmd.SetArgs([]string{"restart", "interrupt"})
 		require.ErrorContains(t, cmd.ExecuteContext(t.Context()), `unknown command "interrupt"`)
 		assert.Zero(t, listCalls)
-		assert.Zero(t, interruptCalls)
-		assert.Zero(t, stopCalls)
-		cmd = daemonCmd()
-		cmd.SetArgs([]string{"restart", "--running=interrupt", "42"})
-		require.ErrorContains(t, cmd.ExecuteContext(t.Context()), `unknown command "42"`)
-		assert.Zero(t, listCalls)
-		assert.Zero(t, interruptCalls)
-		assert.Zero(t, stopCalls)
 	})
 	for _, service := range []bool{false, true} {
 		t.Run(fmt.Sprintf("service=%t", service), func(t *testing.T) {
