@@ -820,7 +820,7 @@ func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead
 			resp, err = client.ShutdownRaw(ctx)
 		}
 		if err == nil {
-			defer resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 				return struct{}{}, nil
 			}
