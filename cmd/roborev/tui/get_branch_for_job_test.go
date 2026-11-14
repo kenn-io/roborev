@@ -87,6 +87,12 @@ func TestBackfillBranchValue(t *testing.T) {
 		assert.Equal(t, "feature-x", branch)
 	})
 
+	t.Run("all-branch insights left unbackfilled", func(t *testing.T) {
+		job := storage.ReviewJob{JobType: storage.JobTypeInsights, GitRef: "insights"}
+		_, ok := backfillBranchValue(t.Context(), job, nil)
+		assert.False(t, ok)
+	})
+
 	t.Run("task job persists sentinel", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeTask, GitRef: "analyze"}
 		branch, ok := backfillBranchValue(t.Context(), job, nil)

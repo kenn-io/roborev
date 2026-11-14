@@ -163,6 +163,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	if fields.FinishedAt.Valid {
 		t := parseSQLiteTime(fields.FinishedAt.String)
 		job.FinishedAt = &t
+		job.FinishedAtRaw = fields.FinishedAt.String
 	}
 	if fields.Closed.Valid {
 		closed := fields.Closed.Int64 != 0
