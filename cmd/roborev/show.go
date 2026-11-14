@@ -333,6 +333,9 @@ Examples:
 				fmt.Printf("Review for %s (job %d, by %s)\n", displayRef, review.JobID, review.Agent)
 			}
 			if review.Job != nil {
+				if id := storage.RubricID(review.Job.ReviewType, review.Job.RubricSHA256); id != "" {
+					fmt.Printf("Rubric: %s\n", id)
+				}
 				if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
 					if summary := tu.FormatSummary(); summary != "" {
 						fmt.Printf("Tokens: %s\n", summary)

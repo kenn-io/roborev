@@ -301,3 +301,75 @@ synthesis_agent = "codex"
 		})
 	}
 }
+
+func TestDoctorRubricSetupDaemonEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a shell script")
+	}
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("KATA_SERVER", "daemon-target")
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "kata"), []byte("#!/bin/sh\nif [ \"$KATA_SERVER\" = daemon-target ]; then printf '%s' '{\"docbank\":{\"credential\":\"ok\"}}'; fi\n"), 0o755))
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".kata.toml"), []byte("[project]\nname = \"example\"\n"), 0o600))
+	server, _, _ := newTestServer(t)
+	cfg := config.DefaultConfig()
+	cfg.KataRubrics.Mode = "current"
+	server.configWatcher.cfgMu.Lock()
+	server.configWatcher.cfg = cfg
+	server.configWatcher.cfgMu.Unlock()
+	get := func() DoctorAgentsOutput {
+		w := httptest.NewRecorder()
+		query := url.Values{"repo": {repo}}
+		server.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/doctor/agents?"+query.Encode(), nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		var out DoctorAgentsOutput
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out.Body))
+		return out
+	}
+	out := get()
+	require.NotNil(t, out.Body.RubricSetup)
+	assert.Equal(t, "ok", out.Body.RubricSetup.State)
+	assert.Equal(t, "example", out.Body.RubricSetup.Project)
+	require.Len(t, out.Body.HookTools, 1)
+	assert.Equal(t, "kata", out.Body.HookTools[0].Name)
+	assert.True(t, out.Body.HookTools[0].Available)
+
+	for _, tc := range []struct{ name, script, state, detail string }{
+		{"missing", `printf '%s' '{"docbank":{"credential":"missing"}}'`, "missing", ""},
+		{"omitted", `printf '%s' '{}'`, "unknown", ""},
+		{"unavailable", `echo secret >&2; exit 1`, "unknown", "Kata health could not be read"},
+		// The subprocess is external work; the probe deadline stops it.
+		{"timeout", `exec /bin/sleep 30`, "unknown", "Kata health could not be read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(filepath.Join(bin, "kata"), []byte("#!/bin/sh\n"+tc.script+"\n"), 0o755))
+			out := get()
+			require.NotNil(t, out.Body.RubricSetup)
+			assert.Equal(t, tc.state, out.Body.RubricSetup.State)
+			assert.Equal(t, "example", out.Body.RubricSetup.Project)
+			assert.Equal(t, tc.detail, out.Body.RubricSetup.Error)
+			assert.NotEmpty(t, out.Body.Agents)
+			assert.NotNil(t, out.Body.UsageProvider)
+		})
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte("[kata_rubrics]\nmode = \"off\"\n"), 0o600))
+	out = get()
+	require.NotNil(t, out.Body.RubricSetup)
+	assert.Equal(t, "off", out.Body.RubricSetup.State)
+	require.NoError(t, os.Remove(filepath.Join(repo, ".roborev.toml")))
+
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".kata.toml"), []byte("[project\n"), 0o600))
+	out = get()
+	require.NotNil(t, out.Body.RubricSetup)
+	assert.Equal(t, "binding_error", out.Body.RubricSetup.State)
+	assert.Contains(t, out.Body.RubricSetup.Error, "parse")
+	require.NoError(t, os.Remove(filepath.Join(repo, ".kata.toml")))
+	out = get()
+	require.NotNil(t, out.Body.RubricSetup)
+	assert.Equal(t, "binding_missing", out.Body.RubricSetup.State)
+	require.NoError(t, os.Remove(filepath.Join(bin, "kata")))
+	out = get()
+	require.NotNil(t, out.Body.RubricSetup)
+	assert.Equal(t, "kata_missing", out.Body.RubricSetup.State)
+}

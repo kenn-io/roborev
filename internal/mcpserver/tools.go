@@ -89,6 +89,7 @@ type jobRow struct {
 	Model         string                 `json:"model,omitempty"`
 	JobType       string                 `json:"job_type"`
 	ReviewType    string                 `json:"review_type,omitempty"`
+	RubricSHA256  *string                `json:"rubric_sha256,omitempty"`
 	Status        string                 `json:"status"`
 	Verdict       string                 `json:"verdict,omitempty"`
 	Closed        *bool                  `json:"closed,omitempty"`
@@ -727,6 +728,7 @@ func newJobRow(job *storage.ReviewJob) jobRow {
 		Model:         job.Model,
 		JobType:       job.JobType,
 		ReviewType:    job.ReviewType,
+		RubricSHA256:  job.RubricSHA256,
 		Status:        string(job.Status),
 		Verdict:       verdictLabel(job.Verdict),
 		Closed:        job.Closed,

@@ -159,6 +159,7 @@ func runDoctorChecks(env *doctorEnv) []doctorCheck {
 		checkDoctorRepo,
 		checkDoctorGuidelines,
 		checkDoctorIntegrations,
+		checkDoctorKataRubrics,
 	}
 	var out []doctorCheck
 	for _, check := range checks {

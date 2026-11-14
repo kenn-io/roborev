@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,6 +87,33 @@ func enqueueJob(t *testing.T, db *DB, repoID, commitID int64, sha string) *Revie
 	require.NoError(t, err, "Failed to enqueue job: %v")
 
 	return job
+}
+
+// seedHistoricalJob inserts a row using columns present before numbered migrations.
+// Migration tests must not use the current EnqueueJob against an older schema.
+func seedHistoricalJob(t *testing.T, db *DB, repoID, commitID int64, sha string) *ReviewJob {
+	t.Helper()
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	result, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs
+		(repo_id, commit_id, git_ref, agent, uuid, source_machine_id, updated_at)
+		VALUES (?, ?, ?, 'codex', ?, ?, ?)`, repoID, commitID, sha, uuid.New(), machineID, time.Now().UTC().Format(time.RFC3339))
+	require.NoError(t, err)
+	id, err := result.LastInsertId()
+	require.NoError(t, err)
+	return &ReviewJob{ID: id, RepoID: repoID, GitRef: sha}
+}
+
+func seedHistoricalJobs(t *testing.T, db *DB, path string, n int) (*Repo, []*ReviewJob) {
+	t.Helper()
+	repo := createRepo(t, db, path)
+	jobs := make([]*ReviewJob, n)
+	for i := range n {
+		sha := fmt.Sprintf("%s-sha%d", filepath.Base(path), i)
+		commit := createCommit(t, db, repo.ID, sha)
+		jobs[i] = seedHistoricalJob(t, db, repo.ID, commit.ID, sha)
+	}
+	return repo, jobs
 }
 
 func claimJob(t *testing.T, db *DB, workerID string) *ReviewJob {

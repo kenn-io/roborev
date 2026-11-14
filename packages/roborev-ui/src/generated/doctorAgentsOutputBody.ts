@@ -3,6 +3,7 @@
  */
 import type { Diagnosis } from "./diagnosis";
 import type { DoctorPanel } from "./doctorPanel";
+import type { DoctorRubricSetup } from "./doctorRubricSetup";
 import type { DoctorUsageProvider } from "./doctorUsageProvider";
 
 export interface DoctorAgentsOutputBody {
@@ -10,7 +11,7 @@ export interface DoctorAgentsOutputBody {
   readonly $schema?: string;
   /** Every agent the daemon knows */
   agents: Diagnosis[];
-  /** CLI tools that configured kata and beads hooks run, resolved on the daemon PATH */
+  /** CLI tools used by configured kata and beads hooks or enabled rubric transport, resolved on the daemon PATH */
   hook_tools: Diagnosis[];
   /** Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review */
   panels: DoctorPanel[];
@@ -22,6 +23,8 @@ export interface DoctorAgentsOutputBody {
   repo_config_error?: string;
   /** The requested agent names, resolved by the daemon; unknown names report an error */
   requested: Diagnosis[];
+  /** Rubric archiving diagnosis from the daemon process */
+  rubric_setup?: DoctorRubricSetup;
   /** Usage provider and authenticated probe result from the daemon process */
   usage_provider?: DoctorUsageProvider;
 }

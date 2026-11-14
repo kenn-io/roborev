@@ -842,12 +842,21 @@ type DoctorAgentsOutput struct {
 		PathEnv         string               `json:"path_env" doc:"PATH environment variable of the daemon process"`
 		Agents          []agent.Diagnosis    `json:"agents" doc:"Every agent the daemon knows"`
 		Requested       []agent.Diagnosis    `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
-		HookTools       []agent.Diagnosis    `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
+		HookTools       []agent.Diagnosis    `json:"hook_tools" doc:"CLI tools used by configured kata and beads hooks or enabled rubric transport, resolved on the daemon PATH"`
 		Panels          []DoctorPanel        `json:"panels" doc:"Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review"`
+		RubricSetup     *DoctorRubricSetup   `json:"rubric_setup,omitempty" doc:"Rubric archiving diagnosis from the daemon process"`
 		UsageProvider   *DoctorUsageProvider `json:"usage_provider,omitempty" doc:"Usage provider and authenticated probe result from the daemon process"`
 		PanelsError     string               `json:"panels_error,omitempty" doc:"Why the review experiment configuration could not be applied; panels were not checked"`
 		RepoConfigError string               `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; results use global config only"`
 	}
+}
+
+// DoctorRubricSetup is a secret-free diagnosis of rubric archiving.
+type DoctorRubricSetup struct {
+	Mode    string `json:"mode" doc:"Resolved rubric archiving mode"`
+	State   string `json:"state" doc:"Diagnostic state"`
+	Project string `json:"project,omitempty" doc:"Bound Kata project"`
+	Error   string `json:"error,omitempty" doc:"Safe binding or health error"`
 }
 
 // DoctorUsageProvider is the daemon's secret-free usage provider diagnosis.

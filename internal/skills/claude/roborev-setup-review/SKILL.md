@@ -148,6 +148,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | They want | Configure |
 |-----------|-----------|
 | One kind of check | One `[review.types.<name>]` with a rubric `template` |
+| Keep rubrics with Kata issues | Global `[kata_rubrics] mode = "current"`; repositories may opt out |
 | Several checks | One type per check, one `[review.subagents.<name>]` per type, and a `[review.panels.<name>]` listing them |
 | Context every reviewer needs | `review_guidelines` in `.roborev.toml`, or `REVIEW.md` |
 | A source reviewers compare against | Commit its text and name the path in the rubric |
@@ -188,6 +189,24 @@ Rules that matter:
 - Put the setup in the repository's `.roborev.toml`. Use the global
     `~/.roborev/config.toml` only when the user wants the same review in every
     repository, and only with their approval.
+- When setting up a custom type, offer to archive its rendered rubric on the
+    Kata issues referenced by local commit or range reviews. This is off by
+    default. Explain that every issue reader and metadata writer served by the
+    Kata daemon can read the vault rubric. If the user wants it, identify the
+    Kata daemon selected by the roborev daemon's environment and repository
+    binding before configuring Docbank. For a locally selected daemon, use
+    `kata docbank setup` in its `KATA_HOME`; it edits that local home and
+    restarts its local daemons. For a remote-selected daemon,
+    direct configuration to the machine and home serving it, or its operator;
+    a local setup command does not configure that remote daemon. Propose
+    `[kata_rubrics] mode = "current"` in global `~/.roborev/config.toml`.
+    This enables all eligible repositories. A repository may opt out with
+    `[kata_rubrics] mode = "off"` in `.roborev.toml`.
+    Kata issue attachments are named `roborev-rubric.<type>.<sha16>.md`;
+    `roborev show` identifies the rubric as `<type>@<sha16>`. Use
+    `roborev doctor --from-skill --json` to check or recheck the setup. An
+    unknown Docbank state leaves archiving and connectivity unverified; Kata
+    did not expose enough information to verify them.
 - Custom types need an agent with JSON Schema output: `codex`, `claude-code`,
     `pi`, or `grok`. Pi also needs its `pi-json-schema` extension, which
     validation and doctor do not check. Custom types do not inherit

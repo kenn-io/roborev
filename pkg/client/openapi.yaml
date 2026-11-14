@@ -1218,7 +1218,7 @@ components:
             $ref: "#/components/schemas/Diagnosis"
           type: array
         hook_tools:
-          description: CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
+          description: CLI tools used by configured kata and beads hooks or enabled rubric transport, resolved on the daemon PATH
           items:
             $ref: "#/components/schemas/Diagnosis"
           type: array
@@ -1241,6 +1241,9 @@ components:
           items:
             $ref: "#/components/schemas/Diagnosis"
           type: array
+        rubric_setup:
+          $ref: "#/components/schemas/DoctorRubricSetup"
+          description: Rubric archiving diagnosis from the daemon process
         usage_provider:
           $ref: "#/components/schemas/DoctorUsageProvider"
           description: Usage provider and authenticated probe result from the daemon process
@@ -1290,6 +1293,25 @@ components:
       required:
         - name
         - agent
+      type: object
+    DoctorRubricSetup:
+      additionalProperties: false
+      properties:
+        error:
+          description: Safe binding or health error
+          type: string
+        mode:
+          description: Resolved rubric archiving mode
+          type: string
+        project:
+          description: Bound Kata project
+          type: string
+        state:
+          description: Diagnostic state
+          type: string
+      required:
+        - mode
+        - state
       type: object
     DoctorUsageProvider:
       additionalProperties: false
@@ -1454,6 +1476,8 @@ components:
           format: int64
           type: integer
         review_type:
+          type: string
+        rubric_sha256:
           type: string
         session_id:
           type: string
@@ -3096,6 +3120,8 @@ components:
           type: integer
         review_type:
           type: string
+        rubric_sha256:
+          type: string
         session_id:
           type: string
         skip_reason:
@@ -4082,6 +4108,8 @@ components:
           format: int64
           type: integer
         review_type:
+          type: string
+        rubric_sha256:
           type: string
         session_id:
           type: string

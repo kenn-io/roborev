@@ -66,6 +66,7 @@ type doctorDaemonAgents struct {
 	HookTools       []agent.Diagnosis           `json:"hook_tools"`
 	Panels          []daemon.DoctorPanel        `json:"panels"`
 	PanelsError     string                      `json:"panels_error,omitempty"`
+	RubricSetup     *daemon.DoctorRubricSetup   `json:"rubric_setup,omitempty"`
 	UsageProvider   *daemon.DoctorUsageProvider `json:"usage_provider,omitempty"`
 	RepoConfigError string                      `json:"repo_config_error,omitempty"`
 }
@@ -288,6 +289,9 @@ func doctorAgentsFromAPI(resp *generated.DoctorAgentsResponse) *doctorDaemonAgen
 		HookTools:       diagnosesFromAPI(resp.HookTools),
 		RepoConfigError: deref(resp.RepoConfigError),
 		PanelsError:     deref(resp.PanelsError),
+	}
+	if p := resp.RubricSetup; p != nil {
+		out.RubricSetup = &daemon.DoctorRubricSetup{Mode: p.Mode, State: p.State, Project: deref(p.Project), Error: deref(p.ErrorData)}
 	}
 	if p := resp.UsageProvider; p != nil {
 		out.UsageProvider = &daemon.DoctorUsageProvider{

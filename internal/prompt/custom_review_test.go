@@ -1,6 +1,8 @@
 package prompt
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -74,10 +76,10 @@ func TestCustomReviewReadsRepoFilesFromConfiguredRef(t *testing.T) {
 		},
 	}}
 
-	got, custom, err := NewBuilder(nil).
+	got, custom, _, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted base rubric.")
@@ -96,10 +98,10 @@ func TestCustomReviewReadsGlobalRelativeFilesFromConfiguredRef(t *testing.T) {
 		},
 	}}
 
-	got, custom, err := NewBuilderWithConfig(nil, globalCfg).
+	got, custom, _, err := NewBuilderWithConfig(nil, globalCfg).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(nil, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted global rubric.")
@@ -126,10 +128,10 @@ func TestCustomReviewReadsExternalSymlinkFromConfiguredRef(t *testing.T) {
 		},
 	}}
 
-	got, custom, err := NewBuilder(nil).
+	got, custom, _, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "External rubric.")
@@ -154,10 +156,10 @@ func TestCustomReviewReadsThroughDirectorySymlinkFromConfiguredRef(t *testing.T)
 		},
 	}}
 
-	got, custom, err := NewBuilder(nil).
+	got, custom, _, err := NewBuilder(nil).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(repoCfg, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted directory-link rubric.")
@@ -176,20 +178,20 @@ func TestCustomReviewUsesExplicitNilRepoConfig(t *testing.T) {
 		},
 	}}
 
-	got, custom, err := NewBuilderWithConfig(nil, globalCfg).
+	got, custom, _, err := NewBuilderWithConfig(nil, globalCfg).
 		ForRepo(repo.dir, 0).
 		WithRepoConfig(nil, baseRef).
-		resolveSystemPrompt("codex", "custom", "custom")
+		resolveSystemPromptWithRubric("codex", "custom", "custom", nil)
 	require.NoError(t, err)
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted global rubric.")
 }
 
 func TestCustomReviewMissingDefinitionFails(t *testing.T) {
-	_, _, err := NewBuilder(nil).
+	_, _, _, err := NewBuilder(nil).
 		ForRepo(t.TempDir(), 0).
 		WithRepoConfig(&config.RepoConfig{}, "").
-		resolveSystemPrompt("codex", "removed-type", "removed-type")
+		resolveSystemPromptWithRubric("codex", "removed-type", "removed-type", nil)
 	require.ErrorContains(t, err, `custom review type "removed-type" is not configured`)
 }
 
@@ -205,11 +207,11 @@ func TestCustomReviewFilesPreserveCompleteTemplate(t *testing.T) {
 		},
 	}}
 
-	rendered, _, err := NewBuilder(nil).
+	rendered, _, _, err := NewBuilder(nil).
 		ForRepo(repoPath, 0).
 		WithRepoConfig(repoCfg, "").
-		resolveSystemPrompt(
-			"codex", "custom", "custom",
+		resolveSystemPromptWithRubric(
+			"codex", "custom", "custom", nil,
 		)
 	require.NoError(t, err)
 	assert.Contains(t, rendered, strings.Repeat("x", 1024))
@@ -247,4 +249,113 @@ func TestReconcileStructuredOutputInstruction(t *testing.T) {
 	assert.Equal(prose, ReconcileStructuredOutputInstruction(structured, false),
 		"a prose agent never sees the JSON instruction")
 	assert.Equal(prose, ReconcileStructuredOutputInstruction(prose, false))
+}
+
+func TestRenderedRubricBytes(t *testing.T) {
+	repoPath := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "review.tmpl"), []byte("  Check {{ index .Includes \"rule\" }}  \n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "rule.md"), []byte("safety"), 0o644))
+	cfg := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{
+		"custom": {Template: "review.tmpl", Includes: map[string]string{"rule": "rule.md"}},
+	}}}
+	b := NewBuilder(nil).ForRepo(repoPath, 0).WithRepoConfig(cfg, "")
+	result, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("Check safety\n"), result.Rubric)
+	assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte("Check safety\n"))), result.RubricSHA256)
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, "review.tmpl"), []byte("  Check {{ index .Includes \"rule\" }}  \n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(other, "rule.md"), []byte("safety"), 0o644))
+	same, err := NewBuilder(nil).ForRepo(other, 0).WithRepoConfig(cfg, "").BuildDirtyResult("different diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.Equal(t, result.RubricSHA256, same.RubricSHA256)
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "rule.md"), []byte("correctness"), 0o644))
+	changed, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.NotEqual(t, result.RubricSHA256, changed.RubricSHA256)
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "review.tmpl"), []byte("Other {{ index .Includes \"rule\" }}"), 0o644))
+	changedTemplate, err := b.BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+	require.NoError(t, err)
+	assert.NotEqual(t, changed.RubricSHA256, changedTemplate.RubricSHA256)
+	builtin, err := b.BuildDirtyResult("diff", nil, 0, "test", "security", "")
+	require.NoError(t, err)
+	assert.Nil(t, builtin.Rubric)
+	assert.Empty(t, builtin.RubricSHA256)
+}
+
+func TestRubricArchiveEligibilityCapturedAtRender(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not reliably available on Windows")
+	}
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "inside.md"), []byte("inside"), 0o600))
+	require.NoError(t, os.WriteFile(outside, []byte("outside"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "template.md"), []byte(`{{ index .Includes "rule" }}`), 0o600))
+	link := filepath.Join(root, "outside-link.md")
+	require.NoError(t, os.Symlink(outside, link))
+	for _, tc := range []struct {
+		name       string
+		spec       config.ReviewTypeSpec
+		globalType bool
+		repoMode   string
+		enabled    bool
+		text       string
+	}{
+		{"inside", config.ReviewTypeSpec{Template: "inside.md"}, false, "", true, "inside\n"},
+		{"outside symlink", config.ReviewTypeSpec{Template: "outside-link.md"}, false, "", false, "outside\n"},
+		{"external include", config.ReviewTypeSpec{Template: "template.md", Includes: map[string]string{"rule": outside}}, false, "", false, "outside\n"},
+		{"repository opt out", config.ReviewTypeSpec{Template: "inside.md"}, false, "off", false, "inside\n"},
+		{"global external", config.ReviewTypeSpec{Template: outside}, true, "", true, "outside\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			global := &config.Config{KataRubrics: config.KataRubricsConfig{Mode: "current"}}
+			repo := &config.RepoConfig{KataRubrics: config.KataRubricsConfig{Mode: tc.repoMode}}
+			if tc.globalType {
+				global.Review.Types = map[string]config.ReviewTypeSpec{"custom": tc.spec}
+			} else {
+				repo.Review.Types = map[string]config.ReviewTypeSpec{"custom": tc.spec}
+			}
+			result, err := NewBuilderWithConfig(nil, global).ForRepo(root, 0).WithRepoConfig(repo, "").BuildDirtyResult("diff", nil, 0, "test", "custom", "")
+			require.NoError(t, err)
+			assert.Equal(t, tc.enabled, result.RubricArchiveEnabled)
+			assert.Equal(t, []byte(tc.text), result.Rubric)
+		})
+	}
+}
+
+func TestContainedReviewFileRejectsDirectorySwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not reliably available on Windows")
+	}
+	dir := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "rules"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rules", "rubric.md"), []byte("inside"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "rubric.md"), []byte("outside"), 0o600))
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	defer root.Close()
+	// The check has selected rules/rubric.md; replace its parent before open.
+	require.NoError(t, os.Rename(filepath.Join(dir, "rules"), filepath.Join(dir, "old-rules")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "rules")))
+	_, err = readContainedReviewFile(root, filepath.Join("rules", "rubric.md"))
+	require.Error(t, err)
+}
+
+func TestReviewResultRubricCommitAndRange(t *testing.T) {
+	repo := newTestRepo(t)
+	base := repo.fastCommitFile("review.tmpl", "  Inspect safety  ", "rubric")
+	head := repo.fastCommitFile("change.txt", "change", "change")
+	cfg := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{
+		"custom": {Template: "review.tmpl"},
+	}}}
+	builder := NewBuilder(nil).ForRepo(repo.dir, 0).WithRepoConfig(cfg, "")
+	for _, ref := range []string{head, base + ".." + head} {
+		t.Run(ref, func(t *testing.T) {
+			result, err := builder.BuildResultWithAdditionalContext(ref, 0, "test", "custom", "", "")
+			require.NoError(t, err)
+			assert.Equal(t, []byte("Inspect safety\n"), result.Rubric)
+		})
+	}
 }

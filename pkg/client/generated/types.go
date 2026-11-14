@@ -1017,7 +1017,7 @@ type DoctorAgentsOutputBody struct {
 	// Agents Every agent the daemon knows
 	Agents []Diagnosis `json:"agents" validate:"required"`
 
-	// HookTools CLI tools that configured kata and beads hooks run, resolved on the daemon PATH
+	// HookTools CLI tools used by configured kata and beads hooks or enabled rubric transport, resolved on the daemon PATH
 	HookTools []Diagnosis `json:"hook_tools" validate:"required"`
 
 	// Panels Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review
@@ -1034,6 +1034,7 @@ type DoctorAgentsOutputBody struct {
 
 	// Requested The requested agent names, resolved by the daemon; unknown names report an error
 	Requested     []Diagnosis          `json:"requested" validate:"required"`
+	RubricSetup   *DoctorRubricSetup   `json:"rubric_setup,omitempty"`
 	UsageProvider *DoctorUsageProvider `json:"usage_provider,omitempty"`
 }
 
@@ -1079,6 +1080,13 @@ func (d DoctorAgentsOutputBody) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Requested[%d]", i), err)
+			}
+		}
+	}
+	if d.RubricSetup != nil {
+		if v, ok := any(d.RubricSetup).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RubricSetup", err)
 			}
 		}
 	}
@@ -1144,6 +1152,24 @@ type DoctorPanelMember struct {
 }
 
 func (d DoctorPanelMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DoctorRubricSetup struct {
+	// ErrorData Safe binding or health error
+	ErrorData *string `json:"error,omitempty"`
+
+	// Mode Resolved rubric archiving mode
+	Mode string `json:"mode" validate:"required"`
+
+	// Project Bound Kata project
+	Project *string `json:"project,omitempty"`
+
+	// State Diagnostic state
+	State string `json:"state" validate:"required"`
+}
+
+func (d DoctorRubricSetup) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
@@ -1222,6 +1248,7 @@ type EnqueueCreatedResponse struct {
 	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
+	RubricSha256          *string                `json:"rubric_sha256,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
@@ -2972,6 +2999,7 @@ type PanelEnqueueResponse struct {
 	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
+	RubricSha256          *string                `json:"rubric_sha256,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
@@ -3782,6 +3810,7 @@ type ReviewJob struct {
 	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
+	RubricSha256          *string                `json:"rubric_sha256,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`

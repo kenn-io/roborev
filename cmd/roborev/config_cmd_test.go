@@ -1089,3 +1089,24 @@ func TestConfigSetWithInvalidDaemonConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestSetKataRubricsModeRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	local := filepath.Join(dir, ".roborev.toml")
+	global := filepath.Join(dir, "global.toml")
+	require.NoError(t, setConfigKey(local, "agent", "test", false))
+	_, err := config.LoadRepoConfig(dir)
+	require.NoError(t, err)
+	for _, mode := range []string{"", "current", "open"} {
+		require.Error(t, setConfigKey(local, "kata_rubrics.mode", mode, false))
+	}
+	require.NoError(t, setConfigKey(local, "kata_rubrics.mode", "off", false))
+	_, err = config.LoadRepoConfig(dir)
+	require.NoError(t, err)
+	for _, mode := range []string{"", "open"} {
+		require.Error(t, setConfigKey(global, "kata_rubrics.mode", mode, true))
+	}
+	require.NoError(t, setConfigKey(global, "kata_rubrics.mode", "current", true))
+	_, err = config.LoadGlobalFrom(global)
+	require.NoError(t, err)
+}

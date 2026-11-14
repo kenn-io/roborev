@@ -165,6 +165,7 @@ command = 'echo "{error}"'
 | `{repo_name}` | Display name for the repo | Always |
 | `{sha}` | Commit SHA or git ref | Always |
 | `{agent}` | Agent that ran the review (e.g., `codex`, `claude-code`) | Always |
+| `{rubric_sha256}` | Full SHA-256 digest of the rendered custom rubric | When available |
 | `{verdict}` | `P` (pass) or `F` (fail) | `review.completed` only |
 | `{findings}` | Full review output from the agent | `review.completed` only |
 | `{error}` | Error message describing why the job failed | `review.failed` only |
@@ -231,7 +232,8 @@ The Kata hook runs in the repo's working directory and uses the repo's committed
 project. Every issue receives the `roborev` label plus a marker label
 (`review-failed` or `review-finding`) and any extra `labels` you configure.
 roborev uses an idempotency key per job/event so reruns do not create duplicate
-Kata issues.
+Kata issues. When a custom rubric digest is available, the issue body includes
+`rubric: <type>@<digest>`, using the first 16 hexadecimal characters.
 
 The `kata` CLI must be on `PATH`. If it is missing, or the repo is not bound to
 a Kata project, the hook is skipped. If you explicitly configured the hook but
@@ -258,11 +260,12 @@ url = "https://example.com/roborev-webhook"
 
 The webhook sends a JSON POST with a 5-second timeout. The payload is the full
 review event as JSON (`type`, `ts`, `job_id`, `job_uuid`, `repo`, `repo_name`,
-`sha`, `branch`, `agent`, `verdict`, `findings`, `error`, `worktree_path`), with
-unset fields omitted. See [Event Fields](/docs/advanced/streaming/#event-fields)
-for field semantics. The `url` field is treated as sensitive and is masked in
-`roborev config list` output. Webhook URLs are redacted in daemon logs (only the
-scheme and host are shown).
+`sha`, `branch`, `agent`, `review_type`, `rubric_sha256`, `verdict`, `findings`,
+`error`, `worktree_path`), with unset fields omitted. See
+[Event Fields](/docs/advanced/streaming/#event-fields) for field semantics. The
+`url` field is treated as sensitive and is masked in `roborev config list`
+output. Webhook URLs are redacted in daemon logs (only the scheme and host are
+shown).
 
 Webhook delivery is asynchronous and never blocks the review pipeline. Failed
 deliveries are logged but do not retry.
