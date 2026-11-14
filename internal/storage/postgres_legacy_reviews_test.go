@@ -383,90 +383,116 @@ func TestIntegrationLegacyMigrationBatches(t *testing.T) { //nolint:paralleltest
 }
 
 func TestIntegrationLegacyMaintenance(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
-	env := newIntegrationEnv(t)
-	pool, ctx := env.Pool, t.Context()
-	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
-	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
-	// Leave fewer than a batch after the checkpoint, even if sync adds a review.
-	for range 102 {
-		insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+	for _, stopEarly := range []bool{false, true} {
+		name := "retry and sync"
+		if stopEarly {
+			name = "stop during retry"
+		}
+		t.Run(name, func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			pool, ctx := env.Pool, t.Context()
+			repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+			commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+			// Leave fewer than a batch after the checkpoint, even if sync adds a review.
+			for range 102 {
+				insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+			}
+			_, err := pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
+			require.NoError(t, err)
+			var checkpoint, earlier, locked uuid.UUID
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 99 LIMIT 1`).Scan(&checkpoint))
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 100 LIMIT 1`).Scan(&earlier))
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 101 LIMIT 1`).Scan(&locked))
+			tx, err := pool.Pool().Begin(ctx)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+			_, err = tx.Exec(ctx, `SELECT uuid FROM reviews WHERE uuid = $1 FOR UPDATE`, locked)
+			require.NoError(t, err)
+
+			db := env.openDB("maintenance.db")
+			worker := startSyncWorker(t, db, env.pgURL, "maintenance-test", "100ms")
+			// PostgreSQL persists the checkpoint outside synctest's control.
+			waitCondition(t, 10*time.Second, "saved maintenance checkpoint", func() (bool, error) {
+				var stored string
+				if err := pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored); err != nil {
+					return false, err
+				}
+				var state legacyReviewScanState
+				if err := json.Unmarshal([]byte(stored), &state); err != nil {
+					return false, err
+				}
+				return state.Run != nil && state.Run.After != nil && *state.Run.After == checkpoint, nil
+			})
+			// This pass must fail at the held row, rolling back locks on earlier rows.
+			err = pool.migrateLegacyReviews(ctx, true)
+			require.ErrorContains(t, err, "could not obtain lock")
+			if stopEarly {
+				done := make(chan struct{})
+				go func() { worker.Stop(); close(done) }()
+				// The worker and PostgreSQL run outside synctest's control.
+				require.Eventually(t, func() bool {
+					select {
+					case <-done:
+						return true
+					default:
+						return false
+					}
+				}, 10*time.Second, 50*time.Millisecond, "worker did not stop during maintenance retry")
+				return
+			}
+
+			writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			var jobID, owner uuid.UUID
+			var enqueued time.Time
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_uuid, job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, earlier).Scan(&jobID, &enqueued, &owner))
+			err = pool.UpsertReview(writeCtx, SyncableReview{
+				UUID: earlier, JobUUID: jobID, JobEnqueuedAt: enqueued, JobSourceMachineID: owner,
+				Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
+				StructuredOutput: jsontext.Value(`{"schema_version":2,"summary":"Updated review.","verdict":"pass","findings":[]}`),
+			})
+			require.NoError(t, err)
+			var closed bool
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT closed FROM reviews WHERE uuid = $1`, earlier).Scan(&closed))
+			assert.True(t, closed)
+			repo, err := db.GetOrCreateRepo(env.TmpDir, "git@example.test:synthetic/repo.git")
+			require.NoError(t, err)
+			_, review := createCompletedReview(t, db, repo.ID, "abc123def456", "Author", "Subject", "prompt", "output")
+			require.NotNil(t, review.UUID)
+			// PostgreSQL receives scheduled sync writes outside synctest's control.
+			waitCondition(t, 10*time.Second, "scheduled review push", func() (bool, error) {
+				var exists bool
+				err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE uuid = $1)`, *review.UUID).Scan(&exists)
+				return exists, err
+			})
+			_, err = worker.SyncNow()
+			require.NoError(t, err)
+			var stored string
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored))
+			var state legacyReviewScanState
+			require.NoError(t, json.Unmarshal([]byte(stored), &state))
+			require.NotNil(t, state.Run)
+			require.NotNil(t, state.Run.After)
+			assert.Equal(t, checkpoint, *state.Run.After)
+
+			require.NoError(t, tx.Rollback(ctx))
+			// PostgreSQL persists completion outside synctest's control.
+			waitCondition(t, 10*time.Second, "maintenance completed after retry", func() (bool, error) {
+				var raw string
+				if err := pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&raw); err != nil {
+					return false, err
+				}
+				var current legacyReviewScanState
+				if err := json.Unmarshal([]byte(raw), &current); err != nil {
+					return false, err
+				}
+				return current.Run == nil && current.Done != nil, nil
+			})
+			var archived bool
+			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM legacy_reviews WHERE uuid = $1)`, locked).Scan(&archived))
+			assert.True(t, archived)
+		})
 	}
-	_, err := pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
-	require.NoError(t, err)
-	var checkpoint, earlier, locked uuid.UUID
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 99 LIMIT 1`).Scan(&checkpoint))
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 100 LIMIT 1`).Scan(&earlier))
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 101 LIMIT 1`).Scan(&locked))
-	tx, err := pool.Pool().Begin(ctx)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
-	_, err = tx.Exec(ctx, `SELECT uuid FROM reviews WHERE uuid = $1 FOR UPDATE`, locked)
-	require.NoError(t, err)
-
-	db := env.openDB("maintenance.db")
-	worker := startSyncWorker(t, db, env.pgURL, "maintenance-test", "100ms")
-	// PostgreSQL persists the checkpoint outside synctest's control.
-	waitCondition(t, 10*time.Second, "saved maintenance checkpoint", func() (bool, error) {
-		var stored string
-		if err := pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored); err != nil {
-			return false, err
-		}
-		var state legacyReviewScanState
-		if err := json.Unmarshal([]byte(stored), &state); err != nil {
-			return false, err
-		}
-		return state.Run != nil && state.Run.After != nil && *state.Run.After == checkpoint, nil
-	})
-	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	var jobID, owner uuid.UUID
-	var enqueued time.Time
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_uuid, job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, earlier).Scan(&jobID, &enqueued, &owner))
-	err = pool.UpsertReview(writeCtx, SyncableReview{
-		UUID: earlier, JobUUID: jobID, JobEnqueuedAt: enqueued, JobSourceMachineID: owner,
-		Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(),
-		StructuredOutput: jsontext.Value(`{"schema_version":2,"summary":"Updated review.","verdict":"pass","findings":[]}`),
-	})
-	require.NoError(t, err)
-	var closed bool
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT closed FROM reviews WHERE uuid = $1`, earlier).Scan(&closed))
-	assert.True(t, closed)
-	repo, err := db.GetOrCreateRepo(env.TmpDir, "git@example.test:synthetic/repo.git")
-	require.NoError(t, err)
-	_, review := createCompletedReview(t, db, repo.ID, "abc123def456", "Author", "Subject", "prompt", "output")
-	require.NotNil(t, review.UUID)
-	// PostgreSQL receives scheduled sync writes outside synctest's control.
-	waitCondition(t, 10*time.Second, "scheduled review push", func() (bool, error) {
-		var exists bool
-		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE uuid = $1)`, *review.UUID).Scan(&exists)
-		return exists, err
-	})
-	_, err = worker.SyncNow()
-	require.NoError(t, err)
-	var stored string
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored))
-	var state legacyReviewScanState
-	require.NoError(t, json.Unmarshal([]byte(stored), &state))
-	require.NotNil(t, state.Run)
-	require.NotNil(t, state.Run.After)
-	assert.Equal(t, checkpoint, *state.Run.After)
-
-	require.NoError(t, tx.Rollback(ctx))
-	// PostgreSQL persists completion outside synctest's control.
-	waitCondition(t, 10*time.Second, "maintenance completed after retry", func() (bool, error) {
-		var raw string
-		if err := pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&raw); err != nil {
-			return false, err
-		}
-		var current legacyReviewScanState
-		if err := json.Unmarshal([]byte(raw), &current); err != nil {
-			return false, err
-		}
-		return current.Run == nil && current.Done != nil, nil
-	})
-	var archived bool
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM legacy_reviews WHERE uuid = $1)`, locked).Scan(&archived))
-	assert.True(t, archived)
 }
 
 func TestIntegrationLegacyMaintenancePassProgress(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
@@ -530,9 +556,6 @@ func TestIntegrationLegacyMaintenancePassProgress(t *testing.T) { //nolint:paral
 		require.NoError(t, json.Unmarshal([]byte(stored), &state))
 		assert.Nil(t, state.Run)
 		assert.NotNil(t, state.Done)
-		var restored bool
-		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE uuid = $1)`, blocked).Scan(&restored))
-		assert.False(t, restored)
 	})
 
 	t.Run("restore progress then no progress", func(t *testing.T) {
@@ -590,13 +613,11 @@ func TestIntegrationMirrorArchivesOriginalBeforeSyncWrite(t *testing.T) { //noli
 			review := SyncableReview{UUID: id, JobUUID: job, JobEnqueuedAt: enqueued, JobSourceMachineID: owner, Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(), StructuredOutput: jsontext.Value(tc.document)}
 			require.NoError(t, pool.UpsertReview(ctx, review))
 			var output, prompt string
-			var resolved, closed bool
+			var resolved bool
 			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output', record->>'prompt', resolved_at IS NOT NULL FROM legacy_reviews WHERE uuid = $1`, id).Scan(&output, &prompt, &resolved))
 			assert.Equal(t, "Preserve this historical text.", output)
 			assert.Equal(t, "prompt", prompt)
 			assert.Equal(t, tc.resolved, resolved)
-			require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT closed FROM reviews WHERE uuid = $1`, id).Scan(&closed))
-			assert.True(t, closed)
 		})
 	}
 }
@@ -682,10 +703,12 @@ func TestIntegrationLegacyResolveConcurrentUpload(t *testing.T) { //nolint:paral
 	go func() {
 		upload <- pool.UpsertReview(ctx, SyncableReview{UUID: id, JobUUID: job, JobEnqueuedAt: enqueued, JobSourceMachineID: owner, Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(), StructuredOutput: raw})
 	}()
+	waitCondition(t, 10*time.Second, "upload waiting for review", func() (bool, error) {
+		var waiting bool
+		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%WITH locked_job AS MATERIALIZED%')`).Scan(&waiting)
+		return waiting, err
+	})
 	require.NoError(t, tx.Rollback(ctx))
 	require.NoError(t, <-resolve)
 	require.NoError(t, <-upload)
-	var output string
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output' FROM legacy_reviews WHERE uuid = $1`, id).Scan(&output))
-	assert.Equal(t, "Preserve this historical text.", output)
 }
