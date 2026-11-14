@@ -34,12 +34,18 @@ section invalid and keeps the file unchanged.
 ## CI comment display
 
 The GitHub daemon poller accepts `[ci] comment_max_findings` (integer, default
-`0` for unlimited) and `comment_when_clean` (boolean, default `true`). Repo
-values override global values, including explicit `0` and `true` resets.
-Negative caps are rejected. These settings affect synthesized GitHub comments
-only; they preserve complete stored reviews, verdicts, and prompts. Prose is
-uncapped, and raw fallback comments, daemon-free CI, and GitLab retain their
-existing behavior. See
+`0` for unlimited), `comment_when_clean` (boolean, default `true`), and
+`comment_min_confidence` (optional finite number from `0` to `1`, unset globally
+disables filtering). An unset repo floor inherits the global floor. Set it to
+`0` to disable filtering for that repo. The floor uses confidence recorded by
+synthesis. Findings with no stored score remain visible. Synthesis is instructed
+to use `0.5` when no source scored a finding, so a floor above `0.5` can hide
+it. With `comment_when_clean = false`, an empty comment can be suppressed even
+when the stored review has findings. Negative caps and invalid confidence floors
+are rejected during loading, saving, and reloading. These settings affect
+synthesized GitHub comments only; they preserve complete stored reviews,
+verdicts, and prompts. Prose is uncapped, and raw fallback comments, daemon-free
+CI, and GitLab retain their existing behavior. See
 [Comment display policy](/docs/integrations/github/#comment-display-policy) for
 filtering, complete review retrieval, silent upsert, and status permissions.
 

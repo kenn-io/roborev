@@ -103,3 +103,54 @@ func FuzzCommentMaxFindings(f *testing.F) {
 		}
 	})
 }
+
+func TestCommentMinConfidence(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "high", Problem: "legacy confidence", Confidence: 0},
+		{Severity: "high", Problem: "explicit zero", Kind: "defect", Confidence: 0},
+		{Severity: "high", Problem: "below floor", Kind: "defect", Confidence: 0.69},
+		{Severity: "high", Problem: "at floor", Kind: "defect", Confidence: 0.7},
+		{Severity: "high", Problem: "confident", Kind: "defect", Confidence: 0.9},
+		{Severity: "critical", Problem: "critical", Kind: "defect", Confidence: 0.7},
+	}}
+	original := slices.Clone(doc.Findings)
+	for _, tc := range []struct {
+		name    string
+		floor   float64
+		cap     int
+		want    []string
+		omitted int
+	}{
+		{"off", 0, 0, []string{"critical", "legacy confidence", "explicit zero", "below floor", "at floor", "confident"}, 0},
+		{"inclusive floor", 0.7, 0, []string{"critical", "legacy confidence", "at floor", "confident"}, 0},
+		{"cap after filters", 0.7, 3, []string{"critical", "legacy confidence", "at floor"}, 1},
+		{"missing survives", 1, 0, []string{"legacy confidence"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := PrepareComment(CommentConfig{MinSeverity: "high", MinConfidence: tc.floor, MaxFindings: tc.cap}, ReviewResult{Structured: &doc})
+			var got []string
+			for _, finding := range prepared.findings {
+				got = append(got, finding.problem)
+			}
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, tc.omitted, prepared.omitted)
+			assert.Equal(t, original, doc.Findings)
+		})
+	}
+	for _, tc := range []struct {
+		name        string
+		minSeverity string
+		findings    []StructuredFinding
+		message     string
+	}{
+		{name: "already clean", message: "No issues found."},
+		{name: "severity only", minSeverity: "high", findings: []StructuredFinding{{Severity: "low", Kind: "defect", Confidence: 0}}, message: "No findings at or above high severity."},
+		{name: "confidence removed eligible finding", minSeverity: "high", findings: []StructuredFinding{{Severity: "high", Kind: "defect", Confidence: 0}}, message: "No findings match the comment filters."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := PrepareComment(CommentConfig{MinSeverity: tc.minSeverity, MinConfidence: 0.7}, ReviewResult{Structured: &StructuredReview{Findings: tc.findings}})
+			assert.True(t, prepared.IsClean())
+			assert.Equal(t, "**Verdict:** "+tc.message+"\n", FormatComment(prepared))
+		})
+	}
+}

@@ -15,6 +15,7 @@ import (
 	ghpkg "go.kenn.io/roborev/internal/github"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // Exercise real GitHub HTTP delivery: silence may patch a stale marker, but
@@ -242,4 +243,29 @@ func TestCIPanelCappedPublicationPreservesOmissionNotice(t *testing.T) {
 	assert.Equal(t, before.Output, after.Output)
 	assert.Equal(t, before.StructuredOutput, after.StructuredOutput)
 	assert.Equal(t, storage.VerdictFail, after.Verdict())
+}
+
+func TestCIPanelCommentMinConfidence(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	floor := 0.8
+	h.Cfg.CI.CommentMinConfidence = &floor
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
+	document := reviewpkg.StructuredReview{SchemaVersion: 3, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
+		{Severity: "high", Kind: "defect", Confidence: 0.5, Problem: "Filtered finding.", Fix: "Fix it."},
+		{Severity: "high", Kind: "defect", Confidence: 0.9, Problem: "Published finding.", Fix: "Fix it."},
+	}}
+	raw, err := json.Marshal(document)
+	require.NoError(t, err)
+	require.NoError(t, h.DB.MaybeReleasePanelSynthesisContext(t.Context(), panel.PanelRunUUID))
+	claimed, err := h.DB.ClaimJobContext(t.Context(), "fixture-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, synth.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(h.DB, synth.ID, synth.Agent, "", string(raw)))
+	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
+	require.NoError(t, err)
+	body, err := h.Poller.panelCommentBody(panel, members)
+	require.NoError(t, err)
+	assert.Contains(t, body, "Published finding.")
+	assert.NotContains(t, body, "Filtered finding.")
 }
