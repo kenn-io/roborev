@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -440,4 +441,39 @@ func TestDaemonRestartOnlyStopsValidatedRuntimes(t *testing.T) {
 	assert.Equal(t, []*daemon.RuntimeInfo{validated}, stopped)
 	assert.Equal(t, 1, listCalls)
 	assertRecoveryLock(t, true)
+}
+
+func TestDaemonRestartRunningPolicy(t *testing.T) {
+	t.Run("arguments", func(t *testing.T) {
+		stubDaemonRestartOutput(t)
+		withDaemonCommandDependencies(t, func() error { return nil }, func() error { return nil }, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
+		cmd := daemonCmd()
+		cmd.SetArgs([]string{"restart", "--running=invalid"})
+		require.Error(t, cmd.ExecuteContext(t.Context()))
+	})
+	for _, service := range []bool{false, true} {
+		t.Run(fmt.Sprintf("service=%t", service), func(t *testing.T) {
+			stubDaemonRestartOutput(t)
+			restartThroughService = service
+			info := &daemon.RuntimeInfo{PID: os.Getpid()}
+			oldList, oldInterrupt := listAllRuntimes, interruptDaemon
+			t.Cleanup(func() { listAllRuntimes, interruptDaemon = oldList, oldInterrupt })
+			interruptCalls, stopCalls := 0, 0
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{info}, nil }
+			interruptDaemon = func(got *daemon.RuntimeInfo) error { assert.Same(t, info, got); interruptCalls++; return nil }
+			if service {
+				owner := ownedDaemonService(t)
+				findDaemonService = func(context.Context, int) (*daemonService, error) { return owner, nil }
+				startDaemonService = func(context.Context, string) error { return nil }
+				serviceMainPID = func(context.Context, string) (int, error) { return 200, nil }
+				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return &daemon.RuntimeInfo{PID: 200}, nil }
+			}
+			withDaemonCommandDependencies(t, func() error { return nil }, func() error { stopCalls++; return nil }, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
+			cmd := daemonCmd()
+			cmd.SetArgs([]string{"restart", "--running=interrupt"})
+			require.NoError(t, cmd.ExecuteContext(t.Context()))
+			assert.Equal(t, 1, interruptCalls)
+			assert.Zero(t, stopCalls)
+		})
+	}
 }

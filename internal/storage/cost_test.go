@@ -414,9 +414,10 @@ func TestSaveJobTokenUsageIgnoresStaleSession(t *testing.T) {
 	assert.Contains(reloaded.TokenUsage, "1.00", "current-session write lands")
 }
 
-// TestResetStaleJobsClearsCostMetadata verifies restart recovery does not
-// carry a prior attempt's session id or cost into the requeued run.
-func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
+// TestResetStaleJobsClearsAttemptDataAndPreservesRebuttalSession verifies
+// restart recovery clears prior attempt metadata while retaining a rebuttal's
+// session.
+func TestResetStaleJobsClearsAttemptDataAndPreservesRebuttalSession(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)
@@ -444,16 +445,28 @@ func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
 	require.NoError(t, db.SaveJobTokenUsage(
 		job.ID, "sess-stale", `{"cost_usd":3.00,"has_cost":true}`))
 
+	rebuttal, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, Agent: "test", JobType: JobTypeTask, Prompt: "task", Source: JobSourceRebuttal, SessionID: "original-session"})
+	require.NoError(t, err)
+	setJobStatus(t, db, rebuttal.ID, JobStatusRunning)
+
 	require.NoError(t, db.ResetStaleJobs())
 
 	reloaded, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(JobStatusQueued, reloaded.Status, "running job requeued")
-	assert.Empty(reloaded.SessionID, "session id cleared on restart recovery")
+	assert.Empty(reloaded.SessionID, "non-rebuttal session id cleared on restart recovery")
 	assert.Empty(reloaded.TokenUsage, "stale cost cleared on restart recovery")
 	assert.Empty(reloaded.CommandLine, "stale command line cleared on restart recovery")
 	assert.False(getJobAgentInvoked(t, db, job.ID),
 		"stale agent-ran marker cleared on restart recovery")
+	reloadedRebuttal, err := db.GetJobByID(rebuttal.ID)
+	require.NoError(t, err)
+	assert.Equal(JobStatusQueued, reloadedRebuttal.Status)
+	assert.Equal("original-session", reloadedRebuttal.SessionID)
+	var resumed int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT session_resumed FROM review_jobs WHERE id = ?`, rebuttal.ID).Scan(&resumed))
+	assert.Equal(1, resumed)
+
 	reloadedCanceled, err := db.GetJobByID(canceled.ID)
 	require.NoError(t, err)
 	assert.Empty(reloadedCanceled.WorkerID,

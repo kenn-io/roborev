@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -273,13 +274,29 @@ func TestPrepareUpdateDrainTimerUsesAdvertisedExpiry(t *testing.T) {
 }
 
 func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
-	server, db, dir := newTestServer(t)
-	createTestJob(t, db, dir, "retry-update-requeue", "test")
-	job, err := db.ClaimJob("worker-update")
-	require.NoError(t, err)
-	require.NotNil(t, job)
-	lease := prepareUpdateDrain(t, server, "owner-requeue-retry", "interrupt")
-	_, err = db.ExecContext(t.Context(), fmt.Sprintf(`
+	for _, tc := range []struct {
+		name     string
+		shutdown bool
+	}{
+		{name: "lease release"},
+		{name: "server shutdown", shutdown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, db, dir := newTestServer(t)
+			createTestJob(t, db, dir, "retry-update-requeue", "test")
+			job, err := db.ClaimJob("worker-update")
+			require.NoError(t, err)
+			require.NotNil(t, job)
+
+			var leaseToken string
+			if tc.shutdown {
+				response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			} else {
+				lease := prepareUpdateDrain(t, server, "owner-requeue-retry", "interrupt")
+				leaseToken = lease.LeaseToken
+			}
+			_, err = db.ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_update_requeue
 		BEFORE UPDATE ON review_jobs
 		WHEN OLD.id = %d AND NEW.status = 'queued'
@@ -287,24 +304,30 @@ func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
 			SELECT RAISE(FAIL, 'synthetic requeue failure');
 		END
 	`, job.ID))
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
 
-	assert.True(t, server.workerPool.handleUpdateInterruption(ctx, "worker-update", job))
-	stored, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusRunning, stored.Status)
+			assert.True(t, server.workerPool.handleUpdateInterruption(ctx, "worker-update", job))
+			stored, err := db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, storage.JobStatusRunning, stored.Status)
 
-	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_update_requeue`)
-	require.NoError(t, err)
-	released, err := server.updateCoordinator.release(lease.LeaseToken)
-	require.NoError(t, err)
-	assert.True(t, released)
-	stored, err = db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusQueued, stored.Status)
-	assert.Equal(t, 0, stored.RetryCount)
+			_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_update_requeue`)
+			require.NoError(t, err)
+			if tc.shutdown {
+				require.NoError(t, server.Stop())
+			} else {
+				released, err := server.updateCoordinator.release(leaseToken)
+				require.NoError(t, err)
+				assert.True(t, released)
+			}
+			stored, err = db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, storage.JobStatusQueued, stored.Status)
+			assert.Equal(t, 0, stored.RetryCount)
+		})
+	}
 }
 
 func TestFailedAbortRollbackRemainsVisibleUntilGateRecovers(t *testing.T) {

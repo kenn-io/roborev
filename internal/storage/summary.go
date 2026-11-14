@@ -13,6 +13,7 @@ import (
 
 // querier abstracts *sql.DB and *sql.Tx for summary queries.
 type querier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
 }

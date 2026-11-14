@@ -856,8 +856,9 @@ func insertJobSessionHistory(
 }
 
 // RequeueUpdateInterruptedJob returns an update-interrupted attempt to the
-// queue without consuming a retry. The worker ownership guard prevents a stale
-// attempt from changing a row that was canceled or reclaimed concurrently.
+// queue without consuming a retry. A rebuttal keeps its input session. The
+// worker ownership guard prevents a stale attempt from changing a row that was
+// canceled or reclaimed concurrently.
 func (db *DB) RequeueUpdateInterruptedJob(
 	jobID int64, workerID string,
 ) (bool, error) {
@@ -866,15 +867,15 @@ func (db *DB) RequeueUpdateInterruptedJob(
 		SET status = 'queued',
 		    worker_id = NULL,
 		    started_at = NULL,
-		    session_id = NULL,
-		    session_resumed = 0,
+		    session_id = CASE WHEN source = ? THEN session_id ELSE NULL END,
+		    session_resumed = CASE WHEN source = ? THEN session_resumed ELSE 0 END,
 		    resume_source_job_uuid = NULL,
 		    token_usage = NULL,
 		    command_line = NULL,
 		    agent_invoked = 0,
 		    synced_at = NULL
 		WHERE id = ? AND status = 'running' AND worker_id = ?
-	`, jobID, workerID)
+	`, JobSourceRebuttal, JobSourceRebuttal, jobID, workerID)
 	if err != nil {
 		return false, err
 	}
@@ -886,7 +887,12 @@ func (db *DB) RequeueUpdateInterruptedJob(
 // the query. Update preparation calls this after persisting the claim gate, so
 // the result is the complete cutover set.
 func (db *DB) ListRunningJobIDs() ([]int64, error) {
-	rows, err := db.Query(`
+	// This legacy wrapper has no caller context.
+	return listRunningJobIDs(context.Background(), db)
+}
+
+func listRunningJobIDs(ctx context.Context, q querier) ([]int64, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT id FROM review_jobs WHERE status = 'running' ORDER BY id
 	`)
 	if err != nil {

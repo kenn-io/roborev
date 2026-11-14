@@ -2480,6 +2480,23 @@ components:
       required:
         - session_id
       type: object
+    InterruptShutdownInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/InterruptShutdownInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        expected_pid:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - expected_pid
+      type: object
     JobIDRequest:
       additionalProperties: false
       properties:
@@ -7555,6 +7572,31 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Gracefully shut down the daemon
+      tags:
+        - daemon
+  /api/shutdown/interrupt:
+    post:
+      operationId: interrupt-shutdown
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InterruptShutdownInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShutdownOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Interrupt running reviews and shut down the daemon
       tags:
         - daemon
   /api/status:

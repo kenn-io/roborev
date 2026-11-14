@@ -110,6 +110,7 @@ export * from "./healthStatus";
 export * from "./importLegacyReviewInputBody";
 export * from "./input";
 export * from "./inputToolInput";
+export * from "./interruptShutdownInputBody";
 export * from "./jobIDRequest";
 export * from "./jobInvocationsOutputBody";
 export * from "./jobStats";

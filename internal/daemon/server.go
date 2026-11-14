@@ -353,9 +353,12 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("clear interrupted shutdown drain: %w", err)
 	}
 
-	// Reset stale jobs from previous runs
+	// A stale running job cannot be reclaimed by workers until recovery succeeds.
 	if err := s.db.ResetStaleJobs(); err != nil {
-		log.Printf("Warning: failed to reset stale jobs: %v", err)
+		if listener != nil {
+			_ = listener.Close()
+		}
+		return fmt.Errorf("reset stale jobs: %w", err)
 	}
 
 	// Start config watcher for hot-reloading
@@ -796,6 +799,9 @@ func (s *Server) stopOnce0() error {
 
 	// Stop worker pool
 	s.workerPool.Stop()
+	if err := s.workerPool.RetryFailedUpdateRequeues(); err != nil {
+		log.Printf("Warning: failed to retry interrupted job requeues: %v", err)
+	}
 
 	// Stop search reconciliation after workers can no longer emit review events.
 	s.stopSearch()
@@ -4233,6 +4239,31 @@ func (s *Server) humaShutdown(
 			fmt.Sprintf("prepare graceful shutdown: %v", err),
 		)
 	}
+	s.RequestShutdown()
+	resp := &ShutdownOutput{}
+	resp.Body.Status = "shutting down"
+	return resp, nil
+}
+
+// humaInterruptShutdown targets only the process the caller discovered.
+func (s *Server) humaInterruptShutdown(ctx context.Context, input *InterruptShutdownInput) (*ShutdownOutput, error) {
+	if input.Body.ExpectedPID != os.Getpid() {
+		return nil, huma.Error412PreconditionFailed("daemon PID changed")
+	}
+	s.shutdownDrainMu.Lock()
+	defer s.shutdownDrainMu.Unlock()
+	if s.updateDrain != nil {
+		return nil, huma.Error409Conflict("update drain is active or recovering")
+	}
+	s.workerPool.attemptTransitionsMu.Lock()
+	defer s.workerPool.attemptTransitionsMu.Unlock()
+	ids, err := s.db.BeginInterruptShutdown(ctx)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(fmt.Sprintf("prepare interrupt shutdown: %v", err))
+	}
+	s.workerPool.interruptJobsForUpdateLocked(ids)
+	s.shutdownDraining = true
+	s.workerPool.BeginStop()
 	s.RequestShutdown()
 	resp := &ShutdownOutput{}
 	resp.Body.Status = "shutting down"

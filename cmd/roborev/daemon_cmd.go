@@ -137,6 +137,10 @@ func runDaemonWithSearch(
 	return errors.Join(startErr, stopErr, closeErr)
 }
 
+var interruptDaemon = func(info *daemon.RuntimeInfo) error {
+	return daemon.InterruptDaemonWithFallback(info, interruptDaemonWithUpdateAPI)
+}
+
 func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -170,13 +174,27 @@ func daemonCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
-		Use:   "restart",
+	var runningPolicy string
+	restartCmd := &cobra.Command{
+		Use:   "restart [flags]",
 		Short: "Restart the daemon",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if runningPolicy != "wait" && runningPolicy != "interrupt" {
+				return fmt.Errorf("invalid --running value %q (use wait or interrupt)", runningPolicy)
+			}
 			var owner *daemonService
 			var runtimes []*daemon.RuntimeInfo
 			stop := daemonStop
+			drain := drainManagedDaemon
+			message := daemonShutdownWaitMessage
+			if runningPolicy == "interrupt" {
+				drain = interruptDaemon
+				message = "Interrupting running jobs and waiting for daemon shutdown..."
+				stop = func() error {
+					return stopDaemonRuntimesWithMessage(listAllRuntimes, drain, os.Stderr, message)
+				}
+			}
 			var release func()
 			if restartThroughService {
 				var err error
@@ -187,7 +205,9 @@ func daemonCmd() *cobra.Command {
 				if release != nil {
 					defer release()
 				}
-				stop = func() error { return stopDaemonSnapshot(runtimes, drainManagedDaemon, os.Stderr) }
+				stop = func() error {
+					return stopDaemonSnapshotWithMessage(runtimes, drain, os.Stderr, message)
+				}
 			}
 			wasRunning := true
 			if err := stop(); errors.Is(err, ErrDaemonNotRunning) {
@@ -209,7 +229,9 @@ func daemonCmd() *cobra.Command {
 			}
 			return nil
 		},
-	})
+	}
+	restartCmd.Flags().StringVar(&runningPolicy, "running", "wait", "how to handle running jobs: wait or interrupt")
+	cmd.AddCommand(restartCmd)
 
 	cmd.AddCommand(statusCmd())
 	cmd.AddCommand(daemonRunCmd())

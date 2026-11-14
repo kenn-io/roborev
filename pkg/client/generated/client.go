@@ -259,6 +259,10 @@ type ClientInterface interface {
 	Shutdown(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ShutdownResponse, error)
 	ShutdownWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ShutdownResp, error)
 
+	// InterruptShutdown Interrupt running reviews and shut down the daemon
+	InterruptShutdown(ctx context.Context, options *InterruptShutdownRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResponse, error)
+	InterruptShutdownWithResponse(ctx context.Context, options *InterruptShutdownRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResp, error)
+
 	// GetStatus Get daemon status
 	GetStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetStatusResponse, error)
 	GetStatusWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetStatusResp, error)
@@ -4014,6 +4018,70 @@ func (c *Client) Shutdown(ctx context.Context, reqEditors ...runtime.RequestEdit
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/shutdown")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// InterruptShutdown Interrupt running reviews and shut down the daemon
+func (c *Client) InterruptShutdown(ctx context.Context, options *InterruptShutdownRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/shutdown/interrupt",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*InterruptShutdownResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(InterruptShutdownErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "InterruptShutdownErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(InterruptShutdownResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "InterruptShutdownResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/shutdown/interrupt")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
