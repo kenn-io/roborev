@@ -97,7 +97,10 @@ tmp_config_base=""
     --exclude './zensical.toml' \
     --exclude './assets/*.sh' \
     -cf - .
-) | (cd "$tmp_docs" && tar -xf -)
+) | (
+  # Tar may finish before the producer writes all trailing archive padding.
+  cd "$tmp_docs" && tar -xf - && cat > /dev/null
+)
 # The docs tier renders under /docs/; the hand-written website tier owns the
 # site root.
 docs_output_dir="$site_dir/docs"
