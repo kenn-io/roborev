@@ -481,7 +481,8 @@ func (wp *WorkerPool) runSynthesisAgent(
 			log.Printf("[%s] Warning: close job log for job %d: %v", workerID, job.ID, cErr)
 		}
 	}()
-	agentOutput := io.MultiWriter(jobLog, outputWriter)
+	logOutput := newPiInvocationLogWriter(a.Name(), jobLog)
+	agentOutput := io.MultiWriter(logOutput, outputWriter)
 	if hasSuppliedReviewSettings(job) {
 		agentOutput = io.MultiWriter(&emitted, agentOutput)
 	}

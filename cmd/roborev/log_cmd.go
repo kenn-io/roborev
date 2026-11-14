@@ -32,11 +32,14 @@ By default, JSONL agent output is rendered as human-readable
 progress lines (tool calls, agent text). Non-JSON logs are
 printed as-is.
 
-Use --raw to print the original log bytes unchanged.
+Use --raw to print the exact stored log bytes unchanged. Stored Pi logs may omit
+repeated identical cumulative usage from message deltas. Changed and final usage
+remain in the stored log. Compaction leaves live rendering and invocation capture
+unchanged.
 
 Examples:
   roborev log 42          # Human-friendly rendered output
-  roborev log --raw 42    # Raw log bytes (JSONL)
+  roborev log --raw 42    # Stored log bytes
   roborev log --path 42   # Print the log file path`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
