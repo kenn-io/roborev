@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,6 +130,67 @@ func TestInterruptDaemonWithUpdateAPI(t *testing.T) {
 				require.NoError(t, err)
 			}
 			assert.Equal(t, tc.want, requests)
+		})
+	}
+}
+
+func TestInterruptDaemonWithUpdateAPITargetExitsAfterPause(t *testing.T) {
+	if os.Getenv("ROBOREV_TEST_WAIT_FOR_EXIT") == "1" {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		return
+	}
+
+	for _, exitAt := range []string{"/api/queue/pause", "/api/jobs"} {
+		t.Run(exitAt, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInterruptDaemonWithUpdateAPITargetExitsAfterPause$")
+			cmd.Env = append(os.Environ(), "ROBOREV_TEST_WAIT_FOR_EXIT=1")
+			stdin, err := cmd.StdinPipe()
+			require.NoError(t, err)
+			require.NoError(t, cmd.Start())
+			waited := false
+			t.Cleanup(func() {
+				if !waited {
+					_ = stdin.Close()
+					_ = cmd.Wait()
+				}
+			})
+
+			var unpause, shutdown atomic.Int32
+			var exitErr error
+			endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == exitAt {
+					exitErr = stdin.Close()
+					if err := cmd.Wait(); exitErr == nil {
+						exitErr = err
+					}
+					waited = true
+				}
+				switch r.URL.Path {
+				case "/api/status":
+					_, _ = io.WriteString(w, `{"queue_paused":false,"active_snoozes":[],"web_capabilities":[],"version":"0.75.0"}`)
+				case "/api/ping":
+					_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, cmd.Process.Pid)
+				case "/api/queue/pause":
+					_, _ = io.WriteString(w, `{"queue_paused":true}`)
+				case "/api/jobs":
+					_, _ = io.WriteString(w, `{"jobs":[],"has_more":false,"next_cursor":null}`)
+				case "/api/queue/unpause":
+					unpause.Add(1)
+				case "/api/shutdown":
+					shutdown.Add(1)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			err = interruptDaemonWithUpdateAPI(t.Context(), &daemon.RuntimeInfo{PID: cmd.Process.Pid}, endpoint)
+			require.NoError(t, exitErr)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "roborev unpause")
+			assert.Zero(t, unpause.Load())
+			assert.Zero(t, shutdown.Load())
 		})
 	}
 }

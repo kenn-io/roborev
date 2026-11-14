@@ -15,14 +15,14 @@ import (
 )
 
 // errInterruptTargetGone reports that the discovered daemon exited, so there
-// is nothing left to interrupt or restore.
+// is nothing left to interrupt.
 var errInterruptTargetGone = errors.New("daemon exited before interruption")
 
 func interruptDaemonWithUpdateAPI(
 	ctx context.Context, info *daemon.RuntimeInfo, endpoint daemon.DaemonEndpoint,
 ) error {
 	err := interruptPausedDaemon(ctx, info, endpoint)
-	if errors.Is(err, errInterruptTargetGone) {
+	if err == errInterruptTargetGone {
 		return nil
 	}
 	return err
@@ -69,8 +69,8 @@ func interruptPausedDaemon(
 }
 
 // pauseQueueForInterrupt pauses the queue unless it was already paused and
-// returns an idempotent restore of the prior state. Restoration is skipped
-// once the discovered daemon is gone or replaced, so no request reaches a
+// returns an idempotent restore of the prior state. Restoration returns an
+// error if the discovered daemon is gone or replaced, so no request reaches a
 // replacement PID. Check after the status read and before pausing, so a
 // replacement cannot receive the first mutating compatibility request.
 func pauseQueueForInterrupt(
@@ -92,6 +92,9 @@ func pauseQueueForInterrupt(
 		return nil, err
 	}
 	done := false
+	recoveryError := func(err error) error {
+		return fmt.Errorf("queue may still be paused; start the daemon and run roborev unpause: %w", err)
+	}
 	restore := func(ctx context.Context) error {
 		if done {
 			return nil
@@ -100,11 +103,11 @@ func pauseQueueForInterrupt(
 		if err != nil {
 			// A replacement may own the endpoint now, so do not retry there.
 			done = true
-			return err
+			return recoveryError(err)
 		}
 		if !alive {
 			done = true
-			return nil
+			return recoveryError(errInterruptTargetGone)
 		}
 		resp, err := api.UnpauseQueueWithResponse(ctx)
 		if err != nil {
@@ -137,11 +140,11 @@ func pauseQueueForInterrupt(
 	alive, err = interruptTargetAtEndpoint(ctx, info, endpoint)
 	if err != nil {
 		done = true
-		return nil, err
+		return nil, recoveryError(err)
 	}
 	if !alive {
 		done = true
-		return nil, errInterruptTargetGone
+		return nil, recoveryError(errInterruptTargetGone)
 	}
 	return restore, nil
 }
