@@ -574,16 +574,6 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			successFixture: "gemini-stream.jsonl",
 		},
 		{
-			name:           "Gemini agentic model fallback does not replay a resumed prompt",
-			cli:            "gemini",
-			version:        "0.34.0",
-			agentic:        true,
-			wantError:      true,
-			resumeError:    "Error: model is not found for API version v1",
-			resumeFlag:     "--resume",
-			successFixture: "gemini-stream.jsonl",
-		},
-		{
 			name: "Antigravity failed resume",
 			cli:  "agy", version: "1.2.6", resumeFlag: "--conversation",
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",

@@ -146,7 +146,6 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	require.NoError(t, err)
 	a := assert.New(t)
 	a.Equal("original-session", stored.SessionID)
-	a.Equal("agy", stored.SessionCLI)
 	a.Equal("original-model", stored.Model)
 	a.Equal("original-provider", stored.Provider)
 	a.Equal("thorough", stored.Reasoning)

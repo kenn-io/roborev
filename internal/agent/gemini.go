@@ -135,7 +135,6 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	capabilities := a.capabilities(ctx)
-	resumingSession := a.SessionID != "" && capabilities.resume
 	if !a.usesAntigravity() {
 		mode, minimum := "read-only", geminiPlanModeVersion
 		if agenticMode {
@@ -165,8 +164,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		args = a.buildArgsWithModel(a.Model, agenticMode)
 		result, stderrStr, err = a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
 	}
-	if err != nil && (!agenticMode || !resumingSession) &&
-		a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
+	if err != nil && a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
 		// Built-in default model may be stale (Google renames
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
