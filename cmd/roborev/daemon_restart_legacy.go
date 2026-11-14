@@ -22,7 +22,7 @@ func interruptDaemonWithUpdateAPI(
 	ctx context.Context, info *daemon.RuntimeInfo, endpoint daemon.DaemonEndpoint,
 ) error {
 	err := interruptPausedDaemon(ctx, info, endpoint)
-	if err == errInterruptTargetGone {
+	if errors.Is(err, errInterruptTargetGone) {
 		return nil
 	}
 	return err
@@ -93,6 +93,9 @@ func pauseQueueForInterrupt(
 	}
 	done := false
 	recoveryError := func(err error) error {
+		if errors.Is(err, errInterruptTargetGone) {
+			return errors.New("daemon exited; queue may still be paused; start the daemon and run roborev unpause")
+		}
 		return fmt.Errorf("queue may still be paused; start the daemon and run roborev unpause: %w", err)
 	}
 	restore := func(ctx context.Context) error {
