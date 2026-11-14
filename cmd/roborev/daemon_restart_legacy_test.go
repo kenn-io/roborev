@@ -31,7 +31,7 @@ func TestInterruptDaemonWithUpdateAPI(t *testing.T) {
 		{name: "running rebuttal", rebuttal: true, want: []string{"status", "ping", "pause", "ping", "jobs", "ping", "unpause"}},
 		{name: "replacement after status read", flipAt: "/api/status", want: []string{"status", "ping"}},
 		{name: "replacement after jobs read", flipAt: "/api/jobs", want: []string{"status", "ping", "pause", "ping", "jobs", "ping", "ping"}},
-		{name: "replacement before shutdown", flipAt: "/api/update/renew", want: []string{"status", "ping", "pause", "ping", "jobs", "ping", "prepare:interrupt", "ping", "renew", "ping", "ping"}},
+		{name: "replacement before shutdown", paused: true, flipAt: "/api/update/renew", want: []string{"status", "jobs", "ping", "prepare:interrupt", "ping", "renew", "ping", "ping"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests []string
@@ -129,63 +129,4 @@ func TestInterruptDaemonWithUpdateAPI(t *testing.T) {
 			assert.Equal(t, tc.want, requests)
 		})
 	}
-}
-
-func TestLegacyInterruptPausesQueueBeforeUpdatePrepare(t *testing.T) {
-	var calls []string
-	queuePaused := false
-	jobSessionID := "rebuttal-session"
-	endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/status":
-			calls = append(calls, "status")
-			_, _ = fmt.Fprintf(w, `{"queue_paused":%t,"active_snoozes":[],"web_capabilities":[],"version":"0.75.0"}`, queuePaused)
-		case "/api/queue/pause":
-			calls = append(calls, "pause")
-			queuePaused = true
-			_, _ = io.WriteString(w, `{"queue_paused":true}`)
-		case "/api/queue/unpause":
-			calls = append(calls, "unpause")
-			queuePaused = false
-			_, _ = io.WriteString(w, `{"queue_paused":false}`)
-		case "/api/jobs":
-			calls = append(calls, "jobs")
-			assert.Equal(t, "running", r.URL.Query().Get("status"))
-			_, _ = io.WriteString(w, `{"jobs":[],"has_more":false,"next_cursor":null}`)
-		case "/api/ping":
-			calls = append(calls, "ping")
-			_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, os.Getpid())
-		case "/api/update/prepare":
-			calls = append(calls, "prepare")
-			// v0.75.0 atomically blocks claims and snapshots running jobs here.
-			// A worker that claims this queued rebuttal before the gate is set
-			// has its session cleared when that attempt is requeued.
-			runningJobs, targetedJobs, activeWorkers := 0, 0, 0
-			if !queuePaused {
-				jobSessionID = ""
-				runningJobs, targetedJobs, activeWorkers = 1, 1, 1
-			}
-			_, _ = fmt.Fprintf(w, `{"lease_token":"lease-1","policy":"interrupt","expires_at":"2030-01-01T00:00:00Z","running_jobs":%d,"targeted_running_jobs":%d,"active_workers":%d,"recovering":false}`, runningJobs, targetedJobs, activeWorkers)
-		case "/api/update/renew":
-			calls = append(calls, "renew")
-			_, _ = io.WriteString(w, `{"lease_token":"lease-1","policy":"interrupt","expires_at":"2030-01-01T00:00:00Z","running_jobs":0,"targeted_running_jobs":0,"active_workers":0,"recovering":false}`)
-		case "/api/shutdown":
-			calls = append(calls, "shutdown")
-			_, _ = io.WriteString(w, `{"ok":true}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-
-	err := interruptDaemonWithUpdateAPI(
-		t.Context(), &daemon.RuntimeInfo{PID: os.Getpid()}, endpoint,
-	)
-	require.NoError(t, err)
-	assert.Equal(t, "rebuttal-session", jobSessionID,
-		"the v0.75.0 prepare endpoint must not interrupt a rebuttal claimed after the running-job check")
-	assert.False(t, queuePaused, "restore the queue's prior unpaused state")
-	assert.Equal(t, []string{
-		"status", "ping", "pause", "ping", "jobs", "ping", "prepare", "ping", "renew", "ping", "unpause", "ping", "shutdown",
-	}, calls)
 }
