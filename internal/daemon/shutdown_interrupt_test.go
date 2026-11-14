@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 func TestInterruptShutdownTargetsRunningAttempts(t *testing.T) {
@@ -98,7 +99,7 @@ func TestInterruptShutdownRequest(t *testing.T) {
 	}{
 		{name: "older daemon", status: http.StatusNotFound, want: "--running=wait"},
 		{name: "PID changed", status: http.StatusPreconditionFailed, want: "412 Precondition Failed"},
-		{name: "original exited", status: http.StatusPreconditionFailed, dead: true},
+		{name: "original exited", status: http.StatusNotFound, dead: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var dead atomic.Bool
@@ -143,8 +144,10 @@ func TestInterruptDaemonRejectsUnusableRuntime(t *testing.T) {
 func TestInterruptDaemonFallsBackForOlderDaemon(t *testing.T) {
 	testenv.SetDataDir(t)
 	mockIdentifyProcess(t, func(int) processIdentity { return processIsRoborev })
+	var pingCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/ping" {
+			pingCalls.Add(1)
 			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, os.Getpid())
 			return
 		}
@@ -153,12 +156,73 @@ func TestInterruptDaemonFallsBackForOlderDaemon(t *testing.T) {
 	defer server.Close()
 	endpoint := DaemonEndpoint{Network: "tcp", Address: server.Listener.Addr().String()}
 	wantErr := errors.New("fallback called")
+	info := &RuntimeInfo{PID: os.Getpid(), Network: endpoint.Network, Address: endpoint.Address}
 	calls := 0
-	err := InterruptDaemonWithFallback(&RuntimeInfo{PID: os.Getpid(), Network: endpoint.Network, Address: endpoint.Address}, func(_ context.Context, got DaemonEndpoint) error {
+	err := InterruptDaemonWithFallback(info, func(_ context.Context, gotInfo *RuntimeInfo, got DaemonEndpoint) error {
 		calls++
+		assert.Same(t, info, gotInfo)
 		assert.Equal(t, endpoint, got)
 		return wantErr
 	})
 	require.ErrorIs(t, err, wantErr)
 	assert.Equal(t, 1, calls)
+	assert.Equal(t, int32(2), pingCalls.Load())
+}
+
+func TestInterruptDaemonRejectsFallbackWhenEndpointPIDChanges(t *testing.T) {
+	testenv.SetDataDir(t)
+	mockIdentifyProcess(t, func(int) processIdentity { return processIsRoborev })
+	var pingCalls atomic.Int32
+	var fallbackCalls atomic.Int32
+	var compatibilityMutation atomic.Bool
+	var replacement atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ping":
+			pid := os.Getpid()
+			if pingCalls.Add(1) > 1 && replacement.Load() {
+				pid++
+			}
+			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, pid)
+		case "/api/shutdown/interrupt":
+			replacement.Store(true)
+			http.NotFound(w, r)
+		case "/api/update/prepare":
+			compatibilityMutation.Store(true)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"lease_token":"lease-1","policy":"interrupt","expires_at":"2030-01-01T00:00:00Z","running_jobs":0,"targeted_running_jobs":0,"active_workers":0,"recovering":false}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	endpoint := DaemonEndpoint{Network: "tcp", Address: server.Listener.Addr().String()}
+	fallbackErr := errors.New("fallback should not run for a replacement")
+	info := &RuntimeInfo{PID: os.Getpid(), Network: endpoint.Network, Address: endpoint.Address}
+
+	err := InterruptDaemonWithFallback(
+		info,
+		func(ctx context.Context, gotInfo *RuntimeInfo, got DaemonEndpoint) error {
+			fallbackCalls.Add(1)
+			assert.Same(t, info, gotInfo)
+			assert.Equal(t, endpoint, got)
+			_, err := got.APIClient(time.Second).PrepareUpdateWithResponse(
+				ctx, &generated.PrepareUpdateRequestOptions{
+					Body: &generated.PrepareUpdateBody{
+						OwnerID: "legacy-fallback",
+						Policy:  generated.Interrupt,
+					},
+				},
+			)
+			if err != nil {
+				return err
+			}
+			return fallbackErr
+		},
+	)
+
+	require.ErrorIs(t, err, ErrInterruptShutdownUnsupported)
+	assert.Equal(t, int32(2), pingCalls.Load())
+	assert.Zero(t, fallbackCalls.Load())
+	assert.False(t, compatibilityMutation.Load())
 }

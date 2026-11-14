@@ -520,13 +520,21 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 // the full roborev ping payload, including fields the shared kit probe does
 // not model such as mcp_url.
 func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
+	return ProbeDaemonPingContext(context.Background(), ep, timeout)
+}
+
+// ProbeDaemonPingContext validates an endpoint and returns its daemon identity
+// using the caller's context.
+func ProbeDaemonPingContext(
+	ctx context.Context, ep DaemonEndpoint, timeout time.Duration,
+) (*PingInfo, error) {
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
 	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	resp, err := ep.APIClient(timeout).PingRaw(ctx)
 	if err != nil {
@@ -671,13 +679,15 @@ func KillDaemon(info *RuntimeInfo) error {
 // InterruptDaemonWithFallback interrupts a daemon and calls fallback only
 // when its interrupt-shutdown endpoint returns 404.
 func InterruptDaemonWithFallback(
-	info *RuntimeInfo, fallback func(context.Context, DaemonEndpoint) error,
+	info *RuntimeInfo, fallback func(context.Context, *RuntimeInfo, DaemonEndpoint) error,
 ) error {
 	return killDaemonWithFallback(info, true, fallback)
 }
 
 func killDaemonWithFallback(
-	info *RuntimeInfo, interrupt bool, fallback func(context.Context, DaemonEndpoint) error,
+	info *RuntimeInfo,
+	interrupt bool,
+	fallback func(context.Context, *RuntimeInfo, DaemonEndpoint) error,
 ) error {
 	if info == nil {
 		return nil
@@ -791,7 +801,9 @@ func killDaemonWithFallback(
 		defer cancelShutdownCleanup()
 		err := requestDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead, info.PID, interrupt)
 		if errors.Is(err, ErrInterruptShutdownUnsupported) && fallback != nil {
-			if err := fallback(shutdownCleanupCtx, ep); err != nil {
+			if err := runInterruptFallback(
+				shutdownCleanupCtx, info, ep, confirmedDead, fallback,
+			); err != nil {
 				return err
 			}
 		} else if err != nil {
@@ -802,6 +814,29 @@ func killDaemonWithFallback(
 		return nil
 	}
 	return fmt.Errorf("daemon shutdown was not accepted")
+}
+
+func runInterruptFallback(
+	ctx context.Context,
+	info *RuntimeInfo,
+	endpoint DaemonEndpoint,
+	confirmedDead func() bool,
+	fallback func(context.Context, *RuntimeInfo, DaemonEndpoint) error,
+) error {
+	if confirmedDead() {
+		return nil
+	}
+	ping, err := ProbeDaemonPingContext(ctx, endpoint, 2*time.Second)
+	if confirmedDead() {
+		return nil
+	}
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil || ping == nil || ping.PID != info.PID {
+		return ErrInterruptShutdownUnsupported
+	}
+	return fallback(ctx, info, endpoint)
 }
 
 func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead func() bool, pid int, interrupt bool) error {
