@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"time"
 	"uuid"
 )
@@ -70,9 +71,9 @@ func migrateCIBranchReviews(ctx context.Context, db *DB) error {
 }
 
 // GetCIBranchCursor returns nil when the repository has no cursor yet.
-func (db *DB) GetCIBranchCursor(githubRepo string) (*CIBranchCursor, error) {
+func (db *DB) GetCIBranchCursor(ctx context.Context, githubRepo string) (*CIBranchCursor, error) {
 	cursor := CIBranchCursor{GithubRepo: githubRepo}
-	err := db.QueryRow(`SELECT branch, head_sha FROM ci_branch_cursors WHERE github_repo = ?`,
+	err := db.QueryRowContext(ctx, `SELECT branch, head_sha FROM ci_branch_cursors WHERE github_repo = ?`,
 		githubRepo).Scan(&cursor.Branch, &cursor.HeadSHA)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -86,15 +87,45 @@ func (db *DB) GetCIBranchCursor(githubRepo string) (*CIBranchCursor, error) {
 // SetCIBranchCursor records that every commit up to headSHA is accounted for,
 // without reviewing anything. The poller uses it for the starting point, after
 // a history rewrite, and for commits that reviews are configured to skip.
-func (db *DB) SetCIBranchCursor(githubRepo, branch, headSHA string) error {
-	return setCIBranchCursor(context.Background(), db, githubRepo, branch, headSHA, time.Now())
+func (db *DB) SetCIBranchCursor(ctx context.Context, githubRepo, branch, headSHA string) error {
+	return setCIBranchCursor(ctx, db, githubRepo, branch, headSHA, time.Now())
 }
 
 // DeleteCIBranchCursor forgets a repository's review position, so the next
 // enabled poll starts from the branch head again.
-func (db *DB) DeleteCIBranchCursor(githubRepo string) error {
-	_, err := db.Exec(`DELETE FROM ci_branch_cursors WHERE github_repo = ?`, githubRepo)
+func (db *DB) DeleteCIBranchCursor(ctx context.Context, githubRepo string) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM ci_branch_cursors WHERE github_repo = ?`, githubRepo)
 	return err
+}
+
+// DeleteCIBranchCursorsExcept forgets the review position of every repository
+// not in polled, so a repository that returns to the poller starts from its
+// branch head instead of reviewing what landed while it was not polled.
+func (db *DB) DeleteCIBranchCursorsExcept(ctx context.Context, polled []string) error {
+	rows, err := db.QueryContext(ctx, `SELECT github_repo FROM ci_branch_cursors`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var dropped []string
+	for rows.Next() {
+		var repo string
+		if err := rows.Scan(&repo); err != nil {
+			return err
+		}
+		if !slices.Contains(polled, repo) {
+			dropped = append(dropped, repo)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, repo := range dropped {
+		if err := db.DeleteCIBranchCursor(ctx, repo); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func setCIBranchCursor(ctx context.Context, exec execer, githubRepo, branch, headSHA string, now time.Time) error {
@@ -110,12 +141,11 @@ func setCIBranchCursor(ctx context.Context, exec execer, githubRepo, branch, hea
 // advances the repository cursor to that commit in the same transaction, so a
 // crash cannot review a commit twice or skip it. created is false when the
 // commit already has a review; the cursor still advances.
-func (db *DB) CreateCIBranchReviewRun(githubRepo, branch, sha string,
+func (db *DB) CreateCIBranchReviewRun(ctx context.Context, githubRepo, branch, sha string,
 	members []EnqueueOpts, synthesis EnqueueOpts,
 ) (bool, *ReviewJob, error) {
 	machineID, _ := db.GetMachineID() // writes on a pooled conn; must precede BEGIN
 	now := time.Now()
-	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return false, nil, err
@@ -185,9 +215,8 @@ func (db *DB) CreateCIBranchReviewRun(githubRepo, branch, sha string,
 // RecordCIBranchCommitOutcome accounts for a landed commit that cannot be
 // reviewed, such as one whose review configuration is invalid. The commit
 // receives its final status and the cursor moves past it.
-func (db *DB) RecordCIBranchCommitOutcome(githubRepo, branch, sha, state, description string) error {
+func (db *DB) RecordCIBranchCommitOutcome(ctx context.Context, githubRepo, branch, sha, state, description string) error {
 	now := time.Now()
-	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
@@ -240,8 +269,8 @@ func scanCIBranchReview(row interface{ Scan(...any) error }) (CIBranchReview, er
 
 // GetCIBranchReviewBySynthesisJobID returns sql.ErrNoRows for jobs that do not
 // review a landed default-branch commit.
-func (db *DB) GetCIBranchReviewBySynthesisJobID(jobID int64) (*CIBranchReview, error) {
-	review, err := scanCIBranchReview(db.QueryRow(`SELECT `+ciBranchReviewColumns+`
+func (db *DB) GetCIBranchReviewBySynthesisJobID(ctx context.Context, jobID int64) (*CIBranchReview, error) {
+	review, err := scanCIBranchReview(db.QueryRowContext(ctx, `SELECT `+ciBranchReviewColumns+`
 		FROM ci_branch_reviews WHERE synthesis_job_id = ?`, jobID))
 	if err != nil {
 		return nil, err
@@ -250,8 +279,8 @@ func (db *DB) GetCIBranchReviewBySynthesisJobID(jobID int64) (*CIBranchReview, e
 }
 
 // GetCIBranchReview returns sql.ErrNoRows when the commit has no review row.
-func (db *DB) GetCIBranchReview(githubRepo, sha string) (*CIBranchReview, error) {
-	review, err := scanCIBranchReview(db.QueryRow(`SELECT `+ciBranchReviewColumns+`
+func (db *DB) GetCIBranchReview(ctx context.Context, githubRepo, sha string) (*CIBranchReview, error) {
+	review, err := scanCIBranchReview(db.QueryRowContext(ctx, `SELECT `+ciBranchReviewColumns+`
 		FROM ci_branch_reviews WHERE github_repo = ? AND sha = ?`, githubRepo, sha))
 	if err != nil {
 		return nil, err
@@ -262,8 +291,8 @@ func (db *DB) GetCIBranchReview(githubRepo, sha string) (*CIBranchReview, error)
 // SetCIBranchReviewFinalStatus records the result of review's run to publish
 // once. A later call for the same run leaves the first result unchanged, and
 // a run that a rerun has replaced records nothing.
-func (db *DB) SetCIBranchReviewFinalStatus(review CIBranchReview, state, description string) error {
-	_, err := db.Exec(`UPDATE ci_branch_reviews SET final_state = ?, final_description = ?
+func (db *DB) SetCIBranchReviewFinalStatus(ctx context.Context, review CIBranchReview, state, description string) error {
+	_, err := db.ExecContext(ctx, `UPDATE ci_branch_reviews SET final_state = ?, final_description = ?
 		WHERE id = ? AND synthesis_job_id IS ? AND final_state = ''`,
 		state, description, review.ID, nullableJobID(review.SynthesisJobID))
 	return err
@@ -283,22 +312,23 @@ func nullableJobID(id *int64) sql.NullInt64 {
 // ListCIBranchReviewsAwaitingResult returns reviews whose synthesis job has
 // finished but whose result has not been recorded, for example because the
 // completion event was lost in a restart.
-func (db *DB) ListCIBranchReviewsAwaitingResult(githubRepo string) ([]CIBranchReview, error) {
-	return db.listCIBranchReviews(`SELECT b.id, b.github_repo, b.branch, b.sha, b.panel_run_uuid,
+func (db *DB) ListCIBranchReviewsAwaitingResult(ctx context.Context, githubRepo string) ([]CIBranchReview, error) {
+	return db.listCIBranchReviews(ctx, `SELECT b.id, b.github_repo, b.branch, b.sha, b.panel_run_uuid,
 		b.synthesis_job_id, b.final_state, b.final_description
 		FROM ci_branch_reviews b JOIN review_jobs j ON j.id = b.synthesis_job_id
 		WHERE b.github_repo = ? AND b.final_state = '' AND j.status IN ('done', 'failed', 'canceled')
 		ORDER BY b.id`, githubRepo)
 }
 
-// ListCIBranchReviewStatuses returns recorded results not yet published.
-func (db *DB) ListCIBranchReviewStatuses(githubRepo string) ([]CIBranchReview, error) {
-	return db.listCIBranchReviews(`SELECT `+ciBranchReviewColumns+` FROM ci_branch_reviews
+// ListCIBranchReviewStatuses returns recorded results whose publication is
+// still open: neither published nor given up on.
+func (db *DB) ListCIBranchReviewStatuses(ctx context.Context, githubRepo string) ([]CIBranchReview, error) {
+	return db.listCIBranchReviews(ctx, `SELECT `+ciBranchReviewColumns+` FROM ci_branch_reviews
 		WHERE github_repo = ? AND final_state != '' AND status_sent_at IS NULL ORDER BY id`, githubRepo)
 }
 
-func (db *DB) listCIBranchReviews(query string, args ...any) ([]CIBranchReview, error) {
-	rows, err := db.Query(query, args...)
+func (db *DB) listCIBranchReviews(ctx context.Context, query string, args ...any) ([]CIBranchReview, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -317,8 +347,8 @@ func (db *DB) listCIBranchReviews(query string, args ...any) ([]CIBranchReview, 
 // ClaimCIBranchReviewStatus leases review's unpublished result to one
 // publisher. A crashed publisher's lease becomes claimable after staleWindow.
 // The claim fails when a rerun has replaced the run that produced the result.
-func (db *DB) ClaimCIBranchReviewStatus(review CIBranchReview, staleWindow time.Duration) (bool, error) {
-	res, err := db.Exec(`UPDATE ci_branch_reviews SET status_claimed_at = datetime('now')
+func (db *DB) ClaimCIBranchReviewStatus(ctx context.Context, review CIBranchReview, staleWindow time.Duration) (bool, error) {
+	res, err := db.ExecContext(ctx, `UPDATE ci_branch_reviews SET status_claimed_at = datetime('now')
 		WHERE id = ? AND synthesis_job_id IS ? AND final_state != '' AND status_sent_at IS NULL
 		  AND (status_claimed_at IS NULL OR datetime(status_claimed_at) < datetime('now', ?))`,
 		review.ID, nullableJobID(review.SynthesisJobID), fmt.Sprintf("-%d seconds", int64(staleWindow.Seconds())))
@@ -329,18 +359,20 @@ func (db *DB) ClaimCIBranchReviewStatus(review CIBranchReview, staleWindow time.
 	return n == 1, err
 }
 
-// FinishCIBranchReviewStatus releases the publication lease, marking the
-// result published when sent is true. It returns ErrCIBranchReviewReplaced
-// when a rerun took over the review after its lease went stale, leaving the
-// rerun's publication untouched.
-func (db *DB) FinishCIBranchReviewStatus(review CIBranchReview, sent bool) error {
+// FinishCIBranchReviewStatus releases the publication lease. settled closes
+// the publication: the status was published, or GitHub will never accept it,
+// so status_sent_at also marks a publication that was given up on. An unsettled
+// result stays listed for another attempt. It returns
+// ErrCIBranchReviewReplaced when a rerun took over the review after its lease
+// went stale, leaving the rerun's publication untouched.
+func (db *DB) FinishCIBranchReviewStatus(ctx context.Context, review CIBranchReview, settled bool) error {
 	query := `UPDATE ci_branch_reviews SET status_claimed_at = NULL
 		WHERE id = ? AND synthesis_job_id IS ? AND status_sent_at IS NULL`
-	if sent {
+	if settled {
 		query = `UPDATE ci_branch_reviews SET status_sent_at = datetime('now'), status_claimed_at = NULL
 		WHERE id = ? AND synthesis_job_id IS ? AND status_sent_at IS NULL`
 	}
-	res, err := db.Exec(query, review.ID, nullableJobID(review.SynthesisJobID))
+	res, err := db.ExecContext(ctx, query, review.ID, nullableJobID(review.SynthesisJobID))
 	if err != nil {
 		return err
 	}
@@ -357,8 +389,8 @@ func (db *DB) FinishCIBranchReviewStatus(review CIBranchReview, sent bool) error
 // GetTimedOutCIBranchReviewRuns returns the panel runs of unfinished
 // default-branch reviews with a member running longer than maxAge, for the
 // same batch-timeout handling as pull request panels.
-func (db *DB) GetTimedOutCIBranchReviewRuns(githubRepo string, maxAge time.Duration) ([]uuid.UUID, error) {
-	rows, err := db.Query(`SELECT b.panel_run_uuid FROM ci_branch_reviews b
+func (db *DB) GetTimedOutCIBranchReviewRuns(ctx context.Context, githubRepo string, maxAge time.Duration) ([]uuid.UUID, error) {
+	rows, err := db.QueryContext(ctx, `SELECT b.panel_run_uuid FROM ci_branch_reviews b
 		WHERE b.github_repo = ? AND b.final_state = '' AND b.panel_run_uuid IS NOT NULL
 		  AND EXISTS (
 		      SELECT 1 FROM review_jobs j

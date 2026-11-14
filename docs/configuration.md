@@ -765,7 +765,9 @@ reference.
 Use a named experiment to compare the normal review configuration with one
 configuration overlay. Roborev deterministically assigns a repository-scoped
 source branch to the default or experimental arm, so new commits on that branch
-stay in the same arm.
+stay in the same arm. CI reviews of
+[commits on the default branch](/docs/integrations/github/#review-commits-on-the-default-branch)
+have no source branch, so each landed commit is assigned on its own.
 
 ```toml
 [experiments.review-session-resumption-v1]

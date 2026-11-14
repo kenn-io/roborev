@@ -75,7 +75,7 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		if wp.ciGitEnv != nil {
 			if panel, err := wp.db.GetCIPanelBySynthesisJobID(job.ID); err == nil && panel != nil {
 				env = wp.ciGitEnv(panel.GithubRepo)
-			} else if review, err := wp.db.GetCIBranchReviewBySynthesisJobID(job.ID); err == nil {
+			} else if review, err := wp.db.GetCIBranchReviewBySynthesisJobID(ctx, job.ID); err == nil {
 				env = wp.ciGitEnv(review.GithubRepo)
 			}
 		}

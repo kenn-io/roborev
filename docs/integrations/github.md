@@ -507,7 +507,11 @@ Expect this behavior:
 - **History is not reviewed.** The first poll after you turn the option on
     records the branch head and reviews nothing. Only commits that land after
     that poll are reviewed. Turning the option off forgets this position, so
-    turning it back on starts from the head again.
+    turning it back on starts from the head again. The same happens to a repo
+    that leaves the polled repos and later returns.
+- **Commits that land while the daemon is stopped are reviewed.** The position
+    is saved, so the first poll after a restart queues a review for every commit
+    that landed in between.
 - **Opted-out commits are skipped.** A commit whose own `.roborev.toml` sets
     `review_default_branch = false` is never reviewed, even when a later commit
     turns reviews back on before the next poll. When the branch has no committed
@@ -518,8 +522,9 @@ Expect this behavior:
     Rerunning a default-branch review updates its commit status when the new
     result arrives. Rerunning an earlier run is refused until the latest run's
     result is published.
-- **One poll queues at most 20 reviews per repo.** Later commits wait for the
-    next poll.
+- **A failed review is not retried.** Pull request reviews retry after a
+    reviewer outage or an exhausted quota. A default-branch review reports the
+    failure once; rerun it to review the commit.
 - **Quiet hours delay the reviews.** Commits that land during
     [quiet hours](#quiet-hours) are reviewed after quiet hours end.
 - **`batch_timeout` applies.** As with pull requests, a reviewer that runs past
@@ -527,7 +532,9 @@ Expect this behavior:
 - **A rewritten branch restarts from its new head.** When the last reviewed
     commit is no longer in the branch's first-parent history, for example after
     a force push, the poller cannot tell new commits from reviewed ones. It
-    reviews nothing and continues with the commits that land next.
+    reviews nothing and continues with the commits that land next. It does the
+    same when the default branch is renamed, or when its clone of the repo no
+    longer has the last reviewed commit.
 - **Every poll fetches every repo.** With the option on, the poller runs
     `git fetch` for each configured repo on each interval, even when no pull
     request changed.
@@ -540,6 +547,11 @@ With GitHub credentials, the poller also posts a commit status with the context
 the pull request's `roborev` status, which can be on the same commit after a
 fast-forward merge. It is informational: as with the pull request status, its
 state reports whether the review ran, and its description reports the result.
+
+A status that GitHub does not accept right away is sent again on the next poll.
+The poller stops trying when GitHub will never accept it: the token cannot write
+commit statuses, or GitHub no longer has the commit. The review itself is still
+stored.
 
 | State | Description | When |
 |-------|-------------|------|

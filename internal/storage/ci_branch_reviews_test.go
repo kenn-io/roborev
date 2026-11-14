@@ -19,12 +19,12 @@ func TestCreateCIBranchReviewRunReviewsACommitOnce(t *testing.T) {
 	members := []EnqueueOpts{{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"}}
 	synthesis := EnqueueOpts{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"}
 
-	created, synth, err := db.CreateCIBranchReviewRun("o/r", "main", "landed", members, synthesis)
+	created, synth, err := db.CreateCIBranchReviewRun(t.Context(), "o/r", "main", "landed", members, synthesis)
 	require.NoError(t, err)
 	require.True(t, created)
 	assert.Equal(JobSourceCIBranch, synth.Source)
 
-	again, _, err := db.CreateCIBranchReviewRun("o/r", "main", "landed", members, synthesis)
+	again, _, err := db.CreateCIBranchReviewRun(t.Context(), "o/r", "main", "landed", members, synthesis)
 	require.NoError(t, err)
 	assert.False(again, "a second poll of the same commit must not queue another review")
 
@@ -35,12 +35,12 @@ func TestCreateCIBranchReviewRunReviewsACommitOnce(t *testing.T) {
 		assert.Equal(JobSourceCIBranch, job.Source)
 	}
 
-	cursor, err := db.GetCIBranchCursor("o/r")
+	cursor, err := db.GetCIBranchCursor(t.Context(), "o/r")
 	require.NoError(t, err)
 	require.NotNil(t, cursor)
 	assert.Equal("landed", cursor.HeadSHA)
 
-	review, err := db.GetCIBranchReviewBySynthesisJobID(synth.ID)
+	review, err := db.GetCIBranchReviewBySynthesisJobID(t.Context(), synth.ID)
 	require.NoError(t, err)
 	require.NotNil(t, review)
 	assert.Equal("landed", review.SHA)
@@ -52,24 +52,24 @@ func TestCIBranchReviewStatusIsSentOnce(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
-	require.NoError(t, db.RecordCIBranchCommitOutcome("o/r", "main", "landed", "error", "could not queue"))
-	review, err := db.GetCIBranchReview("o/r", "landed")
+	require.NoError(t, db.RecordCIBranchCommitOutcome(t.Context(), "o/r", "main", "landed", "error", "could not queue"))
+	review, err := db.GetCIBranchReview(t.Context(), "o/r", "landed")
 	require.NoError(t, err)
 	require.NotNil(t, review)
 
-	claimed, err := db.ClaimCIBranchReviewStatus(*review, time.Minute)
+	claimed, err := db.ClaimCIBranchReviewStatus(t.Context(), *review, time.Minute)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	again, err := db.ClaimCIBranchReviewStatus(*review, time.Minute)
+	again, err := db.ClaimCIBranchReviewStatus(t.Context(), *review, time.Minute)
 	require.NoError(t, err)
 	assert.False(again, "a claimed status is not sent by a second poller")
 
-	require.NoError(t, db.FinishCIBranchReviewStatus(*review, false))
-	retry, err := db.ClaimCIBranchReviewStatus(*review, time.Minute)
+	require.NoError(t, db.FinishCIBranchReviewStatus(t.Context(), *review, false))
+	retry, err := db.ClaimCIBranchReviewStatus(t.Context(), *review, time.Minute)
 	require.NoError(t, err)
 	assert.True(retry, "a failed send is retried")
-	require.NoError(t, db.FinishCIBranchReviewStatus(*review, true))
-	done, err := db.ClaimCIBranchReviewStatus(*review, time.Minute)
+	require.NoError(t, db.FinishCIBranchReviewStatus(t.Context(), *review, true))
+	done, err := db.ClaimCIBranchReviewStatus(t.Context(), *review, time.Minute)
 	require.NoError(t, err)
 	assert.False(done, "a sent status is not sent again")
 }
@@ -83,7 +83,7 @@ func TestRerunCIBranchReviewPublishesReplacementResult(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/ci-branch-review-rerun")
 	members := []EnqueueOpts{{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"}}
 	synthesis := EnqueueOpts{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"}
-	_, original, err := db.CreateCIBranchReviewRun("o/r", "main", "landed", members, synthesis)
+	_, original, err := db.CreateCIBranchReviewRun(t.Context(), "o/r", "main", "landed", members, synthesis)
 	require.NoError(t, err)
 	publishBranchResult(t, db, "error", "Review failed")
 	replacement := rerunBranchReview(t, db, repo.ID, original.ID)
@@ -95,7 +95,7 @@ func TestRerunCIBranchReviewPublishesReplacementResult(t *testing.T) {
 	assert.Equal(*replacement.PanelRunUUID, *review.PanelRunUUID, "the review follows the rerun's jobs")
 	assert.NotEqual(*original.PanelRunUUID, *review.PanelRunUUID)
 	assert.Empty(review.FinalState, "the earlier failure no longer stands as the result")
-	require.NoError(t, db.SetCIBranchReviewFinalStatus(*review, "success", "No issues found"))
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(t.Context(), *review, "success", "No issues found"))
 	assert.True(mustClaim(t, db, *review), "the replacement result is published")
 }
 
@@ -106,7 +106,7 @@ func TestReplacedCIBranchReviewRunCannotPublish(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 
 	repo := createRepo(t, db, "/tmp/ci-branch-review-replaced")
-	_, original, err := db.CreateCIBranchReviewRun("o/r", "main", "landed",
+	_, original, err := db.CreateCIBranchReviewRun(t.Context(), "o/r", "main", "landed",
 		[]EnqueueOpts{{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"}},
 		EnqueueOpts{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"})
 	require.NoError(t, err)
@@ -118,14 +118,14 @@ func TestReplacedCIBranchReviewRunCannotPublish(t *testing.T) {
 	require.Equal(t, *replacement.PanelRunUUID, *current.PanelRunUUID)
 
 	// The first run's late result and publisher both act on the old run.
-	require.NoError(t, db.SetCIBranchReviewFinalStatus(*stale, "error", "Review failed"))
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(t.Context(), *stale, "error", "Review failed"))
 	assert.Empty(mustBranchReview(t, db).FinalState, "a replaced run cannot record the rerun's result")
-	claimed, err := db.ClaimCIBranchReviewStatus(*stale, time.Minute)
+	claimed, err := db.ClaimCIBranchReviewStatus(t.Context(), *stale, time.Minute)
 	require.NoError(t, err)
 	assert.False(claimed, "a replaced run's result is not published")
 
-	require.NoError(t, db.SetCIBranchReviewFinalStatus(*current, "success", "No issues found"))
-	require.ErrorIs(t, db.FinishCIBranchReviewStatus(*stale, true), ErrCIBranchReviewReplaced)
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(t.Context(), *current, "success", "No issues found"))
+	require.ErrorIs(t, db.FinishCIBranchReviewStatus(t.Context(), *stale, true), ErrCIBranchReviewReplaced)
 	assert.True(mustClaim(t, db, *current), "the rerun's result is still unpublished")
 }
 
@@ -136,7 +136,7 @@ func TestRerunEarlierCIBranchReviewRun(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 
 	repo := createRepo(t, db, "/tmp/ci-branch-review-earlier-run")
-	_, original, err := db.CreateCIBranchReviewRun("o/r", "main", "landed",
+	_, original, err := db.CreateCIBranchReviewRun(t.Context(), "o/r", "main", "landed",
 		[]EnqueueOpts{{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"}},
 		EnqueueOpts{RepoID: repo.ID, GitRef: "parent..landed", Agent: "test"})
 	require.NoError(t, err)
@@ -144,11 +144,11 @@ func TestRerunEarlierCIBranchReviewRun(t *testing.T) {
 	publishBranchResult(t, db, "error", "Review failed")
 	second := rerunBranchReview(t, db, repo.ID, original.ID)
 	finishRun(t, db, second)
-	require.NoError(t, db.SetCIBranchReviewFinalStatus(*mustBranchReview(t, db), "error", "Review failed"))
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(t.Context(), *mustBranchReview(t, db), "error", "Review failed"))
 	// Rerunning the current run replaces it before its result is published.
 	latest := rerunBranchReview(t, db, repo.ID, second.ID)
 	finishRun(t, db, latest)
-	require.NoError(t, db.SetCIBranchReviewFinalStatus(*mustBranchReview(t, db), "success", "No issues found"))
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(t.Context(), *mustBranchReview(t, db), "success", "No issues found"))
 	queued := countJobs(t, db)
 
 	_, err = tryRerunBranchReview(db, repo.ID, original.ID)
@@ -178,7 +178,7 @@ func TestGetTimedOutCIBranchReviewRunsSelectsHungUnfinishedReviews(t *testing.T)
 	seed := func(sha string) *ReviewJob {
 		t.Helper()
 		members := []EnqueueOpts{{RepoID: repo.ID, GitRef: "p.." + sha, Agent: "test"}}
-		_, synth, err := db.CreateCIBranchReviewRun("o/r", "main", sha, members,
+		_, synth, err := db.CreateCIBranchReviewRun(t.Context(), "o/r", "main", sha, members,
 			EnqueueOpts{RepoID: repo.ID, GitRef: "p.." + sha, Agent: "test"})
 		require.NoError(t, err)
 		return synth
@@ -193,25 +193,25 @@ func TestGetTimedOutCIBranchReviewRunsSelectsHungUnfinishedReviews(t *testing.T)
 			run.age, run.synth.PanelRunUUID)
 		require.NoError(t, err)
 	}
-	finishedReview, err := db.GetCIBranchReviewBySynthesisJobID(finished.ID)
+	finishedReview, err := db.GetCIBranchReviewBySynthesisJobID(t.Context(), finished.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.SetCIBranchReviewFinalStatus(*finishedReview, "error", "Review canceled"))
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(t.Context(), *finishedReview, "error", "Review canceled"))
 
-	runs, err := db.GetTimedOutCIBranchReviewRuns("o/r", time.Hour)
+	runs, err := db.GetTimedOutCIBranchReviewRuns(t.Context(), "o/r", time.Hour)
 	require.NoError(t, err)
 	assert.Equal(t, []uuid.UUID{*hung.PanelRunUUID}, runs)
 }
 
 func mustBranchReview(t *testing.T, db *DB) *CIBranchReview {
 	t.Helper()
-	review, err := db.GetCIBranchReview("o/r", "landed")
+	review, err := db.GetCIBranchReview(t.Context(), "o/r", "landed")
 	require.NoError(t, err)
 	return review
 }
 
 func mustClaim(t *testing.T, db *DB, review CIBranchReview) bool {
 	t.Helper()
-	claimed, err := db.ClaimCIBranchReviewStatus(review, time.Minute)
+	claimed, err := db.ClaimCIBranchReviewStatus(t.Context(), review, time.Minute)
 	require.NoError(t, err)
 	return claimed
 }
@@ -219,10 +219,10 @@ func mustClaim(t *testing.T, db *DB, review CIBranchReview) bool {
 // publishBranchResult records and publishes the current run's result.
 func publishBranchResult(t *testing.T, db *DB, state, description string) {
 	t.Helper()
-	require.NoError(t, db.SetCIBranchReviewFinalStatus(*mustBranchReview(t, db), state, description))
+	require.NoError(t, db.SetCIBranchReviewFinalStatus(t.Context(), *mustBranchReview(t, db), state, description))
 	review := mustBranchReview(t, db)
 	require.True(t, mustClaim(t, db, *review))
-	require.NoError(t, db.FinishCIBranchReviewStatus(*review, true))
+	require.NoError(t, db.FinishCIBranchReviewStatus(t.Context(), *review, true))
 }
 
 // rerunBranchReview reruns sourceJobID's panel as the rerun API does: the

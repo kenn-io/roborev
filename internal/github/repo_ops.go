@@ -187,12 +187,13 @@ func (c *Client) GetRepositoryFullName(ctx context.Context, ghRepo string) (stri
 }
 
 func (c *Client) SetCommitStatus(ctx context.Context, ghRepo, sha, state, description string) error {
-	return c.SetCommitStatusContext(ctx, ghRepo, sha, "roborev", state, description)
+	return c.SetNamedCommitStatus(ctx, ghRepo, sha, "roborev", state, description)
 }
 
-// SetCommitStatusContext publishes a commit status under statusContext, so
-// separate review flows on one commit do not replace each other's results.
-func (c *Client) SetCommitStatusContext(ctx context.Context, ghRepo, sha, statusContext, state, description string) error {
+// SetNamedCommitStatus publishes a commit status under statusContext, the name
+// GitHub shows for it, so separate review flows on one commit do not replace
+// each other's results.
+func (c *Client) SetNamedCommitStatus(ctx context.Context, ghRepo, sha, statusContext, state, description string) error {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
 		return err
