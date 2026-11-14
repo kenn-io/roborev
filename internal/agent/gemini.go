@@ -147,33 +147,26 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	} else if !versionAtLeast(capabilities.version, "0") {
 		return "", errors.New("antigravity CLI version could not be verified; cannot choose a supported prompt contract")
 	}
-	if a.SessionID != "" && !capabilities.resume {
-		if resetErr := resetSessionCapture(output); resetErr != nil {
-			return "", resetErr
-		}
+	if !capabilities.resume {
 		a = a.WithSessionID("").(*GeminiAgent)
 	}
 	args := a.buildArgsWithModel(a.Model, agenticMode)
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
 	if a.SessionID != "" && !agenticMode && ctx.Err() == nil &&
 		(err != nil || result == "No review output generated") {
-		if resetErr := resetSessionCapture(output); resetErr != nil {
-			return "", errors.Join(err, resetErr)
-		}
+		resetSessionCapture(output)
 		log.Printf("gemini: resumed session failed (%v), retrying in a fresh session", err)
 		a = a.WithSessionID("").(*GeminiAgent)
 		args = a.buildArgsWithModel(a.Model, agenticMode)
 		result, stderrStr, err = a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
 	}
-	if err != nil && ctx.Err() == nil && (!agenticMode || !resumingSession) &&
+	if err != nil && (!agenticMode || !resumingSession) &&
 		a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
 		// Built-in default model may be stale (Google renames
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
 		// config) fail fast so config errors are surfaced.
-		if resetErr := resetSessionCapture(output); resetErr != nil {
-			return "", errors.Join(err, resetErr)
-		}
+		resetSessionCapture(output)
 		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
 		noModelArgs := a.buildArgsWithModel("", agenticMode)
 		result, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities, output)
@@ -181,11 +174,10 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	return result, err
 }
 
-func resetSessionCapture(output io.Writer) error {
-	if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
-		return resetter.ResetSessionID()
+func resetSessionCapture(output io.Writer) {
+	if resetter, ok := output.(interface{ ResetSessionID() }); ok {
+		resetter.ResetSessionID()
 	}
-	return nil
 }
 
 // buildArgsWithModel builds CLI args with an explicit model override
@@ -225,8 +217,6 @@ const (
 	geminiAgenticVersion  = "0.11.0" // stream-json and yolo approval mode
 	geminiResumeVersion   = "0.20.0" // newer releases accept resumed prompts on stdin
 	geminiPlanModeVersion = "0.34.0"
-	// Antigravity supports --conversation before adding stream-json.
-	antigravityResumeVersion = "1.0.9"
 )
 
 // capabilities gates CLI flags by the installed version. Review rejects an
@@ -237,7 +227,7 @@ func (a *GeminiAgent) capabilities(ctx context.Context) geminiCLICapabilities {
 		return geminiCLICapabilities{
 			version:    version,
 			streamJSON: versionAtLeast(version, antigravityStreamJSONVersion),
-			resume:     versionAtLeast(version, antigravityResumeVersion),
+			resume:     versionAtLeast(version, antigravityStreamJSONVersion),
 			promptFlag: antigravityVersionUsesPromptFlag(version),
 		}
 	}
@@ -320,7 +310,7 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 // the reported version rather than assuming one contract.
 const (
 	antigravityPromptFlagVersion   = "1.1.1"
-	antigravityStreamJSONVersion   = "1.1.8" // stream-json carries the init conversation ID
+	antigravityStreamJSONVersion   = "1.1.8" // stream-json and --conversation
 	antigravityVersionProbeTimeout = 10 * time.Second
 )
 

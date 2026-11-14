@@ -994,22 +994,12 @@ func (db *DB) JobSessionIsolated(ctx context.Context, jobID int64) (bool, error)
 // IsolateJobSession clears inherited resume metadata and marks this attempt's
 // session ineligible for reuse, including sessions later found by usage backfill.
 func (db *DB) IsolateJobSession(jobID int64, workerID string) error {
-	return db.clearJobSession(jobID, workerID, true)
-}
-
-// ClearJobSessionID drops a failed resume's session so the fresh run that
-// replaces it can save its own session ID.
-func (db *DB) ClearJobSessionID(jobID int64, workerID string) error {
-	return db.clearJobSession(jobID, workerID, false)
-}
-
-func (db *DB) clearJobSession(jobID int64, workerID string, isolate bool) error {
 	result, err := db.Exec(`
 		UPDATE review_jobs
-		SET session_id = NULL, session_cli = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
-		    session_isolated = CASE WHEN ? THEN 1 ELSE session_isolated END, updated_at = ?, synced_at = NULL
+		SET session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
+		    session_isolated = 1, updated_at = ?, synced_at = NULL
 		WHERE id = ? AND status = 'running' AND worker_id = ?
-	`, isolate, time.Now().Format(time.RFC3339), jobID, workerID)
+	`, time.Now().Format(time.RFC3339), jobID, workerID)
 	if err != nil {
 		return err
 	}
@@ -1036,6 +1026,8 @@ func (db *DB) SaveJobSessionID(
 }
 
 // SaveJobSessionIDWithCLI stores the session ID and the CLI that created it.
+// The CLI reports a different ID only for a new conversation, so that ID
+// replaces the stored one.
 func (db *DB) SaveJobSessionIDWithCLI(
 	jobID int64, workerID, sessionID, sessionCLI string,
 ) error {
@@ -1068,11 +1060,8 @@ func (db *DB) SaveJobSessionIDWithCLI(
 		WHERE id = ?
 		  AND status = 'running'
 		  AND worker_id = ?
-		  AND (
-		    session_id IS NULL OR session_id = ''
-		    OR (session_resumed = 1 AND session_id != ? AND ? != '')
-		  )
-	`, sessionID, sessionCLI, now, jobID, workerID, sessionID, sessionCLI)
+		  AND (session_id IS NULL OR session_id = '' OR (? != '' AND session_id != ?))
+	`, sessionID, sessionCLI, now, jobID, workerID, sessionCLI, sessionID)
 	if err != nil {
 		return err
 	}

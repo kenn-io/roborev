@@ -1910,10 +1910,6 @@ func TestSaveJobSessionIDWithCLI_ReplacesSuccessfulResume(t *testing.T) {
 	assert.Equal(t, "gemini", sessionCLI)
 	assert.Zero(t, resumed)
 	assert.Empty(t, resumeSource)
-
-	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-A", "later-session", "gemini"))
-	sessionID, _, _, _ = readSession()
-	assert.Equal(t, "fresh-session", sessionID)
 }
 
 // TestMarkJobAgentInvoked_StaleWorkerIgnored verifies the agent-ran marker is

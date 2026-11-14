@@ -17,7 +17,6 @@ import (
 type SessionCaptureWriter struct {
 	dst       io.Writer
 	onCapture func(string)
-	onReset   func() error
 	mu        sync.Mutex
 	buf       bytes.Buffer
 	sessionID string
@@ -26,8 +25,8 @@ type SessionCaptureWriter struct {
 // NewSessionCaptureWriter wraps dst and reports the first captured
 // session ID via onCapture (if non-nil). Bytes pass through to dst
 // unchanged.
-func NewSessionCaptureWriter(dst io.Writer, onCapture func(string), onReset func() error) *SessionCaptureWriter {
-	return &SessionCaptureWriter{dst: dst, onCapture: onCapture, onReset: onReset}
+func NewSessionCaptureWriter(dst io.Writer, onCapture func(string)) *SessionCaptureWriter {
+	return &SessionCaptureWriter{dst: dst, onCapture: onCapture}
 }
 
 func (w *SessionCaptureWriter) Write(p []byte) (int, error) {
@@ -66,18 +65,12 @@ func (w *SessionCaptureWriter) SessionID() string {
 	return w.sessionID
 }
 
-// ResetSessionID clears an abandoned attempt before a fresh one captures its ID.
-func (w *SessionCaptureWriter) ResetSessionID() error {
-	if w.onReset != nil {
-		if err := w.onReset(); err != nil {
-			return err
-		}
-	}
+// ResetSessionID drops an abandoned attempt's ID so a fresh attempt reports its own.
+func (w *SessionCaptureWriter) ResetSessionID() {
 	w.mu.Lock()
 	w.sessionID = ""
 	w.buf.Reset()
 	w.mu.Unlock()
-	return nil
 }
 
 func (w *SessionCaptureWriter) capture(p []byte) {

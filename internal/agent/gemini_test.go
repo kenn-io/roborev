@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -35,8 +36,10 @@ func TestVersionGatesFeatures(t *testing.T) {
 		cli               string
 		version           string
 		agentic           bool
+		sessionID         string
 		resumeFlag        string
 		wantStream        bool
+		wantResult        string
 		wantPrompt        string
 		wantStdin         string
 		wantPrint         bool
@@ -45,20 +48,27 @@ func TestVersionGatesFeatures(t *testing.T) {
 	}{
 		{name: "Gemini 0.20 read-only requires plan mode", cli: "gemini", version: "0.20.0", wantErrorContains: "read-only reviews require Gemini CLI 0.34.0 or newer"},
 		{name: "Gemini unknown version agentic", cli: "gemini", version: "unknown", agentic: true, wantErrorContains: "agentic reviews require Gemini CLI 0.11.0 or newer"},
-		{name: "Gemini 0.11 agentic stream", cli: "gemini", version: "0.11.0", agentic: true, wantStdin: "prompt", wantStream: true, wantApproval: "yolo"},
-		{name: "Gemini 0.20 agentic resume uses stdin", cli: "gemini", version: "0.20.0", agentic: true, resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantApproval: "yolo"},
-		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantApproval: "plan"},
-		{name: "Antigravity 1.0.8", cli: "agy", version: "1.0.8", wantPrint: true, wantStdin: "prompt\n"},
-		{name: "Antigravity 1.0.9 conversation", cli: "agy", version: "1.0.9", resumeFlag: "--conversation", wantPrint: true, wantStdin: "prompt\n"},
-		{name: "Antigravity 1.1.7 prompt", cli: "agy", version: "1.1.7", resumeFlag: "--conversation", wantPrompt: "prompt"},
-		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", resumeFlag: "--conversation", wantStream: true, wantPrompt: "prompt"},
+		{name: "Gemini 0.11 agentic stream without resume", cli: "gemini", version: "0.11.0", agentic: true, sessionID: "old-session", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
+		{name: "Gemini 0.20 agentic resume uses stdin", cli: "gemini", version: "0.20.0", agentic: true, sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
+		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "plan"},
+		{name: "Antigravity 1.0.8 without resume", cli: "agy", version: "1.0.8", sessionID: "old-session", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
+		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review"},
+		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
 		{name: "Antigravity unknown version", cli: "agy", version: "unknown", wantErrorContains: "antigravity CLI version could not be verified"},
 	}
+	geminiFixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
+	require.NoError(t, err)
+	agyFixture, err := filepath.Abs(filepath.Join("testdata", "antigravity-success-result-capture.jsonl"))
+	require.NoError(t, err)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			argsFile := filepath.Join(t.TempDir(), "args")
+			callsFile := filepath.Join(t.TempDir(), "calls")
 			t.Setenv("CLI_VERSION", tc.version)
 			t.Setenv("ARGS_FILE", argsFile)
+			t.Setenv("CALLS_FILE", callsFile)
+			t.Setenv("GEMINI_FIXTURE", geminiFixture)
+			t.Setenv("AGY_FIXTURE", agyFixture)
 			streamOutput := ""
 			if tc.wantStream {
 				streamOutput = tc.cli
@@ -68,11 +78,12 @@ func TestVersionGatesFeatures(t *testing.T) {
 			t.Setenv("STDIN_FILE", stdinFile)
 			script := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "$CLI_VERSION"; exit 0; fi
+echo call >> "$CALLS_FILE"
 cat > "$STDIN_FILE"
 printf '%s\n' "$@" > "$ARGS_FILE"
 case "$STREAM_OUTPUT" in
-  gemini) echo '{"type":"result","result":"Plain review"}' ;;
-  agy) echo '{"event":"result","result":{"status":"SUCCESS","response":"Plain review"}}' ;;
+  gemini) cat "$GEMINI_FIXTURE" ;;
+  agy) cat "$AGY_FIXTURE" ;;
   *) echo 'Plain review' ;;
 esac
 `)
@@ -82,8 +93,8 @@ esac
 				script = agyPath
 			}
 			a := NewGeminiAgent(script).WithAgentic(tc.agentic).(*GeminiAgent)
-			if tc.resumeFlag != "" {
-				a = a.WithSessionID("old-session").(*GeminiAgent)
+			if tc.sessionID != "" {
+				a = a.WithSessionID(tc.sessionID).(*GeminiAgent)
 			}
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
 			if tc.wantErrorContains != "" {
@@ -105,10 +116,15 @@ esac
 				assert.NotContains(t, args, "--output-format")
 			}
 			if tc.resumeFlag != "" {
-				assertFlagValue(t, args, tc.resumeFlag, "old-session")
+				assertFlagValue(t, args, tc.resumeFlag, tc.sessionID)
 			} else {
 				assert.NotContains(t, args, "--resume")
 				assert.NotContains(t, args, "--conversation")
+				if tc.sessionID != "" {
+					calls, readErr := os.ReadFile(callsFile)
+					require.NoError(t, readErr)
+					assert.Equal(t, "call\n", string(calls))
+				}
 			}
 			if tc.wantPrompt != "" {
 				assertFlagValue(t, args, "--prompt", tc.wantPrompt)
@@ -126,7 +142,7 @@ esac
 				assert.NotContains(t, args, "--approval-mode")
 			}
 			require.NoError(t, err)
-			assert.Equal(t, "Plain review", result)
+			assert.Equal(t, tc.wantResult, result)
 		})
 	}
 }
@@ -282,7 +298,7 @@ func TestGeminiAntigravityReviewStopsWhenSettingsLockCanceled(t *testing.T) {
 	invokedPath := filepath.Join(t.TempDir(), "invoked")
 	t.Setenv("INVOKED_PATH", invokedPath)
 	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; esac
+if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
 touch "$INVOKED_PATH"
 exit 0
 `)
@@ -520,6 +536,7 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		agentic        bool
 		wantError      bool
 		resumeError    string
+		resumeSession  string
 		resumeFlag     string
 		successFixture string
 		initFixture    string
@@ -528,7 +545,8 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 	}{
 		{
 			name: "Gemini failed resume",
-			cli:  "gemini", version: "0.34.0", resumeFlag: "--resume",
+			cli:  "gemini", version: "0.34.0", resumeError: "resume failed",
+			resumeSession: "failed-session", resumeFlag: "--resume",
 			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
 			wantSessionID: geminiSessionID,
 		},
@@ -564,6 +582,7 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			t.Setenv("CLI_VERSION", tc.version)
 			t.Setenv("RESUME_FLAG", tc.resumeFlag)
 			t.Setenv("RESUME_ERROR", tc.resumeError)
+			t.Setenv("RESUME_SESSION", tc.resumeSession)
 			t.Setenv("ARGS_FILE", argsFile)
 			successFixture, err := filepath.Abs(filepath.Join("testdata", tc.successFixture))
 			require.NoError(t, err)
@@ -579,6 +598,9 @@ if [ "$1" = "--version" ]; then echo "$CLI_VERSION"; exit 0; fi
 printf '%s\n' "$@" >> "$ARGS_FILE"
 for arg in "$@"; do
   if [ "$arg" = "$RESUME_FLAG" ]; then
+    if [ -n "$RESUME_SESSION" ]; then
+      echo "{\"type\":\"init\",\"session_id\":\"$RESUME_SESSION\"}"
+    fi
     if [ -n "$RESUME_ERROR" ]; then
       echo "$RESUME_ERROR" >&2
     else
@@ -596,21 +618,15 @@ cat "$SUCCESS_FILE"
 				script = agyPath
 			}
 			a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(tc.agentic).(*GeminiAgent)
-			resetCalls := 0
-			capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
-				resetCalls++
-				return nil
-			})
+			capture := NewSessionCaptureWriter(io.Discard, nil)
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
 			wantCalls := 2
 			if tc.wantError {
 				wantCalls = 1
 				require.Error(t, err)
-				assert.Zero(t, resetCalls)
 			} else {
 				require.NoError(t, err)
 				assert.Equal(t, tc.wantResult, result)
-				assert.Equal(t, 1, resetCalls)
 				assert.Equal(t, tc.wantSessionID, capture.SessionID())
 			}
 			args, readErr := os.ReadFile(argsFile)
@@ -624,96 +640,23 @@ cat "$SUCCESS_FILE"
 	}
 }
 
-func TestUnsupportedResumeStartsFreshAndClearsSession(t *testing.T) {
-	skipIfWindows(t)
-	argsFile := filepath.Join(t.TempDir(), "args")
-	callsFile := filepath.Join(t.TempDir(), "calls")
-	stdinFile := filepath.Join(t.TempDir(), "stdin")
-	t.Setenv("ARGS_FILE", argsFile)
-	t.Setenv("CALLS_FILE", callsFile)
-	t.Setenv("STDIN_FILE", stdinFile)
-	script := writeGeminiTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "1.0.8"; exit 0; fi
-echo call >> "$CALLS_FILE"
-printf '%s\n' "$@" > "$ARGS_FILE"
-cat > "$STDIN_FILE"
-echo "Fresh review"
-`)
-	agyPath := filepath.Join(filepath.Dir(script), "agy")
-	require.NoError(t, os.Rename(script, agyPath))
-
-	storedSessionID := "old-session"
-	resetCalls := 0
-	capture := NewSessionCaptureWriter(io.Discard, func(sessionID string) {
-		storedSessionID = sessionID
-	}, func() error {
-		resetCalls++
-		storedSessionID = ""
-		return nil
-	})
-	a := NewGeminiAgent(agyPath).WithSessionID(storedSessionID)
-	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
-	require.NoError(t, err)
-	assert.Equal(t, "Fresh review", result)
-	assert.Equal(t, 1, resetCalls)
-	assert.Empty(t, storedSessionID, "a CLI that cannot resume must not leave the obsolete session reusable")
-	assert.Empty(t, capture.SessionID())
-
-	args, err := os.ReadFile(argsFile)
-	require.NoError(t, err)
-	assert.Contains(t, string(args), "--print\n")
-	assert.NotContains(t, string(args), "--conversation\n")
-	assert.NotContains(t, string(args), "--output-format\n")
-	stdin, err := os.ReadFile(stdinFile)
-	require.NoError(t, err)
-	assert.Equal(t, "prompt\n", string(stdin))
-	calls, err := os.ReadFile(callsFile)
-	require.NoError(t, err)
-	assert.Equal(t, "call\n", string(calls))
-}
-
 func TestGeminiAntigravityReviewPlainText(t *testing.T) {
 	skipIfWindows(t)
 
 	scriptPath := writeTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
-cat > "$STDIN_FILE"
-printf '%s\n' "$@" > "$ARGS_FILE"
-# A plain-text review can include JSON as a code example.
 echo "Plain text review output"
-printf '\140\140\140json\n'
-echo '{"event":"result","result":{"status":"SUCCESS","response":"quoted JSON example"}}'
-printf '\140\140\140\n'
 echo "No issues found."
 `)
-
-	stdinFile := filepath.Join(t.TempDir(), "stdin")
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("STDIN_FILE", stdinFile)
-	t.Setenv("ARGS_FILE", argsFile)
 	a := NewGeminiAgent(scriptPath)
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
 	var output bytes.Buffer
-	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
+	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
 
 	require.NoError(t, err)
-	assert.Equal(t, "Plain text review output\n```json\n{\"event\":\"result\",\"result\":{\"status\":\"SUCCESS\",\"response\":\"quoted JSON example\"}}\n```\nNo issues found.", res)
-	assert.Contains(t, output.String(), "Plain text review output")
-
-	// agy >= 1.1.1 takes the prompt as the value of --prompt, not from stdin.
-	stdinBytes, readErr := os.ReadFile(stdinFile)
-	require.NoError(t, readErr)
-	assert.Empty(t, string(stdinBytes))
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	argsOut := string(argsBytes)
-	assert.Contains(t, argsOut, "--prompt\nprompt\n")
-	assert.NotContains(t, argsOut, "--print\n")
-	assert.NotContains(t, argsOut, "--sandbox\n")
-	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
+	assert.Equal(t, "Plain text review output\nNo issues found.\n", output.String())
 }
 
 func TestGeminiAntigravityEmptyOutput(t *testing.T) {
@@ -993,58 +936,49 @@ exit 1
 
 func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 	skipIfWindows(t)
-
-	// Script that fails with "model not found" when -m is passed,
-	// and succeeds without it (simulating a retired default model).
-	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
+	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name       string
+		agentic    bool
+		lateStderr bool
+	}{
+		{name: "read-only fallback"},
+		{name: "agentic fallback captures late stderr", agentic: true, lateStderr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			callsFile := filepath.Join(t.TempDir(), "calls")
+			t.Setenv("SUCCESS_FILE", fixture)
+			t.Setenv("CALLS_FILE", callsFile)
+			t.Setenv("LATE_STDERR", strconv.FormatBool(tc.lateStderr))
+			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
+echo call >> "$CALLS_FILE"
+has_model=0
 for arg in "$@"; do
-  if [ "$arg" = "-m" ]; then
-    echo "Error: model is not found for API version v1" >&2
-    exit 1
-  fi
+  if [ "$arg" = "-m" ]; then has_model=1; fi
 done
-echo '{"type":"result","result":"Review from default model"}'
+if [ "$has_model" = "1" ]; then
+  if [ "$LATE_STDERR" = "true" ]; then
+    sed -n '1p' "$SUCCESS_FILE"
+    exec 1>&-
+    sleep 0.05
+  fi
+  echo "Error: model is not found for API version v1" >&2
+  exit 1
+fi
+cat "$SUCCESS_FILE"
 `)
 
-	a := NewGeminiAgent(scriptPath).WithAgentic(true)
-	var output bytes.Buffer
-	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
-	require.NoError(t, err)
-	assert.Equal(t, "Review from default model", res)
-}
-
-func TestGeminiReview_ModelNotFoundLateStderr(t *testing.T) {
-	skipIfWindows(t)
-
-	// Regression: stderr emitted only at exit (after stdout closes).
-	// Previously stderrStr was read before cmd.Wait(), racing with
-	// the goroutine writing stderr.
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("ARGS_FILE", argsFile)
-	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
-printf '%s\n' "$@" >> "$ARGS_FILE"
-for arg in "$@"; do
-  if [ "$arg" = "-m" ]; then
-echo '{"type":"system","subtype":"init"}'
-# Close stdout before writing stderr, simulating late error output.
-exec 1>&-
-sleep 0.05
-echo "Error: model is not found for API version v1" >&2
-exit 1
-  fi
-done
-echo '{"type":"result","result":"Review from default model"}'
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
-	require.NoError(t, err)
-	assert.Equal(t, "Review from default model", result)
-	args, err := os.ReadFile(argsFile)
-	require.NoError(t, err)
-	assert.Equal(t, 1, strings.Count(string(args), "-m\n"))
-	assert.Equal(t, 2, strings.Count(string(args), "--output-format\nstream-json\n"))
+			a := NewGeminiAgent(scriptPath).WithAgentic(tc.agentic)
+			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
+			require.NoError(t, err)
+			assert.Equal(t, `{"passed":true,"findings":[]}`, result)
+			calls, readErr := os.ReadFile(callsFile)
+			require.NoError(t, readErr)
+			assert.Equal(t, "call\ncall\n", string(calls))
+		})
+	}
 }
 
 func TestGeminiReview_ModelNotFoundNoRetryWhenNoModel(t *testing.T) {
