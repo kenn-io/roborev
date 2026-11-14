@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	googlegithub "github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -215,7 +217,7 @@ func TestCIDefaultBranchReviewsSkipRewrittenHistory(t *testing.T) {
 
 	h.poll(t)
 	assert.Empty(t, h.synthesisJobs(t), "commits after a rewrite cannot be told apart from reviewed ones")
-	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
 	require.NoError(t, err)
 	require.NotNil(t, cursor)
 	assert.Equal(t, rewritten, cursor.HeadSHA)
@@ -253,7 +255,7 @@ func TestCIDefaultBranchReviewsRecordInvalidConfiguration(t *testing.T) {
 		SHA: landed, State: "error",
 		Description: "Review could not be queued; run roborev config validate",
 	}}, h.takeStatuses())
-	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
 	require.NoError(t, err)
 	assert.Equal(t, landed, cursor.HeadSHA, "a commit that cannot be reviewed does not block later commits")
 }
@@ -326,7 +328,7 @@ func TestCIDefaultBranchReviewsResetWhenLastReviewIsOnlyMerged(t *testing.T) {
 
 	h.poll(t)
 	assert.Empty(t, h.synthesisJobs(t), "a merge's second parent is not a review base")
-	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
 	require.NoError(t, err)
 	assert.Equal(t, merged, cursor.HeadSHA)
 }
@@ -341,8 +343,8 @@ func TestCIDefaultBranchCursorSurvivesCanceledHistoryCheck(t *testing.T) {
 	_, _, err := landedCommits(canceled, h.origin.Path(), reviewed, h.origin.HeadSHA())
 	require.Error(t, err, "a canceled check is not evidence that history was rewritten")
 
-	// Cancel after the poll has fetched and resolved the new head, so only
-	// the history check sees the canceled context.
+	// Cancel after the poll has fetched and resolved the new head, so the
+	// poll stops before it decides what the landed commit needs.
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	h.poller.loadRepoConfigFn = func(repoPath string) (ciRepoConfigSource, error) {
@@ -350,7 +352,7 @@ func TestCIDefaultBranchCursorSurvivesCanceledHistoryCheck(t *testing.T) {
 		return loadCIRepoConfig(repoPath)
 	}
 	require.Error(t, h.poller.pollRepo(ctx, branchReviewRepo, h.cfg))
-	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
 	require.NoError(t, err)
 	assert.Equal(t, reviewed, cursor.HeadSHA, "the landed commit is still waiting for review")
 	assert.Empty(t, h.synthesisJobs(t))
@@ -365,7 +367,7 @@ func TestCIDefaultBranchReviewsHonorUncommittedOptOut(t *testing.T) {
 	h.poll(t)
 
 	assert.Empty(t, h.synthesisJobs(t), "the poller checkout's configuration opts the repository out")
-	cursor, err := h.db.GetCIBranchCursor(branchReviewRepo)
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
 	require.NoError(t, err)
 	assert.Equal(t, landed, cursor.HeadSHA, "the skipped commit is accounted for")
 }
@@ -428,4 +430,142 @@ func TestCIDefaultBranchReviewsApplyBatchTimeout(t *testing.T) {
 	job, err := h.db.GetJobByID(hung)
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusCanceled, job.Status, "a reviewer past ci.batch_timeout no longer holds the result")
+}
+
+func TestCIDefaultBranchReviewsRestartWhenLastReviewedCommitIsMissing(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	// A clone that was replaced no longer has the commit the poller reviewed
+	// last. No repository contains this one.
+	require.NoError(t, h.db.SetCIBranchCursor(t.Context(), branchReviewRepo, "main",
+		"0123456789012345678901234567890123456789"))
+	head := h.origin.CommitFile("app.txt", "changed\n", "change")
+
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t), "commits after an unknown position cannot be told apart from reviewed ones")
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	assert.Equal(t, head, cursor.HeadSHA)
+
+	next := h.origin.CommitFile("app.txt", "next\n", "next")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1)
+	assert.Equal(t, head+".."+next, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewsFollowRenamedDefaultBranch(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	h.origin.Run("branch", "-m", "main", "trunk")
+	renamed := h.origin.CommitFile("app.txt", "renamed\n", "landed after the rename")
+
+	h.poll(t)
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	assert.Equal(t, storage.CIBranchCursor{GithubRepo: branchReviewRepo, Branch: "trunk", HeadSHA: renamed}, *cursor)
+
+	next := h.origin.CommitFile("app.txt", "next\n", "next")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1)
+	assert.Equal(t, renamed+".."+next, runs[0].GitRef)
+	assert.Equal(t, "trunk", runs[0].HookBranch())
+}
+
+func TestCIDefaultBranchReviewsRestartAfterRepoLeavesThePoller(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.cfg.CI.Repos = []string{branchReviewRepo}
+	h.poller.poll(t.Context())
+	h.cfg.CI.Repos = nil
+	h.origin.CommitFile("app.txt", "while away\n", "landed while not polled")
+	h.poller.poll(t.Context())
+	h.cfg.CI.Repos = []string{branchReviewRepo}
+	h.poller.poll(t.Context())
+	assert.Empty(t, h.synthesisJobs(t), "a returning repo does not review what landed while it was not polled")
+
+	start := h.origin.HeadSHA()
+	landed := h.origin.CommitFile("app.txt", "after\n", "landed after")
+	h.poller.poll(t.Context())
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1)
+	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewsAssignExperimentsPerCommit(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	enabled, ratio := true, 1.0
+	h.cfg.Experiments = map[string]config.ExperimentDefinition{
+		"landed-model-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
+			Config:    map[string]any{"review_model": "experiment-model"},
+		},
+	}
+	h.poll(t)
+	h.origin.CommitFile("app.txt", "first\n", "first change")
+	h.origin.CommitFile("app.txt", "second\n", "second change")
+	h.poll(t)
+
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 2)
+	require.Len(t, runs[0].Experiments, 1)
+	require.Len(t, runs[1].Experiments, 1)
+	assert.NotEqual(t, runs[0].Experiments[0].SubjectHash, runs[1].Experiments[0].SubjectHash,
+		"landed commits share a branch name, so each commit is assigned on its own")
+}
+
+func TestCIDefaultBranchStatusDelivery(t *testing.T) {
+	githubError := func(status int, message string) error {
+		return &googlegithub.ErrorResponse{Response: &http.Response{StatusCode: status}, Message: message}
+	}
+	tests := []struct {
+		name    string
+		err     error
+		retried bool
+	}{
+		{name: "a failed request is retried", err: errors.New("connection reset"), retried: true},
+		{name: "a server error is retried", err: githubError(http.StatusBadGateway, "Bad Gateway"), retried: true},
+		{name: "a token that cannot write statuses", err: githubError(http.StatusForbidden, "Resource not accessible by integration")},
+		{name: "a commit GitHub no longer has", err: githubError(http.StatusUnprocessableEntity, "No commit found for SHA")},
+		{name: "no GitHub credentials", err: errBranchStatusNoToken},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newBranchReviewHarness(t)
+			h.poll(t)
+			failing := true
+			var failed, published int
+			h.poller.setBranchStatusFn = func(_, _, state, _ string) error {
+				switch {
+				case state == "pending":
+					return nil
+				case failing:
+					failed++
+					return tt.err
+				}
+				published++
+				return nil
+			}
+			h.origin.CommitFile("app.txt", "changed\n", "change")
+			h.poll(t)
+			h.runJobs(t)
+			h.poll(t)
+			h.poll(t)
+			failing = false
+			h.poll(t)
+			h.poll(t)
+
+			if tt.retried {
+				assert.Greater(failed, 1, "delivery is tried again on the next poll")
+				assert.Equal(1, published, "the result is published once GitHub accepts it")
+				return
+			}
+			assert.Equal(1, failed, "GitHub will not accept this status, so it is sent once")
+			assert.Zero(published)
+		})
+	}
 }

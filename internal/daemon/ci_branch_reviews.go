@@ -6,10 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"os/exec"
 	"strings"
+
+	googlegithub "github.com/google/go-github/v93/github"
 
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/procutil"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -17,23 +22,19 @@ import (
 // request status, which can share a commit after a fast-forward merge.
 const ciBranchStatusContext = "roborev/default-branch"
 
-// ciBranchCommitsPerPoll bounds the reviews one poll enqueues for a
-// repository. Later commits wait for the next poll.
-const ciBranchCommitsPerPoll = 20
-
 // pollDefaultBranch reviews commits that landed on the repository's default
 // branch since the previous poll. The first poll records the current head
 // without reviewing history, so enabling the feature does not review a
 // repository's past.
 func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *config.Config) error {
 	// Results can finish after the feature is turned off; still publish them.
-	p.reconcileBranchReviews(ghRepo)
+	p.reconcileBranchReviews(ctx, ghRepo)
 	if !cfg.CI.ReviewDefaultBranch {
 		// Forget the review position, so turning reviews back on starts from
 		// the branch head instead of reviewing what landed in between.
-		return p.db.DeleteCIBranchCursor(ghRepo)
+		return p.db.DeleteCIBranchCursor(ctx, ghRepo)
 	}
-	p.expireTimedOutBranchReviews(ghRepo, cfg)
+	p.expireTimedOutBranchReviews(ctx, ghRepo, cfg)
 	repo, err := p.findOrCloneRepo(ctx, ghRepo)
 	if err != nil {
 		return fmt.Errorf("find local repo for %s: %w", ghRepo, err)
@@ -42,15 +43,9 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 		return fmt.Errorf("git fetch: %w", err)
 	}
 
-	defaultRef, err := gitpkg.GetDefaultBranch(repo.RootPath)
+	branch, err := p.remoteDefaultBranch(ctx, ghRepo, repo.RootPath)
 	if err != nil {
 		return fmt.Errorf("detect default branch: %w", err)
-	}
-	// A local branch in the poller's clone does not track what landed on
-	// GitHub, so only the fetched remote default branch is reviewed.
-	branch, ok := strings.CutPrefix(defaultRef, "origin/")
-	if !ok {
-		return fmt.Errorf("detect default branch: origin/HEAD does not name a fetched branch")
 	}
 	head, err := gitText(ctx, repo.RootPath, "rev-parse", "--verify", "origin/"+branch+"^{commit}")
 	if err != nil {
@@ -64,13 +59,13 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 		return err
 	}
 
-	cursor, err := p.db.GetCIBranchCursor(ghRepo)
+	cursor, err := p.db.GetCIBranchCursor(ctx, ghRepo)
 	if err != nil {
 		return err
 	}
 	if cursor == nil || cursor.Branch != branch {
 		log.Printf("CI poller: starting %s default-branch reviews after %s@%s", ghRepo, branch, gitpkg.ShortSHA(head))
-		return p.db.SetCIBranchCursor(ghRepo, branch, head)
+		return p.db.SetCIBranchCursor(ctx, ghRepo, branch, head)
 	}
 	if cursor.HeadSHA == head {
 		return nil
@@ -83,31 +78,27 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 		return fmt.Errorf("list landed commits: %w", err)
 	}
 	if !onBranch {
-		// The branch was rewritten, or the last reviewed commit is reachable
-		// only through a merged branch. Later commits cannot be told apart
-		// from reviewed ones, so continue from the new head.
+		// The branch was rewritten, the last reviewed commit is reachable only
+		// through a merged branch, or the clone no longer has it. Later
+		// commits cannot be told apart from reviewed ones, so continue from
+		// the new head.
 		log.Printf("CI poller: %s %s no longer follows %s; continuing default-branch reviews after %s",
 			ghRepo, branch, gitpkg.ShortSHA(cursor.HeadSHA), gitpkg.ShortSHA(head))
-		return p.db.SetCIBranchCursor(ghRepo, branch, head)
+		return p.db.SetCIBranchCursor(ctx, ghRepo, branch, head)
 	}
-	queued := 0
 	for _, commit := range landed {
-		if queued == ciBranchCommitsPerPoll {
-			break
-		}
 		if commitOptedOut(repo.RootPath, commit.sha, scopedCfg, repoConfig) {
-			if err := p.db.SetCIBranchCursor(ghRepo, branch, commit.sha); err != nil {
+			if err := p.db.SetCIBranchCursor(ctx, ghRepo, branch, commit.sha); err != nil {
 				return err
 			}
 			continue
 		}
-		queued++
 		if configErr != nil {
-			if err := p.db.RecordCIBranchCommitOutcome(ghRepo, branch, commit.sha, "error",
+			if err := p.db.RecordCIBranchCommitOutcome(ctx, ghRepo, branch, commit.sha, "error",
 				"Review could not be queued; run roborev config validate"); err != nil {
 				return err
 			}
-			p.deliverPendingBranchStatuses(ghRepo)
+			p.deliverPendingBranchStatuses(ctx, ghRepo)
 			continue
 		}
 		if err := p.enqueueBranchCommit(ctx, scopedCfg, repoConfig, repo, ghRepo, branch, commit.parent, commit.sha); err != nil {
@@ -123,10 +114,12 @@ type landedCommit struct {
 
 // landedCommits lists the first-parent commits from cursor to head, oldest
 // first, each with its first parent. onBranch is false when cursor is not on
-// head's first-parent chain: it was rewritten away or is reachable only
-// through a merged branch.
+// head's first-parent chain: it was rewritten away, is reachable only through
+// a merged branch, or is missing from the clone.
 func landedCommits(ctx context.Context, repoPath, cursor, head string) ([]landedCommit, bool, error) {
-	if _, err := gitText(ctx, repoPath, "cat-file", "-e", cursor+"^{commit}"); err != nil {
+	// With --quiet, rev-parse exits 1 for a commit the clone does not have.
+	// Other failures, such as an unreadable repository, exit 128.
+	if _, err := gitText(ctx, repoPath, "rev-parse", "--verify", "--quiet", cursor+"^{commit}"); err != nil {
 		if ctx.Err() == nil && isGitExitCode(err, 1) {
 			return nil, false, nil
 		}
@@ -180,34 +173,38 @@ func (p *CIPoller) enqueueBranchCommit(
 	plan, err := p.planCIPanel(ctx, cfg, repoConfig, ciPanelTarget{
 		repo: repo, ghRepo: ghRepo, base: parent, head: sha,
 		branch: branch, baseBranch: branch,
+		// Landed commits share one branch name. Assigning each commit on its
+		// own splits them between arms by the experiment's ratio.
+		experimentSubject: sha,
 	})
 	if err != nil {
 		if _, ok := errors.AsType[*ciConfigurationError](err); ok {
-			if recordErr := p.db.RecordCIBranchCommitOutcome(ghRepo, branch, sha, "error",
+			if recordErr := p.db.RecordCIBranchCommitOutcome(ctx, ghRepo, branch, sha, "error",
 				"Review could not be queued; run roborev config validate"); recordErr != nil {
 				return recordErr
 			}
-			p.deliverPendingBranchStatuses(ghRepo)
+			p.deliverPendingBranchStatuses(ctx, ghRepo)
 			return nil
 		}
 		return err
 	}
 	if len(plan.memberOpts) == 0 {
-		return p.db.SetCIBranchCursor(ghRepo, branch, sha)
+		return p.db.SetCIBranchCursor(ctx, ghRepo, branch, sha)
 	}
-	existing, err := p.db.GetCIBranchReview(ghRepo, sha)
+	existing, err := p.db.GetCIBranchReview(ctx, ghRepo, sha)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if existing == nil {
 		// Post pending before the jobs exist. A fast review could otherwise
 		// publish its result first and be overwritten by pending.
-		if err := p.callSetBranchStatus(ghRepo, sha, "pending", "Review in progress"); err != nil {
+		err := p.callSetBranchStatus(ctx, ghRepo, sha, "pending", "Review in progress")
+		if err != nil && !errors.Is(err, errBranchStatusNoToken) {
 			log.Printf("CI poller: failed to set pending default-branch status for %s@%s: %v",
 				ghRepo, gitpkg.ShortSHA(sha), err)
 		}
 	}
-	created, synth, err := p.db.CreateCIBranchReviewRun(ghRepo, branch, sha, plan.memberOpts, plan.synthOpts)
+	created, synth, err := p.db.CreateCIBranchReviewRun(ctx, ghRepo, branch, sha, plan.memberOpts, plan.synthOpts)
 	if err != nil {
 		return fmt.Errorf("create default-branch panel run: %w", err)
 	}
@@ -222,12 +219,12 @@ func (p *CIPoller) enqueueBranchCommit(
 
 // expireTimedOutBranchReviews applies ci.batch_timeout to default-branch
 // panel runs, as expireTimedOutPanels does for pull requests.
-func (p *CIPoller) expireTimedOutBranchReviews(ghRepo string, cfg *config.Config) {
+func (p *CIPoller) expireTimedOutBranchReviews(ctx context.Context, ghRepo string, cfg *config.Config) {
 	timeout := cfg.CI.ResolvedBatchTimeout()
 	if timeout <= 0 {
 		return
 	}
-	runs, err := p.db.GetTimedOutCIBranchReviewRuns(ghRepo, timeout)
+	runs, err := p.db.GetTimedOutCIBranchReviewRuns(ctx, ghRepo, timeout)
 	if err != nil {
 		log.Printf("CI poller: error listing timed-out default-branch reviews for %s: %v", ghRepo, err)
 		return
@@ -246,7 +243,10 @@ func (p *CIPoller) expireTimedOutBranchReviews(ghRepo string, cfg *config.Config
 // routeBranchReviewEvent records and publishes the result when jobID is the
 // synthesis job of a default-branch review. Other jobs are ignored.
 func (p *CIPoller) routeBranchReviewEvent(jobID int64) {
-	review, err := p.db.GetCIBranchReviewBySynthesisJobID(jobID)
+	// The event listener carries no context yet, so this starts its own, as
+	// routePanelEvent does.
+	ctx := context.Background()
+	review, err := p.db.GetCIBranchReviewBySynthesisJobID(ctx, jobID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return
 	}
@@ -254,27 +254,27 @@ func (p *CIPoller) routeBranchReviewEvent(jobID int64) {
 		log.Printf("CI poller: error checking default-branch review for job %d: %v", jobID, err)
 		return
 	}
-	p.finishBranchReview(*review)
+	p.finishBranchReview(ctx, *review)
 }
 
 // reconcileBranchReviews recovers results whose completion events were lost
 // and retries status delivery that previously failed.
-func (p *CIPoller) reconcileBranchReviews(ghRepo string) {
-	reviews, err := p.db.ListCIBranchReviewsAwaitingResult(ghRepo)
+func (p *CIPoller) reconcileBranchReviews(ctx context.Context, ghRepo string) {
+	reviews, err := p.db.ListCIBranchReviewsAwaitingResult(ctx, ghRepo)
 	if err != nil {
 		log.Printf("CI poller: error listing default-branch results for %s: %v", ghRepo, err)
 	}
 	for _, review := range reviews {
-		p.finishBranchReview(review)
+		p.finishBranchReview(ctx, review)
 	}
-	p.deliverPendingBranchStatuses(ghRepo)
+	p.deliverPendingBranchStatuses(ctx, ghRepo)
 }
 
-func (p *CIPoller) finishBranchReview(review storage.CIBranchReview) {
+func (p *CIPoller) finishBranchReview(ctx context.Context, review storage.CIBranchReview) {
 	if review.SynthesisJobID == nil || review.PanelRunUUID == nil {
 		return
 	}
-	synth, err := p.db.GetJobByID(*review.SynthesisJobID)
+	synth, err := p.db.GetJobByIDContext(ctx, *review.SynthesisJobID)
 	if err != nil {
 		log.Printf("CI poller: error loading default-branch synthesis job %d: %v", *review.SynthesisJobID, err)
 		return
@@ -304,12 +304,12 @@ func (p *CIPoller) finishBranchReview(review storage.CIBranchReview) {
 	default:
 		return
 	}
-	if err := p.db.SetCIBranchReviewFinalStatus(review, state, desc); err != nil {
+	if err := p.db.SetCIBranchReviewFinalStatus(ctx, review, state, desc); err != nil {
 		log.Printf("CI poller: error recording default-branch result for %s@%s: %v",
 			review.GithubRepo, gitpkg.ShortSHA(review.SHA), err)
 		return
 	}
-	p.deliverPendingBranchStatuses(review.GithubRepo)
+	p.deliverPendingBranchStatuses(ctx, review.GithubRepo)
 }
 
 // branchCommitStatus reports review execution in the state, as pull request
@@ -324,14 +324,17 @@ func branchCommitStatus(members []storage.BatchReviewResult, foundIssues bool) (
 	return state, desc + strings.TrimPrefix(execution, "Review complete")
 }
 
-func (p *CIPoller) deliverPendingBranchStatuses(ghRepo string) {
-	reviews, err := p.db.ListCIBranchReviewStatuses(ghRepo)
+// deliverPendingBranchStatuses publishes recorded results. A failed send is
+// retried on the next poll, unless GitHub will never accept the status. That
+// result stays in the database, and its commit gets no status.
+func (p *CIPoller) deliverPendingBranchStatuses(ctx context.Context, ghRepo string) {
+	reviews, err := p.db.ListCIBranchReviewStatuses(ctx, ghRepo)
 	if err != nil {
 		log.Printf("CI poller: error listing default-branch statuses for %s: %v", ghRepo, err)
 		return
 	}
 	for _, review := range reviews {
-		won, err := p.db.ClaimCIBranchReviewStatus(review, panelPostingStaleWindow)
+		won, err := p.db.ClaimCIBranchReviewStatus(ctx, review, panelPostingStaleWindow)
 		if err != nil {
 			log.Printf("CI poller: error claiming default-branch status for %s@%s: %v",
 				ghRepo, gitpkg.ShortSHA(review.SHA), err)
@@ -340,27 +343,89 @@ func (p *CIPoller) deliverPendingBranchStatuses(ghRepo string) {
 		if !won {
 			continue
 		}
-		sendErr := p.callSetBranchStatus(ghRepo, review.SHA, review.FinalState, review.FinalDescription)
-		if sendErr != nil {
+		sendErr := p.callSetBranchStatus(ctx, ghRepo, review.SHA, review.FinalState, review.FinalDescription)
+		refused := branchStatusRefused(sendErr)
+		switch {
+		case refused:
+			log.Printf("CI poller: default-branch status for %s@%s will not be published: %v",
+				ghRepo, gitpkg.ShortSHA(review.SHA), sendErr)
+		case sendErr != nil:
 			log.Printf("CI poller: failed to set default-branch status for %s@%s: %v",
 				ghRepo, gitpkg.ShortSHA(review.SHA), sendErr)
 		}
-		if err := p.db.FinishCIBranchReviewStatus(review, sendErr == nil); err != nil {
+		// The send already happened. Record its outcome even when the poller
+		// is stopping, so a restart does not publish the status again.
+		if err := p.db.FinishCIBranchReviewStatus(context.WithoutCancel(ctx), review, sendErr == nil || refused); err != nil {
 			log.Printf("CI poller: error acknowledging default-branch status for %s@%s: %v",
 				ghRepo, gitpkg.ShortSHA(review.SHA), err)
 		}
 	}
 }
 
-func (p *CIPoller) callSetBranchStatus(ghRepo, sha, state, description string) error {
+// errBranchStatusNoToken means the daemon has no GitHub credentials. Reviews
+// still run and are stored; only their commit statuses are skipped.
+var errBranchStatusNoToken = errors.New("GitHub token required to publish commit status")
+
+// branchStatusRefused reports whether GitHub will never accept a commit status
+// from this daemon, so sending it again cannot succeed.
+func branchStatusRefused(err error) bool {
+	if errors.Is(err, errBranchStatusNoToken) || isPermanentGitHubAccessError(err) {
+		return true
+	}
+	// GitHub answers 422 for a commit it no longer has, such as one removed by
+	// a force push, and for a commit that already holds its maximum number of
+	// statuses for one context.
+	githubErr, ok := errors.AsType[*googlegithub.ErrorResponse](err)
+	return ok && githubErr.Response != nil && githubErr.Response.StatusCode == http.StatusUnprocessableEntity
+}
+
+func (p *CIPoller) callSetBranchStatus(ctx context.Context, ghRepo, sha, state, description string) error {
 	if p.setBranchStatusFn != nil {
 		return p.setBranchStatusFn(ghRepo, sha, state, description)
+	}
+	if strings.TrimSpace(p.githubTokenForRepo(ghRepo)) == "" {
+		return errBranchStatusNoToken
 	}
 	client, err := p.githubClientForRepo(ghRepo)
 	if err != nil {
 		return err
 	}
-	return client.SetCommitStatusContext(context.Background(), ghRepo, sha, ciBranchStatusContext, state, description)
+	return client.SetNamedCommitStatus(ctx, ghRepo, sha, ciBranchStatusContext, state, description)
+}
+
+// remoteDefaultBranch returns the name of the default branch that the fetched
+// origin/HEAD points to. A local branch in the poller's clone does not track
+// what landed on GitHub, so only a fetched remote branch is reviewed.
+func (p *CIPoller) remoteDefaultBranch(ctx context.Context, ghRepo, repoPath string) (string, error) {
+	if branch, ok := fetchedDefaultBranch(repoPath); ok {
+		return branch, nil
+	}
+	// Git writes origin/HEAD when it clones and fetch does not move it. After
+	// the default branch is renamed on GitHub, it names a branch that fetch
+	// has pruned, so ask the remote which branch is the default now.
+	unlock := lockGitMetadata(repoPath)
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "remote", "set-head", "origin", "--auto")
+	procutil.HideConsole(cmd)
+	if env := p.gitEnvForRepo(ghRepo); env != nil {
+		cmd.Env = env
+	}
+	out, err := cmd.CombinedOutput()
+	unlock()
+	if err != nil {
+		return "", fmt.Errorf("update origin/HEAD: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if branch, ok := fetchedDefaultBranch(repoPath); ok {
+		return branch, nil
+	}
+	return "", errors.New("origin/HEAD does not name a fetched branch")
+}
+
+func fetchedDefaultBranch(repoPath string) (string, bool) {
+	ref, err := gitpkg.GetDefaultBranch(repoPath)
+	if err != nil {
+		return "", false
+	}
+	return strings.CutPrefix(ref, "origin/")
 }
 
 func gitText(ctx context.Context, repoPath string, args ...string) (string, error) {

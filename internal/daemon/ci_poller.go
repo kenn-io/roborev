@@ -527,6 +527,11 @@ func (p *CIPoller) poll(ctx context.Context) {
 			}
 		}
 		p.mu.Unlock()
+		// A repository the poller no longer covers loses its default-branch
+		// review position, as it does when the reviews are turned off.
+		if err := p.db.DeleteCIBranchCursorsExcept(ctx, repos); err != nil {
+			log.Printf("CI poller: error forgetting default-branch review positions: %v", err)
+		}
 	}
 
 	for _, ghRepo := range repos {
@@ -848,7 +853,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	}
 	plan, err := p.planCIPanel(ctx, cfg, repoConfig, ciPanelTarget{
 		repo: repo, ghRepo: ghRepo, base: mergeBase, head: pr.HeadRefOid,
-		branch: pr.HeadRefName,
+		branch: pr.HeadRefName, experimentSubject: pr.HeadRefName,
 		// Gate hooks on the PR base (target) branch: it is maintainer-
 		// controlled, unlike the fork-author-controlled head ref.
 		baseBranch: pr.BaseRefName,
@@ -906,14 +911,18 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 // ciPanelTarget is the commit range one CI panel run reviews. prNumber is zero
 // for a commit on the default branch, which has no pull request.
 type ciPanelTarget struct {
-	repo        *storage.Repo
-	ghRepo      string
-	base, head  string
-	branch      string
-	baseBranch  string
-	prNumber    int
-	discussion  string
-	pullRequest prompt.PullRequest
+	repo       *storage.Repo
+	ghRepo     string
+	base, head string
+	branch     string
+	baseBranch string
+	// experimentSubject is the unit an experiment assigns to one arm: the
+	// head branch of a pull request, so its later commits stay in that arm,
+	// or the landed commit of a default-branch review.
+	experimentSubject string
+	prNumber          int
+	discussion        string
+	pullRequest       prompt.PullRequest
 }
 
 // ciPanelPlan holds the jobs for one CI panel run. No member options means the
@@ -937,7 +946,7 @@ func (p *CIPoller) planCIPanel(
 		Workflow: config.ExperimentWorkflowCI,
 		Subject: config.ExperimentSubject{
 			Repository: t.repo.Identity,
-			Branch:     t.branch,
+			Branch:     t.experimentSubject,
 		},
 		Global:  cfg,
 		Repo:    repoCfg,
@@ -1813,6 +1822,15 @@ type buildPanelOptsInput struct {
 	synth       config.SynthesisSpec
 }
 
+// target names the review in logs and errors: its pull request, or the commit
+// range of a default-branch review, which has no pull request.
+func (in buildPanelOptsInput) target() string {
+	if in.prNumber == 0 {
+		return in.ghRepo + "@" + in.gitRef
+	}
+	return fmt.Sprintf("%s#%d", in.ghRepo, in.prNumber)
+}
+
 // buildPanelOpts builds the member and synthesis EnqueueOpts for a CI panel run.
 // Each member's prompt is prebuilt off the frozen range; a prebuild failure logs
 // and enqueues without a stored prompt (the worker rebuilds it). Members are
@@ -1835,10 +1853,10 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			// A canceled poller (Stop or shutdown) must abort the whole run
 			// rather than degrade it into jobs without stored prompts.
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, storage.EnqueueOpts{}, fmt.Errorf("prebuild prompt for %s#%d canceled: %w", in.ghRepo, in.prNumber, err)
+				return nil, storage.EnqueueOpts{}, fmt.Errorf("prebuild prompt for %s canceled: %w", in.target(), err)
 			}
-			log.Printf("CI poller: failed to prebuild prompt for %s#%d (member=%s, agent=%s): %v; enqueuing without stored prompt",
-				in.ghRepo, in.prNumber, m.Name, m.Agent, err)
+			log.Printf("CI poller: failed to prebuild prompt for %s (member=%s, agent=%s): %v; enqueuing without stored prompt",
+				in.target(), m.Name, m.Agent, err)
 			storedPrompt = ""
 		}
 		acpSnapshot, err := snapshotACPExecutionConfig(
