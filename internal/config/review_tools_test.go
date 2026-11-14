@@ -192,10 +192,7 @@ members = ["checker"]
 	repoCfg, err := LoadRepoConfig(dir)
 	require.NoError(t, err)
 
-	settings, err := ResolveReviewSettings("exhibits", nil, false, repoCfg, nil)
-	require.NoError(t, err)
-	assert.True(t, settings.BinaryEvidence)
-	settings, err = ResolveReviewSettings("default", nil, false, repoCfg, nil)
+	settings, err := ResolveReviewSettings("default", nil, false, repoCfg, nil)
 	require.NoError(t, err)
 	assert.False(t, settings.BinaryEvidence)
 

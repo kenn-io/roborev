@@ -4277,11 +4277,10 @@ func designMemberCount(members []storage.ReviewJob) int {
 	return n
 }
 
-// TestProcessPRCreatesPanelRunWithFrozenDesignEvidence verifies processPR enqueues one
-// panel run per PR. With auto-design enabled and a design-warranting commit, the
-// run carries the matrix member plus exactly one whole-range design member; every
-// member is role=member and not a classify job.
-func TestProcessPRCreatesPanelRunWithFrozenDesignEvidence(t *testing.T) {
+// TestProcessPRCreatesPanelRunWithFrozenDesignBinaryEvidence checks that
+// auto-design adds one whole-range design member with frozen binary evidence.
+// Every member has role=member and is not a classify job.
+func TestProcessPRCreatesPanelRunWithFrozenDesignBinaryEvidence(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	p.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {

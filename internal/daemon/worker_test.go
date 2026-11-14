@@ -1699,7 +1699,7 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
 	assert.Contains(t, stored.Output, "Global review instructions loaded from the default branch.")
 }
 
-func TestProcessJob_DirtyPromptWithFrozenBinaryEvidence(t *testing.T) {
+func TestProcessJob_DirtyPromptClearsFrozenBinaryEvidence(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 
