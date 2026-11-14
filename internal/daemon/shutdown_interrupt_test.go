@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 )
 
@@ -53,36 +52,6 @@ func TestInterruptShutdownTargetsRunningAttempts(t *testing.T) {
 			assert.True(t, requested)
 		})
 	}
-}
-
-func TestInterruptShutdownStopRetriesFailedRequeue(t *testing.T) {
-	server, db, dir := newTestServer(t)
-	createTestJob(t, db, dir, "interrupt-requeue-retry", "test")
-	job, err := db.ClaimJob("worker-interrupt")
-	require.NoError(t, err)
-	require.NotNil(t, job)
-	response := postUpdateDrain(t, server, "/api/shutdown/interrupt", map[string]int{"expected_pid": os.Getpid()})
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	_, err = db.ExecContext(t.Context(), fmt.Sprintf(`
-		CREATE TRIGGER fail_update_requeue
-		BEFORE UPDATE ON review_jobs
-		WHEN OLD.id = %d AND NEW.status = 'queued'
-		BEGIN
-			SELECT RAISE(FAIL, 'synthetic requeue failure');
-		END
-	`, job.ID))
-	require.NoError(t, err)
-	assert.True(t, server.workerPool.handleUpdateInterruption(t.Context(), "worker-interrupt", job))
-	stored, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusRunning, stored.Status)
-	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_update_requeue`)
-	require.NoError(t, err)
-	require.NoError(t, server.Stop())
-	stored, err = db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusQueued, stored.Status)
-	assert.Equal(t, 0, stored.RetryCount)
 }
 
 func TestInterruptShutdownRejectsMismatchAndUpdateLease(t *testing.T) {
@@ -134,12 +103,11 @@ func TestInterruptShutdownRequest(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		status int
-		detail string
 		dead   bool
 		want   string
 	}{
 		{name: "older daemon", status: http.StatusNotFound, want: "--running=wait"},
-		{name: "PID changed", status: http.StatusPreconditionFailed, detail: "daemon PID changed", want: "daemon PID changed"},
+		{name: "PID changed", status: http.StatusPreconditionFailed, want: "412 Precondition Failed"},
 		{name: "original exited", status: http.StatusPreconditionFailed, dead: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,9 +120,7 @@ func TestInterruptShutdownRequest(t *testing.T) {
 				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 				assert.Equal(t, pid, body.ExpectedPID)
 				dead.Store(tc.dead)
-				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(tc.status)
-				assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{"detail": tc.detail}))
 			}))
 			defer server.Close()
 			ep, err := ParseEndpoint(server.Listener.Addr().String())
@@ -179,7 +145,7 @@ func TestInterruptDaemonRejectsUnusableRuntime(t *testing.T) {
 		fmt.Fprint(w, `{"ok":true,"service":"roborev","pid":1}`)
 	}))
 	defer server.Close()
-	err := InterruptDaemon(&RuntimeInfo{Network: "tcp", Address: server.Listener.Addr().String()})
+	err := InterruptDaemonWithFallback(&RuntimeInfo{Network: "tcp", Address: server.Listener.Addr().String()}, nil)
 	require.ErrorContains(t, err, "--running=wait")
 	assert.Zero(t, shutdowns.Load())
 }

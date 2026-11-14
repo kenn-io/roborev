@@ -1458,9 +1458,7 @@ to requeue all running jobs, including reviews, synthesis, and background fixes,
 wait for shutdown, and start the replacement. Interrupted jobs start fresh,
 discarding in-progress work, except rebuttals, which preserve and resume their
 original agent session. No retry is consumed. If Ctrl-C interrupts a waiting
-restart, rerun it with `--running=interrupt` while the daemon is draining. Older
-daemons do not support interruption; restart them with the default
-`--running=wait`.
+restart, rerun it with `--running=interrupt` while the daemon is draining.
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,

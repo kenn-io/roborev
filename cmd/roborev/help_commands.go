@@ -64,8 +64,7 @@ all running jobs return to the queue, including reviews, synthesis and backgroun
 fixes. Interrupted jobs start fresh, discarding in-progress work, except
 rebuttals, which preserve and resume their original agent session. No retry is
 consumed.
-If Ctrl-C interrupts a graceful restart, rerun with --running=interrupt.
-Daemons without interrupt support need the default, --running=wait.`, example: `  roborev daemon restart
+If Ctrl-C interrupts a graceful restart, rerun with --running=interrupt.`, example: `  roborev daemon restart
   roborev daemon restart --running=interrupt`},
 	"daemon status": {long: `Inspect the local daemon, its queue, browser UI and Agent Hook reminders.
 Use --json for the status record, or doctor to diagnose setup and agents.`, example: `  roborev daemon status

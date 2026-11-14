@@ -665,12 +665,7 @@ func isLoopbackAddr(addr string) bool {
 // Returns nil if the daemon is no longer running.
 // Only removes runtime file if the daemon is confirmed dead.
 func KillDaemon(info *RuntimeInfo) error {
-	return killDaemon(info, false)
-}
-
-// InterruptDaemon stops the discovered daemon and requeues its active attempts.
-func InterruptDaemon(info *RuntimeInfo) error {
-	return killDaemon(info, true)
+	return killDaemonWithFallback(info, false, nil)
 }
 
 // InterruptDaemonWithFallback interrupts a daemon and calls fallback only
@@ -679,10 +674,6 @@ func InterruptDaemonWithFallback(
 	info *RuntimeInfo, fallback func(context.Context, DaemonEndpoint) error,
 ) error {
 	return killDaemonWithFallback(info, true, fallback)
-}
-
-func killDaemon(info *RuntimeInfo, interrupt bool) error {
-	return killDaemonWithFallback(info, interrupt, nil)
 }
 
 func killDaemonWithFallback(
@@ -840,12 +831,6 @@ func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead
 				return struct{}{}, backoff.Permanent(ErrInterruptShutdownUnsupported)
 			}
 			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
-			if interrupt {
-				var problem generated.ErrorModel
-				if json.UnmarshalRead(resp.Body, &problem) == nil && problem.Detail != nil && *problem.Detail != "" {
-					err = fmt.Errorf("daemon shutdown returned %s: %s", resp.Status, *problem.Detail)
-				}
-			}
 			if resp.StatusCode < http.StatusInternalServerError {
 				return struct{}{}, backoff.Permanent(err)
 			}
