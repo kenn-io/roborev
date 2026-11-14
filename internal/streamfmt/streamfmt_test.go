@@ -683,32 +683,46 @@ func TestFormatter_Gemini(t *testing.T) {
 	}
 }
 
-func TestFormatter_GeminiAntigravityCapturedResultEvent(t *testing.T) {
-	captured, err := os.ReadFile("../agent/testdata/antigravity-success-result-capture.jsonl")
-	require.NoError(t, err)
-	var output bytes.Buffer
-	fmtr := New(&output, true, DecoderForAgent("gemini"))
-	require.NoError(t, RenderLogWith(bytes.NewReader(captured), fmtr))
+func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		fixture     string
+		contains    string
+		notContains []string
+	}{
+		{
+			name:     "successful result",
+			fixture:  "../agent/testdata/antigravity-success-result-capture.jsonl",
+			contains: "RESUME_OK",
+			notContains: []string{
+				`"event":"result"`,
+			},
+		},
+		{
+			name:     "error result",
+			fixture:  "../agent/testdata/antigravity-resume-error-capture.jsonl",
+			contains: "Individual quota reached",
+			notContains: []string{
+				"RESUME_OK",
+				"text_delta",
+				`"event":"result"`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			captured, err := os.ReadFile(tc.fixture)
+			require.NoError(t, err)
+			var output bytes.Buffer
+			fmtr := New(&output, true, DecoderForAgent("gemini"))
+			require.NoError(t, RenderLogWith(bytes.NewReader(captured), fmtr))
 
-	plain := StripANSI(output.String())
-	normalized := strings.Join(strings.Fields(plain), " ")
-	assert.Contains(t, normalized, "RESUME_OK")
-	assert.NotContains(t, normalized, "text_delta")
-	assert.NotContains(t, normalized, `"event":"result"`)
-}
-
-func TestFormatter_GeminiAntigravityCapturedErrorIgnoresStepUpdates(t *testing.T) {
-	captured, err := os.ReadFile("../agent/testdata/antigravity-resume-error-capture.jsonl")
-	require.NoError(t, err)
-	var output bytes.Buffer
-	fmtr := New(&output, true, DecoderForAgent("gemini"))
-	require.NoError(t, RenderLogWith(bytes.NewReader(captured), fmtr))
-
-	plain := StripANSI(output.String())
-	assert.Contains(t, plain, "Individual quota reached")
-	assert.NotContains(t, plain, "RESUME_OK")
-	assert.NotContains(t, plain, "text_delta")
-	assert.NotContains(t, plain, `"event":"result"`)
+			plain := StripANSI(output.String())
+			assert.Contains(t, plain, tc.contains)
+			for _, text := range tc.notContains {
+				assert.NotContains(t, plain, text)
+			}
+		})
+	}
 }
 
 func TestFormatter_OpenCode(t *testing.T) {

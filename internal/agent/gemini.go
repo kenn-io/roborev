@@ -155,7 +155,13 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
 		// config) fail fast so config errors are surfaced.
+		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
+			if resetErr := resetter.ResetSessionID(); resetErr != nil {
+				return "", errors.Join(err, resetErr)
+			}
+		}
 		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
+		runAgent = runAgent.WithSessionID("").(*GeminiAgent)
 		noModelArgs := runAgent.buildArgsWithModel("", agenticMode, capabilities)
 		result, _, err = runAgent.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities, output)
 	}
