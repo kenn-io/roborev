@@ -1408,9 +1408,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job,
 		cfg,
 	)
+	clearSession := func() error {
+		if err := wp.db.ClearJobSessionID(job.ID, workerID); err != nil {
+			return err
+		}
+		job.SessionID = ""
+		job.SessionCLI = ""
+		job.ResumeSourceJobUUID = nil
+		return nil
+	}
 	// A queued session ID only works with the CLI that created it.
 	if job.SessionID != "" && job.SessionCLI != sessionCLIForAgent(a) {
-		job.SessionID, job.ResumeSourceJobUUID = "", nil
+		if err := clearSession(); err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, a.Name(), fmt.Sprintf("clear incompatible session: %v", err))
+			return
+		}
 	}
 	if job.SessionID != "" || checkout.isolatedLocalReview {
 		if sa, ok := a.(agent.SessionAgent); ok {
@@ -1524,7 +1536,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				{invoked: true, implementation: true, sessionID: sessionID, logUsage: implementationUsageCapture.Usage()},
 			}, false)
 		}
-	})
+	}, clearSession)
 	agentOutput = sessionWriter
 
 	// For fix jobs, create an isolated worktree to run the agent in.
@@ -1598,7 +1610,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		implementationRef, err = gitrepo.Resolve(ctx, reviewRepoPath, "HEAD")
 		if err == nil {
 			planningSessionWriter = agent.NewSessionCaptureWriter(
-				io.MultiWriter(jobLog, outputWriter, planningUsageCapture), nil,
+				io.MultiWriter(jobLog, outputWriter, planningUsageCapture), nil, nil,
 			)
 			fixPlan, reviewPrompt, err = wp.prepareFixPlan(
 				ctx, planningTimeout, workerID, a, job, reviewRepoPath,

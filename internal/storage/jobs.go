@@ -1013,6 +1013,27 @@ func (db *DB) IsolateJobSession(jobID int64, workerID string) error {
 	return nil
 }
 
+// ClearJobSessionID drops inherited resume metadata without isolating a fresh session.
+func (db *DB) ClearJobSessionID(jobID int64, workerID string) error {
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET session_id = NULL, session_cli = NULL, session_resumed = 0,
+		    resume_source_job_uuid = NULL, updated_at = ?, synced_at = NULL
+		WHERE id = ? AND status = 'running' AND worker_id = ?
+	`, time.Now().Format(time.RFC3339), jobID, workerID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // SaveJobSessionID stores the captured agent session ID for a job.
 // The first captured ID wins so repeated lifecycle events do not
 // overwrite it. The update is scoped to the current execution

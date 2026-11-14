@@ -147,14 +147,19 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	} else if !versionAtLeast(capabilities.version, "0") {
 		return "", errors.New("antigravity CLI version could not be verified; cannot choose a supported prompt contract")
 	}
-	if !capabilities.resume {
+	if a.SessionID != "" && !capabilities.resume {
+		if resetErr := resetSessionCapture(output); resetErr != nil {
+			return "", resetErr
+		}
 		a = a.WithSessionID("").(*GeminiAgent)
 	}
 	args := a.buildArgsWithModel(a.Model, agenticMode)
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
-	if a.SessionID != "" && !agenticMode && ctx.Err() == nil &&
+	if a.SessionID != "" && !a.Agentic && ctx.Err() == nil &&
 		(err != nil || result == "No review output generated") {
-		resetSessionCapture(output)
+		if resetErr := resetSessionCapture(output); resetErr != nil {
+			return "", errors.Join(err, resetErr)
+		}
 		log.Printf("gemini: resumed session failed (%v), retrying in a fresh session", err)
 		a = a.WithSessionID("").(*GeminiAgent)
 		args = a.buildArgsWithModel(a.Model, agenticMode)
@@ -166,7 +171,9 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
 		// config) fail fast so config errors are surfaced.
-		resetSessionCapture(output)
+		if resetErr := resetSessionCapture(output); resetErr != nil {
+			return "", errors.Join(err, resetErr)
+		}
 		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
 		noModelArgs := a.buildArgsWithModel("", agenticMode)
 		result, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities, output)
@@ -174,10 +181,11 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	return result, err
 }
 
-func resetSessionCapture(output io.Writer) {
-	if resetter, ok := output.(interface{ ResetSessionID() }); ok {
-		resetter.ResetSessionID()
+func resetSessionCapture(output io.Writer) error {
+	if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
+		return resetter.ResetSessionID()
 	}
+	return nil
 }
 
 // buildArgsWithModel builds CLI args with an explicit model override

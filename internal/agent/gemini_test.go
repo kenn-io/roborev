@@ -534,6 +534,7 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		cli            string
 		version        string
 		agentic        bool
+		unsafe         bool
 		wantError      bool
 		resumeError    string
 		resumeSession  string
@@ -549,6 +550,18 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			resumeSession: "failed-session", resumeFlag: "--resume",
 			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
 			wantSessionID: geminiSessionID,
+		},
+		{
+			name:           "Gemini unsafe review retries a failed resume",
+			cli:            "gemini",
+			version:        "0.34.0",
+			unsafe:         true,
+			resumeError:    "resume failed",
+			resumeSession:  "failed-session",
+			resumeFlag:     "--resume",
+			successFixture: "gemini-stream.jsonl",
+			wantResult:     `{"passed":true,"findings":[]}`,
+			wantSessionID:  geminiSessionID,
 		},
 		{
 			name:           "Gemini agentic failed resume does not replay",
@@ -578,6 +591,10 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			previousUnsafe := AllowUnsafeAgents()
+			SetAllowUnsafeAgents(tc.unsafe)
+			t.Cleanup(func() { SetAllowUnsafeAgents(previousUnsafe) })
+
 			argsFile := filepath.Join(t.TempDir(), "args")
 			t.Setenv("CLI_VERSION", tc.version)
 			t.Setenv("RESUME_FLAG", tc.resumeFlag)
@@ -618,7 +635,7 @@ cat "$SUCCESS_FILE"
 				script = agyPath
 			}
 			a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(tc.agentic).(*GeminiAgent)
-			capture := NewSessionCaptureWriter(io.Discard, nil)
+			capture := NewSessionCaptureWriter(io.Discard, nil, nil)
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
 			wantCalls := 2
 			if tc.wantError {
@@ -633,7 +650,7 @@ cat "$SUCCESS_FILE"
 			require.NoError(t, readErr)
 			assert.Equal(t, 1, strings.Count(string(args), tc.resumeFlag+"\n"))
 			assert.Equal(t, wantCalls, strings.Count(string(args), "--output-format\nstream-json\n"))
-			if tc.agentic {
+			if tc.agentic || tc.unsafe {
 				assert.Equal(t, wantCalls, strings.Count(string(args), "--approval-mode\nyolo\n"))
 			}
 		})
@@ -985,11 +1002,14 @@ func TestGeminiReview_ModelNotFoundNoRetryWhenNoModel(t *testing.T) {
 	skipIfWindows(t)
 
 	// When Model is empty, don't retry on model-not-found.
+	counterFile := filepath.Join(t.TempDir(), "invocations")
 	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
+echo "invoked" >> "$COUNTER_FILE"
 echo "Error: model is not found" >&2
 exit 1
 `)
 
+	t.Setenv("COUNTER_FILE", counterFile)
 	a := NewGeminiAgent(scriptPath)
 	a.Model = ""
 	var output bytes.Buffer
@@ -998,6 +1018,11 @@ exit 1
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gemini failed")
+
+	countBytes, readErr := os.ReadFile(counterFile)
+	require.NoError(t, readErr)
+	assert.Equal(t, 1, strings.Count(string(countBytes), "invoked"),
+		"empty model should invoke exactly once, not retry")
 }
 
 func TestGeminiReview_ExplicitModelNoFallback(t *testing.T) {

@@ -54,6 +54,46 @@ echo '{"type":"result","status":"success"}'
 	assert.NotContains(t, string(args), "--resume")
 }
 
+func TestWorkerClearsUnsupportedAntigravitySession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("synthetic Antigravity CLI uses a POSIX shell")
+	}
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	commandPath := filepath.Join(t.TempDir(), "agy")
+	require.NoError(t, os.WriteFile(commandPath, []byte(`#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+if [ "$1" = "--version" ]; then echo "1.1.7"; exit 0; fi
+echo '{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}'
+`), 0o755))
+	cfg := config.DefaultConfig()
+	cfg.GeminiCmd = commandPath
+	tc.reconfigurePool(cfg)
+
+	job := tc.createJobWithAgent(t, tc.GitRepo.HeadSHA(), "gemini")
+	_, err := tc.DB.ExecContext(t.Context(), `
+		UPDATE review_jobs
+		SET session_id = 'old-agy-session', session_cli = 'agy', session_resumed = 1,
+		    resume_source_job_uuid = '123e4567-e89b-12d3-a456-426614174000'
+		WHERE id = ?`, job.ID)
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	got := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Empty(t, got.SessionID)
+	assert.Empty(t, got.SessionCLI)
+	assert.Nil(t, got.ResumeSourceJobUUID)
+	var resumed int
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(),
+		`SELECT session_resumed FROM review_jobs WHERE id = ?`, job.ID,
+	).Scan(&resumed))
+	assert.Zero(t, resumed)
+}
+
 func TestWorkerModelFallbackStoresSuccessfulGeminiSession(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("synthetic Gemini CLI uses a POSIX shell")

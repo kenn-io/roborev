@@ -155,7 +155,7 @@ printf '%s\n%s' \
 	a := NewCopilotAgent(cmdPath)
 
 	var output bytes.Buffer
-	sessionWriter := NewSessionCaptureWriter(&output, nil)
+	sessionWriter := NewSessionCaptureWriter(&output, nil, nil)
 	res, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", sessionWriter)
 	sessionWriter.Flush()
 
@@ -443,7 +443,7 @@ exec sleep 60
 	r, w := io.Pipe()
 	defer r.Close()
 	defer w.Close()
-	capture := NewSessionCaptureWriter(w, nil)
+	capture := NewSessionCaptureWriter(w, nil, nil)
 	type outcome struct {
 		output string
 		err    error
