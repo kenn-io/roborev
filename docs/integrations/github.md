@@ -533,11 +533,14 @@ Expect this behavior:
     commit is no longer in the branch's first-parent history, for example after
     a force push, the poller cannot tell new commits from reviewed ones. It
     reviews nothing and continues with the commits that land next. It does the
-    same when the default branch is renamed, or when its clone of the repo no
-    longer has the last reviewed commit.
+    same when its clone of the repo no longer has the last reviewed commit.
+- **A new default branch starts from its head.** When the repo's default branch
+    is renamed, or another branch becomes the default, the poller follows the
+    new default branch and reviews the commits that land on it next.
 - **Every poll fetches every repo.** With the option on, the poller runs
     `git fetch` for each configured repo on each interval, even when no pull
-    request changed.
+    request changed. It also asks the repo's remote which branch is the default,
+    with `git remote set-head origin --auto`.
 - **No PR comment is posted.** The review is stored like any other review. Run
     `roborev list` or `roborev show <job-id>` to read it, or use a
     [review hook](/docs/guides/hooks/) to send results elsewhere.

@@ -475,6 +475,32 @@ func TestCIDefaultBranchReviewsFollowRenamedDefaultBranch(t *testing.T) {
 	assert.Equal(t, "trunk", runs[0].HookBranch())
 }
 
+func TestCIDefaultBranchReviewsFollowNewDefaultBranchWhenOldOneRemains(t *testing.T) {
+	assert := assert.New(t)
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	// The origin's checked-out branch is its default. main stays in place.
+	h.origin.CheckoutNewBranch("develop")
+	switched := h.origin.CommitFile("app.txt", "develop\n", "first commit on the new default")
+
+	h.poll(t)
+	assert.Empty(h.synthesisJobs(t), "a new default branch starts from its head")
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	assert.Equal(storage.CIBranchCursor{GithubRepo: branchReviewRepo, Branch: "develop", HeadSHA: switched}, *cursor)
+
+	h.origin.CheckoutBranch("main")
+	h.origin.CommitFile("old.txt", "old\n", "commit on the former default")
+	h.origin.CheckoutBranch("develop")
+	landed := h.origin.CommitFile("app.txt", "next\n", "next commit on the new default")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "only the new default branch is reviewed")
+	assert.Equal(switched+".."+landed, runs[0].GitRef)
+	assert.Equal("develop", runs[0].HookBranch())
+}
+
 func TestCIDefaultBranchReviewsRestartAfterRepoLeavesThePoller(t *testing.T) {
 	h := newBranchReviewHarness(t)
 	h.cfg.CI.Repos = []string{branchReviewRepo}

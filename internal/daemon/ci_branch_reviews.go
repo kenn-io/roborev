@@ -393,16 +393,15 @@ func (p *CIPoller) callSetBranchStatus(ctx context.Context, ghRepo, sha, state, 
 	return client.SetNamedCommitStatus(ctx, ghRepo, sha, ciBranchStatusContext, state, description)
 }
 
-// remoteDefaultBranch returns the name of the default branch that the fetched
-// origin/HEAD points to. A local branch in the poller's clone does not track
-// what landed on GitHub, so only a fetched remote branch is reviewed.
+// remoteDefaultBranch asks the remote which branch is its default and returns
+// that branch's name. A local branch in the poller's clone does not track what
+// landed on GitHub, so only a fetched remote branch is reviewed.
+//
+// Git writes origin/HEAD when it clones, and fetch does not move it.
+// Without asking on each poll, a default branch that is renamed or replaced on
+// GitHub would never be followed. Pull request reviews read their repository
+// configuration through origin/HEAD too, so they follow the change as well.
 func (p *CIPoller) remoteDefaultBranch(ctx context.Context, ghRepo, repoPath string) (string, error) {
-	if branch, ok := fetchedDefaultBranch(repoPath); ok {
-		return branch, nil
-	}
-	// Git writes origin/HEAD when it clones and fetch does not move it. After
-	// the default branch is renamed on GitHub, it names a branch that fetch
-	// has pruned, so ask the remote which branch is the default now.
 	unlock := lockGitMetadata(repoPath)
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "remote", "set-head", "origin", "--auto")
 	procutil.HideConsole(cmd)
@@ -414,18 +413,15 @@ func (p *CIPoller) remoteDefaultBranch(ctx context.Context, ghRepo, repoPath str
 	if err != nil {
 		return "", fmt.Errorf("update origin/HEAD: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	if branch, ok := fetchedDefaultBranch(repoPath); ok {
-		return branch, nil
-	}
-	return "", errors.New("origin/HEAD does not name a fetched branch")
-}
-
-func fetchedDefaultBranch(repoPath string) (string, bool) {
 	ref, err := gitpkg.GetDefaultBranch(repoPath)
 	if err != nil {
-		return "", false
+		return "", err
 	}
-	return strings.CutPrefix(ref, "origin/")
+	branch, ok := strings.CutPrefix(ref, "origin/")
+	if !ok {
+		return "", errors.New("origin/HEAD does not name a fetched branch")
+	}
+	return branch, nil
 }
 
 func gitText(ctx context.Context, repoPath string, args ...string) (string, error) {
