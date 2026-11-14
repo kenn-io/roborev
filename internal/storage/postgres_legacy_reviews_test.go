@@ -526,6 +526,39 @@ func TestIntegrationLegacyReviewOfflineCloseKeepsMirrorOriginal(t *testing.T) { 
 }
 
 func TestIntegrationLegacyMaintenancePassProgress(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	t.Run("structured scan checkpoint", func(t *testing.T) {
+		env := newIntegrationEnv(t)
+		pool, ctx := env.Pool, t.Context()
+		repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+		for range 101 {
+			insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+		}
+		_, err := pool.Pool().Exec(ctx, `UPDATE reviews SET output = '', structured_output = '{"schema_version":2,"summary":"Review.","verdict":"pass","findings":[]}'`)
+		require.NoError(t, err)
+		_, err = pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
+		require.NoError(t, err)
+		var checkpoint, locked uuid.UUID
+		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid OFFSET 99 LIMIT 1`).Scan(&checkpoint))
+		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT uuid FROM reviews ORDER BY uuid DESC LIMIT 1`).Scan(&locked))
+		tx, err := pool.Pool().Begin(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+		_, err = tx.Exec(ctx, `SELECT 1 FROM reviews WHERE uuid = $1 FOR UPDATE`, locked)
+		require.NoError(t, err)
+		err = pool.legacyMaintenancePass(ctx)
+		var retry *backoff.RetryAfterError
+		require.ErrorAs(t, err, &retry)
+		assert.Zero(t, retry.Duration)
+		var stored string
+		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored))
+		var state legacyReviewScanState
+		require.NoError(t, json.Unmarshal([]byte(stored), &state))
+		require.NotNil(t, state.Run)
+		require.NotNil(t, state.Run.After)
+		assert.Equal(t, checkpoint, *state.Run.After)
+	})
+
 	t.Run("scan progress", func(t *testing.T) {
 		env := newIntegrationEnv(t)
 		pool, ctx := env.Pool, t.Context()

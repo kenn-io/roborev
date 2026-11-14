@@ -28,14 +28,20 @@ type legacyReviewScanRun struct {
 	After *uuid.UUID
 }
 
-func (p *PgPool) migrateLegacyReviews(ctx context.Context, noWait bool) error {
+func (p *PgPool) migrateLegacyReviews(ctx context.Context, noWait bool) (err error) {
+	total := 0
+	defer func() {
+		if err != nil && total > 0 {
+			p.legacyProgress.Add(int64(total))
+		}
+	}()
 	if _, err := p.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS legacy_reviews (
  uuid UUID PRIMARY KEY, record JSONB NOT NULL, migration_error TEXT NOT NULL, resolved_at TIMESTAMPTZ)`); err != nil {
 		return err
 	}
 	var state legacyReviewScanState
 	var stored string
-	err := p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored)
+	err = p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("read historical mirror scan state: %w", err)
 	}
@@ -51,7 +57,6 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context, noWait bool) error {
 			return fmt.Errorf("start historical mirror scan: %w", err)
 		}
 	}
-	total := 0
 	for {
 		next, scanned, err := p.migrateLegacyReviewsBatch(ctx, state.Run.After, state.Done, noWait)
 		if err != nil {
