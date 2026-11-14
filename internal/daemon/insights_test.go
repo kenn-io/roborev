@@ -25,17 +25,20 @@ func TestInsightsFractionalCutoff(t *testing.T) {
 	require.NoError(t, err)
 	since := time.Date(2026, time.January, 1, 12, 0, 0, 500_400_000, time.UTC)
 	var wantIDs []int64
-	for i, finished := range []time.Time{since.Add(-300 * time.Microsecond), since, since.Add(100 * time.Microsecond)} {
+	asOf := since.Add(50 * time.Microsecond)
+	for i, finished := range []time.Time{
+		since.Add(-300 * time.Microsecond), since, asOf, asOf.Add(25 * time.Microsecond),
+	} {
 		job := enqueueCompletedInsightsReviewJob(t, db, repo.ID, fmt.Sprintf("review-%d", i), "main", storage.JobTypeReview, failingInsightsOutput("Finding"))
 		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at = ?, enqueued_at = ? WHERE id = ?`,
 			finished.Format(time.RFC3339Nano), since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano), job.ID)
 		require.NoError(t, err)
-		if i > 0 {
+		if i == 1 || i == 2 {
 			wantIDs = append([]int64{job.ID}, wantIDs...)
 		}
 	}
 
-	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since)
+	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since, asOf)
 	require.NoError(t, err)
 	var gotIDs []int64
 	for _, review := range reviews {
@@ -56,7 +59,7 @@ func TestInsightsCapsReviewsNewestFirst(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since)
+	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since, since.Add(2*time.Hour))
 	require.NoError(t, err)
 	require.Len(t, reviews, 100)
 }
@@ -106,7 +109,7 @@ func TestInsightsIncludesPanelParentOnce(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since)
+	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since, time.Now())
 	require.NoError(t, err)
 	var jobIDs []int64
 	for _, review := range reviews {
@@ -373,4 +376,245 @@ func enqueueCompletedInsightsGoalReviewJob(t *testing.T, db *storage.DB, repoID 
 
 func failingInsightsOutput(summary string) string {
 	return "- Medium - " + summary
+}
+
+// A wrong completion cutoff/population would mix the measured and excerpt windows.
+func TestBuildInsightsPromptMeasuredWindow(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	since := time.Now().Add(-24 * time.Hour)
+	included := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "included", "main", storage.JobTypeReview, failingInsightsOutput("Current finding"))
+	// Older synced reviews can have a stored diff as their only review signal.
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type='', commit_id=NULL WHERE id=?`, included.ID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO job_content (job_id, diff_content) VALUES (?, zstd_compress('snapshot diff'))
+		ON CONFLICT(job_id) DO UPDATE SET diff_content=excluded.diff_content`, included.ID)
+	require.NoError(t, err)
+	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "passing", "main", storage.JobTypeReview, "No findings.")
+	future := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "future", "main", storage.JobTypeReview, failingInsightsOutput("FUTURE FINDING"))
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at=? WHERE id=?`, time.Now().Add(time.Hour).Format(time.RFC3339), future.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.MarkReviewClosedByJobID(included.ID, true))
+	_, err = db.AddCommentToJob(included.ID, "user", "This is intentional")
+	require.NoError(t, err)
+	text, count, err := server.buildInsightsPrompt(t.Context(), repo.RootPath, "main", since)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal(1, count)
+	assert.Contains(text, `"logical_reviews": 2`)
+	assert.Contains(text, `"labeled": 0`)
+	assert.Contains(text, `"closed_reviews": 1`)
+	assert.Contains(text, fmt.Sprintf("### Review 1 (Job #%d)", included.ID))
+	assert.NotContains(text, "FUTURE FINDING")
+}
+
+func TestPriorInsightsCompletionAndScope(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	asOf := time.Now()
+	makePrior := func(branch, suggestion string, completed time.Time) *storage.ReviewJob {
+		t.Helper()
+		job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "insights", Branch: branch, Agent: "test", JobType: storage.JobTypeInsights, Prompt: "old prompt"})
+		require.NoError(t, err)
+		claimed, err := db.ClaimJob("worker")
+		require.NoError(t, err)
+		require.Equal(t, job.ID, claimed.ID)
+		require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "old prompt", "## 5. Suggested Guideline Additions\n\n"+suggestion))
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at=? WHERE id=?`, completed.Format(time.RFC3339Nano), job.ID)
+		require.NoError(t, err)
+		return job
+	}
+	latest := makePrior("", "ALL BRANCHES", asOf.Add(-time.Hour))
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET uuid=? WHERE id=?`, "00000000-0000-4000-8000-000000000002", latest.ID)
+	require.NoError(t, err)
+	tie := makePrior("", "LOWER STABLE IDENTITY", asOf.Add(-time.Hour))
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET uuid=? WHERE id=?`, "00000000-0000-4000-8000-000000000001", tie.ID)
+	require.NoError(t, err)
+	makePrior("", "OLDER COMPLETION", asOf.Add(-2*time.Hour))
+	makePrior("main", "EXACT MAIN", asOf.Add(-time.Minute))
+	makePrior("", "FUTURE", asOf.Add(time.Hour))
+	makePrior("", "EXACT CUTOFF", asOf)
+	prior, err := server.fetchPriorInsights(t.Context(), repo.RootPath, "", asOf)
+	require.NoError(t, err)
+	require.NotNil(t, prior)
+	assert.Equal(t, latest.ID, prior.JobID)
+	assert.Equal(t, "ALL BRANCHES", prior.Suggestions)
+	assert.Nil(t, prior.Baseline)
+	mainPrior, err := server.fetchPriorInsights(t.Context(), repo.RootPath, "main", asOf)
+	require.NoError(t, err)
+	require.NotNil(t, mainPrior)
+	assert.Equal(t, "EXACT MAIN", mainPrior.Suggestions)
+
+	// The endpoint used by the TUI must preserve an empty insights scope.
+	backfill := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(backfill, testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/update-branch",
+		UpdateJobBranchRequest{JobID: latest.ID, Branch: "(none)"}))
+	require.Equal(t, http.StatusOK, backfill.Code, backfill.Body.String())
+	var update UpdateJobBranchOutput
+	testutil.DecodeJSON(t, backfill, &update.Body)
+	assert.False(t, update.Body.Updated)
+
+	// Simulate the value older TUIs persisted before the endpoint protected it.
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET branch='(none)' WHERE id=?`, latest.ID)
+	require.NoError(t, err)
+	allBaseline := &storage.FindingStats{Since: asOf.Add(-48 * time.Hour), AsOf: asOf.Add(-24 * time.Hour), RepoPath: repo.RootPath, TimeBasis: "finished_at", LogicalReviews: 7}
+	require.NoError(t, db.SaveJobPrompt(latest.ID, prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: allBaseline})))
+	literal := makePrior("(none)", "LITERAL BRANCH", asOf.Add(-time.Minute))
+	literalBaseline := *allBaseline
+	literalBaseline.Branch = "(none)"
+	require.NoError(t, db.SaveJobPrompt(literal.ID, prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: &literalBaseline})))
+	makePrior("(none)", "UNKNOWN SCOPE", asOf.Add(-time.Second))
+
+	prior, err = server.fetchPriorInsights(t.Context(), repo.RootPath, "", asOf)
+	require.NoError(t, err)
+	require.NotNil(t, prior)
+	assert.Equal(t, latest.ID, prior.JobID)
+	assert.Equal(t, "ALL BRANCHES", prior.Suggestions)
+	require.NotNil(t, prior.Baseline)
+	assert.Equal(t, 7, prior.Baseline.LogicalReviews)
+	literalPrior, err := server.fetchPriorInsights(t.Context(), repo.RootPath, "(none)", asOf)
+	require.NoError(t, err)
+	require.NotNil(t, literalPrior)
+	assert.Equal(t, literal.ID, literalPrior.JobID)
+	assert.Equal(t, "LITERAL BRANCH", literalPrior.Suggestions)
+
+	// Baselines are recovered only from complete, scope-matching stored context.
+	baseline := &storage.FindingStats{Since: asOf.Add(-48 * time.Hour), AsOf: asOf.Add(-24 * time.Hour), RepoPath: repo.RootPath, Branch: "main", TimeBasis: "finished_at", LogicalReviews: 7}
+	baselinePrompt := prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: baseline})
+	require.NoError(t, db.SaveJobPrompt(mainPrior.JobID, baselinePrompt))
+	withBaseline, err := server.fetchPriorInsights(t.Context(), repo.RootPath, "main", asOf)
+	require.NoError(t, err)
+	require.NotNil(t, withBaseline.Baseline)
+	assert.Equal(t, 7, withBaseline.Baseline.LogicalReviews)
+	baseline.Branch = "other"
+	require.NoError(t, db.SaveJobPrompt(mainPrior.JobID, prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: baseline})))
+	wrongScope, err := server.fetchPriorInsights(t.Context(), repo.RootPath, "main", asOf)
+	require.NoError(t, err)
+	assert.Nil(t, wrongScope.Baseline)
+
+	empty := makePrior("main", "", asOf.Add(-30*time.Second))
+	missing, err := server.fetchPriorInsights(t.Context(), repo.RootPath, "main", asOf)
+	require.NoError(t, err)
+	assert.Equal(t, empty.ID, missing.JobID)
+	assert.Empty(t, missing.Suggestions, "do not fall back to an older recoverable section")
+}
+
+func TestFetchPriorInsightsKeepsBaselineWithinStoredCompletionSecond(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+
+	storedSecond := time.Date(2026, 10, 30, 23, 50, 0, 0, time.UTC)
+	baselineAsOf := storedSecond.Add(500 * time.Millisecond)
+	actualCompletion := storedSecond.Add(800 * time.Millisecond)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "insights", Branch: "main", Agent: "test",
+		JobType: storage.JobTypeInsights, Prompt: "old prompt",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "old prompt", "## 5. Suggested Guideline Additions\n\nCheck returned errors."))
+
+	// Older completions wrote RFC3339 seconds, losing the subsecond part.
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at=? WHERE id=?`, actualCompletion.Format(time.RFC3339), job.ID)
+	require.NoError(t, err)
+	baseline := &storage.FindingStats{
+		Since: baselineAsOf.Add(-24 * time.Hour), AsOf: baselineAsOf,
+		RepoPath: filepath.ToSlash(repo.RootPath), Branch: "main", TimeBasis: "finished_at", LogicalReviews: 7,
+	}
+	require.NoError(t, db.SaveJobPrompt(job.ID, prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: baseline})))
+
+	prior, err := server.fetchPriorInsights(t.Context(), repo.RootPath, "main", actualCompletion.Add(time.Minute))
+	require.NoError(t, err)
+	require.NotNil(t, prior)
+	require.NotNil(t, prior.Baseline)
+	assert.Equal(t, 7, prior.Baseline.LogicalReviews)
+
+	// A precise timestamp in the same second still rejects a later baseline.
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at=? WHERE id=?`, storedSecond.Format("2006-01-02T15:04:05.000000000Z07:00"), job.ID)
+	require.NoError(t, err)
+	prior, err = server.fetchPriorInsights(t.Context(), repo.RootPath, "main", actualCompletion.Add(time.Minute))
+	require.NoError(t, err)
+	require.NotNil(t, prior)
+	assert.Nil(t, prior.Baseline)
+}
+
+func TestInsightsReviewSnapshotRejectsRerun(t *testing.T) {
+	asOf := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	since := asOf.Add(-24 * time.Hour)
+	finished := asOf.Add(-time.Hour)
+	verdict := 0
+	version := uuid.MustParse("00000000-0000-4000-8000-000000000010")
+	review := &storage.Review{
+		JobID: 1, UUID: &version, Output: "Current finding", VerdictBool: &verdict,
+		Job: &storage.ReviewJob{ID: 1, JobType: storage.JobTypeReview, Status: storage.JobStatusDone, FinishedAt: &finished},
+	}
+	entry, ok := currentInsightsReview(review, since, asOf)
+	require.True(t, ok)
+	assert.Equal(t, version.String(), entry.ReviewUUID)
+	future := asOf.Add(time.Hour)
+	review.Job.FinishedAt = &future
+	_, ok = currentInsightsReview(review, since, asOf)
+	assert.False(t, ok, "joined completion must be checked after loading review text")
+	review.Job.FinishedAt = &finished
+	review.Job.Status = storage.JobStatusRunning
+	_, ok = currentInsightsReview(review, since, asOf)
+	assert.False(t, ok)
+	review.Job.Status = storage.JobStatusDone
+	verdict = 1
+	_, ok = currentInsightsReview(review, since, asOf)
+	assert.False(t, ok)
+}
+
+func TestHandleEnqueueInsightsPriorWithQuotedNoopWithoutCurrentFailures(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repoDir := filepath.Join(tmpDir, "repo")
+	testutil.InitTestGitRepo(t, repoDir)
+	root, err := gitpkg.GetMainRepoRoot(repoDir)
+	require.NoError(t, err)
+	repo, err := db.GetOrCreateRepo(root)
+	require.NoError(t, err)
+	prior, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "insights", Branch: "main", Agent: "test", JobType: storage.JobTypeInsights, Prompt: "old prompt"})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.Equal(t, prior.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, prior.ID, "test", "old prompt", "## 5. Suggested Guideline Additions\n\nCheck returned errors.\n\nSupported by Jobs #101, #102 and #103. Unlike the earlier \"No guideline change recommended\" result, these are three distinct examples."))
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at=? WHERE id=?`, time.Now().Add(-2*time.Hour).Format(time.RFC3339Nano), prior.ID)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath: repoDir, GitRef: "insights", Branch: "main", Agent: "test", JobType: storage.JobTypeInsights, Since: time.Now().Add(-time.Hour).Format(time.RFC3339),
+	}))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var job storage.ReviewJob
+	testutil.DecodeJSON(t, w, &job)
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Contains(stored.Prompt, "Fetched failing reviews: 0; included excerpts: 0")
+	assert.Contains(stored.Prompt, `"logical_reviews": 0`)
+	assert.Contains(stored.Prompt, "Check returned errors.")
+	assert.Contains(stored.Prompt, `Unlike the earlier "No guideline change recommended" result`)
+	assert.Contains(stored.Prompt, "insufficient comparable evidence")
+}
+
+func TestBuildInsightsPromptSkipsPriorNoopWithoutFailures(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "insights", Agent: "test", JobType: storage.JobTypeInsights, Prompt: "old prompt"})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "old prompt", "## 5. Suggested Guideline Additions\n\nNo guideline change recommended: too few examples."))
+	text, count, err := server.buildInsightsPrompt(t.Context(), repo.RootPath, "", time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, text)
+	assert.Zero(t, count)
 }
