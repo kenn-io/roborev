@@ -1906,15 +1906,37 @@ func TestMarkJobAgentInvoked_StaleWorkerIgnored(t *testing.T) {
 	claimJob(t, db, "worker-B")
 
 	// The stale worker-A write must not land on the row worker-B now owns.
-	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-A", "stale review x"),
+	before, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.MarkJobAgentInvokedContext(t.Context(), job.ID, "worker-A", "stale review x"),
 		"MarkJobAgentInvoked (stale worker-A)")
 	assert.False(getJobAgentInvoked(t, db, job.ID),
 		"stale worker does not set the marker on the new attempt")
+	after, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(before.Agent, after.Agent)
+	assert.Equal(before.Model, after.Model)
 
-	// The current owner can still set it.
-	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-B", "codex review x"),
+	// The current owner can still set it without changing sync metadata.
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET synced_at='2026-01-01T00:00:00Z' WHERE id=?`, job.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.MarkJobAgentInvokedContext(t.Context(), job.ID, "worker-B", "backup review x"),
 		"MarkJobAgentInvoked (worker-B)")
 	assert.True(getJobAgentInvoked(t, db, job.ID), "current owner sets the marker")
+	after, err = db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(before.Agent, after.Agent)
+	assert.Equal(before.Model, after.Model)
+	var syncedAt string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT synced_at FROM review_jobs WHERE id=?`, job.ID).Scan(&syncedAt))
+	assert.Equal("2026-01-01T00:00:00Z", syncedAt)
+	retried, err := db.RetryJob(job.ID, "worker-B", 3, 0)
+	require.NoError(t, err)
+	require.True(t, retried)
+	afterRetry, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(before.Agent, afterRetry.Agent)
+	assert.Equal(before.Model, afterRetry.Model)
 }
 
 func TestMinSeverityRoundTrip(t *testing.T) {
