@@ -930,8 +930,12 @@ func TestFindReusableSessionIDUsesDirtyBaseCommit(t *testing.T) {
 	assert.Equal(t, "session-dirty", reused)
 }
 
-func TestFindCompatibleReusableSessionReturnsSessionCLI(t *testing.T) {
+func TestFindCompatibleReusableSessionChoosesMatchingCLI(t *testing.T) {
 	_, db, _ := newTestServer(t)
+	binDir := t.TempDir()
+	geminiCommand := filepath.Join(binDir, "gemini")
+	require.NoError(t, os.WriteFile(geminiCommand, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	repo := testutil.InitTestRepo(t)
 	targetSHA := repo.HeadSHA()
 	storedRepo, err := db.GetOrCreateRepo(repo.Path())
@@ -940,22 +944,28 @@ func TestFindCompatibleReusableSessionReturnsSessionCLI(t *testing.T) {
 	require.NoError(t, err)
 
 	reuseSessions := true
-	globalCfg := &config.Config{ReuseReviewSession: &reuseSessions}
+	globalCfg := &config.Config{ReuseReviewSession: &reuseSessions, GeminiCmd: "gemini"}
 	opts := storage.EnqueueOpts{
 		RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: targetSHA,
 		Branch: "feature/session", Agent: "gemini", Reasoning: "thorough", ReviewType: config.ReviewTypeDefault,
 	}
-	job, err := db.EnqueueJob(opts)
-	require.NoError(t, err)
-	claimed, err := db.ClaimJob("worker")
-	require.NoError(t, err)
-	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "gemini", "prompt", "No issues found."))
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = 'session', session_cli = 'agy' WHERE id = ?`, job.ID)
-	require.NoError(t, err)
+	createCompletedSession := func(sessionID, sessionCLI, finishedAt string) {
+		t.Helper()
+		job, err := db.EnqueueJob(opts)
+		require.NoError(t, err)
+		claimed, err := db.ClaimJob("worker")
+		require.NoError(t, err)
+		require.Equal(t, job.ID, claimed.ID)
+		require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "gemini", "prompt", "No issues found."))
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, session_cli = ?, finished_at = ? WHERE id = ?`, sessionID, sessionCLI, finishedAt, job.ID)
+		require.NoError(t, err)
+	}
+	createCompletedSession("gemini-session", "gemini", "2026-11-13T00:00:00Z")
+	createCompletedSession("agy-session", "agy", "2026-11-14T00:00:00Z")
 
-	_, sessionCLI, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
-	assert.Equal(t, "agy", sessionCLI, "the worker compares this CLI before resuming")
+	sessionID, sessionCLI, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
+	assert.Equal(t, "gemini-session", sessionID)
+	assert.Equal(t, "gemini", sessionCLI)
 }
 
 func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *testing.T) {

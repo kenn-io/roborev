@@ -21,8 +21,6 @@ import (
 // Stream-json output is required; this error means the Gemini CLI may need to be upgraded.
 var errNoStreamJSON = errors.New("no valid stream-json events parsed from output")
 
-var errIncompleteGeminiStream = errors.New("gemini stream ended without a successful result event")
-
 // defaultGeminiModel is the built-in default that may be auto-retried
 // without -m if Google retires the model name.
 const defaultGeminiModel = "gemini-3.1-pro-preview"
@@ -127,7 +125,7 @@ func (a *GeminiAgent) commandLine(agenticMode bool) string {
 }
 
 func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
-	return a.buildArgsWithModel(a.Model, agenticMode, geminiCLICapabilities{streamJSON: true, resume: true, approvalMode: "plan"})
+	return a.buildArgsWithModel(a.Model, agenticMode)
 }
 
 func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
@@ -137,22 +135,38 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	capabilities := a.capabilities(ctx)
-	if !a.usesAntigravity() && capabilities.approvalMode == "" {
-		return "", fmt.Errorf("gemini CLI version could not be verified as %s or newer, which Gemini reviews need to run safely", geminiSafeApprovalVersion)
+	resumingSession := a.SessionID != "" && capabilities.resume
+	if !a.usesAntigravity() {
+		mode, minimum := "read-only", geminiPlanModeVersion
+		if agenticMode {
+			mode, minimum = "agentic", geminiAgenticVersion
+		}
+		if !versionAtLeast(capabilities.version, minimum) {
+			return "", fmt.Errorf("%s reviews require Gemini CLI %s or newer; detected %q", mode, minimum, capabilities.version)
+		}
+	} else if !versionAtLeast(capabilities.version, "0") {
+		return "", errors.New("antigravity CLI version could not be verified; cannot choose a supported prompt contract")
 	}
-	args := a.buildArgsWithModel(a.Model, agenticMode, capabilities)
+	if a.SessionID != "" && !capabilities.resume {
+		if resetErr := resetSessionCapture(output); resetErr != nil {
+			return "", resetErr
+		}
+		a = a.WithSessionID("").(*GeminiAgent)
+	}
+	args := a.buildArgsWithModel(a.Model, agenticMode)
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
-	if capabilities.resume && a.SessionID != "" && freshResumeFallbackAllowed(ctx) &&
+	if a.SessionID != "" && !agenticMode && ctx.Err() == nil &&
 		(err != nil || result == "No review output generated") {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
 			return "", errors.Join(err, resetErr)
 		}
 		log.Printf("gemini: resumed session failed (%v), retrying in a fresh session", err)
 		a = a.WithSessionID("").(*GeminiAgent)
-		args = a.buildArgsWithModel(a.Model, agenticMode, capabilities)
+		args = a.buildArgsWithModel(a.Model, agenticMode)
 		result, stderrStr, err = a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
 	}
-	if err != nil && freshResumeFallbackAllowed(ctx) && a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
+	if err != nil && ctx.Err() == nil && (!agenticMode || !resumingSession) &&
+		a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
 		// Built-in default model may be stale (Google renames
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
@@ -161,8 +175,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 			return "", errors.Join(err, resetErr)
 		}
 		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
-		a = a.WithSessionID("").(*GeminiAgent)
-		noModelArgs := a.buildArgsWithModel("", agenticMode, capabilities)
+		noModelArgs := a.buildArgsWithModel("", agenticMode)
 		result, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities, output)
 	}
 	return result, err
@@ -177,15 +190,12 @@ func resetSessionCapture(output io.Writer) error {
 
 // buildArgsWithModel builds CLI args with an explicit model override
 // (empty string omits the -m flag entirely).
-func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool, capabilities geminiCLICapabilities) []string {
+func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []string {
 	if a.usesAntigravity() {
 		return a.buildAntigravityArgs(agenticMode)
 	}
 
-	var args []string
-	if capabilities.streamJSON {
-		args = append(args, "--output-format", "stream-json")
-	}
+	args := []string{"--output-format", "stream-json"}
 
 	if model != "" {
 		args = append(args, "-m", model)
@@ -193,11 +203,11 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool, capabil
 
 	if agenticMode {
 		args = append(args, "--approval-mode", "yolo")
-	} else if capabilities.approvalMode != "" {
-		args = append(args, "--approval-mode", capabilities.approvalMode)
+	} else {
+		args = append(args, "--approval-mode", "plan")
 	}
 
-	if capabilities.resume && a.SessionID != "" {
+	if a.SessionID != "" {
 		args = append(args, "--resume", a.SessionID)
 	}
 
@@ -205,47 +215,33 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool, capabil
 }
 
 type geminiCLICapabilities struct {
-	streamJSON       bool
-	resume           bool
-	approvalMode     string
-	promptFlag       bool
-	resumePromptFlag bool
+	version    string
+	streamJSON bool
+	resume     bool
+	promptFlag bool
 }
 
 const (
-	geminiSafeApprovalVersion = "0.10.0"
-	geminiStreamJSONVersion   = "0.11.0"
-	geminiResumeVersion       = "0.15.0"
-	geminiResumeStdinVersion  = "0.20.0"
-	geminiPlanModeVersion     = "0.34.0" // plan mode became the default in this release
+	geminiAgenticVersion  = "0.11.0" // stream-json and yolo approval mode
+	geminiResumeVersion   = "0.20.0" // newer releases accept resumed prompts on stdin
+	geminiPlanModeVersion = "0.34.0"
 	// Antigravity supports --conversation before adding stream-json.
 	antigravityResumeVersion = "1.0.9"
 )
 
-// capabilities gates CLI flags by the installed version; an unknown version
-// gets none of them.
+// capabilities gates CLI flags by the installed version. Review rejects an
+// unknown version before using any of those flags.
 func (a *GeminiAgent) capabilities(ctx context.Context) geminiCLICapabilities {
 	version := cliVersion(ctx, a.Command)
 	if a.usesAntigravity() {
 		return geminiCLICapabilities{
+			version:    version,
 			streamJSON: versionAtLeast(version, antigravityStreamJSONVersion),
 			resume:     versionAtLeast(version, antigravityResumeVersion),
 			promptFlag: antigravityVersionUsesPromptFlag(version),
 		}
 	}
-	approvalMode := ""
-	if versionAtLeast(version, geminiPlanModeVersion) {
-		approvalMode = "plan"
-	} else if versionAtLeast(version, geminiSafeApprovalVersion) {
-		approvalMode = "default"
-	}
-	resume := versionAtLeast(version, geminiResumeVersion)
-	return geminiCLICapabilities{
-		streamJSON:       versionAtLeast(version, geminiStreamJSONVersion),
-		resume:           resume,
-		resumePromptFlag: resume && !versionAtLeast(version, geminiResumeStdinVersion),
-		approvalMode:     approvalMode,
-	}
+	return geminiCLICapabilities{version: version, resume: versionAtLeast(version, geminiResumeVersion)}
 }
 
 func (a *GeminiAgent) usesAntigravity() bool {
@@ -281,29 +277,19 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 	if a.usesAntigravity() {
 		return a.runAntigravity(ctx, repoPath, prompt, args, capabilities, output)
 	}
-	var stdin io.Reader
-	if capabilities.resumePromptFlag && a.SessionID != "" {
-		args = append(args, "--prompt", prompt)
-	} else {
-		stdin = strings.NewReader(prompt)
-	}
-	parse := parsePlainTextOutput
-	if capabilities.streamJSON {
-		parse = func(r io.Reader, sw *syncWriter) (string, error) {
-			parsed, err := a.parseStreamJSON(r, sw)
-			return parsed.result, err
-		}
-	}
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "gemini",
 		Command:      a.Command,
 		Args:         args,
 		Dir:          repoPath,
-		Stdin:        stdin,
+		Stdin:        strings.NewReader(prompt),
 		Output:       output,
 		StreamStderr: true,
-		Parse:        parse,
+		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
+			parsed, err := a.parseStreamJSON(r, sw)
+			return parsed.result, err
+		},
 	})
 	if runErr != nil {
 		return "", "", runErr
@@ -359,7 +345,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	// fall back to its scratch directory for ephemeral worktrees.
 	args = append(append([]string(nil), args...), "--add-dir", repoPath)
 	parse := parsePlainTextOutput
-	if capabilities.resume && a.SessionID != "" {
+	if a.SessionID != "" {
 		args = append(args, "--conversation", a.SessionID)
 	}
 	if capabilities.streamJSON {
@@ -510,8 +496,7 @@ func antigravityMaxPromptArgLen() int {
 // antigravityVersionUsesPromptFlag reports whether agy's `--version` output
 // indicates the --prompt flag contract (>= 1.1.1). It scans for the first
 // dotted version token, so decorated output ("agy version 1.1.0", a trailing
-// build hash) still resolves. Output with no parseable version is false, so an
-// unknown agy gets the older stdin contract.
+// build hash) still resolves. Review rejects unparseable version output.
 func antigravityVersionUsesPromptFlag(versionOutput string) bool {
 	return versionAtLeast(versionOutput, antigravityPromptFlagVersion)
 }
@@ -588,7 +573,6 @@ func isModelNotFoundError(stderr string) bool {
 type geminiStreamMessage struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype,omitempty"`
-	Status  string `json:"status,omitempty"`
 	// Top-level fields for "message" type events
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content,omitempty"`
@@ -613,7 +597,6 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	var lastResult string
 	assistantMessages := newTrailingReviewText()
 	var validEventsParsed bool
-	var successfulResult bool
 
 	err := scanStreamJSONLines(r, sw, func(trimmed string) error {
 		var msg geminiStreamMessage
@@ -630,11 +613,8 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 				assistantMessages.ResetAfterTool()
 			}
 
-			if msg.Type == "result" {
-				successfulResult = msg.Status == "success"
-				if successfulResult && msg.Result != "" {
-					lastResult = msg.Result
-				}
+			if msg.Type == "result" && msg.Result != "" {
+				lastResult = msg.Result
 			}
 		}
 		return nil
@@ -646,9 +626,6 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	// If no valid events were parsed, return error
 	if !validEventsParsed {
 		return parseResult{}, errNoStreamJSON
-	}
-	if !successfulResult {
-		return parseResult{}, errIncompleteGeminiStream
 	}
 
 	// Prefer the result field if present, otherwise join assistant messages

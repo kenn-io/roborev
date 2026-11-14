@@ -130,7 +130,7 @@ User explanation: %q
 	job, err := s.db.EnqueueJob(storage.EnqueueOpts{
 		RepoID: parent.RepoID, GitRef: parent.GitRef, Branch: parent.Branch, Agent: parent.Agent,
 		Model: parent.Model, Provider: parent.Provider, Reasoning: parent.Reasoning,
-		SessionID: parent.SessionID, Prompt: focused, JobType: storage.JobTypeTask,
+		SessionID: parent.SessionID, SessionCLI: parent.SessionCLI, Prompt: focused, JobType: storage.JobTypeTask,
 		Source: storage.JobSourceRebuttal, ParentJobID: parent.ID, WorktreePath: parent.WorktreePath,
 	})
 	if err != nil {

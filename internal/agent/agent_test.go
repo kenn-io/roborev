@@ -642,7 +642,6 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 			}
 			if tt.name == "gemini" {
 				opts.Version = "0.34.0"
-				opts.StdoutLines = []string{`{"type": "result", "status": "success", "result": "review result"}`}
 			}
 			mock := mockAgentCLI(t, opts)
 

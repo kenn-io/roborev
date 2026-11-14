@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -2120,46 +2119,6 @@ func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
 		"retry must resume the first call's session so the tracker captures the latest context")
 	assert.Contains(t, calls[1].Prompt, "Verify before committing.")
 	assert.Contains(t, calls[1].Prompt, "Check the pending changes against the autofix guidelines")
-}
-
-func TestFixJobDirectDisablesFreshResumeFallback(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a shell CLI fixture")
-	}
-	repo := createTestRepo(t, map[string]string{"README.md": "base\n"})
-	tmp := t.TempDir()
-	calls := filepath.Join(tmp, "calls")
-	args := filepath.Join(tmp, "args")
-	script := filepath.Join(tmp, "gemini")
-	stream, err := filepath.Abs(filepath.Join("..", "..", "internal", "agent", "testdata", "gemini-stream.jsonl"))
-	require.NoError(t, err)
-	t.Setenv("CALLS", calls)
-	t.Setenv("ARGS", args)
-	t.Setenv("STREAM_FILE", stream)
-	command := `#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; esac
-if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
-echo call >> "$CALLS"
-printf '%s\n' "$@" >> "$ARGS"
-case " $* " in
-  *" --resume old-session "*)
-    echo "resume failed" >&2
-    exit 1
-esac
-cat "$STREAM_FILE"
-`
-	require.NoError(t, os.WriteFile(script, []byte(command), 0o755))
-	capture := agent.NewSessionCaptureWriter(io.Discard, nil, nil)
-	gemini := agent.NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(true)
-
-	_, err = fixJobDirect(t.Context(), fixJobParams{RepoRoot: repo.Dir, Agent: gemini, Output: capture}, "fix the issue")
-	require.Error(t, err, "a failed mutating resume must not replay the fix prompt")
-	callLog, err := os.ReadFile(calls)
-	require.NoError(t, err)
-	assert.Equal(t, "call\n", string(callLog))
-	argsLog, err := os.ReadFile(args)
-	require.NoError(t, err)
-	assert.Contains(t, string(argsLog), "--resume\nold-session\n")
 }
 
 // If a commit retry replaces the initial fix report, the persisted outcome can
