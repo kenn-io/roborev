@@ -1536,3 +1536,76 @@ func TestSynthesisNeutralFramingUsesVotingMembers(t *testing.T) {
 		})
 	}
 }
+
+// TestCombinedResultsReportCallerWorktree verifies that combined results name
+// the caller's linked checkout, as member results do, so hooks resolve that
+// checkout's configuration instead of the main checkout's.
+func TestCombinedResultsReportCallerWorktree(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	for _, tt := range []struct {
+		name, event  string
+		failMembers  bool
+		removeCaller bool
+	}{
+		{name: "completed", event: "review.completed"},
+		{name: "failed", event: "review.failed", failMembers: true},
+		{name: "caller gone", event: "review.completed", removeCaller: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			worktreePath := filepath.Join(t.TempDir(), "wt")
+			tc.GitRepo.Run("worktree", "add", "--detach", worktreePath, "HEAD")
+
+			const memberAgent = "panel-caller-member"
+			registerPassingAgent(t, memberAgent)
+			const synthAgent = "synth-caller"
+			agent.RegisterForTest(t, &agent.FakeAgent{
+				NameStr: synthAgent,
+				ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+					return `{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+				},
+			})
+			runUUID, members, _ := enqueuePanelRun(t, tc, "caller-panel", []memberSpec{
+				{name: "m0", agent: memberAgent},
+				{name: "m1", agent: memberAgent},
+			})
+			setSynthesisAgent(t, tc, runUUID, synthAgent)
+			_, err := tc.DB.ExecContext(t.Context(),
+				"UPDATE review_jobs SET worktree_path = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+				worktreePath, runUUID)
+			require.NoError(t, err)
+			for i, m := range members {
+				if tt.failMembers {
+					failMember(t, tc, m.ID)
+				} else {
+					completeMember(t, tc, m.ID, memberAgent, fmt.Sprintf("Finding %d", i))
+				}
+			}
+			if tt.removeCaller {
+				tc.GitRepo.Run("worktree", "remove", "--force", worktreePath)
+			}
+
+			subID, events := tc.Broadcaster.Subscribe("")
+			defer tc.Broadcaster.Unsubscribe(subID)
+			synth := releaseAndClaimSynthesis(t, tc, runUUID)
+			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
+
+			var got *Event
+			for got == nil {
+				select {
+				case event := <-events:
+					if event.JobID == synth.ID && event.Type == tt.event {
+						got = &event
+					}
+				case <-time.After(time.Minute):
+					require.FailNow(t, "no combined result event")
+				}
+			}
+			if tt.removeCaller {
+				assert.Empty(t, got.WorktreePath, "a vanished checkout falls back to the main repository")
+			} else {
+				assert.Equal(t, worktreePath, got.WorktreePath)
+			}
+		})
+	}
+}

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"log"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,13 +13,15 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katatest"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestKataCreateRequestFailed(t *testing.T) {
 	hook := config.HookConfig{Type: "kata"}
 	event := Event{Type: "review.failed", JobID: 7, RepoName: "myrepo", SHA: "abc123def456", Agent: "codex", Error: "boom", TS: time.Unix(1700000000, 0).UTC()}
 
-	req, ok := kataCreateRequest(hook, event)
+	req, ok := kataCreateRequest(hook, event, kataCommit{})
 	require.True(t, ok)
 	assert.Contains(t, req.Title, "Review failed for myrepo")
 	assert.Contains(t, req.Title, "roborev show 7")
@@ -35,7 +38,7 @@ func TestKataCreateRequestPrefersUUID(t *testing.T) {
 	hook := config.HookConfig{Type: "kata"}
 	jobUUID := testUUID("uuid-abc")
 	event := Event{Type: "review.failed", JobID: 7, JobUUID: &jobUUID, SHA: "deadbeef"}
-	req, ok := kataCreateRequest(hook, event)
+	req, ok := kataCreateRequest(hook, event, kataCommit{})
 	require.True(t, ok)
 	assert.Equal(t, "roborev:job:"+jobUUID.String()+":review.failed", req.IdempotencyKey) //nolint:forbidigo // Kata idempotency key text boundary.
 }
@@ -45,7 +48,7 @@ func TestKataCreateRequestFindings(t *testing.T) {
 	hook := config.HookConfig{Type: "kata", Project: "proj", Labels: []string{"team"}, Priority: &p}
 	event := Event{Type: "review.completed", Verdict: "F", JobID: 9, RepoName: "r", SHA: "deadbeef", Findings: "## Bug\nbad"}
 
-	req, ok := kataCreateRequest(hook, event)
+	req, ok := kataCreateRequest(hook, event, kataCommit{})
 	require.True(t, ok)
 	assert.Equal(t, "proj", req.Project)
 	assert.Equal(t, 4, *req.Priority) // configured priority wins
@@ -57,13 +60,13 @@ func TestKataCreateRequestFindings(t *testing.T) {
 }
 
 func TestKataCreateRequestPassingSkipped(t *testing.T) {
-	_, ok := kataCreateRequest(config.HookConfig{Type: "kata"}, Event{Type: "review.completed", Verdict: "P", JobID: 1})
+	_, ok := kataCreateRequest(config.HookConfig{Type: "kata"}, Event{Type: "review.completed", Verdict: "P", JobID: 1}, kataCommit{})
 	assert.False(t, ok)
 }
 
 func TestKataHookBodyTruncated(t *testing.T) {
 	event := Event{Type: "review.completed", Verdict: "F", JobID: 2, SHA: "s", Findings: strings.Repeat("x", kataHookMaxBodyBytes*2)}
-	req, ok := kataCreateRequest(config.HookConfig{Type: "kata"}, event)
+	req, ok := kataCreateRequest(config.HookConfig{Type: "kata"}, event, kataCommit{})
 	require.True(t, ok)
 	assert.LessOrEqual(t, len(req.Body), kataHookMaxBodyBytes+64)
 	assert.Contains(t, req.Body, "truncated")
@@ -95,4 +98,126 @@ func TestRunKataHookLogsNoBinding(t *testing.T) {
 
 	assert.Empty(t, fake.CreateReqs, "must not create without a binding")
 	assert.Contains(t, buf.String(), "no .kata.toml binding")
+}
+
+// runKataHookFor files the event through runKataHook in repoDir and returns
+// the requests the fake Kata client received.
+func runKataHookFor(t *testing.T, event Event, repoDir string) []kata.CreateReq {
+	t.Helper()
+	var buf strings.Builder
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	hr := &HookRunner{
+		logger:        log.New(&buf, "", 0),
+		newKataClient: func(string) kata.Client { return fake },
+	}
+	hr.wg.Add(1)
+	hr.runKataHook(config.HookConfig{Type: "kata", Project: "p"}, event, repoDir)
+	return fake.CreateReqs
+}
+
+func TestRunKataHookLinksLandedCommitAndPullRequest(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	parent := repo.CommitFile("app.txt", "one\n", "initial")
+	landed := repo.CommitFile("app.txt", "two\n", "fix(api): validate input (#42)")
+	repo.Run("remote", "add", "origin", "https://x-access-token:hidden-secret@github.com/acme/api.git")
+
+	reqs := runKataHookFor(t, Event{
+		Type: "review.completed", Verdict: "F", JobID: 9, RepoName: "api",
+		SHA: parent + ".." + landed, PanelRole: storage.PanelRoleSynthesis,
+		Source: storage.JobSourceCIBranch, Findings: "- [P1] Missing validation",
+	}, repo.Path())
+
+	require.Len(t, reqs, 1)
+	req := reqs[0]
+	assert.Equal(t, "Review findings for api ("+landed[:7]+"): fix(api): validate input (#42)", req.Title,
+		"the title names the landed commit, not the start of the reviewed range")
+	assert.Contains(t, req.Body, "- commit link: https://github.com/acme/api/commit/"+landed+"\n")
+	assert.Contains(t, req.Body, "- pull request: https://github.com/acme/api/pull/42\n")
+	assert.Contains(t, req.Body, "Missing validation")
+	assert.NotContains(t, req.Body, "hidden-secret", "remote credentials stay out of issue text")
+}
+
+func TestRunKataHookKeysLandedCommitIssuesByCommit(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	parent := repo.CommitFile("app.txt", "one\n", "initial")
+	landed := repo.CommitFile("app.txt", "two\n", "change")
+	file := func(run, source string) kata.CreateReq {
+		reqs := runKataHookFor(t, Event{
+			Type: "review.completed", Verdict: "F", JobID: 9, JobUUID: testUUIDPtr(run), RepoName: "api",
+			SHA: parent + ".." + landed, PanelRole: storage.PanelRoleSynthesis, Source: source,
+		}, repo.Path())
+		require.Len(t, reqs, 1)
+		return reqs[0]
+	}
+
+	landedKey := "roborev:landed:api:" + landed + ":review.completed"
+	assert.Equal(landedKey, file("first run", storage.JobSourceCIBranch).IdempotencyKey)
+	assert.Equal(landedKey, file("rerun", storage.JobSourceCIBranch).IdempotencyKey,
+		"a rerun reuses the landed commit's issue")
+	assert.Equal("roborev:job:"+testUUID("first run").String()+":review.completed", //nolint:forbidigo // Kata idempotency key text boundary.
+		file("first run", storage.JobSourceCI).IdempotencyKey, "other reviews keep one issue per job")
+}
+
+func TestRunKataHookLinksMergeCommitPullRequest(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("app.txt", "one\n", "initial")
+	landed := repo.CommitFile("app.txt", "two\n", "Merge pull request #7 from acme/feature")
+	repo.Run("remote", "add", "origin", "git@github.com:acme/api.git")
+
+	reqs := runKataHookFor(t, Event{Type: "review.completed", Verdict: "F", JobID: 9, SHA: landed}, repo.Path())
+	require.Len(t, reqs, 1)
+	assert.Contains(t, reqs[0].Body, "- pull request: https://github.com/acme/api/pull/7\n")
+}
+
+func TestRunKataHookOmitsLinksForOtherHosts(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	landed := repo.CommitFile("app.txt", "one\n", "change (#3)")
+	repo.Run("remote", "add", "origin", "https://git.example.org/acme/api.git")
+
+	reqs := runKataHookFor(t, Event{Type: "review.completed", Verdict: "F", JobID: 9, SHA: landed}, repo.Path())
+	require.Len(t, reqs, 1)
+	assert.NotContains(t, reqs[0].Body, "link:")
+	assert.NotContains(t, reqs[0].Body, "pull request:")
+	assert.Contains(t, reqs[0].Title, "change (#3)")
+}
+
+func TestRunKataHookFilesPanelResultOnce(t *testing.T) {
+	member := Event{Type: "review.completed", Verdict: "F", JobID: 3, SHA: "x", PanelRole: storage.PanelRoleMember}
+	assert.Empty(t, runKataHookFor(t, member, t.TempDir()), "a member's findings arrive through the synthesis")
+	failedMember := Event{Type: "review.failed", JobID: 4, SHA: "x", PanelRole: storage.PanelRoleMember, Error: "boom"}
+	assert.Empty(t, runKataHookFor(t, failedMember, t.TempDir()))
+
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("app.txt", "one\n", "initial")
+	missing := strings.Repeat("0123456789", 4)
+	synthesis := Event{
+		Type: "review.completed", Verdict: "F", JobID: 5, RepoName: "api",
+		SHA: missing, PanelRole: storage.PanelRoleSynthesis,
+	}
+	reqs := runKataHookFor(t, synthesis, repo.Path())
+	require.Len(t, reqs, 1, "an issue is filed even when the commit cannot be read")
+	assert.Contains(t, reqs[0].Title, missing[:7], "the issue still names the reviewed commit")
+}
+
+func TestPanelFailureSummaryReachesOnlyKataHooks(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "command-hook-fired")
+	cfg := &config.Config{Hooks: []config.HookConfig{
+		{Event: "review.failed", Type: "kata", Project: "p"},
+		{Event: "review.failed", Command: touchCmd(marker)},
+	}}
+	hr, broadcaster := setupRunner(t, cfg)
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	hr.newKataClient = func(string) kata.Client { return fake }
+
+	broadcaster.Broadcast(Event{
+		Type: "review.failed", JobID: 8, SHA: "x", Repo: t.TempDir(),
+		PanelRole: storage.PanelRoleSynthesis, Error: "all review agents failed",
+		SuppressHooks: true, PanelFailureSummary: true,
+	})
+	hr.WaitUntilIdle()
+
+	require.Len(t, fake.CreateReqs, 1, "Kata hooks skip reviewer failures, so the panel failure is their issue")
+	assert.Contains(t, fake.CreateReqs[0].Body, "all review agents failed")
+	assert.NoFileExists(t, marker, "command hooks already ran for each reviewer's failure")
 }

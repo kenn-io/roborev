@@ -8,10 +8,10 @@ import (
 	"io"
 	"log"
 	"strings"
-	"time"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	gitpkg "go.kenn.io/roborev/internal/git"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -320,7 +320,9 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 		event := eventForJob("review.failed", job, job.ID)
 		event.Agent = ""
 		event.Error = errorMsg
+		event.WorktreePath = wp.synthesisEventWorktreePath(job)
 		event.SuppressHooks = true
+		event.PanelFailureSummary = true
 		wp.broadcaster.Broadcast(event)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker",
@@ -406,20 +408,29 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	log.Printf("[%s] Completed synthesis job %d %s panel=%s",
 		workerID, job.ID, job.RepoName, job.PanelName)
 
-	wp.broadcaster.Broadcast(Event{
-		Type:              "review.completed",
-		TS:                time.Now(),
-		JobID:             job.ID,
-		JobUUID:           job.UUID,
-		Repo:              job.RepoPath,
-		RepoName:          job.RepoName,
-		SHA:               job.GitRef,
-		Branch:            job.HookBranch(),
-		Agent:             agentName,
-		SuppressRepoHooks: hasSuppliedReviewSettings(job),
-		Verdict:           string(verdict),
-		Findings:          output,
-	})
+	event := eventForJob("review.completed", job, job.ID)
+	event.Agent = agentName
+	event.Verdict = string(verdict)
+	event.Findings = output
+	event.WorktreePath = wp.synthesisEventWorktreePath(job)
+	wp.broadcaster.Broadcast(event)
+}
+
+// synthesisEventWorktreePath reports the caller's checkout with a combined
+// result, as member results do, so hooks use that checkout's configuration
+// and issue project. A checkout that has gone away falls back to the main
+// repository, and the private checkouts of CI reviews are never reported.
+func (wp *WorkerPool) synthesisEventWorktreePath(job *storage.ReviewJob) string {
+	if job.WorktreePath == "" {
+		return ""
+	}
+	if ci, err := wp.jobRequiresCIExactCheckout(job); err != nil || ci {
+		return ""
+	}
+	if !gitpkg.ValidateWorktreeForRepo(job.WorktreePath, job.RepoPath) {
+		return ""
+	}
+	return job.WorktreePath
 }
 
 // runSynthesisAgent invokes the configured agent read-only (non-agentic) to
@@ -446,17 +457,9 @@ func (wp *WorkerPool) runSynthesisAgent(
 		return reviewpkg.SynthesisDocument{}, "", sessionTokenUsage{}, err
 	}
 
-	wp.broadcaster.Broadcast(Event{
-		Type:              "review.started",
-		TS:                time.Now(),
-		JobID:             job.ID,
-		Repo:              job.RepoPath,
-		RepoName:          job.RepoName,
-		SHA:               job.GitRef,
-		Branch:            job.HookBranch(),
-		Agent:             agentName,
-		SuppressRepoHooks: hasSuppliedReviewSettings(job),
-	})
+	started := eventForJob("review.started", job, job.ID)
+	started.Agent = agentName
+	wp.broadcaster.Broadcast(started)
 
 	cfg := wp.cfgGetter.Config()
 	var tools *config.ReviewToolPolicy

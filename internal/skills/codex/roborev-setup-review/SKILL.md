@@ -267,9 +267,10 @@ Rules that matter:
     for the same workflow and PR. Existing workflows need
     `roborev init gh-action --force` to adopt the behavior; add
     `--include-drafts` if the user wants draft reviews.
-- A `type = "kata"` hook files an issue for each reviewer's failing review as
-    well as for the combined review. With a panel of several reviewers, one
-    failing commit can open several issues. Say so when proposing it.
+- A `type = "kata"` hook files one issue per failing panel run, from the
+    combined review, not one per reviewer. Add `sources = ["ci_branch"]` to
+    file only findings from daemon reviews of commits that landed on the
+    default branch.
 
 Example: a legal brief checked every five commits by two reviewers. It leaves
 the agent to the repository or machine default. Adapt it; do not copy names

@@ -1453,19 +1453,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	eventWorktreePath := checkout.eventWorktreePath
 
 	// Broadcast started event
-	wp.broadcaster.Broadcast(Event{
-		Type:              "review.started",
-		TS:                time.Now(),
-		JobID:             job.ID,
-		Repo:              job.RepoPath,
-		RepoName:          job.RepoName,
-		SHA:               job.GitRef,
-		Branch:            job.HookBranch(),
-		Agent:             agentName,
-		WorktreePath:      eventWorktreePath,
-		SuppressHooks:     suppressJobHooks(job),
-		SuppressRepoHooks: hasSuppliedReviewSettings(job),
-	})
+	started := eventForJob("review.started", job, job.ID)
+	started.Agent = agentName
+	started.WorktreePath = eventWorktreePath
+	wp.broadcaster.Broadcast(started)
 
 	// Create output writer for tail command
 	normalizer := GetNormalizer(agentName)
@@ -1863,22 +1854,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		if job.Source == storage.JobSourceRebuttal {
 			eventVerdict = ""
 		}
-		wp.broadcaster.Broadcast(Event{
-			Type:              "review.completed",
-			TS:                time.Now(),
-			JobID:             job.ID,
-			JobUUID:           job.UUID,
-			Repo:              job.RepoPath,
-			RepoName:          job.RepoName,
-			SHA:               job.GitRef,
-			Branch:            job.HookBranch(),
-			Agent:             agentName,
-			Verdict:           eventVerdict,
-			Findings:          output,
-			WorktreePath:      eventWorktreePath,
-			SuppressHooks:     suppressJobHooks(job),
-			SuppressRepoHooks: hasSuppliedReviewSettings(job),
-		})
+		event := eventForJob("review.completed", job, job.ID)
+		event.Agent = agentName
+		event.Verdict = eventVerdict
+		event.Findings = output
+		event.WorktreePath = eventWorktreePath
+		wp.broadcaster.Broadcast(event)
 	})
 	if completed && wp.captureSetupFinished != nil {
 		wp.captureSetupFinished()
@@ -1891,19 +1872,10 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 	wp.runAttemptTransition(workerID, job, func() {
 		log.Printf("[%s] Job %d was canceled", workerID, job.ID)
 		if !wp.cancellationEventOwnedByCaller(job.ID) {
-			wp.broadcaster.Broadcast(Event{
-				Type:              jobEventType(job, "canceled"),
-				TS:                time.Now(),
-				JobID:             job.ID,
-				Repo:              job.RepoPath,
-				RepoName:          job.RepoName,
-				SHA:               job.GitRef,
-				Branch:            job.HookBranch(),
-				Agent:             agentName,
-				WorktreePath:      eventWorktreePath,
-				SuppressHooks:     suppressJobHooks(job),
-				SuppressRepoHooks: hasSuppliedReviewSettings(job),
-			})
+			event := eventForJob(jobEventType(job, "canceled"), job, job.ID)
+			event.Agent = agentName
+			event.WorktreePath = eventWorktreePath
+			wp.broadcaster.Broadcast(event)
 		}
 		// Member canceled is terminal — release the panel synthesis.
 		wp.releaseIfPanelMember(job)
@@ -2382,21 +2354,11 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 			wtPath = job.WorktreePath
 		}
 	}
-	wp.broadcaster.Broadcast(Event{
-		Type:              jobEventType(job, "failed"),
-		TS:                time.Now(),
-		JobID:             job.ID,
-		JobUUID:           job.UUID,
-		Repo:              job.RepoPath,
-		RepoName:          job.RepoName,
-		SHA:               job.GitRef,
-		Branch:            job.HookBranch(),
-		Agent:             agentName,
-		Error:             errorMsg,
-		WorktreePath:      wtPath,
-		SuppressHooks:     suppressJobHooks(job),
-		SuppressRepoHooks: hasSuppliedReviewSettings(job),
-	})
+	event := eventForJob(jobEventType(job, "failed"), job, job.ID)
+	event.Agent = agentName
+	event.Error = errorMsg
+	event.WorktreePath = wtPath
+	wp.broadcaster.Broadcast(event)
 	// broadcastFailed is the terminal-failure chokepoint (never reached on
 	// retry/failover), so a member that finally fails releases its panel's
 	// synthesis here. No-op for non-member and synthesis jobs (role gate).

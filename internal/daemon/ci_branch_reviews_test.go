@@ -20,6 +20,8 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/kata/katatest"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
@@ -35,17 +37,19 @@ type branchStatus struct {
 // branchReviewHarness polls a real clone of a local origin repository. Only
 // GitHub writes, PR listing, and the review agent are fakes.
 type branchReviewHarness struct {
-	origin   *testutil.TestRepo
-	clone    string
-	db       *storage.DB
-	cfg      *config.Config
-	poller   *CIPoller
-	pool     *WorkerPool
-	mu       sync.Mutex
-	statuses []branchStatus
-	findings bool
-	fail     bool
-	reviewed []string
+	origin *testutil.TestRepo
+	clone  string
+	db     *storage.DB
+	cfg    *config.Config
+	poller *CIPoller
+	pool   *WorkerPool
+	// broadcaster carries the worker's review events, as hooks receive them.
+	broadcaster Broadcaster
+	mu          sync.Mutex
+	statuses    []branchStatus
+	findings    bool
+	fail        bool
+	reviewed    []string
 }
 
 func newBranchReviewHarness(t *testing.T) *branchReviewHarness {
@@ -96,7 +100,8 @@ func newBranchReviewHarness(t *testing.T) *branchReviewHarness {
 		h.statuses = append(h.statuses, branchStatus{SHA: sha, State: state, Description: description})
 		return nil
 	}
-	h.pool = NewWorkerPool(h.db, NewStaticConfig(h.cfg), 1, NewBroadcaster(), nil, nil)
+	h.broadcaster = NewBroadcaster()
+	h.pool = NewWorkerPool(h.db, NewStaticConfig(h.cfg), 1, h.broadcaster, nil, nil)
 	h.pool.retryBackoff = 0
 	return h
 }
@@ -295,6 +300,31 @@ func TestCIDefaultBranchReviewsWaitForQuietHoursToEnd(t *testing.T) {
 	assert.Equal(t, start+".."+landed, runs[0].GitRef)
 }
 
+func TestCIDefaultBranchReviewEventsIdentifyLandedCommitResult(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.findings = true
+	h.poll(t)
+	h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	_, events := h.broadcaster.Subscribe("")
+	h.runJobs(t)
+
+	roles := map[string]string{}
+	for len(events) > 0 {
+		event := <-events
+		if event.Type != "review.completed" {
+			continue
+		}
+		assert.Equal(t, storage.JobSourceCIBranch, event.Source,
+			"hooks can select landed-commit reviews by source")
+		roles[event.PanelRole] = event.Verdict
+	}
+	assert.Equal(t, map[string]string{
+		storage.PanelRoleMember:    "F",
+		storage.PanelRoleSynthesis: "F",
+	}, roles)
+}
+
 func TestCIDefaultBranchReviewsRestartAfterBeingTurnedOff(t *testing.T) {
 	h := newBranchReviewHarness(t)
 	h.cfg.CI.Repos = []string{branchReviewRepo}
@@ -437,6 +467,31 @@ func TestCIDefaultBranchReviewsApplyBatchTimeout(t *testing.T) {
 	job, err := h.db.GetJobByID(hung)
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusCanceled, job.Status, "a reviewer past ci.batch_timeout no longer holds the result")
+}
+
+func TestCIDefaultBranchReviewFilesOneKataIssueWhenEveryReviewerFails(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.fail = true
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "branch-reviewer-2", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		return "", errors.New("agent unavailable")
+	}})
+	h.cfg.CI.Agents = []string{"branch-reviewer", "branch-reviewer-2"}
+	h.cfg.Hooks = []config.HookConfig{{
+		Event: "review.*", Type: "kata", Project: "p", Sources: []string{storage.JobSourceCIBranch},
+	}}
+	hooks := NewHookRunner(NewStaticConfig(h.cfg), h.broadcaster, nil)
+	t.Cleanup(hooks.Stop)
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	hooks.newKataClient = func(string) kata.Client { return fake }
+
+	h.poll(t)
+	h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	h.runJobs(t)
+	hooks.WaitUntilIdle()
+
+	require.Len(t, fake.CreateReqs, 1, "one failed panel opens one issue, not one per reviewer or none")
+	assert.Contains(t, fake.CreateReqs[0].Labels, "review-failed")
 }
 
 func TestCIDefaultBranchReviewsRestartWhenLastReviewedCommitIsMissing(t *testing.T) {

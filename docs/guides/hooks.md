@@ -63,6 +63,7 @@ type = "kata"
 |-------|------|-------------|
 | `event` | string | Event pattern to match (see [Events](#events)) |
 | `branches` | array | Optional branch allowlist using `path.Match` globs. Empty or omitted means all branches |
+| `sources` | array | Optional allowlist of the reviews' sources, such as `ci` or `ci_branch` (see [Source Filtering](#source-filtering)). Empty or omitted means every review |
 | `command` | string | Shell command to run, with `{var}` template interpolation |
 | `type` | string | Built-in hook type: `"beads"`, `"kata"`, or `"webhook"`. Empty or `"command"` runs `command` |
 | `url` | string | Webhook destination URL (required when `type = "webhook"`) |
@@ -143,6 +144,29 @@ For local reviews, the matched branch is the job's local branch. For daemon CI
 pull-request reviews, the matched branch is the PR base/target branch, not the
 contributor's head branch. This means `branches = ["main"]` fires for PRs
 targeting `main`, which is usually what protected-branch integrations want.
+
+## Source Filtering
+
+Add `sources` to run a hook only for reviews that roborev started for a given
+reason:
+
+```toml
+[[hooks]]
+event = "review.completed"
+sources = ["ci_branch"]
+type = "kata"
+```
+
+| Source | Reviews |
+|--------|---------|
+| `ci` | Daemon CI reviews of pull requests |
+| `ci_branch` | Daemon CI reviews of [commits that landed on the default branch](/docs/integrations/github/#review-commits-on-the-default-branch) |
+| `post_commit` | Reviews queued by the post-commit git hook |
+| `auto_design` | Design reviews that roborev added automatically |
+| `review_prompt` | Reviews that automation queued with a [supplied review prompt](/docs/automation/supplied-review-prompts/) |
+
+Reviews you start yourself, such as `roborev review`, have no source. A hook
+with a non-empty `sources` list never runs for them.
 
 ## Template Variables
 
@@ -226,12 +250,26 @@ What the `type = "kata"` hook does for each event:
 | `review.completed` | `F` (fail) | Creates a priority-2 Kata issue for the review findings, including compatible `roborev show` and `roborev fix` commands |
 | `review.completed` | `P` (pass) | No action |
 
+For a [review panel](/docs/advanced/subagent-review-panels/), only the synthesis
+review files an issue, so each panel run opens at most one. Its findings already
+combine the members' findings. When every reviewer fails, the panel's failure
+opens one `review-failed` issue instead.
+
+The issue title names the reviewed commit and its subject. For a range, that is
+the newest commit. When the repo's `origin` remote is on GitHub, the body links
+to the commit. It also links to the pull request when the commit subject has the
+form GitHub uses for squash merges (`Title (#123)`) or merge commits
+(`Merge pull request #123 from ...`). The links never include credentials from
+the remote URL.
+
 The Kata hook runs in the repo's working directory and uses the repo's committed
 `.kata.toml` binding by default. Set `project = "myproj"` to override the target
 project. Every issue receives the `roborev` label plus a marker label
 (`review-failed` or `review-finding`) and any extra `labels` you configure.
-roborev uses an idempotency key per job/event so reruns do not create duplicate
-Kata issues.
+roborev uses an idempotency key per job/event so rerunning a job does not create
+a duplicate Kata issue. A review of a commit that landed on the default branch
+is keyed by that commit, so rerunning it reuses the commit's issue. Rerunning
+any other review panel starts new jobs and can open another issue.
 
 The `kata` CLI must be on `PATH`. If it is missing, or the repo is not bound to
 a Kata project, the hook is skipped. If you explicitly configured the hook but
@@ -258,11 +296,12 @@ url = "https://example.com/roborev-webhook"
 
 The webhook sends a JSON POST with a 5-second timeout. The payload is the full
 review event as JSON (`type`, `ts`, `job_id`, `job_uuid`, `repo`, `repo_name`,
-`sha`, `branch`, `agent`, `verdict`, `findings`, `error`, `worktree_path`), with
-unset fields omitted. See [Event Fields](/docs/advanced/streaming/#event-fields)
-for field semantics. The `url` field is treated as sensitive and is masked in
-`roborev config list` output. Webhook URLs are redacted in daemon logs (only the
-scheme and host are shown).
+`sha`, `branch`, `source`, `panel_role`, `agent`, `verdict`, `findings`,
+`error`, `worktree_path`), with unset fields omitted. See
+[Event Fields](/docs/advanced/streaming/#event-fields) for field semantics. The
+`url` field is treated as sensitive and is masked in `roborev config list`
+output. Webhook URLs are redacted in daemon logs (only the scheme and host are
+shown).
 
 Webhook delivery is asynchronous and never blocks the review pipeline. Failed
 deliveries are logged but do not retry.
@@ -407,6 +446,9 @@ command = "test {verdict} = P && ~/hooks/on-pass.sh {job_id} || ~/hooks/on-fail.
 - Multiple hooks can match the same event; they all fire independently
 - Branch filters fail closed: if a hook has a non-empty `branches` list and the
     event has no branch, the hook does not run
+- Source filters fail closed the same way: a hook with a non-empty `sources`
+    list does not run for a review that has no source. `roborev doctor` warns
+    about a source name that matches no review
 
 ## Git Hooks
 

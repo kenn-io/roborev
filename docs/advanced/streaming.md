@@ -274,6 +274,10 @@ Common fields:
 - `sha`: Commit SHA (or `dirty` for uncommitted changes)
 - `branch`: Branch used for event and hook matching, when known. For CI
     pull-request reviews this is the PR base branch
+- `source`: Why roborev started the review, such as `ci` or `ci_branch`. Omitted
+    for reviews you start yourself. See
+    [Source Filtering](/docs/guides/hooks/#source-filtering)
+- `panel_role`: `member` or `synthesis` for a review panel job
 - `agent`: Agent that processed the review, when available
 - `worktree_path`: Worktree path used by the job, when different from the main
     repo path
