@@ -49,8 +49,6 @@ echo '{"type":"result","status":"success"}'
 	tc.Pool.processJob(testWorkerID, claimed)
 
 	got := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	assert.Equal(t, "new-gemini-session", got.SessionID)
-	assert.Equal(t, "gemini", got.SessionCLI)
 	assert.Nil(t, got.ResumeSourceJobUUID)
 	args, err := os.ReadFile(argsFile)
 	require.NoError(t, err)

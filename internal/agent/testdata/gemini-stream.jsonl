@@ -1,4 +1,4 @@
-{"type":"init","timestamp":"2026-11-14T06:13:59.496Z","session_id":"...","model":"gemini-2.5-flash"}
+{"type":"init","timestamp":"2026-11-14T06:13:59.496Z","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2","model":"gemini-2.5-flash"}
 {"type":"message","timestamp":"2026-11-14T06:13:59.497Z","role":"user","content":"return the requested JSON response"}
 {"type":"message","timestamp":"2026-11-14T06:13:59.512Z","role":"assistant","content":"{\"passed\":true,\"findings\":[]}","delta":true}
 {"type":"result","timestamp":"2026-11-14T06:13:59.515Z","status":"success","stats":{"total_tokens":0,"input_tokens":0,"output_tokens":0,"cached":0,"input":0,"duration_ms":20,"tool_calls":0,"models":{"gemini-2.5-flash":{"total_tokens":0,"input_tokens":0,"output_tokens":0,"cached":0,"input":0}}}}

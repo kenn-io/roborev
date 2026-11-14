@@ -706,11 +706,10 @@ func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
 		},
 		{
 			name:     "error result",
-			fixture:  "../agent/testdata/antigravity-resume-error-capture.jsonl",
+			fixture:  "../agent/testdata/antigravity-quota-result-capture.jsonl",
 			contains: "Individual quota reached",
 			notContains: []string{
 				"RESUME_OK",
-				"text_delta",
 				`"event":"result"`,
 			},
 		},

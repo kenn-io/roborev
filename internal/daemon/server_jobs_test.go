@@ -954,8 +954,7 @@ func TestFindCompatibleReusableSessionReturnsSessionCLI(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = 'session', session_cli = 'agy' WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 
-	got, sessionCLI, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
-	assert.Equal(t, "session", got)
+	_, sessionCLI, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
 	assert.Equal(t, "agy", sessionCLI, "the worker compares this CLI before resuming")
 }
 

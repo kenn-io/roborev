@@ -34,7 +34,7 @@ func TestExtractSessionID(t *testing.T) {
 		{
 			name: "captured agy init conversation_id",
 			line: string(initCapture),
-			want: "...",
+			want: "b5f7c102-6dc1-4d94-8296-8ba54ef1d0f4",
 		},
 		{
 			name: "conversation_id outside an init event is ignored",
