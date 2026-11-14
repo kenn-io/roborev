@@ -810,7 +810,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:         "failed_reviews",
 				Reason:              deferredReminderReason(buildFailedReviewReason(req, st, actionableReviewIDs), scope.WorktreeRoot),
-				Instruction:         req.Instruction,
+				Instruction:         customInstruction(req.Instruction),
 				TrackedRepoRoot:     scope.TrackedRepoRoot,
 				TrackedRepoIdentity: scope.TrackedRepoIdentity,
 				WorktreeRoot:        scope.WorktreeRoot,
@@ -825,7 +825,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:         "commit",
 				Reason:              deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot, actionableReviewIDs), scope.WorktreeRoot),
-				Instruction:         req.Instruction,
+				Instruction:         customInstruction(req.Instruction),
 				TrackedRepoRoot:     scope.TrackedRepoRoot,
 				TrackedRepoIdentity: scope.TrackedRepoIdentity,
 				WorktreeRoot:        scope.WorktreeRoot,
@@ -1570,16 +1570,6 @@ func buildFailedReviewReason(req Request, st SessionState, reviewIDs reviewIDSet
 	return buildPromptReason(req, detail+"."+formatReviewJobIDs(reviewIDs))
 }
 
-// userPromptGuidance is the triage contract for injected reminders. Unlike a
-// stop-decision reminder, injected context reaches the model next to a fresh
-// user message, so it must explicitly yield to that task and scope the review
-// work instead of telling the model to start fixing immediately.
-const userPromptGuidance = "Guidance: finish the user's current task first, then triage these reviews " +
-	"with the roborev-fix skill, and only the named jobs. " +
-	"Fix reachable defects with the smallest change that stays inside the user's task, " +
-	"decline or disprove the rest with a recorded reason, " +
-	"and ask the user about anything that would grow the task."
-
 // userPromptDiagnosis summarizes the failed-review evaluation for one
 // injected reminder so an empty reminder is explainable from hook stderr.
 func userPromptDiagnosis(available bool, openFailed, actionable, threshold int, scope hookScope) string {
@@ -1599,10 +1589,7 @@ func userPromptDiagnosis(available bool, openFailed, actionable, threshold int, 
 // instruction replaces the default guidance verbatim, mirroring the
 // stop-decision reminder's instruction handling.
 func buildUserPromptReason(req Request, scope hookScope, jobs []storage.ReviewJob, reviewIDs reviewIDSet) string {
-	guidance := strings.TrimSpace(req.Instruction)
-	if guidance == "" {
-		guidance = userPromptGuidance
-	}
+	guidance := effectiveInstruction(req.Instruction)
 	repo := repoDisplayName(scope.TrackedRepoRoot)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[roborev] %s has %s.",
@@ -1617,9 +1604,9 @@ func buildUserPromptReason(req Request, scope hookScope, jobs []storage.ReviewJo
 		}
 		fmt.Fprintf(&b, "\n- job %d (%s, verdict %s)", job.ID, shortReviewRef(job.GitRef), verdict)
 	}
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	b.WriteString(reminderPreamble)
-	b.WriteString(" ")
+	b.WriteString("\n\n")
 	b.WriteString(guidance)
 	return b.String()
 }
@@ -1721,15 +1708,12 @@ const reminderPreamble = "roborev Agent Hook reminder. This is background mainte
 	"suggestions to triage, not requirements."
 
 func buildPromptReason(req Request, detail string) string {
-	instruction := strings.TrimSpace(req.Instruction)
-	if instruction == "" {
-		instruction = DefaultInstruction
-	}
-	reason := reminderPreamble + " " + instruction
+	instruction := effectiveInstruction(req.Instruction)
+	reason := reminderPreamble + "\n\n" + instruction
 	if strings.TrimSpace(detail) == "" {
 		return reason
 	}
-	return reason + " " + detail
+	return reason + "\n\n" + strings.TrimSpace(detail)
 }
 
 func countPhrase(count int, singular, plural string) string {

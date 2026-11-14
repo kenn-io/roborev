@@ -27,3 +27,15 @@ instruction = "Run roborev fix."
 	assert.Equal(t, 3, cfg.AgentHook.FailedReviewThreshold)
 	assert.Equal(t, "Run roborev fix.", cfg.AgentHook.Instruction)
 }
+
+func TestSaveGlobalDoesNotPersistBuiltinInstruction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, SaveGlobalTo(path, DefaultConfig()))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "roborev-fix skill")
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.AgentHook.Instruction)
+	assert.Empty(t, cfg.DroidHook.Instruction)
+}
