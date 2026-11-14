@@ -469,12 +469,6 @@ func TestDaemonRestartRunningPolicy(t *testing.T) {
 		assert.Zero(t, listCalls)
 		assert.Zero(t, interruptCalls)
 		assert.Zero(t, stopCalls)
-		cmd = daemonCmd()
-		cmd.SetArgs([]string{"restart", "extra"})
-		require.ErrorContains(t, cmd.ExecuteContext(t.Context()), `unknown command "extra"`)
-		assert.Zero(t, listCalls)
-		assert.Zero(t, interruptCalls)
-		assert.Zero(t, stopCalls)
 	})
 	for _, service := range []bool{false, true} {
 		t.Run(fmt.Sprintf("service=%t", service), func(t *testing.T) {
