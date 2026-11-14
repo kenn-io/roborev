@@ -471,6 +471,41 @@ func TestUpsertPulledJob_SessionTerminalOverwrite(t *testing.T) {
 		"non-terminal update preserves the existing session id")
 }
 
+func TestUpsertPulledJobClearsSessionCLIWhenRemoteSessionChanges(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	jobUUID := testUUID("session-cli-sync")
+	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Hour)
+
+	local := PulledJob{
+		UUID: jobUUID, GitRef: "local-review", SessionID: "agy-session",
+		Agent: "gemini", JobType: JobTypeReview, Status: "done",
+		EnqueuedAt: t1, UpdatedAt: t1, SourceMachineID: h.machineID,
+	}
+	require.NoError(t, h.db.UpsertPulledJob(local, h.repo.ID, nil))
+	_, err := h.db.ExecContext(t.Context(),
+		`UPDATE review_jobs SET session_cli = 'agy' WHERE uuid = ?`, jobUUID,
+	)
+	require.NoError(t, err)
+
+	remote := local
+	remote.GitRef = "remote-review"
+	remote.SessionID = "gemini-session"
+	remote.EnqueuedAt = t2
+	remote.UpdatedAt = t2
+	remote.SourceMachineID = testUUID("remote-machine")
+	require.NoError(t, h.db.UpsertPulledJob(remote, h.repo.ID, nil))
+
+	var sessionID, sessionCLI sql.NullString
+	require.NoError(t, h.db.QueryRowContext(t.Context(),
+		`SELECT session_id, session_cli FROM review_jobs WHERE uuid = ?`, jobUUID,
+	).Scan(&sessionID, &sessionCLI))
+	assert.Equal(t, "gemini-session", sessionID.String)
+	assert.False(t, sessionCLI.Valid,
+		"a pulled session must not inherit the prior machine's CLI provenance")
+}
+
 // TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers verifies that a
 // skipped row — a synced, rerun-eligible terminal state — overwrites the
 // per-attempt markers (session_id, token_usage, agent_invoked) instead of
