@@ -84,6 +84,24 @@ func (w *SessionCaptureWriter) ResetSessionID() error {
 	return nil
 }
 
+// ReplaceSessionID clears the prior session and reports a new one when a
+// successful resume actually started a different session.
+func (w *SessionCaptureWriter) ReplaceSessionID(sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	if err := w.ResetSessionID(); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	w.sessionID = sessionID
+	w.mu.Unlock()
+	if w.onCapture != nil {
+		w.onCapture(sessionID)
+	}
+	return nil
+}
+
 func (w *SessionCaptureWriter) capture(p []byte) {
 	var captured string
 

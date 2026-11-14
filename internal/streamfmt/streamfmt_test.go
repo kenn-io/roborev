@@ -683,6 +683,17 @@ func TestFormatter_Gemini(t *testing.T) {
 	}
 }
 
+func TestFormatter_GeminiDeltaTextStaysInOneParagraph(t *testing.T) {
+	fix := newFixture(true, "gemini")
+	fix.writeLine(eventGeminiMessage("assistant", "hello ", true))
+	fix.writeLine(eventGeminiMessage("assistant", "world", true))
+	fix.writeLine(eventGeminiResult("success"))
+
+	plain := strings.TrimSpace(StripANSI(fix.output()))
+	assert.Equal(t, "hello world", strings.Join(strings.Fields(plain), " "))
+	assert.NotContains(t, plain, "hello\nworld")
+}
+
 func TestFormatter_GeminiAntigravityResultEvent(t *testing.T) {
 	const response = "Git rebase destructively rewrites a branch's commit history by systematically detaching its unique commits and sequentially reapplying them onto a new base commit."
 	captured, err := os.ReadFile("../agent/testdata/antigravity-stream.jsonl")

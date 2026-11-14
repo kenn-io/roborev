@@ -141,3 +141,31 @@ func TestSessionCaptureWriter_ResetSessionIDForFreshRetry(t *testing.T) {
 	require.Contains(t, dst.String(), `"session_id":"old-session"`)
 	require.Contains(t, dst.String(), `"session_id":"fresh-session"`)
 }
+
+func TestSessionCaptureWriter_ReplaceSessionID(t *testing.T) {
+	var dst bytes.Buffer
+	var stored string
+	var captured []string
+	resetCalls := 0
+	w := NewSessionCaptureWriter(&dst, func(sessionID string) {
+		captured = append(captured, sessionID)
+		if stored == "" {
+			stored = sessionID
+		}
+	}, func() error {
+		stored = ""
+		resetCalls++
+		return nil
+	})
+
+	_, err := w.Write([]byte(`{"event":"init","conversation_id":"expired-session"}` + "\n"))
+	require.NoError(t, err)
+	stored = "expired-session"
+
+	require.NoError(t, w.ReplaceSessionID("fresh-session"))
+
+	require.Equal(t, "fresh-session", w.SessionID())
+	require.Equal(t, "fresh-session", stored)
+	require.Equal(t, 1, resetCalls)
+	require.Equal(t, []string{"expired-session", "fresh-session"}, captured)
+}

@@ -100,15 +100,15 @@ func TestGeminiReviewGatesCapabilitiesByVersion(t *testing.T) {
 		wantResume   bool
 		wantApproval string
 	}{
-		{name: "0.10 plain output", version: "0.10.0"},
+		{name: "0.10 plain output", version: "0.10.0", wantApproval: "default"},
 		{name: "0.10 agentic mode", version: "0.10.0", agentic: true, wantApproval: "yolo"},
-		{name: "0.11 stream without resume", version: "0.11.0", wantStream: true},
-		{name: "0.14 has no resume", version: "0.14.0", wantStream: true},
-		{name: "0.15 supports resume", version: "0.15.0", wantStream: true, wantResume: true},
-		{name: "0.33 keeps plan experimental", version: "0.33.0", wantStream: true, wantResume: true},
+		{name: "0.11 stream without resume", version: "0.11.0", wantStream: true, wantApproval: "default"},
+		{name: "0.14 has no resume", version: "0.14.0", wantStream: true, wantApproval: "default"},
+		{name: "0.15 supports resume", version: "0.15.0", wantStream: true, wantResume: true, wantApproval: "default"},
+		{name: "0.33 keeps plan experimental", version: "0.33.0", wantStream: true, wantResume: true, wantApproval: "default"},
 		{name: "0.34 supports plan", version: "0.34.0", wantStream: true, wantResume: true, wantApproval: "plan"},
-		{name: "unparseable version", version: "unknown"},
-		{name: "failed version probe", version: "0.34.0", versionFails: true},
+		{name: "unparseable version", version: "unknown", wantApproval: "default"},
+		{name: "failed version probe", version: "0.34.0", versionFails: true, wantApproval: "default"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,11 +131,23 @@ if [ "$1" = "--version" ]; then
 fi
 printf '%s\n' "$@" > "$ARGS_FILE"
 stream_json=0
+has_resume=0
+has_prompt=0
 for arg in "$@"; do
   if [ "$arg" = "stream-json" ]; then stream_json=1; fi
+  if [ "$arg" = "--resume" ]; then has_resume=1; fi
+  if [ "$arg" = "--prompt" ]; then has_prompt=1; fi
 done
+if [ "$has_resume" = "1" ] && [ "$has_prompt" = "0" ]; then
+  echo 'When resuming a session, provide --prompt or stdin' >&2
+  exit 1
+fi
 if [ "$stream_json" = "1" ]; then
-  echo '{"type":"init","session_id":"new-session"}'
+  if [ "$has_resume" = "1" ]; then
+    echo '{"type":"init","session_id":"old-session"}'
+  else
+    echo '{"type":"init","session_id":"new-session"}'
+  fi
   echo '{"type":"message","role":"assistant","content":"Stream review"}'
   echo '{"type":"result","status":"success"}'
 else
@@ -172,9 +184,10 @@ fi
 			}
 			if tc.wantResume {
 				assertFlagValue(t, args, "--resume", "old-session")
-				assert.Equal(t, "new-session", capture.SessionID())
-				assert.Equal(t, "new-session", savedSession)
-				assert.Equal(t, []string{"new-session"}, capturedSessions)
+				assertFlagValue(t, args, "--prompt", "Review the supplied input.")
+				assert.Equal(t, "old-session", capture.SessionID())
+				assert.Equal(t, "old-session", savedSession)
+				assert.Equal(t, []string{"old-session"}, capturedSessions)
 				assert.Zero(t, resetCalls)
 			} else {
 				assert.NotContains(t, args, "--resume")
@@ -194,6 +207,36 @@ fi
 			}
 		})
 	}
+}
+
+func TestGeminiReadOnlyReviewOverridesAutoEdit(t *testing.T) {
+	skipIfWindows(t)
+
+	repo := t.TempDir()
+	path := filepath.Join(repo, "reviewed.txt")
+	require.NoError(t, os.WriteFile(path, []byte("original"), 0o600))
+	t.Setenv("REVIEWED_FILE", path)
+	script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "0.33.0"; exit 0; fi
+mode=auto_edit
+expect_mode=0
+for arg in "$@"; do
+  if [ "$expect_mode" = "1" ]; then mode="$arg"; expect_mode=0; fi
+  if [ "$arg" = "--approval-mode" ]; then expect_mode=1; fi
+done
+if [ "$mode" = "auto_edit" ]; then printf modified > "$REVIEWED_FILE"; fi
+echo '{"type":"init","session_id":"session-1"}'
+echo '{"type":"message","role":"assistant","content":"Review complete"}'
+echo '{"type":"result","status":"success"}'
+`)
+	a := NewGeminiAgent(script)
+
+	_, err := a.Review(t.Context(), repo, "sha", "review", io.Discard)
+
+	require.NoError(t, err)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "original", string(got))
 }
 
 func TestGeminiAntigravityBuildArgs(t *testing.T) {
@@ -786,6 +829,48 @@ cat "$STREAM_FILE"
 	args, readErr := os.ReadFile(argsFile)
 	require.NoError(t, readErr)
 	assert.Equal(t, 1, strings.Count(string(args), "--conversation\n"))
+}
+
+func TestAntigravitySuccessfulResumeStoresReturnedConversation(t *testing.T) {
+	skipIfWindows(t)
+
+	fixture, err := filepath.Abs(filepath.Join("testdata", "antigravity-stream.jsonl"))
+	require.NoError(t, err)
+	t.Setenv("STREAM_FILE", fixture)
+	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.8"; exit 0; fi
+cat "$STREAM_FILE"
+`)
+	agyPath := filepath.Join(filepath.Dir(scriptPath), "agy")
+	require.NoError(t, os.Rename(scriptPath, agyPath))
+	a := NewGeminiAgent(agyPath).WithSessionID("expired-session").(*GeminiAgent)
+
+	var output bytes.Buffer
+	storedSession := "expired-session"
+	var captured []string
+	resetCalls := 0
+	capture := NewSessionCaptureWriter(&output, func(sessionID string) {
+		captured = append(captured, sessionID)
+		if storedSession == "" {
+			storedSession = sessionID
+		}
+	}, func() error {
+		storedSession = ""
+		resetCalls++
+		return nil
+	})
+
+	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
+
+	require.NoError(t, err)
+	assert.Contains(t, result, "Git rebase destructively rewrites")
+	assert.Equal(t, "c3b66b04-872b-4fbe-a3a4-058a026ef20a", capture.SessionID())
+	assert.Equal(t, "c3b66b04-872b-4fbe-a3a4-058a026ef20a", storedSession)
+	assert.Equal(t, 1, resetCalls)
+	assert.Equal(t, []string{
+		"c3b66b04-872b-4fbe-a3a4-058a026ef20a",
+		"c3b66b04-872b-4fbe-a3a4-058a026ef20a",
+	}, captured)
 }
 
 func TestGeminiAntigravityReviewPlainText(t *testing.T) {

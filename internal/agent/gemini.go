@@ -184,6 +184,18 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		noModelArgs := runAgent.buildArgsWithCapabilities("", agenticMode, capabilities)
 		result, _, err = runAgent.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities.streamJSON, output)
 	}
+	if err == nil && runAgent.SessionID != "" {
+		if capture, ok := output.(interface {
+			SessionID() string
+			ReplaceSessionID(string) error
+		}); ok {
+			if capturedID := capture.SessionID(); capturedID != "" && capturedID != runAgent.SessionID {
+				if replaceErr := capture.ReplaceSessionID(capturedID); replaceErr != nil {
+					return "", fmt.Errorf("replace stale Gemini session ID: %w", replaceErr)
+				}
+			}
+		}
+	}
 	if !a.usesAntigravity() && !capabilities.resume {
 		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
 			if resetErr := resetter.ResetSessionID(); resetErr != nil {
@@ -198,9 +210,11 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 // (empty string omits the -m flag entirely).
 func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []string {
 	return a.buildArgsWithCapabilities(model, agenticMode, geminiCLICapabilities{
-		streamJSON: true,
-		resume:     true,
-		plan:       true,
+		streamJSON:      true,
+		resume:          true,
+		plan:            true,
+		defaultApproval: true,
+		versionKnown:    true,
 	})
 }
 
@@ -226,6 +240,11 @@ func (a *GeminiAgent) buildArgsWithCapabilities(
 		args = append(args, "--approval-mode", "yolo")
 	} else if capabilities.plan {
 		args = append(args, "--approval-mode", "plan")
+	} else if capabilities.defaultApproval || !capabilities.versionKnown {
+		// Force non-agentic reviews to remain read-only even when the user's
+		// Gemini settings select auto_edit. Unknown versions fail closed if
+		// they don't recognize this flag.
+		args = append(args, "--approval-mode", "default")
 	}
 
 	if capabilities.resume && a.SessionID != "" && !strings.HasPrefix(a.SessionID, "-") {
@@ -236,23 +255,33 @@ func (a *GeminiAgent) buildArgsWithCapabilities(
 }
 
 type geminiCLICapabilities struct {
-	streamJSON bool
-	resume     bool
-	plan       bool
+	streamJSON      bool
+	resume          bool
+	plan            bool
+	defaultApproval bool
+	versionKnown    bool
 }
 
 const (
-	geminiStreamJSONVersion   = "0.11.0"
-	geminiResumeVersion       = "0.15.0"
-	geminiPlanModeVersion     = "0.34.0"
-	geminiVersionProbeTimeout = 10 * time.Second
+	geminiStreamJSONVersion      = "0.11.0"
+	geminiResumeVersion          = "0.15.0"
+	geminiDefaultApprovalVersion = "0.10.0"
+	geminiPlanModeVersion        = "0.34.0"
+	geminiVersionProbeTimeout    = 10 * time.Second
 )
 
 func geminiCapabilitiesFor(versionOutput string) geminiCLICapabilities {
-	streamJSON, _ := versionAtLeast(versionOutput, geminiStreamJSONVersion)
+	streamJSON, versionKnown := versionAtLeast(versionOutput, geminiStreamJSONVersion)
 	resume, _ := versionAtLeast(versionOutput, geminiResumeVersion)
+	defaultApproval, _ := versionAtLeast(versionOutput, geminiDefaultApprovalVersion)
 	plan, _ := versionAtLeast(versionOutput, geminiPlanModeVersion)
-	return geminiCLICapabilities{streamJSON: streamJSON, resume: resume, plan: plan}
+	return geminiCLICapabilities{
+		streamJSON:      streamJSON,
+		resume:          resume,
+		plan:            plan,
+		defaultApproval: defaultApproval,
+		versionKnown:    versionKnown,
+	}
 }
 
 func geminiVersionOutput(ctx context.Context, command string) string {
@@ -310,6 +339,12 @@ func (a *GeminiAgent) runGemini(
 ) (string, string, error) {
 	if a.usesAntigravity() {
 		return a.runAntigravity(ctx, repoPath, prompt, args, output)
+	}
+	if a.SessionID != "" {
+		// Gemini v0.15 validates that a non-TTY resumed invocation has either
+		// --prompt or interactive stdin. Keep the review prompt on stdin and
+		// add a short prompt flag so that older versions accept the invocation.
+		args = append(args, "--prompt", "Review the supplied input.")
 	}
 
 	parseOutput := parsePlainTextOutput

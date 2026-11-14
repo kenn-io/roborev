@@ -42,14 +42,6 @@ func (t *trailingReviewText) AppendWithID(id, delta string) {
 	if delta == "" {
 		return
 	}
-	if id == "" {
-		if len(t.parts) == 0 {
-			t.parts = append(t.parts, delta)
-			return
-		}
-		t.parts[len(t.parts)-1] += delta
-		return
-	}
 	if idx, ok := t.indexByID[id]; ok {
 		t.parts[idx] += delta
 		return
