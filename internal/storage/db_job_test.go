@@ -531,6 +531,7 @@ func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
 }
 
 func TestRebuttalSessionSurvivesRequeueAndReset(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		repoPath string
@@ -540,7 +541,6 @@ func TestRebuttalSessionSurvivesRequeueAndReset(t *testing.T) {
 		{name: "update interruption", repoPath: "/tmp/update-requeue-rebuttal", gitRef: "rebuttal-sha", requeue: true},
 		{name: "stale reset", repoPath: "/tmp/reset-stale-rebuttal", gitRef: "reset-stale-sha"},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			env := setupJobEnv(t, tc.repoPath, tc.gitRef)
