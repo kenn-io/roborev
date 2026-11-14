@@ -520,21 +520,13 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 // the full roborev ping payload, including fields the shared kit probe does
 // not model such as mcp_url.
 func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
-	return ProbeDaemonPingContext(context.Background(), ep, timeout)
-}
-
-// ProbeDaemonPingContext validates an endpoint and returns its daemon identity
-// using the caller's context.
-func ProbeDaemonPingContext(
-	ctx context.Context, ep DaemonEndpoint, timeout time.Duration,
-) (*PingInfo, error) {
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
 	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	resp, err := ep.APIClient(timeout).PingRaw(ctx)
 	if err != nil {
@@ -826,7 +818,7 @@ func runInterruptFallback(
 	if confirmedDead() {
 		return nil
 	}
-	ping, err := ProbeDaemonPingContext(ctx, endpoint, 2*time.Second)
+	ping, err := ProbeDaemonPing(endpoint, 2*time.Second)
 	if confirmedDead() {
 		return nil
 	}

@@ -69,7 +69,7 @@ func prepareInterruptUpdateDaemon(
 		return nil, fmt.Errorf("check running jobs before interruption returned HTTP %d", resp.StatusCode)
 	}
 	for _, job := range resp.JSON200.Jobs {
-		if job.Status == "running" && job.Source != nil &&
+		if job.Source != nil &&
 			*job.Source == storage.JobSourceRebuttal &&
 			job.SessionID != nil && *job.SessionID != "" {
 			return nil, errors.New("cannot interrupt a running rebuttal without losing its agent session; use --running=wait")
@@ -96,7 +96,7 @@ func interruptTargetAtEndpoint(
 	if info.Stale() {
 		return false, nil
 	}
-	ping, err := daemon.ProbeDaemonPingContext(ctx, endpoint, 2*time.Second)
+	ping, err := daemon.ProbeDaemonPing(endpoint, 2*time.Second)
 	if info.Stale() {
 		return false, nil
 	}
