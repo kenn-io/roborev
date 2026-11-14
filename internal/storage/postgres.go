@@ -960,7 +960,6 @@ const pgUpsertReviewSQL = `
  CASE WHEN $7::jsonb->'legacy' IS NOT NULL THEN 'Unstructured historical review' ELSE '' END,
  CASE WHEN $7::jsonb->'legacy' IS NULL THEN clock_timestamp() ELSE NULL END
  FROM current_attempt a WHERE ($7::jsonb->'legacy' IS NOT NULL OR EXISTS (SELECT 1 FROM eligible_review))
- AND (SELECT count(*) FROM locked_review) >= 0
  ON CONFLICT DO NOTHING RETURNING 1
  ), resolved AS (
  UPDATE legacy_reviews SET record = record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id),
