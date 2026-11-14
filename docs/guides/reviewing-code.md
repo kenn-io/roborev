@@ -442,12 +442,17 @@ following agents support it:
 |-------|-----------------|
 | Codex | `codex exec resume --json <session>` |
 | Claude Code | `claude --resume <session>` |
+| Gemini | `agy --conversation <session>` or `gemini --resume <session>` |
 | OpenCode | `opencode run --session <session>` |
 | Kilo | `kilo run --session <session>` |
 | Pi | `pi --session <path>` |
 
-Agents that do not support session reuse (Gemini, Copilot, Cursor, Kiro, Droid)
-ignore the setting and always start fresh sessions.
+Gemini session reuse requires version 0.15.0 or later. Antigravity can resume
+stored conversations from version 1.0.9, but version 1.1.8 or later is required
+to capture conversation IDs for future reviews.
+
+Agents that do not support session reuse (Copilot, Cursor, Kiro, Droid) ignore
+the setting and always start fresh sessions.
 
 ### Tuning with Lookback
 

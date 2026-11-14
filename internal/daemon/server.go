@@ -1328,24 +1328,24 @@ func findCompatibleReusableSession(
 	globalCfg *config.Config,
 	experiment *storage.ExperimentAssignmentInput,
 	ciPRNumber int,
-) (string, *uuid.UUID) {
+) (string, string, *uuid.UUID) {
 	// A resumed agent session may retain the caller's cwd. Isolated committed
 	// reviews always start fresh; dirty and CI session policies are unchanged.
 	committedReview := opts.JobType == "" || opts.JobType == storage.JobTypeReview || opts.JobType == storage.JobTypeRange
 	if committedReview && opts.Source != storage.JobSourceCI && opts.CIBaseBranch == "" &&
 		opts.GitRef != "dirty" && opts.DiffContent == "" &&
 		config.ResolveIsolateReviewsFromConfig(repoCfg, globalCfg) {
-		return "", nil
+		return "", "", nil
 	}
 	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||
 		opts.Branch == "" || targetSHA == "" ||
 		opts.PanelRole == storage.PanelRoleSynthesis ||
 		!agent.SupportsSessionResume(opts.Agent) {
-		return "", nil
+		return "", "", nil
 	}
 	machineID, err := db.GetMachineID()
 	if err != nil || machineID == uuid.Nil() {
-		return "", nil
+		return "", "", nil
 	}
 	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
 		RepoID:                opts.RepoID,
@@ -1369,7 +1369,7 @@ func findCompatibleReusableSession(
 	})
 	if err != nil {
 		log.Printf("enqueue: lookup compatible reusable session failed for repo=%d agent=%q: %v", opts.RepoID, opts.Agent, err)
-		return "", nil
+		return "", "", nil
 	}
 	const maxSessionReuseDistance = 50
 	for _, candidate := range candidates {
@@ -1385,9 +1385,9 @@ func findCompatibleReusableSession(
 		if err != nil || len(commitsSinceCandidate) > maxSessionReuseDistance {
 			continue
 		}
-		return candidate.SessionID, candidate.UUID
+		return candidate.SessionID, candidate.SessionCLI, candidate.UUID
 	}
-	return "", nil
+	return "", "", nil
 }
 
 func reusableSessionTarget(gitRef string) string {
@@ -3466,7 +3466,7 @@ func (s *Server) enqueueSingleAgent(
 		o.Experiment = assignment
 	}
 	if in.req.ReviewSettings == nil {
-		o.SessionID, o.ResumeSourceJobUUID = findCompatibleReusableSession(
+		o.SessionID, o.SessionCLI, o.ResumeSourceJobUUID = findCompatibleReusableSession(
 			ctx, s.db, in.checkoutRoot, in.descriptor.sessionSHA, o,
 			in.repoCfg, in.rawRepoCfg, in.cfg, o.Experiment, 0,
 		)

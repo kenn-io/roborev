@@ -649,7 +649,7 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 		}
 	}
 	for i := range memberOpts {
-		memberOpts[i].SessionID, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
+		memberOpts[i].SessionID, memberOpts[i].SessionCLI, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
 			ctx, s.db, in.resolutionPath, in.descriptor.sessionSHA,
 			memberOpts[i], in.repoCfg, in.rawRepoCfg, in.cfg, synthOpts.Experiment, 0,
 		)

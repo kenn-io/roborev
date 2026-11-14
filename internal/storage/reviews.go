@@ -291,7 +291,7 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		q.ReviewType = "default"
 	}
 	query := `
-		SELECT j.id, j.uuid, j.git_ref, j.session_id, COALESCE(c.sha, '')
+		SELECT j.id, j.uuid, j.git_ref, j.session_id, COALESCE(j.session_cli, ''), COALESCE(c.sha, '')
 		FROM review_jobs j
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN experiment_assignments a ON (
@@ -365,7 +365,7 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		var job ReviewJob
 		var sessionID string
 		var commitSHA string
-		if err := rows.Scan(&job.ID, &job.UUID, &job.GitRef, &sessionID, &commitSHA); err != nil {
+		if err := rows.Scan(&job.ID, &job.UUID, &job.GitRef, &sessionID, &job.SessionCLI, &commitSHA); err != nil {
 			return nil, err
 		}
 		target := reusableSessionCandidateTarget(job.GitRef, commitSHA)

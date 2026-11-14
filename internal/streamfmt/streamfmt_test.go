@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -679,6 +680,53 @@ func TestFormatter_Gemini(t *testing.T) {
 
 	for _, tc := range tests {
 		runStreamTestCase(t, "gemini", tc)
+	}
+}
+
+func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		fixture     string
+		contains    string
+		notContains []string
+	}{
+		{
+			name:        "captured init",
+			fixture:     "../agent/testdata/antigravity-init-capture.jsonl",
+			contains:    "Antigravity session started",
+			notContains: []string{"conversation_id", "always-proceed"},
+		},
+		{
+			name:     "successful result",
+			fixture:  "../agent/testdata/antigravity-success-result-capture.jsonl",
+			contains: "RESUME_OK",
+			notContains: []string{
+				`"event":"result"`,
+			},
+		},
+		{
+			name:     "error result",
+			fixture:  "../agent/testdata/antigravity-quota-result-capture.jsonl",
+			contains: "Individual quota reached",
+			notContains: []string{
+				"RESUME_OK",
+				`"event":"result"`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			captured, err := os.ReadFile(tc.fixture)
+			require.NoError(t, err)
+			var output bytes.Buffer
+			fmtr := New(&output, true, DecoderForAgent("gemini"))
+			require.NoError(t, RenderLogWith(bytes.NewReader(captured), fmtr))
+
+			plain := StripANSI(output.String())
+			assert.Contains(t, plain, tc.contains)
+			for _, text := range tc.notContains {
+				assert.NotContains(t, plain, text)
+			}
+		})
 	}
 }
 

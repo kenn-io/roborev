@@ -890,6 +890,54 @@ func TestSynthesisUsesReviewEntrypoint(t *testing.T) {
 	assert.NotContains(synthAgent.synthPrompt, "Review the code changes in commit")
 }
 
+func TestSynthesisFallbackSavesFreshSession(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-synthesis-session-reset-member"
+	registerPassingAgent(t, memberAgent)
+	const synthAgent = "panel-synthesis-session-reset"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(_ context.Context, _, _, _ string, output io.Writer) (string, error) {
+			if _, err := io.WriteString(output, `{"session_id":"abandoned-session"}`+"\n"); err != nil {
+				return "", err
+			}
+			resetter, ok := output.(interface{ ResetSessionID() error })
+			if !ok {
+				return "", fmt.Errorf("session capture writer does not support reset")
+			}
+			if err := resetter.ResetSessionID(); err != nil {
+				return "", err
+			}
+			if _, err := io.WriteString(output, `{"session_id":"fresh-session"}`+"\n"); err != nil {
+				return "", err
+			}
+			return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+		},
+	})
+
+	runUUID, members, synth := enqueuePanelRun(t, tc, "session-reset-panel", []memberSpec{
+		{name: "only", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	_, err := tc.DB.ExecContext(t.Context(),
+		`UPDATE review_jobs SET session_id = ?, session_cli = ? WHERE id = ?`,
+		"old-session", "gemini", synth.ID,
+	)
+	require.NoError(t, err)
+	completeMember(t, tc, members[0].ID, memberAgent, "No issues found.")
+	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
+
+	_, _, usage, err := tc.Pool.runSynthesisAgent(t.Context(), testWorkerID, claimed, nil, "prompt")
+	require.NoError(t, err)
+	assert.Equal(t, "fresh-session", usage.capturedSession)
+
+	updated, err := tc.DB.GetJobByID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "fresh-session", updated.SessionID)
+}
+
 func TestSynthesisInvalidJSONRetriesWithoutStoringReview(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 1)

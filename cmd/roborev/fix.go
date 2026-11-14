@@ -371,6 +371,8 @@ func detectNewCommit(ctx context.Context, repoRoot, headBefore string) (string, 
 // fixJobDirect runs the agent directly on the repo and detects commits.
 // If the agent leaves uncommitted changes, it retries with a commit prompt.
 func fixJobDirect(ctx context.Context, params fixJobParams, fixPrompt string) (*fixJobResult, error) {
+	// A failed resume may already have edited the tree; never replay the fix.
+	ctx = agent.WithoutFreshResumeFallback(ctx)
 	out := params.Output
 	if out == nil {
 		out = io.Discard
@@ -1219,7 +1221,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		)
 		underlying = fmtr
 	}
-	capture := agent.NewSessionCaptureWriter(underlying, nil)
+	capture := agent.NewSessionCaptureWriter(underlying, nil, nil)
 
 	result, err := fixJobDirect(ctx, fixJobParams{
 		RepoRoot:      repoRoot,
@@ -1591,7 +1593,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			)
 			underlying = fmtr
 		}
-		capture := agent.NewSessionCaptureWriter(underlying, nil)
+		capture := agent.NewSessionCaptureWriter(underlying, nil, nil)
 
 		result, err := fixJobDirect(ctx, fixJobParams{
 			RepoRoot:      roots.worktreeRoot,

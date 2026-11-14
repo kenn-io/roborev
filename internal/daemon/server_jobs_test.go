@@ -930,6 +930,34 @@ func TestFindReusableSessionIDUsesDirtyBaseCommit(t *testing.T) {
 	assert.Equal(t, "session-dirty", reused)
 }
 
+func TestFindCompatibleReusableSessionReturnsSessionCLI(t *testing.T) {
+	_, db, _ := newTestServer(t)
+	repo := testutil.InitTestRepo(t)
+	targetSHA := repo.HeadSHA()
+	storedRepo, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(storedRepo.ID, targetSHA, "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	reuseSessions := true
+	globalCfg := &config.Config{ReuseReviewSession: &reuseSessions}
+	opts := storage.EnqueueOpts{
+		RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: targetSHA,
+		Branch: "feature/session", Agent: "gemini", Reasoning: "thorough", ReviewType: config.ReviewTypeDefault,
+	}
+	job, err := db.EnqueueJob(opts)
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "gemini", "prompt", "No issues found."))
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = 'session', session_cli = 'agy' WHERE id = ?`, job.ID)
+	require.NoError(t, err)
+
+	_, sessionCLI, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
+	assert.Equal(t, "agy", sessionCLI, "the worker compares this CLI before resuming")
+}
+
 func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 

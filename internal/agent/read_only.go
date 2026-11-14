@@ -17,6 +17,20 @@ func WithReadOnlyReview(ctx context.Context) context.Context {
 	return context.WithValue(ctx, planningContextKey{}, true)
 }
 
+type noFreshResumeFallbackKey struct{}
+
+// WithoutFreshResumeFallback stops adapters from replaying a prompt in a fresh
+// session after a resumed attempt fails. Use it for mutating runs, where the
+// failed attempt may already have edited the working tree.
+func WithoutFreshResumeFallback(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noFreshResumeFallbackKey{}, true)
+}
+
+func freshResumeFallbackAllowed(ctx context.Context) bool {
+	disabled, _ := ctx.Value(noFreshResumeFallbackKey{}).(bool)
+	return ctx.Err() == nil && !disabled
+}
+
 func (*CodexAgent) SupportsReadOnlyReview() bool  { return true }
 func (*ClaudeAgent) SupportsReadOnlyReview() bool { return true }
 func (*PiAgent) SupportsReadOnlyReview() bool     { return true }

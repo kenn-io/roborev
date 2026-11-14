@@ -1877,6 +1877,45 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 	assert.Equal(t, "session-B", j.SessionID)
 }
 
+func TestSaveJobSessionIDWithCLI_ReplacesSuccessfulResume(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "session-resume-refresh")
+	claimJob(t, db, "worker-A")
+	source := testUUID("resumed-session-source")
+	_, err := db.ExecContext(t.Context(), `
+		UPDATE review_jobs
+		SET session_id = ?, session_cli = ?, session_resumed = 1, resume_source_job_uuid = ?
+		WHERE id = ?`,
+		"inherited-session", "gemini", source.String(), job.ID,
+	)
+	require.NoError(t, err)
+
+	readSession := func() (string, string, int, string) {
+		t.Helper()
+		var sessionID, sessionCLI, resumeSource sql.NullString
+		var resumed int
+		require.NoError(t, db.QueryRowContext(t.Context(), `
+			SELECT session_id, session_cli, session_resumed, resume_source_job_uuid
+			FROM review_jobs WHERE id = ?`, job.ID,
+		).Scan(&sessionID, &sessionCLI, &resumed, &resumeSource))
+		return sessionID.String, sessionCLI.String, resumed, resumeSource.String
+	}
+
+	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-A", "fresh-session", "gemini"))
+	sessionID, sessionCLI, resumed, resumeSource := readSession()
+	assert.Equal(t, "fresh-session", sessionID)
+	assert.Equal(t, "gemini", sessionCLI)
+	assert.Zero(t, resumed)
+	assert.Empty(t, resumeSource)
+
+	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-A", "later-session", "gemini"))
+	sessionID, _, _, _ = readSession()
+	assert.Equal(t, "fresh-session", sessionID)
+}
+
 // TestMarkJobAgentInvoked_StaleWorkerIgnored verifies the agent-ran marker is
 // scoped to the current attempt: a worker that calls MarkJobAgentInvoked after
 // its attempt was canceled and re-claimed by another worker must not set the
