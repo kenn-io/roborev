@@ -91,8 +91,11 @@ default branch, add `sources = ["ci_branch"]` and use
 The hook uses the repo's committed `.kata.toml` binding by default; set
 `project = "myproj"` to override. Every issue receives the `roborev` label plus
 a marker label (`review-failed` or `review-finding`) and any extra `labels` you
-configure. roborev uses an idempotency key per job/event, so reruns do not
-create duplicate issues.
+configure. roborev uses an idempotency key per job/event, so rerunning a job
+does not create a duplicate issue. A review of a commit that landed on the
+default branch is keyed by that commit, so rerunning it reuses the commit's
+issue. Rerunning any other review panel starts new jobs and can open another
+issue.
 
 See [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration)
 in the review hooks guide for hook fields and event patterns.

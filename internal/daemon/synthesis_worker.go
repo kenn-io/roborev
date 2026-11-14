@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"strings"
-	"time"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -409,23 +408,12 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	log.Printf("[%s] Completed synthesis job %d %s panel=%s",
 		workerID, job.ID, job.RepoName, job.PanelName)
 
-	wp.broadcaster.Broadcast(Event{
-		Type:              "review.completed",
-		TS:                time.Now(),
-		JobID:             job.ID,
-		JobUUID:           job.UUID,
-		Repo:              job.RepoPath,
-		RepoName:          job.RepoName,
-		SHA:               job.GitRef,
-		Branch:            job.HookBranch(),
-		Source:            job.Source,
-		PanelRole:         job.PanelRole,
-		Agent:             agentName,
-		SuppressRepoHooks: hasSuppliedReviewSettings(job),
-		Verdict:           string(verdict),
-		Findings:          output,
-		WorktreePath:      wp.synthesisEventWorktreePath(job),
-	})
+	event := eventForJob("review.completed", job, job.ID)
+	event.Agent = agentName
+	event.Verdict = string(verdict)
+	event.Findings = output
+	event.WorktreePath = wp.synthesisEventWorktreePath(job)
+	wp.broadcaster.Broadcast(event)
 }
 
 // synthesisEventWorktreePath reports the caller's checkout with a combined
@@ -469,19 +457,9 @@ func (wp *WorkerPool) runSynthesisAgent(
 		return reviewpkg.SynthesisDocument{}, "", sessionTokenUsage{}, err
 	}
 
-	wp.broadcaster.Broadcast(Event{
-		Type:              "review.started",
-		TS:                time.Now(),
-		JobID:             job.ID,
-		Repo:              job.RepoPath,
-		RepoName:          job.RepoName,
-		SHA:               job.GitRef,
-		Branch:            job.HookBranch(),
-		Source:            job.Source,
-		PanelRole:         job.PanelRole,
-		Agent:             agentName,
-		SuppressRepoHooks: hasSuppliedReviewSettings(job),
-	})
+	started := eventForJob("review.started", job, job.ID)
+	started.Agent = agentName
+	wp.broadcaster.Broadcast(started)
 
 	cfg := wp.cfgGetter.Config()
 	var tools *config.ReviewToolPolicy

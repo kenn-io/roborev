@@ -137,6 +137,28 @@ func TestRunKataHookLinksLandedCommitAndPullRequest(t *testing.T) {
 	assert.NotContains(t, req.Body, "hidden-secret", "remote credentials stay out of issue text")
 }
 
+func TestRunKataHookKeysLandedCommitIssuesByCommit(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	parent := repo.CommitFile("app.txt", "one\n", "initial")
+	landed := repo.CommitFile("app.txt", "two\n", "change")
+	file := func(run, source string) kata.CreateReq {
+		reqs := runKataHookFor(t, Event{
+			Type: "review.completed", Verdict: "F", JobID: 9, JobUUID: testUUIDPtr(run), RepoName: "api",
+			SHA: parent + ".." + landed, PanelRole: storage.PanelRoleSynthesis, Source: source,
+		}, repo.Path())
+		require.Len(t, reqs, 1)
+		return reqs[0]
+	}
+
+	landedKey := "roborev:landed:api:" + landed + ":review.completed"
+	assert.Equal(landedKey, file("first run", storage.JobSourceCIBranch).IdempotencyKey)
+	assert.Equal(landedKey, file("rerun", storage.JobSourceCIBranch).IdempotencyKey,
+		"a rerun reuses the landed commit's issue")
+	assert.Equal("roborev:job:"+testUUID("first run").String()+":review.completed", //nolint:forbidigo // Kata idempotency key text boundary.
+		file("first run", storage.JobSourceCI).IdempotencyKey, "other reviews keep one issue per job")
+}
+
 func TestRunKataHookLinksMergeCommitPullRequest(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("app.txt", "one\n", "initial")

@@ -266,8 +266,10 @@ The Kata hook runs in the repo's working directory and uses the repo's committed
 `.kata.toml` binding by default. Set `project = "myproj"` to override the target
 project. Every issue receives the `roborev` label plus a marker label
 (`review-failed` or `review-finding`) and any extra `labels` you configure.
-roborev uses an idempotency key per job/event so reruns do not create duplicate
-Kata issues.
+roborev uses an idempotency key per job/event so rerunning a job does not create
+a duplicate Kata issue. A review of a commit that landed on the default branch
+is keyed by that commit, so rerunning it reuses the commit's issue. Rerunning
+any other review panel starts new jobs and can open another issue.
 
 The `kata` CLI must be on `PATH`. If it is missing, or the repo is not bound to
 a Kata project, the hook is skipped. If you explicitly configured the hook but
@@ -445,7 +447,8 @@ command = "test {verdict} = P && ~/hooks/on-pass.sh {job_id} || ~/hooks/on-fail.
 - Branch filters fail closed: if a hook has a non-empty `branches` list and the
     event has no branch, the hook does not run
 - Source filters fail closed the same way: a hook with a non-empty `sources`
-    list does not run for a review that has no source
+    list does not run for a review that has no source. `roborev doctor` warns
+    about a source name that matches no review
 
 ## Git Hooks
 

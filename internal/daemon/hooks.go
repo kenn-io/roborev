@@ -279,6 +279,15 @@ func matchBranch(patterns []string, branch string) bool {
 	return false
 }
 
+// HookSources are the job sources a hook's sources allowlist can match. Add a
+// source here when hooks start receiving its events, so configuration checks
+// such as roborev doctor accept hooks that filter on it. Rebuttal jobs are
+// left out: their events never reach hooks.
+var HookSources = []string{
+	storage.JobSourceCI, storage.JobSourceCIBranch, storage.JobSourcePostCommit,
+	storage.JobSourceAutoDesign, storage.JobSourceReviewPrompt,
+}
+
 // matchSource reports whether an event's job source satisfies a hook's sources
 // allowlist. An empty allowlist matches every event. Explicit reviews have no
 // source, so a non-empty allowlist never matches them.
@@ -518,6 +527,11 @@ func kataCreateRequest(hook config.HookConfig, event Event, commit kataCommit) (
 	idempotencyKey := fmt.Sprintf("roborev:%d:%s:%s", event.JobID, event.Type, event.SHA)
 	if event.JobUUID != nil {
 		idempotencyKey = fmt.Sprintf("roborev:job:%s:%s", event.JobUUID, event.Type)
+	}
+	if event.Source == storage.JobSourceCIBranch {
+		// Rerunning a landed commit's review queues new jobs. Keying on the
+		// commit keeps one findings issue and one failure issue per commit.
+		idempotencyKey = fmt.Sprintf("roborev:landed:%s:%s:%s", repoName, commit.SHA, event.Type)
 	}
 
 	return kata.CreateReq{
