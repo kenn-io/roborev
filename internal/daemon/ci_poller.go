@@ -229,29 +229,6 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
 	p.loadRepoConfigFn = loadCIRepoConfig
-	// CI prompts deliberately carry no kata context. PR-creator trust does
-	// not extend to whoever controls the reviewed head SHA (any write
-	// collaborator can push to a same-repo PR branch), and GitHub's polling
-	// APIs expose no non-spoofable head-pusher signal to gate on, so kata
-	// task-ledger content stays out of CI prompts entirely (it could
-	// otherwise surface in publicly posted PR comments). Kata context is a
-	// local-review feature; the worker also skips it for CI jobs.
-	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
-		builder := prompt.NewBuilderWithConfig(p.db, cfg).
-			WithContext(ctx).
-			ForRepo(repoPath, repoID).
-			WithRepoConfig(repoCfg, repoCfgRef).
-			WithStructuredOutput(true).
-			WithPullRequest(pr)
-		return builder.BuildWithAdditionalContext(
-			gitRef,
-			contextCount,
-			agentName,
-			reviewType,
-			minSeverity,
-			additionalContext,
-		)
-	}
 	p.postPRCommentFn = p.postPRComment
 
 	if cfg.CI.GitHubAppConfigured() {
@@ -714,7 +691,7 @@ func (p *CIPoller) reconcileRetryHealth(
 func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *config.Config) error {
 	// Retry unfinished cancellation before any gate can skip this PR. Active
 	// panels remain subject to the normal enqueue and quiet-hours decisions.
-	if err := p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid, false); err != nil {
+	if err := p.supersedePriorPanels(ctx, ghRepo, pr.Number, pr.HeadRefOid, false); err != nil {
 		return err
 	}
 	// Skip if this HEAD already has a panel run, unless its retry is deferred.
@@ -761,7 +738,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		if dec.quietOnly {
 			p.markPanelsForStalePost(ghRepo, pr)
 		} else {
-			if err := p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid, true); err != nil {
+			if err := p.supersedePriorPanels(ctx, ghRepo, pr.Number, pr.HeadRefOid, true); err != nil {
 				return err
 			}
 		}
@@ -823,7 +800,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	// fetch/merge-base so a transient clone/fetch failure never cancels the prior
 	// run. Throttled rapid re-pushes supersede before returning above, without
 	// enqueuing a replacement run.
-	if err := p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid, true); err != nil {
+	if err := p.supersedePriorPanels(ctx, ghRepo, pr.Number, pr.HeadRefOid, true); err != nil {
 		return false, err
 	}
 
@@ -1777,7 +1754,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	contextCount := config.ResolveReviewContextCount(in.repoCfg, in.cfg)
 	memberOpts := make([]storage.EnqueueOpts, 0, len(in.members))
 	for i, m := range in.members {
-		storedPrompt, err := p.callBuildReviewPrompt(
+		built, err := p.callBuildReviewPromptResult(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, contextCount,
 			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext,
 			in.pullRequest, in.repoCfg, in.repoCfgRef, in.cfg,
@@ -1790,7 +1767,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			}
 			log.Printf("CI poller: failed to prebuild prompt for %s#%d (member=%s, agent=%s): %v; enqueuing without stored prompt",
 				in.ghRepo, in.prNumber, m.Name, m.Agent, err)
-			storedPrompt = ""
+			built = prompt.BuildResult{}
 		}
 		acpSnapshot, err := snapshotACPExecutionConfig(
 			in.repoCfg, in.cfg, m.Agent, m.BackupAgent,
@@ -1809,6 +1786,10 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 				"snapshot ACP config for panel member %q: %w", m.Name, err,
 			)
 		}
+		var digest *string
+		if built.RubricSHA256 != "" {
+			digest = &built.RubricSHA256
+		}
 		memberOpts = append(memberOpts, storage.EnqueueOpts{
 			RepoID:                in.repo.ID,
 			GitRef:                in.gitRef,
@@ -1822,8 +1803,9 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			Reasoning:             m.Reasoning,
 			ReviewType:            m.ReviewType,
 			MinSeverity:           reviewMinSeverity,
-			Prompt:                storedPrompt,
-			PromptPrebuilt:        storedPrompt != "",
+			Prompt:                built.Prompt,
+			PromptPrebuilt:        built.Prompt != "",
+			RubricSHA256:          digest,
 			JobType:               storage.JobTypeRange,
 			Source:                storage.JobSourceCI,
 			PanelRole:             storage.PanelRoleMember,
@@ -3046,7 +3028,7 @@ func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string)
 // it also retires and cancels active runs for older heads before their replacement
 // enqueues. Mappings remain non-postable throttle memory, and failures remain
 // eligible for later polls. Current-head attempts retain their retry backoff.
-func (p *CIPoller) supersedePriorPanels(ghRepo string, prNumber int, newHeadSHA string, includeActive bool) error {
+func (p *CIPoller) supersedePriorPanels(ctx context.Context, ghRepo string, prNumber int, newHeadSHA string, includeActive bool) error {
 	rows, err := p.db.GetUnpostedPanelsForPR(ghRepo, prNumber)
 	if err != nil {
 		return fmt.Errorf("list panels for supersede cleanup: %w", err)
@@ -3066,7 +3048,8 @@ func (p *CIPoller) supersedePriorPanels(ghRepo string, prNumber int, newHeadSHA 
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: retire mapping %s: %w", row.PanelRunUUID, err))
 			continue
 		}
-		canceled, err := cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth)
+		// Complete the cancellation snapshot even if the poll is interrupted.
+		canceled, err := cancelPanelRunParentFirst(context.WithoutCancel(ctx), p.db, p.jobCancelFn, synth)
 		p.broadcastCanceledJobs(canceled)
 		if err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: cancel run %s: %w", row.PanelRunUUID, err))
@@ -3439,7 +3422,7 @@ func (p *CIPoller) cleanupClosedPRPanels(ctx context.Context, ghRepo string, ope
 		if target.Open {
 			continue
 		}
-		if err := p.cancelClosedPRPanelRuns(ghRepo, prNumber); err != nil {
+		if err := p.cancelClosedPRPanelRuns(ctx, ghRepo, prNumber); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("cancel closed PR #%d panels: %w", prNumber, err))
 			continue
 		}
@@ -3515,7 +3498,7 @@ func (p *CIPoller) deleteClosedPRAttempts(ghRepo string, prNumber int) error {
 // cancelClosedPRPanelRuns cancels (parent-first) and retires every unposted
 // panel run for a confirmed-closed PR, including retired runs awaiting cleanup.
 // Keep delivery mappings so an explicit rerun can still target the same PR.
-func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) error {
+func (p *CIPoller) cancelClosedPRPanelRuns(ctx context.Context, ghRepo string, prNumber int) error {
 	rows, err := p.db.GetUnpostedPanelsForPR(ghRepo, prNumber)
 	if err != nil {
 		return fmt.Errorf("list unposted panels: %w", err)
@@ -3534,7 +3517,8 @@ func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) error {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("retire panel %s: %w", row.PanelRunUUID, err))
 			continue
 		}
-		canceled, err := cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth)
+		// Complete the cancellation snapshot even if the poll is interrupted.
+		canceled, err := cancelPanelRunParentFirst(context.WithoutCancel(ctx), p.db, p.jobCancelFn, synth)
 		p.broadcastCanceledJobs(canceled)
 		if err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("cancel run %s: %w", row.PanelRunUUID, err))
@@ -3777,9 +3761,12 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
-func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
+// CI prompts omit Kata context because the reviewed head may be untrusted and
+// its review can be posted publicly. The worker also skips it for CI jobs.
+func (p *CIPoller) callBuildReviewPromptResult(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (prompt.BuildResult, error) {
 	if p.buildReviewPromptFn != nil {
-		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
+		text, err := p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
+		return prompt.BuildResult{Prompt: text}, err
 	}
 	builder := prompt.NewBuilderWithConfig(p.db, cfg).
 		WithContext(ctx).
@@ -3787,7 +3774,7 @@ func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef s
 		WithRepoConfig(repoCfg, repoCfgRef).
 		WithStructuredOutput(true).
 		WithPullRequest(pr)
-	return builder.BuildWithAdditionalContext(
+	return builder.BuildResultWithAdditionalContext(
 		gitRef,
 		contextCount,
 		agentName,

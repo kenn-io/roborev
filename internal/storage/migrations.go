@@ -51,6 +51,7 @@ var schemaMigrations = []schemaMigration{
 	{15, "local review invocation reports", migrateReviewInvocations},
 	{16, "token cost lookup state", migrateTokenCostLookups},
 	{17, "supplied panel enqueue receipts", migratePanelEnqueueRequests},
+	{18, "rubric digest", migrateRubricDigest},
 }
 
 func migrateSyncPendingIndexes(ctx context.Context, db *DB) error {
@@ -277,5 +278,14 @@ func migrateSearchChanges(ctx context.Context, db *DB) error {
 		INSERT INTO search_changes(job_id) VALUES (OLD.job_id);
 	END;
 	`)
+	return err
+}
+
+func migrateRubricDigest(ctx context.Context, db *DB) error {
+	exists, err := hasColumn(ctx, db, "review_jobs", "rubric_sha256")
+	if err != nil || exists {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ALTER TABLE review_jobs ADD COLUMN rubric_sha256 TEXT`)
 	return err
 }

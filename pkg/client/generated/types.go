@@ -1222,6 +1222,7 @@ type EnqueueCreatedResponse struct {
 	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
+	RubricSha256          *string                `json:"rubric_sha256,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
@@ -2972,6 +2973,7 @@ type PanelEnqueueResponse struct {
 	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
+	RubricSha256          *string                `json:"rubric_sha256,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
@@ -3782,6 +3784,7 @@ type ReviewJob struct {
 	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
+	RubricSha256          *string                `json:"rubric_sha256,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`

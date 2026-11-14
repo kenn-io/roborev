@@ -603,7 +603,7 @@ func validateKeyForScope(key, value string, isGlobal bool) (any, error) {
 		cfg := config.DefaultConfig()
 		if err := config.SetConfigValue(cfg, key, value); err != nil {
 			repoCfg := &config.RepoConfig{}
-			if config.SetConfigValue(repoCfg, key, value) == nil {
+			if key != "kata_rubrics.mode" && config.SetConfigValue(repoCfg, key, value) == nil {
 				return nil, fmt.Errorf("key %q is a per-repo setting (use without --global, or set in .roborev.toml)", key)
 			}
 			return nil, err
@@ -614,7 +614,7 @@ func validateKeyForScope(key, value string, isGlobal bool) (any, error) {
 	repoCfg := &config.RepoConfig{}
 	if err := config.SetConfigValue(repoCfg, key, value); err != nil {
 		cfg := config.DefaultConfig()
-		if config.SetConfigValue(cfg, key, value) == nil {
+		if key != "kata_rubrics.mode" && config.SetConfigValue(cfg, key, value) == nil {
 			return nil, fmt.Errorf("key %q is a global setting (use --global to set in %s)", key, config.GlobalConfigPath())
 		}
 		return nil, err

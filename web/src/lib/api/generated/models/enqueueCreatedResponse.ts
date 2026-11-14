@@ -56,6 +56,7 @@ export interface EnqueueCreatedResponse {
   resume_source_job_uuid?: string;
   retry_count: number;
   review_type?: string;
+  rubric_sha256?: string;
   session_id?: string;
   skip_reason?: string;
   source?: string;

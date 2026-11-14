@@ -118,15 +118,17 @@ func TestMatchBranch(t *testing.T) {
 }
 
 func TestInterpolate(t *testing.T) {
+	digest := "1234567890abcdef"
 	event := Event{
-		JobID:    42,
-		Repo:     "/home/user/myrepo",
-		RepoName: "myrepo",
-		SHA:      "abc123def456",
-		Agent:    "codex",
-		Verdict:  "F",
-		Findings: "High — missing input validation in handler",
-		Error:    "agent timeout",
+		RubricSHA256: &digest,
+		JobID:        42,
+		Repo:         "/home/user/myrepo",
+		RepoName:     "myrepo",
+		SHA:          "abc123def456",
+		Agent:        "codex",
+		Verdict:      "F",
+		Findings:     "High — missing input validation in handler",
+		Error:        "agent timeout",
 	}
 
 	tests := []struct {
@@ -150,6 +152,10 @@ func TestInterpolate(t *testing.T) {
 			"process " + quote("High — missing input validation in handler"),
 		},
 		{
+			"echo {rubric_sha256}",
+			"echo " + quote(digest),
+		},
+		{
 			"",
 			"",
 		},
@@ -163,6 +169,8 @@ func TestInterpolate(t *testing.T) {
 			}, "interpolate(%q) = %q, want %q", tt.cmd, got, tt.want)
 		}
 	}
+	event.RubricSHA256 = nil
+	assert.Equal(t, "echo "+quote(""), interpolate("echo {rubric_sha256}", event))
 }
 
 func TestInterpolateShellInjection(t *testing.T) {

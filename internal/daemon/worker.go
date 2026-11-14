@@ -59,6 +59,8 @@ type WorkerPool struct {
 	activityLog          *ActivityLog
 	budgetRouter         *BudgetRouter
 	captureSetupFinished func()
+	// archiveClient is replaced by tests; nil uses the Kata CLI.
+	archiveClient func(string) kata.Client
 
 	// workersMu guards numWorkers, liveWorkers, claimCancels, started, and
 	// stopped so a resize never adds to wg after Stop has begun waiting on it.
@@ -87,8 +89,8 @@ type WorkerPool struct {
 	updateInterruptTargets map[int64]struct{}
 	failedUpdateRequeues   map[int64]string
 	runningJobsMu          sync.Mutex
-	// attemptTransitionsMu linearizes update-target registration with every
-	// attempt-scoped retry, failover, failure, or completion transition.
+	// attemptTransitionsMu linearizes update-target registration and HTTP
+	// cancellation ownership publication with attempt-scoped transitions.
 	attemptTransitionsMu sync.RWMutex
 
 	// Agent cooldowns for quota exhaustion
@@ -1220,6 +1222,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 	var reviewPrompt string
+	var rubricDigest *string
+	var rubricBytes []byte
+	var rubricArchiveEnabled bool
+	var rubricArchiveSkipReason string
 	var fileCoverage *storage.ReviewFileCoverage
 	var promptToPersist string
 	effectiveMinSeverity := job.MinSeverity
@@ -1245,6 +1251,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
+		if job.Source == storage.JobSourceCI || job.Source == "ci_branch" {
+			rubricDigest = job.RubricSHA256
+		}
 		// CI jobs store their threshold at enqueue. A supplied prompt replaces
 		// only the prompt, so its threshold resolves like an ordinary review's.
 		if job.Source == storage.JobSourceReviewPrompt && !hasSuppliedReviewSettings(job) && effectiveMinSeverity == "" {
@@ -1320,17 +1329,33 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			if job.DiffContent != nil {
 				diffContent = *job.DiffContent
 			}
-			reviewPrompt, err = pb.BuildDirtyWithFiles(
+			var built prompt.BuildResult
+			built, err = pb.BuildDirtyResult(
 				diffContent, job.DirtyFiles, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
+			reviewPrompt = built.Prompt
+			if built.RubricSHA256 != "" {
+				rubricDigest = &built.RubricSHA256
+				rubricBytes = built.Rubric
+				rubricArchiveEnabled = built.RubricArchiveEnabled
+				rubricArchiveSkipReason = built.RubricArchiveSkipReason
+			}
 		} else {
 			// Build the complete prompt; preparation happens after all additions.
 			excludes := config.ResolveExcludePatterns(
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
-			reviewPrompt, err = pb.Build(
-				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
+			var built prompt.BuildResult
+			built, err = pb.BuildResultWithAdditionalContext(
+				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity, "",
 			)
+			reviewPrompt = built.Prompt
+			if built.RubricSHA256 != "" {
+				rubricDigest = &built.RubricSHA256
+				rubricBytes = built.Rubric
+				rubricArchiveEnabled = built.RubricArchiveEnabled
+				rubricArchiveSkipReason = built.RubricArchiveSkipReason
+			}
 			if err == nil {
 				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
 			}
@@ -1367,13 +1392,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// The job's stored prompt is the only copy the prompt views read, so a
 	// failed save retries the job instead of running the agent without it.
-	if saved, err := wp.db.SaveJobPromptForAttempt(job, workerID, promptToPersist); err != nil {
-		log.Printf("[%s] Error saving prompt: %v", workerID, err)
-		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
-		return
-	} else if !saved {
+	if !wp.savePromptOrFinish(ctx, workerID, job, promptToPersist, rubricDigest, checkout.eventWorktreePath) {
 		return
 	}
+
+	job.RubricSHA256 = rubricDigest
+	archiveEligible := prepareRubricArchive(job, rubricArchiveEnabled, rubricBytes)
 
 	// Get the configured job agent. Backup failover is handled explicitly by
 	// failOrRetryAgent so jobs never silently run on the hardcoded fallback chain.
@@ -1455,6 +1479,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Broadcast started event
 	wp.broadcaster.Broadcast(Event{
 		Type:              "review.started",
+		ReviewType:        job.ReviewType,
+		RubricSHA256:      job.RubricSHA256,
 		TS:                time.Now(),
 		JobID:             job.ID,
 		Repo:              job.RepoPath,
@@ -1865,6 +1891,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		wp.broadcaster.Broadcast(Event{
 			Type:              "review.completed",
+			ReviewType:        job.ReviewType,
+			RubricSHA256:      job.RubricSHA256,
 			TS:                time.Now(),
 			JobID:             job.ID,
 			JobUUID:           job.UUID,
@@ -1880,9 +1908,59 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			SuppressRepoHooks: hasSuppliedReviewSettings(job),
 		})
 	})
+	if completed && rubricArchiveSkipReason != "" {
+		log.Printf("rubric archive for job %d skipped: %s", job.ID, rubricArchiveSkipReason)
+	}
+	if completed && archiveEligible {
+		archiveJob := *job
+		archivePath := checkout.resolvedConfigRepoPath()
+		client := kata.Client(kata.NewCLIClient(archivePath))
+		if wp.archiveClient != nil {
+			client = wp.archiveClient(archivePath)
+		}
+		wp.wg.Go(func() {
+			// Archiving outlives the review attempt but has its own deadline.
+			archiveCtx, archiveCancel := context.WithTimeout(context.WithoutCancel(ctx), rubricArchiveTimeout)
+			defer archiveCancel()
+			archiveRubric(archiveCtx, client, archiveJob, archivePath, rubricBytes, *rubricDigest, func(err error) {
+				log.Printf("rubric archive for job %d failed; check Kata binding and Docbank setup: %v", archiveJob.ID, err)
+			})
+		})
+	}
 	if completed && wp.captureSetupFinished != nil {
 		wp.captureSetupFinished()
 	}
+}
+
+// savePromptOrFinish stores the prompt and digest for a running claim and
+// reports whether the worker may continue. For a canceled row, it waits for
+// the context and emits its event. Explicit delivery records ownership before
+// cancellation; the HTTP transition lock orders independent deadlines. Other
+// save errors retry; a replaced claim does nothing. A failed status read is
+// logged without emitting or retrying; the finalizer still verifies the claim.
+func (wp *WorkerPool) savePromptOrFinish(
+	ctx context.Context, workerID string, job *storage.ReviewJob, text string,
+	digest *string, eventWorktreePath string,
+) bool {
+	saved, err := wp.db.SaveJobPromptForAttempt(ctx, job, workerID, text, digest)
+	if saved {
+		return true
+	}
+	current, getErr := wp.db.GetJobByIDContext(context.WithoutCancel(ctx), job.ID)
+	switch {
+	case getErr == nil && current.Status == storage.JobStatusCanceled:
+		// Explicit cancellation delivery records ownership before canceling the
+		// context. The context may also expire independently; the HTTP writer
+		// lock orders ownership publication before worker finalization in that case.
+		<-ctx.Done()
+		wp.finishCanceledAttempt(workerID, job, job.Agent, eventWorktreePath)
+	case err != nil:
+		log.Printf("[%s] Error saving prompt: %v", workerID, err)
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
+	case getErr != nil:
+		log.Printf("[%s] Error reading job %d after unsaved prompt: %v", workerID, job.ID, getErr)
+	}
+	return false
 }
 
 // finishCanceledAttempt emits cancellation only for the claim that still owns
@@ -1893,6 +1971,8 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 		if !wp.cancellationEventOwnedByCaller(job.ID) {
 			wp.broadcaster.Broadcast(Event{
 				Type:              jobEventType(job, "canceled"),
+				ReviewType:        job.ReviewType,
+				RubricSHA256:      job.RubricSHA256,
 				TS:                time.Now(),
 				JobID:             job.ID,
 				Repo:              job.RepoPath,
@@ -2384,6 +2464,8 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 	}
 	wp.broadcaster.Broadcast(Event{
 		Type:              jobEventType(job, "failed"),
+		ReviewType:        job.ReviewType,
+		RubricSHA256:      job.RubricSHA256,
 		TS:                time.Now(),
 		JobID:             job.ID,
 		JobUUID:           job.UUID,

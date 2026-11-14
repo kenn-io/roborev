@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/BurntSushi/toml"
 
@@ -21,10 +22,11 @@ import (
 
 // CLIClient implements Client by shelling out to the kata CLI.
 type CLIClient struct {
-	bin     string
-	workdir string
-	env     []string
-	run     func(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) ([]byte, error)
+	archiveReuse atomic.Uint32
+	bin          string
+	workdir      string
+	env          []string
+	run          func(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) ([]byte, error)
 }
 
 var _ Client = (*CLIClient)(nil)
@@ -74,7 +76,29 @@ func realRun(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) 
 			return nil, fmt.Errorf("kata %s: %w", verb, ctxErr)
 		}
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			return nil, fmt.Errorf("kata %s: exit %d: %s", verb, ee.ExitCode(), strings.TrimSpace(string(ee.Stderr)))
+			stderr := strings.TrimSpace(string(ee.Stderr))
+			// The CLI may print warnings before its JSON error, which is the
+			// final line.
+			final := stderr
+			if i := strings.LastIndexByte(final, '\n'); i >= 0 {
+				final = strings.TrimSpace(final[i+1:])
+			}
+			var envelope struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if json.Unmarshal([]byte(final), &envelope) == nil {
+				switch envelope.Error.Code {
+				case "docbank_not_configured":
+					return nil, ErrDocbankNotConfigured
+				case "daemon_unavailable":
+					return nil, ErrDaemonUnavailable
+				case "daemon_api_too_old":
+					return nil, ErrDaemonAPITooOld
+				}
+			}
+			return nil, fmt.Errorf("kata %s: exit %d: %s", verb, ee.ExitCode(), stderr)
 		}
 		return nil, fmt.Errorf("kata %s: %w", verb, err)
 	}

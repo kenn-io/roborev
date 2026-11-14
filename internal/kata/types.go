@@ -17,6 +17,12 @@ var (
 	ErrUnavailable = errors.New("kata: binary not found on PATH")
 	// ErrNoBinding means no .kata.toml binding was found for the workdir.
 	ErrNoBinding = errors.New("kata: no .kata.toml binding for workdir")
+	// ErrDaemonUnavailable means the Kata daemon could not be reached.
+	ErrDaemonUnavailable = errors.New("kata: daemon unavailable; check the Kata daemon")
+	// ErrDaemonAPITooOld means the Kata daemon must be upgraded.
+	ErrDaemonAPITooOld = errors.New("kata: daemon API too old; upgrade the Kata daemon and retry")
+	// ErrDocbankNotConfigured means the Kata daemon has no Docbank configured.
+	ErrDocbankNotConfigured = errors.New("kata: Docbank not configured; run kata docbank setup")
 )
 
 // Issue is the subset of a kata issue roborev consumes. Field names match the
@@ -48,6 +54,12 @@ type Binding struct {
 	Project string
 }
 
+// ArchiveIssue identifies the current issue within the selected project.
+type ArchiveIssue struct {
+	UID     string
+	ShortID string
+}
+
 // ListOpts controls a List call.
 type ListOpts struct {
 	Status    string // "open" (default) | "closed" | "all"
@@ -73,6 +85,9 @@ type CreateResult struct {
 
 // Client is the kata interface roborev depends on.
 type Client interface {
+	ResolveArchiveIssue(ctx context.Context, project, ref string) (ArchiveIssue, error)
+	// ArchiveRubric accepts a canonical UID returned by ResolveArchiveIssue.
+	ArchiveRubric(ctx context.Context, project, uid, name string, data []byte) error
 	Binding(ctx context.Context) (Binding, error)
 	List(ctx context.Context, opts ListOpts) ([]Issue, error)
 	Show(ctx context.Context, ref string) (Issue, error)

@@ -95,3 +95,46 @@ Together, the two directions form a workflow: a commit references a Kata issue,
 the review prompt includes that issue as task intent, and if the review fails or
 finds problems, the findings land back in the Kata backlog with the commands to
 reproduce and fix them.
+
+## Archiving custom rubrics
+
+Roborev can attach the exact rendered custom rubric to issues referenced by a
+local commit or range review. This requires Kata 0.21.0 or later, with `kata` on
+the roborev daemon's `PATH`. First configure the Kata vault with
+`kata docbank setup`. Then opt in globally in `~/.roborev/config.toml`:
+
+```toml
+[kata_rubrics]
+mode = "current" # off (default) or current
+```
+
+The vault is readable by everyone who can read issues or write metadata on that
+Kata daemon. Enable this only if that audience may read your rubrics. A
+repository can opt out with `[kata_rubrics] mode = "off"` in `.roborev.toml`; it
+cannot enable the feature.
+
+Roborev archives after the review completes, subject to these rules:
+
+- It attaches `roborev-rubric.<type>.<digest>.md` to up to ten referenced issues
+    in the bound project. The name uses the first 16 SHA-256 characters; the
+    review records the full digest. A moved issue is skipped if it now belongs
+    to another project. A move between the last check and the attachment write
+    can still change the destination.
+- Repeated reviews can reuse an existing reference with the same name. Editing a
+    rubric adds a new reference and retains the old ones. When the Kata CLI
+    supports `docbank attachments add --reuse-existing`, roborev uses atomic
+    reuse without listing attachments. This requires daemon API 0.45.0 or later;
+    an older daemon rejects the upload until upgraded. Older CLIs use list then
+    add, so concurrent archives can create duplicates. Atomic reuse applies to
+    the same resolved Docbank version; changed Docbank state can resolve a
+    different version.
+- A repository-defined type is eligible only when its template and all includes
+    resolve inside the repository, including through symlinks. Untracked and
+    ignored files are eligible. Global types are operator-owned and can use
+    external sources.
+- Rubrics larger than 1 MiB are skipped. Built-in types, supplied prompts or
+    settings, dirty reviews, CI reviews and synthesis are excluded.
+- Archiving is best effort. Failures are logged without a durable retry; the
+    next review referencing the issue tries again.
+- Before Kata's federated evidence support ships, a relayed project uploads to
+    the serving daemon's vault, which other hubs may not be able to read.

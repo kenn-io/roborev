@@ -10,6 +10,9 @@ import (
 
 // FakeClient is a configurable in-memory kata.Client.
 type FakeClient struct {
+	ArchiveErr    error
+	Archives      map[string]map[string][]byte
+	ArchiveRefs   []string
 	BindingResult kata.Binding
 	BindingErr    error
 
@@ -26,6 +29,10 @@ type FakeClient struct {
 	ShowRefs   []string
 	ListOpts   []kata.ListOpts
 	CreateReqs []kata.CreateReq
+}
+
+func (f *FakeClient) ResolveArchiveIssue(_ context.Context, _, ref string) (kata.ArchiveIssue, error) {
+	return kata.ArchiveIssue{UID: ref, ShortID: ref}, nil
 }
 
 func (f *FakeClient) Binding(context.Context) (kata.Binding, error) {
@@ -53,4 +60,22 @@ func (f *FakeClient) Show(_ context.Context, ref string) (kata.Issue, error) {
 func (f *FakeClient) Create(_ context.Context, req kata.CreateReq) (kata.CreateResult, error) {
 	f.CreateReqs = append(f.CreateReqs, req)
 	return f.CreateResult, f.CreateErr
+}
+
+// ArchiveRubric records a rubric once per issue and name.
+func (f *FakeClient) ArchiveRubric(_ context.Context, _, ref, name string, data []byte) error {
+	f.ArchiveRefs = append(f.ArchiveRefs, ref)
+	if f.ArchiveErr != nil {
+		return f.ArchiveErr
+	}
+	if f.Archives == nil {
+		f.Archives = make(map[string]map[string][]byte)
+	}
+	if f.Archives[ref] == nil {
+		f.Archives[ref] = make(map[string][]byte)
+	}
+	if _, ok := f.Archives[ref][name]; !ok {
+		f.Archives[ref][name] = append([]byte(nil), data...)
+	}
+	return nil
 }

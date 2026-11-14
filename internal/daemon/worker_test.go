@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"encoding/json/jsontext"
@@ -490,10 +491,16 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	assert.True(t, stored.Closed)
 	assert.Equal(t, "high", stored.Job.MinSeverity)
 
-	_, ok := waitForEvent(t, eventCh, time.Second)
+	started, ok := waitForEvent(t, eventCh, time.Second)
 	require.True(t, ok, "expected review.started event")
 	completed, ok := waitForEvent(t, eventCh, time.Second)
 	require.True(t, ok, "expected review.completed event")
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("Review state ownership.\n")))
+	current, err := tc.DB.GetJobByIDContext(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, &digest, current.RubricSHA256)
+	assert.Equal(t, &digest, started.RubricSHA256)
+	assert.Equal(t, &digest, completed.RubricSHA256)
 	assert.Equal(t, "P", completed.Verdict)
 }
 
@@ -708,10 +715,15 @@ func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
 	startedEvent, ok := waitForEvent(t, eventCh, time.Second)
 	require.True(t, ok, "expected review.started event")
 	require.Equal(t, "review.started", startedEvent.Type)
+	assert.Nil(t, startedEvent.RubricSHA256)
 	assert.Empty(t, startedEvent.WorktreePath, "CI exact worktree should not be exposed to hooks or event consumers")
 	completedEvent, ok := waitForEvent(t, eventCh, time.Second)
 	require.True(t, ok, "expected review.completed event")
 	require.Equal(t, "review.completed", completedEvent.Type)
+	assert.Nil(t, completedEvent.RubricSHA256)
+	storedJob, err := db.GetJobByIDContext(t.Context(), claimed.ID)
+	require.NoError(t, err)
+	assert.Nil(t, storedJob.RubricSHA256)
 	assert.Empty(t, completedEvent.WorktreePath, "CI exact worktree should not be exposed to hooks or event consumers")
 
 	stored := repo.RevParse("HEAD")

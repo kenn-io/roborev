@@ -1211,3 +1211,58 @@ func TestJobReadPathsReturnNonVoting(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(batch[observer.ID].Job.NonVoting, "GetJobsWithReviewsByIDs")
 }
+
+func TestRubricDigestSyncRoundTrip(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, t.TempDir())
+	machine, err := db.GetMachineID()
+	require.NoError(t, err)
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "head", Agent: "test", RubricSHA256: &digest})
+	require.NoError(t, err)
+	setStatus(t, db, job.ID, JobStatusDone)
+	jobs, err := db.GetJobsToSync(machine, 100)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, &digest, jobs[0].RubricSHA256)
+	pulled := PulledJob{UUID: testUUID("rubric-remote"), GitRef: "other", Agent: "test", JobType: JobTypeReview, Status: "done", EnqueuedAt: time.Now(), UpdatedAt: time.Now(), SourceMachineID: testUUID("rubric-peer"), RubricSHA256: &digest}
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	var id int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID).Scan(&id))
+	got, err := db.GetJobByID(id)
+	require.NoError(t, err)
+	assert.Equal(t, &digest, got.RubricSHA256)
+	changed := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	pulled.RubricSHA256 = &changed
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	got, err = db.GetJobByID(id)
+	require.NoError(t, err)
+	assert.Equal(t, &changed, got.RubricSHA256)
+	pulled.RubricSHA256 = nil
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	got, err = db.GetJobByID(id)
+	require.NoError(t, err)
+	assert.Nil(t, got.RubricSHA256)
+}
+
+func TestRubricIDRequiresTypeAndFullPrefix(t *testing.T) {
+	t.Parallel()
+	digest := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+	short := "1234"
+	assert.Empty(t, RubricID("custom", nil))
+	assert.Empty(t, RubricID("", &digest))
+	assert.Empty(t, RubricID("custom", &short))
+	for name, bad := range map[string]string{
+		"long":      digest + "0",
+		"short":     digest[:63],
+		"uppercase": strings.ToUpper(digest),
+		"non-hex":   "g" + digest[1:],
+		"control":   "\x1b[31m" + digest[:58],
+		"newline":   digest[:63] + "\n",
+	} {
+		assert.Empty(t, RubricID("custom", &bad), name)
+	}
+	assert.Equal(t, "custom@1234567890abcdef", RubricID("custom", &digest))
+}
