@@ -125,7 +125,11 @@ func (a *GeminiAgent) commandLine(agenticMode bool) string {
 }
 
 func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
-	return a.buildArgsWithModel(a.Model, agenticMode, geminiCLICapabilities{streamJSON: true, resume: true, plan: true})
+	return a.buildArgsWithModel(a.Model, agenticMode, geminiCLICapabilities{
+		streamJSON:   true,
+		resume:       true,
+		approvalMode: "plan",
+	})
 }
 
 func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
@@ -135,6 +139,13 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	capabilities := a.capabilities(ctx)
+	if !a.usesAntigravity() && !agenticMode && capabilities.approvalMode == "" {
+		version := strings.TrimSpace(capabilities.version)
+		if version == "" {
+			version = "unknown"
+		}
+		return "", fmt.Errorf("gemini CLI version %q cannot run read-only reviews safely; upgrade to %s or newer", version, geminiSafeApprovalVersion)
+	}
 	args := a.buildArgsWithModel(a.Model, agenticMode, capabilities)
 	runAgent := a
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
@@ -186,8 +197,8 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool, capabil
 
 	if agenticMode {
 		args = append(args, "--approval-mode", "yolo")
-	} else if capabilities.plan {
-		args = append(args, "--approval-mode", "plan")
+	} else if capabilities.approvalMode != "" {
+		args = append(args, "--approval-mode", capabilities.approvalMode)
 	}
 
 	if capabilities.resume && a.SessionID != "" {
@@ -198,16 +209,18 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool, capabil
 }
 
 type geminiCLICapabilities struct {
-	streamJSON bool
-	resume     bool
-	plan       bool
-	promptFlag bool
+	streamJSON   bool
+	resume       bool
+	approvalMode string
+	promptFlag   bool
+	version      string
 }
 
 const (
-	geminiStreamJSONVersion = "0.11.0"
-	geminiResumeVersion     = "0.15.0"
-	geminiPlanModeVersion   = "0.34.0" // plan mode became the default in this release
+	geminiSafeApprovalVersion = "0.10.0"
+	geminiStreamJSONVersion   = "0.11.0"
+	geminiResumeVersion       = "0.15.0"
+	geminiPlanModeVersion     = "0.34.0" // plan mode became the default in this release
 	// Antigravity supports --conversation before adding stream-json.
 	antigravityResumeVersion = "1.0.9"
 )
@@ -223,10 +236,17 @@ func (a *GeminiAgent) capabilities(ctx context.Context) geminiCLICapabilities {
 			promptFlag: antigravityVersionUsesPromptFlag(version),
 		}
 	}
+	approvalMode := ""
+	if versionAtLeast(version, geminiPlanModeVersion, false) {
+		approvalMode = "plan"
+	} else if versionAtLeast(version, geminiSafeApprovalVersion, false) {
+		approvalMode = "default"
+	}
 	return geminiCLICapabilities{
-		streamJSON: versionAtLeast(version, geminiStreamJSONVersion, false),
-		resume:     versionAtLeast(version, geminiResumeVersion, false),
-		plan:       versionAtLeast(version, geminiPlanModeVersion, false),
+		streamJSON:   versionAtLeast(version, geminiStreamJSONVersion, false),
+		resume:       versionAtLeast(version, geminiResumeVersion, false),
+		approvalMode: approvalMode,
+		version:      version,
 	}
 }
 

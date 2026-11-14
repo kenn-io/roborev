@@ -1022,12 +1022,10 @@ func (db *DB) clearJobSession(jobID int64, workerID string, isolate bool) error 
 	return nil
 }
 
-// SaveJobSessionID stores the captured agent session ID for a job.
-// The first captured ID wins so repeated lifecycle events do not
-// overwrite it. The update is scoped to the current execution
-// attempt: it requires status='running' and the given workerID so
-// that a stale worker unwinding after cancel/retry cannot overwrite
-// a session ID that belongs to a new attempt of the same job.
+// SaveJobSessionID stores the captured agent session ID for a job. The first
+// captured ID wins, except that a successful resume can replace the inherited
+// ID with the session the CLI actually returned. Updates require the current
+// worker so a stale attempt cannot overwrite a newer one.
 func (db *DB) SaveJobSessionID(
 	jobID int64, workerID, sessionID string,
 ) error {
@@ -1062,12 +1060,16 @@ func (db *DB) SaveJobSessionIDWithCLI(
 	now := time.Now().Format(time.RFC3339)
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET session_id = ?, session_cli = NULLIF(?, ''), updated_at = ?
+		SET session_id = ?, session_cli = NULLIF(?, ''), session_resumed = 0,
+		    resume_source_job_uuid = NULL, updated_at = ?
 		WHERE id = ?
 		  AND status = 'running'
 		  AND worker_id = ?
-		  AND (session_id IS NULL OR session_id = '')
-	`, sessionID, sessionCLI, now, jobID, workerID)
+		  AND (
+		    session_id IS NULL OR session_id = ''
+		    OR (session_resumed = 1 AND session_id != ? AND ? != '')
+		  )
+	`, sessionID, sessionCLI, now, jobID, workerID, sessionID, sessionCLI)
 	if err != nil {
 		return err
 	}

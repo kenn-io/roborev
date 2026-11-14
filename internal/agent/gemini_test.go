@@ -98,18 +98,21 @@ func TestVersionGatesFeatures(t *testing.T) {
 		wantStream    bool
 		wantPrompt    string
 		wantPrint     bool
-		wantPlan      bool
+		wantApproval  string
 		wantYolo      bool
+		wantError     bool
+		wantVersion   string
 		streamFixture string
 		wantResult    string
 	}{
-		{name: "Gemini 0.10 plain", cli: "gemini", version: "0.10.0", wantResult: "Plain review"},
+		{name: "Gemini 0.9 is too old for safe review", cli: "gemini", version: "0.9.0", wantError: true, wantVersion: "0.9.0"},
+		{name: "Gemini 0.10 plain", cli: "gemini", version: "0.10.0", wantApproval: "default", wantResult: "Plain review"},
 		{name: "Gemini 0.10 agentic", cli: "gemini", version: "0.10.0", agentic: true, wantYolo: true, wantResult: "Plain review"},
-		{name: "Gemini 0.11 stream", cli: "gemini", version: "0.11.0", wantStream: true, streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
-		{name: "Gemini 0.15 resume", cli: "gemini", version: "0.15.0", resumeFlag: "--resume", wantStream: true, wantPrompt: "Review the supplied input.", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
-		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", resumeFlag: "--resume", wantStream: true, wantPrompt: "Review the supplied input.", wantPlan: true, streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
-		{name: "Gemini unknown", cli: "gemini", version: "unknown", wantResult: "Plain review"},
-		{name: "Gemini failed version probe", cli: "gemini", version: "0.34.0", versionFails: true, wantResult: "Plain review"},
+		{name: "Gemini 0.11 stream", cli: "gemini", version: "0.11.0", wantStream: true, wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
+		{name: "Gemini 0.15 resume", cli: "gemini", version: "0.15.0", resumeFlag: "--resume", wantStream: true, wantPrompt: "Review the supplied input.", wantApproval: "default", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
+		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", resumeFlag: "--resume", wantStream: true, wantPrompt: "Review the supplied input.", wantApproval: "plan", streamFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`},
+		{name: "Gemini unknown", cli: "gemini", version: "unknown", wantError: true, wantVersion: "unknown"},
+		{name: "Gemini failed version probe", cli: "gemini", version: "0.34.0", versionFails: true, wantError: true, wantVersion: "unknown"},
 		{name: "Antigravity 1.0.8", cli: "agy", version: "1.0.8", wantPrint: true, wantResult: "Plain review"},
 		{name: "Antigravity 1.0.9 conversation", cli: "agy", version: "1.0.9", resumeFlag: "--conversation", wantPrint: true, wantResult: "Plain review"},
 		{name: "Antigravity 1.1.7 prompt", cli: "agy", version: "1.1.7", resumeFlag: "--conversation", wantPrompt: "prompt", wantResult: "Plain review"},
@@ -157,6 +160,15 @@ fi
 			}
 			a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(tc.agentic).(*GeminiAgent)
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
+			if tc.wantError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "run read-only reviews safely")
+				assert.Contains(t, err.Error(), tc.wantVersion)
+				assert.Contains(t, err.Error(), geminiSafeApprovalVersion)
+				_, statErr := os.Stat(argsFile)
+				assert.ErrorIs(t, statErr, os.ErrNotExist, "unsafe command must not be invoked")
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantResult, result)
 
@@ -184,8 +196,8 @@ fi
 			} else {
 				assert.NotContains(t, args, "--print")
 			}
-			if tc.wantPlan {
-				assertFlagValue(t, args, "--approval-mode", "plan")
+			if tc.wantApproval != "" {
+				assertFlagValue(t, args, "--approval-mode", tc.wantApproval)
 			} else if tc.wantYolo {
 				assertFlagValue(t, args, "--approval-mode", "yolo")
 			} else {
