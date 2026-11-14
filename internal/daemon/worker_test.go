@@ -4171,15 +4171,16 @@ func TestAutoClosePassingReviews(t *testing.T) {
 func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 	setupTestEnv(t)
 	tc := newWorkerTestContext(t, 1)
+	source, _ := compactSourceFixture(t, tc)
 	const agentName = "compact-verdict-agent"
 	const output = `{"schema_version":3,"summary":"1 finding remains.","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.8,"problem":"A record is lost.","fix":"Retain the record.","file":"file.go","start_line":12,"end_line":12}]}`
 
-	agent.RegisterForTest(t, &agent.FakeAgent{
+	agent.RegisterForTest(t, &readOnlyCompactTestAgent{agent.FakeAgent{
 		NameStr: agentName,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 			return output, nil
 		},
-	})
+	}})
 
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID:  tc.Repo.ID,
@@ -4190,7 +4191,7 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
-		compactMetadataPath(job.ID), []byte(`{"source_job_ids":[]}`), 0o600,
+		compactMetadataPath(job.ID), []byte(fmt.Sprintf(`{"source_job_ids":[%d]}`, source.ID)), 0o600,
 	))
 
 	claimed, err := tc.DB.ClaimJob(testWorkerID)
@@ -4205,6 +4206,9 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 	).Scan(&verdict))
 	require.True(t, verdict.Valid)
 	assert.Equal(t, int64(0), verdict.Int64)
+	sourceStored, err := tc.DB.GetReviewByJobID(source.ID)
+	require.NoError(t, err)
+	assert.False(t, sourceStored.Closed, "legacy metadata never authorizes closure")
 }
 
 func TestProcessJob_MinSeverityCascade(t *testing.T) {

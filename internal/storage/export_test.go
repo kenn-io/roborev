@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/base64"
 	"encoding/json"
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"fmt"
 	"path/filepath"
@@ -46,6 +47,52 @@ func TestExportReviewsPagesUseCompletedIndex(t *testing.T) {
 			assert.NotContains(plan, "USE TEMP B-TREE FOR ORDER BY")
 		})
 	}
+}
+
+func TestExportReviewsIncludesAccountableCompactsAndResumesCursor(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	assert := assert.New(t)
+
+	complete := func(jobType, prompt, summary, gitRef, completedAt string) *ReviewJob {
+		t.Helper()
+		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: gitRef, Agent: "test", JobType: jobType, Prompt: prompt})
+		require.NoError(t, err)
+		claimed := claimJob(t, db, "export-worker")
+		require.Equal(t, job.ID, claimed.ID)
+		raw := jsontext.Value(fmt.Sprintf(`{"schema_version":3,"summary":%q,"verdict":"fail","findings":[{"severity":"low","problem":"Retained finding","fix":"Preserve behavior"}]}`, summary))
+		require.NoError(t, db.CompleteJobResult(job.ID, "test", ReviewCompletion{StructuredOutput: raw}))
+		_, err = db.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, completedAt, job.ID)
+		require.NoError(t, err)
+		return job
+	}
+
+	accountable := complete(JobTypeCompact, CompactPromptPrefix+"source manifest", CompactAuditPrefix+"historical audit", "compact-accountable", "2026-06-29 00:00:01")
+	custom := complete(JobTypeCompact, "custom compact instructions", "custom history", "compact-custom", "2026-06-29 00:00:00")
+	ordinary := complete(JobTypeReview, "ordinary prompt", "ordinary review", "ordinary-review", "2026-06-29 00:00:02")
+	accountableReview, err := db.GetReviewByJobID(accountable.ID)
+	require.NoError(t, err)
+	ordinaryReview, err := db.GetReviewByJobID(ordinary.ID)
+	require.NoError(t, err)
+	customReview, err := db.GetReviewByJobID(custom.ID)
+	require.NoError(t, err)
+
+	first, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, first.Reviews, 1)
+	assert.Equal(*accountableReview.UUID, first.Reviews[0].ReviewID)
+	require.NotNil(t, first.NextCursor)
+	second, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Cursor: *first.NextCursor, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, second.Reviews, 1)
+	assert.Equal(*ordinaryReview.UUID, second.Reviews[0].ReviewID)
+	full, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, full.Reviews, 2)
+	assert.Equal([]uuid.UUID{*accountableReview.UUID, *ordinaryReview.UUID}, []uuid.UUID{full.Reviews[0].ReviewID, full.Reviews[1].ReviewID})
+	assert.NotContains([]uuid.UUID{full.Reviews[0].ReviewID, full.Reviews[1].ReviewID}, *customReview.UUID)
 }
 
 func TestExportReviewsContentProfile(t *testing.T) {

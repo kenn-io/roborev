@@ -565,7 +565,9 @@ Reviews nested under `subagents` do not have these fields.
 Finished review jobs with a verdict and historical legacy reviews are exported.
 Legacy reviews without a recorded verdict use `"unknown"`, including panel
 members. Their original Markdown remains available in the content profile. Task,
-fix, insights, compact, queued, running, failed, and canceled jobs are excluded.
+fix, insights, queued, running, failed, and canceled jobs are excluded.
+Accountable compact reviews export their full historical audit and retained
+findings. Legacy and custom compact reviews without that audit are excluded.
 Panel reviews export as one top-level synthesis review with completed member
 reviews nested under `subagents`; member reviews do not appear as separate
 top-level rows.
@@ -970,17 +972,44 @@ roborev job compact --reasoning thorough         # Use thorough reasoning level
 | `--timeout <duration>` | Timeout for `--wait` mode (default: 10m) |
 | `--quiet` | Suppress progress output |
 
-Compact discovers open completed reviews, sends them to an agent for
-verification against the current codebase, and consolidates related findings
-into a single review job. Original jobs are automatically closed when
-consolidation finishes. This adds a quality layer between `review` and `fix` to
-reduce false positives.
+Compact inspects open completed reviews against the caller checkout in read-only
+mode. A missing or invalid caller worktree fails safely. Captured Git history
+supplies commit IDs and patches without granting the agent shell access;
+evidence is still checked against current files. Every original finding gets an
+inspectable decision:
 
-If the verification reports that findings remain, `compact` requires each one to
-be repeated with actionable detail (severity, file/line, description). Outputs
-that mention remaining findings only as counts or summaries are rejected and the
-job fails, rather than producing a review that cannot be acted on. A clean
-verification with no remaining findings is still recorded as a review.
+- **Valid:** supporting code shows why the finding still applies.
+- **Fixed:** current code and an identified change explain the repair.
+- **False positive:** cited content disproves the original assumption.
+- **Duplicate:** points directly to a surviving original with the same behavior
+    and preservation obligations. The survivor keeps the highest severity.
+- **Unresolved:** evidence is missing, invalid, or insufficient. The original
+    remains actionable.
+
+The consolidated review retains original findings and a historical audit of all
+decisions, reasons, evidence, source identities, and attribution. Show and
+export include that audit. Fix, address, and planning prompts receive only
+retained findings, so dismissed originals do not become fix targets again.
+
+Evidence paths, line ranges, and excerpts are checked against readable content
+inside the repository. These checks authenticate the cited content; they do not
+prove the agent's interpretation. A missing file or harmless edit is not proof
+of a fix. Suspected duplicate paraphrases remain unresolved when the original
+behavior and preservation text differ, avoiding the loss of a separate
+obligation.
+
+A source review closes only after the consolidated result is saved, every one of
+its findings is accounted for, none is unresolved, and its review identity still
+matches the snapshot. Malformed output, provider errors, cancellation, or a
+missing manifest never close sources. Historical reviews that cannot be parsed
+completely require manual handling before compact can run. Existing custom or
+legacy compact prompts retain their output format and do not auto-close sources.
+
+Completed accountable compact jobs cannot be rerun. Their saved findings and
+historical audit remain intact, including when original source reviews are
+already closed. Review the current code again or address the retained findings.
+Ordinary reviews and legacy/custom compact jobs keep their existing rerun
+behavior.
 
 !!! note
 

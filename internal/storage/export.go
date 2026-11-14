@@ -36,6 +36,13 @@ const (
 // Other results without a verdict keep their existing export exclusion.
 const exportReviewHasVerdictExpr = "(rv.verdict_bool IS NOT NULL OR json_extract(rv.structured_output, '$.schema_version') = 0)"
 
+// Accountable compacts carry a canonical audit. Keep legacy/custom compacts
+// outside review export, and share eligibility with cursor validation so a
+// cursor emitted for an accountable compact can always resume.
+const exportReviewJobTypeExpr = "(COALESCE(j.job_type, 'review') IN ('review','range','dirty','synthesis') OR " +
+	"(j.job_type = 'compact' AND instr(json_extract(rv.structured_output, '$.summary'), '" + CompactAuditPrefix + "') = 1 AND " +
+	"instr(COALESCE((SELECT zstd_decompress(prompt) FROM job_content WHERE job_id = j.id), ''), '" + CompactPromptPrefix + "') = 1))"
+
 // exportReviewUpdatedAtExpr is the review's update time with the created_at
 // fallback for rows that predate updated_at or carry an empty value.
 const exportReviewUpdatedAtExpr = "COALESCE(NULLIF(TRIM(rv.updated_at), ''), rv.created_at)"
@@ -390,7 +397,7 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 	// index, which supplies export order without sorting before LIMIT.
 	conditions = append(conditions,
 		"+j.status = 'done'",
-		"COALESCE(j.job_type, 'review') IN ('review','range','dirty','synthesis')",
+		exportReviewJobTypeExpr,
 		"COALESCE(j.panel_role, '') != 'member'",
 		exportReviewHasVerdictExpr,
 	)
@@ -852,7 +859,7 @@ func (db *DB) exportCursorReviewExists(cursor *exportCursor) (bool, error) {
 		WHERE rv.uuid = ?
 		  AND `+completedExpr+` = datetime(?)
 		  AND j.status = 'done'
-		  AND COALESCE(j.job_type, 'review') IN ('review','range','dirty','synthesis')
+		  AND `+exportReviewJobTypeExpr+`
 		  AND COALESCE(j.panel_role, '') != 'member'
 		  AND `+exportReviewHasVerdictExpr+`
 	`, cursor.ReviewID, cursor.CompletedAt).Scan(&count)

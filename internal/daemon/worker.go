@@ -712,13 +712,26 @@ func (wp *WorkerPool) prepareJobCheckout(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 	cfg *config.Config,
 ) (preparedJobCheckout, error) {
+	markedCompact := job.JobType == storage.JobTypeCompact && review.IsCompactPrompt(job.Prompt)
+	if markedCompact && job.WorktreePath != "" && !gitpkg.ValidateWorktreeForRepo(job.WorktreePath, job.RepoPath) {
+		return preparedJobCheckout{}, fmt.Errorf("compact caller checkout is unavailable or belongs to another repository")
+	}
 	requiresCIWorktree, err := wp.jobRequiresCIExactCheckout(job)
 	if err != nil {
 		return preparedJobCheckout{}, err
 	}
 	checkout := preparedJobCheckout{promptRepoPath: job.RepoPath, configRepoPath: job.RepoPath}
 	if !requiresCIWorktree {
-		repoPath := resolveEffectiveRepoPath(workerID, job)
+		repoPath := job.RepoPath
+		if markedCompact {
+			// Keep the validated binding even if the caller disappears now.
+			// A later filesystem/agent error must never select another checkout.
+			if job.WorktreePath != "" {
+				repoPath = job.WorktreePath
+			}
+		} else {
+			repoPath = resolveEffectiveRepoPath(workerID, job)
+		}
 		checkout.promptRepoPath = repoPath
 		checkout.configRepoPath = repoPath
 		checkout.agentRepoPath = repoPath
@@ -1219,6 +1232,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 		}
 	}
+	var compactManifest *review.CompactManifest
+	if job.JobType == storage.JobTypeCompact && review.IsCompactPrompt(storedPromptValue) {
+		compactManifest, err = ReadCompactManifest(ctx, job.ID, storedPromptValue)
+		if err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("read compact manifest: %v", err))
+			return
+		}
+	}
 	var reviewPrompt string
 	var fileCoverage *storage.ReviewFileCoverage
 	var promptToPersist string
@@ -1400,7 +1421,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// tool-capable agents. CI reviews are always non-agentic, but
 	// this guard defends against future callers setting the flag.
 	agentic := job.Agentic
-	if job.PromptPrebuilt || job.Source == storage.JobSourceRebuttal {
+	if job.PromptPrebuilt || job.Source == storage.JobSourceRebuttal || job.JobType == storage.JobTypeCompact {
 		agentic = false
 	}
 	a := applyCodexReviewSettings(
@@ -1421,10 +1442,23 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
+	if job.JobType == storage.JobTypeCompact {
+		readOnly, ok := a.(agent.ReadOnlyReviewAgent)
+		if !ok || !readOnly.SupportsReadOnlyReview() {
+			wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, a.Name(), "agent cannot enforce read-only compact")
+			return
+		}
+		ctx = agent.WithReadOnlyReview(ctx)
+	}
+
 	// A strict tool policy must never run unrestricted. An agent that cannot
 	// enforce it fails before starting; failover may pick a capable backup.
 	tools := settings.Tools
-	if err := agent.ValidateReviewToolSelection(tools, a, job.Agentic); err != nil {
+	toolAgentic := job.Agentic
+	if job.JobType == storage.JobTypeCompact {
+		toolAgentic = false
+	}
+	if err := agent.ValidateReviewToolSelection(tools, a, toolAgentic); err != nil {
 		wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, a.Name(), err.Error())
 		return
 	}
@@ -1446,7 +1480,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Reconcile the actual agent's output contract before shared preparation.
-	if job.IsReviewJob() || job.JobType == storage.JobTypeCompact {
+	if compactManifest == nil && (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) {
 		reviewPrompt = prompt.ReconcileStructuredOutputInstruction(reviewPrompt, true)
 	}
 
@@ -1663,6 +1697,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
 	var agentReview review.ReviewResult
+	var compactEligible []review.CompactSource
 	if err == nil && job.Source == storage.JobSourceRebuttal {
 		agentReview.Output, err = rebuttal.RunAgentAssessment(
 			ctx, a, reviewRepoPath, implementationRef, reviewPrompt, agentOutput,
@@ -1672,6 +1707,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			ctx, reviewRepoPath, implementationRef, reviewPrompt, agentOutput,
 		)
 		agentReview.RawOutput = agentReview.Output
+	} else if err == nil && compactManifest != nil {
+		excludes := config.ResolveExcludePatterns(
+			ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
+		)
+		agentReview, compactEligible, err = review.RunCompactReview(
+			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, effectiveMinSeverity,
+			tools, *compactManifest, agentOutput, excludes...,
+		)
 	} else if err == nil {
 		agentReview, err = review.RunAgentReview(
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
@@ -1772,6 +1815,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	completed := false
+	var closedCompactSources []int64
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
@@ -1781,6 +1825,27 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
 				return
 			}
+		} else if compactManifest != nil {
+			sources := make([]storage.CompactSourceIdentity, 0, len(compactEligible))
+			for _, source := range compactEligible {
+				sources = append(sources, storage.CompactSourceIdentity{JobID: source.JobID, ReviewUUID: source.ReviewUUID})
+			}
+			// Completion and its notifications must finish after the review deadline;
+			// the attempt lock and running-status guard still honor cancellation.
+			finalizeCtx := context.WithoutCancel(ctx)
+			var err error
+			closedCompactSources, err = wp.db.CompleteCompactJobResult(finalizeCtx, job.ID, agentName, storage.ReviewCompletion{
+				Output: output, Verdict: agentReview.Verdict, StructuredOutput: agentReview.StructuredOutput,
+				MinSeverity: effectiveMinSeverity, FileCoverage: fileCoverage,
+			}, sources)
+			if err != nil {
+				wp.failNonRetryableJobLocked(workerID, job, agentName, fmt.Sprintf("store compact result: %v", err))
+				return
+			}
+			if closedCompactSources == nil {
+				return // The job was canceled before completion.
+			}
+			completed = true
 		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
 			agentReview.Verdict != storage.VerdictUnknown {
 			if err := wp.db.CompleteJobResult(
@@ -1808,7 +1873,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// running, so a job canceled between agent finish and DB update
 		// must not broadcast review.completed or the batch counters will
 		// over-count successes.
-		{
+		if !completed {
 			j, err := wp.db.GetJobByID(job.ID)
 			if err != nil {
 				log.Printf("[%s] Job %d: failed to verify status: %v", workerID, job.ID, err)
@@ -1819,12 +1884,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				completed = true
 			}
 		}
-
-		// For compact jobs, mark source jobs as closed now that we've
-		// confirmed the compact job completed.
-		if job.JobType == "compact" {
-			if err := wp.markCompactSourceJobs(workerID, job.ID); err != nil {
-				log.Printf("[%s] Warning: failed to mark compact source jobs for job %d: %v", workerID, job.ID, err)
+		if job.JobType == storage.JobTypeCompact && completed {
+			wp.notifyCompactSourcesClosed(context.WithoutCancel(ctx), workerID, closedCompactSources)
+			if err := DeleteCompactMetadata(job.ID); err != nil {
+				log.Printf("[%s] Warning: failed to delete compact metadata for job %d: %v", workerID, job.ID, err)
 			}
 		}
 
@@ -2875,64 +2938,17 @@ func (wp *WorkerPool) logJobFailed(
 	)
 }
 
-// markCompactSourceJobs marks all source jobs as closed for a completed compact job
-func (wp *WorkerPool) markCompactSourceJobs(workerID string, jobID int64) error {
-	// Read metadata file, retrying briefly in case the CLI hasn't finished
-	// writing it yet (the file is written after enqueue returns the job ID).
-	metadata, err := backoff.Retry(context.Background(), func() (*CompactMetadata, error) {
-		return ReadCompactMetadata(jobID)
-	}, backoff.WithBackOff(backoff.NewConstantBackOff(500*time.Millisecond)),
-		backoff.WithMaxTries(3), backoff.WithMaxElapsedTime(0))
-	if err != nil {
-		log.Printf("[%s] No compact metadata found for job %d after retries: %v", workerID, jobID, backoff.AsRetryError(err).LastErr)
-		return nil
-	}
-
-	if len(metadata.SourceJobIDs) == 0 {
-		log.Printf("[%s] No source jobs to mark for compact job %d", workerID, jobID)
-		return nil
-	}
-
-	log.Printf("[%s] Marking %d source jobs as closed for compact job %d", workerID, len(metadata.SourceJobIDs), jobID)
-
-	// Mark each source job as closed
-	var failedIDs []int64
-	for _, srcJobID := range metadata.SourceJobIDs {
-		if err := wp.db.MarkReviewClosedByJobID(srcJobID, true); err != nil {
-			log.Printf("[%s] Failed to mark job %d as closed: %v", workerID, srcJobID, err)
-			failedIDs = append(failedIDs, srcJobID)
-			continue
-		}
-		source, err := wp.db.GetJobByID(srcJobID)
+// notifyCompactSourcesClosed broadcasts only closures committed with the result.
+func (wp *WorkerPool) notifyCompactSourcesClosed(ctx context.Context, workerID string, sourceIDs []int64) {
+	for _, sourceID := range sourceIDs {
+		job, err := wp.db.GetJobByIDContext(ctx, sourceID)
 		if err != nil {
-			log.Printf("[%s] Load closed compact source job %d: %v", workerID, srcJobID, err)
+			log.Printf("[%s] Load closed compact source job %d: %v", workerID, sourceID, err)
 		}
-		event := eventForJob("review.closed", source, srcJobID)
-		// Notify search and other subscribers without adding hook execution
-		// to automatic compaction bookkeeping.
+		event := eventForJob("review.closed", job, sourceID)
 		event.SuppressHooks = true
 		wp.broadcaster.Broadcast(event)
 	}
-
-	successCount := len(metadata.SourceJobIDs) - len(failedIDs)
-	if successCount > 0 {
-		log.Printf("[%s] Marked %d/%d source jobs as closed", workerID, successCount, len(metadata.SourceJobIDs))
-	}
-
-	// Only delete metadata when all source jobs were marked.
-	// On partial failure, keep metadata so a re-run can retry.
-	if len(failedIDs) > 0 {
-		log.Printf("[%s] Keeping compact metadata for job %d (%d jobs failed)", workerID, jobID, len(failedIDs))
-		return nil
-	}
-
-	if err := DeleteCompactMetadata(jobID); err != nil {
-		log.Printf("[%s] Failed to delete compact metadata for job %d: %v", workerID, jobID, err)
-	} else {
-		log.Printf("[%s] Cleaned up compact metadata for job %d", workerID, jobID)
-	}
-
-	return nil
 }
 
 func (wp *WorkerPool) logJobStarted(workerID string, job *storage.ReviewJob) {
