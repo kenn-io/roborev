@@ -499,6 +499,15 @@ func (p *CIPoller) poll(ctx context.Context) {
 	// warning per poll, not one per PR.
 	p.quietHours = resolveQuietHours(&cfg.CI)
 
+	if !cfg.CI.ReviewDefaultBranch {
+		// Forget every default-branch review position before anything that
+		// can fail, so turning the reviews back on starts from each branch
+		// head instead of reviewing what landed in between.
+		if err := p.db.DeleteCIBranchCursorsExcept(ctx, nil); err != nil {
+			log.Printf("CI poller: error forgetting default-branch review positions: %v", err)
+		}
+	}
+
 	repos, err := p.repoResolver.Resolve(ctx, &cfg.CI, func(owner string) string {
 		return p.githubTokenForRepo(owner + "/_") // githubTokenForRepo only uses the owner part
 	})
@@ -2514,7 +2523,9 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 func gitFetchCtx(ctx context.Context, repoPath string, env []string) error {
 	unlock := lockGitMetadata(repoPath)
 	defer unlock()
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet", "--prune")
+	// Name origin: without a remote, fetch follows the checked-out branch's
+	// remote, which in a registered checkout can be a contributor's fork.
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet", "--prune", "origin")
 	procutil.HideConsole(cmd)
 	if env != nil {
 		cmd.Env = env

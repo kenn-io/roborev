@@ -28,11 +28,12 @@ const ciBranchStatusContext = "roborev/default-branch"
 // repository's past.
 func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *config.Config) error {
 	// Results can finish after the feature is turned off; still publish them.
-	p.reconcileBranchReviews(ctx, ghRepo)
+	p.recordFinishedBranchReviews(ctx, ghRepo)
+	// Publish once, after this poll has recorded every result it can. While
+	// GitHub fails status writes, each result then costs one request a poll.
+	defer p.deliverPendingBranchStatuses(ctx, ghRepo)
 	if !cfg.CI.ReviewDefaultBranch {
-		// Forget the review position, so turning reviews back on starts from
-		// the branch head instead of reviewing what landed in between.
-		return p.db.DeleteCIBranchCursor(ctx, ghRepo)
+		return nil
 	}
 	p.expireTimedOutBranchReviews(ctx, ghRepo, cfg)
 	repo, err := p.findOrCloneRepo(ctx, ghRepo)
@@ -98,7 +99,6 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 				"Review could not be queued; run roborev config validate"); err != nil {
 				return err
 			}
-			p.deliverPendingBranchStatuses(ctx, ghRepo)
 			continue
 		}
 		if err := p.enqueueBranchCommit(ctx, scopedCfg, repoConfig, repo, ghRepo, branch, commit.parent, commit.sha); err != nil {
@@ -179,12 +179,8 @@ func (p *CIPoller) enqueueBranchCommit(
 	})
 	if err != nil {
 		if _, ok := errors.AsType[*ciConfigurationError](err); ok {
-			if recordErr := p.db.RecordCIBranchCommitOutcome(ctx, ghRepo, branch, sha, "error",
-				"Review could not be queued; run roborev config validate"); recordErr != nil {
-				return recordErr
-			}
-			p.deliverPendingBranchStatuses(ctx, ghRepo)
-			return nil
+			return p.db.RecordCIBranchCommitOutcome(ctx, ghRepo, branch, sha, "error",
+				"Review could not be queued; run roborev config validate")
 		}
 		return err
 	}
@@ -254,23 +250,36 @@ func (p *CIPoller) routeBranchReviewEvent(jobID int64) {
 		log.Printf("CI poller: error checking default-branch review for job %d: %v", jobID, err)
 		return
 	}
-	p.finishBranchReview(ctx, *review)
+	p.recordBranchReviewResult(ctx, *review)
+	// Publish this result only. The poll retries the statuses that failed
+	// earlier, so a completion never waits on a GitHub outage for them.
+	recorded, err := p.db.GetCIBranchReviewBySynthesisJobID(ctx, jobID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("CI poller: error loading default-branch result for job %d: %v", jobID, err)
+		}
+		return
+	}
+	if recorded.FinalState != "" {
+		p.deliverBranchStatus(ctx, *recorded)
+	}
 }
 
-// reconcileBranchReviews recovers results whose completion events were lost
-// and retries status delivery that previously failed.
-func (p *CIPoller) reconcileBranchReviews(ctx context.Context, ghRepo string) {
+// recordFinishedBranchReviews recovers results whose completion events were
+// lost, for example in a restart.
+func (p *CIPoller) recordFinishedBranchReviews(ctx context.Context, ghRepo string) {
 	reviews, err := p.db.ListCIBranchReviewsAwaitingResult(ctx, ghRepo)
 	if err != nil {
 		log.Printf("CI poller: error listing default-branch results for %s: %v", ghRepo, err)
 	}
 	for _, review := range reviews {
-		p.finishBranchReview(ctx, review)
+		p.recordBranchReviewResult(ctx, review)
 	}
-	p.deliverPendingBranchStatuses(ctx, ghRepo)
 }
 
-func (p *CIPoller) finishBranchReview(ctx context.Context, review storage.CIBranchReview) {
+// recordBranchReviewResult stores the status to publish for a review whose
+// synthesis job has finished. It does not publish it.
+func (p *CIPoller) recordBranchReviewResult(ctx context.Context, review storage.CIBranchReview) {
 	if review.SynthesisJobID == nil || review.PanelRunUUID == nil {
 		return
 	}
@@ -307,9 +316,7 @@ func (p *CIPoller) finishBranchReview(ctx context.Context, review storage.CIBran
 	if err := p.db.SetCIBranchReviewFinalStatus(ctx, review, state, desc); err != nil {
 		log.Printf("CI poller: error recording default-branch result for %s@%s: %v",
 			review.GithubRepo, gitpkg.ShortSHA(review.SHA), err)
-		return
 	}
-	p.deliverPendingBranchStatuses(ctx, review.GithubRepo)
 }
 
 // branchCommitStatus reports review execution in the state, as pull request
@@ -324,9 +331,9 @@ func branchCommitStatus(members []storage.BatchReviewResult, foundIssues bool) (
 	return state, desc + strings.TrimPrefix(execution, "Review complete")
 }
 
-// deliverPendingBranchStatuses publishes recorded results. A failed send is
-// retried on the next poll, unless GitHub will never accept the status. That
-// result stays in the database, and its commit gets no status.
+// deliverPendingBranchStatuses publishes every recorded result of a
+// repository that is still unpublished, including those whose earlier send
+// failed.
 func (p *CIPoller) deliverPendingBranchStatuses(ctx context.Context, ghRepo string) {
 	reviews, err := p.db.ListCIBranchReviewStatuses(ctx, ghRepo)
 	if err != nil {
@@ -334,31 +341,35 @@ func (p *CIPoller) deliverPendingBranchStatuses(ctx context.Context, ghRepo stri
 		return
 	}
 	for _, review := range reviews {
-		won, err := p.db.ClaimCIBranchReviewStatus(ctx, review, panelPostingStaleWindow)
-		if err != nil {
-			log.Printf("CI poller: error claiming default-branch status for %s@%s: %v",
-				ghRepo, gitpkg.ShortSHA(review.SHA), err)
-			continue
-		}
-		if !won {
-			continue
-		}
-		sendErr := p.callSetBranchStatus(ctx, ghRepo, review.SHA, review.FinalState, review.FinalDescription)
-		refused := branchStatusRefused(sendErr)
-		switch {
-		case refused:
-			log.Printf("CI poller: default-branch status for %s@%s will not be published: %v",
-				ghRepo, gitpkg.ShortSHA(review.SHA), sendErr)
-		case sendErr != nil:
-			log.Printf("CI poller: failed to set default-branch status for %s@%s: %v",
-				ghRepo, gitpkg.ShortSHA(review.SHA), sendErr)
-		}
-		// The send already happened. Record its outcome even when the poller
-		// is stopping, so a restart does not publish the status again.
-		if err := p.db.FinishCIBranchReviewStatus(context.WithoutCancel(ctx), review, sendErr == nil || refused); err != nil {
-			log.Printf("CI poller: error acknowledging default-branch status for %s@%s: %v",
-				ghRepo, gitpkg.ShortSHA(review.SHA), err)
-		}
+		p.deliverBranchStatus(ctx, review)
+	}
+}
+
+// deliverBranchStatus publishes one recorded result. A failed send stays
+// unpublished for the next poll, unless GitHub will never accept the status.
+// That result stays in the database, and its commit gets no status.
+func (p *CIPoller) deliverBranchStatus(ctx context.Context, review storage.CIBranchReview) {
+	target := review.GithubRepo + "@" + gitpkg.ShortSHA(review.SHA)
+	won, err := p.db.ClaimCIBranchReviewStatus(ctx, review, panelPostingStaleWindow)
+	if err != nil {
+		log.Printf("CI poller: error claiming default-branch status for %s: %v", target, err)
+		return
+	}
+	if !won {
+		return
+	}
+	sendErr := p.callSetBranchStatus(ctx, review.GithubRepo, review.SHA, review.FinalState, review.FinalDescription)
+	refused := branchStatusRefused(sendErr)
+	switch {
+	case refused:
+		log.Printf("CI poller: default-branch status for %s will not be published: %v", target, sendErr)
+	case sendErr != nil:
+		log.Printf("CI poller: failed to set default-branch status for %s: %v", target, sendErr)
+	}
+	// The send already happened. Record its outcome even when the poller is
+	// stopping, so a restart does not publish the status again.
+	if err := p.db.FinishCIBranchReviewStatus(context.WithoutCancel(ctx), review, sendErr == nil || refused); err != nil {
+		log.Printf("CI poller: error acknowledging default-branch status for %s: %v", target, err)
 	}
 }
 

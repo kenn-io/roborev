@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -296,17 +297,23 @@ func TestCIDefaultBranchReviewsWaitForQuietHoursToEnd(t *testing.T) {
 
 func TestCIDefaultBranchReviewsRestartAfterBeingTurnedOff(t *testing.T) {
 	h := newBranchReviewHarness(t)
-	h.poll(t)
+	h.cfg.CI.Repos = []string{branchReviewRepo}
+	h.poller.poll(t.Context())
 	h.cfg.CI.ReviewDefaultBranch = false
 	h.origin.CommitFile("app.txt", "while off\n", "landed while off")
-	h.poll(t)
+	// GitHub is unreachable for as long as the reviews are off.
+	h.poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
+		return nil, errors.New("connection refused")
+	}
+	h.poller.poll(t.Context())
+	h.poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
 	h.cfg.CI.ReviewDefaultBranch = true
-	h.poll(t)
+	h.poller.poll(t.Context())
 	assert.Empty(t, h.synthesisJobs(t), "turning reviews back on does not review what landed while off")
 
 	start := h.origin.HeadSHA()
 	landed := h.origin.CommitFile("app.txt", "after\n", "landed after")
-	h.poll(t)
+	h.poller.poll(t.Context())
 	runs := h.synthesisJobs(t)
 	require.Len(t, runs, 1)
 	assert.Equal(t, start+".."+landed, runs[0].GitRef)
@@ -586,7 +593,7 @@ func TestCIDefaultBranchStatusDelivery(t *testing.T) {
 			h.poll(t)
 
 			if tt.retried {
-				assert.Greater(failed, 1, "delivery is tried again on the next poll")
+				assert.Equal(2, failed, "delivery is tried once on each of the two failing polls")
 				assert.Equal(1, published, "the result is published once GitHub accepts it")
 				return
 			}
@@ -594,4 +601,79 @@ func TestCIDefaultBranchStatusDelivery(t *testing.T) {
 			assert.Zero(published)
 		})
 	}
+}
+
+func TestCIDefaultBranchStatusFailureIsTriedOncePerResultEachPoll(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	attempts := map[string]int{}
+	h.poller.setBranchStatusFn = func(_, sha, state, _ string) error {
+		if state == "pending" {
+			return nil
+		}
+		attempts[sha]++
+		return errors.New("connection reset")
+	}
+	first := h.origin.CommitFile("app.txt", "first\n", "first change")
+	second := h.origin.CommitFile("app.txt", "second\n", "second change")
+	third := h.origin.CommitFile("app.txt", "third\n", "third change")
+	h.poll(t)
+	h.runJobs(t)
+
+	h.poll(t)
+	assert.Equal(t, map[string]int{first: 1, second: 1, third: 1}, attempts,
+		"recovering several results must not send each failing status again for every result")
+}
+
+func TestCIDefaultBranchReviewsFetchOriginWhenCheckoutTracksAnotherRemote(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	// The registered checkout's current branch follows a contributor's fork,
+	// so a fetch that names no remote would update the fork, not origin.
+	fork := testutil.NewGitRepo(t)
+	fork.CommitFile("fork.txt", "fork\n", "fork commit")
+	for _, args := range [][]string{
+		{"remote", "add", "fork", fork.Path()},
+		{"config", "branch.main.remote", "fork"},
+		{"config", "branch.main.merge", "refs/heads/main"},
+	} {
+		out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", h.clone}, args...)...).CombinedOutput()
+		require.NoError(t, err, "%s", out)
+	}
+	start := h.origin.HeadSHA()
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "the commit that landed on origin is reviewed")
+	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchCompletionPublishesOnlyItsOwnStatus(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	attempts := map[string]int{}
+	h.poller.setBranchStatusFn = func(_, sha, state, _ string) error {
+		if state == "pending" {
+			return nil
+		}
+		attempts[sha]++
+		return errors.New("connection reset")
+	}
+	h.origin.CommitFile("app.txt", "first\n", "first change")
+	h.poll(t)
+	h.runJobs(t)
+	h.poll(t) // the first result is recorded, and its status fails to send
+
+	second := h.origin.CommitFile("app.txt", "second\n", "second change")
+	h.poll(t)
+	h.runJobs(t)
+	clear(attempts)
+	for _, run := range h.synthesisJobs(t) {
+		if strings.HasSuffix(run.GitRef, second) {
+			h.poller.handleReviewCompleted(Event{Type: "review.completed", JobID: run.ID})
+		}
+	}
+	assert.Equal(t, map[string]int{second: 1}, attempts,
+		"a completion does not retry the statuses that failed earlier")
 }
