@@ -459,6 +459,7 @@ func TestMarkJobsSyncedSkipsSameSecondRecompletionWithChangedAttemptMetadata(t *
 		{name: "model changed", diverge: `model = 'gpt-5'`},
 		{name: "provider changed", diverge: `provider = 'anthropic'`},
 		{name: "error changed", diverge: `error = 'new failure'`},
+		{name: "rubric changed", diverge: `rubric_sha256 = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'`},
 		{name: "started_at changed", diverge: `started_at = '` + changedStartedAt + `'`},
 		{name: "finished_at changed", diverge: `finished_at = '` + changedFinishedAt + `'`},
 	}

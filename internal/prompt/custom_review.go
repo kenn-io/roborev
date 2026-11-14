@@ -74,26 +74,33 @@ type customReviewTemplateData struct {
 	Includes   map[string]string
 }
 
-func (b *Builder) resolveSystemPrompt(
-	agentName, reviewType, promptType string,
-) (string, bool, error) {
+func (b *Builder) resolveSystemPromptWithRubric(
+	agentName, reviewType, promptType string, result *BuildResult,
+) (string, bool, []byte, error) {
 	if config.IsBuiltInReviewType(reviewType) {
-		return GetSystemPrompt(agentName, promptType), false, nil
+		return GetSystemPrompt(agentName, promptType), false, nil, nil
 	}
 	repoCfg, err := b.resolveRepoConfig()
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	resolved, ok := config.ResolveCustomReviewTypeFromConfig(
 		reviewType, repoCfg, b.globalCfg,
 	)
 	if !ok {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"custom review type %q is not configured", reviewType,
 		)
 	}
+	archiveAllowed := config.ResolveKataRubricsMode(repoCfg, b.globalCfg) == "current"
 	read := func(filePath string) (string, error) {
-		data, readErr := b.readCustomReviewFile(filePath)
+		data, inside, readErr := b.readCustomReviewFile(filePath)
+		if resolved.RepoDefined && !inside {
+			if archiveAllowed && result != nil {
+				result.RubricArchiveSkipReason = "repository rubric files must resolve inside the repository"
+			}
+			archiveAllowed = false
+		}
 		if readErr != nil {
 			return "", readErr
 		}
@@ -102,7 +109,7 @@ func (b *Builder) resolveSystemPrompt(
 
 	templateText, err := read(resolved.Spec.Template)
 	if err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q template: %w", reviewType, err,
 		)
 	}
@@ -110,7 +117,7 @@ func (b *Builder) resolveSystemPrompt(
 	for name, filePath := range resolved.Spec.Includes {
 		contents, includeErr := read(filePath)
 		if includeErr != nil {
-			return "", true, fmt.Errorf(
+			return "", true, nil, fmt.Errorf(
 				"review type %q include %q: %w",
 				reviewType, name, includeErr,
 			)
@@ -122,7 +129,7 @@ func (b *Builder) resolveSystemPrompt(
 		Option("missingkey=error").
 		Parse(templateText)
 	if err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q parse template: %w", reviewType, err,
 		)
 	}
@@ -131,13 +138,15 @@ func (b *Builder) resolveSystemPrompt(
 		ReviewType: reviewType,
 		Includes:   includes,
 	}); err != nil {
-		return "", true, fmt.Errorf(
+		return "", true, nil, fmt.Errorf(
 			"review type %q render template: %w", reviewType, err,
 		)
 	}
-	result := strings.TrimSpace(rendered.String()) +
-		structuredReviewOutputInstruction
-	return result, true, nil
+	if result != nil {
+		result.RubricArchiveEnabled = archiveAllowed
+	}
+	trimmed := strings.TrimSpace(rendered.String())
+	return trimmed + structuredReviewOutputInstruction, true, []byte(trimmed + "\n"), nil
 }
 
 func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
@@ -162,26 +171,68 @@ func (b *Builder) ReviewContextCount() (int, error) {
 
 func (b *Builder) readCustomReviewFile(
 	filePath string,
-) ([]byte, error) {
+) ([]byte, bool, error) {
 	filePath = strings.TrimSpace(filePath)
 	resolvedPath := filePath
 	if filePath == "~" || strings.HasPrefix(filePath, "~/") ||
 		strings.HasPrefix(filePath, `~\`) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		resolvedPath = filepath.Join(home, strings.TrimLeft(filePath[1:], `/\`))
 	} else if !filepath.IsAbs(filePath) && b.repoCfgRef != "" {
 		clean := path.Clean(filepath.ToSlash(filePath))
 		if clean != "." && clean != ".." && !strings.HasPrefix(clean, "../") {
-			return b.readCustomReviewRefFile(clean)
+			data, err := b.readCustomReviewRefFile(clean)
+			return data, false, err
 		}
 		resolvedPath = filepath.Join(b.resolvedConfigRepoPath(), filePath)
 	} else if !filepath.IsAbs(filePath) {
 		resolvedPath = filepath.Join(b.resolvedConfigRepoPath(), filePath)
 	}
-	return os.ReadFile(resolvedPath)
+	root, rootErr := filepath.EvalSymlinks(b.resolvedConfigRepoPath())
+	if rootErr == nil {
+		root, rootErr = filepath.Abs(root)
+	}
+	var repoRoot *os.Root
+	if rootErr == nil {
+		repoRoot, rootErr = os.OpenRoot(root)
+		if rootErr == nil {
+			defer repoRoot.Close()
+		}
+	}
+	// Read the canonical path used for the containment decision, so a later
+	// change to the configured symlink cannot change the file we read.
+	canonical, err := filepath.EvalSymlinks(resolvedPath)
+	if err != nil {
+		return nil, false, err
+	}
+	canonical, err = filepath.Abs(canonical)
+	if err != nil {
+		return nil, false, err
+	}
+	inside := false
+	if rootErr == nil {
+		rel, relErr := filepath.Rel(root, canonical)
+		inside = relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	if inside {
+		// Root confines the actual open even if a directory is replaced after
+		// the containment check. External sources remain renderable below.
+		rel, relErr := filepath.Rel(root, canonical)
+		if relErr != nil {
+			return nil, false, relErr
+		}
+		data, readErr := readContainedReviewFile(repoRoot, rel)
+		return data, true, readErr
+	}
+	data, err := os.ReadFile(canonical)
+	return data, false, err
+}
+
+func readContainedReviewFile(root *os.Root, rel string) ([]byte, error) {
+	return root.ReadFile(rel)
 }
 
 func (b *Builder) readCustomReviewRefFile(

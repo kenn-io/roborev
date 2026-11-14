@@ -1,0 +1,144 @@
+package kata
+
+import (
+	"context"
+	"encoding/json/v2"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+type archiveLock struct {
+	token chan struct{}
+	users int
+}
+
+var archiveLocks = struct {
+	sync.Mutex
+	locks map[string]*archiveLock
+}{locks: make(map[string]*archiveLock)}
+
+// ResolveArchiveIssue compares identities returned by Kata, rather than
+// inferring a project from the spelling of a possibly moved reference.
+func (c *CLIClient) ResolveArchiveIssue(ctx context.Context, project, ref string) (ArchiveIssue, error) {
+	out, err := c.run(ctx, c, []string{"projects", "show", project, "--json"}, nil)
+	if err != nil {
+		return ArchiveIssue{}, fmt.Errorf("resolve project: %w", err)
+	}
+	var p struct {
+		Project struct {
+			ID int64 `json:"id"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(out, &p); err != nil || p.Project.ID <= 0 {
+		return ArchiveIssue{}, fmt.Errorf("resolve project: missing project identity")
+	}
+	out, err = c.run(ctx, c, []string{"show", ref, "--json", "--project", project}, nil)
+	if err != nil {
+		return ArchiveIssue{}, fmt.Errorf("resolve issue: %w", err)
+	}
+	var result struct {
+		Issue struct {
+			ProjectID int64  `json:"project_id"`
+			UID       string `json:"uid"`
+			ShortID   string `json:"short_id"`
+		} `json:"issue"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil || result.Issue.ProjectID <= 0 || result.Issue.UID == "" || result.Issue.ShortID == "" {
+		return ArchiveIssue{}, fmt.Errorf("resolve issue: Kata did not return complete identity; update Kata and retry")
+	}
+	if result.Issue.ProjectID != p.Project.ID {
+		return ArchiveIssue{}, fmt.Errorf("issue %s moved outside project %s; update the commit reference", ref, project)
+	}
+	return ArchiveIssue{UID: result.Issue.UID, ShortID: result.Issue.ShortID}, nil
+}
+
+// ArchiveRubric serializes the list/add pair for a canonical UID returned by
+// ResolveArchiveIssue and an exact file name.
+func (c *CLIClient) ArchiveRubric(ctx context.Context, project, uid, name string, data []byte) error {
+	key := project + "#" + uid + "/" + name
+	archiveLocks.Lock()
+	lock := archiveLocks.locks[key]
+	if lock == nil {
+		lock = &archiveLock{token: make(chan struct{}, 1)}
+		lock.token <- struct{}{}
+		archiveLocks.locks[key] = lock
+	}
+	lock.users++
+	archiveLocks.Unlock()
+	defer func() {
+		archiveLocks.Lock()
+		lock.users--
+		if lock.users == 0 {
+			delete(archiveLocks.locks, key)
+		}
+		archiveLocks.Unlock()
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-lock.token:
+	}
+	defer func() { lock.token <- struct{}{} }()
+	issue, err := c.ResolveArchiveIssue(ctx, project, uid)
+	if err != nil {
+		return err
+	}
+	if issue.UID != uid {
+		return fmt.Errorf("resolve issue: identity changed; retry archive")
+	}
+	ref := issue.ShortID
+	out, err := c.run(ctx, c, []string{"docbank", "attachments", "ls", ref, "--json", "--project", project}, nil)
+	if err != nil {
+		return fmt.Errorf("list attachments: %w", err)
+	}
+	var listed struct {
+		Attachments map[string]struct {
+			Name string `json:"name"`
+		} `json:"attachments"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return fmt.Errorf("parse attachments: %w", err)
+	}
+	if listed.Attachments == nil {
+		return fmt.Errorf("parse attachments: missing attachments")
+	}
+	for _, item := range listed.Attachments {
+		if item.Name == name {
+			return nil
+		}
+	}
+	dir, err := os.MkdirTemp("", "roborev-rubric-*")
+	if err != nil {
+		return fmt.Errorf("create rubric temporary directory: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	file := filepath.Join(dir, name)
+	if err := os.WriteFile(file, data, 0o600); err != nil {
+		return fmt.Errorf("write rubric: %w", err)
+	}
+	issue, err = c.ResolveArchiveIssue(ctx, project, uid)
+	if err != nil {
+		return err
+	}
+	if issue.UID != uid {
+		return fmt.Errorf("resolve issue: identity changed; retry archive")
+	}
+	out, err = c.run(ctx, c, []string{"docbank", "attachments", "add", issue.ShortID, file, "--json", "--project", project}, nil)
+	if err != nil {
+		return fmt.Errorf("add attachment: %w", err)
+	}
+	var added struct {
+		Results []struct {
+			ID string `json:"attachment_id"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(out, &added); err != nil {
+		return fmt.Errorf("parse add attachment: %w", err)
+	}
+	if len(added.Results) != 1 || added.Results[0].ID == "" {
+		return fmt.Errorf("add attachment failed: %s", string(out))
+	}
+	return nil
+}

@@ -323,6 +323,7 @@ max_chars = 50000
 | `review_guidelines` | string | Project-specific guidelines for the reviewer |
 | `review_md_fallback` | bool | Use `REVIEW.md` when `review_guidelines` is empty or unset (default: `true`) |
 | `review_guidelines_supersede_global` | bool | Use repo guidelines instead of appending global `review_guidelines` |
+| `kata_rubrics.mode` | string | Global rubric archiving: `off` or `current`; repositories may only set `off`. See [Kata integration](/docs/integrations/kata/#archiving-custom-rubrics) |
 | `kata_context.mode` | string | Kata task context in review prompts: `off`, `current`, or `open`. See [Kata Integration](#kata-integration) |
 | `kata_context.max_chars` | int | Maximum bytes of Kata issue context to include (default: `50000`) |
 | `goal_review.enabled` | bool | Automatically review Superpowers spec/plan and Kata changes (default: `false`; repo only) |
@@ -1244,6 +1245,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) | Yes |
 | `reuse_review_session_lookback` | int | 0 | Max recent session candidates to consider (0 = unlimited) | Yes |
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |
+| `kata_rubrics.mode` | string | `off` | Archive rubrics to referenced Kata issues; repository may only opt out | Yes (off only) |
 | `kata_context.mode` | string | `off` | Kata task context in review prompts: `off`, `current`, or `open` | Yes |
 | `kata_context.max_chars` | int | `50000` | Maximum bytes of Kata issue context to include | Yes |
 | `goal_review.kata_gate.default` | string | `block` | Global candidate-gate policy: `block`, `warn`, or `off`; see [Engineering with Superpowers and Kata](/docs/integrations/goal-review/) | Yes |

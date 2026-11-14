@@ -451,6 +451,7 @@ func TestListJobsAppliesLimitsAndTrimsRows(t *testing.T) {
 	require := require.New(t)
 	closed := true
 	verdict := "F"
+	digest := "synthetic-digest"
 	var got JobsQuery
 	backend := &fakeBackend{listJobsFn: func(_ context.Context, q JobsQuery) (JobsPage, error) {
 		got = q
@@ -460,6 +461,7 @@ func TestListJobsAppliesLimitsAndTrimsRows(t *testing.T) {
 				ID:            7,
 				RepoPath:      "/repo",
 				GitRef:        "abc123",
+				RubricSHA256:  &digest,
 				Branch:        "main",
 				Agent:         "codex",
 				JobType:       storage.JobTypeReview,
@@ -491,6 +493,7 @@ func TestListJobsAppliesLimitsAndTrimsRows(t *testing.T) {
 	require.Len(out.Jobs, 1)
 	row := out.Jobs[0]
 	assert.Equal(int64(7), row.ID)
+	assert.Equal(&digest, row.RubricSHA256)
 	assert.Equal("fail", row.Verdict)
 	assert.Equal("done", row.Status)
 	require.NotNil(row.FindingCounts)

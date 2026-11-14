@@ -10,16 +10,19 @@ import (
 )
 
 func TestEvent_MarshalJSON(t *testing.T) {
+	digest := "1234567890abcdef"
 	event := Event{
-		Type:     "review.completed",
-		TS:       time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
-		JobID:    42,
-		Repo:     "/path/to/myrepo",
-		RepoName: "myrepo",
-		SHA:      "abc123",
-		Agent:    "claude-code",
-		Verdict:  "F",
-		Findings: "Missing input validation",
+		Type:         "review.completed",
+		TS:           time.Date(2026, 1, 11, 10, 0, 30, 0, time.UTC),
+		JobID:        42,
+		Repo:         "/path/to/myrepo",
+		RepoName:     "myrepo",
+		SHA:          "abc123",
+		Agent:        "claude-code",
+		Verdict:      "F",
+		Findings:     "Missing input validation",
+		ReviewType:   "custom",
+		RubricSHA256: &digest,
 	}
 
 	data, err := event.MarshalJSON()
@@ -40,6 +43,8 @@ func TestEvent_MarshalJSON(t *testing.T) {
 		{"agent", "claude-code"},
 		{"verdict", "F"},
 		{"findings", "Missing input validation"},
+		{"review_type", "custom"},
+		{"rubric_sha256", digest},
 	}
 
 	assert.Len(t, decoded, len(tests)+1, // +1 for job_id which is a float

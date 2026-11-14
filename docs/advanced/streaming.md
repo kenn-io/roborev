@@ -278,6 +278,9 @@ Common fields:
 - `branch`: Branch used for event and hook matching, when known. For CI
     pull-request reviews this is the PR base branch
 - `agent`: Agent that processed the review, when available
+- `review_type`: Review type, when available
+- `rubric_sha256`: Full lowercase SHA-256 digest of the rendered custom rubric,
+    when available
 - `worktree_path`: Worktree path used by the job, when different from the main
     repo path
 

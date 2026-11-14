@@ -234,6 +234,18 @@ func GetConfigValue(cfg any, key string) (string, error) {
 // SetConfigValue sets a value on a config struct by its TOML key.
 // Converts the string value to the appropriate Go type.
 func SetConfigValue(cfg any, key string, value string) error {
+	if key == "kata_rubrics.mode" {
+		switch cfg.(type) {
+		case *Config:
+			if err := validateKataRubricsMode(value, true, true); err != nil {
+				return err
+			}
+		case *RepoConfig:
+			if err := validateKataRubricsMode(value, false, true); err != nil {
+				return err
+			}
+		}
+	}
 	v := reflect.ValueOf(cfg)
 	if v.Kind() == reflect.Pointer {
 		v = v.Elem()

@@ -2648,6 +2648,9 @@ func (s *Server) humaCancelJob(
 			return nil, err
 		}
 	}
+	// Publish cancellation ownership before workers finish a canceled attempt.
+	s.workerPool.attemptTransitionsMu.Lock()
+	defer s.workerPool.attemptTransitionsMu.Unlock()
 	if err := s.db.CancelJob(input.Body.JobID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
@@ -2657,6 +2660,11 @@ func (s *Server) humaCancelJob(
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("cancel job: %v", err),
 		)
+	}
+	if current, err := s.db.GetJobByIDContext(lookupCtx, input.Body.JobID); err != nil {
+		log.Printf("cancel job %d: refresh snapshot failed: %v", input.Body.JobID, err)
+	} else {
+		job = current
 	}
 	s.workerPool.cancelJob(input.Body.JobID, true)
 
@@ -2668,12 +2676,9 @@ func (s *Server) humaCancelJob(
 	// complete the synthesis despite the user's cancel. Canceling the parent
 	// first makes the later MaybeReleasePanelSynthesis a no-op on an
 	// already-terminal row.
-	canceledMembers := s.cascadeCancelPanelMembers(job, true)
+	canceledMembers := s.cascadeCancelPanelMembers(lookupCtx, job, true)
 	s.releaseSynthesisIfCanceledMember(job)
 
-	if job == nil {
-		job, _ = s.db.GetJobByIDContext(lookupCtx, input.Body.JobID)
-	}
 	s.broadcaster.Broadcast(eventForMutationPrincipal(
 		ctx, eventForJob(jobEventType(job, "canceled"), job, input.Body.JobID),
 	))
