@@ -447,9 +447,9 @@ following agents support it:
 | Kilo | `kilo run --session <session>` |
 | Pi | `pi --session <path>` |
 
-Gemini session reuse requires version 0.15.0 or later. Antigravity can resume stored
-conversations from version 1.0.9, but version 1.1.8 or later is required to
-capture conversation IDs for future reviews.
+Gemini session reuse requires version 0.15.0 or later. Antigravity can resume
+stored conversations from version 1.0.9, but version 1.1.8 or later is required
+to capture conversation IDs for future reviews.
 
 Agents that do not support session reuse (Copilot, Cursor, Kiro, Droid) ignore
 the setting and always start fresh sessions.
