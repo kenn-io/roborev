@@ -98,22 +98,3 @@ func TestHandleEnqueueNeverReusesIsolatedSource(t *testing.T) {
 		})
 	}
 }
-
-func TestSessionCommandLineUsesStoredGeminiCLI(t *testing.T) {
-	tests := []struct {
-		name        string
-		commandLine string
-		command     string
-		want        bool
-	}{
-		{name: "same Antigravity CLI", commandLine: "agy --print-timeout 30m", command: "agy", want: true},
-		{name: "different Gemini CLI", commandLine: "agy --print-timeout 30m", command: "gemini", want: false},
-		{name: "same configured path", commandLine: "/opt/bin/agy --print-timeout 30m", command: "/opt/bin/agy", want: true},
-		{name: "empty command line", command: "gemini", want: false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, sessionCommandLineUses(tc.commandLine, tc.command))
-		})
-	}
-}

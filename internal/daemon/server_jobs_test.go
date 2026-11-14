@@ -930,15 +930,14 @@ func TestFindReusableSessionIDUsesDirtyBaseCommit(t *testing.T) {
 	assert.Equal(t, "session-dirty", reused)
 }
 
-func TestFindCompatibleReusableSessionSkipsGeminiCI(t *testing.T) {
+func TestFindCompatibleReusableSessionMatchesGeminiCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses an executable CLI fixture")
 	}
 	_, db, _ := newTestServer(t)
 	repo := testutil.InitTestRepo(t)
-	repoRoot := repo.Path()
 	targetSHA := repo.HeadSHA()
-	storedRepo, err := db.GetOrCreateRepo(repoRoot)
+	storedRepo, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
 	commit, err := db.GetOrCreateCommit(storedRepo.ID, targetSHA, "Author", "Subject", time.Now())
 	require.NoError(t, err)
@@ -946,88 +945,34 @@ func TestFindCompatibleReusableSessionSkipsGeminiCI(t *testing.T) {
 	fakeGemini := filepath.Join(t.TempDir(), "gemini")
 	require.NoError(t, os.WriteFile(fakeGemini, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	reuseSessions := true
-	globalCfg := &config.Config{
-		GeminiCmd:          fakeGemini,
-		ReuseReviewSession: &reuseSessions,
-	}
-	commandLine := fakeGemini + " --output-format stream-json --approval-mode plan"
-
-	localJob, err := db.EnqueueJob(storage.EnqueueOpts{
+	globalCfg := &config.Config{GeminiCmd: fakeGemini, ReuseReviewSession: &reuseSessions}
+	opts := storage.EnqueueOpts{
 		RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: targetSHA,
-		Branch: "feature/session", Agent: "gemini", ReviewType: config.ReviewTypeDefault,
-	})
-	require.NoError(t, err)
-	claimed, err := db.ClaimJob("local-worker")
-	require.NoError(t, err)
-	require.Equal(t, localJob.ID, claimed.ID)
-	require.NoError(t, testutil.CompleteReviewFixture(db, localJob.ID, "gemini", "prompt", "No issues found."))
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, command_line = ? WHERE id = ?`, "local-session", commandLine, localJob.ID)
-	require.NoError(t, err)
-
-	const prNumber = 42
-	created, members, _, err := db.CreateCIPanelRun(
-		"owner/repo", prNumber, targetSHA,
-		[]storage.EnqueueOpts{{
-			RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: targetSHA,
-			Branch: "feature/session", Agent: "gemini", ReviewType: config.ReviewTypeDefault,
-			Reasoning: "thorough",
-			PanelName: "ci", PanelMemberName: "reviewer",
-		}},
-		storage.EnqueueOpts{RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: targetSHA, Branch: "feature/session", Agent: "gemini"},
-	)
-	require.NoError(t, err)
-	require.True(t, created)
-	require.Len(t, members, 1)
-	claimed, err = db.ClaimJob("ci-worker")
-	require.NoError(t, err)
-	require.Equal(t, members[0].ID, claimed.ID)
-	require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "gemini", "prompt", "No issues found."))
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, command_line = ? WHERE id = ?`, "ci-session", commandLine, claimed.ID)
-	require.NoError(t, err)
-
-	ciOpts := storage.EnqueueOpts{
-		RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: targetSHA,
-		Branch: "feature/session", Agent: "gemini", ReviewType: config.ReviewTypeDefault,
-		Reasoning: "thorough",
-		JobType:   storage.JobTypeReview, Source: storage.JobSourceCI,
-		CIBaseBranch: "main", PanelRole: storage.PanelRoleMember,
-		PanelName: "ci", PanelMemberName: "reviewer",
+		Branch: "feature/session", Agent: "gemini", Reasoning: "thorough", ReviewType: config.ReviewTypeDefault,
 	}
-	machineID, err := db.GetMachineID()
+	job, err := db.EnqueueJob(opts)
 	require.NoError(t, err)
-	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
-		RepoID: storedRepo.ID, Branch: ciOpts.Branch, Source: ciOpts.Source,
-		Agent: ciOpts.Agent, Reasoning: ciOpts.Reasoning, ReviewType: ciOpts.ReviewType, PanelName: ciOpts.PanelName,
-		PanelMemberName: ciOpts.PanelMemberName, SourceMachineID: machineID,
-		CIPRNumber: prNumber,
-	})
+	claimed, err := db.ClaimJob("worker")
 	require.NoError(t, err)
-	require.Len(t, candidates, 1)
-	assert.Equal(t, "ci-session", candidates[0].SessionID)
-
-	got, _ := findCompatibleReusableSession(
-		t.Context(), db, repoRoot, targetSHA, ciOpts, nil, nil, globalCfg, nil, prNumber,
-	)
-	assert.Empty(t, got, "Gemini CI resumes cannot find sessions from temporary checkout roots")
-
-	localOpts := storage.EnqueueOpts{
-		RepoID: storedRepo.ID, CommitID: commit.ID, GitRef: targetSHA,
-		Branch: "feature/session", Agent: "gemini", Reasoning: "thorough",
-		ReviewType: config.ReviewTypeDefault,
-		JobType:    storage.JobTypeReview,
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "gemini", "prompt", "No issues found."))
+	setSessionCLI := func(sessionCLI string) {
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = 'session', session_cli = ? WHERE id = ?`, sessionCLI, job.ID)
+		require.NoError(t, err)
 	}
-	localCandidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
-		RepoID: storedRepo.ID, Branch: localOpts.Branch, Agent: localOpts.Agent,
-		Reasoning: localOpts.Reasoning, ReviewType: localOpts.ReviewType,
-		SourceMachineID: machineID,
-	})
-	require.NoError(t, err)
-	require.Len(t, localCandidates, 1)
-	assert.Equal(t, "local-session", localCandidates[0].SessionID)
-	got, _ = findCompatibleReusableSession(
-		t.Context(), db, repoRoot, targetSHA, localOpts, nil, nil, globalCfg, nil, 0,
-	)
-	assert.Equal(t, "local-session", got)
+
+	setSessionCLI("agy")
+	got, _, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
+	assert.Empty(t, got, "Gemini must not resume an Antigravity session")
+
+	setSessionCLI("")
+	got, _, _ = findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
+	assert.Empty(t, got, "sessions without CLI provenance are not reusable")
+
+	setSessionCLI("gemini")
+	got, sessionCLI, _ := findCompatibleReusableSession(t.Context(), db, repo.Path(), targetSHA, opts, nil, nil, globalCfg, nil, 0)
+	assert.Equal(t, "session", got)
+	assert.Equal(t, "gemini", sessionCLI)
 }
 
 func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *testing.T) {

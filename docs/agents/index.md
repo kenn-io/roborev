@@ -231,11 +231,6 @@ versions. Review jobs omit both `--sandbox` and
 agy's print-mode sandbox can deny the read-only workspace probes that reviews
 need.
 
-Session reuse through `agy` requires version 1.1.8 or newer, which adds
-`--output-format stream-json`. Older versions keep plain-text output and start
-fresh on later reviews. If a resumed Gemini or Antigravity session fails,
-roborev retries the review in a fresh session.
-
 Since
 [agy 1.1.3](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.1.3),
 print mode soft-denies tool calls that would need a permission confirmation

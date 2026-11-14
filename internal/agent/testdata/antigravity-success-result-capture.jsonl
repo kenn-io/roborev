@@ -1,0 +1,1 @@
+{"event":"result","result":{"conversation_id":"<another-conversation-id>","status":"SUCCESS","response":"RESUME_OK\n","duration_seconds":1.958904627,"num_turns":1,"usage":{"input_tokens":13298,"output_tokens":115,"thinking_tokens":111,"cache_read_tokens":0,"total_tokens":13413}}}

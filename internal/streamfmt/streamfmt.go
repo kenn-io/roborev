@@ -191,8 +191,9 @@ func renderLogWith(r io.Reader, fmtr *Formatter, final bool) error {
 	return fmtr.err()
 }
 
-// LooksLikeJSON reports whether line has a known stream event marker. It
-// separates provider frames from literal text; it does not select a decoder.
+// LooksLikeJSON reports whether line is a JSON object with a non-empty type
+// or event. It separates provider frames from literal stderr; it does not
+// select a provider decoder.
 func LooksLikeJSON(line string) bool {
 	for _, c := range line {
 		switch c {

@@ -1328,29 +1328,33 @@ func findCompatibleReusableSession(
 	globalCfg *config.Config,
 	experiment *storage.ExperimentAssignmentInput,
 	ciPRNumber int,
-) (string, *uuid.UUID) {
-	// Gemini sessions can depend on the project root, but CI reviews use a
-	// disposable exact checkout whose path changes for every job.
-	if opts.Source == storage.JobSourceCI && opts.Agent == "gemini" {
-		return "", nil
-	}
+) (string, string, *uuid.UUID) {
 	// A resumed agent session may retain the caller's cwd. Isolated committed
 	// reviews always start fresh; dirty and CI session policies are unchanged.
 	committedReview := opts.JobType == "" || opts.JobType == storage.JobTypeReview || opts.JobType == storage.JobTypeRange
 	if committedReview && opts.Source != storage.JobSourceCI && opts.CIBaseBranch == "" &&
 		opts.GitRef != "dirty" && opts.DiffContent == "" &&
 		config.ResolveIsolateReviewsFromConfig(repoCfg, globalCfg) {
-		return "", nil
+		return "", "", nil
 	}
 	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||
 		opts.Branch == "" || targetSHA == "" ||
 		opts.PanelRole == storage.PanelRoleSynthesis ||
 		!agent.SupportsSessionResume(opts.Agent) {
-		return "", nil
+		return "", "", nil
 	}
 	machineID, err := db.GetMachineID()
 	if err != nil || machineID == uuid.Nil() {
-		return "", nil
+		return "", "", nil
+	}
+	// Gemini CLI and Antigravity share a roborev agent name, but each resumes
+	// only the session IDs it created.
+	sessionCLI := ""
+	if opts.Agent == "gemini" {
+		resolved, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, opts.Agent, globalCfg)
+		if sessionCLI = sessionCLIForAgent(resolved); err != nil || sessionCLI == "" {
+			return "", "", nil
+		}
 	}
 	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
 		RepoID:                opts.RepoID,
@@ -1362,6 +1366,7 @@ func findCompatibleReusableSession(
 		Reasoning:             opts.Reasoning,
 		ReviewType:            opts.ReviewType,
 		WorktreePath:          opts.WorktreePath,
+		SessionCLI:            sessionCLI,
 		PanelName:             opts.PanelName,
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
@@ -1374,27 +1379,10 @@ func findCompatibleReusableSession(
 	})
 	if err != nil {
 		log.Printf("enqueue: lookup compatible reusable session failed for repo=%d agent=%q: %v", opts.RepoID, opts.Agent, err)
-		return "", nil
-	}
-	geminiCommand := ""
-	if opts.Agent == "gemini" {
-		resolved, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, opts.Agent, globalCfg)
-		if err != nil {
-			return "", nil
-		}
-		gemini, ok := resolved.(*agent.GeminiAgent)
-		if !ok {
-			return "", nil
-		}
-		geminiCommand = gemini.CommandName()
+		return "", "", nil
 	}
 	const maxSessionReuseDistance = 50
 	for _, candidate := range candidates {
-		// Gemini CLI and Antigravity share a roborev agent name, but their
-		// session IDs can only be resumed by the CLI that created them.
-		if geminiCommand != "" && !sessionCommandLineUses(candidate.CommandLine, geminiCommand) {
-			continue
-		}
 		candidateSHA := strings.TrimSpace(candidate.ReusableSessionTarget)
 		if candidateSHA == "" {
 			continue
@@ -1407,15 +1395,9 @@ func findCompatibleReusableSession(
 		if err != nil || len(commitsSinceCandidate) > maxSessionReuseDistance {
 			continue
 		}
-		return candidate.SessionID, candidate.UUID
+		return candidate.SessionID, sessionCLI, candidate.UUID
 	}
-	return "", nil
-}
-
-func sessionCommandLineUses(commandLine, command string) bool {
-	commandLine = strings.TrimSpace(commandLine)
-	command = strings.TrimSpace(command)
-	return commandLine == command || strings.HasPrefix(commandLine, command+" ")
+	return "", "", nil
 }
 
 func reusableSessionTarget(gitRef string) string {
@@ -3494,7 +3476,7 @@ func (s *Server) enqueueSingleAgent(
 		o.Experiment = assignment
 	}
 	if in.req.ReviewSettings == nil {
-		o.SessionID, o.ResumeSourceJobUUID = findCompatibleReusableSession(
+		o.SessionID, o.SessionCLI, o.ResumeSourceJobUUID = findCompatibleReusableSession(
 			ctx, s.db, in.checkoutRoot, in.descriptor.sessionSHA, o,
 			in.repoCfg, in.rawRepoCfg, in.cfg, o.Experiment, 0,
 		)

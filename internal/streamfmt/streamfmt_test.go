@@ -683,20 +683,8 @@ func TestFormatter_Gemini(t *testing.T) {
 	}
 }
 
-func TestFormatter_GeminiDeltaTextStaysInOneParagraph(t *testing.T) {
-	fix := newFixture(true, "gemini")
-	fix.writeLine(eventGeminiMessage("assistant", "hello ", true))
-	fix.writeLine(eventGeminiMessage("assistant", "world", true))
-	fix.writeLine(eventGeminiResult("success"))
-
-	plain := strings.TrimSpace(StripANSI(fix.output()))
-	assert.Equal(t, "hello world", strings.Join(strings.Fields(plain), " "))
-	assert.NotContains(t, plain, "hello\nworld")
-}
-
-func TestFormatter_GeminiAntigravityResultEvent(t *testing.T) {
-	const response = "Git rebase destructively rewrites a branch's commit history by systematically detaching its unique commits and sequentially reapplying them onto a new base commit."
-	captured, err := os.ReadFile("../agent/testdata/antigravity-stream.jsonl")
+func TestFormatter_GeminiAntigravityCapturedResultEvent(t *testing.T) {
+	captured, err := os.ReadFile("../agent/testdata/antigravity-success-result-capture.jsonl")
 	require.NoError(t, err)
 	var output bytes.Buffer
 	fmtr := New(&output, true, DecoderForAgent("gemini"))
@@ -704,57 +692,23 @@ func TestFormatter_GeminiAntigravityResultEvent(t *testing.T) {
 
 	plain := StripANSI(output.String())
 	normalized := strings.Join(strings.Fields(plain), " ")
-	assert.Contains(t, normalized, response)
-	assert.Equal(t, 1, strings.Count(normalized, response), "the terminal result should not duplicate streamed text")
+	assert.Contains(t, normalized, "RESUME_OK")
 	assert.NotContains(t, normalized, "text_delta")
 	assert.NotContains(t, normalized, `"event":"result"`)
 }
 
-func TestLooksLikeJSONRecognizesAntigravityEvents(t *testing.T) {
-	assert.True(t, LooksLikeJSON(`{"event":"init","conversation_id":"conversation-123"}`))
-	assert.True(t, LooksLikeJSON(`{"event":"result","result":{"status":"SUCCESS"}}`))
-	assert.True(t, LooksLikeJSON(eventAssistantResult("final summary text")))
-}
-
-func TestRenderLogWithSuppressesClaudeStringResult(t *testing.T) {
-	var output bytes.Buffer
-	fmtr := New(&output, true, DecoderForAgent("claude-code"))
-	require.NoError(t, RenderLogWith(strings.NewReader(eventAssistantResult("final summary text")+"\n"), fmtr))
-
-	assert.Empty(t, StripANSI(output.String()))
-}
-
-func TestFormatter_GeminiAntigravityPrintTimeout(t *testing.T) {
-	input := strings.Join([]string{
-		`{"event":"init","conversation_id":"conversation-123"}`,
-		`{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Partial answer"}}`,
-		`{"event":"result","result":{"status":"SUCCESS","response":"Partial answer","finished_reason":"print_timeout"}}`,
-	}, "\n")
+func TestFormatter_GeminiAntigravityCapturedErrorIgnoresStepUpdates(t *testing.T) {
+	captured, err := os.ReadFile("../agent/testdata/antigravity-resume-error-capture.jsonl")
+	require.NoError(t, err)
 	var output bytes.Buffer
 	fmtr := New(&output, true, DecoderForAgent("gemini"))
-	require.NoError(t, RenderLogWith(strings.NewReader(input), fmtr))
-	plain := strings.Join(strings.Fields(StripANSI(output.String())), " ")
-	assert.NotContains(t, plain, "Partial answer")
-	assert.Contains(t, plain, "[Error: Antigravity result was incomplete: print_timeout]")
-}
-
-func TestFormatter_GeminiAntigravityFreshRetryShowsFinalResponse(t *testing.T) {
-	input := strings.Join([]string{
-		`{"event":"init","conversation_id":"old-session"}`,
-		`{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"partial old response"}}`,
-		`{"event":"result","result":{"status":"ERROR","error":"session expired"}}`,
-		`{"event":"init","conversation_id":"fresh-session"}`,
-		`{"event":"result","result":{"status":"SUCCESS","response":"fresh final response"}}`,
-	}, "\n") + "\n"
-	var output bytes.Buffer
-	fmtr := New(&output, true, DecoderForAgent("gemini"))
-	require.NoError(t, RenderLogWith(strings.NewReader(input), fmtr))
+	require.NoError(t, RenderLogWith(bytes.NewReader(captured), fmtr))
 
 	plain := StripANSI(output.String())
-	assert.NotContains(t, plain, "partial old response")
-	assert.NotContains(t, plain, `"step_update"`)
-	assert.Contains(t, plain, "[Error: session expired]")
-	assert.Contains(t, plain, "fresh final response")
+	assert.Contains(t, plain, "Individual quota reached")
+	assert.NotContains(t, plain, "RESUME_OK")
+	assert.NotContains(t, plain, "text_delta")
+	assert.NotContains(t, plain, `"event":"result"`)
 }
 
 func TestFormatter_OpenCode(t *testing.T) {

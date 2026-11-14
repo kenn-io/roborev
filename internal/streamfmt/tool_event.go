@@ -18,7 +18,6 @@ var toolAliases = map[string]string{
 	"writefile":          "Write",
 	"bash":               "Bash",
 	"runshellcommand":    "Bash",
-	"runcommand":         "Bash",
 	"runterminalcmd":     "Bash",
 	"runterminalcommand": "Bash",
 	"shell":              "Bash",
@@ -56,7 +55,7 @@ func toolEvent(name string, input jsontext.Value) Event {
 			fields, "filepath", "path", "targetfile", "file",
 		)
 	case "Bash":
-		event.Arg = firstJSONField(fields, "command", "commandline")
+		event.Arg = jsonString(fields["command"])
 		if len(event.Arg) > 80 {
 			event.Arg = event.Arg[:77] + "..."
 		}

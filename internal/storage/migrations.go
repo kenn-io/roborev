@@ -51,6 +51,16 @@ var schemaMigrations = []schemaMigration{
 	{15, "local review invocation reports", migrateReviewInvocations},
 	{16, "token cost lookup state", migrateTokenCostLookups},
 	{17, "supplied panel enqueue receipts", migratePanelEnqueueRequests},
+	{18, "session CLI provenance", migrateSessionCLI},
+}
+
+func migrateSessionCLI(ctx context.Context, db *DB) error {
+	exists, err := hasColumn(ctx, db, "review_jobs", "session_cli")
+	if err != nil || exists {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ALTER TABLE review_jobs ADD COLUMN session_cli TEXT`)
+	return err
 }
 
 func migrateSyncPendingIndexes(ctx context.Context, db *DB) error {

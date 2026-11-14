@@ -67,53 +67,28 @@ func TestClearJobSessionIDAllowsFreshCapture(t *testing.T) {
 	defer db.Close()
 	_, _, job := createJobChain(t, db, "/tmp/example-repo", "session-resume-fallback")
 	claimJob(t, db, "worker-a")
-	source := uuid.New()
 	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
-		SET session_id = 'old-session', session_resumed = 1, resume_source_job_uuid = ?
-		WHERE id = ?`, source, job.ID,
+		SET session_id = 'old-session', session_cli = 'agy', session_resumed = 1, resume_source_job_uuid = ?
+		WHERE id = ?`, uuid.New(), job.ID,
 	)
 	require.NoError(t, err)
 
-	err = db.ClearJobSessionID(job.ID, "worker-b")
-	require.ErrorIs(t, err, sql.ErrNoRows)
+	require.ErrorIs(t, db.ClearJobSessionID(job.ID, "worker-b"), sql.ErrNoRows)
 	require.NoError(t, db.ClearJobSessionID(job.ID, "worker-a"))
-	var sessionID sql.NullString
 	var resumed bool
 	var resumeSource sql.NullString
 	require.NoError(t, db.QueryRowContext(t.Context(), `
-		SELECT session_id, session_resumed, resume_source_job_uuid
-		FROM review_jobs WHERE id = ?`, job.ID,
-	).Scan(&sessionID, &resumed, &resumeSource))
-	assert.False(t, sessionID.Valid)
+		SELECT session_resumed, resume_source_job_uuid FROM review_jobs WHERE id = ?`, job.ID,
+	).Scan(&resumed, &resumeSource))
 	assert.False(t, resumed)
 	assert.False(t, resumeSource.Valid)
 
-	require.NoError(t, db.SaveJobSessionID(job.ID, "worker-a", "fresh-session"))
-	stored, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "fresh-session", stored.SessionID)
-}
-
-func TestClearJobSessionIDAllowsReplacingFailedAttemptSession(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-	_, _, job := createJobChain(t, db, "/tmp/example-repo", "session-clear-failed-attempt")
-	claimJob(t, db, "worker-a")
-	_, err := db.ExecContext(t.Context(), `
-		UPDATE review_jobs
-		SET session_id = 'failed-attempt-session', session_resumed = 0
-		WHERE id = ?`, job.ID,
-	)
-	require.NoError(t, err)
-
-	require.NoError(t, db.ClearJobSessionID(job.ID, "worker-a"))
-	cleared, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Empty(t, cleared.SessionID)
-	require.NoError(t, db.SaveJobSessionID(job.ID, "worker-a", "replacement-session"))
-	replaced, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "replacement-session", replaced.SessionID)
+	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-a", "fresh-session", "gemini"))
+	var sessionID, sessionCLI string
+	require.NoError(t, db.QueryRowContext(t.Context(), `
+		SELECT session_id, session_cli FROM review_jobs WHERE id = ?`, job.ID,
+	).Scan(&sessionID, &sessionCLI))
+	assert.Equal(t, "fresh-session", sessionID)
+	assert.Equal(t, "gemini", sessionCLI)
 }

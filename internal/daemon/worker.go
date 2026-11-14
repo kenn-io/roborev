@@ -1511,7 +1511,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	// Keep the session writer outermost: adapters may report sessions directly.
 	sessionWriter := agent.NewSessionCaptureWriter(agentOutput, func(sessionID string) {
-		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
+		if err := wp.db.SaveJobSessionIDWithCLI(job.ID, workerID, sessionID, sessionCLIForAgent(a)); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
 		}
 		if planningPrompt != "" && implementationInvoked {
@@ -1710,7 +1710,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}, true)
 	}
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
-		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
+		if saveErr := wp.db.SaveJobSessionIDWithCLI(job.ID, workerID, sessionID, sessionCLIForAgent(a)); saveErr != nil {
 			log.Printf("[%s] Error persisting session ID for job %d: %v", workerID, job.ID, saveErr)
 		}
 	}
@@ -1890,6 +1890,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if completed && wp.captureSetupFinished != nil {
 		wp.captureSetupFinished()
 	}
+}
+
+func sessionCLIForAgent(a agent.Agent) string {
+	if cli, ok := a.(interface{ SessionCLI() string }); ok {
+		return cli.SessionCLI()
+	}
+	return ""
 }
 
 // finishCanceledAttempt emits cancellation only for the claim that still owns
