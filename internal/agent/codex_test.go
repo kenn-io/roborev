@@ -457,8 +457,7 @@ func TestCodexReviewPassesThreadSourceWhenSupported(t *testing.T) {
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
-	assertContainsArg(t, args, "--thread-source")
-	assertContainsArg(t, args, "roborev")
+	assertArgsContainContiguous(t, args, []string{"--thread-source", "roborev"})
 }
 
 func TestCodexReviewOmitsIgnoreUserConfigWhenUnsupported(t *testing.T) {
@@ -611,13 +610,9 @@ func TestCodexReviewUsesSandboxNone(t *testing.T) {
 	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
-	args, err := os.ReadFile(mock.ArgsFile)
-	require.NoError(t, err)
-	argsStr := string(args)
-	assert.Contains(t, argsStr, "--sandbox read-only",
-		"expected --sandbox read-only in args, got: %s", strings.TrimSpace(argsStr))
-	assert.NotContains(t, argsStr, codexAutoApproveFlag,
-		"expected no %s in review mode, got: %s", codexAutoApproveFlag, strings.TrimSpace(argsStr))
+	args := readMockArgs(t, mock.ArgsFile)
+	assertArgsContainContiguous(t, args, []string{"--sandbox", "read-only"})
+	assert.NotContains(t, args, codexAutoApproveFlag)
 }
 
 func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {

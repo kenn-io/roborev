@@ -23,6 +23,10 @@ const claudeStrictHelp = "--restricted --tools --allowedTools, --allowed-tools -
 const claudeStrictInitLine = `{"type":"system","subtype":"init","permissionMode":"dontAsk","tools":["Read","Glob","Grep","StructuredOutput"],"mcp_servers":[]}`
 
 func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
+	// Generated MCP and settings paths must each remain a single argument.
+	tmpDir := filepath.Join(t.TempDir(), "strict review")
+	require.NoError(t, os.Mkdir(tmpDir, 0o700))
+	t.Setenv("TMPDIR", tmpDir)
 	// The selected server also offers an ungranted tool; --allowedTools denies it.
 	initLine := `{"type":"system","subtype":"init","permissionMode":"dontAsk",` +
 		`"tools":["Read","Glob","Grep","StructuredOutput","mcp__sources__read","mcp__sources__find"],` +
@@ -47,6 +51,7 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 	prepared, cleanup, err := PrepareReviewToolPolicy(base, policy, cfg)
 	require.NoError(t, err)
 	mcpConfig := prepared.(*ClaudeAgent).StrictReviewMCPConfig()
+	assert.Contains(t, mcpConfig, "strict review")
 	data, err := os.ReadFile(mcpConfig)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"mcpServers":{"sources":{"command":"source-reader","args":["--stdio"]}}}`, string(data))
