@@ -889,15 +889,30 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	}
 	verdictBool, noReview := syncedReviewVerdict(r)
 	var persisted, awaitingAssociation bool
-	err = p.pool.QueryRow(ctx, pgUpsertReviewSQL,
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	err = tx.QueryRow(ctx, pgUpsertReviewSQL,
 		r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 		verdictBool, nullJSON(structuredOutput), r.ReviewedFileCount, r.ExcludedFileCount,
 		reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID, uuid.New()).Scan(&persisted, &awaitingAssociation)
 	if err == nil && awaitingAssociation {
 		return errReviewAttemptPending
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, pgResolveSyncedLegacySQL, r.UUID, nullJSON(structuredOutput), r.MetadataOnly); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
+
+const pgResolveSyncedLegacySQL = `UPDATE legacy_reviews SET resolved_at = COALESCE(resolved_at, clock_timestamp())
+ WHERE uuid = $1 AND $2::jsonb IS NOT NULL AND $2::jsonb->'legacy' IS NULL AND NOT $3::boolean
+ AND EXISTS (SELECT 1 FROM reviews WHERE reviews.uuid = $1 AND reviews.structured_output = $2::jsonb)`
 
 // errSyncRowRejected marks a row that sync cannot upload for an application
 // reason, such as failed local checks or a conflicting experiment, rather
@@ -1651,6 +1666,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 			verdictBool, nullJSON(structuredOutputs[i]), r.ReviewedFileCount, r.ExcludedFileCount,
 			reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID, uuid.New())
+		batch.Queue(pgResolveSyncedLegacySQL, r.UUID, nullJSON(structuredOutputs[i]), r.MetadataOnly)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
@@ -1665,6 +1681,9 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 			err = errReviewAttemptPending
 		}
 		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if _, err := br.Exec(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

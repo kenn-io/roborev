@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -534,6 +535,8 @@ func TestIntegrationLegacyMaintenancePassProgress(t *testing.T) { //nolint:paral
 		_, err = pool.Pool().Exec(ctx, `DELETE FROM reviews WHERE uuid = $1`, blocked)
 		require.NoError(t, err)
 		insertLegacyScanReview(t, pool, repoID, commitID, scanned, "0 seconds", false)
+		_, err = pool.Pool().Exec(ctx, `UPDATE reviews SET output = '', structured_output = '{"schema_version":2,"summary":"Review.","verdict":"pass","findings":[]}' WHERE uuid = $1`, scanned)
+		require.NoError(t, err)
 		_, err = pool.Pool().Exec(ctx, `DELETE FROM sync_metadata WHERE key = $1`, legacyReviewScanKey)
 		require.NoError(t, err)
 		tx, err := pool.Pool().Begin(ctx)
@@ -547,9 +550,6 @@ func TestIntegrationLegacyMaintenancePassProgress(t *testing.T) { //nolint:paral
 		var retry *backoff.RetryAfterError
 		require.ErrorAs(t, err, &retry)
 		assert.Zero(t, retry.Duration)
-		var archived bool
-		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM legacy_reviews WHERE uuid = $1)`, scanned).Scan(&archived))
-		assert.True(t, archived)
 		var stored string
 		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = $1`, legacyReviewScanKey).Scan(&stored))
 		var state legacyReviewScanState
@@ -590,6 +590,66 @@ func TestIntegrationLegacyMaintenancePassProgress(t *testing.T) { //nolint:paral
 		err = pool.legacyMaintenancePass(passCtx2)
 		require.Error(t, err)
 		assert.NotErrorAs(t, err, &retry)
+	})
+}
+
+func TestIntegrationLegacyScanBeforeStructuredUpload(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	id := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+	var job, owner uuid.UUID
+	var enqueued time.Time
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_uuid, job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, id).Scan(&job, &enqueued, &owner))
+	tx, err := pool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+	_, err = tx.Exec(ctx, `SELECT 1 FROM reviews WHERE uuid = $1 FOR UPDATE`, id)
+	require.NoError(t, err)
+	write := make(chan error, 1)
+	go func() {
+		write <- pool.UpsertReview(ctx, SyncableReview{UUID: id, JobUUID: job, JobEnqueuedAt: enqueued, JobSourceMachineID: owner, Agent: "test", Closed: true, UpdatedByMachineID: defaultTestMachineID, CreatedAt: time.Now(), StructuredOutput: jsontext.Value(`{"schema_version":2,"summary":"Review.","verdict":"pass","findings":[]}`)})
+	}()
+	waitCondition(t, 10*time.Second, "upload waiting for scan", func() (bool, error) {
+		var waiting bool
+		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%WITH locked_job AS MATERIALIZED%')`).Scan(&waiting)
+		return waiting, err
+	})
+	_, err = tx.Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error) SELECT uuid, to_jsonb(r), 'Unstructured historical review' FROM reviews r WHERE uuid = $1`, id)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `DELETE FROM reviews WHERE uuid = $1`, id)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+	require.NoError(t, <-write)
+	unresolved, err := pool.UnresolvedLegacyReviews(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, unresolved)
+}
+
+func TestIntegrationSyncLoopRestoresLegacyReviews(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL test schema
+	env := newIntegrationEnv(t)
+	pool, ctx := env.Pool, t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	id := insertLegacyScanReview(t, pool, repoID, commitID, uuid.New(), "0 seconds", false)
+	_, err := pool.Pool().Exec(ctx, `INSERT INTO legacy_reviews (uuid, record, migration_error) SELECT uuid, to_jsonb(r), 'Unstructured historical review' FROM reviews r WHERE uuid = $1`, id)
+	require.NoError(t, err)
+	_, err = pool.Pool().Exec(ctx, `DELETE FROM reviews WHERE uuid = $1`, id)
+	require.NoError(t, err)
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	worker.pgPool = pool
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		worker.syncLoop(ctx, stop, time.Hour, false)
+	}()
+	t.Cleanup(func() { close(stop); <-done })
+	waitCondition(t, 10*time.Second, "maintenance restores archived review", func() (bool, error) {
+		var restored bool
+		err := pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE uuid = $1)`, id).Scan(&restored)
+		return restored, err
 	})
 }
 

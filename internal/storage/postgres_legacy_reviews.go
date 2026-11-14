@@ -51,6 +51,7 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context, noWait bool) (err err
 			state = legacyReviewScanState{}
 		}
 	}
+	firstScan := state.Done == nil
 	if state.Run == nil {
 		state.Run = &legacyReviewScanRun{}
 		if err := p.pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&state.Run.Start); err != nil {
@@ -77,6 +78,9 @@ func (p *PgPool) migrateLegacyReviews(ctx context.Context, noWait bool) (err err
 			return fmt.Errorf("save historical mirror scan state: %w", err)
 		}
 		if scanned == 0 {
+			if firstScan {
+				p.legacyProgress.Add(1)
+			}
 			return nil
 		}
 		total += scanned
