@@ -163,7 +163,7 @@ func TestInterruptShutdownDatabaseErrorLeavesShutdownUntouched(t *testing.T) {
 	renamed := false
 	t.Cleanup(func() {
 		if renamed {
-			_, err := db.ExecContext(context.Background(), `ALTER TABLE review_jobs_gone RENAME TO review_jobs`)
+			_, err := db.ExecContext(context.WithoutCancel(t.Context()), `ALTER TABLE review_jobs_gone RENAME TO review_jobs`)
 			assert.NoError(t, err)
 		}
 	})
