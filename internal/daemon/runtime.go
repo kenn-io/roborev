@@ -769,7 +769,7 @@ func killDaemon(info *RuntimeInfo, interrupt bool) error {
 	}
 
 	if interrupt && info.PID <= 0 {
-		return fmt.Errorf("cannot interrupt a daemon without a recorded PID; use --running=wait")
+		return fmt.Errorf("cannot safely interrupt this daemon; use --running=wait")
 	}
 
 	// Request graceful shutdown within one shared preparation budget. Once the
