@@ -444,29 +444,50 @@ func TestDaemonRestartOnlyStopsValidatedRuntimes(t *testing.T) {
 }
 
 func TestDaemonRestartRunningPolicy(t *testing.T) {
+	t.Run("arguments", func(t *testing.T) {
+		stubDaemonRestartOutput(t)
+		oldList, oldInterrupt := listAllRuntimes, interruptDaemon
+		t.Cleanup(func() { listAllRuntimes, interruptDaemon = oldList, oldInterrupt })
+		listCalls, interruptCalls, stopCalls := 0, 0, 0
+		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { listCalls++; return nil, nil }
+		interruptDaemon = func(*daemon.RuntimeInfo) error { interruptCalls++; return nil }
+		withDaemonCommandDependencies(t, func() error { return nil }, func() error { stopCalls++; return nil }, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
+		cmd := daemonCmd()
+		cmd.SetArgs([]string{"restart", "--running=invalid"})
+		require.Error(t, cmd.ExecuteContext(t.Context()))
+		assert.Zero(t, listCalls)
+		assert.Zero(t, stopCalls)
+		cmd = daemonCmd()
+		cmd.SetArgs([]string{"restart", "--running=interrupt", "42"})
+		require.ErrorContains(t, cmd.ExecuteContext(t.Context()), "--running=interrupt takes no arguments")
+		assert.Zero(t, listCalls)
+		assert.Zero(t, interruptCalls)
+		assert.Zero(t, stopCalls)
+		cmd = daemonCmd()
+		cmd.SetArgs([]string{"restart", "extra"})
+		require.NoError(t, cmd.ExecuteContext(t.Context()))
+		assert.Zero(t, interruptCalls)
+	})
 	for _, service := range []bool{false, true} {
 		t.Run(fmt.Sprintf("service=%t", service), func(t *testing.T) {
 			stubDaemonRestartOutput(t)
 			restartThroughService = service
-			owner := ownedDaemonService(t)
 			info := &daemon.RuntimeInfo{PID: os.Getpid()}
 			oldList, oldInterrupt := listAllRuntimes, interruptDaemon
 			t.Cleanup(func() { listAllRuntimes, interruptDaemon = oldList, oldInterrupt })
 			listCalls, interruptCalls, stopCalls := 0, 0, 0
 			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { listCalls++; return []*daemon.RuntimeInfo{info}, nil }
 			interruptDaemon = func(got *daemon.RuntimeInfo) error { assert.Same(t, info, got); interruptCalls++; return nil }
-			findDaemonService = func(context.Context, int) (*daemonService, error) { return owner, nil }
-			startDaemonService = func(context.Context, string) error { return nil }
-			serviceMainPID = func(context.Context, string) (int, error) { return 200, nil }
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return &daemon.RuntimeInfo{PID: 200}, nil }
+			if service {
+				owner := ownedDaemonService(t)
+				findDaemonService = func(context.Context, int) (*daemonService, error) { return owner, nil }
+				startDaemonService = func(context.Context, string) error { return nil }
+				serviceMainPID = func(context.Context, string) (int, error) { return 200, nil }
+				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return &daemon.RuntimeInfo{PID: 200}, nil }
+			}
 			withDaemonCommandDependencies(t, func() error { return nil }, func() error { stopCalls++; return nil }, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
 			cmd := daemonCmd()
-			cmd.SetArgs([]string{"restart", "--running=invalid"})
-			require.Error(t, cmd.ExecuteContext(t.Context()))
-			assert.Zero(t, listCalls)
-			assert.Zero(t, stopCalls)
-			cmd = daemonCmd()
-			cmd.SetArgs([]string{"restart", "--running=interrupt", "extra"})
+			cmd.SetArgs([]string{"restart", "--running=interrupt"})
 			require.NoError(t, cmd.ExecuteContext(t.Context()))
 			assert.Equal(t, 1, interruptCalls)
 			assert.Zero(t, stopCalls)

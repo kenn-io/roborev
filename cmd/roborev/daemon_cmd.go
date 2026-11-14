@@ -180,6 +180,9 @@ func daemonCmd() *cobra.Command {
 			if runningPolicy != "wait" && runningPolicy != "interrupt" {
 				return fmt.Errorf("invalid --running value %q (use wait or interrupt)", runningPolicy)
 			}
+			if runningPolicy == "interrupt" && len(args) > 0 {
+				return fmt.Errorf("--running=interrupt takes no arguments")
+			}
 			var owner *daemonService
 			var runtimes []*daemon.RuntimeInfo
 			stop := daemonStop

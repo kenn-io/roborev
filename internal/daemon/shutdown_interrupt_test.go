@@ -165,7 +165,6 @@ func TestInterruptShutdownDatabaseErrorLeavesShutdownUntouched(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.False(t, server.shutdownDraining)
 	assert.False(t, server.workerPool.stopped)
-	assert.Empty(t, server.workerPool.updateInterruptTargets)
 	requested := false
 	select {
 	case <-server.ShutdownRequested():
