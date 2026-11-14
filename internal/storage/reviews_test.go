@@ -1093,7 +1093,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testin
 		require.NoError(t, claimErr)
 		require.Equal(t, job.ID, claimed.ID)
 		require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "No issues found."))
-		_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, job.ID)
+		_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, command_line = ? WHERE id = ?`, sessionID, "agy --print-timeout 30m", job.ID)
 		require.NoError(t, updateErr)
 		return *job
 	}
@@ -1114,6 +1114,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testin
 	assert.Equal(t, ci.ID, candidates[0].ID)
 	assert.NotEqual(t, local.ID, candidates[0].ID)
 	assert.Equal(t, "ci-session", candidates[0].SessionID)
+	assert.Equal(t, "agy --print-timeout 30m", candidates[0].CommandLine)
 }
 
 func TestFindCompatibleReusableSessionCandidatesMatchesCIPRNumber(t *testing.T) {

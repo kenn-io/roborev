@@ -44,11 +44,10 @@ func extractSessionIDFromLine(line string) string {
 	if sessionID := jsonFieldString(fields, "sessionID"); sessionID != "" {
 		return sessionID
 	}
-	if sessionID := jsonFieldString(fields, "conversation_id"); sessionID != "" {
-		return sessionID
-	}
-	if sessionID := jsonFieldString(fields, "conversationId"); sessionID != "" {
-		return sessionID
+	if jsonFieldString(fields, "event") == "init" {
+		if sessionID := jsonFieldString(fields, "conversation_id"); sessionID != "" {
+			return sessionID
+		}
 	}
 
 	if jsonFieldString(fields, "type") == "session" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -680,6 +681,49 @@ func TestFormatter_Gemini(t *testing.T) {
 	for _, tc := range tests {
 		runStreamTestCase(t, "gemini", tc)
 	}
+}
+
+func TestFormatter_GeminiAntigravityDocumentedEvents(t *testing.T) {
+	const response = "Git rebase destructively rewrites a branch's commit history by systematically detaching its unique commits and sequentially reapplying them onto a new base commit."
+	captured, err := os.ReadFile("../agent/testdata/antigravity-stream.jsonl")
+	require.NoError(t, err)
+	toolEvent := `{"event":"step_update","step_update":{"conversation_id":"edb1c8c1-50ba-4f3f-87eb-412d0e9d47c3","step_index":4,"state":"DONE","step_type":"tool","tool_name":"run_command","duration_seconds":0.07,"tool_info":{"name":"run_command","parameters":{"CommandLine":"echo hello_headless_demo"},"output":"hello_headless_demo\r\n"}}}`
+	lines := strings.Split(strings.TrimSpace(string(captured)), "\n")
+	lines = append(lines[:len(lines)-1], append([]string{toolEvent}, lines[len(lines)-1:]...)...)
+	input := strings.Join(lines, "\n") + "\n"
+	var output bytes.Buffer
+	fmtr := New(&output, true, DecoderForAgent("gemini"))
+	require.NoError(t, RenderLogWith(strings.NewReader(input), fmtr))
+
+	plain := StripANSI(output.String())
+	normalized := strings.Join(strings.Fields(plain), " ")
+	assert.Contains(t, normalized, response)
+	assert.Contains(t, normalized, "Bash")
+	assert.Contains(t, normalized, "echo hello_headless_demo")
+	assert.Equal(t, 1, strings.Count(normalized, response), "the terminal result should not duplicate streamed text")
+	assert.NotContains(t, normalized, `"event":"step_update"`)
+	assert.NotContains(t, normalized, `"event":"result"`)
+}
+
+func TestLooksLikeJSONRecognizesAntigravityEvents(t *testing.T) {
+	assert.True(t, LooksLikeJSON(`{"event":"init","conversation_id":"conversation-123"}`))
+	assert.True(t, LooksLikeJSON(`{"event":"step_update","step_update":{"step_type":"agent_response"}}`))
+	assert.True(t, LooksLikeJSON(`{"event":"result","result":{"status":"SUCCESS"}}`))
+	assert.False(t, LooksLikeJSON(`{"event":"result","response":"an ordinary JSON example"}`))
+}
+
+func TestFormatter_GeminiAntigravityPrintTimeout(t *testing.T) {
+	input := strings.Join([]string{
+		`{"event":"init","conversation_id":"conversation-123"}`,
+		`{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Partial answer"}}`,
+		`{"event":"result","result":{"status":"SUCCESS","response":"Partial answer","finished_reason":"print_timeout"}}`,
+	}, "\n")
+	var output bytes.Buffer
+	fmtr := New(&output, true, DecoderForAgent("gemini"))
+	require.NoError(t, RenderLogWith(strings.NewReader(input), fmtr))
+	plain := strings.Join(strings.Fields(StripANSI(output.String())), " ")
+	assert.Contains(t, plain, "Partial answer")
+	assert.Contains(t, plain, "[Error: Antigravity result was incomplete: print_timeout]")
 }
 
 func TestFormatter_OpenCode(t *testing.T) {

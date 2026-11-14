@@ -1371,8 +1371,25 @@ func findCompatibleReusableSession(
 		log.Printf("enqueue: lookup compatible reusable session failed for repo=%d agent=%q: %v", opts.RepoID, opts.Agent, err)
 		return "", nil
 	}
+	geminiCommand := ""
+	if opts.Agent == "gemini" {
+		resolved, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, opts.Agent, globalCfg)
+		if err != nil {
+			return "", nil
+		}
+		gemini, ok := resolved.(*agent.GeminiAgent)
+		if !ok {
+			return "", nil
+		}
+		geminiCommand = gemini.CommandName()
+	}
 	const maxSessionReuseDistance = 50
 	for _, candidate := range candidates {
+		// Gemini CLI and Antigravity share a roborev agent name, but their
+		// session IDs can only be resumed by the CLI that created them.
+		if geminiCommand != "" && !sessionCommandLineUses(candidate.CommandLine, geminiCommand) {
+			continue
+		}
 		candidateSHA := strings.TrimSpace(candidate.ReusableSessionTarget)
 		if candidateSHA == "" {
 			continue
@@ -1388,6 +1405,12 @@ func findCompatibleReusableSession(
 		return candidate.SessionID, candidate.UUID
 	}
 	return "", nil
+}
+
+func sessionCommandLineUses(commandLine, command string) bool {
+	commandLine = strings.TrimSpace(commandLine)
+	command = strings.TrimSpace(command)
+	return commandLine == command || strings.HasPrefix(commandLine, command+" ")
 }
 
 func reusableSessionTarget(gitRef string) string {

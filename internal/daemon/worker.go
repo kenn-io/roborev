@@ -1520,6 +1520,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				{invoked: true, implementation: true, sessionID: sessionID, logUsage: implementationUsageCapture.Usage()},
 			}, false)
 		}
+	}, func() error {
+		if err := wp.db.ClearResumedJobSessionID(job.ID, workerID); err != nil {
+			return err
+		}
+		job.SessionID = ""
+		job.ResumeSourceJobUUID = nil
+		return nil
 	})
 	agentOutput = sessionWriter
 

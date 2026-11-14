@@ -191,9 +191,8 @@ func renderLogWith(r io.Reader, fmtr *Formatter, final bool) error {
 	return fmtr.err()
 }
 
-// LooksLikeJSON reports whether line is a JSON object with a non-empty type.
-// It separates provider frames from literal stderr; it does not select a
-// provider decoder.
+// LooksLikeJSON reports whether line has a known stream event marker. It
+// separates provider frames from literal text; it does not select a decoder.
 func LooksLikeJSON(line string) bool {
 	for _, c := range line {
 		switch c {
@@ -201,12 +200,23 @@ func LooksLikeJSON(line string) bool {
 			continue
 		case '{':
 			var probe struct {
-				Type string `json:"type"`
+				Type           string `json:"type"`
+				Event          string `json:"event"`
+				ConversationID string `json:"conversation_id"`
+				StepUpdate     struct {
+					StepType string `json:"step_type"`
+				} `json:"step_update"`
+				Result struct {
+					Status string `json:"status"`
+				} `json:"result"`
 			}
 			if json.Unmarshal([]byte(line), &probe) != nil {
 				return false
 			}
-			return probe.Type != ""
+			return probe.Type != "" ||
+				(probe.Event == "init" && probe.ConversationID != "") ||
+				(probe.Event == "step_update" && probe.StepUpdate.StepType != "") ||
+				(probe.Event == "result" && probe.Result.Status != "")
 		default:
 			return false
 		}

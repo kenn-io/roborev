@@ -1069,6 +1069,28 @@ func (db *DB) SaveJobSessionID(
 	return nil
 }
 
+// ClearResumedJobSessionID drops the inherited session after its resume fails,
+// allowing the fresh attempt to save its own session ID.
+func (db *DB) ClearResumedJobSessionID(jobID int64, workerID string) error {
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
+		    updated_at = ?, synced_at = NULL
+		WHERE id = ? AND status = 'running' AND worker_id = ? AND session_resumed = 1
+	`, time.Now().Format(time.RFC3339), jobID, workerID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // SaveJobPatch stores the generated patch for a completed fix job
 func (db *DB) SaveJobPatch(jobID int64, patch string) error {
 	return setJobContent(context.Background(), db, jobID, jobContentPatch, patch)

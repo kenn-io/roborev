@@ -33,14 +33,19 @@ func TestExtractSessionID(t *testing.T) {
 			want: "agy-conv-123",
 		},
 		{
-			name: "camel conversationId",
+			name: "undocumented camel conversationId",
 			line: `{"event":"init","conversationId":"agy-camel-456"}`,
-			want: "agy-camel-456",
+			want: "",
 		},
 		{
-			name: "agy result event with conversation_id",
+			name: "agy result event conversation_id is ignored",
 			line: `{"event":"result","conversation_id":"agy-res-789","response":"ok"}`,
-			want: "agy-res-789",
+			want: "",
+		},
+		{
+			name: "conversation_id outside an init event is ignored",
+			line: `{"event":"step_update","conversation_id":"agy-step-789"}`,
+			want: "",
 		},
 		{
 			name: "pi session event id",

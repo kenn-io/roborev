@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -135,15 +133,31 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	args := a.buildArgs(agenticMode)
 
-	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, output)
-	if err != nil && a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
+	runAgent := a
+	result, stderrStr, err := runAgent.runGemini(ctx, repoPath, prompt, args, output)
+	resumeFailed := err != nil || (!a.Agentic && result == "No review output generated")
+	if resumeFailed && a.SessionID != "" && ctx.Err() == nil {
+		if resetter, ok := output.(interface{ ResetSessionID() error }); ok {
+			if resetErr := resetter.ResetSessionID(); resetErr != nil {
+				return "", fmt.Errorf("reset failed session before fresh run: %w", resetErr)
+			}
+		}
+		if err != nil {
+			log.Printf("gemini: resuming session failed, retrying in a fresh session: %v", err)
+		} else {
+			log.Printf("gemini: resumed session produced no review output, retrying in a fresh session")
+		}
+		runAgent = a.WithSessionID("").(*GeminiAgent)
+		result, stderrStr, err = runAgent.runGemini(ctx, repoPath, prompt, runAgent.buildArgs(agenticMode), output)
+	}
+	if err != nil && runAgent.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
 		// Built-in default model may be stale (Google renames
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
 		// config) fail fast so config errors are surfaced.
-		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
-		noModelArgs := a.buildArgsWithModel("", agenticMode)
-		result, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, output)
+		log.Printf("gemini: model %q not found, retrying without -m flag", runAgent.Model)
+		noModelArgs := runAgent.buildArgsWithModel("", agenticMode)
+		result, _, err = runAgent.runGemini(ctx, repoPath, prompt, noModelArgs, output)
 	}
 	return result, err
 }
@@ -253,7 +267,9 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 // bare --print. agy is an unstable CLI target, so the invocation is gated on
 // the reported version rather than assuming one contract.
 const (
-	antigravityPromptFlagVersion   = "1.1.1"
+	antigravityPromptFlagVersion = "1.1.1"
+	// Antigravity added --output-format stream-json in 1.1.8.
+	antigravityStreamJSONVersion   = "1.1.8"
 	antigravityVersionProbeTimeout = 10 * time.Second
 )
 
@@ -277,6 +293,14 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	// process cwd, but the CLI resolves its tool workspace separately and can
 	// fall back to its scratch directory for ephemeral worktrees.
 	args = append(append([]string(nil), args...), "--add-dir", repoPath)
+	version := antigravityVersionOutput(ctx, a.Command)
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+	streamJSON := antigravityVersionSupports(version, antigravityStreamJSONVersion)
+	if streamJSON {
+		args = append([]string{"--output-format", "stream-json"}, args...)
+	}
 
 	// Choose the prompt-carrying flag by agy version: >= 1.1.1 takes the prompt
 	// as the value of --prompt (stdin is ignored when a prompt flag is present);
@@ -290,8 +314,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	trimmedPrompt := strings.TrimRight(prompt, "\n")
 	var finalArgs []string
 	var stdin io.Reader
-	if antigravityPromptViaFlag(ctx, a.Command) {
-		args = append([]string{"--output-format", "stream-json"}, args...)
+	if antigravityVersionUsesPromptFlag(version) {
 		if size, limit := antigravityPromptArgSize(trimmedPrompt), antigravityMaxPromptArgLen(); size > limit {
 			finalArgs = append([]string(nil), args...)
 			stdin = strings.NewReader(trimmedPrompt + "\n")
@@ -303,6 +326,10 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		stdin = strings.NewReader(trimmedPrompt + "\n")
 	}
 
+	parseOutput := parsePlainTextOutput
+	if streamJSON {
+		parseOutput = a.parseAntigravityStreamJSON
+	}
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "antigravity",
 		Command:      a.Command,
@@ -311,9 +338,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		Stdin:        stdin,
 		Output:       output,
 		StreamStderr: true,
-		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			return a.parseAntigravityOutput(r, sw)
-		},
+		Parse:        parseOutput,
 	})
 	if runErr != nil {
 		return "", "", runErr
@@ -354,13 +379,9 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	return "", runResult.Stderr, errors.New(msg)
 }
 
-// antigravityPromptViaFlag reports whether the installed agy expects the prompt
-// as a --prompt flag value (agy >= 1.1.1) rather than on stdin (agy <= 1.1.0).
-// It shells out to `agy --version`; the `agy version` subcommand needs a TTY
-// and fails in pipes/subprocesses. Any detection failure (missing binary,
-// timeout, unparseable output) defaults to the current flag contract, since the
-// stdin form only exists in old agy builds.
-func antigravityPromptViaFlag(ctx context.Context, command string) bool {
+// antigravityVersionOutput probes with --version. The `agy version` subcommand
+// needs a TTY and fails in pipes, so it cannot be used here.
+func antigravityVersionOutput(ctx context.Context, command string) string {
 	// Cap the probe: `agy --version` returns instantly, but agy's sibling
 	// `agy version` subcommand hangs without a TTY, so don't let a wedged probe
 	// consume the whole review timeout.
@@ -373,10 +394,10 @@ func antigravityPromptViaFlag(ctx context.Context, command string) bool {
 	configureCapabilityProbe(ctx, cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		log.Printf("antigravity: could not read agy version (%v); assuming the --prompt flag contract", procutil.WithStderr(err))
-		return true
+		log.Printf("antigravity: could not read agy version (%v)", procutil.WithStderr(err))
+		return ""
 	}
-	return antigravityVersionUsesPromptFlag(string(out))
+	return string(out)
 }
 
 // antigravityPromptArgSize measures the prompt against the platform's
@@ -431,15 +452,23 @@ func antigravityMaxPromptArgLen() int {
 // build hash) still resolves. Output with no parseable version defaults to
 // true, the current contract.
 func antigravityVersionUsesPromptFlag(versionOutput string) bool {
+	return antigravityVersionAtLeast(versionOutput, antigravityPromptFlagVersion, true)
+}
+
+func antigravityVersionSupports(versionOutput, minimum string) bool {
+	return antigravityVersionAtLeast(versionOutput, minimum, false)
+}
+
+func antigravityVersionAtLeast(versionOutput, minimum string, unknown bool) bool {
 	for tok := range strings.FieldsSeq(versionOutput) {
 		if !strings.Contains(tok, ".") {
 			continue
 		}
-		if cmp, ok := compareDotVersion(tok, antigravityPromptFlagVersion); ok {
+		if cmp, ok := compareDotVersion(tok, minimum); ok {
 			return cmp >= 0
 		}
 	}
-	return true
+	return unknown
 }
 
 // compareDotVersion compares two dotted numeric versions (major.minor.patch,
@@ -498,87 +527,13 @@ func isModelNotFoundError(stderr string) bool {
 			strings.Contains(lower, "not_found"))
 }
 
-type geminiStepUpdate struct {
-	StepIndex *int   `json:"step_index,omitempty"`
-	Type      string `json:"type,omitempty"`
-	StepType  string `json:"step_type,omitempty"`
-	ToolName  string `json:"tool_name,omitempty"`
-	Content   string `json:"content,omitempty"`
-	Text      string `json:"text,omitempty"`
-	TextDelta string `json:"text_delta,omitempty"`
-	Delta     string `json:"delta,omitempty"`
-	ToolCalls []any  `json:"tool_calls,omitempty"`
-}
-
-// geminiStreamMessage represents a message in Gemini's stream-json output format
+// geminiStreamMessage represents the documented Gemini CLI stream events.
 type geminiStreamMessage struct {
-	Type      string `json:"type"`
-	Event     string `json:"event,omitempty"`
-	Subtype   string `json:"subtype,omitempty"`
-	StepIndex *int   `json:"step_index,omitempty"`
-	// Top-level fields for "message" type events
+	Type    string `json:"type"`
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content,omitempty"`
-	Text    string `json:"text,omitempty"`
+	Status  string `json:"status,omitempty"`
 	Delta   bool   `json:"delta,omitempty"`
-	// Nested message field (older format / Claude Code compatibility)
-	Message struct {
-		Content string `json:"content,omitempty"`
-	} `json:"message,omitempty"`
-	// Antigravity step_update and tool_call fields
-	StepUpdate geminiStepUpdate `json:"step_update,omitempty"`
-	ToolCall   map[string]any   `json:"tool_call,omitempty"`
-	// Result/response fields for "result" events (string or nested object)
-	Result   jsontext.Value `json:"result,omitempty"`
-	Response string         `json:"response,omitempty"`
-}
-
-func firstNonEmptyString(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-func isGeminiStepTool(msg geminiStreamMessage) bool {
-	typ := strings.ToLower(firstNonEmptyString(msg.StepUpdate.Type, msg.StepUpdate.StepType))
-	return typ == "tool_call" || typ == "tool" || typ == "subagent" ||
-		msg.StepUpdate.ToolName != "" || len(msg.StepUpdate.ToolCalls) > 0 || len(msg.ToolCall) > 0
-}
-
-func isGeminiStreamEvent(msg geminiStreamMessage) bool {
-	for _, kind := range []string{msg.Type, msg.Event} {
-		switch kind {
-		case "init", "system", "message", "assistant", "step_update", "tool", "tool_result", "tool_call", "result", "error":
-			return true
-		}
-	}
-	return false
-}
-
-func extractGeminiResultText(msg geminiStreamMessage) string {
-	if msg.Response != "" {
-		return msg.Response
-	}
-	if len(msg.Result) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(msg.Result, &s); err == nil && s != "" {
-		return s
-	}
-	var nested struct {
-		Response string `json:"response"`
-		Result   string `json:"result"`
-		Content  string `json:"content"`
-		Text     string `json:"text"`
-	}
-	if err := json.Unmarshal(msg.Result, &nested); err == nil {
-		return firstNonEmptyString(nested.Response, nested.Result, nested.Content, nested.Text)
-	}
-	return ""
 }
 
 // parseResult contains the parsed result from stream-json output
@@ -590,46 +545,29 @@ type parseResult struct {
 // Returns parseResult with the extracted content, or error on I/O or parse failure.
 // The sw parameter is the shared sync writer for thread-safe output (may be nil).
 func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult, error) {
-	var lastResult string
 	assistantMessages := newTrailingReviewText()
-	var validEventsParsed bool
+	var resultSeen bool
 
 	err := scanStreamJSONLines(r, sw, func(trimmed string) error {
 		var msg geminiStreamMessage
-		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil && isGeminiStreamEvent(msg) {
-			validEventsParsed = true
-
-			if (msg.Type == "message" || msg.Event == "message") && msg.Role == "assistant" && msg.Content != "" {
-				assistantMessages.Add(msg.Content)
-			}
-			if (msg.Type == "assistant" || msg.Event == "assistant") && msg.Message.Content != "" {
-				assistantMessages.Add(msg.Message.Content)
-			}
-			if msg.Type == "step_update" || msg.Event == "step_update" {
-				if isGeminiStepTool(msg) {
-					assistantMessages.ResetAfterTool()
+		if json.Unmarshal([]byte(trimmed), &msg) != nil {
+			return nil
+		}
+		switch msg.Type {
+		case "message":
+			if msg.Role == "assistant" && msg.Content != "" {
+				if msg.Delta {
+					assistantMessages.AppendWithID("assistant", msg.Content)
 				} else {
-					stepID := "_step"
-					if msg.StepUpdate.StepIndex != nil {
-						stepID = strconv.Itoa(*msg.StepUpdate.StepIndex)
-					} else if msg.StepIndex != nil {
-						stepID = strconv.Itoa(*msg.StepIndex)
-					}
-					if text := firstNonEmptyString(msg.StepUpdate.Content, msg.StepUpdate.Text, msg.Text, msg.Content); text != "" {
-						assistantMessages.AddWithID(stepID, text)
-					} else if delta := firstNonEmptyString(msg.StepUpdate.TextDelta, msg.StepUpdate.Delta); delta != "" {
-						assistantMessages.AppendWithID(stepID, delta)
-					}
+					assistantMessages.AddWithID("assistant", msg.Content)
 				}
 			}
-			if msg.Type == "tool" || msg.Event == "tool" || msg.Type == "tool_result" || msg.Event == "tool_result" {
-				assistantMessages.ResetAfterTool()
-			}
-
-			if msg.Type == "result" || msg.Event == "result" {
-				if res := extractGeminiResultText(msg); res != "" {
-					lastResult = res
-				}
+		case "tool_use", "tool_result":
+			assistantMessages.ResetAfterTool()
+		case "result":
+			resultSeen = true
+			if !strings.EqualFold(msg.Status, "success") {
+				return fmt.Errorf("gemini CLI ended with status %q", msg.Status)
 			}
 		}
 		return nil
@@ -638,15 +576,10 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 		return parseResult{}, err
 	}
 
-	// If no valid events were parsed, return error
-	if !validEventsParsed {
+	if !resultSeen {
 		return parseResult{}, errNoStreamJSON
 	}
 
-	// Prefer the result field if present, otherwise join assistant messages
-	if lastResult != "" {
-		return parseResult{result: lastResult}, nil
-	}
 	if result := assistantMessages.Join("\n"); result != "" {
 		return parseResult{result: result}, nil
 	}
@@ -654,13 +587,45 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	return parseResult{}, nil
 }
 
-func (a *GeminiAgent) parseAntigravityOutput(r io.Reader, sw *syncWriter) (string, error) {
-	var raw bytes.Buffer
-	parsed, err := a.parseStreamJSON(io.TeeReader(r, &raw), sw)
-	if errors.Is(err, errNoStreamJSON) {
-		return strings.TrimSpace(raw.String()), nil
+type antigravityStreamEvent struct {
+	Event          string `json:"event"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Result         struct {
+		Status         string `json:"status"`
+		Response       string `json:"response"`
+		Error          string `json:"error,omitempty"`
+		FinishedReason string `json:"finished_reason,omitempty"`
+	} `json:"result,omitempty"`
+}
+
+func (a *GeminiAgent) parseAntigravityStreamJSON(r io.Reader, sw *syncWriter) (string, error) {
+	var response string
+	var resultSeen bool
+	err := scanStreamJSONLines(r, sw, func(line string) error {
+		var event antigravityStreamEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			return nil
+		}
+		if event.Event != "result" {
+			return nil
+		}
+		resultSeen = true
+		if event.Result.FinishedReason != "" {
+			return fmt.Errorf("antigravity result was incomplete: %s", event.Result.FinishedReason)
+		}
+		if event.Result.Status != "SUCCESS" {
+			return fmt.Errorf("antigravity ended with status %q: %s", event.Result.Status, event.Result.Error)
+		}
+		response = event.Result.Response
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
-	return parsed.result, err
+	if !resultSeen {
+		return "", errNoStreamJSON
+	}
+	return strings.TrimSpace(response), nil
 }
 
 func init() {
