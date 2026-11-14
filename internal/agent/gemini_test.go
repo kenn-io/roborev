@@ -973,7 +973,7 @@ cat "$SUCCESS_FILE"
 			a := NewGeminiAgent(scriptPath).WithAgentic(tc.agentic)
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
 			require.NoError(t, err)
-			assert.Equal(t, `{"passed":true,"findings":[]}`, result)
+			assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
 			calls, readErr := os.ReadFile(callsFile)
 			require.NoError(t, readErr)
 			assert.Equal(t, "call\ncall\n", string(calls))
