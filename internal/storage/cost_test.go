@@ -414,9 +414,10 @@ func TestSaveJobTokenUsageIgnoresStaleSession(t *testing.T) {
 	assert.Contains(reloaded.TokenUsage, "1.00", "current-session write lands")
 }
 
-// TestResetStaleJobsClearsCostMetadata verifies restart recovery does not
-// carry a prior attempt's session id or cost into the requeued run.
-func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
+// TestResetStaleJobsClearsAttemptDataAndPreservesRebuttalSession verifies
+// restart recovery clears prior attempt metadata while retaining a rebuttal's
+// session.
+func TestResetStaleJobsClearsAttemptDataAndPreservesRebuttalSession(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	db := openTestDB(t)

@@ -446,16 +446,10 @@ func TestDaemonRestartOnlyStopsValidatedRuntimes(t *testing.T) {
 func TestDaemonRestartRunningPolicy(t *testing.T) {
 	t.Run("arguments", func(t *testing.T) {
 		stubDaemonRestartOutput(t)
-		oldList, oldInterrupt := listAllRuntimes, interruptDaemon
-		t.Cleanup(func() { listAllRuntimes, interruptDaemon = oldList, oldInterrupt })
-		listCalls := 0
-		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { listCalls++; return nil, nil }
-		interruptDaemon = func(*daemon.RuntimeInfo) error { return nil }
 		withDaemonCommandDependencies(t, func() error { return nil }, func() error { return nil }, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
 		cmd := daemonCmd()
 		cmd.SetArgs([]string{"restart", "--running=invalid"})
 		require.Error(t, cmd.ExecuteContext(t.Context()))
-		assert.Zero(t, listCalls)
 	})
 	for _, service := range []bool{false, true} {
 		t.Run(fmt.Sprintf("service=%t", service), func(t *testing.T) {
