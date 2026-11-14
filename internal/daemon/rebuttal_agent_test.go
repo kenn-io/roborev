@@ -1,4 +1,4 @@
-package rebuttal
+package daemon
 
 import (
 	"context"
@@ -54,7 +54,7 @@ exit 1
 				a = grok
 			}
 			a = a.WithAgentic(true).(agent.SessionAgent).WithSessionID(session)
-			_, err := RunAgentAssessment(t.Context(), a, dir, "HEAD", "assess", nil)
+			_, err := runRebuttalAssessment(t.Context(), a, dir, "HEAD", "assess", nil)
 			require.Error(t, err) // Controlled executable exits after recording actual arguments.
 			data, err := os.ReadFile(argsPath)
 			require.NoError(t, err)
@@ -117,7 +117,7 @@ printf '%s\n' "$@" > "$ASSESSMENT_ARGS"
 printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\"outcome\":\"confirmed\",\"explanation\":\"checked\"}"}]}}'
 `), 0o700))
 	a := proseOnlyAssessmentAgent{agent.NewPiAgent(command).WithAgentic(true).(agent.ReadOnlyReviewAgent)}
-	got, err := RunAgentAssessment(t.Context(), a, dir, "HEAD", "assess", nil)
+	got, err := runRebuttalAssessment(t.Context(), a, dir, "HEAD", "assess", nil)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"outcome":"confirmed","explanation":"checked"}`, got)
 	data, err := os.ReadFile(argsPath)
@@ -133,7 +133,7 @@ func TestAssessmentRejectsUnsupportedReadOnlyAgent(t *testing.T) {
 		called = true
 		return "", nil
 	}}
-	_, err := RunAgentAssessment(t.Context(), a, t.TempDir(), "HEAD", "assess", nil)
+	_, err := runRebuttalAssessment(t.Context(), a, t.TempDir(), "HEAD", "assess", nil)
 	require.ErrorContains(t, err, "cannot enforce read-only assessments")
 	assert.False(t, called)
 }
@@ -172,7 +172,7 @@ for arg in "$@"; do
 done`
 			}
 			require.NoError(t, os.WriteFile(command, []byte(script+"\n"), 0o700))
-			got, err := RunAgentAssessment(t.Context(), a, dir, "HEAD", "assess", nil)
+			got, err := runRebuttalAssessment(t.Context(), a, dir, "HEAD", "assess", nil)
 			require.NoError(t, err)
 			assert.JSONEq(t, `{"outcome":"confirmed","explanation":"checked"}`, got)
 			assert.True(t, agent.AllowUnsafeAgents())

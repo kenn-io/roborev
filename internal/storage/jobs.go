@@ -1377,10 +1377,10 @@ func (db *DB) completeJob(
 		}
 	}()
 
-	// Fetch output_prefix and job_type from job (if any)
+	// Fetch output_prefix, job_type and source from job (if any)
 	var outputPrefix sql.NullString
-	var jobType, storedThreshold string
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &storedThreshold)
+	var jobType, source, storedThreshold string
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(source, ''), COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &source, &storedThreshold)
 	if completion.MinSeverity == "" {
 		completion.MinSeverity = storedThreshold
 	}
@@ -1415,13 +1415,19 @@ func (db *DB) completeJob(
 		finalOutput = outputPrefix.String + finalOutput
 	}
 
+	finishedAt := preciseTimestampAt(finished)
+	if jobType == JobTypeTask && source == JobSourceRebuttal {
+		// Latest-assessment selection needs the completion order within a
+		// second. Capture it while this transaction owns the write lock.
+		finishedAt = preciseTimestampAt(time.Now())
+	}
 	// Update job status only if still running (not canceled)
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'done', finished_at = ?, updated_at = ?,
 		    min_severity = COALESCE(NULLIF(?, ''), min_severity)
 		WHERE id = ? AND status = 'running'
-	`, preciseTimestampAt(finished), now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
+	`, finishedAt, now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
 	if err != nil {
 		return err
 	}
@@ -1987,6 +1993,7 @@ type listJobsOptions struct {
 	omitPrompt         bool
 	includeFindings    bool
 	failedReviewsSince *time.Time
+	failedReviewsAsOf  time.Time
 }
 
 // selective reports whether a filter can seek jobs through its own index
@@ -1999,11 +2006,14 @@ func (o listJobsOptions) selective(statusFilter, repoFilter string) bool {
 		(o.branch != "" && !o.branchEmpty && !o.branchIncludeEmpty) || o.gitRef != "" || o.panelRun != uuid.Nil()
 }
 
-// WithFailedReviewsSince selects completed review, range, dirty, or synthesis
-// jobs with a failed verdict, finished at or after since at millisecond resolution.
-// Done jobs without a finish time are excluded.
-func WithFailedReviewsSince(since time.Time) ListJobsOption {
-	return func(o *listJobsOptions) { o.failedReviewsSince = &since }
+// WithFailedReviewsInWindow selects completed review, range, dirty, or
+// synthesis jobs with a failed verdict, finished between since and asOf
+// inclusive at millisecond resolution. Done jobs without a finish time are excluded.
+func WithFailedReviewsInWindow(since, asOf time.Time) ListJobsOption {
+	return func(o *listJobsOptions) {
+		o.failedReviewsSince = &since
+		o.failedReviewsAsOf = asOf
+	}
 }
 
 // WithGitRef filters jobs by git ref.
@@ -2167,6 +2177,12 @@ func findingCountsDiffContentExpr(includeFindings bool) string {
 			THEN ` + jobDiffExpr + ` ELSE NULL END`
 }
 
+// logicalCodeReviewJobSQL is shared by finding outcomes and insights excerpts.
+// The legacy diff check reads presence without loading the diff payload.
+const logicalCodeReviewJobSQL = `(j.job_type IN ('review','range','dirty','synthesis')
+ OR (COALESCE(j.job_type,'')='' AND (j.commit_id IS NOT NULL OR j.git_ref='dirty' OR instr(j.git_ref,'..')>0
+ OR EXISTS (SELECT 1 FROM job_content legacy_content WHERE legacy_content.job_id=j.id AND legacy_content.diff_content IS NOT NULL))))`
+
 func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, enqueueOrder bool) (string, []any) {
 	var args []any
 	var conditions []string
@@ -2190,12 +2206,14 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 		// The indexed probe lets SQLite skip non-failing reviews before the full verdict check.
 		conditions = append(conditions,
 			"j.finished_at IS NOT NULL",
-			"datetime(j.finished_at) >= datetime(?) AND julianday(j.finished_at) >= julianday(?)",
-			"rv.verdict_bool = 0 AND "+jobVerdictSortExpr(false)+" = 'F'",
-			"(j.job_type IN ('"+strings.Join([]string{JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeSynthesis}, "', '")+"') OR "+
-				"(COALESCE(j.job_type, '') = '' AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty' OR instr(j.git_ref, '..') > 0)))")
+			"datetime(j.finished_at) BETWEEN datetime(?) AND datetime(?)",
+			"julianday(j.finished_at) BETWEEN julianday(?) AND julianday(?)",
+			"rv.verdict_bool = 0",
+			"COALESCE(j.error, '') = ''",
+			logicalCodeReviewJobSQL)
 		since := o.failedReviewsSince.Format(time.RFC3339Nano)
-		args = append(args, since, since)
+		asOf := o.failedReviewsAsOf.Format(time.RFC3339Nano)
+		args = append(args, since, asOf, since, asOf)
 	}
 
 	// Repo scoping precedence: a single positional repoFilter wins, then a
@@ -2628,10 +2646,12 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, 
 
 // UpdateJobBranch sets the branch field for a job that doesn't have one.
 // This is used to backfill the branch when it's derived from git.
-// Only updates if the current branch is NULL or empty.
-// Returns the number of rows affected (0 if branch was already set or job not found, 1 if updated).
+// Only updates missing branches. An empty insights branch is the all-branches scope.
+// Returns the number of rows affected.
 func (db *DB) UpdateJobBranch(jobID int64, branch string) (int64, error) {
-	result, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ? AND (branch IS NULL OR branch = '')`, branch, jobID)
+	result, err := db.Exec(`UPDATE review_jobs SET branch = ?
+		WHERE id = ? AND (branch IS NULL OR branch = '') AND COALESCE(job_type, '') != ?`,
+		branch, jobID, JobTypeInsights)
 	if err != nil {
 		return 0, err
 	}

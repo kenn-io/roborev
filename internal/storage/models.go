@@ -95,6 +95,7 @@ type ReviewJob struct {
 	StartedAt           *time.Time `json:"started_at,omitempty"`
 	StartedAtRaw        string     `json:"-"` // Exact persisted value for attempt-scoped writes
 	FinishedAt          *time.Time `json:"finished_at,omitempty"`
+	FinishedAtRaw       string     `json:"-"` // Preserves the recorded completion precision
 	WorkerID            string     `json:"worker_id,omitempty"`
 	Error               string     `json:"error,omitempty"`
 	Prompt              string     `json:"prompt,omitempty"`
