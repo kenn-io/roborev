@@ -176,7 +176,7 @@ func TestExperimentReviewTypeToolPolicy(t *testing.T) {
 	}
 }
 
-func TestPanelFreezesBinaryEvidenceFromTOML(t *testing.T) {
+func TestResolveReviewSettingsBinaryEvidence(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, ".roborev.toml", `
 [review.types.exhibits]
@@ -191,6 +191,13 @@ members = ["checker"]
 `)
 	repoCfg, err := LoadRepoConfig(dir)
 	require.NoError(t, err)
+
+	settings, err := ResolveReviewSettings("exhibits", nil, false, repoCfg, nil)
+	require.NoError(t, err)
+	assert.True(t, settings.BinaryEvidence)
+	settings, err = ResolveReviewSettings("default", nil, false, repoCfg, nil)
+	require.NoError(t, err)
+	assert.False(t, settings.BinaryEvidence)
 
 	members, _, err := ResolveCIPanel("audit", repoCfg, nil)
 	require.NoError(t, err)
@@ -212,7 +219,6 @@ func TestResolveReviewSettingsBinaryEvidencePrecedence(t *testing.T) {
 		reviewType   string
 		want         bool
 	}{
-		{name: "default off", reviewType: "default"},
 		{name: "global on", global: &yes, reviewType: "default", want: true},
 		{name: "repo off", global: &yes, repo: &no, reviewType: "security"},
 		{name: "repo on", global: &no, repo: &yes, reviewType: "default", want: true},
