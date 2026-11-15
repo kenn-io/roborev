@@ -996,6 +996,56 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	assert.Contains(usageAtCompletion, `"cost_usd":0.03`)
 }
 
+func TestSynthesisFallbackReplacesCapturedSession(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-synthesis-fallback-member"
+	const synthAgentName = "panel-synthesis-fallback"
+	registerPassingAgent(t, memberAgent)
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: synthAgentName,
+		ReviewFn: func(_ context.Context, _, _, _ string, output io.Writer) (string, error) {
+			if _, err := io.WriteString(output, `{"type":"session","id":"abandoned-session"}`+"\n"); err != nil {
+				return "", err
+			}
+			resetter, ok := output.(interface{ ResetSessionID() error })
+			if !ok {
+				return "", fmt.Errorf("session output does not support reset")
+			}
+			if err := resetter.ResetSessionID(); err != nil {
+				return "", err
+			}
+			if _, err := io.WriteString(output, `{"type":"session","id":"successful-session"}`+"\n"); err != nil {
+				return "", err
+			}
+			return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+		},
+	})
+
+	var fetchedSession string
+	tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+		fetchedSession = sessionID
+		return &tokens.Usage{CostUSD: 0.03, HasCost: true}, nil
+	}
+
+	runUUID, members, synth := enqueuePanelRun(t, tc, "synthesis-fallback-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgentName)
+	completeMember(t, tc, members[0].ID, memberAgent, "Review #1\n\n## Review Findings\n\n- Severity: Medium\n- Location: a.go:1\n- Problem: A\n- Fix: Fix A")
+	completeMember(t, tc, members[1].ID, memberAgent, "Review #2\n\n## Review Findings\n\n- Severity: Medium\n- Location: b.go:2\n- Problem: B\n- Fix: Fix B")
+
+	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, claimed)
+
+	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	assert.Equal(t, "successful-session", updated.SessionID)
+	assert.Equal(t, "successful-session", fetchedSession)
+	assert.Contains(t, updated.TokenUsage, `"cost_usd":0.03`)
+}
+
 func TestSynthesisRejectsProviderCostForReusedSession(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 1)

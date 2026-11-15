@@ -91,7 +91,6 @@ var defaultLimitRules = []limitRule{
 	{Agents: []string{"*"}, Substring: "capacity_exhausted", Kind: LimitKindQuota},
 	// Agent-specific rules precede the generic "*" rules so the more
 	// specific intent wins under first-match-wins (classifyLimitWithRules).
-	{Agents: []string{"gemini"}, Substring: "individual quota reached", Kind: LimitKindQuota},
 	// Codex ChatGPT-account usage cap — a quota skip, not a hard failure.
 	{Agents: []string{"codex"}, Substring: "you've hit your usage limit", Kind: LimitKindQuota},
 	// Claude Code five-hour session cap, captured from real daemon logs.

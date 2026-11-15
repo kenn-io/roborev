@@ -506,12 +506,6 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			fixture:       "antigravity-quota-result-capture.jsonl",
 			wantErrorText: `antigravity ended with status "ERROR"`,
 		},
-		{
-			name:          "finished reason",
-			input:         `{"event":"result","result":{"status":"SUCCESS","response":"Partial response.","finished_reason":"print_timeout"}}`,
-			wantResponse:  "Partial response.",
-			wantErrorText: "print_timeout",
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := []byte(tc.input)
@@ -544,14 +538,12 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		name           string
 		cli            string
 		version        string
-		agentic        bool
 		unsafe         bool
 		wantError      bool
 		wantErrorText  string
 		resumeError    string
 		resumeSession  string
 		resumeFlag     string
-		resumeFixture  string
 		successFixture string
 		initFixture    string
 		wantResult     string
@@ -576,36 +568,10 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			resumeFlag:    "--resume",
 		},
 		{
-			name:          "Gemini quota failure does not retry a failed resume",
-			cli:           "gemini",
-			version:       "0.34.0",
-			wantError:     true,
-			wantErrorText: "429 Too Many Requests",
-			resumeError:   "429 Too Many Requests",
-			resumeSession: "failed-session",
-			resumeFlag:    "--resume",
-		},
-		{
-			name:           "Gemini agentic failed resume does not replay",
-			cli:            "gemini",
-			version:        "0.34.0",
-			agentic:        true,
-			wantError:      true,
-			wantErrorText:  "model is not found",
-			resumeFlag:     "--resume",
-			successFixture: "gemini-stream.jsonl",
-		},
-		{
 			name: "Antigravity failed resume",
 			cli:  "agy", version: "1.2.6", resumeError: "conversation could not be resumed", resumeFlag: "--conversation",
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
-		},
-		{
-			name: "Antigravity quota result does not retry a failed resume",
-			cli:  "agy", version: "1.2.6", wantError: true, wantErrorText: "Individual quota reached",
-			resumeFlag:    "--conversation",
-			resumeFixture: "antigravity-quota-result-capture.jsonl",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -617,13 +583,6 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			t.Setenv("RESUME_ERROR", tc.resumeError)
 			t.Setenv("RESUME_SESSION", tc.resumeSession)
 			t.Setenv("ARGS_FILE", argsFile)
-			resumeFixture := ""
-			if tc.resumeFixture != "" {
-				var fixtureErr error
-				resumeFixture, fixtureErr = filepath.Abs(filepath.Join("testdata", tc.resumeFixture))
-				require.NoError(t, fixtureErr)
-			}
-			t.Setenv("RESUME_FILE", resumeFixture)
 			successFixture, err := filepath.Abs(filepath.Join("testdata", tc.successFixture))
 			require.NoError(t, err)
 			t.Setenv("SUCCESS_FILE", successFixture)
@@ -641,15 +600,7 @@ for arg in "$@"; do
     if [ -n "$RESUME_SESSION" ]; then
       echo "{\"type\":\"init\",\"session_id\":\"$RESUME_SESSION\"}"
     fi
-    if [ -n "$RESUME_FILE" ]; then
-      cat "$RESUME_FILE"
-      exit 0
-    fi
-    if [ -n "$RESUME_ERROR" ]; then
-      echo "$RESUME_ERROR" >&2
-    else
-      echo "Error: model is not found for API version v1" >&2
-    fi
+    echo "$RESUME_ERROR" >&2
     exit 1
   fi
 done
@@ -661,7 +612,7 @@ cat "$SUCCESS_FILE"
 				require.NoError(t, os.Rename(script, agyPath))
 				script = agyPath
 			}
-			a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(tc.agentic).(*GeminiAgent)
+			a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
 			capture := NewSessionCaptureWriter(io.Discard, nil, nil)
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
 			wantCalls := 2
@@ -680,34 +631,11 @@ cat "$SUCCESS_FILE"
 			require.NoError(t, readErr)
 			assert.Equal(t, 1, strings.Count(string(args), tc.resumeFlag+"\n"))
 			assert.Equal(t, wantCalls, strings.Count(string(args), "--output-format\nstream-json\n"))
-			if tc.agentic || tc.unsafe {
+			if tc.unsafe {
 				assert.Equal(t, wantCalls, strings.Count(string(args), "--approval-mode\nyolo\n"))
 			}
 		})
 	}
-}
-
-func TestAntigravityPrintTimeoutFromCapturedOutputIsFailure(t *testing.T) {
-	skipIfWindows(t)
-
-	resultFixture, err := filepath.Abs(filepath.Join("testdata", "antigravity-timeout-result-capture.jsonl"))
-	require.NoError(t, err)
-	stderrFixture, err := filepath.Abs(filepath.Join("testdata", "antigravity-timeout-stderr-capture.txt"))
-	require.NoError(t, err)
-	t.Setenv("RESULT_FILE", resultFixture)
-	t.Setenv("STDERR_FILE", stderrFixture)
-
-	command := writeGeminiTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "1.3.5"; exit 0; fi
-cat "$RESULT_FILE"
-cat "$STDERR_FILE" >&2
-`)
-	agy := filepath.Join(filepath.Dir(command), "agy")
-	require.NoError(t, os.Rename(command, agy))
-	result, err := NewGeminiAgent(agy).Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
-
-	require.ErrorContains(t, err, "print timeout")
-	assert.Contains(t, result, "targeted repair pass")
 }
 
 func TestGeminiAntigravityEmptyOutput(t *testing.T) {

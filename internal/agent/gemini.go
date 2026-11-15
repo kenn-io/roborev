@@ -161,7 +161,6 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	args := a.buildArgsWithModel(a.Model, agenticMode)
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
 	if a.SessionID != "" && !agenticMode && ctx.Err() == nil &&
-		ClassifyLimit("gemini", fmt.Sprint(stderrStr, "\n", err)).Kind == LimitKindNone &&
 		(err != nil || result == "No review output generated") {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
 			return "", errors.Join(err, resetErr)
@@ -171,7 +170,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		args = a.buildArgsWithModel(a.Model, agenticMode)
 		result, stderrStr, err = a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
 	}
-	if err != nil && (a.SessionID == "" || !agenticMode) && a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
+	if err != nil && a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
 		// Built-in default model may be stale (Google renames
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
@@ -394,8 +393,12 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		return "", "", runErr
 	}
 
-	if err := antigravityOutputError(runResult); err != nil {
-		return runResult.Result, runResult.Stderr, err
+	if runResult.WaitErr != nil {
+		return "", runResult.Stderr, formatStreamingCLIWaitError("antigravity", runResult, runResult.Stderr)
+	}
+
+	if runResult.ParseErr != nil {
+		return "", runResult.Stderr, runResult.ParseErr
 	}
 
 	if runResult.Result != "" {
@@ -423,19 +426,6 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		msg += "\nstderr: " + s
 	}
 	return "", runResult.Stderr, errors.New(msg)
-}
-
-func antigravityOutputError(result streamingCLIResult) error {
-	if result.WaitErr != nil {
-		return formatStreamingCLIWaitError("antigravity", result, result.Stderr)
-	}
-	if result.ParseErr != nil {
-		return result.ParseErr
-	}
-	if strings.Contains(result.Stderr, "[agy] print timeout after ") {
-		return fmt.Errorf("antigravity print timeout\nstderr: %s", result.Stderr)
-	}
-	return nil
 }
 
 // cliVersion returns `--version` output, or "" when detection fails; agy's
@@ -654,10 +644,9 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 type antigravityStreamEvent struct {
 	Event  string `json:"event"`
 	Result struct {
-		Status         string `json:"status"`
-		Response       string `json:"response"`
-		Error          string `json:"error"`
-		FinishedReason string `json:"finished_reason"`
+		Status   string `json:"status"`
+		Response string `json:"response"`
+		Error    string `json:"error"`
 	} `json:"result"`
 }
 
@@ -686,9 +675,6 @@ func (event *antigravityStreamEvent) reviewResult() (string, error) {
 		return "", fmt.Errorf("antigravity ended with status %q: %s", event.Result.Status, event.Result.Error)
 	}
 	response := strings.TrimSpace(event.Result.Response)
-	if event.Result.FinishedReason != "" {
-		return response, fmt.Errorf("antigravity ended early: %s", event.Result.FinishedReason)
-	}
 	return response, nil
 }
 

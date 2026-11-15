@@ -1071,11 +1071,6 @@ func (s *pullSession) upsertPulledJob(ctx context.Context, j PulledJob, repoID i
 			git_ref = excluded.git_ref,
 			branch = excluded.branch,
 			session_id = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.session_id ELSE COALESCE(excluded.session_id, review_jobs.session_id) END,
-			session_cli = CASE
-				WHEN (CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.session_id ELSE COALESCE(excluded.session_id, review_jobs.session_id) END) IS review_jobs.session_id
-				THEN review_jobs.session_cli
-				ELSE NULL
-			END,
 			resume_source_job_uuid = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.resume_source_job_uuid ELSE COALESCE(excluded.resume_source_job_uuid, review_jobs.resume_source_job_uuid) END,
 			commit_id = excluded.commit_id,
 			patch_id = excluded.patch_id,
