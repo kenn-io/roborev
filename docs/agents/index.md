@@ -618,8 +618,8 @@ short `WaitDelay` so orphan pipes cannot hang availability checks forever).
 ## ACP (Agent Client Protocol)
 
 ACP lets you integrate any agent that speaks the
-[Agent Client Protocol](https://zed.dev/blog/acp), even if roborev doesn't have
-a built-in adapter for it. Configure one or more named ACP agents in
+[Agent Client Protocol](https://zed.dev/acp), even if roborev doesn't have a
+built-in adapter for it. Configure one or more named ACP agents in
 `~/.roborev/config.toml`:
 
 ```toml
