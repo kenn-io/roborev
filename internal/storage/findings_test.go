@@ -26,6 +26,7 @@ func TestReviewFindingCounts(t *testing.T) {
 		{name: "empty structured output", structured: new("")},
 		{name: "unable to review", structured: new(`{"schema_version":2,"summary":"unavailable","verdict":"unable_to_review","findings":[]}`)},
 		{name: "malformed structured output", structured: new(`{"schema_version":2`)},
+		{name: "historical Markdown", structured: new(`{"schema_version":0,"legacy":{"markdown":"Historical review.","recorded_verdict":true}}`)},
 		{name: "non-object structured output", structured: new(`[]`)},
 		{name: "trailing structured output", structured: new(structured + ` {}`)},
 	}
