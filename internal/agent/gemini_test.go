@@ -478,6 +478,12 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			wantErrorText:   `antigravity ended with status "ERROR"`,
 			wantTurnStarted: true,
 		},
+		{
+			name:            "error result before a turn",
+			fixture:         "antigravity-preturn-error-capture.jsonl",
+			wantErrorText:   `antigravity ended with status "ERROR"`,
+			wantTurnStarted: false,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
@@ -546,6 +552,13 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			name: "Antigravity agentic review retries a rejected resume",
 			cli:  "agy", version: "1.2.6", agentic: true, resumeError: "conversation missing", resumeFlag: "--conversation",
 			resumeFixture:  "antigravity-init-capture.jsonl",
+			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
+			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
+		},
+		{
+			name: "Antigravity unsafe review retries a pre-turn result error",
+			cli:  "agy", version: "1.2.6", unsafe: true, resumeError: "conversation missing", resumeFlag: "--conversation",
+			resumeFixture:  "antigravity-preturn-error-capture.jsonl",
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
 		},
@@ -897,17 +910,26 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name       string
-		lateStderr bool
-		sessionID  string
+		name        string
+		lateStderr  bool
+		sessionID   string
+		unsafe      bool
+		startedTurn bool
+		wantErr     bool
 	}{
 		{name: "read-only fallback"},
 		{name: "fallback captures late stderr", lateStderr: true},
 		{name: "fallback resumes the same session", sessionID: "resumed-model-session"},
+		{
+			name:      "unsafe resumed fallback does not replay a started turn",
+			sessionID: "resumed-model-session", unsafe: true, startedTurn: true, wantErr: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			withUnsafeAgents(t, tc.unsafe)
 			callsFile := filepath.Join(t.TempDir(), "calls")
 			argsFile := filepath.Join(t.TempDir(), "args")
+			editFile := filepath.Join(t.TempDir(), "edits")
 			successFixture := fixture
 			if tc.sessionID != "" {
 				contents, readErr := os.ReadFile(fixture)
@@ -920,6 +942,8 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 			t.Setenv("ARGS_FILE", argsFile)
 			t.Setenv("LATE_STDERR", strconv.FormatBool(tc.lateStderr))
 			t.Setenv("RESUMED_SESSION", strconv.FormatBool(tc.sessionID != ""))
+			t.Setenv("STARTED_TURN", strconv.FormatBool(tc.startedTurn))
+			t.Setenv("EDIT_FILE", editFile)
 			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
 echo call >> "$CALLS_FILE"
@@ -929,7 +953,10 @@ for arg in "$@"; do
   if [ "$arg" = "-m" ]; then has_model=1; fi
 done
 if [ "$has_model" = "1" ]; then
-  if [ "$RESUMED_SESSION" = "true" ]; then echo '{"type":"result","status":"error"}'; fi
+  if [ "$RESUMED_SESSION" = "true" ] && [ "$STARTED_TURN" = "true" ]; then
+    echo edit >> "$EDIT_FILE"
+    cat "$SUCCESS_FILE"
+  fi
   if [ "$LATE_STDERR" = "true" ]; then
     echo '{"type":"init","session_id":"failed-model-session"}'
     exec 1>&-
@@ -938,6 +965,7 @@ if [ "$has_model" = "1" ]; then
   echo "Error: model is not found for API version v1" >&2
   exit 1
 fi
+if [ "$RESUMED_SESSION" = "true" ] && [ "$STARTED_TURN" = "true" ]; then echo edit >> "$EDIT_FILE"; fi
 cat "$SUCCESS_FILE"
 `)
 			t.Setenv("SUCCESS_FILE", successFixture)
@@ -952,19 +980,37 @@ cat "$SUCCESS_FILE"
 				a = a.WithSessionID(tc.sessionID).(*GeminiAgent)
 			}
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
-			require.NoError(t, err)
-			assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
+			if tc.wantErr {
+				require.ErrorContains(t, err, "model is not found")
+			} else {
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
+			}
 			calls, readErr := os.ReadFile(callsFile)
 			require.NoError(t, readErr)
-			assert.Equal(t, "call\ncall\n", string(calls))
+			wantCalls := "call\ncall\n"
+			if tc.wantErr {
+				wantCalls = "call\n"
+			}
+			assert.Equal(t, wantCalls, string(calls))
 			args, readErr := os.ReadFile(argsFile)
 			require.NoError(t, readErr)
 			if tc.sessionID != "" {
-				assert.Equal(t, 2, strings.Count(string(args), "--resume\n"+tc.sessionID+"\n"))
+				wantResumeCalls := 2
+				if tc.wantErr {
+					wantResumeCalls = 1
+				}
+				assert.Equal(t, wantResumeCalls, strings.Count(string(args), "--resume\n"+tc.sessionID+"\n"))
 				assert.Zero(t, resetCalls, "the fallback keeps the resumed conversation's source link")
 			} else {
 				assert.Zero(t, strings.Count(string(args), "--resume\n"))
 				assert.Equal(t, 1, resetCalls, "fresh fallback resets captured session state")
+			}
+			if tc.startedTurn {
+				edits, readErr := os.ReadFile(editFile)
+				require.NoError(t, readErr)
+				assert.Equal(t, "edit\n", string(edits))
+				assert.Equal(t, tc.sessionID, capture.SessionID())
 			}
 		})
 	}
