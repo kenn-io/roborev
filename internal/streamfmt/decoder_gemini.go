@@ -3,6 +3,7 @@ package streamfmt
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"strings"
 )
 
 type geminiDecoder struct{}
@@ -57,11 +58,13 @@ func geminiResultEvents(line string, raw jsontext.Value) []Event {
 		Response       string `json:"response"`
 		Error          string `json:"error"`
 		FinishedReason string `json:"finished_reason"`
+		NumTurns       int    `json:"num_turns"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return []Event{{Kind: EventText, Text: line}}
 	}
-	if result.Status != "SUCCESS" {
+	if result.Status != "SUCCESS" &&
+		(result.Status != "ERROR" || result.NumTurns == 0 || strings.TrimSpace(result.Response) == "") {
 		if result.Error == "" {
 			result.Error = "Antigravity finished with status " + result.Status
 		}

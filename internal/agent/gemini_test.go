@@ -370,6 +370,15 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			wantTurnStarted: true,
 		},
 		{
+			name: "GeminiErrorResultBeforeTurn",
+			input: `{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"}
+{"type":"result","status":"error","error":{"message":"session not found"}}
+`,
+			assertResult: func(t *testing.T, res string) {
+				assert.Empty(t, res)
+			},
+		},
+		{
 			name: "GeminiMessagesWithoutResult",
 			input: `{"type":"message","role":"assistant","content":"First message"}
 {"type":"message","role":"assistant","content":"Second message"}
@@ -473,9 +482,9 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			wantTurnStarted: true,
 		},
 		{
-			name:            "error result",
+			name:            "historical error after completed response",
 			fixture:         "antigravity-quota-result-capture.jsonl",
-			wantErrorText:   `antigravity ended with status "ERROR"`,
+			wantResponse:    "RESUME_OK",
 			wantTurnStarted: true,
 		},
 		{
@@ -517,7 +526,9 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		unsafe               bool
 		wantError            bool
 		wantErrorText        string
+		wantCalls            int
 		resumeError          string
+		resumeErrorEvent     bool
 		resumeFlag           string
 		resumeFixture        string
 		resumeLines          int
@@ -543,6 +554,13 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			wantSessionID: geminiSessionID,
 		},
 		{
+			name: "Gemini unsafe review retries a pre-turn error result",
+			cli:  "gemini", version: "0.34.0", unsafe: true, resumeError: "session missing",
+			resumeErrorEvent: true, resumeFlag: "--resume",
+			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
+			wantSessionID: geminiSessionID,
+		},
+		{
 			name: "Gemini unsafe review does not replay a started turn",
 			cli:  "gemini", version: "0.34.0", unsafe: true, wantError: true,
 			wantErrorText: "turn failed", resumeError: "turn failed", resumeFlag: "--resume",
@@ -563,9 +581,10 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
 		},
 		{
-			name: "Antigravity unsafe review does not replay a started turn",
-			cli:  "agy", version: "1.2.6", unsafe: true, wantError: true, wantErrorText: "Individual quota reached",
+			name: "Antigravity resumes past a historical quota error",
+			cli:  "agy", version: "1.2.6", unsafe: true,
 			resumeFlag: "--conversation", resumeFixture: "antigravity-quota-result-capture.jsonl", editFile: true, editBeforeTurnResult: true,
+			wantResult: "RESUME_OK", wantCalls: 1,
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 		},
 	} {
@@ -587,6 +606,7 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 				resumeSessionID = "session-id-not-in-fixture"
 			}
 			t.Setenv("RESUME_SESSION_ID", resumeSessionID)
+			t.Setenv("RESUME_ERROR_EVENT", strconv.FormatBool(tc.resumeErrorEvent))
 			t.Setenv("ABANDONED_SESSION_ID", "abandoned-resume-session")
 			t.Setenv("EDIT_BEFORE_TURN_RESULT", strconv.FormatBool(tc.editBeforeTurnResult))
 			editFile := ""
@@ -609,6 +629,7 @@ for arg in "$@"; do
 				  sed "s/$RESUME_SESSION_ID/$ABANDONED_SESSION_ID/g" "$TESTDATA/$RESUME_FILE"
       fi
     fi
+	    if [ "$RESUME_ERROR_EVENT" = "true" ]; then echo '{"type":"result","status":"error","error":{"message":"session missing"}}'; fi
     if [ -n "$EDIT_FILE" ] && [ "$EDIT_BEFORE_TURN_RESULT" != "true" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
     if [ -n "$RESUME_ERROR" ]; then echo "$RESUME_ERROR" >&2; exit 1; fi
     if [ -n "$RESUME_FILE" ]; then exit 0; fi
@@ -626,9 +647,14 @@ cat "$TESTDATA/$SUCCESS_FILE"
 			a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(tc.agentic).(*GeminiAgent)
 			capture := NewSessionCaptureWriter(io.Discard, nil, nil)
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
-			wantCalls := 2
+			wantCalls := tc.wantCalls
+			if wantCalls == 0 {
+				wantCalls = 2
+				if tc.wantError {
+					wantCalls = 1
+				}
+			}
 			if tc.wantError {
-				wantCalls = 1
 				require.Error(t, err)
 				if tc.wantErrorText != "" {
 					require.ErrorContains(t, err, tc.wantErrorText)
@@ -915,10 +941,12 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 		sessionID   string
 		unsafe      bool
 		startedTurn bool
+		errorResult bool
 		wantErr     bool
 	}{
 		{name: "read-only fallback"},
 		{name: "fallback captures late stderr", lateStderr: true},
+		{name: "error result falls back without the built-in model", errorResult: true},
 		{name: "fallback resumes the same session", sessionID: "resumed-model-session"},
 		{
 			name:      "unsafe resumed fallback does not replay a started turn",
@@ -943,6 +971,7 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 			t.Setenv("LATE_STDERR", strconv.FormatBool(tc.lateStderr))
 			t.Setenv("RESUMED_SESSION", strconv.FormatBool(tc.sessionID != ""))
 			t.Setenv("STARTED_TURN", strconv.FormatBool(tc.startedTurn))
+			t.Setenv("MODEL_ERROR_RESULT", strconv.FormatBool(tc.errorResult))
 			t.Setenv("EDIT_FILE", editFile)
 			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
@@ -953,6 +982,7 @@ for arg in "$@"; do
   if [ "$arg" = "-m" ]; then has_model=1; fi
 done
 if [ "$has_model" = "1" ]; then
+  if [ "$MODEL_ERROR_RESULT" = "true" ]; then echo '{"type":"result","status":"error","error":{"message":"model not found"}}'; fi
   if [ "$RESUMED_SESSION" = "true" ] && [ "$STARTED_TURN" = "true" ]; then
     echo edit >> "$EDIT_FILE"
     cat "$SUCCESS_FILE"

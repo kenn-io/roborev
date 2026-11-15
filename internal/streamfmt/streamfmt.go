@@ -223,5 +223,5 @@ func isAntigravityEvent(line string) bool {
 	if json.Unmarshal([]byte(line), &probe) != nil {
 		return false
 	}
-	return probe.Event == "init" || probe.Event == "result"
+	return probe.Event == "init" || probe.Event == "result" || probe.Event == "step_update"
 }

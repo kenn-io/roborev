@@ -142,6 +142,14 @@ func TestRenderLogWithPreservesUnknownEventJSONForOtherAgents(t *testing.T) {
 	}
 }
 
+func TestRenderLogWithDropsAntigravityStepUpdate(t *testing.T) {
+	const event = `{"event":"step_update","step_update":{"state":"ACTIVE","text_delta":"working"}}`
+	var output bytes.Buffer
+	fmtr := New(&output, true, DecoderForAgent("gemini"))
+	require.NoError(t, RenderLogWith(strings.NewReader(event+"\n"), fmtr))
+	assert.Empty(t, output.String())
+}
+
 type toolInput struct {
 	FilePath  string `json:"file_path,omitempty"`
 	OldString string `json:"old_string,omitempty"`
@@ -731,11 +739,11 @@ func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
 			},
 		},
 		{
-			name:     "error result",
+			name:     "historical error after completed response",
 			fixture:  "../agent/testdata/antigravity-quota-result-capture.jsonl",
-			contains: "Individual quota reached",
+			contains: "RESUME_OK",
 			notContains: []string{
-				"RESUME_OK",
+				"Individual quota reached",
 				`"event":"result"`,
 			},
 		},

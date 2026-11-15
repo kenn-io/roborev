@@ -541,6 +541,7 @@ func isModelNotFoundError(stderr string) bool {
 type geminiStreamMessage struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype,omitempty"`
+	Status  string `json:"status,omitempty"`
 	// Top-level fields for "message" type events
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content,omitempty"`
@@ -572,7 +573,9 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 		var msg geminiStreamMessage
 		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
 			validEventsParsed = true
-			turnStarted = turnStarted || (msg.Type != "" && msg.Type != "init" && (msg.Type != "message" || msg.Role != "user"))
+			turnStarted = turnStarted || (msg.Type != "" && msg.Type != "init" &&
+				(msg.Type != "message" || msg.Role != "user") &&
+				(msg.Type != "result" || !strings.EqualFold(msg.Status, "error") || msg.Result != ""))
 
 			if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
 				assistantMessages.Add(msg.Content)
@@ -658,11 +661,12 @@ func (event *antigravityStreamEvent) reviewResult() (string, error) {
 	if event == nil {
 		return "", errNoStreamJSON
 	}
-	if event.Result.Status != "SUCCESS" {
-		return "", fmt.Errorf("antigravity ended with status %q: %s", event.Result.Status, event.Result.Error)
-	}
 	if event.Result.FinishedReason == "print_timeout" {
 		return "", errAntigravityPrintTimeout
+	}
+	if event.Result.Status != "SUCCESS" &&
+		(event.Result.Status != "ERROR" || event.Result.NumTurns == 0 || strings.TrimSpace(event.Result.Response) == "") {
+		return "", fmt.Errorf("antigravity ended with status %q: %s", event.Result.Status, event.Result.Error)
 	}
 	return strings.TrimSpace(event.Result.Response), nil
 }
