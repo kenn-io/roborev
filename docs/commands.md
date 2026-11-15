@@ -96,7 +96,8 @@ stored repository identity, or filter as described by that command. Outside a
 checkout, `list` also discovers repositories in immediate child directories.
 Without `--server`, commands discover the local daemon through its runtime file
 under `ROBOREV_DATA_DIR` (default `~/.roborev`) and start it when needed.
-`doctor` diagnoses setup without starting a daemon.
+`doctor` diagnoses setup. MCP readiness checks may start the configured server
+and daemon, and Codex may create its own state and bundled skills.
 
 `--server` selects an existing loopback address, `unix://` socket, or remote
 HTTPS base URL. The CLI does not start or replace explicit targets. Remote HTTPS
@@ -1540,6 +1541,10 @@ See: [Configuration](/docs/configuration/#post-commit-review-mode) and
 ## Agent Hook
 
 ```bash
+roborev agent setup                     # Connect Claude Code and Codex
+roborev agent setup --mcp               # Also register MCP
+roborev agent setup --check             # Check readiness
+roborev agent setup --print             # Print Claude and Codex MCP commands
 roborev agent hook install              # Install profiles for detected agents
 roborev agent hook install --agent all  # Install all nine integrations
 roborev agent hook install --agent hermes --config ~/.hermes/config.yaml
@@ -1550,6 +1555,22 @@ roborev agent hook run --agent codex --source roborev-agent-hook              # 
 roborev agent hook status               # Tracked session counters as JSON
 roborev agent hook reset example-session   # Reset one session (or --all)
 ```
+
+If Codex asks for review, run `/hooks` in Codex, then recheck. The MCP check may
+start the configured server, and Codex may update its runtime state.
+
+### Setup flags
+
+| Flag | Description |
+|------|-------------|
+| `--agent <name>` | Select `claude` or `codex`; repeat or use a comma-separated list |
+| `--mcp[=false]` | Select MCP or CLI mode; omission keeps the installed mode |
+| `--check` | Check readiness without installing |
+| `--json` | Print the readiness report as JSON |
+| `--print` | Print manual MCP registration commands |
+| `--server <address>` | Select the daemon for setup or printed commands; cannot be combined with `--check` |
+
+### Hook install flags
 
 | Flag | Description |
 |------|-------------|
@@ -1577,8 +1598,8 @@ roborev doctor --repo /path/to/repo   # Check a different repository
 ```
 
 `roborev doctor` reads configuration and daemon state and reports problems with
-a suggested fix for each. It never starts or restarts the daemon, installs
-hooks, or edits config.
+a suggested fix for each. MCP readiness checks may start the configured server
+and daemon. Doctor reports the daemon's state before and after those checks.
 
 | Area | What doctor checks |
 |------|--------------------|

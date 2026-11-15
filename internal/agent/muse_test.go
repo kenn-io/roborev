@@ -30,7 +30,7 @@ func TestMuseBuildArgs(t *testing.T) {
 			a := NewMuseAgent("").WithReasoning(tc.reasoning).WithAgentic(tc.agentic).(*MuseAgent)
 			args := a.buildArgs(a.Agentic, "prompt.md")
 			assert := assert.New(t)
-			assert.Contains(strings.Join(args, " "), "--prompt-file prompt.md")
+			assertArgsContainContiguous(t, args, []string{"--prompt-file", "prompt.md"})
 			if tc.agentic {
 				assert.Contains(args, "--yolo")
 				assert.NotContains(args, `run.toolset=["read_file","search"]`)
@@ -38,11 +38,11 @@ func TestMuseBuildArgs(t *testing.T) {
 				assert.NotContains(args, "--yolo")
 				assert.Contains(args, "--no-foreign-personal-context")
 				for _, override := range []string{`run.toolset=["read_file","search"]`, "hooks={}", "managed_hooks_path=null"} {
-					assert.Contains(strings.Join(args, " "), "-c "+override)
+					assertArgsContainContiguous(t, args, []string{"-c", override})
 				}
 			}
 			if tc.reasoning == ReasoningThorough {
-				assert.Contains(strings.Join(args, " "), "--reasoning-effort high")
+				assertArgsContainContiguous(t, args, []string{"--reasoning-effort", "high"})
 			}
 		})
 	}

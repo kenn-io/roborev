@@ -57,6 +57,7 @@ func applyCommandGrammar(root *cobra.Command) {
 	} {
 		root.AddCommand(&cobra.Command{Use: group.name, Short: group.short, Long: group.long, Example: group.example})
 	}
+	directCommand(root, "agent").AddCommand(agentSetupCmd())
 	for _, move := range commandMoves {
 		legacy := directCommand(root, move.legacy)
 		if legacy == nil {

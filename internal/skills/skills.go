@@ -447,13 +447,19 @@ func Status() []AgentStatus {
 		if err != nil {
 			return nil
 		}
-		out = append(out, statusForAgent(spec, home))
+		out = append(out, statusForAgent(spec, home, nil))
 	}
 	return out
 }
 
 // StatusForAgent returns one agent's embedded skill installation state.
 func StatusForAgent(agent Agent) (AgentStatus, bool) {
+	return StatusForAgentMode(agent, nil)
+}
+
+// StatusForAgentMode checks each skill against the selected transport; nil
+// checks each skill against its own installed mode.
+func StatusForAgentMode(agent Agent, mcp *bool) (AgentStatus, bool) {
 	spec, ok := lookupAgent(agent)
 	if !ok {
 		return AgentStatus{}, false
@@ -462,10 +468,10 @@ func StatusForAgent(agent Agent) (AgentStatus, bool) {
 	if err != nil {
 		return AgentStatus{}, false
 	}
-	return statusForAgent(spec, home), true
+	return statusForAgent(spec, home, mcp), true
 }
 
-func statusForAgent(spec agentSpec, home string) AgentStatus {
+func statusForAgent(spec agentSpec, home string, selected *bool) AgentStatus {
 	status := AgentStatus{
 		Agent:  spec.agent,
 		Skills: make(map[string]SkillState),
@@ -493,7 +499,7 @@ func statusForAgent(spec agentSpec, home string) AgentStatus {
 			continue
 		}
 
-		if bytes.Contains(installedContent, []byte(mcpModeMarker)) {
+		if selected != nil && *selected || selected == nil && bytes.Contains(installedContent, []byte(mcpModeMarker)) {
 			skill.Content = renderMCPSkill(skill.Content)
 		}
 		if !bytes.Equal(installedContent, skill.Content) {

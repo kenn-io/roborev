@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +31,9 @@ var postgresV18Schema string
 
 //go:embed schemas/postgres_v23.sql
 var postgresV23Schema string
+
+//go:embed schemas/postgres_v24.sql
+var postgresV24Schema string
 
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
@@ -56,6 +60,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		17: postgresV17Schema,
 		18: postgresV18Schema,
 		23: postgresV23Schema,
+		24: postgresV24Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
@@ -85,6 +90,45 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	require.NoError(t, err, "seed schema_version")
 
 	return pool
+}
+
+func TestPostgresMigration_SessionCLIFromV24(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
+	pool := openTestPgPoolRawAtVersion(t, 24)
+	ctx := t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	jobUUID := uuid.New()
+	sourceMachineID := uuid.New()
+	enqueuedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	createTestJob(t, pool.Pool(), TestJobOpts{
+		UUID:            jobUUID,
+		RepoID:          repoID,
+		CommitID:        commitID,
+		SourceMachineID: sourceMachineID,
+		EnqueuedAt:      enqueuedAt,
+	})
+	reviewUUID := uuid.New()
+	createTestReview(t, pool.Pool(), TestReviewOpts{UUID: reviewUUID, JobUUID: jobUUID})
+
+	require.NoError(t, pool.EnsureSchema(ctx))
+	require.NoError(t, pool.EnsureSchema(ctx))
+
+	var hasSessionCLI bool
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = 'session_cli'
+	)`).Scan(&hasSessionCLI))
+	assert.True(t, hasSessionCLI)
+
+	var version int
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version))
+	assert.Equal(t, 25, version)
+
+	var gotEnqueuedAt time.Time
+	var gotSourceMachineID uuid.UUID
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, reviewUUID).Scan(&gotEnqueuedAt, &gotSourceMachineID))
+	assert.Equal(t, enqueuedAt, gotEnqueuedAt.UTC())
+	assert.Equal(t, sourceMachineID, gotSourceMachineID)
 }
 
 func TestPostgresMigration_CanonicalReview(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
