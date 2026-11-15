@@ -2,6 +2,7 @@ export * from "./agent-hook/agent-hook";
 export * from "./comments/comments";
 export * from "./daemon/daemon";
 export * from "./default/default";
+export * from "./experiments/experiments";
 export * from "./jobs/jobs";
 export * from "./maintenance/maintenance";
 export * from "./repos/repos";
