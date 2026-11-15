@@ -58,9 +58,7 @@ func TestVersionGatesFeatures(t *testing.T) {
 		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
 		{name: "Antigravity unknown version", cli: "agy", version: "unknown", wantErrorContains: "antigravity CLI version could not be verified", wantVersionDiagnostic: true},
 	}
-	geminiFixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
-	require.NoError(t, err)
-	agyFixture, err := filepath.Abs(filepath.Join("testdata", "antigravity-success-result-capture.jsonl"))
+	testdata, err := filepath.Abs("testdata")
 	require.NoError(t, err)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,8 +67,7 @@ func TestVersionGatesFeatures(t *testing.T) {
 			t.Setenv("CLI_VERSION", tc.version)
 			t.Setenv("ARGS_FILE", argsFile)
 			t.Setenv("CALLS_FILE", callsFile)
-			t.Setenv("GEMINI_FIXTURE", geminiFixture)
-			t.Setenv("AGY_FIXTURE", agyFixture)
+			t.Setenv("TESTDATA", testdata)
 			streamOutput := ""
 			if tc.wantStream {
 				streamOutput = tc.cli
@@ -88,8 +85,8 @@ echo call >> "$CALLS_FILE"
 cat > "$STDIN_FILE"
 printf '%s\n' "$@" > "$ARGS_FILE"
 case "$STREAM_OUTPUT" in
-  gemini) cat "$GEMINI_FIXTURE" ;;
-  agy) cat "$AGY_FIXTURE" ;;
+  gemini) cat "$TESTDATA/gemini-stream.jsonl" ;;
+  agy) cat "$TESTDATA/antigravity-success-result-capture.jsonl" ;;
   *) echo 'Plain review' ;;
 esac
 `)
@@ -658,33 +655,25 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			t.Setenv("RESUME_FLAG", tc.resumeFlag)
 			t.Setenv("RESUME_ERROR", tc.resumeError)
 			t.Setenv("ARGS_FILE", argsFile)
-			resumeFixture := ""
-			if tc.resumeFixture != "" {
-				var err error
-				resumeFixture, err = filepath.Abs(filepath.Join("testdata", tc.resumeFixture))
-				require.NoError(t, err)
-			}
-			t.Setenv("RESUME_FILE", resumeFixture)
+			testdata, err := filepath.Abs("testdata")
+			require.NoError(t, err)
+			t.Setenv("TESTDATA", testdata)
+			t.Setenv("RESUME_FILE", tc.resumeFixture)
 			t.Setenv("RESUME_LINES", strconv.Itoa(tc.resumeLines))
+			resumeSessionID := tc.wantSessionID
+			if resumeSessionID == "" {
+				resumeSessionID = "session-id-not-in-fixture"
+			}
+			t.Setenv("RESUME_SESSION_ID", resumeSessionID)
+			t.Setenv("ABANDONED_SESSION_ID", "abandoned-resume-session")
 			t.Setenv("EDIT_BEFORE_TURN_RESULT", strconv.FormatBool(tc.editBeforeTurnResult))
 			editFile := ""
 			if tc.editFile {
 				editFile = filepath.Join(t.TempDir(), "edits")
 			}
 			t.Setenv("EDIT_FILE", editFile)
-			successFixtureName := tc.successFixture
-			if successFixtureName == "" {
-				successFixtureName = "gemini-stream.jsonl"
-			}
-			successFixture, err := filepath.Abs(filepath.Join("testdata", successFixtureName))
-			require.NoError(t, err)
-			t.Setenv("SUCCESS_FILE", successFixture)
-			initFixture := ""
-			if tc.initFixture != "" {
-				initFixture, err = filepath.Abs(filepath.Join("testdata", tc.initFixture))
-				require.NoError(t, err)
-			}
-			t.Setenv("INIT_FILE", initFixture)
+			t.Setenv("SUCCESS_FILE", tc.successFixture)
+			t.Setenv("INIT_FILE", tc.initFixture)
 			script := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "$CLI_VERSION"; exit 0; fi
 printf '%s\n' "$@" >> "$ARGS_FILE"
@@ -693,9 +682,9 @@ for arg in "$@"; do
     if [ "$EDIT_BEFORE_TURN_RESULT" = "true" ] && [ -n "$EDIT_FILE" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
     if [ -n "$RESUME_FILE" ]; then
       if [ "$RESUME_LINES" -gt 0 ]; then
-        sed -n "1,${RESUME_LINES}p" "$RESUME_FILE"
+				  sed -n "1,${RESUME_LINES}p" "$TESTDATA/$RESUME_FILE" | sed "s/$RESUME_SESSION_ID/$ABANDONED_SESSION_ID/g"
       else
-        cat "$RESUME_FILE"
+				  sed "s/$RESUME_SESSION_ID/$ABANDONED_SESSION_ID/g" "$TESTDATA/$RESUME_FILE"
       fi
     fi
     if [ -n "$EDIT_FILE" ] && [ "$EDIT_BEFORE_TURN_RESULT" != "true" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
@@ -704,8 +693,8 @@ for arg in "$@"; do
   fi
 done
 if [ -n "$EDIT_FILE" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
-if [ -n "$INIT_FILE" ]; then cat "$INIT_FILE"; fi
-cat "$SUCCESS_FILE"
+if [ -n "$INIT_FILE" ]; then cat "$TESTDATA/$INIT_FILE"; fi
+cat "$TESTDATA/$SUCCESS_FILE"
 `)
 			if tc.cli == "agy" {
 				agyPath := filepath.Join(filepath.Dir(script), "agy")
