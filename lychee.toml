@@ -1,0 +1,8 @@
+# A glob input does not read .gitignore.
+exclude_path = ["(^|/)node_modules/"]
+# Docs link to pages as /docs/<page>/, stored as docs/<page>.md or
+# docs/<page>/index.md.
+fallback_extensions = ["md"]
+index_files = ["index.md", "."]
+# Docs images are not in the repository. The docs build downloads them.
+exclude = ["/docs/assets/(generated|static)/"]
