@@ -430,8 +430,8 @@ func formatSince(since time.Time) string {
 
 // printFindingSummary keeps unavailable rates separate from raw counts.
 func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
-	cmd.Printf("Finding outcomes by %s (finished_at; as of %s)\n", f.GroupBy, f.AsOf.UTC().Format(time.RFC3339))
-	cmd.Printf("  Structured reviews: %d/%d | Labeled findings: %d/%d (R: %d, K: %d)\n", f.StructuredReviews, f.LogicalReviews, f.Total.Labeled, f.Total.Findings, f.TierLabeled["R"], f.TierLabeled["K"])
+	cmd.Printf("Finding outcomes by %s (completed by %s)\n", f.GroupBy, f.AsOf.UTC().Format(time.RFC3339))
+	cmd.Printf("  Structured reviews: %d/%d | Labeled findings: %d/%d (rebuttals: %d, typed replies: %d)\n", f.StructuredReviews, f.LogicalReviews, f.Total.Labeled, f.Total.Findings, f.TierLabeled["R"], f.TierLabeled["K"])
 	cohort := f.TierCoverage["R"]
 	cmd.Printf("  Local standalone findings labeled by rebuttals: %d/%d\n", cohort.Labeled, cohort.Findings)
 	cmd.Printf("  Documents unavailable: %d missing, %d invalid, %d legacy, %d unable to review\n", f.MissingDocuments, f.InvalidDocuments, f.LegacyDocuments, f.UnableDocuments)
@@ -441,14 +441,27 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 	if state == "" {
 		state = "unavailable"
 	}
-	cmd.Printf("  K coverage (%s): %d/%d mapped, %d/%d readable | explicit reasons: %d/%d refutes\n", state, k.Mapped, k.Eligible, k.Readable, k.Eligible, k.ExplicitReasons, k.Refutes)
-	cmd.Printf("  K evidence: %d ineligible, %d unmapped, %d unavailable (%d incomplete, %d stale), %d invalid, %d conflicting, %d excluded, %d edited\n", k.Ineligible, k.Unmapped, k.Unavailable, k.Incomplete, k.Stale, k.Invalid, k.Conflicting, k.Excluded, k.Edited)
+	cmd.Printf("  Typed replies (%s): %d/%d matched, %d/%d readable | reasons: %d/%d refutes\n", state, k.Mapped, k.Eligible, k.Readable, k.Eligible, k.ExplicitReasons, k.Refutes)
+	cmd.Printf("  Replies: %d ineligible, %d unmatched, %d unavailable (%d incomplete, %d stale), %d invalid, %d conflicting, %d excluded, %d edited\n", k.Ineligible, k.Unmapped, k.Unavailable, k.Incomplete, k.Stale, k.Invalid, k.Conflicting, k.Excluded, k.Edited)
 	reasons := f.Total.RefuteReasons
 	cmd.Printf("  Refutes: false-positive: %d | spurious: %d | risk-accepted: %d | unspecified: %d\n", reasons.FalsePositive, reasons.Spurious, reasons.RiskAccepted, reasons.Unspecified)
 	cmd.Printf("  Refute reason coverage: %d absent, %d invalid, %d conflicting\n", reasons.Absent, reasons.Invalid, reasons.Conflicting)
 	cmd.Println("  Confirmed share describes assertions; risk-accepted records a real tradeoff. Closure is resolution only.")
 	if len(f.UnavailableTiers) > 0 {
-		cmd.Printf("  Unavailable tiers: %s\n", strings.Join(f.UnavailableTiers, ", "))
+		labels := make([]string, len(f.UnavailableTiers))
+		for i, tier := range f.UnavailableTiers {
+			switch tier {
+			case "K":
+				labels[i] = "typed replies"
+			case "D":
+				labels[i] = "fix outcomes"
+			case "panel R":
+				labels[i] = "panel rebuttals"
+			default:
+				labels[i] = tier
+			}
+		}
+		cmd.Printf("  Unavailable: %s\n", strings.Join(labels, ", "))
 	}
 	showSpend := false
 	for _, r := range f.Rows {

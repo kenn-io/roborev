@@ -1052,7 +1052,9 @@ additive `findings` JSON block reports the repository, branch, since, as-of and
 suppression state. Zero-finding structured reviews count toward document
 coverage. Missing, invalid, legacy and unable-to-review documents remain in the
 logical review denominator. All structured severities count, including findings
-below a passing review's configured threshold.
+below a passing review's configured threshold. Text output spells out rebuttals,
+typed replies, and unavailable outcomes; JSON retains the tier codes for
+scripts.
 
 - **Positive / negative (tier R)**: A completed rebuttal assessment confirms or
     refutes one uniquely matched finding in the current review version. This is

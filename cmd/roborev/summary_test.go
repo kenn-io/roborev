@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -261,19 +262,35 @@ func TestSummaryFindingRequest(t *testing.T) {
 }
 
 func TestPrintFindingSummaryReasons(t *testing.T) {
+	a := assert.New(t)
 	cmd := summaryCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	reasons := storage.RefuteReasonCounts{FalsePositive: 1, Spurious: 2, RiskAccepted: 3, Unspecified: 4}
 	f := storage.FindingStats{
-		GroupBy: "severity",
-		Kata:    storage.FindingKataCoverage{State: "unavailable", Eligible: 10, Unavailable: 10},
-		Total:   storage.FindingOutcomeCounts{Negative: 10, RefuteReasons: reasons},
-		Rows:    []storage.FindingStatsRow{{Key: "high", Negative: 10, RefuteReasons: reasons}},
+		GroupBy:           "severity",
+		AsOf:              time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		TimeBasis:         "finished_at",
+		LogicalReviews:    3,
+		StructuredReviews: 2,
+		TierLabeled:       map[string]int{"R": 10, "K": 0},
+		UnavailableTiers:  []string{"K", "D", "panel R"},
+		Kata:              storage.FindingKataCoverage{State: "unavailable", Eligible: 10, Unavailable: 10},
+		Total:             storage.FindingOutcomeCounts{Findings: 10, Labeled: 10, Negative: 10, RefuteReasons: reasons},
+		Rows:              []storage.FindingStatsRow{{Key: "high", Findings: 10, Labeled: 10, Negative: 10, RefuteReasons: reasons}},
 	}
+	before, err := json.Marshal(f)
+	require.NoError(t, err)
 	printFindingSummary(cmd, &f)
-	assert.Contains(t, out.String(), "false-positive: 1 | spurious: 2 | risk-accepted: 3 | unspecified: 4")
-	assert.Contains(t, out.String(), "K coverage (unavailable): 0/10 mapped, 0/10 readable | explicit reasons: 0/0 refutes\n")
-	assert.Contains(t, out.String(), "Confirmed share")
-	assert.Contains(t, out.String(), "Risk-accepted")
+	a.Contains(out.String(), "Finding outcomes by severity (completed by 2026-01-02T03:04:05Z)\n")
+	a.Contains(out.String(), "Structured reviews: 2/3 | Labeled findings: 10/10 (rebuttals: 10, typed replies: 0)\n")
+	a.Contains(out.String(), "Unavailable: typed replies, fix outcomes, panel rebuttals\n")
+	a.Contains(out.String(), "false-positive: 1 | spurious: 2 | risk-accepted: 3 | unspecified: 4")
+	a.Contains(out.String(), "Typed replies (unavailable): 0/10 matched, 0/10 readable | reasons: 0/0 refutes\n"+
+		"  Replies: 0 ineligible, 0 unmatched, 10 unavailable (0 incomplete, 0 stale), 0 invalid, 0 conflicting, 0 excluded, 0 edited\n")
+	a.Contains(out.String(), "Confirmed share")
+	a.Contains(out.String(), "Risk-accepted")
+	after, err := json.Marshal(f)
+	require.NoError(t, err)
+	a.JSONEq(string(before), string(after), "text formatting must not change machine-readable data")
 }
