@@ -285,7 +285,8 @@ func TestPrintFindingSummaryReasons(t *testing.T) {
 	a.Contains(out.String(), "Finding outcomes by severity (completed by 2026-01-02T03:04:05Z)\n")
 	a.Contains(out.String(), "Structured reviews: 2/3 | Labeled findings: 10/10 (rebuttals: 10, typed replies: 0)\n")
 	a.Contains(out.String(), "Unavailable: typed replies, fix outcomes, panel rebuttals\n")
-	a.Contains(out.String(), "false-positive: 1 | spurious: 2 | risk-accepted: 3 | unspecified: 4")
+	a.NotContains(out.String(), "  Refutes:")
+	a.Contains(strings.Join(strings.Fields(out.String()), " "), "high 10 10 0 10 0 0 1 2 3 4")
 	a.Contains(out.String(), "Typed replies (unavailable): 0/10 matched, 0/10 readable | reasons: 0/0 refutes\n"+
 		"  Replies: 0 ineligible, 0 unmatched, 10 unavailable (0 incomplete, 0 stale), 0 invalid, 0 conflicting, 0 excluded, 0 edited\n")
 	a.Contains(out.String(), "Confirmed share")
@@ -293,4 +294,25 @@ func TestPrintFindingSummaryReasons(t *testing.T) {
 	after, err := json.Marshal(f)
 	require.NoError(t, err)
 	a.JSONEq(string(before), string(after), "text formatting must not change machine-readable data")
+
+	out.Reset()
+	f.Rows = []storage.FindingStatsRow{
+		{Key: "high", Findings: 3, Labeled: 3, Negative: 3, RefuteReasons: storage.RefuteReasonCounts{FalsePositive: 1, Spurious: 2}},
+		{Key: "low", Findings: 7, Labeled: 7, Negative: 7, RefuteReasons: storage.RefuteReasonCounts{RiskAccepted: 3, Unspecified: 4}},
+	}
+	before, err = json.Marshal(f)
+	require.NoError(t, err)
+	printFindingSummary(cmd, &f)
+	a.Contains(out.String(), "  Refutes: false-positive: 1 | spurious: 2 | risk-accepted: 3 | unspecified: 4\n")
+	a.Equal(1, strings.Count(out.String(), "  Refutes:"))
+	rows := strings.Join(strings.Fields(out.String()), " ")
+	a.Contains(rows, "high 3 3 0 3 0 0 1 2 0 0")
+	a.Contains(rows, "low 7 7 0 7 0 0 0 0 3 4")
+	after, err = json.Marshal(f)
+	require.NoError(t, err)
+	a.JSONEq(string(before), string(after), "text formatting must not change machine-readable data")
+
+	out.Reset()
+	printFindingSummary(cmd, &storage.FindingStats{GroupBy: "severity"})
+	a.NotContains(out.String(), "  Refutes:")
 }

@@ -1094,7 +1094,8 @@ The additive `refute_reasons` block in totals and each group distinguishes:
 
 These four counts sum to effective negative findings. Reason coverage reports
 absent, invalid and conflicting states separately. Named reasons do not change
-review verdicts, closure, resolution or cost.
+review verdicts, closure, resolution or cost. Text summaries show refute totals
+only when there are multiple groups; each group always retains its counts.
 
 For validated K fixtures, only direct typed assertions on a verified current
 finding root vote. The newest assertion per actual author and teammate is

@@ -444,7 +444,9 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 	cmd.Printf("  Typed replies (%s): %d/%d matched, %d/%d readable | reasons: %d/%d refutes\n", state, k.Mapped, k.Eligible, k.Readable, k.Eligible, k.ExplicitReasons, k.Refutes)
 	cmd.Printf("  Replies: %d ineligible, %d unmatched, %d unavailable (%d incomplete, %d stale), %d invalid, %d conflicting, %d excluded, %d edited\n", k.Ineligible, k.Unmapped, k.Unavailable, k.Incomplete, k.Stale, k.Invalid, k.Conflicting, k.Excluded, k.Edited)
 	reasons := f.Total.RefuteReasons
-	cmd.Printf("  Refutes: false-positive: %d | spurious: %d | risk-accepted: %d | unspecified: %d\n", reasons.FalsePositive, reasons.Spurious, reasons.RiskAccepted, reasons.Unspecified)
+	if len(f.Rows) > 1 {
+		cmd.Printf("  Refutes: false-positive: %d | spurious: %d | risk-accepted: %d | unspecified: %d\n", reasons.FalsePositive, reasons.Spurious, reasons.RiskAccepted, reasons.Unspecified)
+	}
 	cmd.Printf("  Refute reason coverage: %d absent, %d invalid, %d conflicting\n", reasons.Absent, reasons.Invalid, reasons.Conflicting)
 	cmd.Println("  Confirmed share describes assertions; risk-accepted records a real tradeoff. Closure is resolution only.")
 	if len(f.UnavailableTiers) > 0 {
