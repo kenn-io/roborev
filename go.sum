@@ -339,8 +339,8 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 gitlab.com/gitlab-org/api/client-go/v3 v3.40.0 h1:aWkVhgglUeNPqFVMiYDYv5tmfd8xPqDm7mCwwrsrBKE=
 gitlab.com/gitlab-org/api/client-go/v3 v3.40.0/go.mod h1:jBFhGkTHLKkgeHEdS/A8yA0tQ6UHq96QVsS5muu6flM=
-go.kenn.io/kit v0.53.0 h1:CbBK28C/4ESbw9bwVQ7HJp6EGQiDI+DLSvUOSvWlqdU=
-go.kenn.io/kit v0.53.0/go.mod h1:PZ/4Ybn+VM+KQXnyAYLD8TTIfEbssd+8YbLgdqvrcVU=
+go.kenn.io/kit v0.53.2 h1:ZnyJZR8iTFD+TJwAvZC7ifGoKpZhatoIrwQo1OSNqCo=
+go.kenn.io/kit v0.53.2/go.mod h1:PZ/4Ybn+VM+KQXnyAYLD8TTIfEbssd+8YbLgdqvrcVU=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
 go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
