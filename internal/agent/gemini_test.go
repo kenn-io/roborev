@@ -336,6 +336,8 @@ func assertFlagValue(t *testing.T, args []string, flag, expectedVal string) {
 func TestGeminiParseStreamJSON(t *testing.T) {
 	geminiCapture, err := os.ReadFile("testdata/gemini-stream.jsonl")
 	require.NoError(t, err)
+	geminiDeltaCapture, err := os.ReadFile("testdata/gemini-stream-delta-fragments.jsonl")
+	require.NoError(t, err)
 	tests := []struct {
 		name            string
 		input           string
@@ -352,6 +354,14 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			assertResult: func(t *testing.T, res string) {
 				assert.JSONEq(t, `{"passed":true,"findings":[]}`, res)
 			},
+		},
+		{
+			name:  "CapturedGeminiOutputWithSplitDeltaChunksAfterToolUse",
+			input: string(geminiDeltaCapture),
+			assertResult: func(t *testing.T, res string) {
+				assert.JSONEq(t, `{"passed":true,"findings":[]}`, res)
+			},
+			wantTurnStarted: true,
 		},
 		{
 			name: "GeminiResultEvent",

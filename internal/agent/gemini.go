@@ -557,6 +557,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 	assistantMessages := newTrailingReviewText()
 	var validEventsParsed bool
 	var turnStarted bool
+	var lastAssistantWasDelta bool
 
 	err := scanStreamJSONLines(r, sw, func(trimmed string) error {
 		var msg geminiStreamMessage
@@ -567,13 +568,20 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 				(msg.Type != "result" || !strings.EqualFold(msg.Status, "error") || msg.Result != ""))
 
 			if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
-				assistantMessages.Add(msg.Content)
-			}
-			if msg.Type == "assistant" && msg.Message.Content != "" {
-				assistantMessages.Add(msg.Message.Content)
-			}
-			if msg.Type == "tool" || msg.Type == "tool_result" {
-				assistantMessages.ResetAfterTool()
+				if msg.Delta && lastAssistantWasDelta {
+					assistantMessages.ExtendLast(msg.Content)
+				} else {
+					assistantMessages.Add(msg.Content)
+				}
+				lastAssistantWasDelta = msg.Delta
+			} else {
+				lastAssistantWasDelta = false
+				if msg.Type == "assistant" && msg.Message.Content != "" {
+					assistantMessages.Add(msg.Message.Content)
+				}
+				if msg.Type == "tool" || msg.Type == "tool_use" || msg.Type == "tool_result" {
+					assistantMessages.ResetAfterTool()
+				}
 			}
 
 			if msg.Type == "result" && msg.Result != "" {
