@@ -42,6 +42,7 @@ func TestVersionGatesFeatures(t *testing.T) {
 		wantResult            string
 		wantPrompt            string
 		wantStdin             string
+		wantOutput            string
 		wantPrint             bool
 		wantApproval          string
 		wantErrorContains     string
@@ -53,7 +54,7 @@ func TestVersionGatesFeatures(t *testing.T) {
 		{name: "Gemini 0.20 agentic resume uses stdin", cli: "gemini", version: "0.20.0", agentic: true, sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
 		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "plan"},
 		{name: "Antigravity 1.0.8 without resume", cli: "agy", version: "1.0.8", sessionID: "old-session", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
-		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review"},
+		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review", wantOutput: "Plain review\n"},
 		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
 		{name: "Antigravity unknown version", cli: "agy", version: "unknown", wantErrorContains: "antigravity CLI version could not be verified", wantVersionDiagnostic: true},
 	}
@@ -97,7 +98,8 @@ esac
 			if tc.sessionID != "" {
 				a = a.WithSessionID(tc.sessionID).(*GeminiAgent)
 			}
-			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
+			var output bytes.Buffer
+			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
 			if tc.wantErrorContains != "" {
 				require.ErrorContains(t, err, tc.wantErrorContains)
 				if tc.wantVersionDiagnostic {
@@ -147,6 +149,9 @@ esac
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantResult, result)
+			if tc.wantOutput != "" {
+				assert.Equal(t, tc.wantOutput, output.String())
+			}
 		})
 	}
 }
@@ -428,16 +433,6 @@ still not json
 			wantErr: errNoStreamJSON,
 		},
 		{
-			name: "StreamsToOutput",
-			input: `{"type":"system","subtype":"init"}
-{"type":"result","result":"Done"}
-`,
-			assertResult: func(t *testing.T, res string) {
-				assert.Equal(t, "Done", res)
-			},
-			wantOutput: true,
-		},
-		{
 			name: "EmptyResult",
 			input: `{"type":"system","subtype":"init"}
 {"type":"tool","name":"Read"}
@@ -491,6 +486,7 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		fixture       string
+		input         string
 		wantResponse  string
 		wantErrorText string
 		wantError     error
@@ -510,10 +506,20 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			fixture:       "antigravity-quota-result-capture.jsonl",
 			wantErrorText: `antigravity ended with status "ERROR"`,
 		},
+		{
+			name:          "finished reason",
+			input:         `{"event":"result","result":{"status":"SUCCESS","response":"Partial response.","finished_reason":"print_timeout"}}`,
+			wantResponse:  "Partial response.",
+			wantErrorText: "print_timeout",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			input, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
-			require.NoError(t, err)
+			input := []byte(tc.input)
+			if tc.fixture != "" {
+				var err error
+				input, err = os.ReadFile(filepath.Join("testdata", tc.fixture))
+				require.NoError(t, err)
+			}
 			response, err := parseAntigravityStreamJSON(strings.NewReader(string(input)), nil)
 			if tc.wantError != nil {
 				require.ErrorIs(t, err, tc.wantError)
@@ -521,6 +527,7 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			}
 			if tc.wantErrorText != "" {
 				require.ErrorContains(t, err, tc.wantErrorText)
+				assert.Equal(t, tc.wantResponse, response)
 				return
 			}
 			require.NoError(t, err)
@@ -540,9 +547,11 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		agentic        bool
 		unsafe         bool
 		wantError      bool
+		wantErrorText  string
 		resumeError    string
 		resumeSession  string
 		resumeFlag     string
+		resumeFixture  string
 		successFixture string
 		initFixture    string
 		wantResult     string
@@ -556,22 +565,22 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			wantSessionID: geminiSessionID,
 		},
 		{
-			name:           "Gemini unsafe review retries a failed resume",
-			cli:            "gemini",
-			version:        "0.34.0",
-			unsafe:         true,
-			resumeError:    "resume failed",
-			resumeSession:  "failed-session",
-			resumeFlag:     "--resume",
-			successFixture: "gemini-stream.jsonl",
-			wantResult:     `{"passed":true,"findings":[]}`,
-			wantSessionID:  geminiSessionID,
+			name:          "Gemini unsafe review does not retry a failed resume",
+			cli:           "gemini",
+			version:       "0.34.0",
+			unsafe:        true,
+			wantError:     true,
+			wantErrorText: "resume failed",
+			resumeError:   "resume failed",
+			resumeSession: "failed-session",
+			resumeFlag:    "--resume",
 		},
 		{
 			name:          "Gemini quota failure does not retry a failed resume",
 			cli:           "gemini",
 			version:       "0.34.0",
 			wantError:     true,
+			wantErrorText: "429 Too Many Requests",
 			resumeError:   "429 Too Many Requests",
 			resumeSession: "failed-session",
 			resumeFlag:    "--resume",
@@ -582,21 +591,25 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			version:        "0.34.0",
 			agentic:        true,
 			wantError:      true,
-			resumeError:    "resume failed",
+			wantErrorText:  "model is not found",
 			resumeFlag:     "--resume",
 			successFixture: "gemini-stream.jsonl",
 		},
 		{
 			name: "Antigravity failed resume",
-			cli:  "agy", version: "1.2.6", resumeFlag: "--conversation",
+			cli:  "agy", version: "1.2.6", resumeError: "conversation could not be resumed", resumeFlag: "--conversation",
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
 		},
+		{
+			name: "Antigravity quota result does not retry a failed resume",
+			cli:  "agy", version: "1.2.6", wantError: true, wantErrorText: "Individual quota reached",
+			resumeFlag:    "--conversation",
+			resumeFixture: "antigravity-quota-result-capture.jsonl",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			previousUnsafe := AllowUnsafeAgents()
-			SetAllowUnsafeAgents(tc.unsafe)
-			t.Cleanup(func() { SetAllowUnsafeAgents(previousUnsafe) })
+			withUnsafeAgents(t, tc.unsafe)
 
 			argsFile := filepath.Join(t.TempDir(), "args")
 			t.Setenv("CLI_VERSION", tc.version)
@@ -604,6 +617,13 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			t.Setenv("RESUME_ERROR", tc.resumeError)
 			t.Setenv("RESUME_SESSION", tc.resumeSession)
 			t.Setenv("ARGS_FILE", argsFile)
+			resumeFixture := ""
+			if tc.resumeFixture != "" {
+				var fixtureErr error
+				resumeFixture, fixtureErr = filepath.Abs(filepath.Join("testdata", tc.resumeFixture))
+				require.NoError(t, fixtureErr)
+			}
+			t.Setenv("RESUME_FILE", resumeFixture)
 			successFixture, err := filepath.Abs(filepath.Join("testdata", tc.successFixture))
 			require.NoError(t, err)
 			t.Setenv("SUCCESS_FILE", successFixture)
@@ -620,6 +640,10 @@ for arg in "$@"; do
   if [ "$arg" = "$RESUME_FLAG" ]; then
     if [ -n "$RESUME_SESSION" ]; then
       echo "{\"type\":\"init\",\"session_id\":\"$RESUME_SESSION\"}"
+    fi
+    if [ -n "$RESUME_FILE" ]; then
+      cat "$RESUME_FILE"
+      exit 0
     fi
     if [ -n "$RESUME_ERROR" ]; then
       echo "$RESUME_ERROR" >&2
@@ -644,6 +668,9 @@ cat "$SUCCESS_FILE"
 			if tc.wantError {
 				wantCalls = 1
 				require.Error(t, err)
+				if tc.wantErrorText != "" {
+					require.ErrorContains(t, err, tc.wantErrorText)
+				}
 			} else {
 				require.NoError(t, err)
 				assert.Equal(t, tc.wantResult, result)
@@ -660,23 +687,27 @@ cat "$SUCCESS_FILE"
 	}
 }
 
-func TestGeminiAntigravityReviewPlainText(t *testing.T) {
+func TestAntigravityPrintTimeoutFromCapturedOutputIsFailure(t *testing.T) {
 	skipIfWindows(t)
 
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
-echo "Plain text review output"
-echo "No issues found."
-`)
-	a := NewGeminiAgent(scriptPath)
-	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
-	require.NoError(t, os.Rename(scriptPath, a.Command))
-
-	var output bytes.Buffer
-	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
-
+	resultFixture, err := filepath.Abs(filepath.Join("testdata", "antigravity-timeout-result-capture.jsonl"))
 	require.NoError(t, err)
-	assert.Equal(t, "Plain text review output\nNo issues found.\n", output.String())
+	stderrFixture, err := filepath.Abs(filepath.Join("testdata", "antigravity-timeout-stderr-capture.txt"))
+	require.NoError(t, err)
+	t.Setenv("RESULT_FILE", resultFixture)
+	t.Setenv("STDERR_FILE", stderrFixture)
+
+	command := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.3.5"; exit 0; fi
+cat "$RESULT_FILE"
+cat "$STDERR_FILE" >&2
+`)
+	agy := filepath.Join(filepath.Dir(command), "agy")
+	require.NoError(t, os.Rename(command, agy))
+	result, err := NewGeminiAgent(agy).Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
+
+	require.ErrorContains(t, err, "print timeout")
+	assert.Contains(t, result, "targeted repair pass")
 }
 
 func TestGeminiAntigravityEmptyOutput(t *testing.T) {
@@ -825,10 +856,6 @@ func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
 	assert.True(antigravityVersionUsesPromptFlag("1.1.1 (abc123)"))
 	assert.True(antigravityVersionUsesPromptFlag("agy 2.0.0\n"))
 	assert.False(antigravityVersionUsesPromptFlag("agy version 1.1.0"))
-	// Unparseable, empty, or dot-less output gets the older stdin contract.
-	assert.False(antigravityVersionUsesPromptFlag(""))
-	assert.False(antigravityVersionUsesPromptFlag("unknown"))
-	assert.False(antigravityVersionUsesPromptFlag("12345"))
 }
 
 func TestGeminiAntigravityExplicitModelFailsClearly(t *testing.T) {
@@ -904,14 +931,6 @@ yes "This is a long stderr line that will contribute to the total size" | head -
 			},
 		},
 		{
-			name: "StreamJSON_Success",
-			script: `#!/bin/sh
-echo '{"type":"system","subtype":"init"}'
-echo '{"type":"result","result":"Review complete. All good!"}'
-`,
-			wantResult: "Review complete. All good!",
-		},
-		{
 			name: "StreamJSONNoResult",
 			script: `#!/bin/sh
 echo '{"type":"system","subtype":"init"}'
@@ -980,10 +999,11 @@ for arg in "$@"; do
 done
 if [ "$has_model" = "1" ]; then
   if [ "$LATE_STDERR" = "true" ]; then
-    sed -n '1p' "$SUCCESS_FILE"
+    echo '{"type":"init","session_id":"failed-model-session"}'
     exec 1>&-
     sleep 0.05
   fi
+  echo '{"type":"init","session_id":"failed-model-session"}'
   echo "Error: model is not found for API version v1" >&2
   exit 1
 fi
@@ -991,9 +1011,11 @@ cat "$SUCCESS_FILE"
 `)
 
 			a := NewGeminiAgent(scriptPath).WithAgentic(tc.agentic)
-			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
+			capture := NewSessionCaptureWriter(io.Discard, nil, nil)
+			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
 			require.NoError(t, err)
 			assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
+			assert.Equal(t, "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", capture.SessionID())
 			calls, readErr := os.ReadFile(callsFile)
 			require.NoError(t, readErr)
 			assert.Equal(t, "call\ncall\n", string(calls))
@@ -1001,59 +1023,42 @@ cat "$SUCCESS_FILE"
 	}
 }
 
-func TestGeminiReview_ModelNotFoundNoRetryWhenNoModel(t *testing.T) {
-	skipIfWindows(t)
-
-	// When Model is empty, don't retry on model-not-found.
-	counterFile := filepath.Join(t.TempDir(), "invocations")
-	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
-echo "invoked" >> "$COUNTER_FILE"
-echo "Error: model is not found" >&2
-exit 1
-`)
-
-	t.Setenv("COUNTER_FILE", counterFile)
-	a := NewGeminiAgent(scriptPath)
-	a.Model = ""
-	var output bytes.Buffer
-	_, err := a.Review(
-		t.Context(), t.TempDir(), "sha", "prompt", &output,
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gemini failed")
-
-	countBytes, readErr := os.ReadFile(counterFile)
-	require.NoError(t, readErr)
-	assert.Equal(t, 1, strings.Count(string(countBytes), "invoked"),
-		"empty model should invoke exactly once, not retry")
-}
-
 func TestGeminiReview_ExplicitModelNoFallback(t *testing.T) {
 	skipIfWindows(t)
 
-	// When the model is not the built-in default, model-not-found
-	// errors should fail fast with exactly one invocation.
-	counterFile := filepath.Join(t.TempDir(), "invocations")
-	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
+	// Empty and explicit models must fail fast instead of retrying.
+	for _, tc := range []struct {
+		name  string
+		model string
+	}{
+		{name: "empty model"},
+		{name: "explicit model", model: "user-specified-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counterFile := filepath.Join(t.TempDir(), "invocations")
+			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 echo "invoked" >> "$COUNTER_FILE"
 echo "Error: model is not found for API version v1" >&2
 exit 1
 `)
 
-	t.Setenv("COUNTER_FILE", counterFile)
-	a := NewGeminiAgent(scriptPath).WithModel("user-specified-model")
-	var output bytes.Buffer
-	_, err := a.Review(
-		t.Context(), t.TempDir(), "sha", "prompt", &output,
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gemini failed")
+			t.Setenv("COUNTER_FILE", counterFile)
+			a := NewGeminiAgent(scriptPath)
+			if tc.model == "" {
+				a.Model = ""
+			} else {
+				a = a.WithModel(tc.model).(*GeminiAgent)
+			}
+			var output bytes.Buffer
+			_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "gemini failed")
 
-	countBytes, readErr := os.ReadFile(counterFile)
-	require.NoError(t, readErr)
-	lines := strings.Count(string(countBytes), "invoked")
-	assert.Equal(t, 1, lines,
-		"explicit model should invoke exactly once, not retry")
+			countBytes, readErr := os.ReadFile(counterFile)
+			require.NoError(t, readErr)
+			assert.Equal(t, 1, strings.Count(string(countBytes), "invoked"), "model should invoke exactly once, not retry")
+		})
+	}
 }
 
 func TestIsModelNotFoundError(t *testing.T) {

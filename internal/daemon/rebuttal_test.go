@@ -122,7 +122,7 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	originalReview, err := db.GetReviewByJobID(parent.ID)
 	require.NoError(t, err)
 	require.NotNil(t, originalReview.UUID)
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id='original-session', session_cli='agy', model='original-model', provider='original-provider', reasoning='thorough', branch='review-branch', git_ref='review-ref' WHERE id=?`, parent.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id='original-session', model='original-model', provider='original-provider', reasoning='thorough', branch='review-branch', git_ref='review-ref' WHERE id=?`, parent.ID)
 	require.NoError(t, err)
 	body, err := json.Marshal(map[string]any{"job_id": parent.ID, "finding": "The guard is missing.", "comment": "The caller checks it.", "commenter": "operator"})
 	require.NoError(t, err)

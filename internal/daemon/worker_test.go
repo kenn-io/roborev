@@ -1001,6 +1001,7 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 type sessionStreamingTestAgent struct {
 	name       string
 	streamLine string
+	sessionCLI string
 }
 
 func (a *sessionStreamingTestAgent) Name() string { return a.name }
@@ -1027,6 +1028,7 @@ func (a *sessionStreamingTestAgent) WithModel(model string) agent.Agent {
 }
 
 func (a *sessionStreamingTestAgent) CommandLine() string { return a.name }
+func (a *sessionStreamingTestAgent) SessionCLI() string  { return a.sessionCLI }
 
 func TestProcessJob_CapturesSessionID(t *testing.T) {
 	t.Parallel()
@@ -1034,6 +1036,7 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 		name       string
 		streamLine string
 		want       string
+		wantCLI    string
 	}{
 		{
 			name:       "claude session_id",
@@ -1045,6 +1048,12 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 			streamLine: `{"type":"thread.started","thread_id":"codex-thread-456"}`,
 			want:       "codex-thread-456",
 		},
+		{
+			name:       "gemini session CLI",
+			streamLine: `{"type":"init","session_id":"gemini-session-789"}`,
+			want:       "gemini-session-789",
+			wantCLI:    "gemini",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1052,7 +1061,7 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 			tcxt := newWorkerTestContext(t, 1)
 			sha := testutil.GetHeadSHA(t, tcxt.TmpDir)
 			agentName := fmt.Sprintf("session-stream-%s", strings.ReplaceAll(tc.name, " ", "-"))
-			agent.RegisterForTest(t, &sessionStreamingTestAgent{name: agentName, streamLine: tc.streamLine})
+			agent.RegisterForTest(t, &sessionStreamingTestAgent{name: agentName, streamLine: tc.streamLine, sessionCLI: tc.wantCLI})
 
 			job := tcxt.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
 			tcxt.Pool.processJob(testWorkerID, job)
@@ -1063,6 +1072,7 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 					return false
 				}, "session_id=%q, want %q", updated.SessionID, tc.want)
 			}
+			assert.Equal(t, tc.wantCLI, updated.SessionCLI)
 
 			review, err := tcxt.DB.GetReviewByJobID(job.ID)
 			if err != nil {
