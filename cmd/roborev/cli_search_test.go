@@ -120,17 +120,6 @@ func TestCLISearchQueryWhitespace(t *testing.T) {
 	assert.JSONEq(t, `{"query":"zzqxvnonexistent","results":[]}`, output)
 }
 
-func TestCLISearchNoResults(t *testing.T) {
-	assert := assert.New(t)
-	isolateCLIErrorGlobals(t)
-	code, output, diagnostics := executeCLISearch("cli", "search", "zzqxvnonexistent", "--json")
-	assert.Equal(0, code, diagnostics)
-	assert.JSONEq(`{"query":"zzqxvnonexistent","results":[]}`, output)
-	code, output, diagnostics = executeCLISearch("cli", "search", "zzqxvnonexistent")
-	assert.Equal(0, code, diagnostics)
-	assert.Contains(output, "Run 'roborev --help' for flags and examples.")
-}
-
 func TestCLISearchUsageErrors(t *testing.T) {
 	assert := assert.New(t)
 	isolateCLIErrorGlobals(t)
