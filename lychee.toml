@@ -1,5 +1,6 @@
-# A glob input does not read .gitignore.
-exclude_path = ["(^|/)node_modules/"]
+# A glob input does not read .gitignore. The changelog links are history:
+# old pull requests and contributor profiles.
+exclude_path = ["(^|/)node_modules/", "^docs/changelog\\.md$"]
 # Docs link to pages as /docs/<page>/, stored as docs/<page>.md or
 # docs/<page>/index.md.
 fallback_extensions = ["md"]
