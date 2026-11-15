@@ -535,6 +535,7 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		name           string
 		cli            string
 		version        string
+		agentic        bool
 		unsafe         bool
 		wantError      bool
 		wantErrorText  string
@@ -554,15 +555,17 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			wantSessionID: geminiSessionID,
 		},
 		{
-			name:          "Gemini unsafe review does not retry a failed resume",
-			cli:           "gemini",
-			version:       "0.34.0",
-			unsafe:        true,
-			wantError:     true,
-			wantErrorText: "resume failed",
-			resumeError:   "resume failed",
-			resumeSession: "failed-session",
-			resumeFlag:    "--resume",
+			name: "Gemini unsafe review retries a failed resume",
+			cli:  "gemini", version: "0.34.0", unsafe: true, resumeError: "resume failed",
+			resumeSession: "failed-session", resumeFlag: "--resume",
+			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
+			wantSessionID: geminiSessionID,
+		},
+		{
+			name: "Gemini agentic fix does not replay a failed resume",
+			cli:  "gemini", version: "0.34.0", agentic: true, wantError: true,
+			wantErrorText: "resume failed", resumeError: "resume failed",
+			resumeSession: "failed-session", resumeFlag: "--resume",
 		},
 		{
 			name: "Antigravity failed resume",
@@ -613,7 +616,7 @@ cat "$SUCCESS_FILE"
 				require.NoError(t, os.Rename(script, agyPath))
 				script = agyPath
 			}
-			a := NewGeminiAgent(script).WithSessionID("old-session").(*GeminiAgent)
+			a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(tc.agentic).(*GeminiAgent)
 			capture := NewSessionCaptureWriter(io.Discard, nil, nil)
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
 			wantCalls := 2

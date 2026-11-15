@@ -160,7 +160,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 	args := a.buildArgsWithModel(a.Model, agenticMode)
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
-	if a.SessionID != "" && !agenticMode && ctx.Err() == nil &&
+	if a.SessionID != "" && !a.Agentic && ctx.Err() == nil &&
 		(err != nil || result == "No review output generated") {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
 			return "", errors.Join(err, resetErr)
