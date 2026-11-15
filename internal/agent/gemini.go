@@ -10,9 +10,10 @@ import (
 	"os/exec"
 	"path"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 
 	"go.kenn.io/roborev/internal/procutil"
 )
@@ -140,17 +141,14 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		if agenticMode {
 			mode, minimum = "agentic", geminiAgenticVersion
 		}
-		if !versionAtLeast(capabilities.version, minimum) {
+		// An undetectable version keeps the established invocation; only a
+		// version that was read and is too old is rejected.
+		if versionAtLeast(capabilities.version, "0") && !versionAtLeast(capabilities.version, minimum) {
 			return "", fmt.Errorf(
 				"%s reviews require Gemini CLI %s or newer; detected %q. Check %q --version output",
 				mode, minimum, capabilities.version, a.Command,
 			)
 		}
-	} else if !versionAtLeast(capabilities.version, "0") {
-		return "", fmt.Errorf(
-			"antigravity CLI version could not be verified; cannot choose a supported prompt contract. Check %q --version output",
-			a.Command,
-		)
 	}
 	if a.SessionID != "" && !capabilities.resume {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
@@ -175,7 +173,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		// frequently). Retry without -m to let the Gemini CLI use
 		// its own default. Non-default models (set via WithModel /
 		// config) fail fast so config errors are surfaced.
-		if resetErr := resetSessionCapture(output); resetErr != nil {
+		if resetErr := resetUnlessResuming(output, a.SessionID); resetErr != nil {
 			return "", errors.Join(err, resetErr)
 		}
 		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
@@ -183,6 +181,15 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		result, _, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities, output)
 	}
 	return result, err
+}
+
+// resetUnlessResuming clears captured session state abandoned by a failed
+// attempt, unless the retry resumes the same non-empty session ID.
+func resetUnlessResuming(output io.Writer, sessionID string) error {
+	if sessionID != "" {
+		return nil
+	}
+	return resetSessionCapture(output)
 }
 
 func resetSessionCapture(output io.Writer) error {
@@ -231,8 +238,8 @@ const (
 	geminiPlanModeVersion = "0.34.0"
 )
 
-// capabilities gates CLI flags by the installed version. Review rejects an
-// unknown version before using any of those flags.
+// capabilities gates new CLI flags by the installed version. An undetectable
+// version leaves them off.
 func (a *GeminiAgent) capabilities(ctx context.Context) geminiCLICapabilities {
 	version := cliVersion(ctx, a.Command)
 	if a.usesAntigravity() {
@@ -240,7 +247,8 @@ func (a *GeminiAgent) capabilities(ctx context.Context) geminiCLICapabilities {
 			version:    version,
 			streamJSON: versionAtLeast(version, antigravityStreamJSONVersion),
 			resume:     versionAtLeast(version, antigravityStreamJSONVersion),
-			promptFlag: antigravityVersionUsesPromptFlag(version),
+			// An undetectable version keeps the established --prompt contract.
+			promptFlag: !versionAtLeast(version, "0") || antigravityVersionUsesPromptFlag(version),
 		}
 	}
 	return geminiCLICapabilities{version: version, resume: versionAtLeast(version, geminiResumeVersion)}
@@ -533,61 +541,18 @@ func antigravityVersionUsesPromptFlag(versionOutput string) bool {
 	return versionAtLeast(versionOutput, antigravityPromptFlagVersion)
 }
 
+// versionAtLeast reports whether the first dotted version token in
+// versionOutput is >= minimum. Versions follow semver ordering, so a
+// prerelease ("0.34.0-preview.1") sorts below its final release. A leading 'v'
+// and two-part versions ("1.2") are accepted; unparseable output is false.
 func versionAtLeast(versionOutput, minimum string) bool {
 	for tok := range strings.FieldsSeq(versionOutput) {
-		if !strings.Contains(tok, ".") {
-			continue
-		}
-		if cmp, ok := compareDotVersion(tok, minimum); ok {
-			return cmp >= 0
+		v := "v" + strings.TrimPrefix(tok, "v")
+		if strings.Contains(tok, ".") && semver.IsValid(v) {
+			return semver.Compare(v, "v"+strings.TrimPrefix(minimum, "v")) >= 0
 		}
 	}
 	return false
-}
-
-// compareDotVersion compares two dotted numeric versions (major.minor.patch,
-// with an optional leading 'v' and any -prerelease/+build suffix ignored). It
-// returns -1, 0, or 1, and ok=false if either side has no parseable version.
-func compareDotVersion(a, b string) (int, bool) {
-	av, aok := parseDotVersion(a)
-	bv, bok := parseDotVersion(b)
-	if !aok || !bok {
-		return 0, false
-	}
-	for i := range av {
-		switch {
-		case av[i] < bv[i]:
-			return -1, true
-		case av[i] > bv[i]:
-			return 1, true
-		}
-	}
-	return 0, true
-}
-
-// parseDotVersion parses a single major[.minor[.patch]] numeric version token,
-// tolerating a 'v' prefix and dropping any -prerelease/+build metadata.
-func parseDotVersion(v string) ([3]int, bool) {
-	var out [3]int
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if i := strings.IndexAny(v, "-+"); i >= 0 {
-		v = v[:i]
-	}
-	if v == "" {
-		return out, false
-	}
-	parts := strings.Split(v, ".")
-	if len(parts) > 3 {
-		return out, false
-	}
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil || n < 0 {
-			return out, false
-		}
-		out[i] = n
-	}
-	return out, true
 }
 
 // isModelNotFoundError returns true if stderr indicates the requested
@@ -670,7 +635,7 @@ type geminiStreamState struct {
 }
 
 func (st *geminiStreamState) observe(msg geminiStreamMessage) {
-	st.turnStarted = st.turnStarted || (msg.Type != "" && msg.Type != "init")
+	st.turnStarted = st.turnStarted || (msg.Type != "" && msg.Type != "init" && (msg.Type != "message" || msg.Role != "user"))
 	switch {
 	case msg.Type == "message" && msg.Role == "assistant" && msg.Content != "":
 		// Delta chunks are fragments of one message and may split inside a

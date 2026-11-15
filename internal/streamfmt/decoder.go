@@ -8,6 +8,10 @@ type Decoder interface {
 	Flush() []Event
 }
 
+type antigravityEventDecoder interface {
+	acceptsAntigravityEvent(line string) bool
+}
+
 // DecoderForAgent returns a fresh decoder selected only from agent identity.
 func DecoderForAgent(agent string) Decoder {
 	switch strings.ToLower(strings.TrimSpace(agent)) {

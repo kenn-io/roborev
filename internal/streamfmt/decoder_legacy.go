@@ -70,6 +70,10 @@ func (d *legacyMixedDecoder) Flush() []Event {
 	return d.decoders[d.active].Flush()
 }
 
+func (*legacyMixedDecoder) acceptsAntigravityEvent(line string) bool {
+	return isAntigravityEvent(line)
+}
+
 func legacyProtocolForAgent(agent string) legacyProtocol {
 	switch strings.ToLower(strings.TrimSpace(agent)) {
 	case "claude", "claude-code", "cursor":
@@ -93,6 +97,9 @@ func detectLegacyProtocol(line string) legacyProtocol {
 	var probe map[string]jsontext.Value
 	if err := json.Unmarshal([]byte(line), &probe); err != nil {
 		return legacyLiteral
+	}
+	if isAntigravityEvent(line) {
+		return legacyGemini
 	}
 	var eventType string
 	if err := json.Unmarshal(probe["type"], &eventType); err != nil {

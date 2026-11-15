@@ -918,7 +918,7 @@ func TestSynthesisInvalidJSONRetriesWithoutStoringReview(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestSynthesisCapturesTokenUsage(t *testing.T) {
+func TestSynthesisCapturesReplacementSessionAndTokenUsage(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
@@ -927,10 +927,15 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	registerPassingAgent(t, memberAgent)
 
 	const synthAgentName = "panel-synthesis-token"
+	geminiStream, err := os.ReadFile(filepath.Join("..", "agent", "testdata", "gemini-stream.jsonl"))
+	require.NoError(t, err)
+	geminiInit, _, found := strings.Cut(string(geminiStream), "\n")
+	require.True(t, found)
 	synthAgent := &agent.FakeAgent{
 		NameStr: synthAgentName,
 		ReviewFn: func(_ context.Context, _, _, _ string, output io.Writer) (string, error) {
-			if _, err := io.WriteString(output, `{"type":"session","id":"abandoned-session"}`+"\n"); err != nil {
+			firstInit := strings.Replace(geminiInit, "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", "abandoned-session", 1)
+			if _, err := io.WriteString(output, firstInit+"\n"); err != nil {
 				return "", err
 			}
 			resetter, ok := output.(interface{ ResetSessionID() error })
@@ -940,7 +945,8 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 			if err := resetter.ResetSessionID(); err != nil {
 				return "", err
 			}
-			if _, err := io.WriteString(output, `{"type":"session","id":"successful-session"}`+"\n"); err != nil {
+			secondInit := strings.Replace(geminiInit, "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", "successful-session", 1)
+			if _, err := io.WriteString(output, secondInit+"\n"); err != nil {
 				return "", err
 			}
 			return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil

@@ -1,9 +1,6 @@
 package daemon
 
 import (
-	"context"
-	"io"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,38 +8,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 )
-
-type workerSessionSpyState struct {
-	mu              sync.Mutex
-	observedSession string
-}
-
-type workerSessionSpy struct {
-	name      string
-	sessionID string
-	state     *workerSessionSpyState
-}
-
-func (a *workerSessionSpy) Name() string { return a.name }
-func (a *workerSessionSpy) Review(_ context.Context, _, _, _ string, output io.Writer) (string, error) {
-	a.state.mu.Lock()
-	a.state.observedSession = a.sessionID
-	a.state.mu.Unlock()
-	if _, err := io.WriteString(output, `{"type":"init","session_id":"new-gemini-session"}`+"\n"); err != nil {
-		return "", err
-	}
-	return string(testutil.ReviewFixtureJSON("No issues found.")), nil
-}
-func (a *workerSessionSpy) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
-func (a *workerSessionSpy) WithAgentic(bool) agent.Agent                   { return a }
-func (a *workerSessionSpy) WithModel(string) agent.Agent                   { return a }
-func (a *workerSessionSpy) CommandLine() string                            { return a.name }
-func (a *workerSessionSpy) SessionCLI() string                             { return "gemini" }
-func (a *workerSessionSpy) WithSessionID(sessionID string) agent.Agent {
-	return &workerSessionSpy{name: a.name, sessionID: sessionID, state: a.state}
-}
 
 func TestWorkerPassesOnlyMatchingGeminiSession(t *testing.T) {
 	t.Parallel()
@@ -50,9 +16,12 @@ func TestWorkerPassesOnlyMatchingGeminiSession(t *testing.T) {
 		t.Run(storedCLI, func(t *testing.T) {
 			t.Parallel()
 			worker := newWorkerTestContext(t, 1)
-			state := &workerSessionSpyState{}
+			state := &sessionStreamingTestAgentState{}
 			name := "worker-session-" + storedCLI
-			agent.RegisterForTest(t, &workerSessionSpy{name: name, state: state})
+			agent.RegisterForTest(t, &sessionStreamingTestAgent{
+				name: name, streamLine: `{"type":"init","session_id":"new-gemini-session"}`,
+				sessionCLI: "gemini", state: state,
+			})
 
 			job := worker.createJobWithAgent(t, worker.GitRepo.HeadSHA(), name)
 			_, err := worker.DB.ExecContext(t.Context(), `
@@ -78,7 +47,9 @@ func TestWorkerPassesOnlyMatchingGeminiSession(t *testing.T) {
 			assert.Equal(t, wantIncoming, observedSession)
 			assert.Equal(t, "new-gemini-session", got.SessionID)
 			assert.Equal(t, "gemini", got.SessionCLI)
-			assert.Nil(t, got.ResumeSourceJobUUID)
+			if storedCLI != "gemini" {
+				assert.Nil(t, got.ResumeSourceJobUUID)
+			}
 		})
 	}
 }

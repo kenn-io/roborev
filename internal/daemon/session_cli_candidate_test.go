@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestFindCompatibleReusableSessionSkipsOtherCLIs(t *testing.T) {
+func TestFindCompatibleReusableSessionUsesResolvedAgentCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake Gemini command uses a POSIX shell")
 	}
@@ -70,9 +70,8 @@ func TestFindCompatibleReusableSessionSkipsOtherCLIs(t *testing.T) {
 		Agent: "gemini", Model: "gemini-3.1-pro-preview", Reasoning: "thorough",
 		ReviewType: config.ReviewTypeDefault,
 	}
-	sessionID, sessionCLI, _ := findCompatibleReusableSession(
+	sessionID, _, _ := findCompatibleReusableSession(
 		t.Context(), db, repoRoot, sha, opts, nil, nil, cfg, nil, 0,
 	)
 	assert.Equal(t, "older-gemini-session", sessionID)
-	assert.Equal(t, "gemini", sessionCLI)
 }

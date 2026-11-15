@@ -7,6 +7,10 @@ import (
 
 type geminiDecoder struct{}
 
+func (*geminiDecoder) acceptsAntigravityEvent(line string) bool {
+	return isAntigravityEvent(line)
+}
+
 type geminiStreamEvent struct {
 	Type       string         `json:"type"`
 	Event      string         `json:"event"`
@@ -28,18 +32,7 @@ func (*geminiDecoder) Decode(line string) []Event {
 		return []Event{{Kind: EventText, Text: "Antigravity session started"}}
 	}
 	if streamEvent.Event == "result" {
-		var result struct {
-			Status   string `json:"status"`
-			Response string `json:"response"`
-			Error    string `json:"error"`
-		}
-		if err := json.Unmarshal(streamEvent.Result, &result); err != nil {
-			return []Event{{Kind: EventText, Text: line}}
-		}
-		if result.Status != "SUCCESS" {
-			return []Event{{Kind: EventText, Text: "[Error: " + result.Error + "]"}}
-		}
-		return []Event{{Kind: EventText, Text: result.Response}}
+		return geminiResultEvents(line, streamEvent.Result)
 	}
 
 	switch streamEvent.Type {
@@ -60,6 +53,29 @@ func (*geminiDecoder) Decode(line string) []Event {
 	default:
 		return nil
 	}
+}
+
+func geminiResultEvents(line string, raw jsontext.Value) []Event {
+	var result struct {
+		Status         string `json:"status"`
+		Response       string `json:"response"`
+		Error          string `json:"error"`
+		FinishedReason string `json:"finished_reason"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return []Event{{Kind: EventText, Text: line}}
+	}
+	if result.Status != "SUCCESS" {
+		if result.Error == "" {
+			result.Error = "Antigravity finished with status " + result.Status
+		}
+		return []Event{{Kind: EventText, Text: "[Error: " + result.Error + "]"}}
+	}
+	events := []Event{{Kind: EventText, Text: result.Response}}
+	if result.FinishedReason == "print_timeout" {
+		events = append(events, Event{Kind: EventText, Text: "[Antigravity print timed out; output may be partial]"})
+	}
+	return events
 }
 
 func (*geminiDecoder) Flush() []Event { return nil }

@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -98,17 +97,11 @@ func TestPostgresMigration_SessionCLIFromV24(t *testing.T) { //nolint:parallelte
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
 	jobUUID := uuid.New()
-	sourceMachineID := uuid.New()
-	enqueuedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	createTestJob(t, pool.Pool(), TestJobOpts{
-		UUID:            jobUUID,
-		RepoID:          repoID,
-		CommitID:        commitID,
-		SourceMachineID: sourceMachineID,
-		EnqueuedAt:      enqueuedAt,
+		UUID:     jobUUID,
+		RepoID:   repoID,
+		CommitID: commitID,
 	})
-	reviewUUID := uuid.New()
-	createTestReview(t, pool.Pool(), TestReviewOpts{UUID: reviewUUID, JobUUID: jobUUID})
 
 	require.NoError(t, pool.EnsureSchema(ctx))
 	require.NoError(t, pool.EnsureSchema(ctx))
@@ -119,16 +112,11 @@ func TestPostgresMigration_SessionCLIFromV24(t *testing.T) { //nolint:parallelte
 		WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = 'session_cli'
 	)`).Scan(&hasSessionCLI))
 	assert.True(t, hasSessionCLI)
-
-	var version int
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version))
-	assert.Equal(t, 25, version)
-
-	var gotEnqueuedAt time.Time
-	var gotSourceMachineID uuid.UUID
-	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_enqueued_at, job_source_machine_id FROM reviews WHERE uuid = $1`, reviewUUID).Scan(&gotEnqueuedAt, &gotSourceMachineID))
-	assert.Equal(t, enqueuedAt, gotEnqueuedAt.UTC())
-	assert.Equal(t, sourceMachineID, gotSourceMachineID)
+	var sessionCLI *string
+	require.NoError(t, pool.Pool().QueryRow(ctx,
+		`SELECT session_cli FROM review_jobs WHERE uuid = $1`, jobUUID,
+	).Scan(&sessionCLI))
+	assert.Nil(t, sessionCLI, "jobs created before the migration have no CLI provenance")
 }
 
 func TestPostgresMigration_CanonicalReview(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL

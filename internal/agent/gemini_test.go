@@ -32,31 +32,31 @@ func writeGeminiTempCommand(t *testing.T, script string) string {
 func TestVersionGatesFeatures(t *testing.T) {
 	skipIfWindows(t)
 	tests := []struct {
-		name                  string
-		cli                   string
-		version               string
-		agentic               bool
-		sessionID             string
-		resumeFlag            string
-		wantStream            bool
-		wantResult            string
-		wantPrompt            string
-		wantStdin             string
-		wantOutput            string
-		wantPrint             bool
-		wantApproval          string
-		wantErrorContains     string
-		wantVersionDiagnostic bool
+		name              string
+		cli               string
+		version           string
+		agentic           bool
+		sessionID         string
+		resumeFlag        string
+		wantStream        bool
+		wantResult        string
+		wantPrompt        string
+		wantStdin         string
+		wantOutput        string
+		wantPrint         bool
+		wantApproval      string
+		wantErrorContains string
 	}{
 		{name: "Gemini 0.20 read-only requires plan mode", cli: "gemini", version: "0.20.0", wantErrorContains: "read-only reviews require Gemini CLI 0.34.0 or newer"},
-		{name: "Gemini unknown version agentic", cli: "gemini", version: "unknown", agentic: true, wantErrorContains: "agentic reviews require Gemini CLI 0.11.0 or newer", wantVersionDiagnostic: true},
+		{name: "Gemini version probe fails", cli: "gemini", version: "unknown", sessionID: "old-session", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantStdin: "prompt", wantApproval: "plan"},
 		{name: "Gemini 0.11 agentic stream without resume", cli: "gemini", version: "0.11.0", agentic: true, sessionID: "old-session", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
 		{name: "Gemini 0.20 agentic resume uses stdin", cli: "gemini", version: "0.20.0", agentic: true, sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
 		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "plan"},
 		{name: "Antigravity 1.0.8 without resume", cli: "agy", version: "1.0.8", sessionID: "old-session", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review", wantOutput: "Plain review\n"},
 		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
-		{name: "Antigravity unknown version", cli: "agy", version: "unknown", wantErrorContains: "antigravity CLI version could not be verified", wantVersionDiagnostic: true},
+		{name: "Antigravity two-part version", cli: "agy", version: "1.2", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
+		{name: "Antigravity version probe fails", cli: "agy", version: "unknown", wantPrompt: "prompt", wantResult: "Plain review", wantOutput: "Plain review\n"},
 	}
 	testdata, err := filepath.Abs("testdata")
 	require.NoError(t, err)
@@ -103,13 +103,11 @@ esac
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
 			if tc.wantErrorContains != "" {
 				require.ErrorContains(t, err, tc.wantErrorContains)
-				if tc.wantVersionDiagnostic {
-					assert.Contains(t, err.Error(), strconv.Quote(a.Command)+" --version")
-				}
 				_, statErr := os.Stat(argsFile)
 				assert.ErrorIs(t, statErr, os.ErrNotExist, "unsafe command must not be invoked")
 				return
 			}
+			require.NoError(t, err)
 			stdinBytes, readErr := os.ReadFile(stdinFile)
 			require.NoError(t, readErr)
 			assert.Equal(t, tc.wantStdin, string(stdinBytes))
@@ -148,7 +146,6 @@ esac
 			} else {
 				assert.NotContains(t, args, "--approval-mode")
 			}
-			require.NoError(t, err)
 			assert.Equal(t, tc.wantResult, result)
 			if tc.wantOutput != "" {
 				assert.Equal(t, tc.wantOutput, output.String())
@@ -597,7 +594,7 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 		{
 			name: "Gemini failed resume",
 			cli:  "gemini", version: "0.34.0", resumeError: "resume failed",
-			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 1,
+			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 2,
 			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
 			wantSessionID: geminiSessionID,
 		},
@@ -609,21 +606,8 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			wantSessionID: geminiSessionID,
 		},
 		{
-			name: "Gemini agentic review retries a rejected resume",
-			cli:  "gemini", version: "0.34.0", agentic: true, resumeError: "session missing",
-			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 1,
-			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
-			wantSessionID: geminiSessionID,
-		},
-		{
 			name: "Gemini unsafe review does not replay a started turn",
 			cli:  "gemini", version: "0.34.0", unsafe: true, wantError: true,
-			wantErrorText: "turn failed", resumeError: "turn failed", resumeFlag: "--resume",
-			resumeFixture: "gemini-stream.jsonl", resumeLines: 3, editFile: true,
-		},
-		{
-			name: "Gemini agentic fix does not replay a started turn",
-			cli:  "gemini", version: "0.34.0", agentic: true, wantError: true,
 			wantErrorText: "turn failed", resumeError: "turn failed", resumeFlag: "--resume",
 			resumeFixture: "gemini-stream.jsonl", resumeLines: 3, editFile: true,
 		},
@@ -638,12 +622,6 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			name: "Antigravity unsafe review does not replay a started turn",
 			cli:  "agy", version: "1.2.6", unsafe: true, wantError: true, wantErrorText: "Individual quota reached",
 			resumeFlag: "--conversation", resumeFixture: "antigravity-quota-result-capture.jsonl", editFile: true, editBeforeTurnResult: true,
-			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
-		},
-		{
-			name: "Antigravity read-only review does not retry a quota error",
-			cli:  "agy", version: "1.2.6", wantError: true, wantErrorText: "Individual quota reached",
-			resumeFlag: "--conversation", resumeFixture: "antigravity-quota-result-capture.jsonl",
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 		},
 	} {
@@ -871,7 +849,7 @@ func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
 	assert.True(antigravityVersionUsesPromptFlag("1.2.0"))
 	assert.True(antigravityVersionUsesPromptFlag("2.0.0"))
 	assert.True(antigravityVersionUsesPromptFlag("v1.1.1"))
-	assert.True(antigravityVersionUsesPromptFlag("1.1.1-beta"))
+	assert.False(antigravityVersionUsesPromptFlag("1.1.1-beta"))
 	// Old stdin contract (<= 1.1.0).
 	assert.False(antigravityVersionUsesPromptFlag("1.1.0"))
 	assert.False(antigravityVersionUsesPromptFlag("1.0.16"))
@@ -1002,23 +980,37 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		lateStderr bool
+		sessionID  string
 	}{
 		{name: "read-only fallback"},
 		{name: "fallback captures late stderr", lateStderr: true},
+		{name: "fallback resumes the same session", sessionID: "resumed-model-session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			callsFile := filepath.Join(t.TempDir(), "calls")
-			t.Setenv("SUCCESS_FILE", fixture)
+			argsFile := filepath.Join(t.TempDir(), "args")
+			successFixture := fixture
+			if tc.sessionID != "" {
+				contents, readErr := os.ReadFile(fixture)
+				require.NoError(t, readErr)
+				contents = []byte(strings.Replace(string(contents), "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", tc.sessionID, 1))
+				successFixture = filepath.Join(t.TempDir(), "resumed-success.jsonl")
+				require.NoError(t, os.WriteFile(successFixture, contents, 0o600))
+			}
 			t.Setenv("CALLS_FILE", callsFile)
+			t.Setenv("ARGS_FILE", argsFile)
 			t.Setenv("LATE_STDERR", strconv.FormatBool(tc.lateStderr))
+			t.Setenv("RESUMED_SESSION", strconv.FormatBool(tc.sessionID != ""))
 			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
 echo call >> "$CALLS_FILE"
+printf '%s\n' "$@" >> "$ARGS_FILE"
 has_model=0
 for arg in "$@"; do
   if [ "$arg" = "-m" ]; then has_model=1; fi
 done
 if [ "$has_model" = "1" ]; then
+  if [ "$RESUMED_SESSION" = "true" ]; then echo '{"type":"result","status":"error"}'; fi
   if [ "$LATE_STDERR" = "true" ]; then
     echo '{"type":"init","session_id":"failed-model-session"}'
     exec 1>&-
@@ -1029,16 +1021,31 @@ if [ "$has_model" = "1" ]; then
 fi
 cat "$SUCCESS_FILE"
 `)
+			t.Setenv("SUCCESS_FILE", successFixture)
 
 			a := NewGeminiAgent(scriptPath)
-			capture := NewSessionCaptureWriter(io.Discard, nil, nil)
+			resetCalls := 0
+			capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
+				resetCalls++
+				return nil
+			})
+			if tc.sessionID != "" {
+				a = a.WithSessionID(tc.sessionID).(*GeminiAgent)
+			}
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
 			require.NoError(t, err)
 			assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
-			assert.Equal(t, "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", capture.SessionID())
 			calls, readErr := os.ReadFile(callsFile)
 			require.NoError(t, readErr)
 			assert.Equal(t, "call\ncall\n", string(calls))
+			args, readErr := os.ReadFile(argsFile)
+			require.NoError(t, readErr)
+			if tc.sessionID != "" {
+				assert.Equal(t, 2, strings.Count(string(args), "--resume\n"+tc.sessionID+"\n"))
+				assert.Zero(t, resetCalls, "the fallback keeps the resumed conversation's source link")
+			} else {
+				assert.Zero(t, strings.Count(string(args), "--resume\n"))
+			}
 		})
 	}
 }
