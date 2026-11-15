@@ -511,7 +511,7 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 				input, err = os.ReadFile(filepath.Join("testdata", tc.fixture))
 				require.NoError(t, err)
 			}
-			response, err := parseAntigravityStreamJSON(strings.NewReader(string(input)), nil)
+			response, _, err := parseAntigravityStreamJSON(strings.NewReader(string(input)), nil)
 			if tc.wantError != nil {
 				require.ErrorIs(t, err, tc.wantError)
 				return
@@ -532,46 +532,69 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 	geminiSessionID := "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"
 	antigravitySessionID := "b5f7c102-6dc1-4d94-8296-8ba54ef1d0f4"
 	for _, tc := range []struct {
-		name           string
-		cli            string
-		version        string
-		agentic        bool
-		unsafe         bool
-		wantError      bool
-		wantErrorText  string
-		resumeError    string
-		resumeSession  string
-		resumeFlag     string
-		successFixture string
-		initFixture    string
-		wantResult     string
-		wantSessionID  string
+		name                 string
+		cli                  string
+		version              string
+		agentic              bool
+		unsafe               bool
+		wantError            bool
+		wantErrorText        string
+		resumeError          string
+		resumeFlag           string
+		resumeFixture        string
+		resumeLines          int
+		editFile             bool
+		editBeforeTurnResult bool
+		successFixture       string
+		initFixture          string
+		wantResult           string
+		wantSessionID        string
 	}{
 		{
 			name: "Gemini failed resume",
 			cli:  "gemini", version: "0.34.0", resumeError: "resume failed",
-			resumeSession: "failed-session", resumeFlag: "--resume",
+			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 1,
 			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
 			wantSessionID: geminiSessionID,
 		},
 		{
-			name: "Gemini unsafe review retries a failed resume",
-			cli:  "gemini", version: "0.34.0", unsafe: true, resumeError: "resume failed",
-			resumeSession: "failed-session", resumeFlag: "--resume",
+			name: "Gemini unsafe review retries a rejected resume",
+			cli:  "gemini", version: "0.34.0", unsafe: true, resumeError: "session missing",
+			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 1,
 			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
 			wantSessionID: geminiSessionID,
 		},
 		{
-			name: "Gemini agentic fix does not replay a failed resume",
+			name: "Gemini agentic review retries a rejected resume",
+			cli:  "gemini", version: "0.34.0", agentic: true, resumeError: "session missing",
+			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 1,
+			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
+			wantSessionID: geminiSessionID,
+		},
+		{
+			name: "Gemini unsafe review does not replay a started turn",
+			cli:  "gemini", version: "0.34.0", unsafe: true, wantError: true,
+			wantErrorText: "turn failed", resumeError: "turn failed", resumeFlag: "--resume",
+			resumeFixture: "gemini-stream.jsonl", resumeLines: 3, editFile: true,
+		},
+		{
+			name: "Gemini agentic fix does not replay a started turn",
 			cli:  "gemini", version: "0.34.0", agentic: true, wantError: true,
-			wantErrorText: "resume failed", resumeError: "resume failed",
-			resumeSession: "failed-session", resumeFlag: "--resume",
+			wantErrorText: "turn failed", resumeError: "turn failed", resumeFlag: "--resume",
+			resumeFixture: "gemini-stream.jsonl", resumeLines: 3, editFile: true,
 		},
 		{
-			name: "Antigravity failed resume",
-			cli:  "agy", version: "1.2.6", resumeError: "conversation could not be resumed", resumeFlag: "--conversation",
+			name: "Antigravity agentic review retries a rejected resume",
+			cli:  "agy", version: "1.2.6", agentic: true, resumeError: "conversation missing", resumeFlag: "--conversation",
+			resumeFixture:  "antigravity-init-capture.jsonl",
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
+		},
+		{
+			name: "Antigravity unsafe review does not replay a started turn",
+			cli:  "agy", version: "1.2.6", unsafe: true, wantError: true, wantErrorText: "Individual quota reached",
+			resumeFlag: "--conversation", resumeFixture: "antigravity-quota-result-capture.jsonl", editFile: true, editBeforeTurnResult: true,
+			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -581,8 +604,21 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			t.Setenv("CLI_VERSION", tc.version)
 			t.Setenv("RESUME_FLAG", tc.resumeFlag)
 			t.Setenv("RESUME_ERROR", tc.resumeError)
-			t.Setenv("RESUME_SESSION", tc.resumeSession)
 			t.Setenv("ARGS_FILE", argsFile)
+			resumeFixture := ""
+			if tc.resumeFixture != "" {
+				var err error
+				resumeFixture, err = filepath.Abs(filepath.Join("testdata", tc.resumeFixture))
+				require.NoError(t, err)
+			}
+			t.Setenv("RESUME_FILE", resumeFixture)
+			t.Setenv("RESUME_LINES", strconv.Itoa(tc.resumeLines))
+			t.Setenv("EDIT_BEFORE_TURN_RESULT", strconv.FormatBool(tc.editBeforeTurnResult))
+			editFile := ""
+			if tc.editFile {
+				editFile = filepath.Join(t.TempDir(), "edits")
+			}
+			t.Setenv("EDIT_FILE", editFile)
 			successFixtureName := tc.successFixture
 			if successFixtureName == "" {
 				successFixtureName = "gemini-stream.jsonl"
@@ -601,13 +637,20 @@ if [ "$1" = "--version" ]; then echo "$CLI_VERSION"; exit 0; fi
 printf '%s\n' "$@" >> "$ARGS_FILE"
 for arg in "$@"; do
   if [ "$arg" = "$RESUME_FLAG" ]; then
-    if [ -n "$RESUME_SESSION" ]; then
-      echo "{\"type\":\"init\",\"session_id\":\"$RESUME_SESSION\"}"
+    if [ "$EDIT_BEFORE_TURN_RESULT" = "true" ] && [ -n "$EDIT_FILE" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
+    if [ -n "$RESUME_FILE" ]; then
+      if [ "$RESUME_LINES" -gt 0 ]; then
+        sed -n "1,${RESUME_LINES}p" "$RESUME_FILE"
+      else
+        cat "$RESUME_FILE"
+      fi
     fi
-    echo "$RESUME_ERROR" >&2
-    exit 1
+    if [ -n "$EDIT_FILE" ] && [ "$EDIT_BEFORE_TURN_RESULT" != "true" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
+    if [ -n "$RESUME_ERROR" ]; then echo "$RESUME_ERROR" >&2; exit 1; fi
+    if [ -n "$RESUME_FILE" ]; then exit 0; fi
   fi
 done
+if [ -n "$EDIT_FILE" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
 if [ -n "$INIT_FILE" ]; then cat "$INIT_FILE"; fi
 cat "$SUCCESS_FILE"
 `)
@@ -622,9 +665,9 @@ cat "$SUCCESS_FILE"
 			wantCalls := 2
 			if tc.wantError {
 				wantCalls = 1
-				require.Error(t, err)
-				if tc.wantErrorText != "" {
-					require.ErrorContains(t, err, tc.wantErrorText)
+				assert.Error(t, err)
+				if tc.wantErrorText != "" && err != nil {
+					assert.ErrorContains(t, err, tc.wantErrorText)
 				}
 			} else {
 				require.NoError(t, err)
@@ -635,8 +678,15 @@ cat "$SUCCESS_FILE"
 			require.NoError(t, readErr)
 			assert.Equal(t, 1, strings.Count(string(args), tc.resumeFlag+"\n"))
 			assert.Equal(t, wantCalls, strings.Count(string(args), "--output-format\nstream-json\n"))
-			if tc.unsafe {
+			if tc.unsafe && tc.cli == "gemini" {
 				assert.Equal(t, wantCalls, strings.Count(string(args), "--approval-mode\nyolo\n"))
+			} else if tc.unsafe && tc.cli == "agy" {
+				assert.Equal(t, wantCalls, strings.Count(string(args), "--dangerously-skip-permissions\n"))
+			}
+			if tc.editFile {
+				edits, readErr := os.ReadFile(editFile)
+				require.NoError(t, readErr)
+				assert.Equal(t, "edit\n", string(edits))
 			}
 		})
 	}
