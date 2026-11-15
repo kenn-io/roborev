@@ -1126,11 +1126,11 @@ failed invoked and advisory members. Each execution is charged once per cell;
 review costs can appear in multiple severity rows, so do not add them. Runs that
 never invoked an agent do not reduce cost coverage. A fully priced zero-dollar
 execution counts as priced. A partly priced execution adds its recorded dollars
-to spend and leaves coverage incomplete. Cost per positive finding is unavailable
-without positive findings. Partial prices show lower bounds on both values, with
-coverage shown on spend, such as `≥$2.00 (0/1 priced)`. Human cost columns are
-omitted when no row has usable prices. JSON always preserves eligible and priced
-denominators.
+to spend and leaves coverage incomplete. Cost per positive finding is
+unavailable without positive findings. Partial prices show lower bounds on both
+values, with coverage shown on spend, such as `≥$2.00 (0/1 priced)`. Human cost
+columns are omitted when no row has usable prices. JSON always preserves
+eligible and priced denominators.
 
 ## Aggregate Cost
 
