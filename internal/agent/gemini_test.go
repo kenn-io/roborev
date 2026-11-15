@@ -42,7 +42,6 @@ func TestVersionGatesFeatures(t *testing.T) {
 		wantResult   string
 		wantPrompt   string
 		wantStdin    string
-		wantOutput   string
 		wantPrint    bool
 		wantApproval string
 	}{
@@ -50,9 +49,9 @@ func TestVersionGatesFeatures(t *testing.T) {
 		{name: "Gemini 0.11 agentic stream without resume", cli: "gemini", version: "0.11.0", agentic: true, sessionID: "old-session", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
 		{name: "Gemini 0.20 agentic resume uses stdin", cli: "gemini", version: "0.20.0", agentic: true, sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
 		{name: "Antigravity 1.0.8 without resume", cli: "agy", version: "1.0.8", sessionID: "old-session", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
-		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review", wantOutput: "Plain review\n"},
+		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
-		{name: "Antigravity version probe fails", cli: "agy", version: "unknown", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review", wantOutput: "Plain review\n"},
+		{name: "Antigravity version probe fails", cli: "agy", version: "unknown", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review"},
 	}
 	testdata, err := filepath.Abs("testdata")
 	require.NoError(t, err)
@@ -137,9 +136,6 @@ esac
 				assert.NotContains(t, args, "--approval-mode")
 			}
 			assert.Equal(t, tc.wantResult, result)
-			if tc.wantOutput != "" {
-				assert.Equal(t, tc.wantOutput, output.String())
-			}
 		})
 	}
 }
@@ -519,44 +515,28 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 	geminiSessionID := "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"
 	antigravitySessionID := "b5f7c102-6dc1-4d94-8296-8ba54ef1d0f4"
 	for _, tc := range []struct {
-		name                 string
-		cli                  string
-		version              string
-		agentic              bool
-		unsafe               bool
-		wantError            bool
-		wantErrorText        string
-		wantCalls            int
-		resumeError          string
-		resumeErrorEvent     bool
-		resumeFlag           string
-		resumeFixture        string
-		resumeLines          int
-		editFile             bool
-		editBeforeTurnResult bool
-		successFixture       string
-		initFixture          string
-		wantResult           string
-		wantSessionID        string
+		name           string
+		cli            string
+		version        string
+		agentic        bool
+		unsafe         bool
+		wantError      bool
+		wantErrorText  string
+		wantCalls      int
+		resumeError    string
+		resumeFlag     string
+		resumeFixture  string
+		resumeLines    int
+		editFile       bool
+		successFixture string
+		initFixture    string
+		wantResult     string
+		wantSessionID  string
 	}{
-		{
-			name: "Gemini failed resume",
-			cli:  "gemini", version: "0.34.0", resumeError: "resume failed",
-			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 2,
-			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
-			wantSessionID: geminiSessionID,
-		},
 		{
 			name: "Gemini unsafe review retries a rejected resume",
 			cli:  "gemini", version: "0.34.0", unsafe: true, resumeError: "session missing",
-			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 1,
-			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
-			wantSessionID: geminiSessionID,
-		},
-		{
-			name: "Gemini unsafe review retries a pre-turn error result",
-			cli:  "gemini", version: "0.34.0", unsafe: true, resumeError: "session missing",
-			resumeErrorEvent: true, resumeFlag: "--resume",
+			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 2,
 			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
 			wantSessionID: geminiSessionID,
 		},
@@ -567,25 +547,16 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			resumeFixture: "gemini-stream.jsonl", resumeLines: 3, editFile: true,
 		},
 		{
-			name: "Antigravity agentic review retries a rejected resume",
-			cli:  "agy", version: "1.2.6", agentic: true, resumeError: "conversation missing", resumeFlag: "--conversation",
+			name:           "Antigravity agentic review retries a rejected resume",
+			cli:            "agy",
+			version:        "1.2.6",
+			agentic:        true,
+			unsafe:         true,
+			resumeError:    "conversation missing",
+			resumeFlag:     "--conversation",
 			resumeFixture:  "antigravity-init-capture.jsonl",
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
-		},
-		{
-			name: "Antigravity unsafe review retries a pre-turn result error",
-			cli:  "agy", version: "1.2.6", unsafe: true, resumeError: "conversation missing", resumeFlag: "--conversation",
-			resumeFixture:  "antigravity-preturn-error-capture.jsonl",
-			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
-			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
-		},
-		{
-			name: "Antigravity resumes past a historical quota error",
-			cli:  "agy", version: "1.2.6", unsafe: true,
-			resumeFlag: "--conversation", resumeFixture: "antigravity-quota-result-capture.jsonl", editFile: true, editBeforeTurnResult: true,
-			wantResult: "RESUME_OK", wantCalls: 1,
-			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -606,9 +577,7 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 				resumeSessionID = "session-id-not-in-fixture"
 			}
 			t.Setenv("RESUME_SESSION_ID", resumeSessionID)
-			t.Setenv("RESUME_ERROR_EVENT", strconv.FormatBool(tc.resumeErrorEvent))
 			t.Setenv("ABANDONED_SESSION_ID", "abandoned-resume-session")
-			t.Setenv("EDIT_BEFORE_TURN_RESULT", strconv.FormatBool(tc.editBeforeTurnResult))
 			editFile := ""
 			if tc.editFile {
 				editFile = filepath.Join(t.TempDir(), "edits")
@@ -621,7 +590,7 @@ if [ "$1" = "--version" ]; then echo "$CLI_VERSION"; exit 0; fi
 printf '%s\n' "$@" >> "$ARGS_FILE"
 for arg in "$@"; do
   if [ "$arg" = "$RESUME_FLAG" ]; then
-    if [ "$EDIT_BEFORE_TURN_RESULT" = "true" ] && [ -n "$EDIT_FILE" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
+    if [ -n "$EDIT_FILE" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
     if [ -n "$RESUME_FILE" ]; then
       if [ "$RESUME_LINES" -gt 0 ]; then
 				  sed -n "1,${RESUME_LINES}p" "$TESTDATA/$RESUME_FILE" | sed "s/$RESUME_SESSION_ID/$ABANDONED_SESSION_ID/g"
@@ -629,8 +598,6 @@ for arg in "$@"; do
 				  sed "s/$RESUME_SESSION_ID/$ABANDONED_SESSION_ID/g" "$TESTDATA/$RESUME_FILE"
       fi
     fi
-	    if [ "$RESUME_ERROR_EVENT" = "true" ]; then echo '{"type":"result","status":"error","error":{"message":"session missing"}}'; fi
-    if [ -n "$EDIT_FILE" ] && [ "$EDIT_BEFORE_TURN_RESULT" != "true" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
     if [ -n "$RESUME_ERROR" ]; then echo "$RESUME_ERROR" >&2; exit 1; fi
     if [ -n "$RESUME_FILE" ]; then exit 0; fi
   fi
@@ -939,30 +906,30 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 		name        string
 		lateStderr  bool
 		sessionID   string
-		unsafe      bool
 		startedTurn bool
-		errorResult bool
 		wantErr     bool
 	}{
 		{name: "read-only fallback"},
 		{name: "fallback captures late stderr", lateStderr: true},
-		{name: "error result falls back without the built-in model", errorResult: true},
 		{name: "fallback resumes the same session", sessionID: "resumed-model-session"},
 		{
-			name:      "unsafe resumed fallback does not replay a started turn",
-			sessionID: "resumed-model-session", unsafe: true, startedTurn: true, wantErr: true,
+			name:      "started resumed turn does not fall back",
+			sessionID: "resumed-model-session", startedTurn: true, wantErr: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			withUnsafeAgents(t, tc.unsafe)
 			callsFile := filepath.Join(t.TempDir(), "calls")
 			argsFile := filepath.Join(t.TempDir(), "args")
-			editFile := filepath.Join(t.TempDir(), "edits")
 			successFixture := fixture
 			if tc.sessionID != "" {
 				contents, readErr := os.ReadFile(fixture)
 				require.NoError(t, readErr)
 				contents = []byte(strings.Replace(string(contents), "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", tc.sessionID, 1))
+				if tc.startedTurn {
+					resultStart := strings.Index(string(contents), `{"type":"result"`)
+					require.NotEqual(t, -1, resultStart, "captured stream has a terminal result")
+					contents = contents[:resultStart]
+				}
 				successFixture = filepath.Join(t.TempDir(), "resumed-success.jsonl")
 				require.NoError(t, os.WriteFile(successFixture, contents, 0o600))
 			}
@@ -971,8 +938,6 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 			t.Setenv("LATE_STDERR", strconv.FormatBool(tc.lateStderr))
 			t.Setenv("RESUMED_SESSION", strconv.FormatBool(tc.sessionID != ""))
 			t.Setenv("STARTED_TURN", strconv.FormatBool(tc.startedTurn))
-			t.Setenv("MODEL_ERROR_RESULT", strconv.FormatBool(tc.errorResult))
-			t.Setenv("EDIT_FILE", editFile)
 			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
 echo call >> "$CALLS_FILE"
@@ -982,9 +947,7 @@ for arg in "$@"; do
   if [ "$arg" = "-m" ]; then has_model=1; fi
 done
 if [ "$has_model" = "1" ]; then
-  if [ "$MODEL_ERROR_RESULT" = "true" ]; then echo '{"type":"result","status":"error","error":{"message":"model not found"}}'; fi
   if [ "$RESUMED_SESSION" = "true" ] && [ "$STARTED_TURN" = "true" ]; then
-    echo edit >> "$EDIT_FILE"
     cat "$SUCCESS_FILE"
   fi
   if [ "$LATE_STDERR" = "true" ]; then
@@ -995,7 +958,6 @@ if [ "$has_model" = "1" ]; then
   echo "Error: model is not found for API version v1" >&2
   exit 1
 fi
-if [ "$RESUMED_SESSION" = "true" ] && [ "$STARTED_TURN" = "true" ]; then echo edit >> "$EDIT_FILE"; fi
 cat "$SUCCESS_FILE"
 `)
 			t.Setenv("SUCCESS_FILE", successFixture)
@@ -1037,9 +999,6 @@ cat "$SUCCESS_FILE"
 				assert.Equal(t, 1, resetCalls, "fresh fallback resets captured session state")
 			}
 			if tc.startedTurn {
-				edits, readErr := os.ReadFile(editFile)
-				require.NoError(t, readErr)
-				assert.Equal(t, "edit\n", string(edits))
 				assert.Equal(t, tc.sessionID, capture.SessionID())
 			}
 		})

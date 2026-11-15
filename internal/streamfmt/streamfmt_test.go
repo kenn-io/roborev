@@ -143,7 +143,8 @@ func TestRenderLogWithPreservesUnknownEventJSONForOtherAgents(t *testing.T) {
 }
 
 func TestRenderLogWithDropsAntigravityStepUpdate(t *testing.T) {
-	const event = `{"event":"step_update","step_update":{"state":"ACTIVE","text_delta":"working"}}`
+	// From the stream-json example at https://antigravity.google/docs/cli/headless/.
+	const event = `{"event":"step_update","step_update":{"conversation_id":"9ec58bfd-4d67-4f5e-83a5-9d907e9c6b1f","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"apple"}}`
 	var output bytes.Buffer
 	fmtr := New(&output, true, DecoderForAgent("gemini"))
 	require.NoError(t, RenderLogWith(strings.NewReader(event+"\n"), fmtr))

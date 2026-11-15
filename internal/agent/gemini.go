@@ -142,41 +142,32 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		}
 		a = a.WithSessionID("").(*GeminiAgent)
 	}
-	args := a.buildArgsWithModel(a.Model, agenticMode)
-	result, stderrStr, turnStarted, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
-	modelNotFound := err != nil && !turnStarted && a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr)
-	if a.SessionID != "" && ctx.Err() == nil && !turnStarted &&
-		(err != nil || result == "No review output generated") && !modelNotFound {
-		if resetErr := resetSessionCapture(output); resetErr != nil {
-			return "", errors.Join(err, resetErr)
-		}
-		log.Printf("gemini: resumed session failed (%v), retrying in a fresh session", err)
-		a = a.WithSessionID("").(*GeminiAgent)
-		args = a.buildArgsWithModel(a.Model, agenticMode)
-		result, stderrStr, turnStarted, err = a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
-	}
-	if err != nil && !turnStarted && a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
-		// Built-in default model may be stale (Google renames
-		// frequently). Retry without -m to let the Gemini CLI use
-		// its own default. Non-default models (set via WithModel /
-		// config) fail fast so config errors are surfaced.
-		if resetErr := resetUnlessResuming(output, a.SessionID); resetErr != nil {
-			return "", errors.Join(err, resetErr)
-		}
-		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
-		noModelArgs := a.buildArgsWithModel("", agenticMode)
-		result, stderrStr, turnStarted, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities, output)
-		if a.SessionID != "" && ctx.Err() == nil && !turnStarted &&
-			(err != nil || result == "No review output generated") {
+	model := a.Model
+	for {
+		args := a.buildArgsWithModel(model, agenticMode)
+		result, stderrStr, turnStarted, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
+		switch {
+		case err != nil && !turnStarted && model == defaultGeminiModel && isModelNotFoundError(stderrStr):
+			// Built-in default model may be stale (Google renames
+			// frequently). Retry without -m to let the Gemini CLI use
+			// its own default. Non-default models (set via WithModel /
+			// config) fail fast so config errors are surfaced.
+			if resetErr := resetUnlessResuming(output, a.SessionID); resetErr != nil {
+				return "", errors.Join(err, resetErr)
+			}
+			log.Printf("gemini: model %q not found, retrying without -m flag", model)
+			model = ""
+		case a.SessionID != "" && ctx.Err() == nil && !turnStarted &&
+			(err != nil || result == "No review output generated"):
 			if resetErr := resetSessionCapture(output); resetErr != nil {
 				return "", errors.Join(err, resetErr)
 			}
+			log.Printf("gemini: resumed session failed (%v), retrying in a fresh session", err)
 			a = a.WithSessionID("").(*GeminiAgent)
-			noModelArgs = a.buildArgsWithModel("", agenticMode)
-			result, _, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, capabilities, output)
+		default:
+			return result, err
 		}
 	}
-	return result, err
 }
 
 // resetUnlessResuming clears captured session state abandoned by a failed
@@ -227,9 +218,7 @@ type geminiCLICapabilities struct {
 	promptFlag bool
 }
 
-const (
-	geminiResumeVersion = "0.20.0" // newer releases accept resumed prompts on stdin
-)
+const geminiResumeVersion = "0.20.0" // newer releases accept resumed prompts on stdin
 
 // capabilities gates new CLI flags by the installed version. An undetectable
 // version leaves them off.
@@ -599,7 +588,7 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 
 	// If no valid events were parsed, return error
 	if !validEventsParsed {
-		return parseResult{turnStarted: turnStarted}, errNoStreamJSON
+		return parseResult{}, errNoStreamJSON
 	}
 
 	// Prefer the result field if present, otherwise join assistant messages
@@ -613,20 +602,14 @@ func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult,
 }
 
 type antigravityStreamEvent struct {
-	Event  string                `json:"event"`
-	Result antigravityResultData `json:"result"`
-}
-
-type antigravityResultData struct {
-	Status         string `json:"status"`
-	Response       string `json:"response"`
-	Error          string `json:"error"`
-	FinishedReason string `json:"finished_reason"`
-	NumTurns       int    `json:"num_turns"`
-}
-
-func (r antigravityResultData) startedTurn() bool {
-	return r.Status == "SUCCESS" || strings.TrimSpace(r.Response) != "" || r.NumTurns > 0
+	Event  string `json:"event"`
+	Result struct {
+		Status         string `json:"status"`
+		Response       string `json:"response"`
+		Error          string `json:"error"`
+		FinishedReason string `json:"finished_reason"`
+		NumTurns       int    `json:"num_turns"`
+	} `json:"result"`
 }
 
 // parseAntigravityStreamJSON reads the documented result event and reports
@@ -637,15 +620,11 @@ func parseAntigravityStreamJSON(r io.Reader, sw *syncWriter) (string, bool, erro
 	err := scanStreamJSONLines(r, sw, func(line string) error {
 		var event antigravityStreamEvent
 		if json.Unmarshal([]byte(line), &event) == nil && event.Event != "" {
-			switch event.Event {
-			case "init":
-			case "result":
-				turnStarted = turnStarted || event.Result.startedTurn()
-				if final == nil {
-					final = &event
-				}
-			default:
-				turnStarted = true
+			res := event.Result
+			turnStarted = turnStarted || (event.Event != "init" && (event.Event != "result" ||
+				res.Status == "SUCCESS" || strings.TrimSpace(res.Response) != "" || res.NumTurns > 0))
+			if final == nil && event.Event == "result" {
+				final = &event
 			}
 		}
 		return nil
