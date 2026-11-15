@@ -872,3 +872,10 @@ func TestCIConfigSkipDraftsKeys(t *testing.T) {
 	_, err := GetConfigValue(&RepoConfig{}, "ci.skip_drafts")
 	assert.Error(t, err)
 }
+
+func TestMergedConfigWithOriginListsAgentHookReviewFlow(t *testing.T) {
+	repo := &RepoConfig{AgentHook: RepoAgentHookConfig{ReviewFlow: validReviewFlow}}
+	got := toOriginMap(MergedConfigWithOrigin(DefaultConfig(), repo, nil, map[string]any{"agent_hook": map[string]any{"review_flow": validReviewFlow}}))
+	assert.Equal(t, "local", got["agent_hook.review_flow"].Origin)
+	assert.Equal(t, validReviewFlow, got["agent_hook.review_flow"].Value)
+}

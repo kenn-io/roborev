@@ -137,6 +137,11 @@ type Request struct {
 }
 
 type Response struct {
+	// These values stay in-process. Flow loading runs after state is saved and
+	// its lock is released; deferred reminders carry their original scope.
+	reviewFlowRepo        string
+	reviewFlowInstruction string
+
 	SessionID             string `json:"session_id"`
 	Count                 int    `json:"count"`
 	Threshold             int    `json:"threshold"`
@@ -210,6 +215,7 @@ type StateStore struct {
 	sessions    map[string]SessionState
 	fixSessions map[string]FixSession
 	reviews     ReviewSource
+	flows       ReviewFlowSource
 	now         func() time.Time
 }
 

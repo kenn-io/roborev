@@ -47,6 +47,8 @@ roborev doctor --from-skill --json
 roborev config --from-skill validate
 roborev config --from-skill list --show-origin
 roborev config --from-skill get sync.enabled
+roborev config --from-skill get agent_hook.instruction
+roborev config --from-skill get droid_hook.instruction
 git config --show-origin --get core.hooksPath
 ```
 
@@ -110,7 +112,9 @@ Ground to cover. Treat this as territory, not a script:
 - **When it runs:** every commit, every few commits, on request, or on pull
     requests.
 - **Who acts on findings:** the user, a writing agent, or someone else, and
-    whether findings should also land in Kata when the repository uses it.
+    whether findings should also land in Kata when the repository uses it. When
+    a coding agent fixes them, learn what it checks each kind of finding
+    against and what it may change.
 - **Where the material may go:** see [Confidential material](#confidential-material).
 - **Which agent runs it:** the agent and model they already use and trust. Find
     out which choices they want to make and which they hand to you.
@@ -167,6 +171,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
 | Failed reviews and findings filed as Kata issues | A `[[hooks]]` entry with `event = "review.*"` and `type = "kata"` |
+| A coding agent that handles findings through the Agent Hook, following this review's steps | `[agent_hook] review_flow`, a DOT digraph; see [Write the review flow](#write-the-review-flow) |
 | Reviewers that read changed PDFs, scans, or images | `binary_evidence = true` on the type; see <https://roborev.io/docs/advanced/custom-review-types/#binary-evidence> |
 | A reviewer that looks things up through an outside service | A strict `tools` policy on the type that grants exact MCP tools; see <https://roborev.io/docs/advanced/custom-review-types/#granting-mcp-tools> |
 | Files reviewers should skip | `exclude_patterns` |
@@ -303,6 +308,33 @@ review_type = "quotes"
 
 [review.panels.brief]
 members = ["facts", "quotes"]
+
+[agent_hook]
+review_flow = '''
+digraph roborev_brief {
+  node [shape=box];
+  start [shape=oval label="Findings from the brief panel;\neach job covers up to 5 commits"];
+  read [label="Read each: roborev show --from-skill --job <job_id>"];
+  who [shape=diamond label="Which reviewer reported it?"];
+  facts [label="Compare the date or event with\nevidence/timeline.md and the\nexhibit text copy in exhibits/"];
+  quotes [label="Compare the quoted words with the\nexhibit text copy, word for word"];
+  holds [shape=diamond label="What does the source show?"];
+  fix [label="Fix: correct the sentence, drafts/ only;\nnew commit, never amend reviewed ones"];
+  invalid [label="Invalid: record the source line\nthat shows the draft is right"];
+  decline [label="Decline: imprecise, misleads no one;\nrecord why it can wait"];
+  ask [label="Ask: a source is missing or two disagree;\nask the user, do not guess"];
+  back [shape=oval label="Back to roborev_triage:\nrecord each disposition"];
+  start -> read -> who;
+  who -> facts [label="facts"];
+  who -> quotes [label="quotes"];
+  facts -> holds; quotes -> holds;
+  holds -> fix [label="finding is right"];
+  holds -> invalid [label="draft is right"];
+  holds -> decline [label="imprecise only"];
+  holds -> ask [label="source missing\nor conflicting"];
+  fix -> back; invalid -> back; decline -> back; ask -> back;
+}
+'''
 ```
 
 ## Write the rubrics
@@ -355,6 +387,60 @@ Severity:
 
 Give each location as the file and line of the sentence in the draft.
 ```
+
+## Write the review flow
+
+Write one only when automatic reviews are configured and a coding agent handles
+findings through the Agent Hook. Otherwise say why you skipped it in Your calls.
+Check the applicable profile's `agent_hook.instruction` or
+`droid_hook.instruction`. If it is custom, tell the user that profile omits the
+repository flow until they return to the built-in instruction, and ask whether
+to write one anyway.
+
+Build the flow from the approved setup:
+
+- Name each reviewer and what its findings are checked against.
+- State what the agent may edit, what it must leave alone, and when it must ask.
+- Include the commit batch size: each job covers a range. Fix in a new commit;
+    never amend reviewed commits.
+- When a Kata hook is configured, find the matching issue labeled
+    `review-finding` for each job and comment the outcome there. If none exists,
+    tell the user and ask how to track the finding; do not create an issue in
+    place of the hook. Leave unresolved Ask findings open.
+
+The flow refines the Which disposition step of `roborev_triage`. Use `Fix:`,
+`Decline:`, `Invalid:`, and `Ask:` action labels. End at an oval labeled
+`Back to roborev_triage:\nrecord each disposition`.
+
+Follow the DOT conventions:
+
+- Graph names must match the ASCII pattern
+    `^roborev_[a-z][a-z0-9_]*$`; `roborev_triage` is reserved. Use
+    `roborev_<panel>` after replacing hyphens with underscores when that name
+    matches the pattern and is not reserved. Otherwise use
+    `roborev_review_<slug>`: lowercase the panel name, replace each character
+    outside ASCII `a-z`, `0-9`, and `_` with `_`, and use `review` for an empty
+    slug.
+- Put `node [shape=box];` first. Declare the single oval entry first and each
+    node before its edges. Make every node reachable from that entry.
+- Diamonds ask questions ending in `?` and have at least two labeled outgoing
+    edges. Actions are boxes with at most one outgoing edge. Use oval exits.
+- Use lowercase snake case node IDs, double-quoted labels without escaped
+    quotes, and `\n` for line breaks. Keep commands verbatim and placeholders
+    such as `<job_id>`. No subgraphs, HTML labels, or templates.
+- End statements with semicolons. Keep the graph compact: one step per reviewer
+    and the decisions needed to route findings. Route to rubrics and sources;
+    do not copy the whole rubric into the flow.
+- Name skills plainly, such as the roborev-fix skill. Avoid agent-specific
+    invocation prefixes and name instruction files generically.
+- Store the bare digraph in `[agent_hook] review_flow` as a TOML literal string
+    (`review_flow = '''`). No fences, triple backticks, or `'''` inside it.
+
+Play it back in words as numbered steps inside part 3 of Play it back. Put the
+DOT in the proposal's configuration under the existing HARD-GATE, with no second
+approval step. It takes effect after the setup reaches the default branch. The
+hook falls back to the working tree only when the default branch has no config
+or no default branch resolves.
 
 ## Confidential material
 
@@ -415,14 +501,14 @@ Send one proposal:
 1. Changes outside the repository, such as global configuration, listed
     separately.
 1. Your calls: each default you chose that the user did not state, one line
-    each.
+    each, including each review-flow step they did not state.
 1. How it will run: when reviews start, which agents run, and how many agent
     calls one review uses. A panel uses one call per reviewer, plus one
     combining call when two or more reviewers finish and any of them reports
     a finding or does not pass.
 1. The commit you will make after the checks pass: branch and message.
 1. The full content of every file: `.roborev.toml` (or the exact change to an
-    existing one) and each rubric.
+    existing one), including the review flow when applicable, and each rubric.
 
 <HARD-GATE>
 Write nothing until the user approves the proposal. Approval covers only what
@@ -447,6 +533,16 @@ After approval:
     roborev doctor --from-skill --json
     git check-ignore --no-index -v review-rubrics/facts.md
     ```
+
+    When a flow is set and Graphviz is installed, also run:
+
+    ```bash
+    roborev config --from-skill get --local agent_hook.review_flow | dot -Tcanon >/dev/null
+    ```
+
+    Fix Graphviz errors before committing. Doctor's `repo.agent_hook_flow`
+    check explains which source the hook uses and whether a custom instruction
+    suppresses it for a profile.
 
     Validation and doctor must pass, but they do not open rubrics, includes, or
     the sources a rubric names. Check those yourself:
@@ -514,6 +610,9 @@ Show the user the verdict and findings, then tune together:
 - A mistake the reviewer missed becomes a check.
 - A severity they disagree with changes the severity guidance.
 
+When a change renames a reviewer, moves a source, or changes what fails, update
+the review flow in the same commit and show it in the same approval.
+
 Show each rubric change, get approval, commit it, and request a new review.
 Rerunning an old job reuses its frozen settings.
 
@@ -529,6 +628,9 @@ Finish with a short summary:
 - How to tune: edit a rubric, commit, and review again.
 - How to add a source document: commit its text where the rubric expects it,
     and update the rubric or include when the path changes.
+- Whether the Agent Hook is installed for their coding agent. Ask; if it is
+    missing, `roborev agent-hook install` remains pending and needs approval.
+- Whether the review flow waits on a push to the default branch.
 - What is still pending, such as hooks, a stopped daemon, guidelines waiting
     on a push to the default branch, or the confidentiality decision.
 
@@ -536,6 +638,7 @@ Finish with a short summary:
 
 | Thought | Reality |
 |---------|---------|
+| "I'll put the whole rubric in the flow" | The rubric defines findings; the flow routes them. Keep it compact. |
 | "I'll write a standard config and skip the questions" | The rubric is the product. Find out what they need caught. |
 | "Options will save them effort" | Options steer. Ask them to describe first. |
 | "I'll pick the agent I know best" | Keep the agent they run, or ask among the agents that support custom types. |

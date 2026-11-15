@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agentguide"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -53,6 +55,29 @@ func TestSetupReviewConfigExampleValidates(t *testing.T) {
 		_, ok = config.ResolveCustomReviewTypeFromConfig(subagent.ReviewType, repoCfg, nil)
 		require.True(t, ok, "member %s uses undefined custom type %q", member, subagent.ReviewType)
 	}
+
+	flow := strings.TrimSpace(repoCfg.AgentHook.ReviewFlow)
+	require.NotEmpty(t, flow, "example must show a review flow")
+	graph, err := agentguide.LintDOT(agentguide.FenceDOT(flow))
+	require.NoError(t, err)
+	assert.Equal(t, "roborev_"+strings.ReplaceAll(repoCfg.Review.HookPanel, "-", "_"), graph.Name)
+	readNode, ok := graph.Node("read")
+	require.True(t, ok, "example must include a read node")
+	assert.Equal(t, "Read each: roborev show --from-skill --job <job_id>", readNode.Label)
+	exit := false
+	for _, node := range graph.Nodes {
+		if node.Shape == "oval" && len(graph.Out(node.ID)) == 0 && strings.Contains(node.Label, "roborev_triage") {
+			exit = true
+		}
+	}
+	assert.True(t, exit, "flow must hand back to the triage diagram")
+	t.Run("Graphviz", func(t *testing.T) {
+		err := agentguide.CanonWithGraphviz(t.Context(), flow)
+		if errors.Is(err, agentguide.ErrGraphvizUnavailable) {
+			t.Skip("graphviz not installed")
+		}
+		require.NoError(t, err)
+	})
 
 	// Custom types do not inherit review_agent. Resolve the example with
 	// different generic defaults to ensure it follows the selected default
