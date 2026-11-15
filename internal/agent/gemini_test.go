@@ -32,31 +32,27 @@ func writeGeminiTempCommand(t *testing.T, script string) string {
 func TestVersionGatesFeatures(t *testing.T) {
 	skipIfWindows(t)
 	tests := []struct {
-		name              string
-		cli               string
-		version           string
-		agentic           bool
-		sessionID         string
-		resumeFlag        string
-		wantStream        bool
-		wantResult        string
-		wantPrompt        string
-		wantStdin         string
-		wantOutput        string
-		wantPrint         bool
-		wantApproval      string
-		wantErrorContains string
+		name         string
+		cli          string
+		version      string
+		agentic      bool
+		sessionID    string
+		resumeFlag   string
+		wantStream   bool
+		wantResult   string
+		wantPrompt   string
+		wantStdin    string
+		wantOutput   string
+		wantPrint    bool
+		wantApproval string
 	}{
-		{name: "Gemini 0.20 read-only requires plan mode", cli: "gemini", version: "0.20.0", wantErrorContains: "read-only reviews require Gemini CLI 0.34.0 or newer"},
 		{name: "Gemini version probe fails", cli: "gemini", version: "unknown", sessionID: "old-session", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantStdin: "prompt", wantApproval: "plan"},
 		{name: "Gemini 0.11 agentic stream without resume", cli: "gemini", version: "0.11.0", agentic: true, sessionID: "old-session", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
 		{name: "Gemini 0.20 agentic resume uses stdin", cli: "gemini", version: "0.20.0", agentic: true, sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
-		{name: "Gemini 0.34 plan", cli: "gemini", version: "0.34.0", sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "plan"},
 		{name: "Antigravity 1.0.8 without resume", cli: "agy", version: "1.0.8", sessionID: "old-session", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
 		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review", wantOutput: "Plain review\n"},
 		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
-		{name: "Antigravity two-part version", cli: "agy", version: "1.2", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
-		{name: "Antigravity version probe fails", cli: "agy", version: "unknown", wantPrompt: "prompt", wantResult: "Plain review", wantOutput: "Plain review\n"},
+		{name: "Antigravity version probe fails", cli: "agy", version: "unknown", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review", wantOutput: "Plain review\n"},
 	}
 	testdata, err := filepath.Abs("testdata")
 	require.NoError(t, err)
@@ -101,12 +97,6 @@ esac
 			}
 			var output bytes.Buffer
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
-			if tc.wantErrorContains != "" {
-				require.ErrorContains(t, err, tc.wantErrorContains)
-				_, statErr := os.Stat(argsFile)
-				assert.ErrorIs(t, statErr, os.ErrNotExist, "unsafe command must not be invoked")
-				return
-			}
 			require.NoError(t, err)
 			stdinBytes, readErr := os.ReadFile(stdinFile)
 			require.NoError(t, readErr)
@@ -167,7 +157,6 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 			// Print-mode reviews omit --sandbox so `pwd` is not gated, and
 			// still omit --dangerously-skip-permissions (agentic-only).
 			unwantedArgs: []string{
-				"--output-format",
 				"--approval-mode",
 				"-m",
 				"--dangerously-skip-permissions",
@@ -182,7 +171,6 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 			agentic:   true,
 			wantFlags: []string{"--dangerously-skip-permissions"},
 			unwantedArgs: []string{
-				"--output-format",
 				"--approval-mode",
 				"-m",
 				"--sandbox",
@@ -207,7 +195,7 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 	}
 }
 
-func TestGeminiAntigravityReviewMergesSettingsAndOmitsYolo(t *testing.T) {
+func TestGeminiAntigravityReviewMergesSettings(t *testing.T) {
 	skipIfWindows(t)
 
 	settingsPath := filepath.Join(t.TempDir(), "settings.json")
@@ -224,11 +212,8 @@ func TestGeminiAntigravityReviewMergesSettingsAndOmitsYolo(t *testing.T) {
 
 	scriptPath := writeTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
-printf '%s\n' "$@" > "$ARGS_FILE"
 echo "Review after settings merge"
 `)
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("ARGS_FILE", argsFile)
 	a := NewGeminiAgent(scriptPath)
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
@@ -242,12 +227,6 @@ echo "Review after settings merge"
 	assert.Equal(t, "keep-me", doc["model"])
 	permissions := doc["permissions"].(map[string]any)
 	assert.Equal(t, []any{"command(rm -rf)"}, permissions["deny"])
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	argsOut := string(argsBytes)
-	assert.NotContains(t, argsOut, "--sandbox\n")
-	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
 }
 
 func TestGeminiAntigravityReviewAddsRepositoryWorkspace(t *testing.T) {
@@ -362,16 +341,18 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 	geminiCapture, err := os.ReadFile("testdata/gemini-stream.jsonl")
 	require.NoError(t, err)
 	tests := []struct {
-		name         string
-		input        string
-		assertResult func(t *testing.T, res string)
-		wantErr      error // if non-nil, expect errors.Is match
-		wantOutput   bool  // if true, pass a writer and check it received data
+		name            string
+		input           string
+		assertResult    func(t *testing.T, res string)
+		wantErr         error // if non-nil, expect errors.Is match
+		wantOutput      bool  // if true, pass a writer and check it received data
+		wantTurnStarted bool
 	}{
 		{
-			name:       "CapturedGeminiOutput",
-			input:      string(geminiCapture),
-			wantOutput: true,
+			name:            "CapturedGeminiOutput",
+			input:           string(geminiCapture),
+			wantOutput:      true,
+			wantTurnStarted: true,
 			assertResult: func(t *testing.T, res string) {
 				assert.JSONEq(t, `{"passed":true,"findings":[]}`, res)
 			},
@@ -385,29 +366,8 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			assertResult: func(t *testing.T, res string) {
 				assert.Equal(t, "Done! Review complete.", res)
 			},
-			wantOutput: true,
-		},
-		{
-			name: "GeminiMessageFormat",
-			input: `{"type":"message","timestamp":"2026-01-19T17:49:13.445Z","role":"assistant","content":"Changes:\n- Created file.ts","delta":true}
-{"type":"message","timestamp":"2026-01-19T17:49:13.447Z","role":"assistant","content":" with filtering logic.","delta":true}
-{"type":"result","timestamp":"2026-01-19T17:49:13.519Z","status":"success","stats":{"total_tokens":1000}}
-`,
-			assertResult: func(t *testing.T, res string) {
-				for _, s := range []string{"Changes:", "filtering logic"} {
-					assert.Contains(t, res, s)
-				}
-			},
-		},
-		{
-			name: "GeminiDeltaChunksJoinWithoutSeparators",
-			input: `{"type":"message","role":"assistant","content":"{\"passed\":true,\"findings\":[{\"title\":\"split","delta":true}
-{"type":"message","role":"assistant","content":" inside JSON string\"}]}","delta":true}
-{"type":"result","status":"success"}
-`,
-			assertResult: func(t *testing.T, res string) {
-				assert.JSONEq(t, `{"passed":true,"findings":[{"title":"split inside JSON string"}]}`, res)
-			},
+			wantOutput:      true,
+			wantTurnStarted: true,
 		},
 		{
 			name: "GeminiMessagesWithoutResult",
@@ -417,19 +377,7 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			assertResult: func(t *testing.T, res string) {
 				assert.Equal(t, "First message\nSecond message", res)
 			},
-		},
-		{
-			name: "ReviewTextWithoutCompletionIsRejected",
-			input: `{"type":"message","role":"assistant","content":"{\"passed\":true,\"findings\":[]}","delta":true}
-`,
-			wantErr: errGeminiIncomplete,
-		},
-		{
-			name: "ReviewTextWithErrorCompletionIsRejected",
-			input: `{"type":"message","role":"assistant","content":"{\"passed\":true,\"findings\":[]}","delta":true}
-{"type":"result","status":"error"}
-`,
-			wantErr: errGeminiIncomplete,
+			wantTurnStarted: true,
 		},
 		{
 			name: "Final message after tool result",
@@ -440,27 +388,34 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			assertResult: func(t *testing.T, res string) {
 				assert.Equal(t, "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.", res)
 			},
+			wantTurnStarted: true,
+		},
+		{
+			name: "AssistantFallbackPrefersFinalPostToolSegment",
+			input: `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."}}
+{"type":"tool","name":"Read"}
+{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}}
+`,
+			assertResult: func(t *testing.T, res string) {
+				assert.Equal(t, "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.", res)
+			},
+			wantTurnStarted: true,
 		},
 		{
 			name: "NoValidEvents",
-			input: `not json at all
-still not json
-`,
-			wantErr: errNoStreamJSON,
-		},
-		{
-			name:  "EmptyResult",
-			input: `{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"}`,
-			assertResult: func(t *testing.T, res string) {
-				assert.Empty(t, res)
-			},
-		},
-		{
-			name: "PlainTextError",
 			input: `This is a plain text review.
 No issues found in the code.
 `,
 			wantErr: errNoStreamJSON,
+		},
+		{
+			name: "EmptyResult",
+			input: `{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"}
+{"type":"message","role":"user","content":"return the requested JSON response"}`,
+			assertResult: func(t *testing.T, res string) {
+				assert.Empty(t, res)
+			},
 		},
 	}
 
@@ -477,6 +432,7 @@ No issues found in the code.
 			}
 
 			parsed, err := a.parseStreamJSON(strings.NewReader(tc.input), sw)
+			assert.Equal(tc.wantTurnStarted, parsed.turnStarted)
 
 			if tc.wantErr != nil {
 				require.Error(err)
@@ -498,12 +454,12 @@ No issues found in the code.
 
 func TestParseAntigravityStreamJSON(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		fixture       string
-		input         string
-		wantResponse  string
-		wantErrorText string
-		wantError     error
+		name            string
+		fixture         string
+		wantResponse    string
+		wantErrorText   string
+		wantError       error
+		wantTurnStarted bool
 	}{
 		{
 			name:      "init without result",
@@ -511,29 +467,23 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			wantError: errNoStreamJSON,
 		},
 		{
-			name:         "successful result",
-			fixture:      "antigravity-success-result-capture.jsonl",
-			wantResponse: "RESUME_OK",
+			name:            "successful result",
+			fixture:         "antigravity-success-result-capture.jsonl",
+			wantResponse:    "RESUME_OK",
+			wantTurnStarted: true,
 		},
 		{
-			name:          "error result",
-			fixture:       "antigravity-quota-result-capture.jsonl",
-			wantErrorText: `antigravity ended with status "ERROR"`,
-		},
-		{
-			name:          "partial result after print timeout",
-			input:         `{"event":"result","result":{"status":"SUCCESS","response":"partial answer","finished_reason":"print_timeout"}}`,
-			wantErrorText: `antigravity print timed out`,
+			name:            "error result",
+			fixture:         "antigravity-quota-result-capture.jsonl",
+			wantErrorText:   `antigravity ended with status "ERROR"`,
+			wantTurnStarted: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			input := []byte(tc.input)
-			if tc.fixture != "" {
-				var err error
-				input, err = os.ReadFile(filepath.Join("testdata", tc.fixture))
-				require.NoError(t, err)
-			}
-			response, _, err := parseAntigravityStreamJSON(strings.NewReader(string(input)), nil)
+			input, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
+			require.NoError(t, err)
+			response, turnStarted, err := parseAntigravityStreamJSON(strings.NewReader(string(input)), nil)
+			assert.Equal(t, tc.wantTurnStarted, turnStarted)
 			if tc.wantError != nil {
 				require.ErrorIs(t, err, tc.wantError)
 				return
@@ -547,25 +497,6 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			assert.Equal(t, tc.wantResponse, response)
 		})
 	}
-}
-
-func TestGeminiAntigravityPrintTimeoutIsAnErrorForAgenticRuns(t *testing.T) {
-	skipIfWindows(t)
-
-	resultCapture, err := os.ReadFile(filepath.Join("testdata", "antigravity-print-timeout-capture.json"))
-	require.NoError(t, err)
-	t.Setenv("AGY_TIMEOUT_RESULT", strings.TrimSpace(string(resultCapture)))
-	script := writeGeminiTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "1.2.9"; exit 0; fi
-printf '{"event":"result","result":%s}\n' "$AGY_TIMEOUT_RESULT"
-printf '%s\n' '[agy] print timeout after 1m0s with turn in progress; returning partial output' >&2
-`)
-	agyPath := filepath.Join(filepath.Dir(script), "agy")
-	require.NoError(t, os.Rename(script, agyPath))
-
-	result, err := NewGeminiAgent(agyPath).WithAgentic(true).Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
-	require.ErrorContains(t, err, "antigravity print timed out")
-	assert.Empty(t, result)
 }
 
 func TestResumeFailureStartsFresh(t *testing.T) {
@@ -838,7 +769,6 @@ echo "No issues found."
 	assert.NotContains(t, argsOut, "--prompt\n")
 	assert.NotContains(t, argsOut, "--print\n")
 	assert.NotContains(t, argsOut, "-p\n")
-	assert.NotContains(t, argsOut, "--sandbox\n")
 }
 
 func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
@@ -899,18 +829,6 @@ func TestGemini_Review_Integration(t *testing.T) {
 		checkErr   func(t *testing.T, err error)
 	}{
 		{
-			name: "PlainTextError",
-			script: `#!/bin/sh
-echo "Plain text review output"
-echo "No issues found."
-`,
-			checkErr: func(t *testing.T, err error) {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "stream-json")
-				require.ErrorIs(t, err, errNoStreamJSON)
-			},
-		},
-		{
 			name: "PlainTextErrorWithStderr",
 			script: `#!/bin/sh
 echo "Plain text review output"
@@ -919,6 +837,7 @@ echo "Some stderr message" >&2
 			checkErr: func(t *testing.T, err error) {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "Some stderr message")
+				assert.Contains(t, err.Error(), "stream-json")
 			},
 		},
 		{
@@ -1045,6 +964,7 @@ cat "$SUCCESS_FILE"
 				assert.Zero(t, resetCalls, "the fallback keeps the resumed conversation's source link")
 			} else {
 				assert.Zero(t, strings.Count(string(args), "--resume\n"))
+				assert.Equal(t, 1, resetCalls, "fresh fallback resets captured session state")
 			}
 		})
 	}

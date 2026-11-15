@@ -1082,6 +1082,7 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 					return false
 				}, "session_id=%q, want %q", updated.SessionID, tc.want)
 			}
+
 			review, err := tcxt.DB.GetReviewByJobID(job.ID)
 			if err != nil {
 				require.Condition(t, func() bool {

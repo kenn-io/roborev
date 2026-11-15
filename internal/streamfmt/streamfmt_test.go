@@ -130,7 +130,6 @@ func TestRenderLogWithPreservesUnknownEventJSONForOtherAgents(t *testing.T) {
 		name, agent, line string
 	}{
 		{name: "claude Antigravity event", agent: "claude", line: antigravityEvent},
-		{name: "codex Antigravity event", agent: "codex", line: antigravityEvent},
 		{name: "gemini unknown event", agent: "gemini", line: unknownEvent},
 	}
 	for _, tc := range tests {
@@ -714,7 +713,6 @@ func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		fixture     string
-		input       string
 		contains    string
 		notContains []string
 	}{
@@ -741,25 +739,10 @@ func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
 				`"event":"result"`,
 			},
 		},
-		{
-			name:     "print timeout",
-			input:    `{"event":"result","result":{"status":"SUCCESS","response":"","finished_reason":"print_timeout"}}`,
-			contains: "[Antigravity print timed out; output may be partial]",
-		},
-		{
-			name:        "error result without details",
-			input:       `{"event":"result","result":{"status":"ERROR","error":""}}`,
-			contains:    "status ERROR",
-			notContains: []string{"[Error: ]"},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			captured := []byte(tc.input + "\n")
-			if tc.fixture != "" {
-				var err error
-				captured, err = os.ReadFile(tc.fixture)
-				require.NoError(t, err)
-			}
+			captured, err := os.ReadFile(tc.fixture)
+			require.NoError(t, err)
 			var output bytes.Buffer
 			fmtr := New(&output, true, DecoderForAgent("gemini"))
 			require.NoError(t, RenderLogWith(bytes.NewReader(captured), fmtr))

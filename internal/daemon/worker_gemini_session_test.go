@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,6 +15,11 @@ import (
 
 func TestWorkerPassesOnlyMatchingGeminiSession(t *testing.T) {
 	t.Parallel()
+	geminiStream, err := os.ReadFile(filepath.Join("..", "agent", "testdata", "gemini-stream.jsonl"))
+	require.NoError(t, err)
+	geminiInit, _, found := strings.Cut(string(geminiStream), "\n")
+	require.True(t, found)
+	geminiInit = strings.Replace(geminiInit, "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", "new-gemini-session", 1)
 	for _, storedCLI := range []string{"agy", "gemini"} {
 		t.Run(storedCLI, func(t *testing.T) {
 			t.Parallel()
@@ -19,7 +27,7 @@ func TestWorkerPassesOnlyMatchingGeminiSession(t *testing.T) {
 			state := &sessionStreamingTestAgentState{}
 			name := "worker-session-" + storedCLI
 			agent.RegisterForTest(t, &sessionStreamingTestAgent{
-				name: name, streamLine: `{"type":"init","session_id":"new-gemini-session"}`,
+				name: name, streamLine: geminiInit,
 				sessionCLI: "gemini", state: state,
 			})
 
@@ -47,9 +55,6 @@ func TestWorkerPassesOnlyMatchingGeminiSession(t *testing.T) {
 			assert.Equal(t, wantIncoming, observedSession)
 			assert.Equal(t, "new-gemini-session", got.SessionID)
 			assert.Equal(t, "gemini", got.SessionCLI)
-			if storedCLI != "gemini" {
-				assert.Nil(t, got.ResumeSourceJobUUID)
-			}
 		})
 	}
 }

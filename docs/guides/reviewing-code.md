@@ -448,7 +448,6 @@ following agents support it:
 | Pi | `pi --session <path>` |
 
 Session reuse requires Gemini CLI 0.20.0 or Antigravity 1.1.8 or later.
-Read-only Gemini reviews require 0.34.0 or later, which supports plan mode.
 
 Agents that do not support session reuse (Copilot, Cursor, Kiro, Droid) ignore
 the setting and always start fresh sessions.

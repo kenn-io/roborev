@@ -136,20 +136,6 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	capabilities := a.capabilities(ctx)
-	if !a.usesAntigravity() {
-		mode, minimum := "read-only", geminiPlanModeVersion
-		if agenticMode {
-			mode, minimum = "agentic", geminiAgenticVersion
-		}
-		// An undetectable version keeps the established invocation; only a
-		// version that was read and is too old is rejected.
-		if versionAtLeast(capabilities.version, "0") && !versionAtLeast(capabilities.version, minimum) {
-			return "", fmt.Errorf(
-				"%s reviews require Gemini CLI %s or newer; detected %q. Check %q --version output",
-				mode, minimum, capabilities.version, a.Command,
-			)
-		}
-	}
 	if a.SessionID != "" && !capabilities.resume {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
 			return "", resetErr
@@ -226,16 +212,13 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []strin
 }
 
 type geminiCLICapabilities struct {
-	version    string
 	streamJSON bool
 	resume     bool
 	promptFlag bool
 }
 
 const (
-	geminiAgenticVersion  = "0.11.0" // stream-json and yolo approval mode
-	geminiResumeVersion   = "0.20.0" // newer releases accept resumed prompts on stdin
-	geminiPlanModeVersion = "0.34.0"
+	geminiResumeVersion = "0.20.0" // newer releases accept resumed prompts on stdin
 )
 
 // capabilities gates new CLI flags by the installed version. An undetectable
@@ -244,14 +227,13 @@ func (a *GeminiAgent) capabilities(ctx context.Context) geminiCLICapabilities {
 	version := cliVersion(ctx, a.Command)
 	if a.usesAntigravity() {
 		return geminiCLICapabilities{
-			version:    version,
 			streamJSON: versionAtLeast(version, antigravityStreamJSONVersion),
 			resume:     versionAtLeast(version, antigravityStreamJSONVersion),
 			// An undetectable version keeps the established --prompt contract.
 			promptFlag: !versionAtLeast(version, "0") || antigravityVersionUsesPromptFlag(version),
 		}
 	}
-	return geminiCLICapabilities{version: version, resume: versionAtLeast(version, geminiResumeVersion)}
+	return geminiCLICapabilities{resume: versionAtLeast(version, geminiResumeVersion)}
 }
 
 func (a *GeminiAgent) usesAntigravity() bool {
@@ -416,19 +398,8 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		return "", runResult.Stderr, turnStarted, runResult.ParseErr
 	}
 
-	result, err := a.acceptAntigravityResult(runResult, capabilities.streamJSON)
-	return result, runResult.Stderr, turnStarted, err
-}
-
-// acceptAntigravityResult turns a clean agy run into the review text, or an
-// error when the run produced no usable review.
-func (a *GeminiAgent) acceptAntigravityResult(runResult streamingCLIResult, streamJSON bool) (string, error) {
-	if streamJSON && antigravityPrintTimedOut(runResult.Stderr) {
-		return "", errAntigravityPrintTimeout
-	}
-
 	if runResult.Result != "" {
-		return runResult.Result, nil
+		return runResult.Result, runResult.Stderr, turnStarted, nil
 	}
 
 	// Agentic jobs keep the shared non-fatal placeholder: fix jobs
@@ -437,7 +408,7 @@ func (a *GeminiAgent) acceptAntigravityResult(runResult streamingCLIResult, stre
 	// gates on workflow intent, not agenticMode: allow_unsafe_agents
 	// changes tool permissions, not what a review must produce.
 	if a.Agentic {
-		return "No review output generated", nil
+		return "No review output generated", runResult.Stderr, turnStarted, nil
 	}
 
 	// A clean exit with no output is a failure, not an empty review: agy >=
@@ -451,20 +422,10 @@ func (a *GeminiAgent) acceptAntigravityResult(runResult streamingCLIResult, stre
 	if s := runResult.Stderr; s != "" {
 		msg += "\nstderr: " + s
 	}
-	return "", errors.New(msg)
+	return "", runResult.Stderr, turnStarted, errors.New(msg)
 }
 
 var errAntigravityPrintTimeout = errors.New("antigravity print timed out; response is partial")
-
-// antigravityPrintTimedOut detects print timeouts from stream-json agy
-// versions that predate result.finished_reason (added in 1.4.11). Upstream
-// issue #1087 (1.2.9) captured such a run returning an empty SUCCESS result
-// with this exact stderr line. It is an observed message, not a documented
-// contract, so only that marker is matched.
-func antigravityPrintTimedOut(stderr string) bool {
-	return strings.Contains(stderr, "[agy] print timeout after ") &&
-		strings.Contains(stderr, " with turn in progress; returning partial output")
-}
 
 // cliVersion returns `--version` output, or "" when detection fails; agy's
 // `agy version` subcommand needs a TTY and fails in pipes/subprocesses.
@@ -536,7 +497,7 @@ func antigravityMaxPromptArgLen() int {
 // antigravityVersionUsesPromptFlag reports whether agy's `--version` output
 // indicates the --prompt flag contract (>= 1.1.1). It scans for the first
 // dotted version token, so decorated output ("agy version 1.1.0", a trailing
-// build hash) still resolves. Review rejects unparseable version output.
+// build hash) still resolves. Unparseable output is false.
 func antigravityVersionUsesPromptFlag(versionOutput string) bool {
 	return versionAtLeast(versionOutput, antigravityPromptFlagVersion)
 }
@@ -580,13 +541,7 @@ type geminiStreamMessage struct {
 	} `json:"message,omitempty"`
 	// Result field for "result" type events
 	Result string `json:"result,omitempty"`
-	// Status is set on the modern completion event: "success" or "error".
-	Status string `json:"status,omitempty"`
 }
-
-// errGeminiIncomplete reports modern stream output that never reported a
-// successful completion, so its text may be a partial answer.
-var errGeminiIncomplete = errors.New("gemini stream ended without a successful result event")
 
 // parseResult contains the parsed result from stream-json output
 type parseResult struct {
@@ -598,69 +553,50 @@ type parseResult struct {
 // and whether the stream shows that a turn started.
 // The sw parameter is the shared sync writer for thread-safe output (may be nil).
 func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult, error) {
-	st := geminiStreamState{assistantMessages: newTrailingReviewText()}
+	var lastResult string
+	assistantMessages := newTrailingReviewText()
 	var validEventsParsed bool
+	var turnStarted bool
 
 	err := scanStreamJSONLines(r, sw, func(trimmed string) error {
 		var msg geminiStreamMessage
 		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
 			validEventsParsed = true
-			st.observe(msg)
+			turnStarted = turnStarted || (msg.Type != "" && msg.Type != "init" && (msg.Type != "message" || msg.Role != "user"))
+
+			if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
+				assistantMessages.Add(msg.Content)
+			}
+			if msg.Type == "assistant" && msg.Message.Content != "" {
+				assistantMessages.Add(msg.Message.Content)
+			}
+			if msg.Type == "tool" || msg.Type == "tool_result" {
+				assistantMessages.ResetAfterTool()
+			}
+
+			if msg.Type == "result" && msg.Result != "" {
+				lastResult = msg.Result
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return parseResult{turnStarted: st.turnStarted}, err
+		return parseResult{turnStarted: turnStarted}, err
 	}
 
-	// Legacy streams have no completion status; their result text is final.
-	switch {
-	case !validEventsParsed:
-		return parseResult{}, errNoStreamJSON
-	case st.failed || (st.streamed && !st.succeeded && st.lastResult == ""):
-		return parseResult{turnStarted: st.turnStarted}, errGeminiIncomplete
-	case st.lastResult != "":
-		return parseResult{result: st.lastResult, turnStarted: st.turnStarted}, nil
+	// If no valid events were parsed, return error
+	if !validEventsParsed {
+		return parseResult{turnStarted: turnStarted}, errNoStreamJSON
 	}
-	return parseResult{result: st.assistantMessages.Join("\n"), turnStarted: st.turnStarted}, nil
-}
 
-// geminiStreamState accumulates review text and completion status across
-// stream-json events. streamed marks modern output (delta chunks or a result
-// status), which must end with a successful completion.
-type geminiStreamState struct {
-	assistantMessages                                 *trailingReviewText
-	lastResult                                        string
-	turnStarted, inDelta, streamed, succeeded, failed bool
-}
-
-func (st *geminiStreamState) observe(msg geminiStreamMessage) {
-	st.turnStarted = st.turnStarted || (msg.Type != "" && msg.Type != "init" && (msg.Type != "message" || msg.Role != "user"))
-	switch {
-	case msg.Type == "message" && msg.Role == "assistant" && msg.Content != "":
-		// Delta chunks are fragments of one message and may split inside a
-		// JSON string, so they join without a separator.
-		if msg.Delta && st.inDelta {
-			st.assistantMessages.Extend(msg.Content)
-		} else {
-			st.assistantMessages.Add(msg.Content)
-		}
-		st.inDelta = msg.Delta
-		st.streamed = st.streamed || msg.Delta
-	case msg.Type == "assistant" && msg.Message.Content != "":
-		st.assistantMessages.Add(msg.Message.Content)
-		st.inDelta = false
-	case msg.Type == "tool" || msg.Type == "tool_result":
-		st.assistantMessages.ResetAfterTool()
-		st.inDelta = false
-	case msg.Type == "result":
-		st.streamed = st.streamed || msg.Status != ""
-		st.succeeded = st.succeeded || msg.Status == "success"
-		st.failed = st.failed || (msg.Status != "" && msg.Status != "success")
-		if msg.Result != "" {
-			st.lastResult = msg.Result
-		}
+	// Prefer the result field if present, otherwise join assistant messages
+	if lastResult != "" {
+		return parseResult{result: lastResult, turnStarted: turnStarted}, nil
 	}
+	if result := assistantMessages.Join("\n"); result != "" {
+		return parseResult{result: result, turnStarted: turnStarted}, nil
+	}
+	return parseResult{turnStarted: turnStarted}, nil
 }
 
 type antigravityStreamEvent struct {

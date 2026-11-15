@@ -7,10 +7,6 @@ import (
 
 type geminiDecoder struct{}
 
-func (*geminiDecoder) acceptsAntigravityEvent(line string) bool {
-	return isAntigravityEvent(line)
-}
-
 type geminiStreamEvent struct {
 	Type       string         `json:"type"`
 	Event      string         `json:"event"`

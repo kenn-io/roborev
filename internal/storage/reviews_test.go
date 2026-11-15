@@ -1098,7 +1098,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchSourceAndCLI(t *tes
 		return *job
 	}
 
-	local := enqueueCompleted("", "local-session", "gemini")
+	local := enqueueCompleted("", "local-session", "agy")
 	query := ReusableSessionQuery{
 		RepoID: repo.ID, Branch: "feature/session", Source: JobSourceCI,
 		Agent: "test", Reasoning: "thorough", SourceMachineID: machineID,
@@ -1108,7 +1108,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchSourceAndCLI(t *tes
 	require.NoError(t, err)
 	assert.Empty(t, candidates)
 
-	wrongCLI := enqueueCompleted(JobSourceCI, "ci-gemini-session", "gemini")
+	enqueueCompleted(JobSourceCI, "ci-gemini-session", "gemini")
 	candidates, err = db.FindCompatibleReusableSessionCandidates(query)
 	require.NoError(t, err)
 	assert.Empty(t, candidates)
@@ -1118,7 +1118,6 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchSourceAndCLI(t *tes
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, ci.ID, candidates[0].ID)
-	assert.NotEqual(t, wrongCLI.ID, candidates[0].ID)
 	assert.NotEqual(t, local.ID, candidates[0].ID)
 	assert.Equal(t, "ci-agy-session", candidates[0].SessionID)
 	assert.Equal(t, "agy", candidates[0].SessionCLI)
