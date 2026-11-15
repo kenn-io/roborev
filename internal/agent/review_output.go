@@ -22,6 +22,12 @@ func (t *trailingReviewText) Add(text string) {
 	t.parts = append(t.parts, text)
 }
 
+// Extend appends a continuation fragment to the latest part, which must exist,
+// without a separator.
+func (t *trailingReviewText) Extend(text string) {
+	t.parts[len(t.parts)-1] += text
+}
+
 func (t *trailingReviewText) AddWithID(id, text string) {
 	if text == "" {
 		return

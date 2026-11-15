@@ -28,6 +28,7 @@ func TestFindCompatibleReusableSessionSkipsOtherCLIs(t *testing.T) {
 	reuseSessions := true
 	cfg := server.configWatcher.Config()
 	cfg.ReuseReviewSession = &reuseSessions
+	cfg.ReuseReviewSessionLookback = 1
 	geminiCommand := filepath.Join(tmpDir, "gemini")
 	require.NoError(t, os.WriteFile(geminiCommand, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	cfg.GeminiCmd = geminiCommand

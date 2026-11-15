@@ -1366,6 +1366,7 @@ func findCompatibleReusableSession(
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
 		SourceMachineID:       machineID,
+		SessionCLI:            wantedSessionCLI,
 		CIPRNumber:            ciPRNumber,
 		Experiment:            experiment,
 		Limit: config.ResolveReuseReviewSessionLookbackFromConfig(
@@ -1378,9 +1379,6 @@ func findCompatibleReusableSession(
 	}
 	const maxSessionReuseDistance = 50
 	for _, candidate := range candidates {
-		if wantedSessionCLI != "" && candidate.SessionCLI != wantedSessionCLI {
-			continue
-		}
 		candidateSHA := strings.TrimSpace(candidate.ReusableSessionTarget)
 		if candidateSHA == "" {
 			continue

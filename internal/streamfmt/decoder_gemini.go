@@ -14,11 +14,7 @@ type geminiStreamEvent struct {
 	Content    jsontext.Value `json:"content,omitempty"`
 	ToolName   string         `json:"tool_name,omitempty"`
 	Parameters jsontext.Value `json:"parameters,omitempty"`
-	Result     struct {
-		Status   string `json:"status"`
-		Response string `json:"response"`
-		Error    string `json:"error"`
-	} `json:"result"`
+	Result     jsontext.Value `json:"result,omitempty"`
 }
 
 func (*geminiDecoder) Decode(line string) []Event {
@@ -32,10 +28,18 @@ func (*geminiDecoder) Decode(line string) []Event {
 		return []Event{{Kind: EventText, Text: "Antigravity session started"}}
 	}
 	if streamEvent.Event == "result" {
-		if streamEvent.Result.Status != "SUCCESS" {
-			return []Event{{Kind: EventText, Text: "[Error: " + streamEvent.Result.Error + "]"}}
+		var result struct {
+			Status   string `json:"status"`
+			Response string `json:"response"`
+			Error    string `json:"error"`
 		}
-		return []Event{{Kind: EventText, Text: streamEvent.Result.Response}}
+		if err := json.Unmarshal(streamEvent.Result, &result); err != nil {
+			return []Event{{Kind: EventText, Text: line}}
+		}
+		if result.Status != "SUCCESS" {
+			return []Event{{Kind: EventText, Text: "[Error: " + result.Error + "]"}}
+		}
+		return []Event{{Kind: EventText, Text: result.Response}}
 	}
 
 	switch streamEvent.Type {

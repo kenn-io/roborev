@@ -160,7 +160,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 	args := a.buildArgsWithModel(a.Model, agenticMode)
 	result, stderrStr, turnStarted, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
-	if a.SessionID != "" && ctx.Err() == nil && (!agenticMode || !turnStarted) &&
+	if a.SessionID != "" && ctx.Err() == nil && !turnStarted &&
 		(err != nil || result == "No review output generated") {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
 			return "", errors.Join(err, resetErr)
@@ -408,8 +408,19 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		return "", runResult.Stderr, turnStarted, runResult.ParseErr
 	}
 
+	result, err := a.acceptAntigravityResult(runResult, capabilities.streamJSON)
+	return result, runResult.Stderr, turnStarted, err
+}
+
+// acceptAntigravityResult turns a clean agy run into the review text, or an
+// error when the run produced no usable review.
+func (a *GeminiAgent) acceptAntigravityResult(runResult streamingCLIResult, streamJSON bool) (string, error) {
+	if streamJSON && antigravityPrintTimedOut(runResult.Stderr) {
+		return "", errAntigravityPrintTimeout
+	}
+
 	if runResult.Result != "" {
-		return runResult.Result, runResult.Stderr, turnStarted, nil
+		return runResult.Result, nil
 	}
 
 	// Agentic jobs keep the shared non-fatal placeholder: fix jobs
@@ -418,7 +429,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	// gates on workflow intent, not agenticMode: allow_unsafe_agents
 	// changes tool permissions, not what a review must produce.
 	if a.Agentic {
-		return "No review output generated", runResult.Stderr, turnStarted, nil
+		return "No review output generated", nil
 	}
 
 	// A clean exit with no output is a failure, not an empty review: agy >=
@@ -432,7 +443,19 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	if s := runResult.Stderr; s != "" {
 		msg += "\nstderr: " + s
 	}
-	return "", runResult.Stderr, turnStarted, errors.New(msg)
+	return "", errors.New(msg)
+}
+
+var errAntigravityPrintTimeout = errors.New("antigravity print timed out; response is partial")
+
+// antigravityPrintTimedOut detects print timeouts from stream-json agy
+// versions that predate result.finished_reason (added in 1.4.11). Upstream
+// issue #1087 (1.2.9) captured such a run returning an empty SUCCESS result
+// with this exact stderr line. It is an observed message, not a documented
+// contract, so only that marker is matched.
+func antigravityPrintTimedOut(stderr string) bool {
+	return strings.Contains(stderr, "[agy] print timeout after ") &&
+		strings.Contains(stderr, " with turn in progress; returning partial output")
 }
 
 // cliVersion returns `--version` output, or "" when detection fails; agy's
@@ -592,7 +615,13 @@ type geminiStreamMessage struct {
 	} `json:"message,omitempty"`
 	// Result field for "result" type events
 	Result string `json:"result,omitempty"`
+	// Status is set on the modern completion event: "success" or "error".
+	Status string `json:"status,omitempty"`
 }
+
+// errGeminiIncomplete reports modern stream output that never reported a
+// successful completion, so its text may be a partial answer.
+var errGeminiIncomplete = errors.New("gemini stream ended without a successful result event")
 
 // parseResult contains the parsed result from stream-json output
 type parseResult struct {
@@ -604,59 +633,78 @@ type parseResult struct {
 // and whether the stream shows that a turn started.
 // The sw parameter is the shared sync writer for thread-safe output (may be nil).
 func (a *GeminiAgent) parseStreamJSON(r io.Reader, sw *syncWriter) (parseResult, error) {
-	var lastResult string
-	assistantMessages := newTrailingReviewText()
+	st := geminiStreamState{assistantMessages: newTrailingReviewText()}
 	var validEventsParsed bool
-	var turnStarted bool
 
 	err := scanStreamJSONLines(r, sw, func(trimmed string) error {
 		var msg geminiStreamMessage
 		if jsonErr := json.Unmarshal([]byte(trimmed), &msg); jsonErr == nil {
 			validEventsParsed = true
-			turnStarted = turnStarted || (msg.Type != "" && msg.Type != "init")
-
-			if msg.Type == "message" && msg.Role == "assistant" && msg.Content != "" {
-				assistantMessages.Add(msg.Content)
-			}
-			if msg.Type == "assistant" && msg.Message.Content != "" {
-				assistantMessages.Add(msg.Message.Content)
-			}
-			if msg.Type == "tool" || msg.Type == "tool_result" {
-				assistantMessages.ResetAfterTool()
-			}
-
-			if msg.Type == "result" && msg.Result != "" {
-				lastResult = msg.Result
-			}
+			st.observe(msg)
 		}
 		return nil
 	})
 	if err != nil {
-		return parseResult{turnStarted: turnStarted}, err
+		return parseResult{turnStarted: st.turnStarted}, err
 	}
 
-	// If no valid events were parsed, return error
-	if !validEventsParsed {
+	// Legacy streams have no completion status; their result text is final.
+	switch {
+	case !validEventsParsed:
 		return parseResult{}, errNoStreamJSON
+	case st.failed || (st.streamed && !st.succeeded && st.lastResult == ""):
+		return parseResult{turnStarted: st.turnStarted}, errGeminiIncomplete
+	case st.lastResult != "":
+		return parseResult{result: st.lastResult, turnStarted: st.turnStarted}, nil
 	}
+	return parseResult{result: st.assistantMessages.Join("\n"), turnStarted: st.turnStarted}, nil
+}
 
-	// Prefer the result field if present, otherwise join assistant messages
-	if lastResult != "" {
-		return parseResult{result: lastResult, turnStarted: turnStarted}, nil
-	}
-	if result := assistantMessages.Join("\n"); result != "" {
-		return parseResult{result: result, turnStarted: turnStarted}, nil
-	}
+// geminiStreamState accumulates review text and completion status across
+// stream-json events. streamed marks modern output (delta chunks or a result
+// status), which must end with a successful completion.
+type geminiStreamState struct {
+	assistantMessages                                 *trailingReviewText
+	lastResult                                        string
+	turnStarted, inDelta, streamed, succeeded, failed bool
+}
 
-	return parseResult{turnStarted: turnStarted}, nil
+func (st *geminiStreamState) observe(msg geminiStreamMessage) {
+	st.turnStarted = st.turnStarted || (msg.Type != "" && msg.Type != "init")
+	switch {
+	case msg.Type == "message" && msg.Role == "assistant" && msg.Content != "":
+		// Delta chunks are fragments of one message and may split inside a
+		// JSON string, so they join without a separator.
+		if msg.Delta && st.inDelta {
+			st.assistantMessages.Extend(msg.Content)
+		} else {
+			st.assistantMessages.Add(msg.Content)
+		}
+		st.inDelta = msg.Delta
+		st.streamed = st.streamed || msg.Delta
+	case msg.Type == "assistant" && msg.Message.Content != "":
+		st.assistantMessages.Add(msg.Message.Content)
+		st.inDelta = false
+	case msg.Type == "tool" || msg.Type == "tool_result":
+		st.assistantMessages.ResetAfterTool()
+		st.inDelta = false
+	case msg.Type == "result":
+		st.streamed = st.streamed || msg.Status != ""
+		st.succeeded = st.succeeded || msg.Status == "success"
+		st.failed = st.failed || (msg.Status != "" && msg.Status != "success")
+		if msg.Result != "" {
+			st.lastResult = msg.Result
+		}
+	}
 }
 
 type antigravityStreamEvent struct {
 	Event  string `json:"event"`
 	Result struct {
-		Status   string `json:"status"`
-		Response string `json:"response"`
-		Error    string `json:"error"`
+		Status         string `json:"status"`
+		Response       string `json:"response"`
+		Error          string `json:"error"`
+		FinishedReason string `json:"finished_reason"`
 	} `json:"result"`
 }
 
@@ -689,8 +737,10 @@ func (event *antigravityStreamEvent) reviewResult() (string, error) {
 	if event.Result.Status != "SUCCESS" {
 		return "", fmt.Errorf("antigravity ended with status %q: %s", event.Result.Status, event.Result.Error)
 	}
-	response := strings.TrimSpace(event.Result.Response)
-	return response, nil
+	if event.Result.FinishedReason == "print_timeout" {
+		return "", errAntigravityPrintTimeout
+	}
+	return strings.TrimSpace(event.Result.Response), nil
 }
 
 func init() {

@@ -680,6 +680,13 @@ func TestFormatter_Gemini(t *testing.T) {
 			empty: true,
 		},
 		{
+			name: "LegacyStringResult",
+			events: []string{
+				`{"type":"result","result":"done","status":"success"}`,
+			},
+			empty: true,
+		},
+		{
 			name: "SanitizesGeminiText",
 			events: []string{
 				toJSON(geminiMessageEvent{

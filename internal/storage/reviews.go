@@ -276,6 +276,7 @@ type ReusableSessionQuery struct {
 	PanelMemberName       string
 	PanelMemberConfigJSON string
 	SourceMachineID       uuid.UUID
+	SessionCLI            string // when set, only sessions created by this CLI
 	CIPRNumber            int
 	Experiment            *ExperimentAssignmentInput
 	Limit                 int
@@ -329,6 +330,10 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		  AND COALESCE(j.panel_member_name, '') = ?
 		  AND COALESCE(j.panel_member_config_json, '') = ?`
 		args = append(args, q.PanelName, q.PanelMemberName, q.PanelMemberConfigJSON)
+	}
+	if q.SessionCLI != "" {
+		query += ` AND COALESCE(j.session_cli, '') = ?`
+		args = append(args, q.SessionCLI)
 	}
 	if q.CIPRNumber > 0 {
 		query += `

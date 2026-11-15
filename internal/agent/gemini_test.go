@@ -406,6 +406,16 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			},
 		},
 		{
+			name: "GeminiDeltaChunksJoinWithoutSeparators",
+			input: `{"type":"message","role":"assistant","content":"{\"passed\":true,\"findings\":[{\"title\":\"split","delta":true}
+{"type":"message","role":"assistant","content":" inside JSON string\"}]}","delta":true}
+{"type":"result","status":"success"}
+`,
+			assertResult: func(t *testing.T, res string) {
+				assert.JSONEq(t, `{"passed":true,"findings":[{"title":"split inside JSON string"}]}`, res)
+			},
+		},
+		{
 			name: "GeminiMessagesWithoutResult",
 			input: `{"type":"message","role":"assistant","content":"First message"}
 {"type":"message","role":"assistant","content":"Second message"}
@@ -413,6 +423,19 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			assertResult: func(t *testing.T, res string) {
 				assert.Equal(t, "First message\nSecond message", res)
 			},
+		},
+		{
+			name: "ReviewTextWithoutCompletionIsRejected",
+			input: `{"type":"message","role":"assistant","content":"{\"passed\":true,\"findings\":[]}","delta":true}
+`,
+			wantErr: errGeminiIncomplete,
+		},
+		{
+			name: "ReviewTextWithErrorCompletionIsRejected",
+			input: `{"type":"message","role":"assistant","content":"{\"passed\":true,\"findings\":[]}","delta":true}
+{"type":"result","status":"error"}
+`,
+			wantErr: errGeminiIncomplete,
 		},
 		{
 			name: "Final message after tool result",
@@ -503,6 +526,11 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			fixture:       "antigravity-quota-result-capture.jsonl",
 			wantErrorText: `antigravity ended with status "ERROR"`,
 		},
+		{
+			name:          "partial result after print timeout",
+			input:         `{"event":"result","result":{"status":"SUCCESS","response":"partial answer","finished_reason":"print_timeout"}}`,
+			wantErrorText: `antigravity print timed out`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := []byte(tc.input)
@@ -525,6 +553,25 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 			assert.Equal(t, tc.wantResponse, response)
 		})
 	}
+}
+
+func TestGeminiAntigravityPrintTimeoutIsAnErrorForAgenticRuns(t *testing.T) {
+	skipIfWindows(t)
+
+	resultCapture, err := os.ReadFile(filepath.Join("testdata", "antigravity-print-timeout-capture.json"))
+	require.NoError(t, err)
+	t.Setenv("AGY_TIMEOUT_RESULT", strings.TrimSpace(string(resultCapture)))
+	script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.2.9"; exit 0; fi
+printf '{"event":"result","result":%s}\n' "$AGY_TIMEOUT_RESULT"
+printf '%s\n' '[agy] print timeout after 1m0s with turn in progress; returning partial output' >&2
+`)
+	agyPath := filepath.Join(filepath.Dir(script), "agy")
+	require.NoError(t, os.Rename(script, agyPath))
+
+	result, err := NewGeminiAgent(agyPath).WithAgentic(true).Review(t.Context(), t.TempDir(), "sha", "prompt", io.Discard)
+	require.ErrorContains(t, err, "antigravity print timed out")
+	assert.Empty(t, result)
 }
 
 func TestResumeFailureStartsFresh(t *testing.T) {
@@ -596,6 +643,12 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			resumeFlag: "--conversation", resumeFixture: "antigravity-quota-result-capture.jsonl", editFile: true, editBeforeTurnResult: true,
 			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
 		},
+		{
+			name: "Antigravity read-only review does not retry a quota error",
+			cli:  "agy", version: "1.2.6", wantError: true, wantErrorText: "Individual quota reached",
+			resumeFlag: "--conversation", resumeFixture: "antigravity-quota-result-capture.jsonl",
+			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withUnsafeAgents(t, tc.unsafe)
@@ -665,9 +718,9 @@ cat "$SUCCESS_FILE"
 			wantCalls := 2
 			if tc.wantError {
 				wantCalls = 1
-				assert.Error(t, err)
-				if tc.wantErrorText != "" && err != nil {
-					assert.ErrorContains(t, err, tc.wantErrorText)
+				require.Error(t, err)
+				if tc.wantErrorText != "" {
+					require.ErrorContains(t, err, tc.wantErrorText)
 				}
 			} else {
 				require.NoError(t, err)
