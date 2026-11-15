@@ -73,6 +73,11 @@ func (w *SessionCaptureWriter) ResetSessionID() error {
 			return err
 		}
 	}
+	return w.RestartSessionCapture()
+}
+
+// RestartSessionCapture scans the next attempt without clearing inherited job metadata.
+func (w *SessionCaptureWriter) RestartSessionCapture() error {
 	w.mu.Lock()
 	w.sessionID = ""
 	w.buf.Reset()

@@ -170,13 +170,20 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	}
 }
 
-// resetUnlessResuming clears captured session state abandoned by a failed
-// attempt, unless the retry resumes the same non-empty session ID.
+// resetUnlessResuming restarts capture for a retry, preserving inherited job
+// metadata when the retry resumes the same non-empty session ID.
 func resetUnlessResuming(output io.Writer, sessionID string) error {
 	if sessionID != "" {
-		return nil
+		return restartSessionCapture(output)
 	}
 	return resetSessionCapture(output)
+}
+
+func restartSessionCapture(output io.Writer) error {
+	if restarter, ok := output.(interface{ RestartSessionCapture() error }); ok {
+		return restarter.RestartSessionCapture()
+	}
+	return nil
 }
 
 func resetSessionCapture(output io.Writer) error {

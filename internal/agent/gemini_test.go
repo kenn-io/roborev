@@ -913,15 +913,23 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name        string
-		lateStderr  bool
-		sessionID   string
-		startedTurn bool
-		wantErr     bool
+		name                string
+		lateStderr          bool
+		sessionID           string
+		fallbackSessionID   string
+		emitFailedSessionID bool
+		startedTurn         bool
+		wantErr             bool
 	}{
 		{name: "read-only fallback"},
 		{name: "fallback captures late stderr", lateStderr: true},
 		{name: "fallback resumes the same session", sessionID: "resumed-model-session"},
+		{
+			name:                "fallback replaces resumed capture",
+			sessionID:           "resumed-model-session",
+			fallbackSessionID:   "fallback-model-session",
+			emitFailedSessionID: true,
+		},
 		{
 			name:      "started resumed turn does not fall back",
 			sessionID: "resumed-model-session", startedTurn: true, wantErr: true,
@@ -932,9 +940,13 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 			argsFile := filepath.Join(t.TempDir(), "args")
 			successFixture := fixture
 			if tc.sessionID != "" {
+				fallbackSessionID := tc.fallbackSessionID
+				if fallbackSessionID == "" {
+					fallbackSessionID = tc.sessionID
+				}
 				contents, readErr := os.ReadFile(fixture)
 				require.NoError(t, readErr)
-				contents = []byte(strings.Replace(string(contents), "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", tc.sessionID, 1))
+				contents = []byte(strings.Replace(string(contents), "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", fallbackSessionID, 1))
 				if tc.startedTurn {
 					resultStart := strings.Index(string(contents), `{"type":"result"`)
 					require.NotEqual(t, -1, resultStart, "captured stream has a terminal result")
@@ -947,6 +959,8 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 			t.Setenv("ARGS_FILE", argsFile)
 			t.Setenv("LATE_STDERR", strconv.FormatBool(tc.lateStderr))
 			t.Setenv("RESUMED_SESSION", strconv.FormatBool(tc.sessionID != ""))
+			t.Setenv("EMIT_FAILED_SESSION_ID", strconv.FormatBool(tc.emitFailedSessionID))
+			t.Setenv("FAILED_SESSION_ID", tc.sessionID)
 			t.Setenv("STARTED_TURN", strconv.FormatBool(tc.startedTurn))
 			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
@@ -959,6 +973,9 @@ done
 if [ "$has_model" = "1" ]; then
   if [ "$RESUMED_SESSION" = "true" ] && [ "$STARTED_TURN" = "true" ]; then
     cat "$SUCCESS_FILE"
+  fi
+  if [ "$EMIT_FAILED_SESSION_ID" = "true" ]; then
+    echo "{\"type\":\"init\",\"session_id\":\"$FAILED_SESSION_ID\"}"
   fi
   if [ "$LATE_STDERR" = "true" ]; then
     echo '{"type":"init","session_id":"failed-model-session"}'
@@ -973,8 +990,11 @@ cat "$SUCCESS_FILE"
 			t.Setenv("SUCCESS_FILE", successFixture)
 
 			a := NewGeminiAgent(scriptPath)
+			var capturedSessionIDs []string
 			resetCalls := 0
-			capture := NewSessionCaptureWriter(io.Discard, nil, func() error {
+			capture := NewSessionCaptureWriter(io.Discard, func(sessionID string) {
+				capturedSessionIDs = append(capturedSessionIDs, sessionID)
+			}, func() error {
 				resetCalls++
 				return nil
 			})
@@ -1004,6 +1024,10 @@ cat "$SUCCESS_FILE"
 				}
 				assert.Equal(t, wantResumeCalls, strings.Count(string(args), "--resume\n"+tc.sessionID+"\n"))
 				assert.Zero(t, resetCalls, "the fallback keeps the resumed conversation's source link")
+				if tc.emitFailedSessionID {
+					assert.Equal(t, []string{tc.sessionID, tc.fallbackSessionID}, capturedSessionIDs)
+					assert.Equal(t, tc.fallbackSessionID, capture.SessionID())
+				}
 			} else {
 				assert.Zero(t, strings.Count(string(args), "--resume\n"))
 				assert.Equal(t, 1, resetCalls, "fresh fallback resets captured session state")
