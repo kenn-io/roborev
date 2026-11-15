@@ -203,26 +203,27 @@ func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit,
 // seedJobs creates a repo at repoPath and enqueues n jobs for it,
 // returning the repo and the list of created jobs.
 func seedJobs(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob) {
-	t.Helper()
-	repo := createRepo(t, db, repoPath)
-	jobs := make([]*ReviewJob, n)
-	for i := range n {
-		sha := fmt.Sprintf("%s-sha%d", filepath.Base(repoPath), i)
-		commit := createCommit(t, db, repo.ID, sha)
-		jobs[i] = enqueueJob(t, db, repo.ID, commit.ID, sha)
-	}
-	return repo, jobs
+	return seedJobsWithEnqueue(t, db, repoPath, n, enqueueJob)
 }
 
 func seedJobsBeforeSessionCLIMigration(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob) {
+	return seedJobsWithEnqueue(t, db, repoPath, n, enqueueJobBeforeSessionCLIMigration)
+}
+
+func seedJobsWithEnqueue(
+	t *testing.T,
+	db *DB,
+	repoPath string,
+	n int,
+	enqueue func(*testing.T, *DB, int64, int64, string) *ReviewJob,
+) (*Repo, []*ReviewJob) {
 	t.Helper()
 	repo := createRepo(t, db, repoPath)
 	jobs := make([]*ReviewJob, n)
 	for i := range n {
 		sha := fmt.Sprintf("%s-sha%d", filepath.Base(repoPath), i)
 		commit := createCommit(t, db, repo.ID, sha)
-		job := enqueueJobBeforeSessionCLIMigration(t, db, repo.ID, commit.ID, sha)
-		jobs[i] = job
+		jobs[i] = enqueue(t, db, repo.ID, commit.ID, sha)
 	}
 	return repo, jobs
 }

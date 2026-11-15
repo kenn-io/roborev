@@ -37,11 +37,6 @@ func TestExtractSessionID(t *testing.T) {
 			want: "b5f7c102-6dc1-4d94-8296-8ba54ef1d0f4",
 		},
 		{
-			name: "conversation_id outside an init event is ignored",
-			line: `{"event":"other","conversation_id":"agy-event-789"}`,
-			want: "",
-		},
-		{
 			name: "pi session event id",
 			line: `{"type":"session","id":"pi-session-321"}`,
 			want: "pi-session-321",

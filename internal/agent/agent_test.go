@@ -640,9 +640,6 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 				CaptureArgs: true,
 				StdoutLines: []string{jsonOutput},
 			}
-			if tt.name == "gemini" {
-				opts.Version = "0.34.0"
-			}
 			mock := mockAgentCLI(t, opts)
 
 			agent := tt.factory(mock.CmdPath).WithModel(tt.testModel)

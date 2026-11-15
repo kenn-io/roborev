@@ -126,16 +126,19 @@ func TestFormatterTTYRendersPlainText(t *testing.T) {
 func TestRenderLogWithPreservesUnknownEventJSONForOtherAgents(t *testing.T) {
 	const unknownEvent = `{"event":"retrying","attempt":2}`
 	const antigravityEvent = `{"event":"init","conversation_id":"session-123"}`
-	for _, agent := range []string{"claude", "codex", "gemini"} {
-		t.Run(agent, func(t *testing.T) {
-			line := unknownEvent
-			if agent != "gemini" {
-				line = antigravityEvent
-			}
+	tests := []struct {
+		name, agent, line string
+	}{
+		{name: "claude Antigravity event", agent: "claude", line: antigravityEvent},
+		{name: "codex Antigravity event", agent: "codex", line: antigravityEvent},
+		{name: "gemini unknown event", agent: "gemini", line: unknownEvent},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			var output bytes.Buffer
-			fmtr := New(&output, true, DecoderForAgent(agent))
-			require.NoError(t, RenderLogWith(strings.NewReader(line+"\n"), fmtr))
-			assert.Contains(t, output.String(), line)
+			fmtr := New(&output, true, DecoderForAgent(tc.agent))
+			require.NoError(t, RenderLogWith(strings.NewReader(tc.line+"\n"), fmtr))
+			assert.Contains(t, output.String(), tc.line)
 		})
 	}
 }

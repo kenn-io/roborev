@@ -1904,8 +1904,15 @@ func TestSaveJobSessionIDWithCLI_ReplacesSuccessfulResume(t *testing.T) {
 		return sessionID.String, sessionCLI.String, resumed, resumeSource.String
 	}
 
-	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-A", "fresh-session", "gemini"))
+	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-A", "inherited-session", "gemini"))
 	sessionID, sessionCLI, resumed, resumeSource := readSession()
+	assert.Equal(t, "inherited-session", sessionID)
+	assert.Equal(t, "gemini", sessionCLI)
+	assert.Equal(t, 1, resumed)
+	assert.Equal(t, source.String(), resumeSource)
+
+	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-A", "fresh-session", "gemini"))
+	sessionID, sessionCLI, resumed, resumeSource = readSession()
 	assert.Equal(t, "fresh-session", sessionID)
 	assert.Equal(t, "gemini", sessionCLI)
 	assert.Zero(t, resumed)

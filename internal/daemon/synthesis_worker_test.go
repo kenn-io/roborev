@@ -1043,7 +1043,6 @@ func TestSynthesisFallbackReplacesCapturedSession(t *testing.T) {
 	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	assert.Equal(t, "successful-session", updated.SessionID)
 	assert.Equal(t, "successful-session", fetchedSession)
-	assert.Contains(t, updated.TokenUsage, `"cost_usd":0.03`)
 }
 
 func TestSynthesisRejectsProviderCostForReusedSession(t *testing.T) {

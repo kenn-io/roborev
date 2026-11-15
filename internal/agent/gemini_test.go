@@ -24,7 +24,7 @@ func writeGeminiTempCommand(t *testing.T, script string) string {
 	require.Len(t, parts, 2, "Gemini command fixture needs a shebang and body")
 	body := parts[1]
 	if !strings.Contains(body, `"$1" = "--version"`) {
-		body = "if [ \"$1\" = \"--version\" ]; then echo 0.34.0; exit 0; fi\n" + body
+		body = mockCLIVersionBlock("0.34.0") + body
 	}
 	return writeTempCommand(t, parts[0]+"\ncase \"$1\" in *etxtbsy*) exit 0;; esac\n"+body)
 }
@@ -79,7 +79,11 @@ func TestVersionGatesFeatures(t *testing.T) {
 			stdinFile := filepath.Join(t.TempDir(), "stdin")
 			t.Setenv("STDIN_FILE", stdinFile)
 			script := writeGeminiTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "$CLI_VERSION"; exit 0; fi
+if [ "$1" = "--version" ]; then
+  echo "$CLI_VERSION"
+  if [ "$CLI_VERSION" = "unknown" ]; then exit 1; fi
+  exit 0
+fi
 echo call >> "$CALLS_FILE"
 cat > "$STDIN_FILE"
 printf '%s\n' "$@" > "$ARGS_FILE"
@@ -379,6 +383,17 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			},
 		},
 		{
+			name: "GeminiResultEvent",
+			input: `{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"}
+{"type":"message","role":"assistant","content":"Working on it..."}
+{"type":"result","result":"Done! Review complete."}
+`,
+			assertResult: func(t *testing.T, res string) {
+				assert.Equal(t, "Done! Review complete.", res)
+			},
+			wantOutput: true,
+		},
+		{
 			name: "GeminiMessageFormat",
 			input: `{"type":"message","timestamp":"2026-01-19T17:49:13.445Z","role":"assistant","content":"Changes:\n- Created file.ts","delta":true}
 {"type":"message","timestamp":"2026-01-19T17:49:13.447Z","role":"assistant","content":" with filtering logic.","delta":true}
@@ -391,38 +406,22 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 			},
 		},
 		{
-			name: "AssistantFallback",
-			input: `{"type":"system","subtype":"init"}
-{"type":"assistant","message":{"content":"First message"}}
-{"type":"assistant","message":{"content":"Second message"}}
+			name: "GeminiMessagesWithoutResult",
+			input: `{"type":"message","role":"assistant","content":"First message"}
+{"type":"message","role":"assistant","content":"Second message"}
 `,
 			assertResult: func(t *testing.T, res string) {
-				want := "First message\nSecond message"
-				assert.Equal(t, want, res)
+				assert.Equal(t, "First message\nSecond message", res)
 			},
 		},
 		{
-			name: "AssistantFallbackDropsNarrationBeforeToolUse",
-			input: `{"type":"system","subtype":"init"}
-{"type":"assistant","message":{"content":"I am checking the relevant files first."}}
-{"type":"tool","name":"Read"}
-{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Final finding."}}
+			name: "Final message after tool result",
+			input: `{"type":"message","role":"assistant","content":"## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."}
+{"type":"tool_result","tool_id":"tool-1","status":"success","output":"file contents"}
+{"type":"message","role":"assistant","content":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}
 `,
 			assertResult: func(t *testing.T, res string) {
-				want := "## Review Findings\n- **Severity**: Low; **Problem**: Final finding."
-				assert.Equal(t, want, res)
-			},
-		},
-		{
-			name: "AssistantFallbackPrefersFinalPostToolSegment",
-			input: `{"type":"system","subtype":"init"}
-{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."}}
-{"type":"tool","name":"Read"}
-{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}}
-`,
-			assertResult: func(t *testing.T, res string) {
-				want := "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."
-				assert.Equal(t, want, res)
+				assert.Equal(t, "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.", res)
 			},
 		},
 		{
@@ -433,10 +432,8 @@ still not json
 			wantErr: errNoStreamJSON,
 		},
 		{
-			name: "EmptyResult",
-			input: `{"type":"system","subtype":"init"}
-{"type":"tool","name":"Read"}
-`,
+			name:  "EmptyResult",
+			input: `{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"}`,
 			assertResult: func(t *testing.T, res string) {
 				assert.Empty(t, res)
 			},
@@ -583,7 +580,11 @@ func TestResumeFailureStartsFresh(t *testing.T) {
 			t.Setenv("RESUME_ERROR", tc.resumeError)
 			t.Setenv("RESUME_SESSION", tc.resumeSession)
 			t.Setenv("ARGS_FILE", argsFile)
-			successFixture, err := filepath.Abs(filepath.Join("testdata", tc.successFixture))
+			successFixtureName := tc.successFixture
+			if successFixtureName == "" {
+				successFixtureName = "gemini-stream.jsonl"
+			}
+			successFixture, err := filepath.Abs(filepath.Join("testdata", successFixtureName))
 			require.NoError(t, err)
 			t.Setenv("SUCCESS_FILE", successFixture)
 			initFixture := ""
@@ -861,9 +862,7 @@ yes "This is a long stderr line that will contribute to the total size" | head -
 		{
 			name: "StreamJSONNoResult",
 			script: `#!/bin/sh
-echo '{"type":"system","subtype":"init"}'
-echo '{"type":"tool","name":"Read","input":{"path":"foo.go"}}'
-echo '{"type":"tool_result","content":"file contents here"}'
+echo '{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2","model":"gemini-2.5-flash"}'
 `,
 			wantResult: "No review output generated",
 		},
@@ -907,11 +906,10 @@ func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		name       string
-		agentic    bool
 		lateStderr bool
 	}{
 		{name: "read-only fallback"},
-		{name: "agentic fallback captures late stderr", agentic: true, lateStderr: true},
+		{name: "fallback captures late stderr", lateStderr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			callsFile := filepath.Join(t.TempDir(), "calls")
@@ -931,14 +929,13 @@ if [ "$has_model" = "1" ]; then
     exec 1>&-
     sleep 0.05
   fi
-  echo '{"type":"init","session_id":"failed-model-session"}'
   echo "Error: model is not found for API version v1" >&2
   exit 1
 fi
 cat "$SUCCESS_FILE"
 `)
 
-			a := NewGeminiAgent(scriptPath).WithAgentic(tc.agentic)
+			a := NewGeminiAgent(scriptPath)
 			capture := NewSessionCaptureWriter(io.Discard, nil, nil)
 			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
 			require.NoError(t, err)
