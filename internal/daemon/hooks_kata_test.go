@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"log"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -142,21 +143,36 @@ func TestRunKataHookKeysLandedCommitIssuesByCommit(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	parent := repo.CommitFile("app.txt", "one\n", "initial")
 	landed := repo.CommitFile("app.txt", "two\n", "change")
-	file := func(run, source string) kata.CreateReq {
+	repo.Run("remote", "add", "origin", "https://github.com/acme/api.git")
+	// A fork of the same history: same commits and name, another repository.
+	fork := filepath.Join(t.TempDir(), "fork")
+	out, err := exec.CommandContext(t.Context(), "git", "clone", "--quiet", repo.Path(), fork).CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	out, err = exec.CommandContext(t.Context(), "git", "-C", fork, "remote", "set-url", "origin",
+		"https://github.com/fork/api.git").CombinedOutput()
+	require.NoError(t, err, "%s", out)
+
+	file := func(run, source, name, repoPath string) kata.CreateReq {
 		reqs := runKataHookFor(t, Event{
-			Type: "review.completed", Verdict: "F", JobID: 9, JobUUID: testUUIDPtr(run), RepoName: "api",
+			Type: "review.completed", Verdict: "F", JobID: 9, JobUUID: testUUIDPtr(run),
+			Repo: repoPath, RepoName: name,
 			SHA: parent + ".." + landed, PanelRole: storage.PanelRoleSynthesis, Source: source,
-		}, repo.Path())
+		}, repoPath)
 		require.Len(t, reqs, 1)
 		return reqs[0]
 	}
 
-	landedKey := "roborev:landed:api:" + landed + ":review.completed"
-	assert.Equal(landedKey, file("first run", storage.JobSourceCIBranch).IdempotencyKey)
-	assert.Equal(landedKey, file("rerun", storage.JobSourceCIBranch).IdempotencyKey,
+	first := file("first run", storage.JobSourceCIBranch, "api", repo.Path()).IdempotencyKey
+	assert.Contains(first, ":"+landed+":review.completed")
+	assert.NotContains(first, "acme", "repository locations stay out of the issue tracker's key")
+	assert.Equal(first, file("rerun", storage.JobSourceCIBranch, "api", repo.Path()).IdempotencyKey,
 		"a rerun reuses the landed commit's issue")
+	assert.Equal(first, file("renamed", storage.JobSourceCIBranch, "service", repo.Path()).IdempotencyKey,
+		"renaming the repository keeps its issue")
+	assert.NotEqual(first, file("fork", storage.JobSourceCIBranch, "api", fork).IdempotencyKey,
+		"a same-named repository with the same commit files its own issue")
 	assert.Equal("roborev:job:"+testUUID("first run").String()+":review.completed", //nolint:forbidigo // Kata idempotency key text boundary.
-		file("first run", storage.JobSourceCI).IdempotencyKey, "other reviews keep one issue per job")
+		file("first run", storage.JobSourceCI, "api", repo.Path()).IdempotencyKey, "other reviews keep one issue per job")
 }
 
 func TestRunKataHookLinksMergeCommitPullRequest(t *testing.T) {

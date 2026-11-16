@@ -268,8 +268,9 @@ project. Every issue receives the `roborev` label plus a marker label
 (`review-failed` or `review-finding`) and any extra `labels` you configure.
 roborev uses an idempotency key per job/event so rerunning a job does not create
 a duplicate Kata issue. A review of a commit that landed on the default branch
-is keyed by that commit, so rerunning it reuses the commit's issue. Rerunning
-any other review panel starts new jobs and can open another issue.
+is keyed by its repository and commit, so rerunning it or renaming the
+repository with `roborev repo rename` reuses the commit's issue. Rerunning any
+other review panel starts new jobs and can open another issue.
 
 The `kata` CLI must be on `PATH`. If it is missing, or the repo is not bound to
 a Kata project, the hook is skipped. If you explicitly configured the hook but

@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -470,6 +472,9 @@ type kataCommit struct {
 	Subject        string
 	URL            string
 	PullRequestURL string
+	// RepoIdentity is the repository's roborev identity, which survives
+	// `roborev repo rename` and tells same-named repositories apart.
+	RepoIdentity string
 }
 
 // kataEventFiles reports whether an event should open an issue: a failed
@@ -530,8 +535,15 @@ func kataCreateRequest(hook config.HookConfig, event Event, commit kataCommit) (
 	}
 	if event.Source == storage.JobSourceCIBranch {
 		// Rerunning a landed commit's review queues new jobs. Keying on the
-		// commit keeps one findings issue and one failure issue per commit.
-		idempotencyKey = fmt.Sprintf("roborev:landed:%s:%s:%s", repoName, commit.SHA, event.Type)
+		// repository and commit keeps one findings issue and one failure
+		// issue per commit. The identity is hashed so local paths and remote
+		// URLs stay out of the key the issue tracker stores.
+		repoKey := commit.RepoIdentity
+		if repoKey == "" {
+			repoKey = "name:" + repoName
+		}
+		sum := sha256.Sum256([]byte(repoKey))
+		idempotencyKey = fmt.Sprintf("roborev:landed:%x:%s:%s", sum[:16], commit.SHA, event.Type)
 	}
 
 	return kata.CreateReq{
@@ -600,6 +612,10 @@ var pullRequestSubject = regexp.MustCompile(`\(#(\d+)\)$|^Merge pull request #(\
 // whose URL layout is unknown.
 func lookupKataCommit(ctx context.Context, workdir string, event Event) kataCommit {
 	commit := kataCommit{SHA: reviewedHead(event.SHA)}
+	// The main checkout owns the identity; a linked worktree shares it.
+	if root := cmp.Or(event.Repo, workdir); root != "" {
+		commit.RepoIdentity = config.ResolveRepoIdentity(root, nil)
+	}
 	if workdir == "" || !gitpkg.LooksLikeSHA(commit.SHA) {
 		return commit
 	}
