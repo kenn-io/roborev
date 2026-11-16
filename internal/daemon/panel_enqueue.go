@@ -366,8 +366,8 @@ func (s *Server) descriptorForSingleCommit(
 		return targetDescriptor{}, out
 	}
 
-	commit, err := s.db.GetOrCreateCommit(
-		in.repo.ID, sha, info.Author, info.Subject, info.Timestamp,
+	commit, err := s.db.GetOrCreateCommitContext(
+		ctx, in.repo.ID, sha, info.Author, info.Subject, info.Timestamp,
 	)
 	if err != nil {
 		out, _ := rawJSONOutput(http.StatusInternalServerError,

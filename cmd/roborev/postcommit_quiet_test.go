@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -120,4 +121,41 @@ func TestPostCommitQuietPeriodScheduleFailureEnqueuesRange(t *testing.T) {
 	assert.Empty(t, stderr)
 	require.Len(t, requests, 1)
 	assert.Equal(t, base+".."+repo.Run("rev-parse", "HEAD"), (<-requests).GitRef)
+}
+
+func TestPostCommitQuietFlushReportsUnqueuedRange(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	requests := make(chan daemon.EnqueueRequest, 10)
+	var fail atomic.Bool
+	fail.Store(true)
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		if fail.Load() {
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+	mux.HandleFunc("/api/post-commit/schedule", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	writeRoborevConfig(t, repo, `post_commit_quiet_period = "5m"`)
+	base := repo.CommitFile("base.txt", "base", "base")
+	head := repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	branch := repo.Run("branch", "--show-current")
+
+	// The daemon runs the quiet flush and reads its exit status: an error
+	// tells it to retry, since the range stays pending.
+	_, _, err = executePostCommitCmd("--repo", repo.Dir, "--flush", "--flush-branch", branch, "--quiet-head", head)
+	require.Error(t, err)
+	assert.Equal(t, base+".."+head, (<-requests).GitRef)
+
+	fail.Store(false)
+	_, _, err = executePostCommitCmd("--repo", repo.Dir, "--flush", "--flush-branch", branch, "--quiet-head", head)
+	require.NoError(t, err)
+	assert.Equal(t, base+".."+head, (<-requests).GitRef, "the retry flushes the same pending range")
 }

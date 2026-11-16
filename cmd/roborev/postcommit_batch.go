@@ -883,3 +883,43 @@ func advancePostCommitBatch(
 	state.Branches[decision.Branch] = entry
 	return savePostCommitBatchState(decision.statePath, state)
 }
+
+// rememberFailedPostCommit records the HEAD commit of a failed immediate
+// review as a pending range for its branch: the checkpoint is HEAD's parent
+// and the tip is HEAD. The next hook run drains that range together with its
+// own commit, and a push flushes it, so a commit the daemon could not accept
+// still gets a review. It reports whether a range is pending. The caller must
+// hold the batch lock. A detached HEAD or a root commit has no branch range to
+// record. If the daemon queued the commit but its reply was lost, the commit is
+// reviewed again with the next range; a redundant review is the cost of never
+// dropping one.
+func rememberFailedPostCommit(ctx context.Context, root string) (bool, error) {
+	branch := git.GetCurrentBranch(root)
+	if branch == "" {
+		return false, nil
+	}
+	head, err := git.ResolveSHACtx(ctx, root, "refs/heads/"+branch)
+	if err != nil {
+		return false, err
+	}
+	checkpoint, err := git.ResolveSHACtx(ctx, root, head+"^1")
+	if err != nil {
+		return false, nil
+	}
+	statePath, err := postCommitBatchStatePath(root)
+	if err != nil {
+		return false, err
+	}
+	state, _, err := loadPostCommitBatchState(statePath)
+	if err != nil {
+		return false, err
+	}
+	if _, pending := state.Branches[branch]; pending {
+		return true, nil
+	}
+	state.Branches[branch] = postCommitBatchEntry{Checkpoint: checkpoint, Tip: head}
+	if err := savePostCommitBatchState(statePath, state); err != nil {
+		return false, err
+	}
+	return true, nil
+}

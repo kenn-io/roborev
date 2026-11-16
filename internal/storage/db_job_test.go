@@ -334,6 +334,47 @@ func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
 	assert.Equal(t, env.job.ID, result.job.ID)
 }
 
+func TestClaimJobWithEmptyQueueSkipsWriteLock(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	lockConn, err := db.Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lockConn.Close()) })
+	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = lockConn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK") })
+
+	// Another writer holds the lock. With nothing queued, an idle worker's
+	// claim must not queue behind it; a claim that waited would hit this
+	// deadline and fail.
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	job, err := db.ClaimJobContext(ctx, "idle-worker")
+	require.NoError(t, err)
+	assert.Nil(t, job)
+}
+
+func TestClaimJobSkipsWriteLockWhileQueuedJobWaitsForRetry(t *testing.T) {
+	t.Parallel()
+	env := setupJobEnv(t, "/tmp/claim-retry-wait", "claim-retry-wait")
+	_, err := env.db.ExecContext(t.Context(),
+		`UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`,
+		preciseTimestampAt(time.Now().Add(time.Hour)), env.job.ID)
+	require.NoError(t, err)
+	lockConn, err := env.db.Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lockConn.Close()) })
+	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = lockConn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK") })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	job, err := env.db.ClaimJobContext(ctx, "idle-worker")
+	require.NoError(t, err)
+	assert.Nil(t, job)
+}
+
 func TestJobFailure(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/test-repo", "def456")
@@ -2573,7 +2614,7 @@ func TestEnqueuePostCommitJobDeduplicatesNonCanceled(t *testing.T) {
 			require.NoError(t, err)
 			setStatus(t, db, existing.ID, status)
 
-			job, duplicate, err := db.EnqueuePostCommitJob(EnqueueOpts{
+			job, duplicate, err := db.EnqueuePostCommitJob(t.Context(), EnqueueOpts{
 				RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
 			})
 			require.NoError(t, err)
@@ -2603,7 +2644,7 @@ func TestEnqueuePostCommitJobAllowsCanceledReplacement(t *testing.T) {
 	require.NoError(t, err)
 	setStatus(t, db, existing.ID, JobStatusCanceled)
 
-	replacement, duplicate, err := db.EnqueuePostCommitJob(EnqueueOpts{
+	replacement, duplicate, err := db.EnqueuePostCommitJob(t.Context(), EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
 	})
 	require.NoError(t, err)
@@ -2611,12 +2652,44 @@ func TestEnqueuePostCommitJobAllowsCanceledReplacement(t *testing.T) {
 	assert.False(t, duplicate)
 	assert.Equal(t, JobSourcePostCommit, replacement.Source)
 
-	again, duplicate, err := db.EnqueuePostCommitJob(EnqueueOpts{
+	again, duplicate, err := db.EnqueuePostCommitJob(t.Context(), EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
 	})
 	require.NoError(t, err)
 	assert.Nil(t, again)
 	assert.True(t, duplicate)
+}
+
+func TestEnqueuePostCommitJobAbandonedByCallerInsertsNothing(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, "/tmp/post-commit-abandoned")
+	commit := createCommit(t, db, repo.ID, "abc123")
+	lockConn, err := db.Conn(t.Context())
+	require.NoError(t, err)
+	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+
+	// The hook stops waiting while another writer holds the lock. The
+	// enqueue must leave the write queue rather than insert a review the
+	// hook will request again on its next run.
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	job, _, err := db.EnqueuePostCommitJob(ctx, EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Nil(t, job)
+
+	_, err = lockConn.ExecContext(t.Context(), "ROLLBACK")
+	require.NoError(t, err)
+	require.NoError(t, lockConn.Close())
+	var count int
+	require.NoError(t, db.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repo.ID,
+	).Scan(&count))
+	assert.Zero(t, count)
 }
 
 // Listings treat a non-NULL verdict_bool as proof that a non-empty review

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"time"
 )
@@ -8,7 +9,13 @@ import (
 // GetOrCreateCommit finds or creates a commit record.
 // Lookups are by (repo_id, sha) to handle the same SHA in different repos.
 func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, timestamp time.Time) (*Commit, error) {
-	_, err := db.Exec(`
+	return db.GetOrCreateCommitContext(context.Background(), repoID, sha, author, subject, timestamp)
+}
+
+// GetOrCreateCommitContext is GetOrCreateCommit with caller-controlled
+// cancellation, which also bounds the wait for the write lock.
+func (db *DB) GetOrCreateCommitContext(ctx context.Context, repoID int64, sha, author, subject string, timestamp time.Time) (*Commit, error) {
+	_, err := db.ExecContext(ctx, `
 		INSERT INTO commits (repo_id, sha, author, subject, timestamp)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(repo_id, sha) DO NOTHING
@@ -17,7 +24,7 @@ func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, times
 		return nil, err
 	}
 
-	return scanCommit(db.QueryRow(`
+	return scanCommit(db.QueryRowContext(ctx, `
 		SELECT id, repo_id, sha, author, subject, timestamp, created_at
 		FROM commits WHERE repo_id = ? AND sha = ?
 	`, repoID, sha))

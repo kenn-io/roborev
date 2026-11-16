@@ -78,6 +78,78 @@ func TestPostCommitWarnsWhenDaemonRejectsCommit(t *testing.T) {
 		stderr)
 }
 
+func TestPostCommitFailedImmediateEnqueueRetriesWithNextCommit(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	requests := make(chan daemon.EnqueueRequest, 3)
+	var calls atomic.Int32
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		if calls.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"daemon busy"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CommitFile("one.txt", "one", "one")
+	_, stderr, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err, "a hook failure must not fail the commit")
+	assert.Equal(t, "HEAD", (<-requests).GitRef)
+	assert.Equal(t,
+		"roborev: commit not queued for review: daemon busy\n"+
+			"roborev: the next commit or push will retry it\n"+
+			"roborev: run 'roborev doctor' to diagnose\n",
+		stderr)
+
+	head := repo.CommitFile("two.txt", "two", "two")
+	_, stderr, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
+	assert.Equal(t, base+".."+head, (<-requests).GitRef,
+		"the retry reviews the missed commit together with the new one")
+
+	repo.CommitFile("three.txt", "three", "three")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, "HEAD", (<-requests).GitRef, "a successful retry clears the pending range")
+}
+
+func TestPostCommitFailedImmediateEnqueueFlushesOnPush(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	requests := make(chan daemon.EnqueueRequest, 2)
+	var calls atomic.Int32
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		if calls.Add(1) == 1 {
+			http.Error(w, "temporary failure", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	base := repo.CommitFile("base.txt", "base", "base")
+	head := repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	<-requests
+
+	branch := repo.Run("branch", "--show-current")
+	input := strings.NewReader(fmt.Sprintf(
+		"refs/heads/%s %s refs/heads/%s %s\n",
+		branch, head, branch, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+	require.Len(t, requests, 1, "the push flushes the commit the hook missed")
+	assert.Equal(t, base+".."+head, (<-requests).GitRef)
+}
+
 func TestPostCommitBranchReview(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueue(t, mux)
