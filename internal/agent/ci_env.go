@@ -12,6 +12,8 @@ type ciReviewContextKey struct{}
 
 // WithCIReview marks agent work whose children must not inherit Git publishing
 // credentials or helpers. The parent keeps its environment for comment posting.
+// CI reviews run in the checkout under review, so the context is also marked
+// with WithUntrustedCheckout.
 func WithCIReview(ctx context.Context) (context.Context, func(), error) {
 	dir, err := os.MkdirTemp("", "roborev-ci-git-")
 	if err != nil {
@@ -24,7 +26,7 @@ func WithCIReview(ctx context.Context) (context.Context, func(), error) {
 		cleanup()
 		return nil, nil, fmt.Errorf("prepare CI Git config: %w", err)
 	}
-	return context.WithValue(ctx, ciReviewContextKey{}, dir), cleanup, nil
+	return WithUntrustedCheckout(context.WithValue(ctx, ciReviewContextKey{}, dir)), cleanup, nil
 }
 
 func ciReviewDir(ctx context.Context) string {

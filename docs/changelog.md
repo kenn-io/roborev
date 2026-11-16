@@ -13,6 +13,13 @@ All notable changes to roborev, grouped by minor release.
     workers no longer take the database write lock to find an empty queue, so
     enqueues wait less, and a daemon on a busy host no longer exits during
     startup because its first readiness check was slow.
+- Stop CI reviews from running hooks, MCP servers, and plugins that a pull
+    request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
+    Cursor, Grok, Copilot, and Kilo now skip project agent configuration in
+    `roborev ci review` and daemon CI reviews. Codex and Pi fail the review when
+    the installed CLI cannot skip it. See
+    [Agent configuration in the pull request](integrations/github.md#agent-configuration-in-the-pull-request)
+    for the agents that cannot.
 - Droid reviews use the configured model, such as `model`, `review_model`,
     `backup_model`, or `--model`, by passing it to `droid exec -m`. Set
     `droid_cmd` to run a different Droid executable. When Droid's error output

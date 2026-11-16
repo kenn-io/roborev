@@ -866,6 +866,23 @@ func TestHandleRerunKey_ClearsClosedAndVerdict(t *testing.T) {
 		"rerun job should be visible with hideClosed")
 }
 
+// A skipped job had nothing to review. It has no review to close, so the
+// hide-closed view hides it, and r reruns it after the exclusions change.
+func TestSkippedJobHiddenAndRerunnable(t *testing.T) {
+	t.Parallel()
+	m := newModel(testEndpoint, withExternalIODisabled())
+	m.currentView = viewQueue
+	m.hideClosed = true
+	m.jobs = []storage.ReviewJob{makeJob(11, withStatus(storage.JobStatusSkipped))}
+	m.selectedIdx = 0
+	m.selectedJobID = 11
+	assert.False(t, m.isJobVisible(m.jobs[0]), "skipped jobs have no review to resolve")
+
+	result, _ := m.handleRerunKey()
+
+	assert.Equal(t, storage.JobStatusQueued, result.(model).jobs[0].Status)
+}
+
 func TestRerunResultMsg_RestoresClosedOnFailure(t *testing.T) {
 	t.Parallel()
 	verdict := "FAIL"

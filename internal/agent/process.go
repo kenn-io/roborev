@@ -89,6 +89,7 @@ func configureSubprocess(ctx context.Context, cmd *exec.Cmd, opts ...subprocessO
 	if isCIReview(ctx) {
 		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), cmd.Dir)
 	}
+	cmd.Env = untrustedCheckoutEnv(ctx, cmd.Env)
 
 	tracker := &subprocessTracker{}
 	// Ensure Cancel is always set. Go's exec.CommandContext only provides a

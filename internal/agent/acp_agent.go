@@ -221,6 +221,7 @@ func (a *ACPAgent) runPrompt(
 	if isCIReview(ctx) {
 		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), repoPath)
 	}
+	cmd.Env = untrustedCheckoutEnv(ctx, cmd.Env)
 
 	// Keep the agent's stderr so a crash or startup failure explains itself
 	// instead of surfacing only as a closed ACP connection. This defer runs

@@ -312,7 +312,7 @@ func (m model) isJobVisible(job storage.ReviewJob) bool {
 		return false
 	}
 	if m.hideClosed {
-		// Hide closed reviews, failed jobs, and canceled jobs
+		// Hide closed reviews and failed, canceled, and skipped jobs
 		// Check pendingClosed first for optimistic updates (avoids flash on filter)
 		if pending, ok := m.pendingClosed[job.ID]; ok {
 			if pending.newState {
@@ -321,7 +321,8 @@ func (m model) isJobVisible(job storage.ReviewJob) bool {
 		} else if job.Closed != nil && *job.Closed {
 			return false
 		}
-		if job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {
+		if job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled ||
+			job.Status == storage.JobStatusSkipped {
 			return false
 		}
 	}

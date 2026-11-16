@@ -560,3 +560,77 @@ done
 		})
 	}
 }
+
+// TestPiUntrustedCheckoutIgnoresProjectFiles runs each Pi entry point in an
+// untrusted checkout whose .pi/settings.json lists the schema package.
+func TestPiUntrustedCheckoutIgnoresProjectFiles(t *testing.T) {
+	skipIfWindows(t)
+	writePi := func(t *testing.T, help string) (string, string) {
+		argsFile := filepath.Join(t.TempDir(), "args.txt")
+		return writeTempCommand(t, fmt.Sprintf(`#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; --help) echo %[2]q; exit 0;; esac
+: > %[1]q
+prev=""
+for arg in "$@"; do
+  printf '%%s\n' "$arg" >> %[1]q
+  if [ "$prev" = "--json-output" ]; then printf '{}\n' > "$arg"; fi
+  prev="$arg"
+done
+echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}'
+`, argsFile, help)), argsFile
+	}
+	calls := []struct {
+		name string
+		run  func(ctx context.Context, a *PiAgent, repo string) error
+	}{
+		{name: "Review", run: func(ctx context.Context, a *PiAgent, repo string) error {
+			_, err := a.Review(ctx, repo, "HEAD", "review", nil)
+			return err
+		}},
+		{name: "ReviewWithSchema", run: func(ctx context.Context, a *PiAgent, repo string) error {
+			_, err := a.ReviewWithSchema(ctx, repo, "HEAD", "review", jsonRaw(`{"type":"object"}`), nil)
+			return err
+		}},
+		{name: "ClassifyWithSchema", run: func(ctx context.Context, a *PiAgent, repo string) error {
+			_, err := a.ClassifyWithSchema(ctx, repo, "HEAD", "classify", jsonRaw(`{"type":"object"}`), nil)
+			return err
+		}},
+	}
+	for _, call := range calls {
+		t.Run(call.name, func(t *testing.T) {
+			t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+			repo := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, ".pi"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(repo, ".pi", "settings.json"),
+				[]byte(`{"packages":["`+config.DefaultPiJSONSchemaExtension+`"]}`), 0o600))
+
+			cli, argsFile := writePi(t, "--no-approve --no-session")
+			require.NoError(t, call.run(t.Context(), NewPiAgent(cli), repo))
+			assert.NotContains(t, readLineFile(t, argsFile), "--no-approve")
+
+			cli, argsFile = writePi(t, "--no-approve --no-session")
+			require.NoError(t, call.run(WithUntrustedCheckout(t.Context()), NewPiAgent(cli), repo))
+			args := readLineFile(t, argsFile)
+			assert.Contains(t, args, "--no-approve")
+			if call.name == "ClassifyWithSchema" {
+				assert.Contains(t, args, "--no-session")
+				assert.NotContains(t, args, "--session-dir")
+			} else {
+				// A project sessionDir must not choose where the session is
+				// saved, so the run names Pi's default directory for the cwd.
+				want := filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "sessions",
+					"--"+strings.NewReplacer("/", "-", ":", "-").Replace(strings.TrimPrefix(repo, "/"))+"--")
+				assert.Equal(t, want, argAfter(args, "--session-dir"))
+				assert.NotContains(t, args, "--no-session")
+			}
+			if call.name == "ReviewWithSchema" {
+				// The checkout's package list does not count once Pi ignores it.
+				assert.Equal(t, config.DefaultPiJSONSchemaExtension, argAfter(args, "--extension"))
+			}
+
+			cli, _ = writePi(t, "--no-session")
+			err := call.run(WithUntrustedCheckout(t.Context()), NewPiAgent(cli), repo)
+			require.ErrorContains(t, err, "--no-approve")
+		})
+	}
+}

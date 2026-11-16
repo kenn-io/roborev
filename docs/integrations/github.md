@@ -1554,6 +1554,48 @@ isolation. The existing agent read-only tool permissions still apply. Regenerate
 existing workflows with `roborev init gh-action --force` to disable persisted
 checkout credentials and include Copilot's separate secret when selected.
 
+### Agent configuration in the pull request
+
+CI reviews run the agent inside a checkout of the pull request. This applies to
+`roborev ci review`, GitLab pipelines, and the daemon CI poller, which reviews
+each pull request head in a detached worktree. The pull request author controls
+that checkout. Several agent CLIs load configuration from their working
+directory that runs commands: hooks, MCP servers, and plugins. A hook is not a
+tool call, so read-only tool limits do not stop it.
+
+roborev tells each agent to skip the checkout's own configuration. User-level
+configuration, credentials, and context files such as `CLAUDE.md` still load.
+Local reviews of your own commits are unchanged.
+
+| Agent | What a CI review does |
+| --- | --- |
+| Claude Code | Passes `--setting-sources user --strict-mcp-config`, so `.claude/settings.json` hooks and `.mcp.json` servers are skipped. |
+| Codex | Always passes `--ignore-user-config`, which drops the user config's project trust list, so `.codex/config.toml` is skipped. Codex without that flag fails the review. |
+| Gemini | Sets `GEMINI_CLI_TRUST_WORKSPACE=false`. With folder trust off in your Gemini user settings, Gemini skips the checkout's settings; with it on, headless Gemini exits instead of reviewing. |
+| Pi | Passes `--no-approve`, and `--session-dir` set to Pi's default session directory so the checkout cannot choose where sessions are saved. Pi without `--no-approve` fails the review. |
+| Cursor | Starts with an empty `CURSOR_DATA_DIR`, so saved workspace trust does not apply and Cursor refuses the untrusted checkout. |
+| Grok | Sets `GROK_FOLDER_TRUST=1`, so folder trust stays on. A folder you trusted before is still trusted. |
+| Copilot | Removes `COPILOT_ALLOW_ALL` and the `GITHUB_COPILOT_PROMPT_MODE_*` variables. Prompt mode then skips repository hooks and workspace MCP servers. A folder you trusted before is still trusted. |
+| Kilo | Sets `KILO_DISABLE_PROJECT_CONFIG=1`, which skips project config, plugins, and MCP servers. |
+| Muse | Already runs non-agentic reviews in a private home without trusted workspaces. |
+
+Some agents have no way to skip project configuration. Do not use them to review
+pull requests from authors you do not trust:
+
+- **OpenCode** gets `OPENCODE_DISABLE_PROJECT_CONFIG=1`, which skips project MCP
+    servers and custom tools. OpenCode still imports plugins from
+    `.opencode/plugins/` and `opencode.json`.
+- **Droid** loads hooks and MCP servers from `.factory/`.
+- **Kiro** loads hooks and MCP servers from `.kiro/`. `roborev ci review`
+    already refuses Kiro.
+- **Antigravity** loads hooks and plugins from `.agents/`.
+- **ACP agents** load whatever the wrapped CLI loads. `claude-agent-acp` loads
+    project settings and hooks.
+
+These settings narrow what an agent reads from the checkout. They are not a
+sandbox. An agent running with `allow_unsafe_agents` can still run shell
+commands that the reviewed code asks for.
+
 ### Customizing via `.roborev.toml`
 
 The `ci review` command reads the repo's `.roborev.toml` for CI-specific

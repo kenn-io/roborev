@@ -191,6 +191,36 @@ func TestCIReviewKeepsCommitsWhenHEADMoves(t *testing.T) {
 	assert.Contains(output, "`"+head[:7]+"`", "the comment names the reviewed commit")
 }
 
+// A CI range with nothing to review is skipped: no agent runs, nothing is
+// posted, and the job exits zero instead of reporting a verdict.
+func TestCIReviewSkipsWhenNothingIsReviewable(t *testing.T) {
+	clearForgeCIEnv(t)
+	testenv.SetDataDir(t)
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.CommitFile(".cache/build.txt", "cached\n", "only excluded files")
+	t.Chdir(repo.Path())
+
+	var calls int
+	reviewer := &agent.FakeAgent{NameStr: "ci-nothing-reviewer", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		calls++
+		return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+	}}
+	agent.RegisterForTest(t, reviewer)
+	cmd := ciCmd()
+	cmd.SetArgs([]string{"review", "--ref", "HEAD^..HEAD", "--agent", reviewer.Name(), "--review-types", "default", "--synthesis-agent", reviewer.Name()})
+
+	var runErr error
+	output := captureOutput(t, func() error {
+		runErr = cmd.Execute()
+		return runErr
+	})
+
+	require.NoError(t, runErr)
+	assert.Equal(t, 0, calls, "no agent runs")
+	assert.Contains(t, output, "roborev: skipped: nothing to review in")
+	assert.NotContains(t, output, "No issues found")
+}
+
 func installFakeGHAuthToken(t *testing.T, token string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
