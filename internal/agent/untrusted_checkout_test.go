@@ -80,8 +80,14 @@ func TestCursorUntrustedCheckoutUsesEmptyDataDir(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			capture := filepath.Join(t.TempDir(), "data")
+			// The fake exits nonzero, failing the review, unless
+			// CURSOR_DATA_DIR names a directory it can list.
 			command := writeTempCommand(t, `#!/bin/sh
-{ echo "$CURSOR_DATA_DIR"; ls -A "$CURSOR_DATA_DIR"; } > '`+capture+`'
+set -e
+[ -n "$CURSOR_DATA_DIR" ]
+[ -d "$CURSOR_DATA_DIR" ]
+listing=$(ls -A "$CURSOR_DATA_DIR")
+printf '%s\n%s\n' "$CURSOR_DATA_DIR" "$listing" > '`+capture+`'
 echo '{"type":"result","result":"ok"}'
 `)
 			ctx := t.Context()
@@ -94,6 +100,7 @@ echo '{"type":"result","result":"ok"}'
 			data, err := os.ReadFile(capture)
 			require.NoError(t, err)
 			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			require.True(t, filepath.IsAbs(lines[0]), "CURSOR_DATA_DIR = %q", lines[0])
 			if tt.untrusted {
 				assert.NotEqual(t, userData, lines[0])
 				assert.Len(t, lines, 1, "the data directory must start empty")
