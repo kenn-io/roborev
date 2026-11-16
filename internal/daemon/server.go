@@ -3342,6 +3342,7 @@ type resolvedSingleAgent struct {
 	Model       string
 	BackupAgent string
 	BackupModel string
+	Settings    config.ReviewSettings
 }
 
 // resolveSingleAgent resolves the single-review agent for the no-panel path:
@@ -3399,12 +3400,12 @@ func (s *Server) resolveSingleAgent(
 	}
 	agentName = resolved.Name()
 	target := storage.ReviewJob{JobType: storage.JobTypeForEnqueue(in.descriptor.baseOpts()), ReviewType: in.req.ReviewType}
-	tools, err := currentReviewTools(target, in.repoCfg, in.cfg)
+	settings, err := currentReviewSettings(target, in.repoCfg, in.cfg)
 	if err == nil {
-		err = agent.ValidateReviewToolSelection(tools, resolved, in.req.Agentic)
+		err = agent.ValidateReviewToolSelection(settings.Tools, resolved, in.req.Agentic)
 	}
 	if err == nil {
-		err = agent.ValidateReviewToolBackup(tools, resolution, agentName)
+		err = agent.ValidateReviewToolBackup(settings.Tools, resolution, agentName)
 	}
 	if err != nil {
 		out, _ := rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
@@ -3427,6 +3428,7 @@ func (s *Server) resolveSingleAgent(
 		Model:       resolution.ModelForSelectedAgent(agentName, in.requestedModel),
 		BackupAgent: backupAgent,
 		BackupModel: backupModel,
+		Settings:    settings,
 	}, nil
 }
 
@@ -3458,6 +3460,15 @@ func (s *Server) enqueueSingleAgent(
 	if in.experiment != nil {
 		o.BackupAgent = execution.BackupAgent
 		o.BackupModel = execution.BackupModel
+		// Freeze the selected arm's review policy alongside its execution plan.
+		target := storage.ReviewJob{JobType: storage.JobTypeForEnqueue(o), ReviewType: o.ReviewType}
+		if target.IsReviewJob() && !target.IsGoalReviewJob() {
+			snapshot, snapshotErr := json.Marshal(execution.Settings)
+			if snapshotErr != nil {
+				return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: snapshotErr.Error()})
+			}
+			o.PanelMemberConfigJSON = string(snapshot)
+		}
 		plan, planErr := experimentPlanForJob(o)
 		if planErr != nil {
 			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: planErr.Error()})

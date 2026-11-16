@@ -83,9 +83,13 @@ func CanonicalReviewToolPolicy(p *ReviewToolPolicy) (*ReviewToolPolicy, error) {
 
 // ResolveReviewSettings returns the settings of a review type. A member policy
 // replaces the type policy as a whole.
-func ResolveReviewSettings(reviewType string, memberTools *ReviewToolPolicy, repoCfg *RepoConfig, globalCfg *Config) (ReviewSettings, error) {
+func ResolveReviewSettings(reviewType string, memberTools *ReviewToolPolicy, dirty bool, repoCfg *RepoConfig, globalCfg *Config) (ReviewSettings, error) {
 	var settings ReviewSettings
-	if !IsBuiltInReviewType(reviewType) {
+	if IsBuiltInReviewType(reviewType) {
+		if !dirty {
+			settings = BuiltInReviewSettings(repoCfg, globalCfg)
+		}
+	} else {
 		resolved, ok := ResolveCustomReviewTypeFromConfig(reviewType, repoCfg, globalCfg)
 		if !ok {
 			return settings, fmt.Errorf("unknown review type %q", reviewType)
@@ -99,6 +103,18 @@ func ResolveReviewSettings(reviewType string, memberTools *ReviewToolPolicy, rep
 	var err error
 	settings.Tools, err = CanonicalReviewToolPolicy(settings.Tools)
 	return settings, err
+}
+
+// BuiltInReviewSettings resolves shared settings for a built-in review.
+func BuiltInReviewSettings(repoCfg *RepoConfig, globalCfg *Config) ReviewSettings {
+	var repoEvidence, globalEvidence *bool
+	if repoCfg != nil {
+		repoEvidence = repoCfg.Review.BinaryEvidence
+	}
+	if globalCfg != nil {
+		globalEvidence = globalCfg.Review.BinaryEvidence
+	}
+	return ReviewSettings{BinaryEvidence: resolveBool(false, repoEvidence, globalEvidence)}
 }
 
 func validateReviewMCPAllowedTools(entries []string) error {
