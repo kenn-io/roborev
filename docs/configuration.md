@@ -916,6 +916,7 @@ opencode_cmd = "/usr/local/bin/opencode-wrapper"
 pi_cmd = "~/bin/pi"
 grok_cmd = "/opt/bin/grok"
 muse_cmd = "/opt/bin/muse"
+droid_cmd = "/opt/bin/droid-wrapper"
 ```
 
 | Option | Default command |
@@ -928,6 +929,7 @@ muse_cmd = "/opt/bin/muse"
 | `pi_cmd` | `pi` |
 | `grok_cmd` | `grok` |
 | `muse_cmd` | `muse` |
+| `droid_cmd` | `droid` |
 
 These overrides affect both agent execution and availability detection. Without
 them, roborev only checks for the default command name when deciding whether an
@@ -1282,6 +1284,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `pi_cmd` | string | `pi` | Custom path or name for the Pi binary | Yes |
 | `grok_cmd` | string | `grok` | Custom path or name for the Grok Build binary | Yes |
 | `muse_cmd` | string | `muse` | Custom path or name for the Muse Code binary | Yes |
+| `droid_cmd` | string | `droid` | Custom path or name for the Factory Droid binary | Yes |
 | `exclude_patterns` | array | `[]` | Filenames or glob patterns to exclude from review diffs globally | Yes |
 | `default_max_prompt_size` | int | 204800 | Default inline prompt budget in bytes before file handoff | Yes |
 

@@ -133,6 +133,18 @@ var allAgentSpecs = []agentSpec{
 		Name:           "droid",
 		DefaultCommand: "droid",
 		FallbackRank:   9,
+		CommandOverride: func(cfg *config.Config) string {
+			return cfg.DroidCmd
+		},
+		CloneWithCommand: func(a Agent, command string) Agent {
+			agent, ok := a.(*DroidAgent)
+			if !ok {
+				return a
+			}
+			clone := *agent
+			clone.Command = command
+			return &clone
+		},
 	},
 	{
 		Name:           "pi",

@@ -91,7 +91,7 @@ roborev refine --model claude-sonnet-4-20250514
 | Copilot | OpenAI model name | `gpt-4.1` |
 | Cursor | Model name | `claude-sonnet-4-20250514`, `gpt-4.1` |
 | OpenCode | `provider/model` | `anthropic/claude-sonnet-4-20250514`, `openai/gpt-4.1` |
-| Droid | Factory model name | (see Factory.ai docs) |
+| Droid | Factory model ID, passed as `droid exec -m` | `claude-opus-5-5`, `custom:My-Model-0` |
 | Kilo | `provider/model` | `anthropic/claude-sonnet-4-20250514`, `openai/gpt-4.1` |
 | Kiro | Model name | (see Kiro docs) |
 | Pi | Model name | `claude-sonnet-4-20250514`, `gpt-4.1` |
