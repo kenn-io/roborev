@@ -4261,7 +4261,7 @@ func (s *Server) humaInterruptShutdown(
 	if err != nil {
 		if !s.shutdownDraining {
 			// Reopen claims that this request closed; the daemon keeps running.
-			_ = s.db.SetShutdownDrainingContext(context.WithoutCancel(ctx), false)
+			err = errors.Join(err, s.db.SetShutdownDrainingContext(context.WithoutCancel(ctx), false))
 		}
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("list running jobs: %v", err))
 	}
