@@ -885,14 +885,16 @@ func advancePostCommitBatch(
 }
 
 // rememberFailedPostCommit records head, the commit a failed immediate review
-// targeted on branch, as a pending range: the checkpoint is head's parent and
-// the tip is head. The next hook run drains that range together with its own
-// commit, and a push flushes it, so a commit the daemon could not accept still
-// gets a review. An existing pending range already covers head and is kept. It
-// reports whether a range is pending. The caller must hold the batch lock. A
-// root commit has no parent to anchor the range. If the daemon queued the
-// commit but its reply was lost, the commit is reviewed again with the next
-// range; a redundant review is the cost of never dropping one.
+// targeted on branch, as pending: a range from head's parent through head. The
+// next hook run drains that range together with its own commit, and a push
+// flushes it, so a commit the daemon could not accept still gets a review.
+// Another hook may have recorded a range for the branch first, so head merges
+// into it, keeping the earlier checkpoint and the later tip on the same
+// history. It reports whether the pending range now covers head; a range from
+// other history is left alone and does not. The caller must hold the batch
+// lock. A root commit has no parent to anchor the range. If the daemon queued
+// the commit but its reply was lost, the commit is reviewed again with the
+// next range; a redundant review is the cost of never dropping one.
 func rememberFailedPostCommit(ctx context.Context, root, branch, head string) (bool, error) {
 	checkpoint, err := git.ResolveSHACtx(ctx, root, head+"^1")
 	if err != nil {
@@ -906,10 +908,32 @@ func rememberFailedPostCommit(ctx context.Context, root, branch, head string) (b
 	if err != nil {
 		return false, err
 	}
-	if _, pending := state.Branches[branch]; pending {
-		return true, nil
+	entry, pending := state.Branches[branch]
+	if !pending {
+		entry = postCommitBatchEntry{Checkpoint: checkpoint, Tip: head}
+	} else {
+		// onChain reports whether from is on to's first-parent chain.
+		onChain := func(from, to string) bool {
+			_, on, err := git.FirstParentDistance(ctx, root, from, to)
+			return err == nil && on
+		}
+		merged := entry
+		if merged.Checkpoint != "" && onChain(checkpoint, merged.Checkpoint) {
+			merged.Checkpoint = checkpoint
+		}
+		if merged.Tip == "" || onChain(merged.Tip, head) {
+			merged.Tip = head
+		}
+		if (merged.Checkpoint != "" && !onChain(merged.Checkpoint, checkpoint)) ||
+			!onChain(head, merged.Tip) {
+			return false, nil
+		}
+		if merged == entry {
+			return true, nil
+		}
+		entry = merged
 	}
-	state.Branches[branch] = postCommitBatchEntry{Checkpoint: checkpoint, Tip: head}
+	state.Branches[branch] = entry
 	if err := savePostCommitBatchState(statePath, state); err != nil {
 		return false, err
 	}

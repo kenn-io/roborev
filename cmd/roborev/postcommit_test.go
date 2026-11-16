@@ -535,6 +535,62 @@ func TestPostCommitLockTimeoutFailedEnqueueRetriesWithNextCommit(t *testing.T) {
 	assert.Equal(t, base+".."+head, (<-requests).GitRef)
 }
 
+func TestRememberFailedPostCommitMergesIntoPendingRange(t *testing.T) {
+	type pushRef struct{ ref, sha string }
+	cases := []struct {
+		name string
+		// seed returns the pending entry another hook recorded first, the
+		// failed commit to record, and the push that must flush it.
+		seed func(repo *TestGitRepo) (existing postCommitBatchEntry, failed string, push pushRef, wantRange string)
+	}{
+		{
+			name: "earlier failed commit joins a range that starts after it",
+			seed: func(repo *TestGitRepo) (postCommitBatchEntry, string, pushRef, string) {
+				base := repo.CommitFile("base.txt", "base", "base")
+				first := repo.CommitFile("one.txt", "one", "one")
+				second := repo.CommitFile("two.txt", "two", "two")
+				return postCommitBatchEntry{Checkpoint: first, Tip: second}, first,
+					pushRef{"refs/heads/work", second}, base + ".." + second
+			},
+		},
+		{
+			name: "later failed commit extends a range that ends before it",
+			seed: func(repo *TestGitRepo) (postCommitBatchEntry, string, pushRef, string) {
+				base := repo.CommitFile("base.txt", "base", "base")
+				first := repo.CommitFile("one.txt", "one", "one")
+				second := repo.CommitFile("two.txt", "two", "two")
+				repo.Run("branch", "-m", "work", "renamed")
+				repo.Run("tag", "v1", second)
+				return postCommitBatchEntry{Checkpoint: base, Tip: first}, second,
+					pushRef{"refs/tags/v1", second}, base + ".." + second
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, mux := setupTestEnvironment(t)
+			reqCh := mockEnqueueCapture(t, mux)
+			repo.Run("checkout", "-b", "work")
+			existing, failed, push, wantRange := tc.seed(repo)
+			statePath, err := postCommitBatchStatePath(repo.Dir)
+			require.NoError(t, err)
+			state := newPostCommitBatchState()
+			state.Branches["work"] = existing
+			require.NoError(t, savePostCommitBatchState(statePath, state))
+
+			recorded, err := rememberFailedPostCommit(t.Context(), repo.Dir, "work", failed)
+			require.NoError(t, err)
+			assert.True(t, recorded)
+
+			flushPushedPostCommitBatches(t.Context(), repo.Dir, strings.NewReader(fmt.Sprintf(
+				"%s %s %s %s\n", push.ref, push.sha, push.ref, strings.Repeat("0", 40),
+			)))
+			require.Len(t, reqCh, 1)
+			assert.Equal(t, wantRange, (<-reqCh).GitRef, "the flush covers the failed commit")
+		})
+	}
+}
+
 func TestPostCommitBatchFlushesPendingCommits(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueue(t, mux)
