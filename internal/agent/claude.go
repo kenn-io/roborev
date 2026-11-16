@@ -253,6 +253,22 @@ func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 	return args
 }
 
+// claudeUntrustedCheckoutArgs load only user settings and no MCP servers.
+// Project and local settings can define hooks, which Claude Code runs under
+// -p without a trust prompt, and .mcp.json can start stdio servers; both come
+// from the reviewed checkout. CLAUDE.md and rules still load as review context.
+var claudeUntrustedCheckoutArgs = []string{"--setting-sources", "user", "--strict-mcp-config"}
+
+// withUntrustedCheckoutArgs appends claudeUntrustedCheckoutArgs when ctx runs
+// in an untrusted checkout. Strict and bare sessions already skip project
+// configuration with --restricted or --bare.
+func withUntrustedCheckoutArgs(ctx context.Context, args []string) []string {
+	if !untrustedCheckout(ctx) {
+		return args
+	}
+	return append(args, claudeUntrustedCheckoutArgs...)
+}
+
 func (a *ClaudeAgent) buildPlanningArgs(includeEffort bool) []string {
 	args := a.buildArgs(false, includeEffort)
 	// Override any configured default permission mode.
@@ -357,6 +373,7 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if planningReadOnly(ctx) {
 		args = a.buildPlanningArgs(includeEffort)
 	}
+	args = withUntrustedCheckoutArgs(ctx, args)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -809,6 +826,8 @@ func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, 
 	args := a.classifyArgs(schema)
 	if isolated {
 		args = append(args, "--bare", "--strict-mcp-config", "--mcp-config", `{ "mcpServers": {} }`, "--no-session-persistence")
+	} else {
+		args = withUntrustedCheckoutArgs(ctx, args)
 	}
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -883,6 +902,7 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	if planningReadOnly(ctx) {
 		args = a.buildPlanningArgs(includeEffort)
 	}
+	args = withUntrustedCheckoutArgs(ctx, args)
 	args = append(args, "--json-schema", string(schema))
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)

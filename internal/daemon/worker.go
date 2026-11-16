@@ -1047,6 +1047,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	ctx, cancel := withWallClockTimeout(context.Background(), timeoutDuration)
 	defer cancel()
+	if job.IsCIReview() {
+		// CI jobs run in a checkout of the pull request head, so the agent
+		// must not load project configuration its author controls.
+		ctx = agent.WithUntrustedCheckout(ctx)
+	}
 	releaseAttempt, err := wp.db.StartJobAttempt(ctx, job, workerID, cancel)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
