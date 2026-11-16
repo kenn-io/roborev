@@ -4148,6 +4148,28 @@ func TestCIPollerProcessPR_ExperimentValidationFailureSetsConfigurationStatus(t 
 	assert.Contains(t, (*statuses)[0].Desc, "roborev config validate")
 }
 
+func TestCIPollerProcessPR_UndefinedPanelSetsConfigurationStatus(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	h.Poller.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
+		return ciRepoConfigSource{Config: &config.RepoConfig{CI: config.RepoCIConfig{Panel: "missing"}}}, nil
+	}
+	statuses := h.CaptureCommitStatuses()
+
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
+		Number: 96, HeadRefOid: "head-sha-96", HeadRefName: "feature",
+		BaseRefName: "main",
+	}, h.Cfg)
+
+	require.ErrorContains(t, err, "missing")
+	require.Len(t, *statuses, 1, "without an experiment, an undefined panel is still a configuration error")
+	assert.Equal(t, "error", (*statuses)[0].State)
+	assert.Contains(t, (*statuses)[0].Desc, "roborev config validate")
+}
+
 func TestCIPollerProcessPR_RepoExperimentValidationFailureSetsConfigurationStatus(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}

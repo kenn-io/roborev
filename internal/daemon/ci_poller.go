@@ -970,6 +970,12 @@ func (p *CIPoller) planCIPanel(
 	if selection.RawRepoConfig != nil {
 		rawRepoCfg = selection.RawRepoConfig
 	}
+	// An experiment validates its arm's settings when selected. Validate the
+	// settings without one too, so a setting such as an undefined panel is a
+	// configuration error rather than a failure retried on every poll.
+	if err := config.ValidateEffectiveReviewConfig(cfg, repoCfg); err != nil {
+		return ciPanelPlan{}, &ciConfigurationError{err: fmt.Errorf("review config: %w", err)}
+	}
 
 	// Resolve panel members + synthesis: a configured [ci].panel names a panel,
 	// else the agents x review_types matrix is adapted into members.

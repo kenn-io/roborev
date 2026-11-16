@@ -252,18 +252,31 @@ func TestCIDefaultBranchReviewsRespectRepositoryOptOut(t *testing.T) {
 }
 
 func TestCIDefaultBranchReviewsRecordInvalidConfiguration(t *testing.T) {
-	h := newBranchReviewHarness(t)
-	h.poll(t)
-	landed := h.origin.CommitFile(".roborev.toml", "[ci]\ncomment_max_findings = -1\n", "invalid config")
-	h.poll(t)
-	assert.Empty(t, h.synthesisJobs(t))
-	assert.Equal(t, []branchStatus{{
-		SHA: landed, State: "error",
-		Description: "Review could not be queued; run roborev config validate",
-	}}, h.takeStatuses())
-	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
-	require.NoError(t, err)
-	assert.Equal(t, landed, cursor.HeadSHA, "a commit that cannot be reviewed does not block later commits")
+	for _, tt := range []struct{ name, config string }{
+		{"invalid value", "[ci]\ncomment_max_findings = -1\n"},
+		{"undefined panel", "[ci]\npanel = \"missing\"\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newBranchReviewHarness(t)
+			h.poll(t)
+			landed := h.origin.CommitFile(".roborev.toml", tt.config, "invalid config")
+			h.poll(t)
+			assert.Empty(t, h.synthesisJobs(t))
+			assert.Equal(t, []branchStatus{{
+				SHA: landed, State: "error",
+				Description: "Review could not be queued; run roborev config validate",
+			}}, h.takeStatuses())
+			cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
+			require.NoError(t, err)
+			assert.Equal(t, landed, cursor.HeadSHA, "a commit that cannot be reviewed does not block later commits")
+
+			repaired := h.origin.CommitFile(".roborev.toml", "[ci]\n", "repair config")
+			h.poll(t)
+			runs := h.synthesisJobs(t)
+			require.Len(t, runs, 1, "reviews resume once the configuration is repaired")
+			assert.Equal(t, landed+".."+repaired, runs[0].GitRef)
+		})
+	}
 }
 
 func TestCIDefaultBranchReviewFailureReportsError(t *testing.T) {
