@@ -390,3 +390,23 @@ func TestFreezeReviewRefResolvesEachEndToACommit(t *testing.T) {
 	_, err := freezeReviewRef(t.Context(), repo.Path(), "no-such-ref")
 	assert.Error(t, err)
 }
+
+// A local review of a commit whose only changes are excluded from the diff
+// must fail instead of printing the agent's "no issues" answer to an empty
+// diff, which reads exactly like a passing review.
+func TestLocalReviewFailsWhenNothingIsReviewable(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.CommitFile(".roborev.toml", "exclude_patterns = [\"*.md\"]\n", "exclude docs")
+	repo.CommitFile("README.md", "docs\n", "docs only")
+	cmd := reviewCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--local", "--repo", repo.Root, "--agent", "test"})
+
+	err := cmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nothing to review: the only changed file")
+	assert.NotContains(t, out.String(), "No issues found")
+}

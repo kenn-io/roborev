@@ -136,3 +136,70 @@ func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, fixReview.FileCoverage)
 }
+
+// An agent shown an empty diff answers that it found no issues, which reads as
+// a passing review. A committed review with nothing left to read after
+// exclusions must fail without running the agent, rather than pass.
+func TestProcessJobFailsWhenNothingIsReviewable(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	var calls int
+	reviewer := &agent.FakeAgent{
+		NameStr: "counting-review",
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			calls++
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	}
+	agent.RegisterForTest(t, reviewer)
+	tc.GitRepo.CommitFile(".roborev.toml", "exclude_patterns = [\"*.md\"]\n", "exclude docs")
+
+	tests := []struct {
+		name    string
+		commit  func() string
+		wantErr string // empty: the review runs and completes
+	}{
+		{
+			name: "only excluded files",
+			commit: func() string {
+				return tc.GitRepo.CommitFiles(map[string]string{
+					"README.md":    "docs\n",
+					"docs/note.md": "more docs\n",
+				}, "docs only")
+			},
+			wantErr: "nothing to review: all 2 changed files",
+		},
+		{
+			name: "empty commit",
+			commit: func() string {
+				tc.GitRepo.Run("commit", "--allow-empty", "-m", "empty")
+				return tc.GitRepo.HeadSHA()
+			},
+			wantErr: "has an empty diff",
+		},
+		{
+			name: "dependency metadata only",
+			commit: func() string {
+				return tc.GitRepo.CommitFile("go.sum", "example.com/m v1.0.0 h1:abc=\n", "deps")
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := calls
+			job := tc.createAndClaimJobWithAgent(t, tt.commit(), testWorkerID, reviewer.NameStr)
+			tc.Pool.processJob(testWorkerID, job)
+
+			stored, err := tc.DB.GetJobByID(job.ID)
+			require.NoError(t, err)
+			if tt.wantErr == "" {
+				assert.Equal(t, storage.JobStatusDone, stored.Status)
+				assert.Equal(t, before+1, calls)
+				return
+			}
+			assert.Equal(t, storage.JobStatusFailed, stored.Status)
+			assert.Contains(t, stored.Error, tt.wantErr)
+			assert.Equal(t, 0, stored.RetryCount)
+			assert.Equal(t, before, calls, "the agent must not run")
+		})
+	}
+}

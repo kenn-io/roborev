@@ -1328,11 +1328,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			excludes := config.ResolveExcludePatterns(
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
+			census := reviewPathCensusForJob(ctx, checkout.promptRepoPath, job, excludes)
+			if census != nil {
+				// An agent shown an empty diff reports no issues, which
+				// reads as a pass. Retrying or failing over cannot help.
+				if emptyErr := census.Reviewable(); emptyErr != nil {
+					wp.runAttemptTransition(workerID, job, func() {
+						wp.failNonRetryableJobLocked(workerID, job, job.Agent, emptyErr.Error())
+					})
+					return
+				}
+			}
 			reviewPrompt, err = pb.Build(
 				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
 			if err == nil {
-				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
+				fileCoverage = coverageFromCensus(census)
 			}
 		}
 	}

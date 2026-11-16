@@ -1007,6 +1007,10 @@ Patterns can be filenames, directory names (with trailing `/`), or glob patterns
 (including `**`). Both global and repo-level patterns are merged. User patterns
 are appended to the built-in exclusion list.
 
+A commit or range review whose changed files are all excluded fails with a
+"nothing to review" error instead of passing, because no reviewer saw any code.
+Changed lockfiles still count, since the prompt lists them.
+
 !!! note
 
     Security reviews (`--type security`) skip repo-level exclude patterns entirely.

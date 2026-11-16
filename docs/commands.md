@@ -285,6 +285,15 @@ roborev review --branch --panel none          # Force single-agent review
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)
 
+A commit or range review fails instead of passing when its diff is empty after
+[file exclusions](/docs/configuration/#exclude-patterns), for example an empty
+commit or a docs-only commit in a repo that excludes `*.md`. Changes to
+dependency lockfiles still count, because the prompt lists them.
+
+In a shallow clone, `roborev review <start> <end>` fails when the parent of
+`<start>` was not fetched. Fetch more history, or pass a `<start>` whose parent
+is present.
+
 For spec-only review, linked plan selection, automatic polling and the Kata
 candidate gate, see
 [Superpowers Intent Reviews](/docs/integrations/goal-review/). Goal reviews
