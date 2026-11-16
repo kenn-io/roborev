@@ -31,6 +31,9 @@ var postgresV18Schema string
 //go:embed schemas/postgres_v23.sql
 var postgresV23Schema string
 
+//go:embed schemas/postgres_v24.sql
+var postgresV24Schema string
+
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
 // schema file and seeding schema_version. It deliberately does NOT call
@@ -56,6 +59,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		17: postgresV17Schema,
 		18: postgresV18Schema,
 		23: postgresV23Schema,
+		24: postgresV24Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
@@ -85,6 +89,34 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	require.NoError(t, err, "seed schema_version")
 
 	return pool
+}
+
+func TestPostgresMigration_SessionCLIFromV24(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
+	pool := openTestPgPoolRawAtVersion(t, 24)
+	ctx := t.Context()
+	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
+	jobUUID := uuid.New()
+	createTestJob(t, pool.Pool(), TestJobOpts{
+		UUID:     jobUUID,
+		RepoID:   repoID,
+		CommitID: commitID,
+	})
+
+	require.NoError(t, pool.EnsureSchema(ctx))
+	require.NoError(t, pool.EnsureSchema(ctx))
+
+	var hasSessionCLI bool
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'roborev' AND table_name = 'review_jobs' AND column_name = 'session_cli'
+	)`).Scan(&hasSessionCLI))
+	assert.True(t, hasSessionCLI)
+	var sessionCLI *string
+	require.NoError(t, pool.Pool().QueryRow(ctx,
+		`SELECT session_cli FROM review_jobs WHERE uuid = $1`, jobUUID,
+	).Scan(&sessionCLI))
+	assert.Nil(t, sessionCLI, "jobs created before the migration have no CLI provenance")
 }
 
 func TestPostgresMigration_CanonicalReview(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL

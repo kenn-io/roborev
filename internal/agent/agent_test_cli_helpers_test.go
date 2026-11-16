@@ -122,6 +122,10 @@ type MockCLIResult struct {
 	EnvFile   string
 }
 
+func mockCLIVersionBlock(version string) string {
+	return fmt.Sprintf("if [ \"$1\" = \"--version\" ]; then echo %q; exit 0; fi\n", version)
+}
+
 // readMockArgs decodes the NUL-terminated argument vector from a mock CLI.
 func readMockArgs(t *testing.T, path string) []string {
 	t.Helper()
@@ -197,6 +201,8 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 		}
 		script.WriteString(fmt.Sprintf(`case "$*" in *--help*) cat %q; exit 0;; esac`, helpFile) + "\n")
 	}
+
+	script.WriteString(mockCLIVersionBlock("0.34.0"))
 
 	if opts.CaptureArgs {
 		result.ArgsFile = filepath.Join(tmpDir, "args.txt")
