@@ -20,6 +20,7 @@ func TestUntrustedCheckoutAgentEnv(t *testing.T) {
 	t.Setenv("GEMINI_CLI_TRUST_WORKSPACE", "true")
 	t.Setenv("KILO_DISABLE_PROJECT_CONFIG", "0")
 	t.Setenv("GROK_FOLDER_TRUST", "0")
+	t.Setenv("OPENCODE_DISABLE_PROJECT_CONFIG", "0")
 	for _, tt := range []struct {
 		name      string
 		untrusted bool
@@ -47,6 +48,7 @@ func TestUntrustedCheckoutAgentEnv(t *testing.T) {
 				assert.Contains(t, env, "GEMINI_CLI_TRUST_WORKSPACE=false")
 				assert.NotContains(t, env, "KILO_DISABLE_PROJECT_CONFIG=0")
 				assert.Contains(t, env, "KILO_DISABLE_PROJECT_CONFIG=1")
+				assert.NotContains(t, env, "OPENCODE_DISABLE_PROJECT_CONFIG=0")
 				assert.Contains(t, env, "OPENCODE_DISABLE_PROJECT_CONFIG=1")
 				assert.NotContains(t, env, "GROK_FOLDER_TRUST=0")
 				assert.Contains(t, env, "GROK_FOLDER_TRUST=1")
@@ -54,7 +56,7 @@ func TestUntrustedCheckoutAgentEnv(t *testing.T) {
 				assert.Contains(t, env, "COPILOT_ALLOW_ALL=true")
 				assert.Contains(t, env, "GEMINI_CLI_TRUST_WORKSPACE=true")
 				assert.Contains(t, env, "KILO_DISABLE_PROJECT_CONFIG=0")
-				assert.NotContains(t, env, "OPENCODE_DISABLE_PROJECT_CONFIG=1")
+				assert.Contains(t, env, "OPENCODE_DISABLE_PROJECT_CONFIG=0")
 				assert.Contains(t, env, "GROK_FOLDER_TRUST=0")
 			}
 		})

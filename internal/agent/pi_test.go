@@ -612,7 +612,17 @@ echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"te
 			require.NoError(t, call.run(WithUntrustedCheckout(t.Context()), NewPiAgent(cli), repo))
 			args := readLineFile(t, argsFile)
 			assert.Contains(t, args, "--no-approve")
-			assert.Contains(t, args, "--no-session")
+			if call.name == "ClassifyWithSchema" {
+				assert.Contains(t, args, "--no-session")
+				assert.NotContains(t, args, "--session-dir")
+			} else {
+				// A project sessionDir must not choose where the session is
+				// saved, so the run names Pi's default directory for the cwd.
+				want := filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "sessions",
+					"--"+strings.NewReplacer("/", "-", ":", "-").Replace(strings.TrimPrefix(repo, "/"))+"--")
+				assert.Equal(t, want, argAfter(args, "--session-dir"))
+				assert.NotContains(t, args, "--no-session")
+			}
 			if call.name == "ReviewWithSchema" {
 				// The checkout's package list does not count once Pi ignores it.
 				assert.Equal(t, config.DefaultPiJSONSchemaExtension, argAfter(args, "--extension"))

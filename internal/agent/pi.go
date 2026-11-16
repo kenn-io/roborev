@@ -235,10 +235,12 @@ var piNoApproveSupport capabilityCache
 // piUntrustedCheckoutArgs returns the flags an untrusted checkout needs.
 // Pi loads extensions, MCP servers and packages from a trusted project's .pi
 // directory, and a user setting or saved trust entry can trust it. Pi also
-// reads the project's sessionDir before it checks trust, so a run without an
-// explicit session saves none. Pi releases without --no-approve load project
-// files unconditionally, so they cannot review an untrusted checkout.
-func (a *PiAgent) piUntrustedCheckoutArgs(ctx context.Context, sessionPath string) ([]string, error) {
+// reads the project's sessionDir before it checks trust, so a run that saves
+// a new session names Pi's default session directory explicitly. Pi releases
+// without --no-approve load project files unconditionally, so they cannot
+// review an untrusted checkout. newSession is false when the run resumes a
+// session file or saves none.
+func (a *PiAgent) piUntrustedCheckoutArgs(ctx context.Context, repoPath string, newSession bool) ([]string, error) {
 	if !untrustedCheckout(ctx) {
 		return nil, nil
 	}
@@ -246,10 +248,29 @@ func (a *PiAgent) piUntrustedCheckoutArgs(ctx context.Context, sessionPath strin
 		return nil, fmt.Errorf("pi does not support --no-approve, which reviews of an untrusted checkout require; upgrade pi")
 	}
 	args := []string{"--no-approve"}
-	if sessionPath == "" {
-		args = append(args, "--no-session")
+	if newSession {
+		dir, err := piDefaultSessionDir(repoPath)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--session-dir", dir)
 	}
 	return args, nil
+}
+
+// piDefaultSessionDir returns the directory Pi saves a session for cwd in
+// when no setting overrides it, so resolvePiSessionPath still finds it.
+func piDefaultSessionDir(cwd string) (string, error) {
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve pi session directory: %w", err)
+	}
+	// Pi drops one leading separator, then replaces separators and colons.
+	if abs != "" && (abs[0] == '/' || abs[0] == '\\') {
+		abs = abs[1:]
+	}
+	safe := strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(abs)
+	return filepath.Join(piDataDir(), "sessions", "--"+safe+"--"), nil
 }
 
 func piSupportsNoApprove(ctx context.Context, command string) bool {
@@ -299,7 +320,8 @@ func (a *PiAgent) ClassifyWithSchema(
 	outputPath := filepath.Join(tmpDir, "result.json")
 
 	args := a.classifyArgs(promptPath, outputPath, schema)
-	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, "")
+	// Classification already runs with --no-session.
+	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, repoPath, false)
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +390,7 @@ func (a *PiAgent) ReviewWithSchema(
 	// extensions, so either way the schema extension is loaded explicitly,
 	// even when the user installed it.
 	readOnly := planningReadOnly(ctx)
-	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, sessionPath)
+	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, repoPath, sessionPath == "")
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +481,7 @@ func (a *PiAgent) Review(
 	if planningReadOnly(ctx) {
 		args = append(args, "--no-extensions")
 	}
-	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, sessionPath)
+	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, repoPath, sessionPath == "")
 	if err != nil {
 		return "", err
 	}

@@ -1572,7 +1572,7 @@ Local reviews of your own commits are unchanged.
 | Claude Code | Passes `--setting-sources user --strict-mcp-config`, so `.claude/settings.json` hooks and `.mcp.json` servers are skipped. |
 | Codex | Always passes `--ignore-user-config`, which drops the user config's project trust list, so `.codex/config.toml` is skipped. Codex without that flag fails the review. |
 | Gemini | Sets `GEMINI_CLI_TRUST_WORKSPACE=false`. With folder trust off in your Gemini user settings, Gemini skips the checkout's settings; with it on, headless Gemini exits instead of reviewing. |
-| Pi | Passes `--no-approve` and, without a resumed session, `--no-session`. Pi without `--no-approve` fails the review. |
+| Pi | Passes `--no-approve`, and `--session-dir` set to Pi's default session directory so the checkout cannot choose where sessions are saved. Pi without `--no-approve` fails the review. |
 | Cursor | Starts with an empty `CURSOR_DATA_DIR`, so saved workspace trust does not apply and Cursor refuses the untrusted checkout. |
 | Grok | Sets `GROK_FOLDER_TRUST=1`, so folder trust stays on. A folder you trusted before is still trusted. |
 | Copilot | Removes `COPILOT_ALLOW_ALL` and the `GITHUB_COPILOT_PROMPT_MODE_*` variables. Prompt mode then skips repository hooks and workspace MCP servers. A folder you trusted before is still trusted. |
