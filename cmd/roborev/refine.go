@@ -709,7 +709,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 					if skipped, ok := errors.AsType[*daemon.ReviewSkippedError](err); ok {
 						// Nothing on the branch reaches a reviewer, so
 						// there is nothing to fix.
-						fmt.Printf("\nNothing to review: %s\n", skipped.Reason)
+						fmt.Printf("\nSkipped: %s\n", skipped.Reason)
 						return nil
 					}
 					if err != nil {

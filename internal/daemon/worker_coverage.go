@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -109,4 +111,30 @@ func (wp *WorkerPool) skipJob(ctx context.Context, workerID string, job *storage
 		wp.broadcaster.Broadcast(eventForJob("review.completed", job, job.ID))
 		wp.releaseIfPanelMember(job)
 	})
+}
+
+// skipUnreviewableWithoutAgent skips an ordinary committed review whose diff
+// is empty after exclusions, before the worker prepares a checkout or an
+// agent. The worker uses it when the agent cannot run, so a review with
+// nothing to review is skipped instead of failed for agent availability.
+func (wp *WorkerPool) skipUnreviewableWithoutAgent(
+	ctx context.Context, workerID string, job *storage.ReviewJob, cfg *config.Config,
+) bool {
+	if !job.IsReviewJob() || job.IsDirtyJob() || job.IsGoalReviewJob() || job.UsesStoredPrompt() ||
+		job.PromptPrebuilt || job.Source == storage.JobSourceCI || job.Source == storage.JobSourceRebuttal {
+		return false
+	}
+	repoPath := job.RepoPath
+	if job.WorktreePath != "" {
+		if _, err := os.Stat(job.WorktreePath); err == nil {
+			repoPath = job.WorktreePath
+		}
+	}
+	settings, err := reviewJobSettings(job, repoPath, cfg)
+	if err != nil {
+		return false
+	}
+	excludes := config.ResolveExcludePatterns(ctx, repoPath, cfg, job.ReviewType)
+	census := reviewPathCensusForJob(ctx, repoPath, job, excludes)
+	return wp.skipUnreviewableCensus(ctx, workerID, job, census, settings.BinaryEvidence)
 }

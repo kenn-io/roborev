@@ -318,6 +318,7 @@ func TestWaitForJobSkipped(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "Skipped: nothing to review in abc123: the diff is empty")
+	assert.Equal(t, 1, strings.Count(strings.ToLower(stdout), "skipped"), "the outcome is printed once")
 }
 
 func TestWaitForJobUnknownStatus(t *testing.T) {

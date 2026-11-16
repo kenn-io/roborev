@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -204,4 +205,30 @@ func TestProcessJobSkipsWhenNothingIsReviewable(t *testing.T) {
 			assert.Equal(t, before, calls, "the agent must not run")
 		})
 	}
+}
+
+// A review with nothing to review needs no agent, so it is skipped even while
+// its agent is in quota cooldown. A review with changes still waits on the
+// agent and fails for the cooldown as before.
+func TestProcessJobSkipsDuringAgentCooldown(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	reviewer := &agent.FakeAgent{
+		NameStr: "cooling-review",
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	}
+	agent.RegisterForTest(t, reviewer)
+	tc.Pool.cooldownAgent(reviewer.NameStr, time.Now().Add(time.Hour))
+
+	empty := tc.createAndClaimJobWithAgent(t, tc.GitRepo.CommitFile(".cache/build.txt", "cached\n", "only excluded"), testWorkerID, reviewer.NameStr)
+	tc.Pool.processJob(testWorkerID, empty)
+	tc.assertJobStatus(t, empty.ID, storage.JobStatusSkipped)
+
+	code := tc.createAndClaimJobWithAgent(t, tc.GitRepo.CommitFile("main.go", "package main\n", "code"), testWorkerID, reviewer.NameStr)
+	tc.Pool.processJob(testWorkerID, code)
+	stored, err := tc.DB.GetJobByID(code.ID)
+	require.NoError(t, err)
+	assert.NotEqual(t, storage.JobStatusSkipped, stored.Status)
+	assert.NotEqual(t, storage.JobStatusDone, stored.Status)
 }

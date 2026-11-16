@@ -69,7 +69,7 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 		case storage.JobStatusSkipped:
 			// No agent ran, so there is no verdict to report or fail on.
 			if !quiet {
-				cmd.Printf(" skipped.\n\nSkipped: %s\n", job.SkipReason)
+				cmd.Printf("\n\nSkipped: %s\n", job.SkipReason)
 			}
 			return nil
 
