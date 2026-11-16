@@ -252,6 +252,22 @@ export const shutdown = async (
   });
 };
 
+export const getInterruptShutdownUrl = () => {
+  return `/api/shutdown/interrupt`;
+};
+
+/**
+ * @summary Interrupt running reviews and shut down the daemon
+ */
+export const interruptShutdown = async (
+  options?: RequestInit,
+): Promise<ShutdownOutputBody> => {
+  return roborevFetch<ShutdownOutputBody>(getInterruptShutdownUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
 export const getGetStatusUrl = () => {
   return `/api/status`;
 };

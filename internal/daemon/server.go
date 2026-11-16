@@ -4256,6 +4256,41 @@ func (s *Server) humaShutdown(
 	return resp, nil
 }
 
+// humaInterruptShutdown shuts down without waiting for running jobs. Running
+// attempts return to the queue without consuming a retry, through the same
+// worker path that an interrupting update uses.
+func (s *Server) humaInterruptShutdown(
+	ctx context.Context, input *struct{},
+) (*ShutdownOutput, error) {
+	s.shutdownDrainMu.Lock()
+	defer s.shutdownDrainMu.Unlock()
+	if s.updateDrain != nil {
+		return nil, huma.Error409Conflict("an update drain is active")
+	}
+	// Hold attempt transitions across the claim gate and the running-job
+	// snapshot so no job can start between them without being interrupted.
+	s.workerPool.attemptTransitionsMu.Lock()
+	defer s.workerPool.attemptTransitionsMu.Unlock()
+	if err := s.db.SetShutdownDrainingContext(ctx, true); err != nil {
+		return nil, huma.Error500InternalServerError(fmt.Sprintf("block job claims for shutdown: %v", err))
+	}
+	ids, err := s.db.ListRunningJobIDs()
+	if err != nil {
+		if !s.shutdownDraining {
+			// Reopen claims that this request closed; the daemon keeps running.
+			err = errors.Join(err, s.db.SetShutdownDrainingContext(context.WithoutCancel(ctx), false))
+		}
+		return nil, huma.Error500InternalServerError(fmt.Sprintf("list running jobs: %v", err))
+	}
+	s.workerPool.interruptJobsForUpdateLocked(ids)
+	s.shutdownDraining = true
+	s.workerPool.BeginStop()
+	s.RequestShutdown()
+	resp := &ShutdownOutput{}
+	resp.Body.Status = "shutting down"
+	return resp, nil
+}
+
 func (s *Server) beginShutdownDrain() error {
 	s.shutdownDrainMu.Lock()
 	defer s.shutdownDrainMu.Unlock()

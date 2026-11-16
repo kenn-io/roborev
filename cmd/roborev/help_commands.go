@@ -58,7 +58,11 @@ to inspect the queue and published browser address.`, example: `  roborev daemon
 available when it starts again. Use pause to suspend queue processing while
 leaving the daemon available for reads.`, example: `  roborev daemon stop`},
 	"daemon restart": {long: `Stop and start the local daemon to load new configuration or a new binary.
-If no daemon is running, start it. Review history stays in the data directory.`, example: `  roborev daemon restart`},
+If no daemon is running, start it. Review history stays in the data directory.
+By default, running jobs finish before shutdown. With --running=interrupt,
+running jobs go back to the queue without using a retry and start over after
+the restart; rebuttals resume their agent session.`, example: `  roborev daemon restart
+  roborev daemon restart --running=interrupt`},
 	"daemon status": {long: `Inspect the local daemon, its queue, browser UI and Agent Hook reminders.
 Use --json for the status record, or doctor to diagnose setup and agents.`, example: `  roborev daemon status
   roborev daemon status --json`},

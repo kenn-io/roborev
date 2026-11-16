@@ -382,6 +382,10 @@ type ShutdownResponse = ShutdownOutputBody
 
 type ShutdownErrorResponse = ErrorModel
 
+type InterruptShutdownResponse = ShutdownOutputBody
+
+type InterruptShutdownErrorResponse = ErrorModel
+
 type GetStatusResponse = DaemonStatus
 
 type GetStatusErrorResponse = ErrorModel
@@ -945,6 +949,14 @@ type ShutdownResp struct {
 	StatusCode                        int
 	JSON200                           *ShutdownResponse
 	ApplicationProblemPlusJSONDefault *ShutdownErrorResponse
+}
+
+type InterruptShutdownResp struct {
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *InterruptShutdownResponse
+	ApplicationProblemPlusJSONDefault *InterruptShutdownErrorResponse
 }
 
 type GetStatusResp struct {
@@ -1939,6 +1951,18 @@ func (c *RawClient) ShutdownRaw(ctx context.Context, reqEditors ...runtime.Reque
 
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/shutdown",
+		Method:     "POST",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) InterruptShutdownRaw(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/shutdown/interrupt",
 		Method:     "POST",
 	}, reqEditors...)
 	if err != nil {
