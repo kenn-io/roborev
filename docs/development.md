@@ -116,8 +116,9 @@ Job states: `queued` -> `running` -> `done`/`failed`
 ## Conventions
 
 - **HTTP over gRPC**: Simple HTTP/JSON for the daemon API
-- **No CGO in releases**: Build with `CGO_ENABLED=0` for static binaries (except
-    sqlite which needs CGO locally)
+- **No CGO in releases**: Build with `CGO_ENABLED=0` for static binaries. SQLite
+    uses the pure-Go `modernc.org/sqlite` driver, so no build needs cgo or
+    SQLite headers; only the race detector needs cgo
 - **Test agent**: Use `agent = "test"` for testing without calling real AI
 - **Isolated tests**: All tests use `t.TempDir()` for temp directories
 

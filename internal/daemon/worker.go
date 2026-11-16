@@ -1408,6 +1408,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job,
 		cfg,
 	)
+	clearSession := func() error {
+		if err := wp.db.ClearJobSessionID(job.ID, workerID); err != nil {
+			return err
+		}
+		job.SessionID = ""
+		job.SessionCLI = ""
+		job.ResumeSourceJobUUID = nil
+		return nil
+	}
+	// A queued session ID only works with the CLI that created it.
+	if job.SessionID != "" && job.SessionCLI != sessionCLIForAgent(a) {
+		if err := clearSession(); err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, a.Name(), fmt.Sprintf("clear incompatible session: %v", err))
+			return
+		}
+	}
 	if job.SessionID != "" || checkout.isolatedLocalReview {
 		if sa, ok := a.(agent.SessionAgent); ok {
 			a = sa.WithSessionID(job.SessionID)
@@ -1512,7 +1528,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	// Keep the session writer outermost: adapters may report sessions directly.
 	sessionWriter := agent.NewSessionCaptureWriter(agentOutput, func(sessionID string) {
-		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
+		if err := wp.db.SaveJobSessionIDWithCLI(job.ID, workerID, sessionID, sessionCLIForAgent(a)); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
 		}
 		if planningPrompt != "" && implementationInvoked {
@@ -1521,7 +1537,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				{invoked: true, implementation: true, sessionID: sessionID, logUsage: implementationUsageCapture.Usage()},
 			}, false)
 		}
-	})
+	}, clearSession)
 	agentOutput = sessionWriter
 
 	// For fix jobs, create an isolated worktree to run the agent in.
@@ -1595,7 +1611,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		implementationRef, err = gitrepo.Resolve(ctx, reviewRepoPath, "HEAD")
 		if err == nil {
 			planningSessionWriter = agent.NewSessionCaptureWriter(
-				io.MultiWriter(newPiInvocationLogWriter(a.Name(), jobLog), outputWriter, planningUsageCapture), nil,
+				io.MultiWriter(newPiInvocationLogWriter(a.Name(), jobLog), outputWriter, planningUsageCapture), nil, nil,
 			)
 			fixPlan, reviewPrompt, err = wp.prepareFixPlan(
 				ctx, planningTimeout, workerID, a, job, reviewRepoPath,
@@ -1704,7 +1720,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}, true)
 	}
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
-		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
+		if saveErr := wp.db.SaveJobSessionIDWithCLI(job.ID, workerID, sessionID, sessionCLIForAgent(a)); saveErr != nil {
 			log.Printf("[%s] Error persisting session ID for job %d: %v", workerID, job.ID, saveErr)
 		}
 	}
@@ -1884,6 +1900,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if completed && wp.captureSetupFinished != nil {
 		wp.captureSetupFinished()
 	}
+}
+
+func sessionCLIForAgent(a agent.Agent) string {
+	if cli, ok := a.(interface{ SessionCLI() string }); ok {
+		return cli.SessionCLI()
+	}
+	return ""
 }
 
 // finishCanceledAttempt emits cancellation only for the claim that still owns
@@ -2507,20 +2530,22 @@ func (wp *WorkerPool) collectTokenUsageForSession(
 ) sessionTokenUsage {
 	// Only fetch agentsview usage for fresh sessions (where we captured a new
 	// session ID). Resumed-session agentsview totals are cumulative across
-	// turns, but Codex job-log turn.completed usage belongs to this job's
-	// stream and is safe to parse below.
+	// turns, but usage events in the job log belong to this job's stream and
+	// are safe to parse below.
 	collected := sessionTokenUsage{
 		capturedSession: capturedSession,
 		wasResumed:      job.SessionID != "" && capturedSession == job.SessionID,
 	}
-	logUsage, logErr := tokens.ParseCodexUsageFile(JobLogPath(job.ID))
+	logUsage, logErr := parseJobLogUsage(job.ID, job.Agent)
 	if logErr != nil {
 		log.Printf("[%s] Warning: parse token usage from job log for job %d: %v",
 			workerID, job.ID, logErr)
 	}
 	collected.logUsage = logUsage
 
-	if capturedSession != "" && !collected.wasResumed {
+	// A log that sums several sessions is stored as it is. When it carries no
+	// cost, reconciliation prices every session it names.
+	if capturedSession != "" && !collected.wasResumed && !logUsageCoversSeveralSessions(logUsage) {
 		fetched, tokenErr := wp.fetchFreshSessionUsage(
 			ctx, wp.fetchTokenUsage, capturedSession,
 		)

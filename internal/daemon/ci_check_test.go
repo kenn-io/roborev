@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,17 +28,45 @@ func TestCICheckApply(t *testing.T) {
 	doc := structuredreview.Document{SchemaVersion: 3, Summary: "Original summary", Verdict: "fail", Findings: []structuredreview.Finding{
 		{Severity: "high", Problem: "first", Fix: "fix"}, {Severity: "low", Problem: "second", Fix: "fix"},
 	}}
+	keep, drop := true, false
+	kept, dropped := structuredreview.CheckKept, structuredreview.CheckDropped
 	for _, tc := range []struct {
 		name, raw, summary string
 		want               []string
+		outcomes           []string
+		// firstVerdicts are the verdicts recorded for finding 1.
+		firstVerdicts []structuredreview.CheckVerdict
 	}{
-		{name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, summary: "1 finding.", want: []string{"second"}},
-		{name: "explicit keep", raw: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`},
-		{name: "duplicate", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"}]}`},
-		{name: "empty evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":" ","reason":"refuted"}]}`},
-		{name: "empty reason", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":""}]}`},
-		{name: "missing keep", raw: `{"verdicts":[{"finding":1,"evidence":"ok","reason":"refuted"}]}`},
-		{name: "all dropped", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":2,"keep":false,"evidence":"ok","reason":"refuted"}]}`, summary: "No issues found.", want: []string{}},
+		{
+			name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, summary: "1 finding.", want: []string{"second"},
+			outcomes: []string{dropped, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &drop, Evidence: "build succeeded", Reason: "claim refuted"}},
+		},
+		{
+			name: "explicit keep", raw: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`,
+			outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &keep, Evidence: "failed", Reason: "reproduced"}},
+		},
+		{
+			name: "duplicate", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"}]}`,
+			outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &drop, Evidence: "ok", Reason: "refuted"}, {Keep: &drop, Evidence: "ok", Reason: "refuted"}},
+		},
+		{
+			name: "empty evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":" ","reason":"refuted"}]}`,
+			outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &drop, Reason: "refuted"}},
+		},
+		{
+			name: "empty reason", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":""}]}`,
+			outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &drop, Evidence: "ok"}},
+		},
+		{
+			name: "missing keep", raw: `{"verdicts":[{"finding":1,"evidence":"ok","reason":"refuted"}]}`,
+			outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Evidence: "ok", Reason: "refuted"}},
+		},
+		{
+			name: "all dropped", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":2,"keep":false,"evidence":"ok","reason":"refuted"}]}`, summary: "No issues found.", want: []string{},
+			outcomes: []string{dropped, dropped}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &drop, Evidence: "ok", Reason: "refuted"}},
+		},
+		{name: "missing verdict", raw: `{"verdicts":[]}`, outcomes: []string{kept, kept}},
+		{name: "unknown finding number", raw: `{"verdicts":[{"finding":3,"keep":false,"evidence":"ok","reason":"refuted"}]}`, outcomes: []string{kept, kept}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.want == nil {
@@ -52,14 +81,19 @@ func TestCICheckApply(t *testing.T) {
 			}
 			assert.Equal(t, tc.want, problems)
 			assert.Equal(t, tc.summary, got.Summary)
-			assert.Contains(t, log.String(), `"evidence":"`)
+			assert.Equal(t, strings.Count(tc.raw, `"finding":`), strings.Count(log.String(), "CI checker verdict: "), "the job log keeps every verdict")
+			require.NotNil(t, got.Check)
+			assert.Equal(t, structuredreview.CheckCompleted, got.Check.Status)
+			require.Len(t, got.Check.Findings, len(doc.Findings), "every checked finding is recorded, kept or dropped")
+			outcomes := make([]string, 0, len(got.Check.Findings))
+			for i, checked := range got.Check.Findings {
+				outcomes = append(outcomes, checked.Outcome)
+				assert.Equal(t, doc.Findings[i], checked.Finding, "the record keeps the finding the checker received")
+			}
+			assert.Equal(t, tc.outcomes, outcomes)
+			assert.Equal(t, tc.firstVerdicts, got.Check.Findings[0].Verdicts)
 		})
 	}
-	t.Run("missing verdict", func(t *testing.T) {
-		got, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[]}`), io.Discard)
-		require.NoError(t, err)
-		assert.Equal(t, doc, got)
-	})
 }
 
 func TestCICheckSnapshot(t *testing.T) {
@@ -153,7 +187,8 @@ func TestCICheckCompletionFailure(t *testing.T) {
 	stored, checked := readCICheckCompletionReview(t, tc, job)
 	assert.Equal(t, original.review.Output, stored.Output)
 	assert.Equal(t, original.review.Verdict, stored.Verdict())
-	assert.Equal(t, doc, checked)
+	doc.Check = &structuredreview.Check{Status: structuredreview.CheckFailed}
+	assert.Equal(t, doc, checked, "the unchecked review records that its checker failed")
 	var invoked bool
 	require.NoError(t, tc.DB.QueryRowContext(t.Context(), "SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
 	assert.False(t, invoked)
@@ -178,7 +213,8 @@ func TestCICheckCompletionFailureAfterUsage(t *testing.T) {
 	stored, checked := readCICheckCompletionReview(t, tc, job)
 	assert.Equal(t, original.review.Output, stored.Output)
 	assert.Equal(t, original.review.Verdict, stored.Verdict())
-	assert.Equal(t, doc, checked)
+	doc.Check = &structuredreview.Check{Status: structuredreview.CheckFailed}
+	assert.Equal(t, doc, checked, "the unchecked review records that its checker failed")
 	usage := tokens.ParseJSON(finished.TokenUsage)
 	require.NotNil(t, usage)
 	assert := assert.New(t)
@@ -251,6 +287,65 @@ func TestCICheckCompletionDrop(t *testing.T) {
 			assert.Equal(t, drop.structuredVerdict, checked.Verdict)
 			require.Len(t, checked.Findings, 1)
 			assert.Equal(t, "Data loss", checked.Findings[0].Problem)
+		})
+	}
+}
+
+// The stored review document carries every verdict, so sync and export
+// consumers can see that checking ran and why each finding stayed or went.
+func TestCICheckCompletionStoresVerdicts(t *testing.T) {
+	const (
+		refuted    = `{"finding":1,"keep":false,"evidence":"go build ./... exited 0","reason":"The build claim does not hold."}`
+		reproduced = `{"finding":2,"keep":true,"evidence":"TestSave lost the file","reason":"Reproduced the data loss."}`
+	)
+	kept, dropped := structuredreview.CheckKept, structuredreview.CheckDropped
+	for _, tc := range []struct {
+		name, verdicts string
+		outcomes       []string
+		posted         []string
+		firstVerdicts  []structuredreview.CheckVerdict
+		// unchanged means the posted review keeps its original rendering and verdict.
+		unchanged bool
+	}{
+		{
+			name: "one dropped", verdicts: `{"verdicts":[` + refuted + `,` + reproduced + `]}`, outcomes: []string{dropped, kept}, posted: []string{"Data loss"},
+			firstVerdicts: []structuredreview.CheckVerdict{{Keep: new(false), Evidence: "go build ./... exited 0", Reason: "The build claim does not hold."}},
+		},
+		{name: "all kept", verdicts: `{"verdicts":[` + reproduced + `]}`, outcomes: []string{kept, kept}, posted: []string{"Build claim", "Data loss"}, unchanged: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wtc, job, doc, original := setupCICheckCompletion(t, "medium", "", nil)
+			// Only the sandboxed Codex run is replaced; its verdicts go through the real parser.
+			wtc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
+				return applyCICheck(doc, jsontext.Value(tc.verdicts), out)
+			}
+			wtc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
+			stored, checked := readCICheckCompletionReview(t, wtc, job)
+
+			assert := assert.New(t)
+			problems := make([]string, 0, len(checked.Findings))
+			for _, f := range checked.Findings {
+				problems = append(problems, f.Problem)
+			}
+			assert.Equal(tc.posted, problems)
+			require.NotNil(t, checked.Check)
+			assert.Equal(structuredreview.CheckCompleted, checked.Check.Status)
+			require.Len(t, checked.Check.Findings, 2)
+			outcomes := make([]string, 0, 2)
+			for i, entry := range checked.Check.Findings {
+				outcomes = append(outcomes, entry.Outcome)
+				assert.Equal(doc.Findings[i], entry.Finding)
+			}
+			assert.Equal(tc.outcomes, outcomes)
+			assert.Equal(tc.firstVerdicts, checked.Check.Findings[0].Verdicts)
+			assert.Equal([]structuredreview.CheckVerdict{{Keep: new(true), Evidence: "TestSave lost the file", Reason: "Reproduced the data loss."}}, checked.Check.Findings[1].Verdicts)
+			for _, text := range []string{"TestSave lost the file", "go build ./... exited 0"} {
+				assert.NotContains(stored.Output, text, "the posted Markdown does not carry checker evidence")
+			}
+			if tc.unchanged {
+				assert.Equal(original.review.Output, stored.Output)
+				assert.Equal(original.review.Verdict, stored.Verdict())
+			}
 		})
 	}
 }

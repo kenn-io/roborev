@@ -22,3 +22,9 @@ actions:
   - target: '$.components.schemas.LegacyReviewDocument.properties.legacy.properties.recorded_verdict'
     update:
       x-omitempty: false
+  # A finding without a location carries location: null. The member is
+  # always present, but null is valid, so validation must not require a value.
+  - target: '$.components.schemas.StructuredReviewFinding.properties.location'
+    update:
+      x-oapi-codegen-extra-tags:
+        validate: '-'

@@ -408,7 +408,8 @@ refuses this agentic mode.
 
 Tests that start a loopback server, such as `httptest.NewServer`, fail inside
 this sandbox. Run `make test-sandbox-integration` with nono and Codex on PATH to
-exercise the policy with real binaries and a local stand-in Responses server.
+exercise the policy with real binaries and a local stand-in Responses server. On
+Linux x86_64, `mise install` in a roborev checkout installs the pinned nono.
 
 ## Pi
 
@@ -617,8 +618,8 @@ short `WaitDelay` so orphan pipes cannot hang availability checks forever).
 ## ACP (Agent Client Protocol)
 
 ACP lets you integrate any agent that speaks the
-[Agent Client Protocol](https://zed.dev/blog/acp), even if roborev doesn't have
-a built-in adapter for it. Configure one or more named ACP agents in
+[Agent Client Protocol](https://zed.dev/acp), even if roborev doesn't have a
+built-in adapter for it. Configure one or more named ACP agents in
 `~/.roborev/config.toml`:
 
 ```toml

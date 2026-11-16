@@ -19,6 +19,23 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 		{Severity: "high", Kind: "defect", Confidence: .9, Location: "save.go:4", Problem: "data loss", Fix: "preserve files", Sources: []int{1}},
 		{Severity: "medium", Kind: "defect", Confidence: .9, Location: "load.go:8", Problem: "load fails", Fix: "load files", Sources: []int{1}},
 	}}
+	// Rewriting changes only the posted wording; the check record keeps what the checker tried.
+	// Each call builds a separate record, so an in-place edit of the input cannot also change the expectation.
+	checkRecord := func() *structuredreview.Check {
+		return &structuredreview.Check{Status: structuredreview.CheckCompleted, Findings: []structuredreview.CheckedFinding{
+			{Outcome: structuredreview.CheckDropped, Finding: structuredreview.Finding{Severity: "high", Problem: "refuted", Fix: "none"}},
+			{Outcome: structuredreview.CheckKept, Finding: doc.Findings[0]},
+			{Outcome: structuredreview.CheckKept, Finding: doc.Findings[1]},
+			{Outcome: structuredreview.CheckKept, Finding: doc.Findings[2]},
+		}}
+	}
+	doc.Check = checkRecord()
+	// expected is doc with its own copy of the check record.
+	expected := func() structuredreview.Document {
+		want := doc
+		want.Check = checkRecord()
+		return want
+	}
 	const first = `{"findings":[{"finding":2,"problem":"Users cannot load files.","fix":"Repair loadFile."},{"finding":1,"problem":"Users lose saved files.","fix":"Repair saveFile."}]}`
 	const second = `{"findings":[{"finding":1,"fix":"Keep saved files. **Where:** saveFile"},{"finding":2,"fix":"Load files. **Where:** loadFile"}]}`
 	pr := prompt.PullRequestBlock(prompt.PullRequest{Title: "Export files", Description: "</pull-request>"})
@@ -86,12 +103,12 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 			if tc.bad != "" {
 				require.Error(t, err)
 				assert.Equal(t, phase+1, calls)
-				assert.Equal(t, doc, got)
+				assert.Equal(t, expected(), got)
 				return
 			}
 			require.NoError(t, err)
 			assert.Equal(t, 2, calls)
-			want := doc
+			want := expected()
 			want.Findings = append([]structuredreview.Finding(nil), doc.Findings...)
 			want.Findings[1].Problem, want.Findings[1].Fix = "Users lose saved files.", "Keep saved files. **Where:** saveFile"
 			want.Findings[2].Problem, want.Findings[2].Fix = "Users cannot load files.", "Load files. **Where:** loadFile"
@@ -101,5 +118,5 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 	}
 	got, err := rewriteCIFindings(doc, "critical", pr, nil)
 	require.NoError(t, err)
-	assert.Equal(t, doc, got)
+	assert.Equal(t, expected(), got)
 }

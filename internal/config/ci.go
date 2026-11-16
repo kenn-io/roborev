@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path"
 	"slices"
@@ -199,6 +200,10 @@ type CIConfig struct {
 	// MinSeverity filters out findings below this severity level during synthesis.
 	// Valid values: critical, high, medium, low. Empty means no filter (include all).
 	MinSeverity string `toml:"min_severity"`
+
+	// CommentMinConfidence filters stated confidence in synthesized GitHub daemon comments.
+	// Nil disables the filter; zero includes every confidence.
+	CommentMinConfidence *float64 `toml:"comment_min_confidence"`
 
 	// CommentMaxFindings caps structured findings in synthesized GitHub daemon
 	// comments. Zero (the default) is unlimited. Stored reviews remain complete.
@@ -591,6 +596,9 @@ type RepoCIConfig struct {
 	// MinSeverity overrides the minimum severity filter for CI synthesis.
 	MinSeverity string `toml:"min_severity" comment:"Override the minimum CI severity included in synthesized output."`
 
+	// CommentMinConfidence overrides the global floor; zero disables it.
+	CommentMinConfidence *float64 `toml:"comment_min_confidence" comment:"Minimum recorded synthesis confidence in GitHub daemon comments (0..1). Unset inherits the global floor. Zero disables filtering."`
+
 	// CommentMaxFindings overrides the global cap; an explicit zero disables it.
 	CommentMaxFindings *int `toml:"comment_max_findings" comment:"Maximum structured findings in synthesized GitHub daemon comments; zero is unlimited."`
 
@@ -918,6 +926,24 @@ func ResolveCICommentWhenClean(repoCfg *RepoConfig, globalCfg *Config) bool {
 func validateCICommentMaxFindings(value int) error {
 	if value < 0 {
 		return fmt.Errorf("ci.comment_max_findings must be non-negative")
+	}
+	return nil
+}
+
+// ResolveCICommentMinConfidence resolves the publication floor; repo zero resets it.
+func ResolveCICommentMinConfidence(repoCfg *RepoConfig, globalCfg *Config) float64 {
+	if repoCfg != nil && repoCfg.CI.CommentMinConfidence != nil {
+		return *repoCfg.CI.CommentMinConfidence
+	}
+	if globalCfg != nil && globalCfg.CI.CommentMinConfidence != nil {
+		return *globalCfg.CI.CommentMinConfidence
+	}
+	return 0
+}
+
+func validateCICommentMinConfidence(value *float64) error {
+	if value != nil && (math.IsNaN(*value) || *value < 0 || *value > 1) {
+		return fmt.Errorf("ci.comment_min_confidence must be finite and between 0 and 1")
 	}
 	return nil
 }

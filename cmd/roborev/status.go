@@ -222,10 +222,10 @@ func statusCmd() *cobra.Command {
 					if health.Search.MirrorBacklog != nil {
 						mirrorBacklog = fmt.Sprintf("%d pending", *health.Search.MirrorBacklog)
 					}
-					fmt.Printf("  Lexical: %d indexed, mirror %s, %s\n",
+					fmt.Printf("  Full-text search: %d indexed, review index %s, %s\n",
 						health.Search.Indexed, mirrorState, mirrorBacklog)
 					if health.Search.EmbeddingsConfigured {
-						vectorLine := fmt.Sprintf("  Vectors: %s, %d embedded, %d pending, %d skipped",
+						vectorLine := fmt.Sprintf("  Semantic search: %s, %d indexed, %d pending, %d skipped",
 							health.Search.VectorState, health.Search.Embedded,
 							health.Search.EmbeddingBacklog, health.Search.Skipped)
 						if health.Search.RatePerSecond != nil {
@@ -237,7 +237,7 @@ func statusCmd() *cobra.Command {
 						}
 						fmt.Println(vectorLine)
 					} else {
-						fmt.Println("  Vectors: disabled")
+						fmt.Println("  Semantic search: disabled")
 					}
 					if health.Search.Credential != "" {
 						line := "  Credential: " + health.Search.Credential

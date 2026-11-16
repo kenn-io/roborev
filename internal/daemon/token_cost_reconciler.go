@@ -133,7 +133,7 @@ func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenUsageLogCandid
 		return
 	}
 	existing := tokens.ParseJSON(candidate.TokenUsage)
-	logUsage, err := tokens.ParseCodexUsageFile(JobLogPath(candidate.JobID))
+	logUsage, err := parseJobLogUsage(candidate.JobID, candidate.Agent)
 	if err != nil {
 		log.Printf("token cost reconciliation: job %d log: %v", candidate.JobID, err)
 		return

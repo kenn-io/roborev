@@ -11,32 +11,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/skills"
 )
-
-func TestCheckAgentHookUsesKitProfile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hooks.json")
-	_, err := kitagenthook.Install(kitagenthook.AgentCodex, kitagenthook.InstallOptions{
-		ConfigPath: path,
-		Executable: "/opt/bin/roborev",
-		Arguments:  []string{"agent-hook", "run", "--agent", "codex", "--source=roborev-agent-hook"},
-		Marker:     "--source=roborev-agent-hook",
-		Hooks:      []kitagenthook.Hook{{Event: kitagenthook.EventStop}},
-	})
-	require.NoError(t, err)
-
-	check := checkAgentHook(
-		"agent_hook_codex",
-		path,
-		string(kitagenthook.AgentCodex),
-		"roborev agent-hook install --agent codex",
-	)
-
-	assert.Equal(t, statusOK, check.Status)
-}
 
 func TestCheckConfiguredAgentRequiresNonEmptyGlobalDefault(t *testing.T) {
 	assert := assert.New(t)
@@ -372,6 +350,10 @@ func TestRenderHumanIncludesGuideAndState(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "How roborev works") // embedded guide
 	assert.Contains(t, out, "daemon_running")    // detected state
+	buf.Reset()
+	renderHuman(&buf, quickstartState{Checks: []quickstartCheck{{ID: "agent_hook_codex", Status: checkStatus("untrusted"), FixCommand: "open codex and run /hooks"}}})
+	assert.Contains(t, buf.String(), "needs you")
+	assert.Contains(t, buf.String(), "open codex and run /hooks")
 }
 
 func TestQuickstartJSONOmitsGuide(t *testing.T) {
@@ -420,4 +402,27 @@ func TestQuickstartOutsideGitRepo(t *testing.T) {
 		cmd.SetErr(&errBuf)
 		require.Error(t, cmd.Execute())
 	})
+}
+
+func TestQuickstartCodexTrust(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	fakeAgent(t, "codex")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	_, err := runSetup("--agent", "codex", "--mcp")
+	require.NoError(t, err)
+	marker := filepath.Join(t.TempDir(), "mcp-probe")
+	t.Setenv("ROBOREV_TEST_MCP_MARKER", marker)
+	check := checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
+	assert.Equal(t, statusOK, check.Status)
+	assert.NotContains(t, check.Details, "mcp roborev")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "untrusted")
+	check = checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
+	assert.Equal(t, checkStatus("untrusted"), check.Status)
+	assert.Contains(t, check.FixCommand, "/hooks")
+	t.Setenv("ROBOREV_TEST_HOOK_TRUST", "trusted")
+	require.NoError(t, os.RemoveAll(filepath.Join(os.Getenv("CODEX_HOME"), "skills")))
+	check = checkNativeAgentHook(t.Context(), "agent_hook_codex", "codex")
+	assert.Equal(t, statusOK, check.Status, check.Details)
+	_, err = os.Stat(marker)
+	assert.True(t, os.IsNotExist(err))
 }

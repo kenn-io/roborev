@@ -493,7 +493,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
 			log.Printf("[%s] Error saving session ID for synthesis job %d: %v", workerID, job.ID, err)
 		}
-	})
+	}, func() error { return wp.db.ClearJobSessionID(job.ID, workerID) })
 	agentOutput = sessionWriter
 
 	var invocation *storage.ReviewInvocation

@@ -1001,11 +1001,24 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 type sessionStreamingTestAgent struct {
 	name       string
 	streamLine string
+	sessionCLI string
+	sessionID  string
+	state      *sessionStreamingTestAgentState
+}
+
+type sessionStreamingTestAgentState struct {
+	mu              sync.Mutex
+	observedSession string
 }
 
 func (a *sessionStreamingTestAgent) Name() string { return a.name }
 
 func (a *sessionStreamingTestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if a.state != nil {
+		a.state.mu.Lock()
+		a.state.observedSession = a.sessionID
+		a.state.mu.Unlock()
+	}
 	if output != nil {
 		if _, err := io.WriteString(output, a.streamLine+"\n"); err != nil {
 			return "", err
@@ -1027,6 +1040,12 @@ func (a *sessionStreamingTestAgent) WithModel(model string) agent.Agent {
 }
 
 func (a *sessionStreamingTestAgent) CommandLine() string { return a.name }
+func (a *sessionStreamingTestAgent) SessionCLI() string  { return a.sessionCLI }
+func (a *sessionStreamingTestAgent) WithSessionID(sessionID string) agent.Agent {
+	clone := *a
+	clone.sessionID = sessionID
+	return &clone
+}
 
 func TestProcessJob_CapturesSessionID(t *testing.T) {
 	t.Parallel()

@@ -2,6 +2,9 @@ package tokens
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -70,5 +73,151 @@ func TestParseSchemaUsageReportsReadFailure(t *testing.T) {
 	want := errors.New("read interrupted")
 	usage, err := ParseSchemaUsage("pi", iotest.ErrReader(want))
 	require.ErrorIs(t, err, want)
+	assert.Nil(t, usage)
+}
+
+// claudeResult builds a Claude result event. Each models entry is
+// {input, output, cache read, cache creation} with a fixed cost of $0.10.
+func claudeResult(sessionID, field string, models map[string][4]int64) string {
+	var entries []string
+	for name, counts := range models {
+		entries = append(entries, fmt.Sprintf(
+			`%q:{"inputTokens":%d,"outputTokens":%d,"cacheReadInputTokens":%d,`+
+				`"cacheCreationInputTokens":%d,"costUSD":0.1}`,
+			name, counts[0], counts[1], counts[2], counts[3]))
+	}
+	session := ""
+	if sessionID != "" {
+		session = fmt.Sprintf(`"session_id":%q,`, sessionID)
+	}
+	return fmt.Sprintf(`{"type":"result",%s%q:{%s}}`, session, field, strings.Join(entries, ","))
+}
+
+func TestParseSchemaUsageClaudeCountsEveryModel(t *testing.T) {
+	// The top-level usage object leaves out the second model's requests.
+	stream := `{"type":"system","subtype":"init","session_id":"session-a"}
+{"type":"result","session_id":"session-a","total_cost_usd":0.3,` +
+		`"usage":{"input_tokens":2,"output_tokens":4,"cache_creation_input_tokens":30},` +
+		`"modelUsage":{"main":{"inputTokens":2,"outputTokens":4,"cacheReadInputTokens":50,"cacheCreationInputTokens":30,"costUSD":0.25},` +
+		`"helper":{"inputTokens":5,"outputTokens":6,"cacheReadInputTokens":7,"cacheCreationInputTokens":8,"costUSD":0.05}}}`
+	usage, err := ParseSchemaUsage("claude-code", strings.NewReader(stream))
+	require.NoError(t, err)
+	assert.Equal(t, &Usage{
+		InputTokens: 7, OutputTokens: 10, CachedInputTokens: 57, CacheCreationTokens: 38,
+		CostUSD: 0.3, HasCost: true, ThreadID: "session-a", UsageSource: "job_log_claude_schema",
+	}, usage)
+}
+
+func TestParseSchemaUsageClaudeCountsEachRunOnce(t *testing.T) {
+	one := map[string][4]int64{"main": {100, 10, 1000, 500}}
+	two := map[string][4]int64{"main": {200, 20, 2000, 600}}
+	for _, tc := range []struct {
+		name   string
+		stream []string
+		want   Usage
+	}{
+		{
+			name: "deltas within one session are summed",
+			stream: []string{
+				claudeResult("session-a", "model_usage_since_last_result", one),
+				claudeResult("session-a", "model_usage_since_last_result", two),
+			},
+			want: Usage{
+				InputTokens: 300, OutputTokens: 30, CachedInputTokens: 3000, CacheCreationTokens: 1100,
+				CostUSD: 0.2, HasCost: true, ThreadID: "session-a",
+			},
+		},
+		{
+			name: "running totals within one session keep the last",
+			stream: []string{
+				claudeResult("session-a", "modelUsage", one),
+				claudeResult("session-a", "modelUsage", two),
+			},
+			want: Usage{
+				InputTokens: 200, OutputTokens: 20, CachedInputTokens: 2000, CacheCreationTokens: 600,
+				CostUSD: 0.1, HasCost: true, ThreadID: "session-a",
+			},
+		},
+		{
+			name: "a wrapper's second CLI run is added",
+			stream: []string{
+				claudeResult("session-b", "model_usage_since_last_result", one),
+				claudeResult("session-a", "modelUsage", two),
+			},
+			want: Usage{
+				InputTokens: 300, OutputTokens: 30, CachedInputTokens: 3000, CacheCreationTokens: 1100,
+				CostUSD: 0.2, HasCost: true, ThreadID: "session-a",
+				ProviderSessionIDs: []string{"session-a", "session-b"}, ExpectedProviderSessions: 2,
+			},
+		},
+		{
+			name: "results that omit the session use the last one named",
+			stream: []string{
+				`{"type":"system","session_id":"session-b"}`,
+				claudeResult("", "modelUsage", one),
+				`{"type":"system","session_id":"session-a"}`,
+				claudeResult("", "modelUsage", two),
+			},
+			want: Usage{
+				InputTokens: 300, OutputTokens: 30, CachedInputTokens: 3000, CacheCreationTokens: 1100,
+				CostUSD: 0.2, HasCost: true, ThreadID: "session-a",
+				ProviderSessionIDs: []string{"session-a", "session-b"}, ExpectedProviderSessions: 2,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usage, err := ParseSchemaUsage("claude-code", strings.NewReader(strings.Join(tc.stream, "\n")))
+			require.NoError(t, err)
+			require.NotNil(t, usage)
+			tc.want.UsageSource = "job_log_claude_schema"
+			assert.InDelta(t, tc.want.CostUSD, usage.CostUSD, 1e-9)
+			usage.CostUSD = tc.want.CostUSD
+			assert.Equal(t, &tc.want, usage)
+		})
+	}
+}
+
+func TestParseSchemaUsageClaudeUnpricedRunLeavesTotalUnpriced(t *testing.T) {
+	stream := claudeResult("session-a", "modelUsage", map[string][4]int64{"main": {1, 2, 3, 4}}) + "\n" +
+		`{"type":"result","session_id":"session-b","modelUsage":{"main":{"inputTokens":10,"outputTokens":20}}}`
+	usage, err := ParseSchemaUsage("claude-code", strings.NewReader(stream))
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(11), usage.InputTokens)
+	assert.Equal(t, int64(22), usage.OutputTokens)
+	assert.False(t, usage.HasCost)
+	assert.Zero(t, usage.CostUSD)
+}
+
+func TestParseJobLogUsageFileReadsTheLogOwnersFormat(t *testing.T) {
+	dir := t.TempDir()
+	claudeLog := filepath.Join(dir, "claude.log")
+	require.NoError(t, os.WriteFile(claudeLog, []byte(
+		claudeResult("session-a", "modelUsage", map[string][4]int64{"main": {1, 2, 3, 4}})+"\n"), 0o600))
+	codexLog := filepath.Join(dir, "codex.log")
+	require.NoError(t, os.WriteFile(codexLog, []byte(
+		`{"type":"turn.completed","thread_id":"thread-a","usage":{"input_tokens":9,"output_tokens":8}}`+"\n"), 0o600))
+
+	usage, err := ParseJobLogUsageFile("claude-code", claudeLog)
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(2), usage.OutputTokens)
+	assert.Equal(t, "session-a", usage.ThreadID)
+
+	usage, err = ParseJobLogUsageFile("codex", codexLog)
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(8), usage.OutputTokens)
+
+	// Another agent's events in a log are not this agent's measured usage.
+	usage, err = ParseJobLogUsageFile("codex", claudeLog)
+	require.NoError(t, err)
+	assert.Nil(t, usage)
+	usage, err = ParseJobLogUsageFile("claude-code", codexLog)
+	require.NoError(t, err)
+	assert.Nil(t, usage)
+
+	usage, err = ParseJobLogUsageFile("claude-code", filepath.Join(dir, "missing.log"))
+	require.NoError(t, err)
 	assert.Nil(t, usage)
 }

@@ -242,7 +242,7 @@ func TestQueueListPositionMigrationBackfill(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:11]))
-	_, jobs := seedJobs(t, db, "/tmp/migration-closed", 3)
+	_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/tmp/migration-closed", 3)
 	for _, job := range jobs {
 		setStatus(t, db, job.ID, JobStatusDone)
 	}
@@ -267,7 +267,7 @@ func TestSyncPendingMigrationBackfill(t *testing.T) {
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:migrationIndex]))
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
-	_, jobs := seedJobs(t, db, t.TempDir(), 4)
+	_, jobs := seedJobsBeforeSessionCLIMigration(t, db, t.TempDir(), 4)
 	cases := []struct {
 		name            string
 		sourceMachineID uuid.UUID
@@ -298,4 +298,36 @@ func TestSyncPendingMigrationBackfill(t *testing.T) {
 		}
 		require.NoError(t, migrateSyncPendingIndexes(t.Context(), db))
 	}
+}
+
+func TestPanelEnqueueRequestMigrationPreservesQueuedReviews(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openUnmigratedDB(t)
+	require.NoError(t, registerContentFunctions())
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:16]))
+	repo, existing := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/panel-upgrade", 1)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+
+	run := uuid.New()
+	members := []EnqueueOpts{{
+		RepoID: repo.ID, GitRef: "head", Agent: "test",
+		JobType: JobTypeReview, PanelRunUUID: &run, PanelRole: "member",
+	}}
+	synthesis := EnqueueOpts{
+		RepoID: repo.ID, GitRef: "head", Agent: "test",
+		JobType: JobTypeSynthesis, PanelRunUUID: &run, PanelRole: "synthesis",
+	}
+	request := PanelEnqueueRequest{ID: uuid.New(), Hash: "submitted-input"}
+	_, panel, replayed, err := db.EnqueuePanelRunRequest(t.Context(), members, synthesis, request)
+	require.NoError(t, err)
+	assert.False(replayed)
+	_, replay, replayed, err := db.EnqueuePanelRunRequest(t.Context(), members, synthesis, request)
+	require.NoError(t, err)
+	assert.True(replayed)
+	assert.Equal(panel.ID, replay.ID)
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal(existing[0].ID, claimed.ID, "the upgrade must preserve queued work")
 }

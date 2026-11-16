@@ -14,7 +14,7 @@ roborev job comment --job 42 "Fixed and verified the findings"
 roborev job close 42
 ```
 
-`doctor` reads setup state without starting the daemon. `init` configures the
+`doctor` may start the MCP server and daemon it checks. `init` configures the
 repository and git hooks. Reviews run in the background; `wait` follows an
 existing job. `fix` runs an agent in the foreground, edits and commits code,
 and closes completed jobs. Re-review the resulting commit for fresh verification.
@@ -53,7 +53,9 @@ and the daemon API.
 The agent hook watches your coding-agent session (turns, commits, failed
 reviews). When review work piles up, it returns a self-contained fix instruction
 before the session goes cold. The write -> review -> fix loop closes without you
-asking. `roborev agent hook install` auto-detects Claude Code, Codex,
+asking. `roborev agent setup [--mcp]` connects Claude Code and Codex; if Codex
+asks for review, run `/hooks` in Codex, then `roborev agent setup --check`.
+For other profiles, `roborev agent hook install` auto-detects Claude Code, Codex,
 Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build.
 Hook installation updates bundled skills for every supported profile.
 The hook never fires in a repo without its own review guidance

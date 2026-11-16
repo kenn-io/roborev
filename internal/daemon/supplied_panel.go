@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -41,7 +44,9 @@ type SuppliedPanelSynthesis struct {
 }
 
 type EnqueueSuppliedPanelInput struct {
-	Body struct {
+	RawBody []byte
+	Body    struct {
+		RequestID     *uuid.UUID             `json:"request_id,omitempty" doc:"Retry an identical submission with this ID to recover its original panel"`
 		RepoPath      string                 `json:"repo_path" minLength:"1"`
 		GitRef        string                 `json:"git_ref" minLength:"1" doc:"Commit or range resolved once for every reviewer and synthesis"`
 		Members       []SuppliedPanelMember  `json:"members" minItems:"1"`
@@ -52,6 +57,25 @@ type EnqueueSuppliedPanelInput struct {
 
 func (s *Server) humaEnqueueSuppliedPanel(ctx context.Context, input *EnqueueSuppliedPanelInput) (*RawJSONOutput, error) {
 	req := input.Body
+	var request storage.PanelEnqueueRequest
+	if req.RequestID != nil {
+		if *req.RequestID == uuid.Nil() {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "request_id must be a nonzero UUID"})
+		}
+		// Hash the wire input so changes to Go fields or JSON tags cannot strand a receipt.
+		data := jsontext.Value(input.RawBody)
+		if err := data.Canonicalize(); err != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: fmt.Sprintf("invalid request JSON: %v", err)})
+		}
+		request = storage.PanelEnqueueRequest{ID: *req.RequestID, Hash: fmt.Sprintf("%x", sha256.Sum256(data))}
+		job, found, err := s.db.GetPanelEnqueueRequest(ctx, request)
+		if err != nil {
+			return suppliedPanelRequestError(err)
+		}
+		if found {
+			return s.replaySuppliedPanel(job, len(req.Members))
+		}
+	}
 	if strings.TrimSpace(req.RepoPath) == "" || strings.TrimSpace(req.GitRef) == "" || req.GitRef == "dirty" || len(req.Members) == 0 {
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "repo_path, a committed git_ref, and at least one member are required"})
 	}
@@ -124,9 +148,19 @@ func (s *Server) humaEnqueueSuppliedPanel(ctx context.Context, input *EnqueueSup
 	if err != nil {
 		return nil, err
 	}
-	jobs, parent, err := s.db.EnqueuePanelRun(members, synthesis)
+	var jobs []*storage.ReviewJob
+	var parent *storage.ReviewJob
+	var replayed bool
+	if req.RequestID != nil {
+		jobs, parent, replayed, err = s.db.EnqueuePanelRunRequest(ctx, members, synthesis, request)
+	} else {
+		jobs, parent, err = s.db.EnqueuePanelRun(members, synthesis)
+	}
 	if err != nil {
-		return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: fmt.Sprintf("enqueue panel: %v", err)})
+		return suppliedPanelRequestError(err)
+	}
+	if replayed {
+		return s.replaySuppliedPanel(parent, len(req.Members))
 	}
 	ids := make([]int64, len(jobs))
 	for i, job := range jobs {
@@ -135,6 +169,36 @@ func (s *Server) humaEnqueueSuppliedPanel(ctx context.Context, input *EnqueueSup
 	parent.RepoPath, parent.RepoName = repo.RootPath, repo.Name
 	s.logEnqueueSideEffects(parent, enqueueSideEffectInputs{repo: repo, gitRef: descriptor.gitRef, agentName: parent.Agent, reviewType: parent.ReviewType})
 	return rawJSONOutput(http.StatusCreated, PanelEnqueueResponse{ReviewJob: parent, PanelRunUUID: run, MemberJobIDs: ids})
+}
+
+func suppliedPanelRequestError(err error) (*RawJSONOutput, error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, storage.ErrPanelRequestConflict) {
+		status = http.StatusConflict
+	}
+	return rawJSONOutput(status, ErrorResponse{Error: fmt.Sprintf("enqueue panel: %v", err)})
+}
+
+func (s *Server) replaySuppliedPanel(receipt *storage.ReviewJob, memberCount int) (*RawJSONOutput, error) {
+	parent, err := s.db.GetSynthesisJob(*receipt.PanelRunUUID)
+	if err != nil {
+		return suppliedPanelRequestError(err)
+	}
+	if parent == nil || parent.ID != receipt.ID {
+		return rawJSONOutput(http.StatusGone, ErrorResponse{Error: "the panel for request_id has been deleted"})
+	}
+	members, err := s.db.GetPanelMembers(*receipt.PanelRunUUID)
+	if err != nil {
+		return suppliedPanelRequestError(err)
+	}
+	if len(members) != memberCount {
+		return rawJSONOutput(http.StatusGone, ErrorResponse{Error: "the panel for request_id has been deleted"})
+	}
+	ids := make([]int64, len(members))
+	for i, member := range members {
+		ids[i] = member.ID
+	}
+	return rawJSONOutput(http.StatusCreated, PanelEnqueueResponse{ReviewJob: parent, PanelRunUUID: *receipt.PanelRunUUID, MemberJobIDs: ids})
 }
 
 func suppliedPanelJobOpts(descriptor targetDescriptor, req EnqueueRequest, cfg *config.Config) (storage.EnqueueOpts, error) {

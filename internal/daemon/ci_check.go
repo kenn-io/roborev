@@ -93,14 +93,19 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		}
 		if checkErr != nil {
 			fmt.Fprintf(outputWriter, "CI checker failed; keeping original review: %v\n", checkErr)
-		} else if !reflect.DeepEqual(checked.Findings, doc.Findings) {
-			if len(checked.Findings) < len(doc.Findings) {
-				checked.Verdict = map[bool]string{true: structuredreview.VerdictPass, false: structuredreview.VerdictFail}[reviewpkg.SynthesisVerdict(checked, job.MinSeverity).Passed()]
+			checked = doc
+			checked.Check = &structuredreview.Check{Status: structuredreview.CheckFailed}
+		} else if len(checked.Findings) < len(doc.Findings) {
+			checked.Verdict = map[bool]string{true: structuredreview.VerdictPass, false: structuredreview.VerdictFail}[reviewpkg.SynthesisVerdict(checked, job.MinSeverity).Passed()]
+		}
+		if reflect.DeepEqual(checked.Findings, doc.Findings) {
+			// Only the check record changed, so keep the review's rendering and verdict.
+			if raw, err := json.Marshal(checked); err == nil {
+				res.review.StructuredOutput = raw
 			}
-			if result, err := synthesisDocumentResult(job, checked); err == nil {
-				result.Agent = res.review.Agent
-				res.review = result
-			}
+		} else if result, err := synthesisDocumentResult(job, checked); err == nil {
+			result.Agent = res.review.Agent
+			res.review = result
 		}
 		return res, true
 	}
@@ -472,19 +477,27 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return doc, fmt.Errorf("decode checker verdicts: %w", err)
 	}
-	counts, drops := make(map[int]int), make(map[int]bool)
+	verdicts := make(map[int][]structuredreview.CheckVerdict)
 	for _, v := range response.Verdicts {
 		encoded, _ := json.Marshal(v)
 		fmt.Fprintf(out, "CI checker verdict: %s\n", encoded)
-		counts[v.Finding]++
-		drops[v.Finding] = v.Keep != nil && !*v.Keep && strings.TrimSpace(v.Evidence) != "" && strings.TrimSpace(v.Reason) != ""
+		verdicts[v.Finding] = append(verdicts[v.Finding], structuredreview.CheckVerdict{
+			Keep: v.Keep, Evidence: strings.TrimSpace(v.Evidence), Reason: strings.TrimSpace(v.Reason),
+		})
 	}
+	check := &structuredreview.Check{Status: structuredreview.CheckCompleted}
 	kept := make([]structuredreview.Finding, 0, len(doc.Findings))
 	for i, f := range doc.Findings {
-		if counts[i+1] != 1 || !drops[i+1] {
+		// Drop only on one verdict that refutes the finding with evidence and a reason.
+		entry := structuredreview.CheckedFinding{Outcome: structuredreview.CheckKept, Finding: f, Verdicts: verdicts[i+1]}
+		if v := entry.Verdicts; len(v) == 1 && v[0].Keep != nil && !*v[0].Keep && v[0].Evidence != "" && v[0].Reason != "" {
+			entry.Outcome = structuredreview.CheckDropped
+		} else {
 			kept = append(kept, f)
 		}
+		check.Findings = append(check.Findings, entry)
 	}
+	doc.Check = check
 	if len(kept) == len(doc.Findings) {
 		return doc, nil
 	}

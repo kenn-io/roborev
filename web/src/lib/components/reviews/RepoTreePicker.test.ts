@@ -1,3 +1,4 @@
+import { offlineRead } from "../../testing/network";
 import {
   cleanup,
   fireEvent,
@@ -84,6 +85,7 @@ describe("RepoTreePicker", () => {
 
   afterEach(async () => {
     cleanup();
+    vi.useRealTimers();
     state.jobs = null;
     repoApi.listBranches.mockReset();
     repoApi.listRepos.mockReset();
@@ -189,7 +191,7 @@ describe("RepoTreePicker", () => {
           branches: [{ name: "project-a-main", count: 1 }],
         });
       }
-      return Promise.reject(new TypeError("branch lookup failed"));
+      return Promise.reject(new Response(null, { status: 500 }));
     });
     render(RepoTreePicker);
 
@@ -201,9 +203,31 @@ describe("RepoTreePicker", () => {
     await screen.findByText("project-a-main");
     await fireEvent.click(expandButtons[1]);
 
-    await screen.findByText("No branches");
+    await screen.findByText("Could not load branches.");
     expect(screen.queryByText("project-a-main")).toBeNull();
+
+    repoApi.listBranches.mockResolvedValue({ branches: [] });
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("No branches");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("recovers a branch list after a brief connection failure", async () => {
+    vi.useFakeTimers();
+    repoApi.listBranches
+      .mockImplementationOnce(offlineRead)
+      .mockResolvedValue({ branches: [{ name: "main", count: 3 }] });
+    render(RepoTreePicker);
+    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(screen.getByTitle("Show branches"));
+    expect(screen.getByText("Loading...")).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(repoApi.listBranches).toHaveBeenCalledTimes(2);
+  });
+
   it("distinguishes duplicate checkouts and searches their paths", async () => {
     repoApi.listRepos.mockResolvedValue({
       repos: [

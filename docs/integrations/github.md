@@ -502,11 +502,15 @@ Patterns use Go's `path.Match` syntax (`*` matches any sequence of characters,
 `?` matches a single character, `[...]` matches character classes). Matching is
 case-insensitive.
 
-Wildcard expansion calls the GitHub API and caches results for one hour.
-Archived repos and repos with pull requests explicitly disabled are excluded.
-Repos remain eligible when the API omits the pull-request setting. If you enable
-pull requests later, the next discovery refresh includes the repo again.
-Explicit (non-wildcard) repos always take priority when `max_repos` is reached.
+Wildcard expansion calls the GitHub API and caches results for one hour. For an
+organization, it lists every repository the token can reach. For a personal
+account, it lists the public repositories plus the private ones the token can
+reach: with a GitHub App, the repositories the app is installed on; with a user
+token, those the user owns or collaborates on. Archived repos and repos with
+pull requests explicitly disabled are excluded. Repos remain eligible when the
+API omits the pull-request setting. If you enable pull requests later, the next
+discovery refresh includes the repo again. Explicit (non-wildcard) repos always
+take priority when `max_repos` is reached.
 
 Failed repository lookups retry on the first poll after 15 minutes, then after
 30 minutes, and then hourly. Other lookups keep their hourly cache, and the
@@ -754,33 +758,46 @@ nothing survives the display filters. Defaults preserve existing behavior:
 [ci]
 comment_max_findings = 0   # Unlimited structured findings
 comment_when_clean = true # Create comments even when no findings survive
+# comment_min_confidence = 0.8 # Optional; unset disables confidence filtering
 ```
 
 Set `comment_max_findings` to a positive integer to show that many structured
-findings after severity filtering. Comments show critical findings first, then
-high, medium, and low, preserving the original order within each severity. An
-overflow line counts only findings omitted by the cap and points to
-`roborev show --job <synthesis-job-id>` for the complete review. Negative caps
-are invalid, including when loading, saving, or reloading global configuration.
-The omission count and retrieval command remain visible when a long finding
-requires comment truncation. Prose is not capped because it cannot be ranked
-reliably.
+findings after severity and confidence filtering. Comments show critical
+findings first, then high, medium, and low, preserving the stored order within
+each severity. An overflow line counts only findings omitted by the cap and
+points to `roborev show --job <synthesis-job-id>` for the complete review.
+Negative caps are invalid, including when loading, saving, or reloading global
+configuration. The omission count and retrieval command remain visible when a
+long finding requires comment truncation. Prose is not capped because it cannot
+be ranked reliably.
+
+Set `comment_min_confidence` to a finite number from `0` to `1` to hide
+structured findings whose recorded synthesis confidence falls below that floor.
+Findings at the floor and findings with no stored score remain visible. An
+explicit score of zero is compared normally. Synthesis is instructed to use
+`0.5` when no source scored a finding, so a floor above `0.5` can hide it. An
+unset global floor disables filtering. Invalid floors are rejected when loading,
+saving, or reloading configuration. If confidence removes a finding that passed
+the severity filter and no findings remain, the comment says "No findings match
+the comment filters." Confidence does not filter prose.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
-synthesis has no findings after filtering. Severity-parsed prose is also silent
-when no labelled findings or unlabelled blocks survive. Verbatim prose and
-legacy Markdown remain publishable, even if their text says the review is clean.
-Roborev does not infer cleanliness from text or the stored verdict. With
-`upsert_comments = true`, silent reviews update an existing marker comment to
-the no-findings line. Missing or deleted comments are successful no-ops; cleanup
-never creates a replacement. Permission and transient delivery errors keep the
-normal error and retry behavior.
+synthesis has no findings after filtering, even if the stored review has
+findings. Severity-parsed prose is also silent when no labelled findings or
+unlabelled blocks survive. Verbatim prose and legacy Markdown remain
+publishable, even if their text says the review is clean. Roborev does not infer
+cleanliness from text or the stored verdict. With `upsert_comments = true`,
+silent reviews update an existing marker comment to the no-findings line.
+Missing or deleted comments are successful no-ops; cleanup never creates a
+replacement. Permission and transient delivery errors keep the normal error and
+retry behavior.
 
-Both settings accept per-repo `[ci]` overrides in `.roborev.toml`. An explicit
-repo cap of `0` restores unlimited findings; an explicit `true` restores clean
-comments. These settings apply only to synthesized GitHub daemon comments. Raw
-member fallback diagnostics, daemon-free `roborev ci`, and GitLab keep existing
-behavior. Complete stored reviews, verdicts, prompts, and execution statuses are
+All three settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
+explicit repo cap of `0` restores unlimited findings; a confidence floor of `0`
+disables a global floor; an explicit `true` restores clean comments. These
+settings apply only to synthesized GitHub daemon comments. Raw member fallback
+diagnostics, daemon-free `roborev ci`, and GitLab keep existing behavior.
+Complete stored reviews, verdicts, prompts, and execution statuses are
 unchanged. Unlike these display settings, `ci.min_severity` also controls the
 synthesis verdict.
 
@@ -910,9 +927,16 @@ that start TCP loopback servers cannot run in this sandbox; the checker keeps
 findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
-Missing or duplicate verdicts keep the finding. The job log records the
-verdicts. If every finding drops, the stored review says "No issues found." A
-checker failure or timeout posts the original review unchanged.
+Missing or duplicate verdicts keep the finding. If every finding drops, the
+stored review says "No issues found." A checker failure or timeout posts the
+original review unchanged.
+
+The stored review document records the check in its `check` member: whether the
+checker completed or failed, and for every finding it received, whether the
+finding was kept or dropped, with the checker's evidence and reason. Sync,
+`roborev export reviews`, and the API carry this record; the posted PR comment
+does not. See the [review document format](/docs/commands/#exporting-reviews).
+The job log also records each verdict.
 
 ## Rewriting checked findings
 
@@ -1066,6 +1090,7 @@ set, it takes priority over the matrix fields for that repo.
 | `reviews` | table | global `reviews` | Granular agent-to-review-type map (overrides `agents` and `review_types`; empty table disables reviews) |
 | `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
+| `comment_min_confidence` | float | global `comment_min_confidence` | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Zero disables filtering. |
 | `comment_max_findings` | int | global `comment_max_findings` | Maximum structured findings in synthesized GitHub daemon comments; `0` restores unlimited |
 | `comment_when_clean` | bool | global `comment_when_clean` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
@@ -1106,6 +1131,7 @@ set, it takes priority over the matrix fields for that repo.
 | `rewrite` | bool | `false` | Rewrite checked findings in plain words; requires `check` |
 | `check_model` | string | | Model override for the checker. Global only |
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
+| `comment_min_confidence` | float | unset | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Unset disables filtering. |
 | `comment_max_findings` | int | `0` | Maximum structured findings in synthesized GitHub daemon comments; `0` is unlimited |
 | `comment_when_clean` | bool | `true` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |

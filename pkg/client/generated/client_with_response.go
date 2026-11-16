@@ -2412,8 +2412,40 @@ func (c *Client) EnqueueSuppliedPanelWithResponse(ctx context.Context, options *
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 409:
+		out.JSON409 = new(EnqueueSuppliedPanelErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON409); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "EnqueueSuppliedPanelErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 410:
+		out.JSON410 = new(EnqueueSuppliedPanelErrorResponseJSON410)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON410); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "EnqueueSuppliedPanelErrorResponseJSON410",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	case 500:
-		out.JSON500 = new(EnqueueSuppliedPanelErrorResponseJSON)
+		out.JSON500 = new(EnqueueSuppliedPanelErrorResponseJSON500)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
@@ -2421,7 +2453,7 @@ func (c *Client) EnqueueSuppliedPanelWithResponse(ctx context.Context, options *
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "EnqueueSuppliedPanelErrorResponseJSON",
+					TargetType:    "EnqueueSuppliedPanelErrorResponseJSON500",
 					Body:          bodyBytes,
 					Err:           err,
 				}

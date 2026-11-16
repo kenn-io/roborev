@@ -385,8 +385,8 @@ func TestStatusCmdShowsSearchHealthWithoutDegradingDaemon(t *testing.T) {
 
 	assert.Contains(t, output, "Health: OK")
 	assert.Contains(t, output, "Search:")
-	assert.Contains(t, output, "Lexical: 12 indexed, mirror complete, 3 pending")
-	assert.Contains(t, output, "Vectors: unavailable, 5 embedded, 7 pending, 2 skipped, 1.50/s, ETA 8s")
+	assert.Contains(t, output, "Full-text search: 12 indexed, review index complete, 3 pending")
+	assert.Contains(t, output, "Semantic search: unavailable, 5 indexed, 7 pending, 2 skipped, 1.50/s, ETA 8s")
 	assert.Contains(t, output, "Error: embedding authentication rejected (HTTP 401)")
 	assert.Contains(t, output, "Credential: rejected (env:EMBEDDING_KEY)")
 	assert.Contains(t, output, "embedding authentication rejected (401)")

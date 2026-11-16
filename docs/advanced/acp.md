@@ -3,7 +3,7 @@ title: Agent Client Protocol (ACP)
 description: Integrate any ACP-compatible agent with roborev
 ---
 
-ACP is an [open protocol from Zed](https://zed.dev/blog/acp) for editor-to-agent
+ACP is an [open protocol from Zed](https://zed.dev/acp) for editor-to-agent
 communication over stdin/stdout JSON-RPC. roborev uses ACP to integrate agents
 that don't have built-in adapters. If an agent speaks ACP (or has a wrapper that
 does), you can plug it in.

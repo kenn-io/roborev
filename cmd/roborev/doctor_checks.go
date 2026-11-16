@@ -37,11 +37,13 @@ type doctorEnv struct {
 	repoBranch string // default branch; "" when it cannot be resolved
 
 	daemon          doctorDaemon
+	initialPingErr  error
 	ping            *daemon.PingInfo
 	pingErr         error
 	daemonAgents    *doctorDaemonAgents
 	daemonAgentsErr error
 
+	agentReach    []doctorCheck
 	postCommitLog string
 }
 
@@ -64,6 +66,12 @@ func loadDoctorEnv(ctx context.Context, repoPath string, d doctorDaemon) *doctor
 		if branch, err := gitrepo.DefaultBranch(ctx, repoPath); err == nil {
 			env.repoBranch = branch
 		}
+	}
+	_, env.initialPingErr = d.Ping()
+	env.agentReach = checkDoctorAgentReach(env)
+	if _, live := d.(liveDoctorDaemon); live {
+		d = newDoctorDaemon(getDaemonEndpoint())
+		env.daemon = d
 	}
 	env.ping, env.pingErr = d.Ping()
 	if env.pingErr == nil {

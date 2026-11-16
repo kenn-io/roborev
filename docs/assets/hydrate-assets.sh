@@ -120,7 +120,8 @@ hydrate_branch() {
 
   rm -rf "$target"
   mkdir -p "$target"
-  git -C "$repo_root" archive "$asset_ref" | tar -xf - -C "$target"
+  # Tar may finish before the producer writes all trailing archive padding.
+  git -C "$repo_root" archive "$asset_ref" | { tar -xf - -C "$target" && cat > /dev/null; }
 
   if ! has_expected_assets "$target" "$@"; then
     printf 'docs assets not hydrated: %s is missing expected assets\n' "$branch" >&2

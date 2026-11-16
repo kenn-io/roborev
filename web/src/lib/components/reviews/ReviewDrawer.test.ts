@@ -22,6 +22,9 @@ const state = vi.hoisted(() => ({
   cancelJob: vi.fn(),
   closeReview: vi.fn(),
   copyOutput: vi.fn(),
+  loadReview: vi.fn(),
+  loadError: null as string | null,
+  visibleJobId: 42,
   jobStatus: "done",
   jobType: "review",
   reviewType: undefined as string | undefined,
@@ -68,6 +71,7 @@ vi.mock("../../stores/context", () => ({
       getVisibleJobs: () => [
         {
           ...job,
+          id: state.visibleJobId,
           status: state.jobStatus,
           job_type: state.jobType,
           review_type: state.reviewType,
@@ -101,6 +105,10 @@ vi.mock("../../stores/context", () => ({
       isClosed: () => false,
       closeReview: state.closeReview,
       copyOutput: state.copyOutput,
+      getError: () => state.loadError,
+      getPrompt: () => "",
+      getSelectedJobId: () => 42,
+      loadReview: state.loadReview,
     },
     getCapabilities: () => state.capabilities,
   }),
@@ -116,6 +124,9 @@ describe("ReviewDrawer", () => {
     state.cancelJob.mockReset();
     state.closeReview.mockReset();
     state.copyOutput.mockReset();
+    state.loadReview.mockReset();
+    state.loadError = null;
+    state.visibleJobId = 42;
     state.jobStatus = "done";
     state.jobType = "review";
     state.reviewType = undefined;
@@ -266,6 +277,22 @@ describe("ReviewDrawer", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Close Review" }));
     expect(state.closeReview).toHaveBeenCalledWith(42);
   });
+
+  it.each(["Log", "Prompt"])(
+    "offers a retry on the %s tab when an off-page job fails to load",
+    async (tab) => {
+      state.visibleJobId = 7;
+      state.loadError = "Failed to load review";
+      render(ReviewDrawer);
+
+      await fireEvent.click(screen.getByRole("button", { name: tab }));
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Failed to load review",
+      );
+      await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      expect(state.loadReview).toHaveBeenCalledExactlyOnceWith(42);
+    },
+  );
 
   it("shows rerun only for rerunnable jobs", () => {
     state.jobStatus = "running";

@@ -63,12 +63,35 @@ Regenerate shell completions with `roborev completion <shell>` to discover the
 new groups. Use `roborev job --help` or another group's help to find its
 actions.
 
+## Find a command
+
+Describe a task to find relevant commands without walking the help tree:
+
+```bash
+roborev cli search "review uncommitted changes"
+roborev cli search add a note to a review --json
+roborev cli search "show agent output log" --limit 3
+```
+
+Search reads the command tree locally. It needs no repository, configuration,
+daemon, credentials or network. It returns five commands by default; `--limit`
+accepts 1–20. Text output includes a help hint. `--json` returns `query` and
+`results`, with `command`, `summary` and `usage` for each result. No matches is
+success with an empty result list. Missing or blank tasks and invalid limits
+exit with code 2.
+
+Results use the preferred command paths. Hidden compatibility commands,
+help-only groups, interactive UIs and internal hook/server entry points are
+excluded. `roborev cli` shows discovery help. To search completed review
+content, use `roborev job search` instead.
+
 ## Direct CLI workflow
 
 Run these from your git checkout. Replace job `42` with the job ID printed by
 `review` or `list`:
 
 ```bash
+roborev cli search "review uncommitted changes"
 roborev doctor
 roborev init
 roborev review HEAD
@@ -96,7 +119,8 @@ stored repository identity, or filter as described by that command. Outside a
 checkout, `list` also discovers repositories in immediate child directories.
 Without `--server`, commands discover the local daemon through its runtime file
 under `ROBOREV_DATA_DIR` (default `~/.roborev`) and start it when needed.
-`doctor` diagnoses setup without starting a daemon.
+`doctor` diagnoses setup. MCP readiness checks may start the configured server
+and daemon, and Codex may create its own state and bundled skills.
 
 `--server` selects an existing loopback address, `unix://` socket, or remote
 HTTPS base URL. The CLI does not start or replace explicit targets. Remote HTTPS
@@ -344,6 +368,11 @@ the job from being queued.
 the daemon has an active browser listener. See
 [Review links](/docs/integrations/mcp/#review-links) for how to use these URLs.
 
+A local Git ref takes precedence when it has a review. If a positive numeric
+argument resolves to a ref with no review, `show` retries it as a job ID and
+prints a note on stderr that names the commit and the job. Use `--job` to skip
+the ref lookup.
+
 When the argument is a numeric job ID, `--prompt` can display the stored prompt
 while the job is queued or running; review output does not exist until the job
 completes.
@@ -492,6 +521,7 @@ A `document` has these members:
 | `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. Omitted when the review stated none, as in some converted historical reviews. The exported top-level `verdict` comes from the findings, not from this value |
 | `findings` | array | Zero or more findings |
 | `source_labels` | array of strings | Only on combined panel reviews. Names the member reviews that findings cite |
+| `check` | object | Only when the [CI checker](/docs/integrations/github/#checking-findings-before-posting) ran on the review. Records what it kept and dropped, and why |
 
 Each finding has `severity` (`critical`, `high`, `medium`, or `low`), `problem`,
 `fix`, and `location`. `location` is always present and is `null` when the
@@ -514,6 +544,28 @@ reviews:
 When `file` is set, `location` is derived from `file`, `start_line`, and
 `end_line`, for example `internal/foo.go:12-14`. Otherwise `location` is free
 text, such as a goal review's `Kata abc123`, or `null`.
+
+A `check` has these members:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `status` | string | `completed` when the checker returned verdicts. `failed` when it ran but failed or timed out, so the review was stored unchecked |
+| `findings` | array | One entry per finding the checker received, in that order. Empty when `status` is `failed` |
+
+Each entry in `check.findings` has these members:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `outcome` | string | `kept` when the finding stayed in the review. `dropped` when the checker refuted it and roborev removed it from `findings` |
+| `finding` | object | The finding as the checker received it, in the same form as a member of `findings` |
+| `verdicts` | array | Every verdict the checker returned for this finding. Each has `keep` (boolean), `evidence` (the command it ran and its output, or what refutes the finding), and `reason` (one sentence). A member the checker left blank is omitted |
+
+A finding drops only when exactly one verdict has `keep` set to `false` and both
+`evidence` and `reason` set. Every other finding is kept, including one with no
+verdict. Kept entries appear in the same order as `findings`, so the second kept
+entry is the second finding. A rewrite can change the wording of a kept finding
+in `findings`; `check.findings` keeps the text the checker tried. The Markdown
+in `content` does not include the check.
 
 Other Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to read a
 `document`. `structuredreview.Decode` validates it, and `Document.Markdown("")`
@@ -1115,9 +1167,22 @@ with a message instead of queuing a job.
 
 ## Token Usage
 
-Token usage is tracked automatically for completed jobs when the local
-`agentsview` CLI or a usage server is configured. Usage appears in the TUI
-review header and `roborev job show` output (e.g. `118.0k ctx · 28.8k out`).
+Token usage is tracked automatically for completed jobs. Usage appears in the
+TUI review header and `roborev job show` output (e.g. `118.0k ctx · 28.8k out`).
+roborev reads it from two places:
+
+- **The job log.** Codex and Claude Code write their own usage into the per-job
+    log, so these jobs need no other tool. Codex logs token counts. Claude Code
+    logs input, cache read, cache write, and output tokens plus the CLI's own
+    cost figure, summed over every model the run used. If a `claude_code_cmd`
+    wrapper runs the CLI more than once in a job, each run is counted once and
+    the job records their total.
+- **A usage provider.** The local `agentsview` CLI or a configured usage server
+    adds peak context size and a cost estimate, and supplies usage for agents
+    that do not log it. When a provider reports a price, that price replaces the
+    logged one. A job that ran the Claude CLI more than once keeps its logged
+    total, because a provider lookup covers a single session.
+
 When supported, roborev uses `session usage --no-sync` to read archived usage,
 including subagents, without synchronizing source transcripts. Run AgentsView's
 watcher or synchronize separately to keep the archive current. On older CLIs,
@@ -1172,10 +1237,12 @@ roborev storage backfill-tokens --dry-run   # Preview without writing
 | `--dry-run` | Preview candidates without fetching or storing data |
 
 The backfill scans eligible terminal jobs that need token or price data. This
-includes failed, canceled, and skipped jobs when an agent ran. Jobs whose
-session files have been deleted are skipped. Sessions reused by more than one
-started job are also skipped because their cumulative usage cannot be assigned
-safely to one job.
+includes failed, canceled, and skipped jobs when an agent ran. Codex and Claude
+Code jobs are filled from their job logs while those logs still exist, with or
+without a usage provider. Jobs whose session files have been deleted are skipped
+unless the job log supplies the data. Sessions reused by more than one started
+job are also skipped because their cumulative usage cannot be assigned safely to
+one job.
 
 ## CI Review
 
@@ -1500,6 +1567,10 @@ See: [Configuration](/docs/configuration/#post-commit-review-mode) and
 ## Agent Hook
 
 ```bash
+roborev agent setup                     # Connect Claude Code and Codex
+roborev agent setup --mcp               # Also register MCP
+roborev agent setup --check             # Check readiness
+roborev agent setup --print             # Print Claude and Codex MCP commands
 roborev agent hook install              # Install profiles for detected agents
 roborev agent hook install --agent all  # Install all nine integrations
 roborev agent hook install --agent hermes --config ~/.hermes/config.yaml
@@ -1510,6 +1581,22 @@ roborev agent hook run --agent codex --source roborev-agent-hook              # 
 roborev agent hook status               # Tracked session counters as JSON
 roborev agent hook reset example-session   # Reset one session (or --all)
 ```
+
+If Codex asks for review, run `/hooks` in Codex, then recheck. The MCP check may
+start the configured server, and Codex may update its runtime state.
+
+### Setup flags
+
+| Flag | Description |
+|------|-------------|
+| `--agent <name>` | Select `claude` or `codex`; repeat or use a comma-separated list |
+| `--mcp[=false]` | Select MCP or CLI mode; omission keeps the installed mode |
+| `--check` | Check readiness without installing |
+| `--json` | Print the readiness report as JSON |
+| `--print` | Print manual MCP registration commands |
+| `--server <address>` | Select the daemon for setup or printed commands; cannot be combined with `--check` |
+
+### Hook install flags
 
 | Flag | Description |
 |------|-------------|
@@ -1537,8 +1624,8 @@ roborev doctor --repo /path/to/repo   # Check a different repository
 ```
 
 `roborev doctor` reads configuration and daemon state and reports problems with
-a suggested fix for each. It never starts or restarts the daemon, installs
-hooks, or edits config.
+a suggested fix for each. MCP readiness checks may start the configured server
+and daemon. Doctor reports the daemon's state before and after those checks.
 
 | Area | What doctor checks |
 |------|--------------------|

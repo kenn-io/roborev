@@ -37,6 +37,17 @@ url = "https://github.com/jdx/jactionlint/releases/download/v2.3.0/jactionlint_2
 url_api = "https://api.github.com/repos/jdx/jactionlint/releases/assets/662210534"
 provenance = "github-attestations"
 
+[[tools.nono]]
+version = "0.80.0"
+backend = "github:nolabs-ai/nono"
+specifiers = ["0.80.0"]
+
+[tools.nono."platforms.linux-x64"]
+checksum = "sha256:6da665b61999570c10dffc7da78828fe1fb7f3cac53319e505cebecaef17037f"
+url = "https://github.com/nolabs-ai/nono/releases/download/v0.80.0/nono-v0.80.0-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nolabs-ai/nono/releases/assets/636393746"
+provenance = "github-attestations"
+
 [[tools.uv]]
 version = "0.13.4"
 backend = "aqua:astral-sh/uv"

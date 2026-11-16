@@ -1,3 +1,4 @@
+import { offlineRead } from "../../testing/network";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnedAppRuntime } from "../../runtime/runtime";
@@ -54,6 +55,41 @@ function abortingRequest() {
 }
 
 describe("Roborev request cancellation", () => {
+  it("retries review and comment reads before displaying them", async () => {
+    const getReview = vi
+      .fn()
+      .mockImplementationOnce(offlineRead)
+      .mockResolvedValue({
+        id: 7,
+        job_id: 42,
+        output: "review output",
+        closed: false,
+      });
+    const getReviewProjection = vi
+      .fn()
+      .mockImplementationOnce(offlineRead)
+      .mockResolvedValue({
+        responses: [{ id: 1, responder: "web", response: "comment" }],
+      });
+    const listJobs = vi.fn().mockResolvedValue({ jobs: [] });
+    const store = reviewStore({
+      getReview,
+      getReviewProjection,
+      listJobs,
+    } as never);
+    vi.useFakeTimers();
+    try {
+      store.setSelectedJobId(42);
+      store.loadReview(42);
+      await vi.runAllTimersAsync();
+      expect(store.getReview()?.output).toBe("review output");
+      expect(store.getResponses()[0]?.response).toBe("comment");
+      expect(store.getError()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("aborts stale review transport when another job becomes authoritative", async () => {
     const staleSignals: AbortSignal[] = [];
     const request = <A>(value: A) =>
@@ -212,6 +248,68 @@ describe("Roborev request cancellation", () => {
     await vi.waitFor(() => expect(store.isLoading()).toBe(false));
     expect(store.getPrompt()).toBe("persisted review prompt");
     expect(store.getResponses()).toEqual([response]);
+  });
+
+  it("offers recovery when the review is missing and the job read fails", async () => {
+    const listJobs = vi
+      .fn()
+      .mockImplementationOnce(offlineRead)
+      .mockImplementationOnce(offlineRead)
+      .mockImplementationOnce(offlineRead)
+      .mockResolvedValue({
+        jobs: [{ id: 42, status: "queued", prompt: "queued prompt" }],
+      });
+    const store = reviewStore({
+      getReview: vi.fn().mockRejectedValue(new Response(null, { status: 404 })),
+      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
+      listJobs,
+    } as never);
+    vi.useFakeTimers();
+    try {
+      store.setSelectedJobId(42);
+      store.loadReview(42);
+      await vi.runAllTimersAsync();
+      expect(store.getError()).toBe("Failed to load review");
+      expect(listJobs).toHaveBeenCalledTimes(3);
+      store.loadReview(42);
+      await vi.runAllTimersAsync();
+      expect(store.getError()).toBeNull();
+      expect(store.getPrompt()).toBe("queued prompt");
+      expect(store.getSelectedJob()?.status).toBe("queued");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows an existing review without retrying its optional job lookup", async () => {
+    const listJobs = vi.fn().mockImplementation(offlineRead);
+    const store = reviewStore({
+      getReview: vi.fn().mockResolvedValue({
+        id: 1,
+        job_id: 42,
+        output: "review output",
+        closed: false,
+        job: { id: 42, status: "done" },
+      }),
+      getReviewProjection: vi
+        .fn()
+        .mockResolvedValue({ responses: [{ id: 1, response: "comment" }] }),
+      listJobs,
+    } as never);
+    vi.useFakeTimers();
+    try {
+      store.setSelectedJobId(42);
+      store.loadReview(42);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getReview()?.output).toBe("review output");
+      expect(store.getResponses()[0]?.response).toBe("comment");
+      expect(store.getSelectedJob()?.status).toBe("done");
+      expect(store.isLoading()).toBe(false);
+      expect(store.getError()).toBeNull();
+      expect(listJobs).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("aborts stale job-list transport when a newer list becomes authoritative", async () => {
@@ -468,21 +566,26 @@ describe("review close reporting", () => {
   );
 });
 
-it("reports a shown review load failure once per selection", async () => {
+it("reports a review load failure once per selection without a toast", async () => {
+  const onError = vi.fn();
   const getReview = vi.fn(async () => {
     throw new Error("load failed");
   });
-  const store = reviewStore({
-    getReview,
-    getReviewProjection: vi.fn(async () => ({ responses: [] })),
-    listJobs: vi.fn(async () => ({ jobs: [] })),
-  } as never);
+  const store = reviewStore(
+    {
+      getReview,
+      getReviewProjection: vi.fn(async () => ({ responses: [] })),
+      listJobs: vi.fn(async () => ({ jobs: [] })),
+    } as never,
+    onError,
+  );
   store.setSelectedJobId(42);
   store.loadReview(42);
   await vi.waitFor(() =>
     expect(store.getError()).toBe("Failed to load review"),
   );
   expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_viewed");
+  expect(onError).not.toHaveBeenCalled();
   // Event-driven reloads show the same failure again.
   store.loadReview(42);
   await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(2));

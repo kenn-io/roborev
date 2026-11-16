@@ -294,9 +294,9 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 
 	job := src.createCompletedJob("session-sync-sha")
 	_, err := src.db.ExecContext(t.Context(),
-		`UPDATE review_jobs SET session_id = ? WHERE id = ?`,
-		"agent-session-abc", job.ID)
-	require.NoError(t, err, "set session_id: %v")
+		`UPDATE review_jobs SET session_id = ?, session_cli = ? WHERE id = ?`,
+		"agent-session-abc", "gemini", job.ID)
+	require.NoError(t, err, "set session metadata: %v")
 
 	exported, err := src.db.GetJobsToSync(src.machineID, 10)
 	require.NoError(t, err, "GetJobsToSync: %v")
@@ -310,6 +310,7 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 	}
 	assert.NotNil(t, syncJob)
 	assert.Equal(t, "agent-session-abc", syncJob.SessionID)
+	assert.Equal(t, "gemini", syncJob.SessionCLI)
 
 	dst := newSyncTestHelper(t)
 	pulled := PulledJob{
@@ -321,6 +322,7 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 		CommitTimestamp: syncJob.CommitTimestamp,
 		GitRef:          syncJob.GitRef,
 		SessionID:       syncJob.SessionID,
+		SessionCLI:      syncJob.SessionCLI,
 		Agent:           syncJob.Agent,
 		Model:           syncJob.Model,
 		Reasoning:       syncJob.Reasoning,
@@ -342,13 +344,26 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 		require.NoError(t, err, "UpsertPulledJob: %v")
 	}
 
-	var gotSessionID sql.NullString
+	var gotSessionID, gotSessionCLI sql.NullString
 	err = dst.db.QueryRowContext(t.Context(),
-		`SELECT session_id FROM review_jobs WHERE uuid = ?`,
-		syncJob.UUID).Scan(&gotSessionID)
-	require.NoError(t, err, "query imported session_id: %v")
+		`SELECT session_id, session_cli FROM review_jobs WHERE uuid = ?`,
+		syncJob.UUID).Scan(&gotSessionID, &gotSessionCLI)
+	require.NoError(t, err, "query imported session metadata: %v")
 
-	assert.False(t, !gotSessionID.Valid || gotSessionID.String != "agent-session-abc")
+	assert.Equal(t, "agent-session-abc", gotSessionID.String)
+	assert.Equal(t, "gemini", gotSessionCLI.String)
+
+	pulled.SessionID = "replacement-session"
+	pulled.SessionCLI = "agy"
+	pulled.UpdatedAt = pulled.UpdatedAt.Add(time.Second)
+	require.NoError(t, dst.db.UpsertPulledJob(pulled, dst.repo.ID, nil),
+		"replace imported session metadata: %v")
+	err = dst.db.QueryRowContext(t.Context(),
+		`SELECT session_id, session_cli FROM review_jobs WHERE uuid = ?`,
+		syncJob.UUID).Scan(&gotSessionID, &gotSessionCLI)
+	require.NoError(t, err, "query replaced session metadata: %v")
+	assert.Equal(t, "replacement-session", gotSessionID.String)
+	assert.Equal(t, "agy", gotSessionCLI.String)
 }
 
 // TestAgentInvoked_SyncRoundTrip verifies the agent_invoked marker survives a

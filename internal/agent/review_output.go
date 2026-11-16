@@ -22,6 +22,17 @@ func (t *trailingReviewText) Add(text string) {
 	t.parts = append(t.parts, text)
 }
 
+func (t *trailingReviewText) ExtendLast(text string) {
+	if text == "" {
+		return
+	}
+	if len(t.parts) == 0 {
+		t.parts = append(t.parts, text)
+		return
+	}
+	t.parts[len(t.parts)-1] += text
+}
+
 func (t *trailingReviewText) AddWithID(id, text string) {
 	if text == "" {
 		return

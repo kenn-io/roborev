@@ -146,7 +146,7 @@ func planNativeHooks(agent kitagenthook.Agent, opts InstallOptions) (kitagenthoo
 	case AgentZcode:
 		return planZcodeInstall(opts)
 	}
-	kitOpts, err := validatedKitInstallOptions(agent, opts)
+	kitOpts, err := KitInstallOptions(agent, opts)
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
@@ -198,6 +198,7 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 			planned.Data = data
 			mcpResult = mcpconfig.Result{Path: path, Data: data, Changed: planned.Changed}
 		} else {
+			mcpOpts.DryRun = opts.DryRun
 			mcpResult, err = mcpconfig.Install(mcpOpts)
 			if err != nil {
 				return kitagenthook.Result{}, err
@@ -206,9 +207,6 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 		if opts.DryRun {
 			fmt.Fprintf(stdout, "MCP configuration in %s (changed: %t):\n%s\n", mcpResult.Path, mcpResult.Changed, mcpResult.Data)
 		} else if !shared && mcpResult.Changed {
-			if err := agentconfig.Write(mcpResult.Path, mcpResult.Data); err != nil {
-				return kitagenthook.Result{}, err
-			}
 			fmt.Fprintf(stdout, "installed MCP configuration in %s\n", mcpResult.Path)
 		}
 	}
@@ -223,7 +221,7 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 			return kitagenthook.Result{}, err
 		}
 	}
-	if err := installAgentHookSkills(agent, planned.ConfigPath, opts.MCP); err != nil {
+	if err := InstallSkills(agent, planned.ConfigPath, opts.MCP); err != nil {
 		return kitagenthook.Result{}, err
 	}
 	if !planned.Changed {
@@ -235,7 +233,8 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions, stdout io.Writer)
 	return planned, nil
 }
 
-func installAgentHookSkills(agent kitagenthook.Agent, configPath string, mcp bool) error {
+// InstallSkills installs the bundled skills beside an agent's hook config.
+func InstallSkills(agent kitagenthook.Agent, configPath string, mcp bool) error {
 	skillAgent := skills.Agent(agent)
 
 	if _, err := skills.InstallToPath(skillAgent, agentHookSkillsDir(agent, configPath), &mcp); err != nil {
@@ -264,7 +263,8 @@ func localAgentConfigRoot(agent kitagenthook.Agent, configDir string) string {
 	return configDir
 }
 
-func validatedKitInstallOptions(
+// KitInstallOptions validates and translates the hook options.
+func KitInstallOptions(
 	agent kitagenthook.Agent,
 	opts InstallOptions,
 ) (kitagenthook.InstallOptions, error) {
@@ -297,15 +297,6 @@ func validatedKitInstallOptions(
 			return kitagenthook.InstallOptions{}, err
 		}
 		kitOpts.Command += " " + args.Native
-	}
-	if agent == kitagenthook.AgentClaude && opts.Command == "" {
-		commands, err := kitagenthook.BuildCommand(kitOpts.Executable, kitOpts.Arguments...)
-		if err != nil {
-			return kitagenthook.InstallOptions{}, err
-		}
-		kitOpts.Executable = ""
-		kitOpts.Arguments = nil
-		kitOpts.Command = commands.POSIX
 	}
 	return kitOpts, nil
 }

@@ -922,7 +922,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		synthOpts.Experiment = assignment
 	}
 	for i := range memberOpts {
-		memberOpts[i].SessionID, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
+		memberOpts[i].SessionID, memberOpts[i].SessionCLI, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
 			ctx, p.db, repo.RootPath, pr.HeadRefOid, memberOpts[i],
 			repoCfg, rawRepoCfg, cfg, synthOpts.Experiment, pr.Number,
 		)
@@ -2959,8 +2959,9 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	if err != nil || rev == nil {
 		return raw(), nil
 	}
-	maxFindings, whenClean := p.resolveCommentPolicy(row.GithubRepo)
+	maxFindings, minConfidence, whenClean := p.resolveCommentPolicy(row.GithubRepo)
 	commentConfig.MaxFindings = maxFindings
+	commentConfig.MinConfidence = minConfidence
 	commentConfig.FullReviewReference = fmt.Sprintf("roborev show --job %d", synth.ID)
 	prepared := preparePanelReviewComment(commentConfig, rev)
 	body := formatPreparedPanelPRCommentWithHead(
@@ -4514,7 +4515,7 @@ func (p *CIPoller) updateExistingPRComment(ghRepo string, prNumber int, body str
 
 // resolveCommentPolicy loads publication overrides from the default branch,
 // following the same precedence as existing comment upsert/cost settings.
-func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, bool) {
+func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, float64, bool) {
 	var repoCfg *config.RepoConfig
 	repo, err := p.findLocalRepo(context.Background(), ghRepo)
 	if err == nil && repo != nil {
@@ -4523,7 +4524,7 @@ func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, bool) {
 		}
 	}
 	cfg := p.cfgGetter.Config()
-	return config.ResolveCICommentMaxFindings(repoCfg, cfg), config.ResolveCICommentWhenClean(repoCfg, cfg)
+	return config.ResolveCICommentMaxFindings(repoCfg, cfg), config.ResolveCICommentMinConfidence(repoCfg, cfg), config.ResolveCICommentWhenClean(repoCfg, cfg)
 }
 
 // resolveUpsertComments determines whether to upsert PR comments

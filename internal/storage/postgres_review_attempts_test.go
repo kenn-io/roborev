@@ -66,7 +66,7 @@ func TestPostgresMigrationReviewAttempts(t *testing.T) { //nolint:paralleltest /
 		assert.Nil(producing)
 	}
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT MAX(version) FROM schema_version`).Scan(&version))
-	assert.Equal(24, version)
+	assert.Equal(25, version)
 	var original, archiveAttempt string
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT record->>'output', record->>'job_enqueued_at' FROM legacy_reviews WHERE uuid = $1`, archivedReview).Scan(&original, &archiveAttempt))
 	assert.Equal("A historical finding without enough detail.", original)
@@ -80,6 +80,10 @@ func TestPostgresMigrationReviewAttempts(t *testing.T) { //nolint:paralleltest /
 	_, err = pool.Pool().Exec(ctx, `UPDATE legacy_reviews SET resolved_at = NULL WHERE uuid = $1`, archivedReview)
 	require.NoError(t, err)
 	require.NoError(t, pool.EnsureSchema(ctx))
+	var exists bool
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviews WHERE uuid = $1)`, archivedReview).Scan(&exists))
+	assert.False(exists)
+	require.NoError(t, pool.maintainLegacyReviews(ctx, false))
 	var restoredOwner uuid.UUID
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_source_machine_id FROM reviews WHERE uuid = $1`, archivedReview).Scan(&restoredOwner))
 	assert.Equal(defaultTestMachineID, restoredOwner)

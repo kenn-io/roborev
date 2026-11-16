@@ -552,6 +552,9 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 	s.agentHealth.start(cfg)
+	if cost := costSourceHealth(cfg); !cost.Healthy {
+		log.Printf("Warning: %s", cost.Message)
+	}
 
 	// Repair stale roborev-managed hooks in registered repos (skip in CI
 	// mode where repos are fetch-only and don't need local hooks).
@@ -1325,24 +1328,29 @@ func findCompatibleReusableSession(
 	globalCfg *config.Config,
 	experiment *storage.ExperimentAssignmentInput,
 	ciPRNumber int,
-) (string, *uuid.UUID) {
+) (string, string, *uuid.UUID) {
 	// A resumed agent session may retain the caller's cwd. Isolated committed
 	// reviews always start fresh; dirty and CI session policies are unchanged.
 	committedReview := opts.JobType == "" || opts.JobType == storage.JobTypeReview || opts.JobType == storage.JobTypeRange
 	if committedReview && opts.Source != storage.JobSourceCI && opts.CIBaseBranch == "" &&
 		opts.GitRef != "dirty" && opts.DiffContent == "" &&
 		config.ResolveIsolateReviewsFromConfig(repoCfg, globalCfg) {
-		return "", nil
+		return "", "", nil
 	}
 	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||
 		opts.Branch == "" || targetSHA == "" ||
 		opts.PanelRole == storage.PanelRoleSynthesis ||
 		!agent.SupportsSessionResume(opts.Agent) {
-		return "", nil
+		return "", "", nil
 	}
+	resolvedAgent, err := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, opts.Agent, globalCfg)
+	if err != nil {
+		return "", "", nil
+	}
+	wantedSessionCLI := sessionCLIForAgent(resolvedAgent)
 	machineID, err := db.GetMachineID()
 	if err != nil || machineID == uuid.Nil() {
-		return "", nil
+		return "", "", nil
 	}
 	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
 		RepoID:                opts.RepoID,
@@ -1358,6 +1366,7 @@ func findCompatibleReusableSession(
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
 		SourceMachineID:       machineID,
+		SessionCLI:            wantedSessionCLI,
 		CIPRNumber:            ciPRNumber,
 		Experiment:            experiment,
 		Limit: config.ResolveReuseReviewSessionLookbackFromConfig(
@@ -1366,7 +1375,7 @@ func findCompatibleReusableSession(
 	})
 	if err != nil {
 		log.Printf("enqueue: lookup compatible reusable session failed for repo=%d agent=%q: %v", opts.RepoID, opts.Agent, err)
-		return "", nil
+		return "", "", nil
 	}
 	const maxSessionReuseDistance = 50
 	for _, candidate := range candidates {
@@ -1382,9 +1391,9 @@ func findCompatibleReusableSession(
 		if err != nil || len(commitsSinceCandidate) > maxSessionReuseDistance {
 			continue
 		}
-		return candidate.SessionID, candidate.UUID
+		return candidate.SessionID, candidate.SessionCLI, candidate.UUID
 	}
-	return "", nil
+	return "", "", nil
 }
 
 func reusableSessionTarget(gitRef string) string {
@@ -3463,7 +3472,7 @@ func (s *Server) enqueueSingleAgent(
 		o.Experiment = assignment
 	}
 	if in.req.ReviewSettings == nil {
-		o.SessionID, o.ResumeSourceJobUUID = findCompatibleReusableSession(
+		o.SessionID, o.SessionCLI, o.ResumeSourceJobUUID = findCompatibleReusableSession(
 			ctx, s.db, in.checkoutRoot, in.descriptor.sessionSHA, o,
 			in.repoCfg, in.rawRepoCfg, in.cfg, o.Experiment, 0,
 		)
@@ -4091,7 +4100,8 @@ func (s *Server) humaGetHealth(
 		Message: workersMessage,
 	})
 
-	agents := s.agentHealth.observe(s.configWatcher.Config())
+	cfg := s.configWatcher.Config()
+	agents := s.agentHealth.observe(cfg)
 	if !agents.Healthy {
 		allHealthy = false
 	}
@@ -4122,6 +4132,13 @@ func (s *Server) humaGetHealth(
 		}
 		components = append(components, ci)
 	}
+	// Missing accounting data degrades health without blocking review work
+	// or hiding the CI recovery that explains an outstanding review failure.
+	cost := costSourceHealth(cfg)
+	if !cost.Healthy {
+		allHealthy = false
+	}
+	components = append(components, cost)
 
 	var recentErrors []storage.ErrorEntry
 	var errorCount24h int

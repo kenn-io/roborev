@@ -252,6 +252,10 @@ type EnqueueSuppliedPanelErrorResponse = ErrorResponse
 
 type EnqueueSuppliedPanelErrorResponseJSON = ErrorResponse
 
+type EnqueueSuppliedPanelErrorResponseJSON410 = ErrorResponse
+
+type EnqueueSuppliedPanelErrorResponseJSON500 = ErrorResponse
+
 type StartPanelSynthesisResponse = ReviewJob
 
 type StartPanelSynthesisErrorResponse = ErrorModel
@@ -749,7 +753,9 @@ type EnqueueSuppliedPanelResp struct {
 	StatusCode   int
 	JSON201      *EnqueueSuppliedPanelResponse
 	JSON400      *EnqueueSuppliedPanelErrorResponse
-	JSON500      *EnqueueSuppliedPanelErrorResponseJSON
+	JSON409      *EnqueueSuppliedPanelErrorResponseJSON
+	JSON410      *EnqueueSuppliedPanelErrorResponseJSON410
+	JSON500      *EnqueueSuppliedPanelErrorResponseJSON500
 }
 
 type StartPanelSynthesisResp struct {

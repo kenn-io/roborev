@@ -524,6 +524,7 @@ func TestInitNoDaemon(t *testing.T) {
 			expectContains: []string{
 				"Repo registered with running daemon",
 				"Ready!",
+				"roborev agent setup",
 			},
 			expectNot: []string{"Setup incomplete"},
 		},

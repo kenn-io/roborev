@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { Component } from "svelte";
+  import { Button } from "@kenn-io/kit-ui";
   import { getReviewStores } from "../../stores/context";
 
   type RichReviewContentComponent = Component<{
@@ -14,6 +15,7 @@
   const stores = getReviewStores();
   const output = $derived(stores.roborevReview?.getOutput() ?? "");
   const selectedJob = $derived(stores.roborevReview?.getSelectedJob());
+  const loadFailure = $derived(stores.roborevReview?.getError());
   const failed = $derived(selectedJob?.status === "failed");
   const failureReason = $derived(
     selectedJob?.error?.trim() ||
@@ -48,6 +50,10 @@
   function reportRendererFailure(): void {
     stores.roborevReview?.reportRendererFailure();
   }
+  function retryReview(): void {
+    const jobId = stores.roborevReview?.getSelectedJobId();
+    if (jobId !== undefined) stores.roborevReview?.loadReview(jobId);
+  }
   function retryRenderer(): void {
     stores.roborevReview?.retryRenderer();
     void loadRichReviewContent();
@@ -72,6 +78,7 @@
       RichReviewContent &&
       output &&
       !stores.roborevReview?.isLoading() &&
+      !loadFailure &&
       !failed &&
       !pending
         ? stores.roborevReview?.getReview()?.job_id
@@ -85,6 +92,11 @@
 
 {#if stores.roborevReview?.isLoading()}
   <div class="review-state">Loading review…</div>
+{:else if loadFailure}
+  <div class="review-state review-retry" role="alert">
+    <p>{loadFailure}</p>
+    <Button size="sm" onclick={retryReview} label="Retry" />
+  </div>
 {:else if failed}
   <div class="review-state review-failure" role="alert">
     <strong>Review failed</strong>
@@ -98,7 +110,7 @@
   />
 {:else if loadError && output}
   <div class="review-state" role="alert" {@attach reportRendererFailure}>
-    <p>Could not load the review renderer.</p>
+    <p>Could not display the review.</p>
     <button type="button" onclick={retryRenderer}>Retry</button>
   </div>
 {:else if pending}
@@ -119,6 +131,21 @@
 
   .review-state p {
     margin: 0 0 var(--space-3);
+  }
+
+  /* The message and its Retry share one row so the error is no taller than
+   * the empty state it replaces; otherwise the comment box below is pushed
+   * under the dock footer at the default drawer height. */
+  .review-retry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .review-retry p {
+    margin: 0;
   }
 
   .review-failure p {

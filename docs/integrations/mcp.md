@@ -22,6 +22,10 @@ without an external request. Whether it appears depends on the client.
 
 ## Install for coding agents
 
+Run `roborev agent setup --mcp` to connect Claude Code and Codex with MCP, or
+`roborev agent setup --print` for the manual `claude mcp add` and
+`codex mcp add` commands.
+
 `roborev mcp install` configures agents whose user configuration directories
 exist. Skills, Agent Hooks, and MCP installation support Claude Code, Codex,
 Factory Droid, Grok Build, Copilot, Cursor, Gemini, Hermes, and Qwen.

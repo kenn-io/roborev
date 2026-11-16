@@ -284,7 +284,7 @@ func printSearchResults(cmd *cobra.Command, response generated.SearchResponse) {
 		cmd.Printf("Bounded: %s\n", sanitizeSearchSingleLine(pointerText(response.BoundedReason, "candidate limit reached")))
 	}
 	if response.Partial {
-		cmd.Println("Partial: search coverage is incomplete")
+		cmd.Println("Search may not include every review.")
 	}
 	cmd.Printf("Coverage: %s\n", formatSearchCoverage(response.Coverage))
 
@@ -320,16 +320,16 @@ func printSearchResults(cmd *cobra.Command, response generated.SearchResponse) {
 }
 
 func formatSearchCoverage(coverage generated.SearchCoverage) string {
-	mirror := "mirror complete"
+	mirror := "review index complete"
 	if !coverage.MirrorComplete {
 		if coverage.MirrorBacklog == nil {
-			mirror = "mirror incomplete (backlog unknown)"
+			mirror = "review index incomplete (remaining count unknown)"
 		} else {
-			mirror = fmt.Sprintf("mirror incomplete (%d pending)", *coverage.MirrorBacklog)
+			mirror = fmt.Sprintf("review index incomplete (%d pending)", *coverage.MirrorBacklog)
 		}
 	}
 
-	vectors := "vectors disabled"
+	vectors := "semantic search disabled"
 	if coverage.EmbeddingsConfigured || coverage.VectorState != "disabled" {
 		details := make([]string, 0, 2)
 		if coverage.EmbeddingBacklog > 0 {
@@ -338,7 +338,7 @@ func formatSearchCoverage(coverage generated.SearchCoverage) string {
 		if coverage.Skipped > 0 {
 			details = append(details, fmt.Sprintf("%d skipped", coverage.Skipped))
 		}
-		vectors = "vectors " + sanitizeSearchSingleLine(coverage.VectorState)
+		vectors = "semantic search " + sanitizeSearchSingleLine(coverage.VectorState)
 		if len(details) > 0 {
 			vectors += " (" + strings.Join(details, ", ") + ")"
 		}

@@ -61,7 +61,7 @@ func syncStatusCmd() *cobra.Command {
 			}
 			cmd.Println()
 			if status.PendingIncomplete {
-				cmd.Println("Warning: could not count all pending items")
+				cmd.Println("Warning: some pending jobs, reviews, or comments may be missing from the counts")
 			}
 			formatCount := func(count int64) string {
 				if count >= status.PendingLimit {

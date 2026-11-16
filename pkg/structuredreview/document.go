@@ -31,6 +31,10 @@
 // constrain agent output, and [ConversionSchema] and [ConversionSourcedSchema]
 // constrain converted historical reviews. Storage-only version 0 carries original historical
 // Markdown in Legacy, without extracted findings.
+//
+// A version 3 document may carry a [Check]: the record of roborev's CI checker
+// trying each finding before the review was stored. Documents the checker did
+// not touch omit it.
 package structuredreview
 
 import (
@@ -192,6 +196,64 @@ type Document struct {
 	// by review number minus one. Persist these labels with synthesized
 	// documents so source attribution survives storage and sync.
 	SourceLabels []string `json:"source_labels,omitempty"`
+	// Check is the CI checker's record for this review, or nil when no
+	// checker ran. Markdown never renders it.
+	Check *Check `json:"check,omitempty"`
+}
+
+// Check status values.
+const (
+	// CheckCompleted means the checker returned verdicts and Findings lists
+	// every finding it was given.
+	CheckCompleted = "completed"
+	// CheckFailed means the checker started but failed, timed out, or
+	// returned unreadable verdicts, so the review was stored unchecked.
+	// Findings is empty.
+	CheckFailed = "failed"
+)
+
+// Checked finding outcomes.
+const (
+	// CheckKept means the finding stayed in the review.
+	CheckKept = "kept"
+	// CheckDropped means the checker refuted the finding and roborev removed
+	// it from the review.
+	CheckDropped = "dropped"
+)
+
+// Check records how the CI checker judged a review's findings before roborev
+// stored and posted it.
+type Check struct {
+	Status string `json:"status"`
+	// Findings has one entry per finding the checker received, in the order
+	// it received them. Kept entries keep that order in the document's
+	// Findings, so the nth kept entry is the nth finding.
+	Findings []CheckedFinding `json:"findings"`
+}
+
+// CheckedFinding is one finding the checker tried and what became of it.
+type CheckedFinding struct {
+	Outcome string `json:"outcome"`
+	// Finding is the finding as the checker received it. A later rewrite can
+	// change the wording of the kept copy in the document's Findings.
+	Finding Finding `json:"finding"`
+	// Verdicts holds every verdict the checker returned for this finding.
+	// A finding drops only with exactly one verdict whose Keep is false and
+	// whose Evidence and Reason are both set; it is kept otherwise, including
+	// when Verdicts is empty.
+	Verdicts []CheckVerdict `json:"verdicts"`
+}
+
+// CheckVerdict is one verdict as the checker returned it. A member the
+// checker left blank is omitted.
+type CheckVerdict struct {
+	// Keep is the checker's decision, or nil when it gave none.
+	Keep *bool `json:"keep,omitempty"`
+	// Evidence is the command the checker ran and its output, or what
+	// refutes the finding.
+	Evidence string `json:"evidence,omitempty"`
+	// Reason is the checker's one-sentence explanation.
+	Reason string `json:"reason,omitempty"`
 }
 
 // MarshalJSON writes the document in the current [SchemaVersion], whatever
@@ -309,6 +371,18 @@ type documentWire struct {
 	Verdict       string          `json:"verdict"`
 	Findings      []findingWire   `json:"findings"`
 	SourceLabels  []string        `json:"source_labels,omitempty"`
+	Check         *checkWire      `json:"check,omitempty"`
+}
+
+type checkWire struct {
+	Status   string               `json:"status"`
+	Findings []checkedFindingWire `json:"findings"`
+}
+
+type checkedFindingWire struct {
+	Outcome  string         `json:"outcome"`
+	Finding  *findingWire   `json:"finding"`
+	Verdicts []CheckVerdict `json:"verdicts"`
 }
 
 type findingWire struct {
@@ -335,7 +409,7 @@ func Decode(raw jsontext.Value) (Document, error) {
 		return Document{}, err
 	}
 	if wire.Legacy != nil {
-		if wire.SchemaVersion != LegacySchemaVersion || wire.Summary != "" || wire.Verdict != "" || len(wire.Findings) != 0 || len(wire.SourceLabels) != 0 {
+		if wire.SchemaVersion != LegacySchemaVersion || wire.Summary != "" || wire.Verdict != "" || len(wire.Findings) != 0 || len(wire.SourceLabels) != 0 || wire.Check != nil {
 			return Document{}, fmt.Errorf("legacy document cannot contain structured review fields")
 		}
 		return Document{SchemaVersion: LegacySchemaVersion, Legacy: wire.Legacy}, nil
@@ -393,28 +467,84 @@ func Decode(raw jsontext.Value) (Document, error) {
 		return Document{}, fmt.Errorf("structured review summary is required")
 	}
 	for i := range result.Findings {
-		finding := &result.Findings[i]
-		finding.Severity = strings.ToLower(strings.TrimSpace(finding.Severity))
-		finding.Problem = strings.TrimSpace(finding.Problem)
-		finding.Fix = strings.TrimSpace(finding.Fix)
-		if severityRank(finding.Severity) == 0 {
-			return Document{}, fmt.Errorf(
-				"structured review finding %d has invalid severity %q",
-				i+1, finding.Severity,
-			)
-		}
-		if finding.Problem == "" {
-			return Document{}, fmt.Errorf(
-				"structured review finding %d has no problem", i+1,
-			)
-		}
-		if finding.Fix == "" {
-			return Document{}, fmt.Errorf(
-				"structured review finding %d has no fix", i+1,
-			)
+		if err := normalizeFinding(&result.Findings[i]); err != nil {
+			return Document{}, fmt.Errorf("structured review finding %d %w", i+1, err)
 		}
 	}
+	if wire.Check != nil {
+		if result.SchemaVersion < SchemaVersion {
+			return Document{}, fmt.Errorf("structured review check needs schema_version %d", SchemaVersion)
+		}
+		check, err := decodeCheck(*wire.Check)
+		if err != nil {
+			return Document{}, fmt.Errorf("structured review check %w", err)
+		}
+		result.Check = &check
+	}
 	return result, nil
+}
+
+// normalizeFinding lowercases the severity and trims the text. It rejects a
+// finding without a valid severity, a problem, or a fix.
+func normalizeFinding(finding *Finding) error {
+	finding.Severity = strings.ToLower(strings.TrimSpace(finding.Severity))
+	finding.Problem = strings.TrimSpace(finding.Problem)
+	finding.Fix = strings.TrimSpace(finding.Fix)
+	switch {
+	case severityRank(finding.Severity) == 0:
+		return fmt.Errorf("has invalid severity %q", finding.Severity)
+	case finding.Problem == "":
+		return errors.New("has no problem")
+	case finding.Fix == "":
+		return errors.New("has no fix")
+	}
+	return nil
+}
+
+// decodeCheck validates the shape of a checker record. It does not re-apply
+// the drop rule, so a reader keeps working if roborev changes that rule.
+// Empty finding and verdict lists decode as nil.
+func decodeCheck(wire checkWire) (Check, error) {
+	check := Check{Status: strings.ToLower(strings.TrimSpace(wire.Status))}
+	switch check.Status {
+	case CheckCompleted:
+	case CheckFailed:
+		if len(wire.Findings) != 0 {
+			return Check{}, fmt.Errorf("status %q cannot list findings", check.Status)
+		}
+	default:
+		return Check{}, fmt.Errorf("has invalid status %q", wire.Status)
+	}
+	if len(wire.Findings) > 0 {
+		check.Findings = make([]CheckedFinding, len(wire.Findings))
+	}
+	for i, entry := range wire.Findings {
+		checked := &check.Findings[i]
+		checked.Outcome = strings.ToLower(strings.TrimSpace(entry.Outcome))
+		if checked.Outcome != CheckKept && checked.Outcome != CheckDropped {
+			return Check{}, fmt.Errorf("finding %d has invalid outcome %q", i+1, entry.Outcome)
+		}
+		if entry.Finding == nil {
+			return Check{}, fmt.Errorf("finding %d has no finding", i+1)
+		}
+		finding, err := decodeLocatedFinding(*entry.Finding)
+		if err == nil {
+			err = normalizeFinding(&finding)
+		}
+		if err != nil {
+			return Check{}, fmt.Errorf("finding %d %w", i+1, err)
+		}
+		checked.Finding = finding
+		if len(entry.Verdicts) > 0 {
+			checked.Verdicts = make([]CheckVerdict, len(entry.Verdicts))
+		}
+		for j, verdict := range entry.Verdicts {
+			verdict.Evidence = strings.TrimSpace(verdict.Evidence)
+			verdict.Reason = strings.TrimSpace(verdict.Reason)
+			checked.Verdicts[j] = verdict
+		}
+	}
+	return check, nil
 }
 
 // decodeTextLocatedFinding reads a version 1 or 2 finding, which must carry a
