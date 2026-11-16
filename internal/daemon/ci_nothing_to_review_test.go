@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -50,4 +51,26 @@ func TestCIPollerSkipsPRWithNothingToReview(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Repo exclusions do not apply to security reviews, so a non-voting security
+// member can see a docs-only change that the voting members cannot. Only the
+// voting members decide the verdict, so the PR still has nothing to review.
+func TestCINothingToReviewIgnoresNonVotingMembers(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.CommitFile(".roborev.toml", "exclude_patterns = [\"*.md\"]\n", "exclude docs")
+	base := repo.HeadSHA()
+	head := repo.CommitFile("README.md", "docs\n", "docs only")
+	cfg := config.DefaultConfig()
+	voting := config.ResolvedMember{Name: "default", ReviewType: "default"}
+	security := config.ResolvedMember{Name: "security", ReviewType: "security"}
+
+	advisory := security
+	advisory.NonVoting = true
+	var nothing *ciNothingToReviewError
+	require.ErrorAs(t, ciNothingToReview(t.Context(), repo.Root, base+".."+head,
+		[]config.ResolvedMember{voting, advisory}, cfg), &nothing)
+
+	assert.NoError(t, ciNothingToReview(t.Context(), repo.Root, base+".."+head,
+		[]config.ResolvedMember{voting, security}, cfg), "a voting security member sees the docs")
 }

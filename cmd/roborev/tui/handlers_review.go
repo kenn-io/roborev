@@ -182,7 +182,8 @@ func (m model) handleRerunKey() (tea.Model, tea.Cmd) {
 		m.setFlash("Select the panel's synthesis row to rerun the panel", 3*time.Second, m.currentView)
 		return m, nil
 	}
-	if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {
+	if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed ||
+		job.Status == storage.JobStatusCanceled || job.Status == storage.JobStatusSkipped {
 		// A synthesis parent's row stays terminal while its rerun is in
 		// flight (see below), so the status check above cannot suppress
 		// a second press the way it does for an ordinary job. Without

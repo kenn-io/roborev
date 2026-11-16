@@ -39,14 +39,25 @@ func (e *ciNothingToReviewError) skip() ciSkip {
 	return ciSkip{description: ciNothingToReviewSkipReason, reason: e.reason}
 }
 
-// ciNothingToReview returns a *ciNothingToReviewError when every member's
-// review diff of gitRef is empty after that member's exclusions. An agent
-// shown an empty diff reports no issues, which would publish a pass for a PR
-// nobody reviewed. A census failure lets the run proceed.
+// ciNothingToReview returns a *ciNothingToReviewError when every voting
+// member's review diff of gitRef is empty after that member's exclusions. An
+// agent shown an empty diff reports no issues, which would publish a pass for a
+// PR nobody reviewed. Non-voting members do not decide the verdict, so their
+// diffs cannot keep an empty voting panel from being skipped. A census failure
+// lets the run proceed.
 func ciNothingToReview(
 	ctx context.Context, repoPath, gitRef string,
 	members []config.ResolvedMember, cfg *config.Config,
 ) error {
+	voting := make([]config.ResolvedMember, 0, len(members))
+	for _, m := range members {
+		if !m.NonVoting {
+			voting = append(voting, m)
+		}
+	}
+	if len(voting) > 0 {
+		members = voting
+	}
 	var empty error
 	for _, m := range members {
 		excludes := config.ResolveExcludePatterns(ctx, repoPath, cfg, m.ReviewType)

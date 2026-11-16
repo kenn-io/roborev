@@ -491,7 +491,7 @@ func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 	})
 }
 
-func TestListJobsWithClosedFalseExcludesFailedAndCanceled(t *testing.T) {
+func TestListJobsWithClosedFalseExcludesJobsWithoutReviews(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
@@ -519,6 +519,17 @@ func TestListJobsWithClosedFalseExcludesFailedAndCanceled(t *testing.T) {
 	canceledJob := enqueueJob(t, db, repo.ID, canceledCommit.ID, "canceled")
 	require.NoError(t, db.CancelJob(canceledJob.ID))
 
+	// A skipped job ran no agent, so it has no review to resolve.
+	skippedCommit := createCommit(t, db, repo.ID, "skipped")
+	skippedJob := enqueueJob(t, db, repo.ID, skippedCommit.ID, "skipped")
+	claimedSkipped, err := db.ClaimJob("worker-skipped")
+	require.NoError(t, err)
+	require.NotNil(t, claimedSkipped)
+	require.Equal(t, skippedJob.ID, claimedSkipped.ID)
+	skipped, err := db.SkipJob(t.Context(), claimedSkipped.ID, "worker-skipped", "nothing to review")
+	require.NoError(t, err)
+	require.True(t, skipped)
+
 	t.Run("list", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithClosed(false))
 		require.NoError(t, err)
@@ -539,6 +550,7 @@ func TestListJobsWithClosedFalseExcludesFailedAndCanceled(t *testing.T) {
 		}{
 			{JobStatusFailed, failedJob.ID},
 			{JobStatusCanceled, canceledJob.ID},
+			{JobStatusSkipped, skippedJob.ID},
 		} {
 			jobs, err := db.ListJobs(string(tc.status), "", 50, 0, WithClosed(false))
 			require.NoError(t, err)

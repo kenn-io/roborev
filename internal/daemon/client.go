@@ -217,6 +217,17 @@ func (c *HTTPClient) getJobByID(ctx context.Context, jobID int64) (*storage.Revi
 	return &result.Jobs[0], nil
 }
 
+// ReviewSkippedError reports a review job that ended skipped: no agent ran,
+// so there is no review and no verdict.
+type ReviewSkippedError struct {
+	JobID  int64
+	Reason string
+}
+
+func (e *ReviewSkippedError) Error() string {
+	return fmt.Sprintf("job %d was skipped: %s", e.JobID, e.Reason)
+}
+
 func (c *HTTPClient) WaitForReview(ctx context.Context, jobID int64) (*storage.Review, error) {
 	missingReviewAttempts := 0
 	for {
@@ -241,6 +252,8 @@ func (c *HTTPClient) WaitForReview(ctx context.Context, jobID int64) (*storage.R
 			return nil, fmt.Errorf("job %d failed: %s", jobID, job.Error)
 		case storage.JobStatusCanceled:
 			return nil, fmt.Errorf("job %d was canceled", jobID)
+		case storage.JobStatusSkipped:
+			return nil, &ReviewSkippedError{JobID: jobID, Reason: job.SkipReason}
 		}
 
 		select {
