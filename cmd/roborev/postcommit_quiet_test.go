@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -158,4 +159,29 @@ func TestPostCommitQuietFlushReportsUnqueuedRange(t *testing.T) {
 	_, _, err = executePostCommitCmd("--repo", repo.Dir, "--flush", "--flush-branch", branch, "--quiet-head", head)
 	require.NoError(t, err)
 	assert.Equal(t, base+".."+head, (<-requests).GitRef, "the retry flushes the same pending range")
+}
+
+func TestPostCommitQuietFlushReportsBusyBatchLock(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	mux.HandleFunc("/api/post-commit/schedule", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	writeRoborevConfig(t, repo, `post_commit_quiet_period = "5m"`)
+	repo.CommitFile("base.txt", "base", "base")
+	head := repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	branch := repo.Run("branch", "--show-current")
+
+	unlock, err := acquirePostCommitBatchLock(t.Context(), repo.Dir)
+	require.NoError(t, err)
+	defer func() { _ = unlock() }()
+	oldTimeout := postCommitBatchLockTimeout
+	postCommitBatchLockTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { postCommitBatchLockTimeout = oldTimeout })
+
+	// Another hook holds the batch lock, so this flush queues nothing. The
+	// daemon must see a failure and retry instead of dropping its timer.
+	_, _, err = executePostCommitCmd("--repo", repo.Dir, "--flush", "--flush-branch", branch, "--quiet-head", head)
+	require.Error(t, err)
 }

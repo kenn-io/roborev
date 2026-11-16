@@ -660,7 +660,7 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 	var duplicate bool
 	if in.req.Source == storage.JobSourcePostCommit {
 		memberJobs, synthJob, duplicate, err = s.db.EnqueuePostCommitPanelRun(
-			memberOpts, synthOpts,
+			ctx, memberOpts, synthOpts,
 		)
 	} else {
 		memberJobs, synthJob, err = s.db.EnqueuePanelRun(memberOpts, synthOpts)

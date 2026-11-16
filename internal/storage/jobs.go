@@ -426,8 +426,9 @@ func (db *DB) EnqueuePanelRerun(
 
 // EnqueuePostCommitPanelRun atomically inserts a hook-originated panel unless
 // a non-canceled job already occupies the target member's deduplication key.
+// Like EnqueuePostCommitJob, ctx bounds the wait for the write lock.
 func (db *DB) EnqueuePostCommitPanelRun(
-	members []EnqueueOpts, synthesis EnqueueOpts,
+	ctx context.Context, members []EnqueueOpts, synthesis EnqueueOpts,
 ) ([]*ReviewJob, *ReviewJob, bool, error) {
 	if len(members) == 0 {
 		return nil, nil, false, errors.New("post-commit panel requires at least one member")
@@ -437,7 +438,7 @@ func (db *DB) EnqueuePostCommitPanelRun(
 		members[i].Source = JobSourcePostCommit
 	}
 	synthesis.Source = JobSourcePostCommit
-	return db.enqueuePanelRun(context.Background(), members, synthesis, true, uuid.Nil(), 0, nil)
+	return db.enqueuePanelRun(ctx, members, synthesis, true, uuid.Nil(), 0, nil)
 }
 
 func (db *DB) enqueuePanelRun(

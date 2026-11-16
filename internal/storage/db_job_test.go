@@ -2666,6 +2666,9 @@ func TestEnqueuePostCommitJobAbandonedByCallerInsertsNothing(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, "/tmp/post-commit-abandoned")
 	commit := createCommit(t, db, repo.ID, "abc123")
+	// The daemon creates its machine ID at startup; create it before the lock.
+	_, err := db.GetMachineID()
+	require.NoError(t, err)
 	lockConn, err := db.Conn(t.Context())
 	require.NoError(t, err)
 	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")

@@ -119,6 +119,70 @@ func TestPostCommitFailedImmediateEnqueueRetriesWithNextCommit(t *testing.T) {
 	assert.Equal(t, "HEAD", (<-requests).GitRef, "a successful retry clears the pending range")
 }
 
+func TestPostCommitFailedImmediateEnqueueKeepsCommitWhenBranchAdvances(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	requests := make(chan daemon.EnqueueRequest, 2)
+	var calls atomic.Int32
+	var later string
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		if calls.Add(1) == 1 {
+			// Another process commits on the branch while this hook waits.
+			later = repo.CommitFile("later.txt", "later", "later")
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	<-requests
+
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, base+".."+later, (<-requests).GitRef,
+		"the retry still covers the commit whose enqueue failed")
+}
+
+func TestPostCommitFailedBranchReviewFlushesOnPush(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	requests := make(chan daemon.EnqueueRequest, 2)
+	var calls atomic.Int32
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		if calls.Add(1) == 1 {
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+	mainSHA := repo.CommitFile("file.txt", "content", "initial")
+	repo.Run("checkout", "-b", "feature")
+	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+	head := repo.CommitFile("feature.txt", "feature", "feature commit")
+	_, stderr, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, mainSHA+"..HEAD", (<-requests).GitRef)
+	assert.Contains(t, stderr, "the next commit or push will retry it")
+
+	input := strings.NewReader(fmt.Sprintf(
+		"refs/heads/feature %s refs/heads/feature %s\n",
+		head, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+	require.Len(t, requests, 1, "the push retries the failed branch review")
+	assert.Equal(t, mainSHA+".."+head, (<-requests).GitRef, "the retry keeps the full-branch scope")
+}
+
 func TestPostCommitFailedImmediateEnqueueFlushesOnPush(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	requests := make(chan daemon.EnqueueRequest, 2)

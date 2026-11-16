@@ -884,24 +884,16 @@ func advancePostCommitBatch(
 	return savePostCommitBatchState(decision.statePath, state)
 }
 
-// rememberFailedPostCommit records the HEAD commit of a failed immediate
-// review as a pending range for its branch: the checkpoint is HEAD's parent
-// and the tip is HEAD. The next hook run drains that range together with its
-// own commit, and a push flushes it, so a commit the daemon could not accept
-// still gets a review. It reports whether a range is pending. The caller must
-// hold the batch lock. A detached HEAD or a root commit has no branch range to
-// record. If the daemon queued the commit but its reply was lost, the commit is
-// reviewed again with the next range; a redundant review is the cost of never
-// dropping one.
-func rememberFailedPostCommit(ctx context.Context, root string) (bool, error) {
-	branch := git.GetCurrentBranch(root)
-	if branch == "" {
-		return false, nil
-	}
-	head, err := git.ResolveSHACtx(ctx, root, "refs/heads/"+branch)
-	if err != nil {
-		return false, err
-	}
+// rememberFailedPostCommit records head, the commit a failed immediate review
+// targeted on branch, as a pending range: the checkpoint is head's parent and
+// the tip is head. The next hook run drains that range together with its own
+// commit, and a push flushes it, so a commit the daemon could not accept still
+// gets a review. An existing pending range already covers head and is kept. It
+// reports whether a range is pending. The caller must hold the batch lock. A
+// root commit has no parent to anchor the range. If the daemon queued the
+// commit but its reply was lost, the commit is reviewed again with the next
+// range; a redundant review is the cost of never dropping one.
+func rememberFailedPostCommit(ctx context.Context, root, branch, head string) (bool, error) {
 	checkpoint, err := git.ResolveSHACtx(ctx, root, head+"^1")
 	if err != nil {
 		return false, nil

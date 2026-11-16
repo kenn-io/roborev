@@ -111,6 +111,10 @@ func postCommitCmd() *cobra.Command {
 				hookLog(root, "fail", fmt.Sprintf(
 					"acquire post-commit lock: %v", err,
 				))
+				if quietHead != "" {
+					// The daemon retries a quiet flush that reports failure.
+					return fmt.Errorf("acquire post-commit lock: %w", err)
+				}
 				return nil
 			case err != nil:
 				// Fail open like every other error: an immediate
@@ -179,6 +183,15 @@ func postCommitCmd() *cobra.Command {
 			// immediate review has no range yet, so record one that starts at
 			// this commit; the next commit or push then reviews it. Writing
 			// state requires the batch lock this hook holds.
+			// Capture the commit before contacting the daemon: another
+			// process can advance the branch while this hook waits.
+			var pendingBranch, pendingHead string
+			if locked && !batch.Track {
+				pendingBranch = git.GetCurrentBranch(root)
+				if pendingBranch != "" {
+					pendingHead, _ = git.ResolveSHACtx(ctx, root, "refs/heads/"+pendingBranch)
+				}
+			}
 			keepPending := func(singleCommit bool) string {
 				if batch.Track {
 					if batch.Reason != "" {
@@ -186,10 +199,10 @@ func postCommitCmd() *cobra.Command {
 					}
 					return "the next commit or push will retry it"
 				}
-				if !locked || !singleCommit {
+				if !singleCommit || pendingHead == "" {
 					return ""
 				}
-				recorded, err := rememberFailedPostCommit(ctx, root)
+				recorded, err := rememberFailedPostCommit(ctx, root, pendingBranch, pendingHead)
 				if err != nil {
 					hookLog(root, "fail", fmt.Sprintf("record pending commit: %v", err))
 				}
@@ -239,14 +252,14 @@ func postCommitCmd() *cobra.Command {
 			if batch.Head != "" {
 				headRef = batch.Head
 			}
-			branchReview := false
 			if ref, ok := tryBranchReviewForRef(
 				ctx, root, baseBranch, headRef, branchName,
 			); ok {
 				gitRef = ref
-				branchReview = true
 			}
-			singleCommit := !batch.Enabled && !branchReview
+			// A retry of a failed branch review drains the recorded range
+			// through tryBranchReviewForRef, so it keeps the branch scope.
+			singleCommit := !batch.Enabled
 
 			reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 				RepoPath: root,
