@@ -260,8 +260,8 @@ type ClientInterface interface {
 	ShutdownWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ShutdownResp, error)
 
 	// InterruptShutdown Interrupt running reviews and shut down the daemon
-	InterruptShutdown(ctx context.Context, options *InterruptShutdownRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResponse, error)
-	InterruptShutdownWithResponse(ctx context.Context, options *InterruptShutdownRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResp, error)
+	InterruptShutdown(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResponse, error)
+	InterruptShutdownWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResp, error)
 
 	// GetStatus Get daemon status
 	GetStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetStatusResponse, error)
@@ -4025,13 +4025,11 @@ func (c *Client) Shutdown(ctx context.Context, reqEditors ...runtime.RequestEdit
 }
 
 // InterruptShutdown Interrupt running reviews and shut down the daemon
-func (c *Client) InterruptShutdown(ctx context.Context, options *InterruptShutdownRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResponse, error) {
+func (c *Client) InterruptShutdown(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/shutdown/interrupt",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
+		RequestURL: c.apiClient.GetBaseURL() + "/api/shutdown/interrupt",
+		Method:     "POST",
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)

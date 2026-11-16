@@ -1959,15 +1959,11 @@ func (c *RawClient) ShutdownRaw(ctx context.Context, reqEditors ...runtime.Reque
 	return c.doer.Do(ctx, req)
 }
 
-func (c *RawClient) InterruptShutdownRaw(ctx context.Context, options *InterruptShutdownRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
-	if options == nil {
-		options = &InterruptShutdownRequestOptions{}
-	}
+func (c *RawClient) InterruptShutdownRaw(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/shutdown/interrupt",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
+		RequestURL: c.apiClient.GetBaseURL() + "/api/shutdown/interrupt",
+		Method:     "POST",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

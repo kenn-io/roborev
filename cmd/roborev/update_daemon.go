@@ -37,7 +37,6 @@ type updateDaemonSession struct {
 	Prepared        bool
 	Installed       bool
 	ShutdownOwned   bool
-	expectedDaemon  *daemon.RuntimeInfo
 	status          generated.UpdateDrainStatus
 	cancelHeartbeat context.CancelFunc
 }
@@ -147,10 +146,6 @@ func (s *updateDaemonSession) renew(ctx context.Context) (generated.UpdateDrainS
 	if s.Legacy || !s.Prepared {
 		return s.status, nil
 	}
-	alive, err := s.expectedDaemonAlive(ctx)
-	if err != nil || !alive {
-		return generated.UpdateDrainStatus{}, err
-	}
 	api, err := newUpdateAPI(s.Endpoint)
 	if err != nil {
 		return generated.UpdateDrainStatus{}, err
@@ -171,10 +166,6 @@ func (s *updateDaemonSession) release(ctx context.Context) (bool, error) {
 	if s.Legacy || !s.Prepared {
 		return true, nil
 	}
-	alive, err := s.expectedDaemonAlive(ctx)
-	if err != nil || !alive {
-		return !alive && err == nil, err
-	}
 	api, err := newUpdateAPI(s.Endpoint)
 	if err != nil {
 		return false, err
@@ -192,10 +183,6 @@ func (s *updateDaemonSession) release(ctx context.Context) (bool, error) {
 }
 
 func (s *updateDaemonSession) shutdown(ctx context.Context) error {
-	alive, err := s.expectedDaemonAlive(ctx)
-	if err != nil || !alive {
-		return err
-	}
 	api, err := newUpdateAPI(s.Endpoint)
 	if err != nil {
 		return err
@@ -208,13 +195,6 @@ func (s *updateDaemonSession) shutdown(ctx context.Context) error {
 		return errors.New("daemon shutdown returned no status")
 	}
 	return nil
-}
-
-func (s *updateDaemonSession) expectedDaemonAlive(ctx context.Context) (bool, error) {
-	if s.expectedDaemon == nil {
-		return true, nil
-	}
-	return interruptTargetAtEndpoint(ctx, s.expectedDaemon, s.Endpoint)
 }
 
 func (s *updateDaemonSession) startHeartbeat(ctx context.Context) <-chan error {

@@ -52,15 +52,26 @@ func (db *DB) SetShutdownDraining(draining bool) error {
 // SetShutdownDrainingContext updates the shutdown claim gate within a caller's
 // cleanup deadline.
 func (db *DB) SetShutdownDrainingContext(ctx context.Context, draining bool) error {
-	return setDaemonBoolStateContext(ctx, db, shutdownDrainingStateKey, draining, "shutdown draining")
+	value := "false"
+	if draining {
+		value = "true"
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO daemon_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+	`, shutdownDrainingStateKey, value)
+	if err != nil {
+		return fmt.Errorf("set shutdown draining state: %w", err)
+	}
+	return nil
 }
 
-func setDaemonBoolStateContext(ctx context.Context, exec execer, key string, enabled bool, label string) error {
+func (db *DB) setDaemonBoolState(key string, enabled bool, label string) error {
 	value := "false"
 	if enabled {
 		value = "true"
 	}
-	_, err := exec.ExecContext(ctx, `
+	_, err := db.Exec(`
 		INSERT INTO daemon_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
 	`, key, value)
@@ -68,30 +79,4 @@ func setDaemonBoolStateContext(ctx context.Context, exec execer, key string, ena
 		return fmt.Errorf("set %s state: %w", label, err)
 	}
 	return nil
-}
-
-func (db *DB) setDaemonBoolState(key string, enabled bool, label string) error {
-	// This legacy wrapper has no caller context.
-	return setDaemonBoolStateContext(context.Background(), db, key, enabled, label)
-}
-
-// BeginInterruptShutdown closes the claim gate and snapshots running attempts
-// atomically, so a failed snapshot cannot leave claims blocked.
-func (db *DB) BeginInterruptShutdown(ctx context.Context) ([]int64, error) {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := setDaemonBoolStateContext(ctx, tx, shutdownDrainingStateKey, true, "shutdown draining"); err != nil {
-		return nil, err
-	}
-	ids, err := listRunningJobIDs(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	return ids, nil
 }

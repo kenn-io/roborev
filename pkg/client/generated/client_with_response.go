@@ -4109,13 +4109,11 @@ func (c *Client) ShutdownWithResponse(ctx context.Context, reqEditors ...runtime
 }
 
 // InterruptShutdown Interrupt running reviews and shut down the daemon
-func (c *Client) InterruptShutdownWithResponse(ctx context.Context, options *InterruptShutdownRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResp, error) {
+func (c *Client) InterruptShutdownWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*InterruptShutdownResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/shutdown/interrupt",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
+		RequestURL: c.apiClient.GetBaseURL() + "/api/shutdown/interrupt",
+		Method:     "POST",
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)

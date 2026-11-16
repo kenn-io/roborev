@@ -137,9 +137,7 @@ func runDaemonWithSearch(
 	return errors.Join(startErr, stopErr, closeErr)
 }
 
-var interruptDaemon = func(info *daemon.RuntimeInfo) error {
-	return daemon.InterruptDaemonWithFallback(info, interruptDaemonWithUpdateAPI)
-}
+var interruptDaemon = daemon.InterruptDaemon
 
 func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{

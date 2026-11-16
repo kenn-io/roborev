@@ -353,12 +353,9 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("clear interrupted shutdown drain: %w", err)
 	}
 
-	// A stale running job cannot be reclaimed by workers until recovery succeeds.
+	// Reset stale jobs from previous runs
 	if err := s.db.ResetStaleJobs(); err != nil {
-		if listener != nil {
-			_ = listener.Close()
-		}
-		return fmt.Errorf("reset stale jobs: %w", err)
+		log.Printf("Warning: failed to reset stale jobs: %v", err)
 	}
 
 	// Start config watcher for hot-reloading
@@ -799,9 +796,6 @@ func (s *Server) stopOnce0() error {
 
 	// Stop worker pool
 	s.workerPool.Stop()
-	if err := s.workerPool.RetryFailedUpdateRequeues(); err != nil {
-		log.Printf("Warning: failed to retry interrupted job requeues: %v", err)
-	}
 
 	// Stop search reconciliation after workers can no longer emit review events.
 	s.stopSearch()
@@ -4245,21 +4239,31 @@ func (s *Server) humaShutdown(
 	return resp, nil
 }
 
-// humaInterruptShutdown targets only the process the caller discovered.
-func (s *Server) humaInterruptShutdown(ctx context.Context, input *InterruptShutdownInput) (*ShutdownOutput, error) {
-	if input.Body.ExpectedPID != os.Getpid() {
-		return nil, huma.Error412PreconditionFailed("daemon PID changed")
-	}
+// humaInterruptShutdown shuts down without waiting for running jobs. Running
+// attempts return to the queue without consuming a retry, through the same
+// worker path that an interrupting update uses.
+func (s *Server) humaInterruptShutdown(
+	ctx context.Context, input *struct{},
+) (*ShutdownOutput, error) {
 	s.shutdownDrainMu.Lock()
 	defer s.shutdownDrainMu.Unlock()
 	if s.updateDrain != nil {
-		return nil, huma.Error409Conflict("update drain is active or recovering")
+		return nil, huma.Error409Conflict("an update drain is active")
 	}
+	// Hold attempt transitions across the claim gate and the running-job
+	// snapshot so no job can start between them without being interrupted.
 	s.workerPool.attemptTransitionsMu.Lock()
 	defer s.workerPool.attemptTransitionsMu.Unlock()
-	ids, err := s.db.BeginInterruptShutdown(ctx)
+	if err := s.db.SetShutdownDrainingContext(ctx, true); err != nil {
+		return nil, huma.Error500InternalServerError(fmt.Sprintf("block job claims for shutdown: %v", err))
+	}
+	ids, err := s.db.ListRunningJobIDs()
 	if err != nil {
-		return nil, huma.Error500InternalServerError(fmt.Sprintf("prepare interrupt shutdown: %v", err))
+		if !s.shutdownDraining {
+			// Reopen claims that this request closed; the daemon keeps running.
+			_ = s.db.SetShutdownDrainingContext(context.WithoutCancel(ctx), false)
+		}
+		return nil, huma.Error500InternalServerError(fmt.Sprintf("list running jobs: %v", err))
 	}
 	s.workerPool.interruptJobsForUpdateLocked(ids)
 	s.shutdownDraining = true

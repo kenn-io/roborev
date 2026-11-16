@@ -21,7 +21,6 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 const (
@@ -48,10 +47,6 @@ const (
 // ErrDaemonAccessDenied means the daemon rejected authentication or local
 // permissions prevented every usable endpoint from being probed.
 var ErrDaemonAccessDenied = errors.New("daemon access denied")
-
-// ErrInterruptShutdownUnsupported means the daemon does not have the
-// interrupt-shutdown endpoint.
-var ErrInterruptShutdownUnsupported = errors.New("daemon does not support interrupt shutdown; use --running=wait")
 
 var probeRuntimeEndpoint = probeRuntimeRecord
 
@@ -661,26 +656,26 @@ func isLoopbackAddr(addr string) bool {
 	return ip.IsLoopback()
 }
 
+// ErrInterruptUnsupported means the running daemon predates interrupting
+// shutdown.
+var ErrInterruptUnsupported = errors.New(
+	"the running daemon does not support --running=interrupt; restart without it",
+)
+
 // KillDaemon requests graceful shutdown and waits until the daemon exits.
 // Returns nil if the daemon is no longer running.
 // Only removes runtime file if the daemon is confirmed dead.
 func KillDaemon(info *RuntimeInfo) error {
-	return killDaemonWithFallback(info, false, nil)
+	return stopDaemonProcess(info, false)
 }
 
-// InterruptDaemonWithFallback interrupts a daemon and calls fallback only
-// when its interrupt-shutdown endpoint returns 404.
-func InterruptDaemonWithFallback(
-	info *RuntimeInfo, fallback func(context.Context, *RuntimeInfo, DaemonEndpoint) error,
-) error {
-	return killDaemonWithFallback(info, true, fallback)
+// InterruptDaemon is KillDaemon, except that the daemon requeues its running
+// jobs instead of waiting for them.
+func InterruptDaemon(info *RuntimeInfo) error {
+	return stopDaemonProcess(info, true)
 }
 
-func killDaemonWithFallback(
-	info *RuntimeInfo,
-	interrupt bool,
-	fallback func(context.Context, *RuntimeInfo, DaemonEndpoint) error,
-) error {
+func stopDaemonProcess(info *RuntimeInfo, interrupt bool) error {
 	if info == nil {
 		return nil
 	}
@@ -701,9 +696,6 @@ func killDaemonWithFallback(
 	// may start a replacement daemon on the same endpoint immediately.
 	confirmedDead := func() bool {
 		if info.PID > 0 {
-			if interrupt {
-				return info.hasStaleProcess()
-			}
 			return !isProcessAlive(info.PID)
 		}
 		alive, err := ProbeDaemonAlive(ep)
@@ -779,10 +771,6 @@ func killDaemonWithFallback(
 		return nil
 	}
 
-	if interrupt && info.PID <= 0 {
-		return fmt.Errorf("cannot safely interrupt this daemon; use --running=wait")
-	}
-
 	// Request graceful shutdown within one shared preparation budget. Once the
 	// daemon accepts the request, wait without a deadline for the exact process
 	// so running reviews still have unlimited time to finish.
@@ -791,14 +779,7 @@ func killDaemonWithFallback(
 			context.Background(), shutdownCleanupTimeout,
 		)
 		defer cancelShutdownCleanup()
-		err := requestDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead, info.PID, interrupt)
-		if errors.Is(err, ErrInterruptShutdownUnsupported) && fallback != nil {
-			if err := runInterruptFallback(
-				shutdownCleanupCtx, info, ep, confirmedDead, fallback,
-			); err != nil {
-				return err
-			}
-		} else if err != nil {
+		if err := requestDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead, interrupt); err != nil {
 			return err
 		}
 		waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
@@ -808,46 +789,24 @@ func killDaemonWithFallback(
 	return fmt.Errorf("daemon shutdown was not accepted")
 }
 
-func runInterruptFallback(
+func requestDaemonShutdown(
 	ctx context.Context,
-	info *RuntimeInfo,
-	endpoint DaemonEndpoint,
+	ep DaemonEndpoint,
 	confirmedDead func() bool,
-	fallback func(context.Context, *RuntimeInfo, DaemonEndpoint) error,
+	interrupt bool,
 ) error {
-	if confirmedDead() {
-		return nil
-	}
-	ping, err := ProbeDaemonPing(endpoint, 2*time.Second)
-	if confirmedDead() {
-		return nil
-	}
-	if err != nil && ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if err != nil || ping == nil || ping.PID != info.PID {
-		return ErrInterruptShutdownUnsupported
-	}
-	return fallback(ctx, info, endpoint)
-}
-
-func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead func() bool, pid int, interrupt bool) error {
 	client := ep.APIClient(0)
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		if confirmedDead() {
 			return struct{}{}, nil
 		}
-		var resp *http.Response
-		var err error
+		send := client.ShutdownRaw
 		if interrupt {
-			resp, err = client.InterruptShutdownRaw(ctx, &generated.InterruptShutdownRequestOptions{
-				Body: &generated.InterruptShutdownBody{ExpectedPid: int64(pid)},
-			})
-		} else {
-			resp, err = client.ShutdownRaw(ctx)
+			send = client.InterruptShutdownRaw
 		}
+		resp, err := send(ctx)
 		if err == nil {
-			_ = resp.Body.Close()
+			resp.Body.Close()
 			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 				return struct{}{}, nil
 			}
@@ -855,7 +814,7 @@ func requestDaemonShutdown(ctx context.Context, ep DaemonEndpoint, confirmedDead
 				return struct{}{}, backoff.Permanent(ErrDaemonAccessDenied)
 			}
 			if interrupt && resp.StatusCode == http.StatusNotFound {
-				return struct{}{}, backoff.Permanent(ErrInterruptShutdownUnsupported)
+				return struct{}{}, backoff.Permanent(ErrInterruptUnsupported)
 			}
 			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
 			if resp.StatusCode < http.StatusInternalServerError {

@@ -1453,12 +1453,12 @@ roborev hook uninstall           # Remove hook
 | `--running=wait\|interrupt` | On daemon restart, finish running jobs by default (`wait`) or interrupt and requeue them (`interrupt`) |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
 
-Restart waits for running jobs to finish by default. Use `--running=interrupt`
-to requeue all running jobs, including reviews, synthesis, and background fixes,
-wait for shutdown, and start the replacement. Interrupted jobs start fresh,
-discarding in-progress work, except rebuttals, which preserve and resume their
-original agent session. No retry is consumed. If Ctrl-C interrupts a waiting
-restart, rerun it with `--running=interrupt` while the daemon is draining.
+Restart waits for running jobs to finish by default. With `--running=interrupt`,
+running jobs go back to the queue without using a retry and start over after the
+restart; rebuttals resume their agent session. A daemon from an older roborev
+release rejects the flag, so restart it once without it. If Ctrl-C stops a
+waiting restart, rerun it with `--running=interrupt` while the daemon is still
+draining.
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,

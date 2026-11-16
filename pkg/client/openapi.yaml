@@ -2480,23 +2480,6 @@ components:
       required:
         - session_id
       type: object
-    InterruptShutdownInputBody:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/InterruptShutdownInputBody.json
-          format: uri
-          readOnly: true
-          type: string
-        expected_pid:
-          format: int64
-          minimum: 1
-          type: integer
-      required:
-        - expected_pid
-      type: object
     JobIDRequest:
       additionalProperties: false
       properties:
@@ -7577,12 +7560,6 @@ paths:
   /api/shutdown/interrupt:
     post:
       operationId: interrupt-shutdown
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/InterruptShutdownInputBody"
-        required: true
       responses:
         "200":
           content:

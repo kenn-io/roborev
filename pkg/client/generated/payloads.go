@@ -64,8 +64,6 @@ type CloseReviewBody = CloseReviewRequest
 
 type MigrateReviewBody = MigrateReviewInputBody
 
-type InterruptShutdownBody = InterruptShutdownInputBody
-
 type BackfillTokensBody = BackfillTokensRequest
 
 type BootstrapWebSessionBody = WebBootstrapInputBody
