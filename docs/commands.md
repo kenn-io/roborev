@@ -63,12 +63,35 @@ Regenerate shell completions with `roborev completion <shell>` to discover the
 new groups. Use `roborev job --help` or another group's help to find its
 actions.
 
+## Find a command
+
+Describe a task to find relevant commands without walking the help tree:
+
+```bash
+roborev cli search "review uncommitted changes"
+roborev cli search add a note to a review --json
+roborev cli search "show agent output log" --limit 3
+```
+
+Search reads the command tree locally. It needs no repository, configuration,
+daemon, credentials or network. It returns five commands by default; `--limit`
+accepts 1–20. Text output includes a help hint. `--json` returns `query` and
+`results`, with `command`, `summary` and `usage` for each result. No matches is
+success with an empty result list. Missing or blank tasks and invalid limits
+exit with code 2.
+
+Results use the preferred command paths. Hidden compatibility commands,
+help-only groups, interactive UIs and internal hook/server entry points are
+excluded. `roborev cli` shows discovery help. To search completed review
+content, use `roborev job search` instead.
+
 ## Direct CLI workflow
 
 Run these from your git checkout. Replace job `42` with the job ID printed by
 `review` or `list`:
 
 ```bash
+roborev cli search "review uncommitted changes"
 roborev doctor
 roborev init
 roborev review HEAD
