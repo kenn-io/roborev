@@ -1084,10 +1084,11 @@ func TestEnqueuePostCommitPanelRunAbandonedByCallerInsertsNothing(t *testing.T) 
 	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
+	// The hook has stopped waiting while another writer holds the lock.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
 	_, _, _, err = db.EnqueuePostCommitPanelRun(ctx, members, synthesis)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorIs(t, err, context.Canceled)
 
 	_, err = lockConn.ExecContext(t.Context(), "ROLLBACK")
 	require.NoError(t, err)

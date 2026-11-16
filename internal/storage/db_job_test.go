@@ -2674,15 +2674,15 @@ func TestEnqueuePostCommitJobAbandonedByCallerInsertsNothing(t *testing.T) {
 	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 
-	// The hook stops waiting while another writer holds the lock. The
-	// enqueue must leave the write queue rather than insert a review the
-	// hook will request again on its next run.
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
+	// The hook has stopped waiting while another writer holds the lock.
+	// The enqueue must give up rather than wait for the lock and insert a
+	// review the hook will request again on its next run.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
 	job, _, err := db.EnqueuePostCommitJob(ctx, EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
 	})
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, job)
 
 	_, err = lockConn.ExecContext(t.Context(), "ROLLBACK")

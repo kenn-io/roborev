@@ -332,6 +332,7 @@ func TestWaitForServerReadyWaitsForSlowListener(t *testing.T) {
 	}))
 	defer server.Close()
 
+	//nolint:kennlint // deadlinetest: the budget bounds refused connections; this listener accepts, so the result does not depend on timing
 	ready, serveExited, err := waitForServerReady(t.Context(), authEndpoint(t, server.URL), 50*time.Millisecond, make(chan error), config.ClientAuth{})
 	require.NoError(t, err)
 	assert.True(t, ready)
@@ -339,6 +340,7 @@ func TestWaitForServerReadyWaitsForSlowListener(t *testing.T) {
 }
 
 func TestWaitForServerReadyGivesUpWhenNothingListens(t *testing.T) {
+	//nolint:kennlint // deadlinetest: nothing listens, so every probe is refused and the budget always expires
 	ready, serveExited, err := waitForServerReady(t.Context(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, make(chan error), config.ClientAuth{})
 	require.ErrorContains(t, err, "failed to become ready")
 	assert.False(t, ready)
