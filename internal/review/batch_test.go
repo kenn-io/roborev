@@ -617,6 +617,32 @@ func TestRunBatch_GlobalExcludePatterns(t *testing.T) {
 		"prompt should not contain excluded file")
 }
 
+// A CI range whose changes are all excluded gives the agent an empty diff,
+// and its "no issues" answer would read as a passing merge gate.
+func TestRunBatchFailsWhenEveryChangeIsExcluded(t *testing.T) {
+	t.Parallel()
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.RevParse("HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root, "generated.dat"), []byte("generated\n"), 0o644))
+	repo.RunGit("add", "-A")
+	repo.RunGit("commit", "-m", "regenerate")
+
+	captureAgent := &promptCapture{name: "capture"}
+	results := RunBatch(t.Context(), BatchConfig{
+		RepoPath:      repo.Root,
+		GitRef:        base + ".." + repo.RevParse("HEAD"),
+		Agents:        []string{"capture"},
+		ReviewTypes:   []string{"review"},
+		GlobalConfig:  &config.Config{ExcludePatterns: []string{"generated.dat"}},
+		AgentRegistry: map[string]agent.Agent{"capture": captureAgent},
+	})
+
+	require.Len(t, results, 1)
+	assert.Equal(t, ResultFailed, results[0].Status)
+	assert.Contains(t, results[0].Error, "nothing to review")
+	assert.Empty(t, captureAgent.lastPrompt, "the agent must not run")
+}
+
 func TestRunBatchShowsPullRequestToAgents(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	base := repo.RevParse("HEAD")

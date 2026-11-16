@@ -1009,7 +1009,8 @@ are appended to the built-in exclusion list.
 
 A commit or range review whose changed files are all excluded fails with a
 "nothing to review" error instead of passing, because no reviewer saw any code.
-Changed lockfiles still count, since the prompt lists them.
+This applies to local, daemon, and CI reviews. Changed lockfiles still count,
+since the prompt lists them.
 
 !!! note
 

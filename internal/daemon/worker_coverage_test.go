@@ -203,3 +203,51 @@ func TestProcessJobFailsWhenNothingIsReviewable(t *testing.T) {
 		})
 	}
 }
+
+// CI members prebuild their prompt from the PR diff, so an all-excluded PR
+// would pass the same way. A supplied review prompt is the caller's content
+// and still runs.
+func TestProcessJobFailsPrebuiltCIReviewWithNothingToReview(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	var calls int
+	reviewer := &agent.FakeAgent{
+		NameStr: "counting-ci-review",
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			calls++
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	}
+	agent.RegisterForTest(t, reviewer)
+	base := tc.GitRepo.HeadSHA()
+	head := tc.GitRepo.CommitFile(".cache/build.txt", "cached\n", "only excluded files")
+	rangeRef := base + ".." + head
+
+	tests := []struct {
+		source     string
+		wantStatus storage.JobStatus
+		wantCalls  int
+	}{
+		{source: storage.JobSourceCI, wantStatus: storage.JobStatusFailed, wantCalls: 0},
+		{source: storage.JobSourceReviewPrompt, wantStatus: storage.JobStatusDone, wantCalls: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			before := calls
+			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+				RepoID: tc.Repo.ID, GitRef: rangeRef, Agent: reviewer.NameStr,
+				Prompt: "prebuilt prompt", PromptPrebuilt: true,
+				JobType: storage.JobTypeRange, Source: tt.source,
+			})
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.Equal(t, job.ID, claimed.ID)
+			tc.Pool.processJob(testWorkerID, claimed)
+
+			stored, err := tc.DB.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStatus, stored.Status, stored.Error)
+			assert.Equal(t, before+tt.wantCalls, calls)
+		})
+	}
+}

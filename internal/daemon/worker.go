@@ -1258,6 +1258,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		var cleanup func()
 		excludes := reviewJobExcludes(ctx, job, settings, checkout.resolvedConfigRepoPath(), cfg)
+		// CI members prebuild their prompt from the PR diff, so an empty diff
+		// would pass the same way. Supplied prompts are the caller's content.
+		if job.Source == storage.JobSourceCI && job.IsReviewJob() {
+			if wp.failUnreviewableCensus(workerID, job, reviewPathCensusForJob(ctx, checkout.promptRepoPath, job, excludes)) {
+				return
+			}
+		}
 		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
 			ctx, checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes,
 		)
@@ -1329,15 +1336,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
 			census := reviewPathCensusForJob(ctx, checkout.promptRepoPath, job, excludes)
-			if census != nil {
-				// An agent shown an empty diff reports no issues, which
-				// reads as a pass. Retrying or failing over cannot help.
-				if emptyErr := census.Reviewable(); emptyErr != nil {
-					wp.runAttemptTransition(workerID, job, func() {
-						wp.failNonRetryableJobLocked(workerID, job, job.Agent, emptyErr.Error())
-					})
-					return
-				}
+			if wp.failUnreviewableCensus(workerID, job, census) {
+				return
 			}
 			reviewPrompt, err = pb.Build(
 				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,

@@ -621,12 +621,12 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		err = dirtyErr
 	} else {
 		excludes := config.ResolveExcludePatterns(ctx, repoPath, cfg, reviewType)
-		census, censusErr := prompt.TakeReviewPathCensus(ctx, repoPath, gitRef, excludes)
-		if censusErr != nil {
-			return fmt.Errorf("list changed files: %w", censusErr)
-		}
-		if err := census.Reviewable(); err != nil {
-			return err
+		// An agent shown an empty diff reports no issues, which reads as a
+		// pass. A census failure leaves prompt building to report the error.
+		if census, censusErr := prompt.TakeReviewPathCensus(ctx, repoPath, gitRef, excludes); censusErr == nil {
+			if err := census.Reviewable(); err != nil {
+				return err
+			}
 		}
 		result, buildErr := pb.BuildWithSnapshot(gitRef, contextCount, a.Name(), reviewType, resolvedMinSev, excludes)
 		reviewPrompt = result.Prompt

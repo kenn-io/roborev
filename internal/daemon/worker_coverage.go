@@ -68,3 +68,21 @@ func coverageFromSets(total, reviewed map[string]struct{}) *storage.ReviewFileCo
 	reviewedCount := len(reviewed)
 	return &storage.ReviewFileCoverage{Reviewed: &reviewedCount, Excluded: &excluded}
 }
+
+// failUnreviewableCensus fails the job when its census shows nothing to
+// review. An agent shown an empty diff reports no issues, which reads as a
+// pass. Retrying or failing over cannot change the diff, so the job fails
+// without either. A nil census (unmeasured) lets the review run.
+func (wp *WorkerPool) failUnreviewableCensus(workerID string, job *storage.ReviewJob, census *prompt.ReviewPathCensus) bool {
+	if census == nil {
+		return false
+	}
+	emptyErr := census.Reviewable()
+	if emptyErr == nil {
+		return false
+	}
+	wp.runAttemptTransition(workerID, job, func() {
+		wp.failNonRetryableJobLocked(workerID, job, job.Agent, emptyErr.Error())
+	})
+	return true
+}

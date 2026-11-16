@@ -1554,25 +1554,6 @@ func GetParentCommitsCtx(ctx context.Context, repoPath, sha string, count int) (
 	return commits, nil
 }
 
-// IsRootCommitCtx reports whether the commit object for sha records no
-// parents. It reads the raw object, so the oldest commit of a shallow clone,
-// whose parents are recorded but not fetched, is not a root commit.
-func IsRootCommitCtx(ctx context.Context, repoPath, sha string) (bool, error) {
-	cmd := newGitCmdContext(ctx, "cat-file", "commit", sha)
-	cmd.Dir = repoPath
-	out, err := gitOutput(cmd)
-	if err != nil {
-		return false, fmt.Errorf("git cat-file: %w", err)
-	}
-	header, _, _ := strings.Cut(string(out), "\n\n")
-	for line := range strings.SplitSeq(header, "\n") {
-		if strings.HasPrefix(line, "parent ") {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 // GetCommitParents returns the direct parent commits for sha.
 func GetCommitParents(repoPath, sha string) ([]string, error) {
 	cmd := newGitCmd("show", "-s", "--format=%P", sha)
@@ -2832,7 +2813,12 @@ func CommitCount(repoPath, rev string) (int, error) {
 // away the boundary commit's parents, so rev-list-based checks see a parentless
 // commit there, while the raw object still names its parents.
 func IsRootCommit(repoPath, rev string) (bool, error) {
-	cmd := newGitCmd("cat-file", "commit", rev)
+	return IsRootCommitCtx(context.Background(), repoPath, rev)
+}
+
+// IsRootCommitCtx is IsRootCommit with a caller context.
+func IsRootCommitCtx(ctx context.Context, repoPath, rev string) (bool, error) {
+	cmd := newGitCmdContext(ctx, "cat-file", "commit", rev)
 	cmd.Dir = repoPath
 
 	out, err := gitOutput(cmd)
