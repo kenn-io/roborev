@@ -7,6 +7,12 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- Keep reviewing commits when the daemon is too busy to answer the post-commit
+    hook. A commit the hook cannot queue stays pending, and the next commit or
+    push reviews it; a quiet-period batch that cannot be queued is retried. Idle
+    workers no longer take the database write lock to find an empty queue, so
+    enqueues wait less, and a daemon on a busy host no longer exits during
+    startup because its first readiness check was slow.
 - Stop CI reviews from running hooks, MCP servers, and plugins that a pull
     request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
     Cursor, Grok, Copilot, and Kilo now skip project agent configuration in

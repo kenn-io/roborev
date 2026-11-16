@@ -54,7 +54,10 @@ only its matching global value.
 
 The daemon runs quiet-period timers. If the daemon restarts before a timer
 fires, the pending commits stay recorded and the next commit or push retries
-them. See
+them. When a timer fires but the batch cannot be queued, for example because the
+daemon is too busy to answer in time, the daemon tries again after twice the
+quiet period, doubling the wait each time, until the batch is queued or a new
+commit restarts the timer. See
 [Post-commit review batching](../configuration.md#post-commit-review-batching)
 for the full rules.
 

@@ -158,13 +158,15 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 }
 
 // EnqueuePostCommitJob atomically inserts a hook-originated job unless a
-// non-canceled job already occupies the same (repo, ref, job type) key.
-func (db *DB) EnqueuePostCommitJob(opts EnqueueOpts) (*ReviewJob, bool, error) {
+// non-canceled job already occupies the same (repo, ref, job type) key. ctx
+// bounds the wait for the write lock: when the hook stops waiting, it keeps
+// the commit pending for its next run, so the insert is abandoned rather than
+// queued behind other writers to create a review the hook will request again.
+func (db *DB) EnqueuePostCommitJob(ctx context.Context, opts EnqueueOpts) (*ReviewJob, bool, error) {
 	opts.Source = JobSourcePostCommit
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 
-	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, false, err
@@ -424,8 +426,9 @@ func (db *DB) EnqueuePanelRerun(
 
 // EnqueuePostCommitPanelRun atomically inserts a hook-originated panel unless
 // a non-canceled job already occupies the target member's deduplication key.
+// Like EnqueuePostCommitJob, ctx bounds the wait for the write lock.
 func (db *DB) EnqueuePostCommitPanelRun(
-	members []EnqueueOpts, synthesis EnqueueOpts,
+	ctx context.Context, members []EnqueueOpts, synthesis EnqueueOpts,
 ) ([]*ReviewJob, *ReviewJob, bool, error) {
 	if len(members) == 0 {
 		return nil, nil, false, errors.New("post-commit panel requires at least one member")
@@ -435,7 +438,7 @@ func (db *DB) EnqueuePostCommitPanelRun(
 		members[i].Source = JobSourcePostCommit
 	}
 	synthesis.Source = JobSourcePostCommit
-	return db.enqueuePanelRun(context.Background(), members, synthesis, true, uuid.Nil(), 0, nil)
+	return db.enqueuePanelRun(ctx, members, synthesis, true, uuid.Nil(), 0, nil)
 }
 
 func (db *DB) enqueuePanelRun(
@@ -633,7 +636,14 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 // caller's context and the claim retry window both bound the operation. The
 // retry boundary owns a fresh connection and BEGIN IMMEDIATE transaction so
 // an interrupted SQLite statement cannot be retried on an invalid transaction.
+//
+// Idle workers poll often. A claim with no queued candidate returns before it
+// opens a write transaction, so polling never makes enqueues and other writers
+// wait for the write gate.
 func (db *DB) ClaimJobContext(ctx context.Context, workerID string) (*ReviewJob, error) {
+	if claimable, err := db.hasClaimableJob(ctx); err != nil || !claimable {
+		return nil, err
+	}
 	deadline := time.Now().Add(claimJobRetryWindow)
 	operationCtx, cancelOperation := context.WithDeadline(ctx, deadline)
 	defer cancelOperation()
@@ -641,6 +651,23 @@ func (db *DB) ClaimJobContext(ctx context.Context, workerID string) (*ReviewJob,
 	return retryOnSQLiteBusy(operationCtx, claimJobBusyAttempts, claimJobBusyAttemptTimeout, claimJobBusyBackoff, nil, func(attemptCtx context.Context) (*ReviewJob, error) {
 		return db.claimJobAttempt(attemptCtx, operationCtx, workerID)
 	})
+}
+
+// hasClaimableJob reports whether any queued job could be claimed now. It
+// applies the claim's cheap filters only, so a true result can still claim
+// nothing; a false result means the claim would find no candidate.
+func (db *DB) hasClaimableJob(ctx context.Context) (bool, error) {
+	var claimable bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM review_jobs
+			WHERE status = 'queued' AND claim_blocked = 0
+			  AND (retry_not_before IS NULL OR retry_not_before <= ?)
+		)`, preciseTimestampAt(time.Now())).Scan(&claimable)
+	if err != nil {
+		return false, fmt.Errorf("check for queued jobs: %w", err)
+	}
+	return claimable, nil
 }
 
 func (db *DB) claimJobAttempt(

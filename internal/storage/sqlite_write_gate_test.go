@@ -107,7 +107,7 @@ func TestUserWritesQueueBehindPullTransaction(t *testing.T) {
 							_, err := h.db.EnqueueJob(opts)
 							return err
 						case "post-commit":
-							_, _, err := h.db.EnqueuePostCommitJob(opts)
+							_, _, err := h.db.EnqueuePostCommitJob(t.Context(), opts)
 							return err
 						default: // close
 							return h.db.MarkReviewClosedByJobID(job.ID, true)

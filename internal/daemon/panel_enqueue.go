@@ -377,8 +377,8 @@ func (s *Server) descriptorForSingleCommit(
 		return targetDescriptor{}, out
 	}
 
-	commit, err := s.db.GetOrCreateCommit(
-		in.repo.ID, sha, info.Author, info.Subject, info.Timestamp,
+	commit, err := s.db.GetOrCreateCommitContext(
+		ctx, in.repo.ID, sha, info.Author, info.Subject, info.Timestamp,
 	)
 	if err != nil {
 		out, _ := rawJSONOutput(http.StatusInternalServerError,
@@ -671,7 +671,7 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 	var duplicate bool
 	if in.req.Source == storage.JobSourcePostCommit {
 		memberJobs, synthJob, duplicate, err = s.db.EnqueuePostCommitPanelRun(
-			memberOpts, synthOpts,
+			ctx, memberOpts, synthOpts,
 		)
 	} else {
 		memberJobs, synthJob, err = s.db.EnqueuePanelRun(memberOpts, synthOpts)
