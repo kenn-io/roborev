@@ -88,3 +88,14 @@ func TestRequestInterruptShutdownRejectsOlderDaemon(t *testing.T) {
 	err = requestDaemonShutdown(t.Context(), ep, func() bool { return false }, true)
 	require.ErrorIs(t, err, ErrInterruptUnsupported)
 }
+
+func TestRequestDaemonShutdownReportsDaemonError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"detail":"list running jobs: synthetic"}`, http.StatusConflict)
+	}))
+	defer server.Close()
+	ep, err := ParseEndpoint(server.Listener.Addr().String())
+	require.NoError(t, err)
+	err = requestDaemonShutdown(t.Context(), ep, func() bool { return false }, true)
+	require.ErrorContains(t, err, "list running jobs: synthetic")
+}

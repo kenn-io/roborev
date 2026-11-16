@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -806,6 +807,7 @@ func requestDaemonShutdown(
 		}
 		resp, err := send(ctx)
 		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 				return struct{}{}, nil
@@ -816,7 +818,7 @@ func requestDaemonShutdown(
 			if interrupt && resp.StatusCode == http.StatusNotFound {
 				return struct{}{}, backoff.Permanent(ErrInterruptUnsupported)
 			}
-			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
+			err = fmt.Errorf("daemon shutdown returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 			if resp.StatusCode < http.StatusInternalServerError {
 				return struct{}{}, backoff.Permanent(err)
 			}
