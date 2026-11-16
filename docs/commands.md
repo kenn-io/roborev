@@ -285,10 +285,13 @@ roborev review --branch --panel none          # Force single-agent review
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)
 
-A commit or range review fails instead of passing when its diff is empty after
+A commit or range review is skipped when its diff is empty after
 [file exclusions](/docs/configuration/#exclude-patterns), for example an empty
-commit or a docs-only commit in a repo that excludes `*.md`. Changes to
-dependency lockfiles still count, because the prompt lists them.
+commit or a docs-only commit in a repo that excludes `*.md`. No agent runs, the
+job gets the `skipped` status with a reason, and `--wait` prints
+`Skipped: nothing to review ...` and exits 0. A skip has no verdict, so it is
+neither a pass nor a failure. Changes to dependency lockfiles still count,
+because the prompt lists them.
 
 In a shallow clone, `roborev review <start> <end>` fails when the parent of
 `<start>` was not fetched. Fetch more history, or pass a `<start>` whose parent

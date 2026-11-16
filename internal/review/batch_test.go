@@ -618,8 +618,9 @@ func TestRunBatch_GlobalExcludePatterns(t *testing.T) {
 }
 
 // A CI range whose changes are all excluded gives the agent an empty diff,
-// and its "no issues" answer would read as a passing merge gate.
-func TestRunBatchFailsWhenEveryChangeIsExcluded(t *testing.T) {
+// and its "no issues" answer would read as a passing merge gate. The review is
+// skipped with a reason instead.
+func TestRunBatchSkipsWhenEveryChangeIsExcluded(t *testing.T) {
 	t.Parallel()
 	repo := testutil.NewTestRepoWithCommit(t)
 	base := repo.RevParse("HEAD")
@@ -638,8 +639,10 @@ func TestRunBatchFailsWhenEveryChangeIsExcluded(t *testing.T) {
 	})
 
 	require.Len(t, results, 1)
-	assert.Equal(t, ResultFailed, results[0].Status)
-	assert.Contains(t, results[0].Error, "nothing to review")
+	assert.Equal(t, ResultSkipped, results[0].Status)
+	assert.True(t, results[0].Skipped)
+	assert.Contains(t, results[0].SkipReason, "nothing to review in")
+	assert.Empty(t, results[0].Error)
 	assert.Empty(t, captureAgent.lastPrompt, "the agent must not run")
 }
 

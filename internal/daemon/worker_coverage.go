@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"go.kenn.io/roborev/internal/prompt"
@@ -69,11 +70,12 @@ func coverageFromSets(total, reviewed map[string]struct{}) *storage.ReviewFileCo
 	return &storage.ReviewFileCoverage{Reviewed: &reviewedCount, Excluded: &excluded}
 }
 
-// failUnreviewableCensus fails the job when its census shows nothing to
-// review. An agent shown an empty diff reports no issues, which reads as a
-// pass. Retrying or failing over cannot change the diff, so the job fails
-// without either. A nil census (unmeasured) lets the review run.
-func (wp *WorkerPool) failUnreviewableCensus(
+// skipUnreviewableCensus ends the job as skipped when its census shows nothing
+// to review. Running the agent on an empty diff would store "No issues found",
+// which reads as a review that passed. Nothing to review is not a failure
+// either, so the job is skipped with the reason and no verdict. A nil census
+// (unmeasured) lets the review run.
+func (wp *WorkerPool) skipUnreviewableCensus(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 	census *prompt.ReviewPathCensus, binaryEvidence bool,
 ) bool {
@@ -84,8 +86,27 @@ func (wp *WorkerPool) failUnreviewableCensus(
 	if emptyErr == nil {
 		return false
 	}
-	wp.runAttemptTransition(workerID, job, func() {
-		wp.failNonRetryableJobLocked(workerID, job, job.Agent, emptyErr.Error())
-	})
+	wp.skipJob(ctx, workerID, job, emptyErr.Error())
 	return true
+}
+
+// skipJob ends the running attempt as skipped. Subscribers get a
+// review.completed event without a verdict, and a skipped panel member counts
+// as finished so its synthesis can run.
+func (wp *WorkerPool) skipJob(ctx context.Context, workerID string, job *storage.ReviewJob, reason string) {
+	wp.runAttemptTransition(workerID, job, func() {
+		skipped, err := wp.db.SkipJob(ctx, job.ID, workerID, reason)
+		if err != nil {
+			log.Printf("[%s] Error skipping job %d: %v", workerID, job.ID, err)
+			wp.failNonRetryableJobLocked(workerID, job, job.Agent, fmt.Sprintf("skip job: %v", err))
+			return
+		}
+		if !skipped {
+			return
+		}
+		log.Printf("[%s] Job %d %s skipped: %s", workerID, job.ID, job.RepoName, reason)
+		wp.invalidateBudgetSpend()
+		wp.broadcaster.Broadcast(eventForJob("review.completed", job, job.ID))
+		wp.releaseIfPanelMember(job)
+	})
 }

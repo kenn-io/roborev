@@ -391,10 +391,10 @@ func TestFreezeReviewRefResolvesEachEndToACommit(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// A local review of a commit whose only changes are excluded from the diff
-// must fail instead of printing the agent's "no issues" answer to an empty
-// diff, which reads exactly like a passing review.
-func TestLocalReviewFailsWhenNothingIsReviewable(t *testing.T) {
+// A local review of a commit whose only changes are excluded is skipped with a
+// reason. It must not print the agent's "no issues" answer to an empty diff,
+// which reads exactly like a passing review, and it is not a failure either.
+func TestLocalReviewSkipsWhenNothingIsReviewable(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile(".roborev.toml", "exclude_patterns = [\"*.md\"]\n", "exclude docs")
 	repo.CommitFile("README.md", "docs\n", "docs only")
@@ -404,9 +404,9 @@ func TestLocalReviewFailsWhenNothingIsReviewable(t *testing.T) {
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{"--local", "--repo", repo.Root, "--agent", "test"})
 
-	err := cmd.Execute()
+	require.NoError(t, cmd.Execute())
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "nothing to review: the only changed file")
+	assert.Contains(t, out.String(), "Skipped: nothing to review in")
+	assert.Contains(t, out.String(), "the only changed file is excluded")
 	assert.NotContains(t, out.String(), "No issues found")
 }

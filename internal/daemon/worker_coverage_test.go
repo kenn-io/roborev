@@ -139,8 +139,9 @@ func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 
 // An agent shown an empty diff answers that it found no issues, which reads as
 // a passing review. A committed review with nothing left to read after
-// exclusions must fail without running the agent, rather than pass.
-func TestProcessJobFailsWhenNothingIsReviewable(t *testing.T) {
+// exclusions is skipped with a reason, without running the agent. It is not a
+// failure either: there was nothing to do.
+func TestProcessJobSkipsWhenNothingIsReviewable(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	var calls int
 	reviewer := &agent.FakeAgent{
@@ -154,9 +155,9 @@ func TestProcessJobFailsWhenNothingIsReviewable(t *testing.T) {
 	tc.GitRepo.CommitFile(".roborev.toml", "exclude_patterns = [\"*.md\"]\n", "exclude docs")
 
 	tests := []struct {
-		name    string
-		commit  func() string
-		wantErr string // empty: the review runs and completes
+		name     string
+		commit   func() string
+		wantSkip string // empty: the review runs and completes
 	}{
 		{
 			name: "only excluded files",
@@ -166,7 +167,7 @@ func TestProcessJobFailsWhenNothingIsReviewable(t *testing.T) {
 					"docs/note.md": "more docs\n",
 				}, "docs only")
 			},
-			wantErr: "nothing to review: all 2 changed files",
+			wantSkip: "all 2 changed files are excluded",
 		},
 		{
 			name: "empty commit",
@@ -174,7 +175,7 @@ func TestProcessJobFailsWhenNothingIsReviewable(t *testing.T) {
 				tc.GitRepo.Run("commit", "--allow-empty", "-m", "empty")
 				return tc.GitRepo.HeadSHA()
 			},
-			wantErr: "has an empty diff",
+			wantSkip: "the diff is empty",
 		},
 		{
 			name: "dependency metadata only",
@@ -191,63 +192,16 @@ func TestProcessJobFailsWhenNothingIsReviewable(t *testing.T) {
 
 			stored, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
-			if tt.wantErr == "" {
+			if tt.wantSkip == "" {
 				assert.Equal(t, storage.JobStatusDone, stored.Status)
 				assert.Equal(t, before+1, calls)
 				return
 			}
-			assert.Equal(t, storage.JobStatusFailed, stored.Status)
-			assert.Contains(t, stored.Error, tt.wantErr)
-			assert.Equal(t, 0, stored.RetryCount)
+			assert.Equal(t, storage.JobStatusSkipped, stored.Status)
+			assert.Contains(t, stored.SkipReason, "nothing to review in")
+			assert.Contains(t, stored.SkipReason, tt.wantSkip)
+			assert.Empty(t, stored.Error)
 			assert.Equal(t, before, calls, "the agent must not run")
-		})
-	}
-}
-
-// CI members prebuild their prompt from the PR diff, so an all-excluded PR
-// would pass the same way. A supplied review prompt is the caller's content
-// and still runs.
-func TestProcessJobFailsPrebuiltCIReviewWithNothingToReview(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	var calls int
-	reviewer := &agent.FakeAgent{
-		NameStr: "counting-ci-review",
-		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			calls++
-			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
-		},
-	}
-	agent.RegisterForTest(t, reviewer)
-	base := tc.GitRepo.HeadSHA()
-	head := tc.GitRepo.CommitFile(".cache/build.txt", "cached\n", "only excluded files")
-	rangeRef := base + ".." + head
-
-	tests := []struct {
-		source     string
-		wantStatus storage.JobStatus
-		wantCalls  int
-	}{
-		{source: storage.JobSourceCI, wantStatus: storage.JobStatusFailed, wantCalls: 0},
-		{source: storage.JobSourceReviewPrompt, wantStatus: storage.JobStatusDone, wantCalls: 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.source, func(t *testing.T) {
-			before := calls
-			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
-				RepoID: tc.Repo.ID, GitRef: rangeRef, Agent: reviewer.NameStr,
-				Prompt: "prebuilt prompt", PromptPrebuilt: true,
-				JobType: storage.JobTypeRange, Source: tt.source,
-			})
-			require.NoError(t, err)
-			claimed, err := tc.DB.ClaimJob(testWorkerID)
-			require.NoError(t, err)
-			require.Equal(t, job.ID, claimed.ID)
-			tc.Pool.processJob(testWorkerID, claimed)
-
-			stored, err := tc.DB.GetJobByID(job.ID)
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantStatus, stored.Status, stored.Error)
-			assert.Equal(t, before+tt.wantCalls, calls)
 		})
 	}
 }

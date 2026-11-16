@@ -66,6 +66,13 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 			}
 			return fmt.Errorf("review was canceled")
 
+		case storage.JobStatusSkipped:
+			// No agent ran, so there is no verdict to report or fail on.
+			if !quiet {
+				cmd.Printf(" skipped.\n\nSkipped: %s\n", job.SkipReason)
+			}
+			return nil
+
 		case storage.JobStatusQueued, storage.JobStatusRunning:
 			// Still in progress, continue polling
 			unknownStatusCount = 0 // Reset counter on known status

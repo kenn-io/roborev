@@ -1547,6 +1547,26 @@ func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate stri
 	return rows > 0, nil
 }
 
+// SkipJob ends the worker's running attempt as skipped, with a reason. A
+// skipped review ran no agent and has no verdict. It reports whether the job
+// was still running on that worker.
+func (db *DB) SkipJob(ctx context.Context, jobID int64, workerID, reason string) (bool, error) {
+	finished := time.Now()
+	result, err := db.ExecContext(ctx, `
+		UPDATE review_jobs
+		SET status = 'skipped', skip_reason = ?, finished_at = ?, updated_at = ?
+		WHERE id = ? AND status = 'running' AND worker_id = ?
+	`, sanitizeSkipReason(reason), preciseTimestampAt(finished), finished.Format(time.RFC3339), jobID, workerID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 // CancelJob marks a running or queued job as canceled
 func (db *DB) CancelJob(jobID int64) error {
 	finished := time.Now()

@@ -60,7 +60,7 @@ func (c ReviewPathCensus) Reviewable(ctx context.Context, binaryEvidence bool) e
 // NoReviewableChangesError reports a committed review subject whose diff is
 // empty once exclusions apply. An agent given an empty diff answers that it
 // found no issues, which reads exactly like a review that passed, so callers
-// fail the review instead of running the agent.
+// skip the review instead of running the agent.
 type NoReviewableChangesError struct {
 	Ref string
 	// Excluded counts changed paths that exclusion patterns removed.
@@ -72,10 +72,10 @@ func (e *NoReviewableChangesError) Error() string {
 	const reason = "excluded from review by exclude_patterns or built-in exclusions"
 	switch e.Excluded {
 	case 0:
-		return fmt.Sprintf("nothing to review: %s has an empty diff", ref)
+		return fmt.Sprintf("nothing to review in %s: the diff is empty", ref)
 	case 1:
-		return fmt.Sprintf("nothing to review: the only changed file in %s is %s", ref, reason)
+		return fmt.Sprintf("nothing to review in %s: the only changed file is %s", ref, reason)
 	default:
-		return fmt.Sprintf("nothing to review: all %d changed files in %s are %s", e.Excluded, ref, reason)
+		return fmt.Sprintf("nothing to review in %s: all %d changed files are %s", ref, e.Excluded, reason)
 	}
 }
