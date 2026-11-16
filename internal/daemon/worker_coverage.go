@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/prompt"
@@ -124,12 +123,9 @@ func (wp *WorkerPool) skipUnreviewableWithoutAgent(
 		job.PromptPrebuilt || job.Source == storage.JobSourceCI || job.Source == storage.JobSourceRebuttal {
 		return false
 	}
-	repoPath := job.RepoPath
-	if job.WorktreePath != "" {
-		if _, err := os.Stat(job.WorktreePath); err == nil {
-			repoPath = job.WorktreePath
-		}
-	}
+	// Validate the worktree like checkout preparation does: a stale path
+	// inside the main checkout would narrow the census to that directory.
+	repoPath := resolveEffectiveRepoPath(workerID, job)
 	settings, err := reviewJobSettings(job, repoPath, cfg)
 	if err != nil {
 		return false

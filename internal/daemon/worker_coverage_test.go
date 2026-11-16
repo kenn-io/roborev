@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -231,4 +233,33 @@ func TestProcessJobSkipsDuringAgentCooldown(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, storage.JobStatusSkipped, stored.Status)
 	assert.NotEqual(t, storage.JobStatusDone, stored.Status)
+}
+
+// A stale worktree path that now names a plain directory inside the main
+// checkout must not narrow the cooldown census to that directory, which would
+// hide the commit's changes and skip a review that has real code.
+func TestProcessJobCooldownCensusIgnoresStaleWorktree(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	reviewer := &agent.FakeAgent{
+		NameStr: "cooling-stale-review",
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	}
+	agent.RegisterForTest(t, reviewer)
+	tc.Pool.cooldownAgent(reviewer.NameStr, time.Now().Add(time.Hour))
+	stale := filepath.Join(tc.TmpDir, "stale-worktree")
+	require.NoError(t, os.MkdirAll(stale, 0o755))
+
+	job := tc.createJobWithAgent(t, tc.GitRepo.CommitFile("main.go", "package main\n", "code"), reviewer.NameStr)
+	_, err := tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET worktree_path = ? WHERE id = ?`, stale, job.ID)
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	stored, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.NotEqual(t, storage.JobStatusSkipped, stored.Status, "the commit changes main.go")
 }
