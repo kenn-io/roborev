@@ -1491,7 +1491,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.outputBuffers.CloseJob(job.ID)
 	}()
 
-	// Tee raw agent output to a per-job log file on disk. The writer retries
+	// Store agent output in a per-job log file on disk. The writer retries
 	// transient filesystem failures so resource pressure does not permanently
 	// disable logging for the rest of the job.
 	var jobLog *jobLogWriter
@@ -1511,7 +1511,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}()
 	displayOutput := io.MultiWriter(jobLog, outputWriter)
-	agentOutput := displayOutput
+	logOutput := newPiInvocationLogWriter(a.Name(), jobLog)
+	agentOutput := io.MultiWriter(logOutput, outputWriter)
 	var planningUsageCapture *tokens.CodexUsageCaptureWriter
 	var implementationUsageCapture *tokens.CodexUsageCaptureWriter
 	var planningSessionWriter *agent.SessionCaptureWriter
@@ -1519,7 +1520,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if planningPrompt != "" {
 		planningUsageCapture = tokens.NewCodexUsageCaptureWriter()
 		implementationUsageCapture = tokens.NewCodexUsageCaptureWriter()
-		agentOutput = io.MultiWriter(jobLog, outputWriter, implementationUsageCapture)
+		agentOutput = io.MultiWriter(logOutput, outputWriter, implementationUsageCapture)
 	}
 	var invocationStream invocationOutput
 	if hasSuppliedReviewSettings(job) {
@@ -1610,7 +1611,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		implementationRef, err = gitrepo.Resolve(ctx, reviewRepoPath, "HEAD")
 		if err == nil {
 			planningSessionWriter = agent.NewSessionCaptureWriter(
-				io.MultiWriter(jobLog, outputWriter, planningUsageCapture), nil, nil,
+				io.MultiWriter(newPiInvocationLogWriter(a.Name(), jobLog), outputWriter, planningUsageCapture), nil, nil,
 			)
 			fixPlan, reviewPrompt, err = wp.prepareFixPlan(
 				ctx, planningTimeout, workerID, a, job, reviewRepoPath,
