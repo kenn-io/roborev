@@ -469,17 +469,30 @@ func (a *CodexAgent) review(
 			return "", fmt.Errorf("sandbox Codex command, repo, and work dir must be absolute")
 		}
 	}
+	// Codex loads .codex/config.toml from a project its user config trusts,
+	// and a linked worktree inherits the trust of its main repository. That
+	// file can start MCP servers, so an untrusted checkout must not get the
+	// user config's trust list.
+	untrusted := a.sandbox == nil && untrustedCheckout(ctx)
+	if untrusted && !runAgent.IgnoreUserConfig {
+		clone := *runAgent
+		clone.IgnoreUserConfig = true
+		runAgent = &clone
+	}
 	if a.sandbox == nil && runAgent.IgnoreUserConfig {
 		supported, err := codexSupportsIgnoreUserConfig(ctx, a.Command)
 		if err != nil {
 			return "", err
 		}
+		if !supported && untrusted {
+			return "", fmt.Errorf("codex does not support %s, which reviews of an untrusted checkout require; upgrade codex", codexIgnoreUserConfigFlag)
+		}
 		if !supported {
-			clone := *a
+			clone := *runAgent
 			clone.IgnoreUserConfig = false
 			runAgent = &clone
 		} else if overrides := codexUserAuthOverrides(); len(overrides) > 0 {
-			clone := *a
+			clone := *runAgent
 			clone.userAuthOverrides = overrides
 			runAgent = &clone
 		}
