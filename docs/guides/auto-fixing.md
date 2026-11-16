@@ -120,25 +120,12 @@ makes no changes without returning the severity-filter marker, refine skips the
 review and records a generic comment; it does not retain the report or close the
 review.
 
-## Windows Line Endings
+## Line Endings
 
-Refine uses your global, system, and repository Git line-ending settings when
-creating its worktree, capturing changes, and applying them back. A global
-`core.autocrlf = true` is sufficient for CRLF working trees unless overridden by
-repository settings or attributes. The TUI's fix patch check and application
-also honor these settings.
-
-Older versions could ignore global and system settings when applying a patch,
-causing `patch does not apply` errors on Windows. Upgrade roborev, or use this
-workaround from the affected repository if it uses CRLF working-tree files:
-
-```powershell
-git config --local core.autocrlf true
-```
-
-Follow the repository's existing line-ending policy. Git's
-[text and eol attributes](https://git-scm.com/docs/gitattributes#_text) can set
-per-file rules through `.gitattributes`.
+Refine and TUI fix application use your existing Git line-ending settings,
+including global, system, and repository configuration and `.gitattributes`.
+roborev does not require a particular `core.autocrlf` value or change your Git
+settings.
 
 ## Repeated finding files
 
