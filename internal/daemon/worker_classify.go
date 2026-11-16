@@ -175,7 +175,7 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 		if !ok {
 			return false, "", selectedName, fmt.Errorf("classify_agent %q lost SchemaAgent capability after WithReasoning/WithModel", name)
 		}
-		classifier := newClassifierAdapter(sa, maxBytes, jobLog).withBeforeInvoke(func() {
+		classifier := newClassifierAdapter(sa, maxBytes, newPiInvocationLogWriter(sa.Name(), jobLog)).withBeforeInvoke(func() {
 			if err := wp.db.MarkClassifyAgentInvoked(
 				job.ID, workerID, selectedName, model, sa.CommandLine(),
 			); err != nil {

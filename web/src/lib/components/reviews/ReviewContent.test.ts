@@ -22,6 +22,7 @@ vi.mock("../../stores/context", () => ({
       reportRendererFailure: errorReports,
       retryRenderer: rendererRetries,
       getSelectedJob: () => ({ status: state.status, error: state.error }),
+      getError: () => null,
     },
   }),
 }));
@@ -47,7 +48,7 @@ describe("ReviewContent", () => {
     render(ReviewContent);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not load the review renderer.",
+      "Could not display the review.",
     );
     expect(errorReports).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));

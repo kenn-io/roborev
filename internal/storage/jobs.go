@@ -77,6 +77,7 @@ type EnqueueOpts struct {
 	Branch              string
 	CIBaseBranch        string // PR base branch for CI event and hook matching
 	SessionID           string
+	SessionCLI          string
 	ResumeSourceJobUUID *uuid.UUID
 	Agent               string
 	Model               string // Effective model for this run
@@ -313,13 +314,13 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 	}
 
 	result, err := exec.ExecContext(ctx, `
-		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, ci_base_branch, session_id, session_resumed, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning,
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, ci_base_branch, session_id, session_cli, session_resumed, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning,
 			status, job_type, review_type, patch_id, dirty_files, agentic, prompt_prebuilt, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, non_voting, claim_blocked, source,
 			analysis_type, analysis_files, analysis_commit_sha)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.CIBaseBranch), nullString(opts.SessionID),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.CIBaseBranch), nullString(opts.SessionID), nullString(opts.SessionCLI),
 		sessionResumedInt, opts.ResumeSourceJobUUID,
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
@@ -348,6 +349,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		Branch:                opts.Branch,
 		CIBaseBranch:          opts.CIBaseBranch,
 		SessionID:             opts.SessionID,
+		SessionCLI:            opts.SessionCLI,
 		ResumeSourceJobUUID:   opts.ResumeSourceJobUUID,
 		Agent:                 opts.Agent,
 		Model:                 opts.Model,
@@ -856,8 +858,9 @@ func insertJobSessionHistory(
 }
 
 // RequeueUpdateInterruptedJob returns an update-interrupted attempt to the
-// queue without consuming a retry. The worker ownership guard prevents a stale
-// attempt from changing a row that was canceled or reclaimed concurrently.
+// queue without consuming a retry. A rebuttal keeps its input session. The
+// worker ownership guard prevents a stale attempt from changing a row that was
+// canceled or reclaimed concurrently.
 func (db *DB) RequeueUpdateInterruptedJob(
 	jobID int64, workerID string,
 ) (bool, error) {
@@ -866,15 +869,15 @@ func (db *DB) RequeueUpdateInterruptedJob(
 		SET status = 'queued',
 		    worker_id = NULL,
 		    started_at = NULL,
-		    session_id = NULL,
-		    session_resumed = 0,
+		    session_id = CASE WHEN source = ? THEN session_id ELSE NULL END,
+		    session_resumed = CASE WHEN source = ? THEN session_resumed ELSE 0 END,
 		    resume_source_job_uuid = NULL,
 		    token_usage = NULL,
 		    command_line = NULL,
 		    agent_invoked = 0,
 		    synced_at = NULL
 		WHERE id = ? AND status = 'running' AND worker_id = ?
-	`, jobID, workerID)
+	`, JobSourceRebuttal, JobSourceRebuttal, jobID, workerID)
 	if err != nil {
 		return false, err
 	}
@@ -1011,6 +1014,27 @@ func (db *DB) IsolateJobSession(jobID int64, workerID string) error {
 	return nil
 }
 
+// ClearJobSessionID drops inherited resume metadata without isolating a fresh session.
+func (db *DB) ClearJobSessionID(jobID int64, workerID string) error {
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET session_id = NULL, session_cli = NULL, session_resumed = 0,
+		    resume_source_job_uuid = NULL, updated_at = ?, synced_at = NULL
+		WHERE id = ? AND status = 'running' AND worker_id = ?
+	`, time.Now().Format(time.RFC3339), jobID, workerID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // SaveJobSessionID stores the captured agent session ID for a job.
 // The first captured ID wins so repeated lifecycle events do not
 // overwrite it. The update is scoped to the current execution
@@ -1019,6 +1043,15 @@ func (db *DB) IsolateJobSession(jobID int64, workerID string) error {
 // a session ID that belongs to a new attempt of the same job.
 func (db *DB) SaveJobSessionID(
 	jobID int64, workerID, sessionID string,
+) error {
+	return db.SaveJobSessionIDWithCLI(jobID, workerID, sessionID, "")
+}
+
+// SaveJobSessionIDWithCLI stores the session ID and the CLI that created it.
+// The CLI reports a different ID only for a new conversation, so that ID
+// replaces the stored one.
+func (db *DB) SaveJobSessionIDWithCLI(
+	jobID int64, workerID, sessionID, sessionCLI string,
 ) error {
 	if sessionID == "" {
 		return nil
@@ -1044,12 +1077,13 @@ func (db *DB) SaveJobSessionID(
 	now := time.Now().Format(time.RFC3339)
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET session_id = ?, updated_at = ?
+		SET session_id = ?, session_cli = NULLIF(?, ''), session_resumed = 0,
+		    resume_source_job_uuid = NULL, updated_at = ?
 		WHERE id = ?
 		  AND status = 'running'
 		  AND worker_id = ?
-		  AND (session_id IS NULL OR session_id = '')
-	`, sessionID, now, jobID, workerID)
+		  AND (session_id IS NULL OR session_id = '' OR (? != '' AND session_id != ?))
+	`, sessionID, sessionCLI, now, jobID, workerID, sessionCLI, sessionID)
 	if err != nil {
 		return err
 	}

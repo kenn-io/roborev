@@ -79,6 +79,25 @@ type FetchConfig struct {
 	RequireCLI bool
 }
 
+type usageSource uint8
+
+const (
+	sourceCLI usageSource = iota
+	sourceAgentsView
+	sourceEndpoint
+)
+
+func (cfg FetchConfig) source() usageSource {
+	switch {
+	case cfg.AgentsViewURL != "":
+		return sourceAgentsView
+	case cfg.Endpoint != "":
+		return sourceEndpoint
+	default:
+		return sourceCLI
+	}
+}
+
 // agentsviewResponse is the JSON shape returned by
 // `agentsview session usage <id> --format json` and the deprecated
 // `agentsview token-use <id>` command.
@@ -230,13 +249,14 @@ func FetchForSessionWithConfig(
 func LookupSessionUsage(
 	ctx context.Context, sessionID string, cfg FetchConfig,
 ) (*Usage, error) {
-	if cfg.AgentsViewURL != "" {
+	switch cfg.source() {
+	case sourceAgentsView:
 		return fetchForSessionAgentsView(ctx, sessionID, cfg)
-	}
-	if cfg.Endpoint != "" {
+	case sourceEndpoint:
 		return fetchForSessionHTTP(ctx, sessionID, cfg)
+	default:
+		return fetchForSessionCLI(ctx, sessionID, cfg)
 	}
-	return fetchForSessionCLI(ctx, sessionID, cfg)
 }
 
 // SessionUsageResult holds one requested session's usage or lookup error.
@@ -258,7 +278,7 @@ func FetchForSessionsWithConfig(
 			results[id] = SessionUsageResult{}
 		}
 	}
-	if cfg.Endpoint != "" || cfg.AgentsViewURL != "" {
+	if cfg.source() != sourceCLI {
 		return nil, ErrBatchUnsupported
 	}
 	binPath, err := resolveAgentsview()

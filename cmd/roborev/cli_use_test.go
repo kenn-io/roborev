@@ -608,6 +608,7 @@ func TestCLIUseRecoveryShutdownDoesNotCount(t *testing.T) {
 		}{
 			{http.MethodGet, "/api/ping", 200, false},
 			{http.MethodPost, "/api/shutdown", 200, false},
+			{http.MethodPost, "/api/shutdown/interrupt", 200, false},
 			{http.MethodPost, "/api/update/prepare", 200, false},
 			{http.MethodPost, "/api/update/renew", 200, false},
 			{http.MethodPost, "/api/update/release", 200, false},

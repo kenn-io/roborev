@@ -757,6 +757,9 @@ func (c *Config) Validate() (err error) {
 	); err != nil {
 		return err
 	}
+	if err := validateCICommentMinConfidence(c.CI.CommentMinConfidence); err != nil {
+		return err
+	}
 	if err := validateCICommentMaxFindings(c.CI.CommentMaxFindings); err != nil {
 		return err
 	}
@@ -967,6 +970,9 @@ func (c *RepoConfig) Validate() (err error) {
 	if _, err := parsePostCommitQuietPeriod(c.PostCommitQuietPeriod); err != nil {
 		return err
 	}
+	if err := validateCICommentMinConfidence(c.CI.CommentMinConfidence); err != nil {
+		return err
+	}
 	if c.CI.CommentMaxFindings != nil && *c.CI.CommentMaxFindings < 0 {
 		return fmt.Errorf("ci.comment_max_findings must be non-negative")
 	}
@@ -1171,6 +1177,7 @@ func applyDaemonSections(c *Config) []error {
 		{"ci", func() error {
 			return errors.Join(
 				validateCICommentMaxFindings(c.CI.CommentMaxFindings),
+				validateCICommentMinConfidence(c.CI.CommentMinConfidence),
 				c.CI.NormalizeInstallations(),
 				validateCIPRFilters(c.CI),
 			)

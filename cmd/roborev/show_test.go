@@ -3,6 +3,7 @@ package main
 // Tests for the show command
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -598,4 +600,92 @@ func TestShowNoComments(t *testing.T) {
 
 	assert.Contains(t, output, "LGTM")
 	assert.NotContains(t, output, "Comments")
+}
+
+func TestShowNumericRefFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		refStatus  int
+		jobStatus  int
+		wantOutput string
+		wantError  string
+		wantNote   bool
+		wantCalls  []string
+	}{
+		{name: "commit review takes precedence", args: []string{"12345"}, refStatus: http.StatusOK, wantOutput: "commit review", wantCalls: []string{"sha"}},
+		{name: "missing commit review retries job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusOK, wantOutput: "job review", wantNote: true, wantCalls: []string{"sha", "job"}},
+		{name: "missing both identifies job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantError: "no review found for job 12345", wantNote: true, wantCalls: []string{"sha", "job"}},
+		{name: "server error does not retry", args: []string{"12345"}, refStatus: http.StatusInternalServerError, wantError: "500", wantCalls: []string{"sha"}},
+		{name: "prompt falls back to stored job", args: []string{"--prompt", "12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantOutput: "stored prompt", wantNote: true, wantCalls: []string{"sha", "job", "prompt"}},
+		{name: "explicit job skips ref", args: []string{"--job", "12345"}, jobStatus: http.StatusOK, wantOutput: "job review", wantCalls: []string{"job"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newTestGitRepo(t)
+			repo.CommitFile("file.txt", "content", "initial commit")
+			repo.Run("tag", "12345")
+			sha := repo.Run("rev-parse", "12345")
+			chdir(t, repo.Dir)
+			var mu sync.Mutex
+			var calls []string
+			record := func(call string) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls = append(calls, call)
+			}
+			daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/review":
+					if r.URL.Query().Has("sha") {
+						record("sha")
+						assert.Equal(t, sha, r.URL.Query().Get("sha"))
+						if !assert.NotZero(t, tc.refStatus, "unexpected ref lookup") {
+							w.WriteHeader(http.StatusInternalServerError)
+							return
+						}
+						w.WriteHeader(tc.refStatus)
+						if tc.refStatus == http.StatusOK {
+							_ = json.NewEncoder(w).Encode(storage.Review{JobID: 1, Output: "commit review"})
+						}
+					} else {
+						record("job")
+						assert.Equal(t, "12345", r.URL.Query().Get("job_id"))
+						if !assert.NotZero(t, tc.jobStatus, "unexpected job lookup") {
+							w.WriteHeader(http.StatusInternalServerError)
+							return
+						}
+						w.WriteHeader(tc.jobStatus)
+						if tc.jobStatus == http.StatusOK {
+							_ = json.NewEncoder(w).Encode(storage.Review{JobID: 12345, Output: "job review"})
+						}
+					}
+				case "/api/jobs":
+					record("prompt")
+					assert.Equal(t, "12345", r.URL.Query().Get("id"))
+					_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{{ID: 12345, Status: storage.JobStatusFailed, Prompt: "stored prompt"}}})
+				}
+			}))
+			cmd := showCmd()
+			cmd.SetArgs(tc.args)
+			var stderr bytes.Buffer
+			cmd.SetErr(&stderr)
+			var err error
+			output := captureStdout(t, func() { err = cmd.Execute() })
+			note := "note: no review found for commit " + sha[:7] + "; trying job 12345\n"
+			if tc.wantNote {
+				assert.Contains(t, stderr.String(), note)
+			} else {
+				assert.NotContains(t, stderr.String(), "note:")
+			}
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+			} else {
+				require.NoError(t, err)
+				assert.Contains(t, output, tc.wantOutput)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, tc.wantCalls, calls)
+		})
+	}
 }

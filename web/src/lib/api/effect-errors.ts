@@ -1,5 +1,11 @@
 import { Schema } from "effect";
 
+export class NetworkRequestError extends Error {
+  constructor(cause: TypeError) {
+    super(cause.message, { cause });
+  }
+}
+
 export class TransientTransportError extends Schema.TaggedErrorClass<TransientTransportError>()(
   "TransientTransportError",
   {

@@ -474,7 +474,7 @@ func TestSearchCmdHumanOutputShowsModeCoverageAndZeroHits(t *testing.T) {
 	output, _, err := executeSearchCmd(t, "nothing")
 	require.NoError(t, err)
 	assert.Contains(t, output, "Mode: lexical")
-	assert.Contains(t, output, "Coverage: mirror complete; vectors disabled")
+	assert.Contains(t, output, "Coverage: review index complete; semantic search disabled")
 	assert.Contains(t, output, "No matching reviews.")
 	assert.Less(t, strings.Index(output, "Coverage:"), strings.Index(output, "No matching reviews."))
 }
@@ -568,8 +568,8 @@ func TestSearchCmdHumanOutputShowsNoticesAndCompactHit(t *testing.T) {
 		"Mode: lexical",
 		"Degraded: embedding provider unavailable",
 		"Bounded: candidate ceiling reached",
-		"Partial: search coverage is incomplete",
-		"Coverage: mirror incomplete (3 pending); vectors building (7 pending, 2 skipped)",
+		"Search may not include every review.",
+		"Coverage: review index incomplete (3 pending); semantic search building (7 pending, 2 skipped)",
 		"Job 42 / Review 9 | acme/widgets | feature/search | fail/open",
 		"Score: 0.01639344262295082 | Matched: lexical, semantic",
 		"Lock the shared map before writing.",
@@ -617,7 +617,7 @@ func TestSearchCmdHumanOutputSanitizesDaemonStrings(t *testing.T) {
 		"Mode: hybridMODEfakecell",
 		"Degraded: providerdownnextcol",
 		"Bounded: candidateceilingreached",
-		"Coverage: mirror incomplete (3 pending); vectors activevectorstate (7 pending, 2 skipped)",
+		"Coverage: review index incomplete (3 pending); semantic search activevectorstate (7 pending, 2 skipped)",
 		"Job 42 / Review 9 | acmewidgets | feature/ref | fail/open",
 		"Score: 0.5 | Matched: lexicalleg, semanticleg",
 		"helloredline\n\tindenttail",
@@ -722,7 +722,7 @@ func TestSearchCmdEveryWordHint(t *testing.T) {
 		name, flag, output string
 		json               bool
 	}{
-		{name: "human", output: "Mode: lexical\nCoverage: mirror complete; vectors disabled\nNo matching reviews.\n"},
+		{name: "human", output: "Mode: lexical\nCoverage: review index complete; semantic search disabled\nNo matching reviews.\n"},
 		{name: "agent", flag: "--agent", output: "OK search count=0 query=\"nil pointer\" mode=lexical partial=false bounded=false\n"},
 		{name: "json", flag: "--json", json: true},
 	} {

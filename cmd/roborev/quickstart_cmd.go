@@ -23,7 +23,8 @@ func quickstartCmd() *cobra.Command {
 		Short: "Print an agent-oriented guide to setting up roborev in this repo",
 		Long: `Print a repo-aware guide describing how roborev works and what is
 configured. Designed to be read by a coding agent ("run roborev quickstart")
-so it can help you finish setup. Detection is read-only.`,
+so it can help you finish setup. An MCP check may start the configured server
+and roborev daemon. Codex may create its own state and bundled skills.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 
@@ -60,13 +61,14 @@ func renderHuman(w io.Writer, s quickstartState) {
 	for _, c := range s.Checks {
 		mark := map[checkStatus]string{
 			statusOK: "[ok]", statusMissing: "[missing]", statusUnknown: "[unknown]",
+			"untrusted": "[needs you]", "modified": "[needs you]", "disabled": "[disabled]", "outdated": "[outdated]", "failed": "[failed]",
 		}[c.Status]
 		fmt.Fprintf(w, "%-10s %s", mark, c.ID)
 		if c.Details != "" {
 			fmt.Fprintf(w, " - %s", c.Details)
 		}
 		fmt.Fprintln(w)
-		if c.Status == statusMissing && c.FixCommand != "" {
+		if c.Status != statusOK && c.FixCommand != "" {
 			fmt.Fprintf(w, "           fix: %s\n", c.FixCommand)
 		}
 	}

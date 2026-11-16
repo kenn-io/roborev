@@ -53,8 +53,7 @@ func TestMigrateRepoIDsPreservesHistory(t *testing.T) {
 	require.NoError(t, err)
 	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC))
 	require.NoError(t, err)
-	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test"})
-	require.NoError(t, err)
+	job := enqueueJobBeforeSessionCLIMigration(t, db, repo.ID, commit.ID, "abc123")
 	_, err = db.ExecContext(t.Context(), `CREATE TABLE repo_renames (repo_id INTEGER, name TEXT);
 		CREATE TRIGGER record_repo_rename AFTER UPDATE OF name ON repos
 		BEGIN INSERT INTO repo_renames VALUES (new.id, new.name); END;`)

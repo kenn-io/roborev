@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -120,6 +121,34 @@ func TestFormatterTTYRendersPlainText(t *testing.T) {
 
 	fix.assertContains(t, "No issues found.")
 	fix.assertContains(t, "Summary: Updates docs.")
+}
+
+func TestRenderLogWithPreservesUnknownEventJSONForOtherAgents(t *testing.T) {
+	const unknownEvent = `{"event":"retrying","attempt":2}`
+	const antigravityEvent = `{"event":"init","conversation_id":"session-123"}`
+	tests := []struct {
+		name, agent, line string
+	}{
+		{name: "claude Antigravity event", agent: "claude", line: antigravityEvent},
+		{name: "gemini unknown event", agent: "gemini", line: unknownEvent},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			fmtr := New(&output, true, DecoderForAgent(tc.agent))
+			require.NoError(t, RenderLogWith(strings.NewReader(tc.line+"\n"), fmtr))
+			assert.Contains(t, output.String(), tc.line)
+		})
+	}
+}
+
+func TestRenderLogWithDropsAntigravityStepUpdate(t *testing.T) {
+	// From the stream-json example at https://antigravity.google/docs/cli/headless/.
+	const event = `{"event":"step_update","step_update":{"conversation_id":"9ec58bfd-4d67-4f5e-83a5-9d907e9c6b1f","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"apple"}}`
+	var output bytes.Buffer
+	fmtr := New(&output, true, DecoderForAgent("gemini"))
+	require.NoError(t, RenderLogWith(strings.NewReader(event+"\n"), fmtr))
+	assert.Empty(t, output.String())
 }
 
 type toolInput struct {
@@ -659,6 +688,13 @@ func TestFormatter_Gemini(t *testing.T) {
 			empty: true,
 		},
 		{
+			name: "LegacyStringResult",
+			events: []string{
+				`{"type":"result","result":"done","status":"success"}`,
+			},
+			empty: true,
+		},
+		{
 			name: "SanitizesGeminiText",
 			events: []string{
 				toJSON(geminiMessageEvent{
@@ -679,6 +715,53 @@ func TestFormatter_Gemini(t *testing.T) {
 
 	for _, tc := range tests {
 		runStreamTestCase(t, "gemini", tc)
+	}
+}
+
+func TestFormatter_GeminiAntigravityCapturedEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		fixture     string
+		contains    string
+		notContains []string
+	}{
+		{
+			name:        "captured init",
+			fixture:     "../agent/testdata/antigravity-init-capture.jsonl",
+			contains:    "Antigravity session started",
+			notContains: []string{"conversation_id", "always-proceed"},
+		},
+		{
+			name:     "successful result",
+			fixture:  "../agent/testdata/antigravity-success-result-capture.jsonl",
+			contains: "RESUME_OK",
+			notContains: []string{
+				`"event":"result"`,
+			},
+		},
+		{
+			name:     "historical error after completed response",
+			fixture:  "../agent/testdata/antigravity-quota-result-capture.jsonl",
+			contains: "RESUME_OK",
+			notContains: []string{
+				"Individual quota reached",
+				`"event":"result"`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			captured, err := os.ReadFile(tc.fixture)
+			require.NoError(t, err)
+			var output bytes.Buffer
+			fmtr := New(&output, true, DecoderForAgent("gemini"))
+			require.NoError(t, RenderLogWith(bytes.NewReader(captured), fmtr))
+
+			plain := StripANSI(output.String())
+			assert.Contains(t, plain, tc.contains)
+			for _, text := range tc.notContains {
+				assert.NotContains(t, plain, text)
+			}
+		})
 	}
 }
 

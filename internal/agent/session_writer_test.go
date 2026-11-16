@@ -16,7 +16,7 @@ func TestSessionCaptureWriter_LongLineChunkingCost(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), 16<<20)
 	var elapsed [2]time.Duration
 	for i, chunkSize := range []int{4096, 65536} {
-		w := NewSessionCaptureWriter(io.Discard, nil)
+		w := NewSessionCaptureWriter(io.Discard, nil, nil)
 		w.buf.Grow(len(payload))
 		result := testing.Benchmark(func(b *testing.B) {
 			for b.Loop() {
@@ -46,7 +46,7 @@ func TestSessionCaptureWriter_Chunking(t *testing.T) {
 			var captured []string
 			w := NewSessionCaptureWriter(&dst, func(sessionID string) {
 				captured = append(captured, sessionID)
-			})
+			}, nil)
 			for offset := 0; offset < len(payload); offset += chunkSize {
 				chunk := []byte(payload[offset:min(offset+chunkSize, len(payload))])
 				n, err := w.Write(chunk)
@@ -67,7 +67,7 @@ func TestSessionCaptureWriter_StopsBufferingAfterCapture(t *testing.T) {
 
 	w := NewSessionCaptureWriter(&dst, func(sessionID string) {
 		captured = append(captured, sessionID)
-	})
+	}, nil)
 
 	first := `{"type":"system","subtype":"init","session_id":"session-123"}` + "\n"
 	_, err := w.Write([]byte(first))
@@ -90,7 +90,7 @@ func TestSessionCaptureWriter_FlushCapturesPartialLine(t *testing.T) {
 
 	w := NewSessionCaptureWriter(&dst, func(sessionID string) {
 		captured = sessionID
-	})
+	}, nil)
 
 	line := `{"type":"thread.started","thread_id":"thread-456"}`
 	_, err := w.Write([]byte(line))
@@ -105,7 +105,7 @@ func TestSessionCaptureWriter_FlushCapturesPartialLine(t *testing.T) {
 
 func TestSessionCaptureWriter_NoSessionEvent(t *testing.T) {
 	var dst bytes.Buffer
-	w := NewSessionCaptureWriter(&dst, nil)
+	w := NewSessionCaptureWriter(&dst, nil, nil)
 
 	payload := "plain text output\nwith multiple lines\nbut no session\n"
 	_, err := w.Write([]byte(payload))

@@ -93,7 +93,7 @@ func runSingle(
 		Agent:      agentName,
 		ReviewType: reviewType,
 	}
-	settings, err := config.ResolveReviewSettings(reviewType, nil, cfg.RepoConfig, cfg.GlobalConfig)
+	settings, err := config.ResolveReviewSettings(reviewType, nil, false, cfg.RepoConfig, cfg.GlobalConfig)
 	if err != nil {
 		result.Status = ResultFailed
 		result.Error = fmt.Sprintf("resolve review settings: %v", err)

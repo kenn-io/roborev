@@ -442,12 +442,15 @@ following agents support it:
 |-------|-----------------|
 | Codex | `codex exec resume --json <session>` |
 | Claude Code | `claude --resume <session>` |
+| Gemini | `agy --conversation <session>` or `gemini --resume <session>` |
 | OpenCode | `opencode run --session <session>` |
 | Kilo | `kilo run --session <session>` |
 | Pi | `pi --session <path>` |
 
-Agents that do not support session reuse (Gemini, Copilot, Cursor, Kiro, Droid)
-ignore the setting and always start fresh sessions.
+Session reuse requires Gemini CLI 0.20.0 or Antigravity 1.1.8 or later.
+
+Agents that do not support session reuse (Copilot, Cursor, Kiro, Droid) ignore
+the setting and always start fresh sessions.
 
 ### Tuning with Lookback
 
@@ -691,8 +694,12 @@ repository.
 The PostgreSQL mirror restores legacy records through the same conversion and
 preservation rules. Its archive retains the original row as JSON in
 `legacy_reviews.record`. The mirror upgrade converts the same formats
-automatically. Use `--postgres-url` to ask the daemon to convert, export, and
-import these records. PostgreSQL archive IDs are UUIDs:
+automatically. On an up-to-date mirror, a resumable background scan performs
+conversion after connection; restored reviews become visible on the next
+scheduled or manual sync. Archive listings and exports can be partial while the
+background conversion processes rows, with progress recorded in daemon logs. Use
+`--postgres-url` to ask the daemon to convert, export, and import these records.
+PostgreSQL archive IDs are UUIDs:
 
 ```bash
 roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" convert --dry-run

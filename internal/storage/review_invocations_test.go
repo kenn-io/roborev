@@ -20,7 +20,9 @@ func TestReviewInvocationsRemainUnfinishedAfterRestartAndCascadeWithJob(t *testi
 	// Upgrade a real prior schema containing a queued job.
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:len(schemaMigrations)-1]))
 	t.Cleanup(func() { _ = db.Close() })
-	_, _, job := createJobChain(t, db, "/tmp/invocation-repo", "abc123")
+	repo := createRepo(t, db, "/tmp/invocation-repo")
+	commit := createCommit(t, db, repo.ID, "abc123")
+	job := enqueueJobBeforeSessionCLIMigration(t, db, repo.ID, commit.ID, "abc123")
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
 	claimed := claimJob(t, db, "worker")
 	report, err := db.BeginReviewInvocation(t.Context(), claimed, "test")

@@ -634,7 +634,13 @@ func stopDaemon() error {
 	return stopDaemonRuntimes(listAllRuntimes, daemon.KillDaemon, os.Stderr)
 }
 
+const daemonShutdownWaitMessage = "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first..."
+
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
+	return stopDaemonRuntimesWithMessage(list, drain, out, daemonShutdownWaitMessage)
+}
+
+func stopDaemonRuntimesWithMessage(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer, message string) error {
 	runtimes, err := list()
 	if err != nil {
 		// Check if it's just a "not exist" type error
@@ -644,10 +650,10 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		// Propagate other errors (permission, IO, etc.)
 		return fmt.Errorf("failed to list daemon runtimes: %w", err)
 	}
-	return stopDaemonSnapshot(runtimes, drain, out)
+	return stopDaemonSnapshotWithMessage(runtimes, drain, out, message)
 }
 
-func stopDaemonSnapshot(runtimes []*daemon.RuntimeInfo, drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
+func stopDaemonSnapshotWithMessage(runtimes []*daemon.RuntimeInfo, drain func(*daemon.RuntimeInfo) error, out io.Writer, message string) error {
 	if len(runtimes) == 0 {
 		return ErrDaemonNotRunning
 	}
@@ -655,10 +661,7 @@ func stopDaemonSnapshot(runtimes []*daemon.RuntimeInfo, drain func(*daemon.Runti
 	// Kill all found daemons, track failures
 	var lastErr error
 	for _, info := range runtimes {
-		fmt.Fprintln(
-			out,
-			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
-		)
+		fmt.Fprintln(out, message)
 		if err := drain(info); err != nil {
 			lastErr = fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
 			if errors.Is(err, daemon.ErrDaemonAccessDenied) {

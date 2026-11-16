@@ -73,7 +73,7 @@
     },
     {
       key: "coverage",
-      label: "Pricing coverage",
+      label: "Agent runs with known cost",
       value: (row) =>
         row.summary.cost.eligible_attempts > 0
           ? row.summary.cost.coverage

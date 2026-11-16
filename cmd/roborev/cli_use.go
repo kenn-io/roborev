@@ -65,6 +65,7 @@ var cliUseCommands = map[string]bool{
 var cliUseLifecyclePaths = map[string]bool{
 	"/api/ping":                   true,
 	"/api/shutdown":               true,
+	"/api/shutdown/interrupt":     true,
 	"/api/update/prepare":         true,
 	"/api/update/renew":           true,
 	"/api/update/release":         true,

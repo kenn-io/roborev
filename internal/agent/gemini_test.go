@@ -3,9 +3,11 @@ package agent
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -16,60 +18,124 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGeminiBuildArgs(t *testing.T) {
+func writeGeminiTempCommand(t *testing.T, script string) string {
+	t.Helper()
+	parts := strings.SplitN(script, "\n", 2)
+	require.Len(t, parts, 2, "Gemini command fixture needs a shebang and body")
+	body := parts[1]
+	if !strings.Contains(body, `"$1" = "--version"`) {
+		body = mockCLIVersionBlock("0.34.0") + body
+	}
+	return writeTempCommand(t, parts[0]+"\ncase \"$1\" in *etxtbsy*) exit 0;; esac\n"+body)
+}
+
+func TestVersionGatesFeatures(t *testing.T) {
+	skipIfWindows(t)
 	tests := []struct {
 		name         string
+		cli          string
+		version      string
 		agentic      bool
-		wantFlags    []string          // Standalone boolean flags
-		wantArgPairs map[string]string // Flag -> exact next token
-		unwantedArgs []string          // Tokens expected NOT in args
+		sessionID    string
+		resumeFlag   string
+		wantStream   bool
+		wantResult   string
+		wantPrompt   string
+		wantStdin    string
+		wantPrint    bool
+		wantApproval string
 	}{
-		{
-			name:    "ReviewMode",
-			agentic: false,
-			wantArgPairs: map[string]string{
-				"--output-format": "stream-json",
-				"--approval-mode": "plan",
-			},
-			unwantedArgs: []string{
-				"--yolo",
-				"--allowed-tools",
-			},
-		},
-		{
-			name:    "AgenticMode",
-			agentic: true,
-			wantArgPairs: map[string]string{
-				"--output-format": "stream-json",
-				"--approval-mode": "yolo",
-			},
-			unwantedArgs: []string{
-				"--allowed-tools",
-			},
-		},
+		{name: "Gemini version probe fails", cli: "gemini", version: "unknown", sessionID: "old-session", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantStdin: "prompt", wantApproval: "plan"},
+		{name: "Gemini 0.11 agentic stream without resume", cli: "gemini", version: "0.11.0", agentic: true, sessionID: "old-session", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
+		{name: "Gemini 0.20 agentic resume uses stdin", cli: "gemini", version: "0.20.0", agentic: true, sessionID: "old-session", resumeFlag: "--resume", wantStdin: "prompt", wantStream: true, wantResult: `{"passed":true,"findings":[]}`, wantApproval: "yolo"},
+		{name: "Antigravity 1.0.8 without resume", cli: "agy", version: "1.0.8", sessionID: "old-session", wantPrint: true, wantStdin: "prompt\n", wantResult: "Plain review"},
+		{name: "Antigravity 1.1.7 prompt without resume", cli: "agy", version: "1.1.7", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review"},
+		{name: "Antigravity 1.1.8 stream", cli: "agy", version: "1.1.8", sessionID: "old-session", resumeFlag: "--conversation", wantStream: true, wantResult: "RESUME_OK", wantPrompt: "prompt"},
+		{name: "Antigravity version probe fails", cli: "agy", version: "unknown", sessionID: "old-session", wantPrompt: "prompt", wantResult: "Plain review"},
 	}
-
+	testdata, err := filepath.Abs("testdata")
+	require.NoError(t, err)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-
-			a := NewGeminiAgent("gemini")
-			args := a.buildArgs(tc.agentic)
-
-			// Check standalone boolean flags
-			for _, flag := range tc.wantFlags {
-				assert.Contains(args, flag, "missing flag %q", flag)
+			argsFile := filepath.Join(t.TempDir(), "args")
+			callsFile := filepath.Join(t.TempDir(), "calls")
+			t.Setenv("CLI_VERSION", tc.version)
+			t.Setenv("ARGS_FILE", argsFile)
+			t.Setenv("CALLS_FILE", callsFile)
+			t.Setenv("TESTDATA", testdata)
+			streamOutput := ""
+			if tc.wantStream {
+				streamOutput = tc.cli
 			}
-
-			// Check flag-value pairs by exact next token
-			for flag, val := range tc.wantArgPairs {
-				assertFlagValue(t, args, flag, val)
+			t.Setenv("STREAM_OUTPUT", streamOutput)
+			stdinFile := filepath.Join(t.TempDir(), "stdin")
+			t.Setenv("STDIN_FILE", stdinFile)
+			script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "$CLI_VERSION"
+  if [ "$CLI_VERSION" = "unknown" ]; then exit 1; fi
+  exit 0
+fi
+echo call >> "$CALLS_FILE"
+cat > "$STDIN_FILE"
+printf '%s\n' "$@" > "$ARGS_FILE"
+case "$STREAM_OUTPUT" in
+  gemini) cat "$TESTDATA/gemini-stream.jsonl" ;;
+  agy) cat "$TESTDATA/antigravity-success-result-capture.jsonl" ;;
+  *) echo 'Plain review' ;;
+esac
+`)
+			if tc.cli == "agy" {
+				agyPath := filepath.Join(filepath.Dir(script), "agy")
+				require.NoError(t, os.Rename(script, agyPath))
+				script = agyPath
 			}
-
-			// Check absence of specific tokens
-			for _, unwanted := range tc.unwantedArgs {
-				assert.NotContains(args, unwanted, "unexpected token %q", unwanted)
+			a := NewGeminiAgent(script).WithAgentic(tc.agentic).(*GeminiAgent)
+			if tc.sessionID != "" {
+				a = a.WithSessionID(tc.sessionID).(*GeminiAgent)
 			}
+			var output bytes.Buffer
+			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
+			require.NoError(t, err)
+			stdinBytes, readErr := os.ReadFile(stdinFile)
+			require.NoError(t, readErr)
+			assert.Equal(t, tc.wantStdin, string(stdinBytes))
+
+			argsBytes, readErr := os.ReadFile(argsFile)
+			require.NoError(t, readErr)
+			args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+			if tc.wantStream {
+				assertFlagValue(t, args, "--output-format", "stream-json")
+			} else {
+				assert.NotContains(t, args, "--output-format")
+			}
+			if tc.resumeFlag != "" {
+				assertFlagValue(t, args, tc.resumeFlag, tc.sessionID)
+			} else {
+				assert.NotContains(t, args, "--resume")
+				assert.NotContains(t, args, "--conversation")
+				if tc.sessionID != "" {
+					calls, readErr := os.ReadFile(callsFile)
+					require.NoError(t, readErr)
+					assert.Equal(t, "call\n", string(calls))
+				}
+			}
+			if tc.wantPrompt != "" {
+				assertFlagValue(t, args, "--prompt", tc.wantPrompt)
+			} else {
+				assert.NotContains(t, args, "--prompt")
+			}
+			if tc.wantPrint {
+				assert.Contains(t, args, "--print")
+			} else {
+				assert.NotContains(t, args, "--print")
+			}
+			if tc.wantApproval != "" {
+				assertFlagValue(t, args, "--approval-mode", tc.wantApproval)
+			} else {
+				assert.NotContains(t, args, "--approval-mode")
+			}
+			assert.Equal(t, tc.wantResult, result)
 		})
 	}
 }
@@ -87,7 +153,6 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 			// Print-mode reviews omit --sandbox so `pwd` is not gated, and
 			// still omit --dangerously-skip-permissions (agentic-only).
 			unwantedArgs: []string{
-				"--output-format",
 				"--approval-mode",
 				"-m",
 				"--dangerously-skip-permissions",
@@ -102,7 +167,6 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 			agentic:   true,
 			wantFlags: []string{"--dangerously-skip-permissions"},
 			unwantedArgs: []string{
-				"--output-format",
 				"--approval-mode",
 				"-m",
 				"--sandbox",
@@ -127,7 +191,7 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 	}
 }
 
-func TestGeminiAntigravityReviewMergesSettingsAndOmitsYolo(t *testing.T) {
+func TestGeminiAntigravityReviewMergesSettings(t *testing.T) {
 	skipIfWindows(t)
 
 	settingsPath := filepath.Join(t.TempDir(), "settings.json")
@@ -144,11 +208,8 @@ func TestGeminiAntigravityReviewMergesSettingsAndOmitsYolo(t *testing.T) {
 
 	scriptPath := writeTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
-printf '%s\n' "$@" > "$ARGS_FILE"
 echo "Review after settings merge"
 `)
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("ARGS_FILE", argsFile)
 	a := NewGeminiAgent(scriptPath)
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
@@ -162,12 +223,6 @@ echo "Review after settings merge"
 	assert.Equal(t, "keep-me", doc["model"])
 	permissions := doc["permissions"].(map[string]any)
 	assert.Equal(t, []any{"command(rm -rf)"}, permissions["deny"])
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	argsOut := string(argsBytes)
-	assert.NotContains(t, argsOut, "--sandbox\n")
-	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
 }
 
 func TestGeminiAntigravityReviewAddsRepositoryWorkspace(t *testing.T) {
@@ -224,8 +279,8 @@ func TestGeminiAntigravityReviewStopsWhenSettingsLockCanceled(t *testing.T) {
 
 	invokedPath := filepath.Join(t.TempDir(), "invoked")
 	t.Setenv("INVOKED_PATH", invokedPath)
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; esac
+	scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
 touch "$INVOKED_PATH"
 exit 0
 `)
@@ -279,57 +334,76 @@ func assertFlagValue(t *testing.T, args []string, flag, expectedVal string) {
 }
 
 func TestGeminiParseStreamJSON(t *testing.T) {
+	geminiCapture, err := os.ReadFile("testdata/gemini-stream.jsonl")
+	require.NoError(t, err)
+	geminiDeltaCapture, err := os.ReadFile("testdata/gemini-stream-delta-fragments.jsonl")
+	require.NoError(t, err)
 	tests := []struct {
-		name         string
-		input        string
-		assertResult func(t *testing.T, res string)
-		wantErr      error // if non-nil, expect errors.Is match
-		wantOutput   bool  // if true, pass a writer and check it received data
+		name            string
+		input           string
+		assertResult    func(t *testing.T, res string)
+		wantErr         error // if non-nil, expect errors.Is match
+		wantOutput      bool  // if true, pass a writer and check it received data
+		wantTurnStarted bool
 	}{
 		{
-			name: "ResultEvent",
-			input: `{"type":"system","subtype":"init"}
-{"type":"assistant","message":{"content":"Working on it..."}}
+			name:            "CapturedGeminiOutput",
+			input:           string(geminiCapture),
+			wantOutput:      true,
+			wantTurnStarted: true,
+			assertResult: func(t *testing.T, res string) {
+				assert.JSONEq(t, `{"passed":true,"findings":[]}`, res)
+			},
+		},
+		{
+			name:  "CapturedGeminiOutputWithSplitDeltaChunksAfterToolUse",
+			input: string(geminiDeltaCapture),
+			assertResult: func(t *testing.T, res string) {
+				assert.JSONEq(t, `{"passed":true,"findings":[]}`, res)
+			},
+			wantTurnStarted: true,
+		},
+		{
+			name: "GeminiResultEvent",
+			input: `{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"}
+{"type":"message","role":"assistant","content":"Working on it..."}
 {"type":"result","result":"Done! Review complete."}
 `,
 			assertResult: func(t *testing.T, res string) {
 				assert.Equal(t, "Done! Review complete.", res)
 			},
+			wantOutput:      true,
+			wantTurnStarted: true,
 		},
 		{
-			name: "GeminiMessageFormat",
-			input: `{"type":"message","timestamp":"2026-01-19T17:49:13.445Z","role":"assistant","content":"Changes:\n- Created file.ts","delta":true}
-{"type":"message","timestamp":"2026-01-19T17:49:13.447Z","role":"assistant","content":" with filtering logic.","delta":true}
-{"type":"result","timestamp":"2026-01-19T17:49:13.519Z","status":"success","stats":{"total_tokens":1000}}
+			name: "GeminiErrorResultBeforeTurn",
+			input: `{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"}
+{"type":"result","status":"error","error":{"message":"session not found"}}
 `,
 			assertResult: func(t *testing.T, res string) {
-				for _, s := range []string{"Changes:", "filtering logic"} {
-					assert.Contains(t, res, s)
-				}
+				assert.Empty(t, res)
 			},
 		},
 		{
-			name: "AssistantFallback",
-			input: `{"type":"system","subtype":"init"}
-{"type":"assistant","message":{"content":"First message"}}
-{"type":"assistant","message":{"content":"Second message"}}
+			name: "GeminiMessagesWithoutResult",
+			input: `{"type":"message","role":"assistant","content":"First message"}
+{"type":"message","role":"assistant","content":"Second message"}
 `,
 			assertResult: func(t *testing.T, res string) {
-				want := "First message\nSecond message"
-				assert.Equal(t, want, res)
+				assert.Equal(t, "First message\nSecond message", res)
 			},
+			wantTurnStarted: true,
 		},
 		{
-			name: "AssistantFallbackDropsNarrationBeforeToolUse",
-			input: `{"type":"system","subtype":"init"}
-{"type":"assistant","message":{"content":"I am checking the relevant files first."}}
-{"type":"tool","name":"Read"}
-{"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Low; **Problem**: Final finding."}}
+			name: "Final message after tool result",
+			input: `{"type":"message","role":"assistant","content":"## Review Findings\n- **Severity**: Low; **Problem**: Earlier provisional finding."}
+{"type":"tool_result","tool_id":"tool-1","status":"success","output":"file contents"}
+{"type":"message","role":"assistant","content":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}
 `,
 			assertResult: func(t *testing.T, res string) {
-				want := "## Review Findings\n- **Severity**: Low; **Problem**: Final finding."
-				assert.Equal(t, want, res)
+				assert.Equal(t, "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.", res)
 			},
+			wantTurnStarted: true,
 		},
 		{
 			name: "AssistantFallbackPrefersFinalPostToolSegment",
@@ -339,42 +413,24 @@ func TestGeminiParseStreamJSON(t *testing.T) {
 {"type":"assistant","message":{"content":"## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."}}
 `,
 			assertResult: func(t *testing.T, res string) {
-				want := "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding."
-				assert.Equal(t, want, res)
+				assert.Equal(t, "## Review Findings\n- **Severity**: Medium; **Problem**: Final persisted finding.", res)
 			},
+			wantTurnStarted: true,
 		},
 		{
 			name: "NoValidEvents",
-			input: `not json at all
-still not json
-`,
-			wantErr: errNoStreamJSON,
-		},
-		{
-			name: "StreamsToOutput",
-			input: `{"type":"system","subtype":"init"}
-{"type":"result","result":"Done"}
-`,
-			assertResult: func(t *testing.T, res string) {
-				assert.Equal(t, "Done", res)
-			},
-			wantOutput: true,
-		},
-		{
-			name: "EmptyResult",
-			input: `{"type":"system","subtype":"init"}
-{"type":"tool","name":"Read"}
-`,
-			assertResult: func(t *testing.T, res string) {
-				assert.Empty(t, res)
-			},
-		},
-		{
-			name: "PlainTextError",
 			input: `This is a plain text review.
 No issues found in the code.
 `,
 			wantErr: errNoStreamJSON,
+		},
+		{
+			name: "EmptyResult",
+			input: `{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"}
+{"type":"message","role":"user","content":"return the requested JSON response"}`,
+			assertResult: func(t *testing.T, res string) {
+				assert.Empty(t, res)
+			},
 		},
 	}
 
@@ -391,6 +447,7 @@ No issues found in the code.
 			}
 
 			parsed, err := a.parseStreamJSON(strings.NewReader(tc.input), sw)
+			assert.Equal(tc.wantTurnStarted, parsed.turnStarted)
 
 			if tc.wantErr != nil {
 				require.Error(err)
@@ -410,82 +467,196 @@ No issues found in the code.
 	}
 }
 
-func TestGeminiAntigravityReviewPlainText(t *testing.T) {
-	skipIfWindows(t)
-
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
-cat > "$STDIN_FILE"
-printf '%s\n' "$@" > "$ARGS_FILE"
-echo "Plain text review output"
-echo "No issues found."
-`)
-
-	stdinFile := filepath.Join(t.TempDir(), "stdin")
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("STDIN_FILE", stdinFile)
-	t.Setenv("ARGS_FILE", argsFile)
-	a := NewGeminiAgent(scriptPath)
-	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
-	require.NoError(t, os.Rename(scriptPath, a.Command))
-
-	var output bytes.Buffer
-	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
-
-	require.NoError(t, err)
-	assert.Equal(t, "Plain text review output\nNo issues found.", res)
-	assert.Contains(t, output.String(), "Plain text review output")
-
-	// agy >= 1.1.1 takes the prompt as the value of --prompt, not from stdin.
-	stdinBytes, readErr := os.ReadFile(stdinFile)
-	require.NoError(t, readErr)
-	assert.Empty(t, string(stdinBytes))
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	argsOut := string(argsBytes)
-	assert.Contains(t, argsOut, "--prompt\nprompt\n")
-	assert.NotContains(t, argsOut, "--print\n")
-	assert.NotContains(t, argsOut, "--sandbox\n")
-	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
+func TestParseAntigravityStreamJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		fixture         string
+		wantResponse    string
+		wantErrorText   string
+		wantError       error
+		wantTurnStarted bool
+	}{
+		{
+			name:      "init without result",
+			fixture:   "antigravity-init-capture.jsonl",
+			wantError: errNoStreamJSON,
+		},
+		{
+			name:            "successful result",
+			fixture:         "antigravity-success-result-capture.jsonl",
+			wantResponse:    "RESUME_OK",
+			wantTurnStarted: true,
+		},
+		{
+			name:            "historical error after completed response",
+			fixture:         "antigravity-quota-result-capture.jsonl",
+			wantResponse:    "RESUME_OK",
+			wantTurnStarted: true,
+		},
+		{
+			name:            "error result before a turn",
+			fixture:         "antigravity-preturn-error-capture.jsonl",
+			wantErrorText:   `antigravity ended with status "ERROR"`,
+			wantTurnStarted: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
+			require.NoError(t, err)
+			response, turnStarted, err := parseAntigravityStreamJSON(strings.NewReader(string(input)), nil)
+			assert.Equal(t, tc.wantTurnStarted, turnStarted)
+			if tc.wantError != nil {
+				require.ErrorIs(t, err, tc.wantError)
+				return
+			}
+			if tc.wantErrorText != "" {
+				require.ErrorContains(t, err, tc.wantErrorText)
+				assert.Equal(t, tc.wantResponse, response)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantResponse, response)
+		})
+	}
 }
 
-func TestGeminiAntigravityLegacyStdinContract(t *testing.T) {
+func TestResumeFailureStartsFresh(t *testing.T) {
 	skipIfWindows(t)
+	geminiSessionID := "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2"
+	antigravitySessionID := "b5f7c102-6dc1-4d94-8296-8ba54ef1d0f4"
+	for _, tc := range []struct {
+		name           string
+		cli            string
+		version        string
+		agentic        bool
+		unsafe         bool
+		wantError      bool
+		wantErrorText  string
+		wantCalls      int
+		resumeError    string
+		resumeFlag     string
+		resumeFixture  string
+		resumeLines    int
+		editFile       bool
+		successFixture string
+		initFixture    string
+		wantResult     string
+		wantSessionID  string
+	}{
+		{
+			name: "Gemini unsafe review retries a rejected resume",
+			cli:  "gemini", version: "0.34.0", unsafe: true, resumeError: "session missing",
+			resumeFlag: "--resume", resumeFixture: "gemini-stream.jsonl", resumeLines: 2,
+			successFixture: "gemini-stream.jsonl", wantResult: `{"passed":true,"findings":[]}`,
+			wantSessionID: geminiSessionID,
+		},
+		{
+			name: "Gemini unsafe review does not replay a started turn",
+			cli:  "gemini", version: "0.34.0", unsafe: true, wantError: true,
+			wantErrorText: "turn failed", resumeError: "turn failed", resumeFlag: "--resume",
+			resumeFixture: "gemini-stream.jsonl", resumeLines: 3, editFile: true,
+		},
+		{
+			name:           "Antigravity agentic review retries a rejected resume",
+			cli:            "agy",
+			version:        "1.2.6",
+			agentic:        true,
+			unsafe:         true,
+			resumeError:    "conversation missing",
+			resumeFlag:     "--conversation",
+			resumeFixture:  "antigravity-init-capture.jsonl",
+			successFixture: "antigravity-success-result-capture.jsonl", initFixture: "antigravity-init-capture.jsonl",
+			wantResult: "RESUME_OK", wantSessionID: antigravitySessionID,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withUnsafeAgents(t, tc.unsafe)
 
-	// Old agy (<= 1.1.0) read the prompt from stdin with a bare --print.
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "1.1.0"; exit 0; fi
-cat > "$STDIN_FILE"
-printf '%s\n' "$@" > "$ARGS_FILE"
-echo "Legacy review output"
-echo "No issues found."
+			argsFile := filepath.Join(t.TempDir(), "args")
+			t.Setenv("CLI_VERSION", tc.version)
+			t.Setenv("RESUME_FLAG", tc.resumeFlag)
+			t.Setenv("RESUME_ERROR", tc.resumeError)
+			t.Setenv("ARGS_FILE", argsFile)
+			testdata, err := filepath.Abs("testdata")
+			require.NoError(t, err)
+			t.Setenv("TESTDATA", testdata)
+			t.Setenv("RESUME_FILE", tc.resumeFixture)
+			t.Setenv("RESUME_LINES", strconv.Itoa(tc.resumeLines))
+			resumeSessionID := tc.wantSessionID
+			if resumeSessionID == "" {
+				resumeSessionID = "session-id-not-in-fixture"
+			}
+			t.Setenv("RESUME_SESSION_ID", resumeSessionID)
+			t.Setenv("ABANDONED_SESSION_ID", "abandoned-resume-session")
+			editFile := ""
+			if tc.editFile {
+				editFile = filepath.Join(t.TempDir(), "edits")
+			}
+			t.Setenv("EDIT_FILE", editFile)
+			t.Setenv("SUCCESS_FILE", tc.successFixture)
+			t.Setenv("INIT_FILE", tc.initFixture)
+			script := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "$CLI_VERSION"; exit 0; fi
+printf '%s\n' "$@" >> "$ARGS_FILE"
+for arg in "$@"; do
+  if [ "$arg" = "$RESUME_FLAG" ]; then
+    if [ -n "$EDIT_FILE" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
+    if [ -n "$RESUME_FILE" ]; then
+      if [ "$RESUME_LINES" -gt 0 ]; then
+				  sed -n "1,${RESUME_LINES}p" "$TESTDATA/$RESUME_FILE" | sed "s/$RESUME_SESSION_ID/$ABANDONED_SESSION_ID/g"
+      else
+				  sed "s/$RESUME_SESSION_ID/$ABANDONED_SESSION_ID/g" "$TESTDATA/$RESUME_FILE"
+      fi
+    fi
+    if [ -n "$RESUME_ERROR" ]; then echo "$RESUME_ERROR" >&2; exit 1; fi
+    if [ -n "$RESUME_FILE" ]; then exit 0; fi
+  fi
+done
+if [ -n "$EDIT_FILE" ]; then printf 'edit\n' >> "$EDIT_FILE"; fi
+if [ -n "$INIT_FILE" ]; then cat "$TESTDATA/$INIT_FILE"; fi
+cat "$TESTDATA/$SUCCESS_FILE"
 `)
-
-	stdinFile := filepath.Join(t.TempDir(), "stdin")
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("STDIN_FILE", stdinFile)
-	t.Setenv("ARGS_FILE", argsFile)
-	a := NewGeminiAgent(scriptPath)
-	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
-	require.NoError(t, os.Rename(scriptPath, a.Command))
-
-	var output bytes.Buffer
-	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
-
-	require.NoError(t, err)
-	assert.Equal(t, "Legacy review output\nNo issues found.", res)
-
-	// Prompt arrives on stdin; args carry a bare --print and no --prompt.
-	stdinBytes, readErr := os.ReadFile(stdinFile)
-	require.NoError(t, readErr)
-	assert.Equal(t, "prompt\n", string(stdinBytes))
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	argsOut := string(argsBytes)
-	assert.Contains(t, argsOut, "--print\n")
-	assert.NotContains(t, argsOut, "--prompt\n")
+			if tc.cli == "agy" {
+				agyPath := filepath.Join(filepath.Dir(script), "agy")
+				require.NoError(t, os.Rename(script, agyPath))
+				script = agyPath
+			}
+			a := NewGeminiAgent(script).WithSessionID("old-session").WithAgentic(tc.agentic).(*GeminiAgent)
+			capture := NewSessionCaptureWriter(io.Discard, nil, nil)
+			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
+			wantCalls := tc.wantCalls
+			if wantCalls == 0 {
+				wantCalls = 2
+				if tc.wantError {
+					wantCalls = 1
+				}
+			}
+			if tc.wantError {
+				require.Error(t, err)
+				if tc.wantErrorText != "" {
+					require.ErrorContains(t, err, tc.wantErrorText)
+				}
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.wantResult, result)
+				assert.Equal(t, tc.wantSessionID, capture.SessionID())
+			}
+			args, readErr := os.ReadFile(argsFile)
+			require.NoError(t, readErr)
+			assert.Equal(t, 1, strings.Count(string(args), tc.resumeFlag+"\n"))
+			assert.Equal(t, wantCalls, strings.Count(string(args), "--output-format\nstream-json\n"))
+			if tc.unsafe && tc.cli == "gemini" {
+				assert.Equal(t, wantCalls, strings.Count(string(args), "--approval-mode\nyolo\n"))
+			} else if tc.unsafe && tc.cli == "agy" {
+				assert.Equal(t, wantCalls, strings.Count(string(args), "--dangerously-skip-permissions\n"))
+			}
+			if tc.editFile {
+				edits, readErr := os.ReadFile(editFile)
+				require.NoError(t, readErr)
+				assert.Equal(t, "edit\n", string(edits))
+			}
+		})
+	}
 }
 
 func TestGeminiAntigravityEmptyOutput(t *testing.T) {
@@ -614,42 +785,6 @@ echo "No issues found."
 	assert.NotContains(t, argsOut, "--prompt\n")
 	assert.NotContains(t, argsOut, "--print\n")
 	assert.NotContains(t, argsOut, "-p\n")
-	assert.NotContains(t, argsOut, "--sandbox\n")
-}
-
-func TestGeminiAntigravityVersionProbeFailureDefaultsToPromptFlag(t *testing.T) {
-	skipIfWindows(t)
-
-	// If `agy --version` fails, detection defaults to the current (flag) contract.
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "boom" >&2; exit 1; fi
-cat > "$STDIN_FILE"
-printf '%s\n' "$@" > "$ARGS_FILE"
-echo "Review output"
-echo "No issues found."
-`)
-
-	stdinFile := filepath.Join(t.TempDir(), "stdin")
-	argsFile := filepath.Join(t.TempDir(), "args")
-	t.Setenv("STDIN_FILE", stdinFile)
-	t.Setenv("ARGS_FILE", argsFile)
-	a := NewGeminiAgent(scriptPath)
-	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
-	require.NoError(t, os.Rename(scriptPath, a.Command))
-
-	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
-
-	require.NoError(t, err)
-	assert.Equal(t, "Review output\nNo issues found.", res)
-
-	// Defaulted to the flag contract: prompt via --prompt, stdin empty.
-	stdinBytes, readErr := os.ReadFile(stdinFile)
-	require.NoError(t, readErr)
-	assert.Empty(t, string(stdinBytes))
-
-	argsBytes, readErr := os.ReadFile(argsFile)
-	require.NoError(t, readErr)
-	assert.Contains(t, string(argsBytes), "--prompt\nprompt\n")
 }
 
 func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
@@ -660,7 +795,7 @@ func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
 	assert.True(antigravityVersionUsesPromptFlag("1.2.0"))
 	assert.True(antigravityVersionUsesPromptFlag("2.0.0"))
 	assert.True(antigravityVersionUsesPromptFlag("v1.1.1"))
-	assert.True(antigravityVersionUsesPromptFlag("1.1.1-beta"))
+	assert.False(antigravityVersionUsesPromptFlag("1.1.1-beta"))
 	// Old stdin contract (<= 1.1.0).
 	assert.False(antigravityVersionUsesPromptFlag("1.1.0"))
 	assert.False(antigravityVersionUsesPromptFlag("1.0.16"))
@@ -669,10 +804,6 @@ func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
 	assert.True(antigravityVersionUsesPromptFlag("1.1.1 (abc123)"))
 	assert.True(antigravityVersionUsesPromptFlag("agy 2.0.0\n"))
 	assert.False(antigravityVersionUsesPromptFlag("agy version 1.1.0"))
-	// Unparseable, empty, or dot-less output defaults to the current (flag) contract.
-	assert.True(antigravityVersionUsesPromptFlag(""))
-	assert.True(antigravityVersionUsesPromptFlag("unknown"))
-	assert.True(antigravityVersionUsesPromptFlag("12345"))
 }
 
 func TestGeminiAntigravityExplicitModelFailsClearly(t *testing.T) {
@@ -714,18 +845,6 @@ func TestGemini_Review_Integration(t *testing.T) {
 		checkErr   func(t *testing.T, err error)
 	}{
 		{
-			name: "PlainTextError",
-			script: `#!/bin/sh
-echo "Plain text review output"
-echo "No issues found."
-`,
-			checkErr: func(t *testing.T, err error) {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "stream-json")
-				require.ErrorIs(t, err, errNoStreamJSON)
-			},
-		},
-		{
 			name: "PlainTextErrorWithStderr",
 			script: `#!/bin/sh
 echo "Plain text review output"
@@ -734,6 +853,7 @@ echo "Some stderr message" >&2
 			checkErr: func(t *testing.T, err error) {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "Some stderr message")
+				assert.Contains(t, err.Error(), "stream-json")
 			},
 		},
 		{
@@ -748,19 +868,9 @@ yes "This is a long stderr line that will contribute to the total size" | head -
 			},
 		},
 		{
-			name: "StreamJSON_Success",
-			script: `#!/bin/sh
-echo '{"type":"system","subtype":"init"}'
-echo '{"type":"result","result":"Review complete. All good!"}'
-`,
-			wantResult: "Review complete. All good!",
-		},
-		{
 			name: "StreamJSONNoResult",
 			script: `#!/bin/sh
-echo '{"type":"system","subtype":"init"}'
-echo '{"type":"tool","name":"Read","input":{"path":"foo.go"}}'
-echo '{"type":"tool_result","content":"file contents here"}'
+echo '{"type":"init","session_id":"d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2","model":"gemini-2.5-flash"}'
 `,
 			wantResult: "No review output generated",
 		},
@@ -782,7 +892,7 @@ exit 1
 			assert := assert.New(t)
 			require := require.New(t)
 
-			scriptPath := writeTempCommand(t, tc.script)
+			scriptPath := writeGeminiTempCommand(t, tc.script)
 			a := NewGeminiAgent(scriptPath)
 			var output bytes.Buffer
 
@@ -800,101 +910,171 @@ exit 1
 
 func TestGeminiReview_ModelNotFoundFallback(t *testing.T) {
 	skipIfWindows(t)
-
-	// Script that fails with "model not found" when -m is passed,
-	// and succeeds without it (simulating a retired default model).
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-for arg in "$@"; do
-  if [ "$arg" = "-m" ]; then
-    echo "Error: model is not found for API version v1" >&2
-    exit 1
-  fi
-done
-echo '{"type":"result","result":"Review from default model"}'
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	res, err := a.Review(
-		t.Context(), t.TempDir(), "sha", "prompt", &output,
-	)
+	fixture, err := filepath.Abs(filepath.Join("testdata", "gemini-stream.jsonl"))
 	require.NoError(t, err)
-	assert.Equal(t, "Review from default model", res)
-}
-
-func TestGeminiReview_ModelNotFoundLateStderr(t *testing.T) {
-	skipIfWindows(t)
-
-	// Regression: stderr emitted only at exit (after stdout closes).
-	// Previously stderrStr was read before cmd.Wait(), racing with
-	// the goroutine writing stderr.
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-echo '{"type":"system","subtype":"init"}'
-# Close stdout before writing stderr, simulating late error output.
-exec 1>&-
-sleep 0.05
-echo "Error: model is not found for API version v1" >&2
-exit 1
+	for _, tc := range []struct {
+		name                string
+		lateStderr          bool
+		sessionID           string
+		fallbackSessionID   string
+		emitFailedSessionID bool
+		startedTurn         bool
+		wantErr             bool
+	}{
+		{name: "read-only fallback"},
+		{name: "fallback captures late stderr", lateStderr: true},
+		{name: "fallback resumes the same session", sessionID: "resumed-model-session"},
+		{
+			name:                "fallback replaces resumed capture",
+			sessionID:           "resumed-model-session",
+			fallbackSessionID:   "fallback-model-session",
+			emitFailedSessionID: true,
+		},
+		{
+			name:      "started resumed turn does not fall back",
+			sessionID: "resumed-model-session", startedTurn: true, wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			callsFile := filepath.Join(t.TempDir(), "calls")
+			argsFile := filepath.Join(t.TempDir(), "args")
+			successFixture := fixture
+			if tc.sessionID != "" {
+				fallbackSessionID := tc.fallbackSessionID
+				if fallbackSessionID == "" {
+					fallbackSessionID = tc.sessionID
+				}
+				contents, readErr := os.ReadFile(fixture)
+				require.NoError(t, readErr)
+				contents = []byte(strings.Replace(string(contents), "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", fallbackSessionID, 1))
+				if tc.startedTurn {
+					resultStart := strings.Index(string(contents), `{"type":"result"`)
+					require.NotEqual(t, -1, resultStart, "captured stream has a terminal result")
+					contents = contents[:resultStart]
+				}
+				successFixture = filepath.Join(t.TempDir(), "resumed-success.jsonl")
+				require.NoError(t, os.WriteFile(successFixture, contents, 0o600))
+			}
+			t.Setenv("CALLS_FILE", callsFile)
+			t.Setenv("ARGS_FILE", argsFile)
+			t.Setenv("LATE_STDERR", strconv.FormatBool(tc.lateStderr))
+			t.Setenv("RESUMED_SESSION", strconv.FormatBool(tc.sessionID != ""))
+			t.Setenv("EMIT_FAILED_SESSION_ID", strconv.FormatBool(tc.emitFailedSessionID))
+			t.Setenv("FAILED_SESSION_ID", tc.sessionID)
+			t.Setenv("STARTED_TURN", strconv.FormatBool(tc.startedTurn))
+			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "0.34.0"; exit 0; fi
+echo call >> "$CALLS_FILE"
+printf '%s\n' "$@" >> "$ARGS_FILE"
+has_model=0
+for arg in "$@"; do
+  if [ "$arg" = "-m" ]; then has_model=1; fi
+done
+if [ "$has_model" = "1" ]; then
+  if [ "$RESUMED_SESSION" = "true" ] && [ "$STARTED_TURN" = "true" ]; then
+    cat "$SUCCESS_FILE"
+  fi
+  if [ "$EMIT_FAILED_SESSION_ID" = "true" ]; then
+    echo "{\"type\":\"init\",\"session_id\":\"$FAILED_SESSION_ID\"}"
+  fi
+  if [ "$LATE_STDERR" = "true" ]; then
+    echo '{"type":"init","session_id":"failed-model-session"}'
+    exec 1>&-
+    sleep 0.05
+  fi
+  echo "Error: model is not found for API version v1" >&2
+  exit 1
+fi
+cat "$SUCCESS_FILE"
 `)
+			t.Setenv("SUCCESS_FILE", successFixture)
 
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	// The retry (without -m) will also fail since the script always
-	// exits 1, but the important thing is that stderr is captured
-	// correctly and the model-not-found detection triggers the retry.
-	_, err := a.Review(
-		t.Context(), t.TempDir(), "sha", "prompt", &output,
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gemini failed",
-		"should fail on retry but not panic or lose stderr")
-}
-
-func TestGeminiReview_ModelNotFoundNoRetryWhenNoModel(t *testing.T) {
-	skipIfWindows(t)
-
-	// When Model is empty, don't retry on model-not-found.
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-echo "Error: model is not found" >&2
-exit 1
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	a.Model = ""
-	var output bytes.Buffer
-	_, err := a.Review(
-		t.Context(), t.TempDir(), "sha", "prompt", &output,
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gemini failed")
+			a := NewGeminiAgent(scriptPath)
+			var capturedSessionIDs []string
+			resetCalls := 0
+			capture := NewSessionCaptureWriter(io.Discard, func(sessionID string) {
+				capturedSessionIDs = append(capturedSessionIDs, sessionID)
+			}, func() error {
+				resetCalls++
+				return nil
+			})
+			if tc.sessionID != "" {
+				a = a.WithSessionID(tc.sessionID).(*GeminiAgent)
+			}
+			result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", capture)
+			if tc.wantErr {
+				require.ErrorContains(t, err, "model is not found")
+			} else {
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"passed":true,"findings":[]}`, result)
+			}
+			calls, readErr := os.ReadFile(callsFile)
+			require.NoError(t, readErr)
+			wantCalls := "call\ncall\n"
+			if tc.wantErr {
+				wantCalls = "call\n"
+			}
+			assert.Equal(t, wantCalls, string(calls))
+			args, readErr := os.ReadFile(argsFile)
+			require.NoError(t, readErr)
+			if tc.sessionID != "" {
+				wantResumeCalls := 2
+				if tc.wantErr {
+					wantResumeCalls = 1
+				}
+				assert.Equal(t, wantResumeCalls, strings.Count(string(args), "--resume\n"+tc.sessionID+"\n"))
+				assert.Zero(t, resetCalls, "the fallback keeps the resumed conversation's source link")
+				if tc.emitFailedSessionID {
+					assert.Equal(t, []string{tc.sessionID, tc.fallbackSessionID}, capturedSessionIDs)
+					assert.Equal(t, tc.fallbackSessionID, capture.SessionID())
+				}
+			} else {
+				assert.Zero(t, strings.Count(string(args), "--resume\n"))
+				assert.Equal(t, 1, resetCalls, "fresh fallback resets captured session state")
+			}
+			if tc.startedTurn {
+				assert.Equal(t, tc.sessionID, capture.SessionID())
+			}
+		})
+	}
 }
 
 func TestGeminiReview_ExplicitModelNoFallback(t *testing.T) {
 	skipIfWindows(t)
 
-	// When the model is not the built-in default, model-not-found
-	// errors should fail fast with exactly one invocation.
-	counterFile := filepath.Join(t.TempDir(), "invocations")
-	scriptPath := writeTempCommand(t, `#!/bin/sh
+	// Empty and explicit models must fail fast instead of retrying.
+	for _, tc := range []struct {
+		name  string
+		model string
+	}{
+		{name: "empty model"},
+		{name: "explicit model", model: "user-specified-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counterFile := filepath.Join(t.TempDir(), "invocations")
+			scriptPath := writeGeminiTempCommand(t, `#!/bin/sh
 echo "invoked" >> "$COUNTER_FILE"
 echo "Error: model is not found for API version v1" >&2
 exit 1
 `)
 
-	t.Setenv("COUNTER_FILE", counterFile)
-	a := NewGeminiAgent(scriptPath).WithModel("user-specified-model")
-	var output bytes.Buffer
-	_, err := a.Review(
-		t.Context(), t.TempDir(), "sha", "prompt", &output,
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "gemini failed")
+			t.Setenv("COUNTER_FILE", counterFile)
+			a := NewGeminiAgent(scriptPath)
+			if tc.model == "" {
+				a.Model = ""
+			} else {
+				a = a.WithModel(tc.model).(*GeminiAgent)
+			}
+			var output bytes.Buffer
+			_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "gemini failed")
 
-	countBytes, readErr := os.ReadFile(counterFile)
-	require.NoError(t, readErr)
-	lines := strings.Count(string(countBytes), "invoked")
-	assert.Equal(t, 1, lines,
-		"explicit model should invoke exactly once, not retry")
+			countBytes, readErr := os.ReadFile(counterFile)
+			require.NoError(t, readErr)
+			assert.Equal(t, 1, strings.Count(string(countBytes), "invoked"), "model should invoke exactly once, not retry")
+		})
+	}
 }
 
 func TestIsModelNotFoundError(t *testing.T) {
@@ -914,29 +1094,4 @@ func TestIsModelNotFoundError(t *testing.T) {
 		got := isModelNotFoundError(tc.stderr)
 		assert.Equal(t, tc.want, got, "isModelNotFoundError(%q)", tc.stderr)
 	}
-}
-
-func TestGeminiReview_PromptDeliveredViaStdin(t *testing.T) {
-	assert := assert.New(t)
-
-	skipIfWindows(t)
-
-	stdinFile := filepath.Join(t.TempDir(), "stdin.txt")
-	t.Setenv("MOCK_STDIN_FILE", stdinFile)
-
-	scriptPath := writeTempCommand(t, `#!/bin/sh
-cat > "$MOCK_STDIN_FILE"
-echo '{"type":"result","result":"Done"}'
-`)
-
-	a := NewGeminiAgent(scriptPath)
-	var output bytes.Buffer
-	expectedPrompt := "Please review this code for security issues"
-	_, err := a.Review(t.Context(), t.TempDir(), "abc123", expectedPrompt, &output)
-	require.NoError(t, err, "Review failed")
-
-	// Verify the prompt was received
-	receivedPrompt, err := os.ReadFile(stdinFile)
-	require.NoError(t, err, "failed to read prompt file")
-	assert.Equal(expectedPrompt, string(receivedPrompt), "prompt not delivered correctly")
 }

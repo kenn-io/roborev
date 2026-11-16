@@ -44,7 +44,7 @@ var (
 )
 
 const jobSelectColumnsBase = `
-		       j.id, j.uuid, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.resume_source_job_uuid,
+		       j.id, j.uuid, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, COALESCE(j.session_cli, ''), j.resume_source_job_uuid,
 		       j.agent, j.model, j.provider, j.requested_model, j.requested_provider, j.reasoning, j.status,
 		       j.enqueued_at, j.started_at, j.finished_at, j.worker_id, j.error, j.retry_count,
 		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), j.job_type, j.review_type, j.patch_id,
@@ -78,7 +78,7 @@ func jobWithReviewSelectColumns(text jobTextColumns, structuredOutputExpr string
 // jobScanDestinations returns the scan targets for jobSelectColumns, in order.
 func jobScanDestinations(j *ReviewJob, f *reviewJobScanFields) []any {
 	return []any{
-		&j.ID, &f.UUID, &j.RepoID, &f.CommitID, &j.GitRef, &f.Branch, &f.CIBaseBranch, &f.SessionID, &f.ResumeSourceUUID,
+		&j.ID, &f.UUID, &j.RepoID, &f.CommitID, &j.GitRef, &f.Branch, &f.CIBaseBranch, &f.SessionID, &j.SessionCLI, &f.ResumeSourceUUID,
 		&j.Agent, &f.Model, &f.Provider, &f.RequestedModel, &f.RequestedProvider, &j.Reasoning, &j.Status,
 		&f.EnqueuedAt, &f.StartedAt, &f.FinishedAt, &f.WorkerID, &f.Error, &j.RetryCount,
 		&f.Agentic, &f.PromptPrebuilt, &f.JobType, &f.ReviewType, &f.PatchID,

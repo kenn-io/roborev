@@ -16,7 +16,10 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-const binaryEvidenceTypesConfig = `[review.types.exhibits]
+const binaryEvidenceTypesConfig = `[review]
+binary_evidence = true
+
+[review.types.exhibits]
 template = "rubric.md"
 binary_evidence = true
 
@@ -24,7 +27,7 @@ binary_evidence = true
 template = "rubric.md"
 `
 
-func TestProcessJobBinaryEvidenceOnlyForEnablingType(t *testing.T) {
+func TestProcessJobBinaryEvidenceSettings(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	// Git for Windows routes *.pdf through a text converter that rejects these
 	// synthetic bytes; review the fixture as plain binary on every host.
@@ -41,7 +44,7 @@ func TestProcessJobBinaryEvidenceOnlyForEnablingType(t *testing.T) {
 	for _, tt := range []struct {
 		reviewType string
 		evidence   bool
-	}{{reviewType: "exhibits", evidence: true}, {reviewType: "plain"}} {
+	}{{reviewType: "default", evidence: true}, {reviewType: "exhibits", evidence: true}, {reviewType: "plain"}} {
 		t.Run(tt.reviewType, func(t *testing.T) {
 			agentName := "evidence-" + tt.reviewType
 			var saved string

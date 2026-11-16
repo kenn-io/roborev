@@ -530,6 +530,33 @@ func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
 	assert.False(t, getJobAgentInvoked(t, env.db, env.job.ID))
 }
 
+func TestRequeueUpdateInterruptedJobKeepsRebuttalSession(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, t.TempDir())
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, Agent: "test", JobType: JobTypeTask, Prompt: "task",
+		Source: JobSourceRebuttal, SessionID: "original-session",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker-A")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.SaveJobTokenUsage(job.ID, "original-session", `{"cost_usd":1.25,"has_cost":true}`))
+
+	requeued, err := db.RequeueUpdateInterruptedJob(job.ID, "worker-A")
+	require.NoError(t, err)
+	require.True(t, requeued)
+
+	got, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusQueued, got.Status)
+	assert.Zero(t, got.RetryCount)
+	assert.Equal(t, "original-session", got.SessionID)
+	assert.Empty(t, got.TokenUsage)
+}
+
 func TestRequeueUpdateInterruptedJobScopesCurrentAttempt(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/update-requeue-owner", "update-owner-sha")
@@ -1875,6 +1902,48 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 	j, err = db.GetJobByID(job.ID)
 	require.NoError(t, err, "GetJobByID after worker-B second save: %v", err)
 	assert.Equal(t, "session-B", j.SessionID)
+}
+
+func TestSaveJobSessionIDWithCLI_ReplacesSuccessfulResume(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "session-resume-refresh")
+	claimJob(t, db, "worker-A")
+	source := testUUID("resumed-session-source")
+	_, err := db.ExecContext(t.Context(), `
+		UPDATE review_jobs
+		SET session_id = ?, session_cli = ?, session_resumed = 1, resume_source_job_uuid = ?
+		WHERE id = ?`,
+		"inherited-session", "gemini", source.String(), job.ID,
+	)
+	require.NoError(t, err)
+
+	readSession := func() (string, string, int, string) {
+		t.Helper()
+		var sessionID, sessionCLI, resumeSource sql.NullString
+		var resumed int
+		require.NoError(t, db.QueryRowContext(t.Context(), `
+			SELECT session_id, session_cli, session_resumed, resume_source_job_uuid
+			FROM review_jobs WHERE id = ?`, job.ID,
+		).Scan(&sessionID, &sessionCLI, &resumed, &resumeSource))
+		return sessionID.String, sessionCLI.String, resumed, resumeSource.String
+	}
+
+	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-A", "inherited-session", "gemini"))
+	sessionID, sessionCLI, resumed, resumeSource := readSession()
+	assert.Equal(t, "inherited-session", sessionID)
+	assert.Equal(t, "gemini", sessionCLI)
+	assert.Equal(t, 1, resumed)
+	assert.Equal(t, source.String(), resumeSource)
+
+	require.NoError(t, db.SaveJobSessionIDWithCLI(job.ID, "worker-A", "fresh-session", "gemini"))
+	sessionID, sessionCLI, resumed, resumeSource = readSession()
+	assert.Equal(t, "fresh-session", sessionID)
+	assert.Equal(t, "gemini", sessionCLI)
+	assert.Zero(t, resumed)
+	assert.Empty(t, resumeSource)
 }
 
 // TestMarkJobAgentInvoked_StaleWorkerIgnored verifies the agent-ran marker is

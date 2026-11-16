@@ -93,8 +93,7 @@ func TestCursorReviewPassesModelFlag(t *testing.T) {
 	require.NoError(t, err, "Review failed: %v")
 
 	args := readMockArgs(t, mock.ArgsFile)
-	assertContainsArg(t, args, "--model")
-	assertContainsArg(t, args, "test-model")
+	assertArgsContainContiguous(t, args, []string{"--model", "test-model"})
 }
 
 func TestCursorParseStreamJSON(t *testing.T) {

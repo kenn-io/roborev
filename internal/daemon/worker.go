@@ -1408,6 +1408,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job,
 		cfg,
 	)
+	clearSession := func() error {
+		if err := wp.db.ClearJobSessionID(job.ID, workerID); err != nil {
+			return err
+		}
+		job.SessionID = ""
+		job.SessionCLI = ""
+		job.ResumeSourceJobUUID = nil
+		return nil
+	}
+	// A queued session ID only works with the CLI that created it.
+	if job.SessionID != "" && job.SessionCLI != sessionCLIForAgent(a) {
+		if err := clearSession(); err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, a.Name(), fmt.Sprintf("clear incompatible session: %v", err))
+			return
+		}
+	}
 	if job.SessionID != "" || checkout.isolatedLocalReview {
 		if sa, ok := a.(agent.SessionAgent); ok {
 			a = sa.WithSessionID(job.SessionID)
@@ -1475,7 +1491,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.outputBuffers.CloseJob(job.ID)
 	}()
 
-	// Tee raw agent output to a per-job log file on disk. The writer retries
+	// Store agent output in a per-job log file on disk. The writer retries
 	// transient filesystem failures so resource pressure does not permanently
 	// disable logging for the rest of the job.
 	var jobLog *jobLogWriter
@@ -1495,7 +1511,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}()
 	displayOutput := io.MultiWriter(jobLog, outputWriter)
-	agentOutput := displayOutput
+	logOutput := newPiInvocationLogWriter(a.Name(), jobLog)
+	agentOutput := io.MultiWriter(logOutput, outputWriter)
 	var planningUsageCapture *tokens.CodexUsageCaptureWriter
 	var implementationUsageCapture *tokens.CodexUsageCaptureWriter
 	var planningSessionWriter *agent.SessionCaptureWriter
@@ -1503,7 +1520,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if planningPrompt != "" {
 		planningUsageCapture = tokens.NewCodexUsageCaptureWriter()
 		implementationUsageCapture = tokens.NewCodexUsageCaptureWriter()
-		agentOutput = io.MultiWriter(jobLog, outputWriter, implementationUsageCapture)
+		agentOutput = io.MultiWriter(logOutput, outputWriter, implementationUsageCapture)
 	}
 	var invocationStream invocationOutput
 	if hasSuppliedReviewSettings(job) {
@@ -1511,7 +1528,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	// Keep the session writer outermost: adapters may report sessions directly.
 	sessionWriter := agent.NewSessionCaptureWriter(agentOutput, func(sessionID string) {
-		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
+		if err := wp.db.SaveJobSessionIDWithCLI(job.ID, workerID, sessionID, sessionCLIForAgent(a)); err != nil {
 			log.Printf("[%s] Error saving session ID for job %d: %v", workerID, job.ID, err)
 		}
 		if planningPrompt != "" && implementationInvoked {
@@ -1520,7 +1537,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				{invoked: true, implementation: true, sessionID: sessionID, logUsage: implementationUsageCapture.Usage()},
 			}, false)
 		}
-	})
+	}, clearSession)
 	agentOutput = sessionWriter
 
 	// For fix jobs, create an isolated worktree to run the agent in.
@@ -1594,7 +1611,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		implementationRef, err = gitrepo.Resolve(ctx, reviewRepoPath, "HEAD")
 		if err == nil {
 			planningSessionWriter = agent.NewSessionCaptureWriter(
-				io.MultiWriter(jobLog, outputWriter, planningUsageCapture), nil,
+				io.MultiWriter(newPiInvocationLogWriter(a.Name(), jobLog), outputWriter, planningUsageCapture), nil, nil,
 			)
 			fixPlan, reviewPrompt, err = wp.prepareFixPlan(
 				ctx, planningTimeout, workerID, a, job, reviewRepoPath,
@@ -1703,7 +1720,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}, true)
 	}
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
-		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
+		if saveErr := wp.db.SaveJobSessionIDWithCLI(job.ID, workerID, sessionID, sessionCLIForAgent(a)); saveErr != nil {
 			log.Printf("[%s] Error persisting session ID for job %d: %v", workerID, job.ID, saveErr)
 		}
 	}
@@ -1883,6 +1900,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if completed && wp.captureSetupFinished != nil {
 		wp.captureSetupFinished()
 	}
+}
+
+func sessionCLIForAgent(a agent.Agent) string {
+	if cli, ok := a.(interface{ SessionCLI() string }); ok {
+		return cli.SessionCLI()
+	}
+	return ""
 }
 
 // finishCanceledAttempt emits cancellation only for the claim that still owns

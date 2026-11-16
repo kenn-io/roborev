@@ -204,14 +204,9 @@ func TestDroidReviewAgenticModeFromGlobal(t *testing.T) {
 	})
 
 	a := NewDroidAgent(mock.CmdPath)
-	if _, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
-		require.NoError(t, err)
-	}
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
 
-	args, err := os.ReadFile(mock.ArgsFile)
-	require.NoError(t, err, "read args: %v")
-
-	if !strings.Contains(string(args), "medium") {
-		require.Contains(t, strings.TrimSpace(string(args)), "--auto", "expected '--auto medium' in args when global unsafe enabled, got %s", strings.TrimSpace(string(args)))
-	}
+	args := readMockArgs(t, mock.ArgsFile)
+	assertArgsContainContiguous(t, args, []string{"--auto", "medium"})
 }

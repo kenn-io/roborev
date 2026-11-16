@@ -11,21 +11,23 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 	"uuid"
 
+	"github.com/cenkalti/backoff/v7"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 24
+const pgSchemaVersion = 25
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v24.sql
+//go:embed schemas/postgres_v25.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -56,9 +58,10 @@ func pgSchemaStatements() []string {
 
 // PgPool wraps a pgx connection pool with reconnection logic
 type PgPool struct {
-	pool       *pgxpool.Pool
-	connString string
-	config     PgPoolConfig
+	legacyProgress atomic.Int64
+	pool           *pgxpool.Pool
+	connString     string
+	config         PgPoolConfig
 }
 
 // PgPoolConfig configures the PostgreSQL connection pool
@@ -535,16 +538,41 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 	}
 	p.ensureSearchVectorsSchema(ctx)
 
-	if err := p.migrateLegacyReviews(ctx); err != nil {
-		return err
-	}
-	if err := p.restoreLegacyReviews(ctx); err != nil {
-		return err
-	}
 	if currentVersion < 24 {
-		return p.migrateReviewAttempts(ctx)
+		if err := p.maintainLegacyReviews(ctx, false); err != nil {
+			return err
+		}
+		if err := p.migrateReviewAttempts(ctx); err != nil {
+			return err
+		}
+	}
+	if currentVersion < 25 {
+		if _, err := p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS session_cli TEXT`); err != nil {
+			return fmt.Errorf("v25 migration (add session CLI): %w", err)
+		}
+		if _, err := p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES (25) ON CONFLICT (version) DO NOTHING`); err != nil {
+			return fmt.Errorf("record v25 migration: %w", err)
+		}
 	}
 	return nil
+}
+
+// maintainLegacyReviews archives and restores historical reviews. Background scans
+// use NOWAIT so a contended row rolls back the whole batch for retry.
+func (p *PgPool) maintainLegacyReviews(ctx context.Context, noWait bool) error {
+	if err := p.migrateLegacyReviews(ctx, noWait); err != nil {
+		return err
+	}
+	return p.restoreLegacyReviews(ctx)
+}
+
+func (p *PgPool) legacyMaintenancePass(ctx context.Context) error {
+	before := p.legacyProgress.Load()
+	err := p.maintainLegacyReviews(ctx, true)
+	if err != nil && p.legacyProgress.Load() != before {
+		return backoff.RetryAfter(0, err)
+	}
+	return err
 }
 
 // GetDatabaseID returns the unique ID for this Postgres database.
@@ -808,12 +836,12 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 	}
 	_, err = p.pool.Exec(ctx, `
 		INSERT INTO review_jobs (
-			uuid, repo_id, commit_id, git_ref, branch, session_id, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
+			uuid, repo_id, commit_id, git_ref, branch, session_id, session_cli, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 			worktree_path, source, min_severity,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
 			source_machine_id, backup_agent, backup_model, agent_invoked, non_voting, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, clock_timestamp())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			agent = EXCLUDED.agent,
@@ -831,6 +859,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			git_ref = EXCLUDED.git_ref,
 			branch = EXCLUDED.branch,
 			session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
+			session_cli = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_cli ELSE COALESCE(EXCLUDED.session_cli, review_jobs.session_cli) END,
 			resume_source_job_uuid = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.resume_source_job_uuid ELSE COALESCE(EXCLUDED.resume_source_job_uuid, review_jobs.resume_source_job_uuid) END,
 			commit_id = EXCLUDED.commit_id,
 			patch_id = EXCLUDED.patch_id,
@@ -852,7 +881,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			non_voting = EXCLUDED.non_voting,
 			updated_at = clock_timestamp()
 		WHERE (review_jobs.enqueued_at, review_jobs.source_machine_id) <= (EXCLUDED.enqueued_at, EXCLUDED.source_machine_id)
-	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.Branch), nullString(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
+	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.Branch), nullString(j.SessionID), nullString(j.SessionCLI), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		j.PanelRunUUID, nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
@@ -878,8 +907,16 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	if err == nil && awaitingAssociation {
 		return errReviewAttemptPending
 	}
+	if err != nil {
+		return err
+	}
+	_, err = p.pool.Exec(ctx, pgResolveSyncedLegacySQL, r.UUID, nullJSON(structuredOutput), r.MetadataOnly)
 	return err
 }
+
+const pgResolveSyncedLegacySQL = `UPDATE legacy_reviews SET resolved_at = COALESCE(resolved_at, clock_timestamp())
+ WHERE uuid = $1 AND $2::jsonb IS NOT NULL AND $2::jsonb->'legacy' IS NULL AND NOT $3::boolean
+ AND EXISTS (SELECT 1 FROM reviews WHERE reviews.uuid = $1 AND reviews.structured_output = $2::jsonb)`
 
 // errSyncRowRejected marks a row that sync cannot upload for an application
 // reason, such as failed local checks or a conflicting experiment, rather
@@ -927,20 +964,27 @@ const pgUpsertReviewSQL = `
  AND newer.job_enqueued_at = r.job_enqueued_at AND newer.job_source_machine_id = r.job_source_machine_id
  AND (newer.created_at, newer.id) > (r.created_at, r.id))))
  UNION ALL SELECT $13::timestamptz, $15::uuid WHERE NOT EXISTS (SELECT 1 FROM locked_job)
+ ), locked_review AS MATERIALIZED (
+ SELECT to_jsonb(r) AS record FROM reviews r WHERE r.uuid = $1 FOR UPDATE
+ ), eligible_review AS (
+ SELECT record FROM locked_review
+ WHERE record->>'output' <> '' AND $7::jsonb IS NOT NULL AND NOT $14::boolean
  ), archived AS (
- INSERT INTO legacy_reviews (uuid, record, migration_error)
- SELECT $1, jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
+ INSERT INTO legacy_reviews (uuid, record, migration_error, resolved_at)
+ SELECT $1, COALESCE((SELECT record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id) FROM eligible_review), jsonb_build_object('uuid', $1::uuid, 'job_uuid', $2::uuid, 'agent', $3::text,
  'prompt', ''::text, 'output', $7::jsonb->'legacy'->>'markdown', 'closed', $5::boolean,
  'verdict_bool', $6::boolean, 'structured_output', $7::jsonb,
  'reviewed_file_count', $8::integer, 'excluded_file_count', $9::integer,
- 'updated_by_machine_id', $10::uuid, 'created_at', $11::timestamptz, 'job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id), 'Unstructured historical review'
- FROM current_attempt a WHERE $7::jsonb->'legacy' IS NOT NULL
- ON CONFLICT DO NOTHING
+ 'updated_by_machine_id', $10::uuid, 'created_at', $11::timestamptz, 'job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id)),
+ CASE WHEN $7::jsonb->'legacy' IS NOT NULL THEN 'Unstructured historical review' ELSE '' END,
+ CASE WHEN $7::jsonb->'legacy' IS NULL THEN clock_timestamp() ELSE NULL END
+ FROM current_attempt a WHERE ($7::jsonb->'legacy' IS NOT NULL OR EXISTS (SELECT 1 FROM eligible_review))
+ ON CONFLICT DO NOTHING RETURNING 1
  ), resolved AS (
  UPDATE legacy_reviews SET record = record || jsonb_build_object('job_enqueued_at', a.enqueued_at, 'job_source_machine_id', a.source_machine_id),
  resolved_at = CASE WHEN NOT $14::boolean AND $7::jsonb IS NOT NULL AND $7::jsonb->'legacy' IS NULL
  THEN COALESCE(resolved_at, clock_timestamp()) ELSE resolved_at END
- FROM current_attempt a WHERE uuid = $1
+ FROM current_attempt a WHERE uuid = $1 AND (SELECT count(*) FROM locked_review) >= 0
  ), written AS (
  INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
@@ -952,6 +996,7 @@ const pgUpsertReviewSQL = `
 			$7, $8, $9, $10, $11, clock_timestamp(), a.enqueued_at, a.source_machine_id
  FROM current_attempt a WHERE ($7::jsonb IS NOT NULL OR NOT EXISTS (SELECT 1 FROM review_jobs j WHERE j.uuid = $2
  AND j.job_type IN ('review','range','dirty','synthesis','compact','goal_review')))
+ AND (SELECT count(*) FROM archived) >= 0
  ON CONFLICT (uuid) DO UPDATE SET
 			job_enqueued_at = EXCLUDED.job_enqueued_at,
 			job_source_machine_id = EXCLUDED.job_source_machine_id,
@@ -1174,6 +1219,7 @@ type PulledJob struct {
 	GitRef                string
 	Branch                string
 	SessionID             string
+	SessionCLI            string
 	ResumeSourceJobUUID   *uuid.UUID
 	Agent                 string
 	Model                 string
@@ -1238,7 +1284,7 @@ func pgNewestReviewPrompt(filter string) string {
 var pgPullJobsQuery = `
 		SELECT
 			j.uuid, parent.identity, COALESCE(parent.sha, ''), COALESCE(parent.author, ''), COALESCE(parent.subject, ''), COALESCE(parent.timestamp, '1970-01-01'::timestamptz),
-			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
+			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), COALESCE(j.session_cli, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
 			j.enqueued_at, j.started_at, j.finished_at,
 			` + pgPulledJobPromptExpr + `,
 			j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
@@ -1294,7 +1340,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 
 		err := rows.Scan(
 			&j.UUID, &j.RepoIdentity, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &j.CommitTimestamp,
-			&j.GitRef, &j.Branch, &j.SessionID, &j.ResumeSourceJobUUID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
+			&j.GitRef, &j.Branch, &j.SessionID, &j.SessionCLI, &j.ResumeSourceJobUUID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
 			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
 			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
@@ -1625,6 +1671,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 			r.UUID, r.JobUUID, sanitizePostgresText(r.Agent), sanitizePostgresText(r.Output), r.Closed,
 			verdictBool, nullJSON(structuredOutputs[i]), r.ReviewedFileCount, r.ExcludedFileCount,
 			reviewSyncMachineID(r), r.CreatedAt, noReview, r.JobEnqueuedAt, r.MetadataOnly, r.JobSourceMachineID, uuid.New())
+		batch.Queue(pgResolveSyncedLegacySQL, r.UUID, nullJSON(structuredOutputs[i]), r.MetadataOnly)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
@@ -1639,6 +1686,9 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 			err = errReviewAttemptPending
 		}
 		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if _, err := br.Exec(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -1780,12 +1830,12 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 	}
 	batch.Queue(`
 			INSERT INTO review_jobs (
-				uuid, repo_id, commit_id, git_ref, branch, session_id, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
+				uuid, repo_id, commit_id, git_ref, branch, session_id, session_cli, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 				enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 				worktree_path, source, min_severity,
 				panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
 				source_machine_id, backup_agent, backup_model, agent_invoked, non_voting, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, clock_timestamp())
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 			agent = EXCLUDED.agent,
@@ -1803,6 +1853,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				git_ref = EXCLUDED.git_ref,
 				branch = EXCLUDED.branch,
 				session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
+				session_cli = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_cli ELSE COALESCE(EXCLUDED.session_cli, review_jobs.session_cli) END,
 				resume_source_job_uuid = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.resume_source_job_uuid ELSE COALESCE(EXCLUDED.resume_source_job_uuid, review_jobs.resume_source_job_uuid) END,
 				commit_id = EXCLUDED.commit_id,
 				patch_id = EXCLUDED.patch_id,
@@ -1824,7 +1875,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 			non_voting = EXCLUDED.non_voting,
 				updated_at = clock_timestamp()
 			WHERE (review_jobs.enqueued_at, review_jobs.source_machine_id) <= (EXCLUDED.enqueued_at, EXCLUDED.source_machine_id)
-		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.Branch), nullString(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
+		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.Branch), nullString(j.SessionID), nullString(j.SessionCLI), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		j.PanelRunUUID, nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),

@@ -62,7 +62,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
   database operations. Direct database opens are allowed only inside `daemon run`;
   tests may open isolated fixtures. Hold the daemon database ownership lock
   before opening SQLite until the database is closed.
-- Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized prompts and diffs, or committed copies of changed binary files for review types that set `binary_evidence`. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
+- Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized prompts and diffs, or committed copies of changed binary files for reviews that enable `binary_evidence`, including through shared configuration. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
 - Foreground agentic flows such as `roborev fix` and `roborev refine` may modify code.
 - Isolated background fix work uses temporary git worktrees and stores patches in the DB.
 
@@ -335,6 +335,38 @@ approvals, token permissions, and secrets are separate controls.
   rationale, behavior changes, risk, and useful links; rely on the diff and
   CI/status checks for routine mechanics and validation evidence unless the
   user explicitly asks for those details.
+
+## Before opening a pull request
+
+- Build for a use you have. Run the change on your own repos and reviews, and
+  say in the body what it did there. If nothing you use needs it yet, don't
+  open it.
+- Make it useful if nothing after it merges. Don't add code that works only
+  once a later PR lands, or a guard for something `main` can't do yet.
+- Start from what the repo already does. Find the closest command, importer,
+  query, or library it already uses, extend it, and name it in the body. If it
+  can't be extended, say why.
+- Add only what the change uses now. Leave out options, states, paging, flags,
+  and API surface until something calls them.
+- Review your diff as a maintainer would: cut what `main` already does and
+  anything without a caller.
+- When review findings keep landing in the same code, rethink the design there
+  instead of patching each one.
+- Before each push, check that your schema, API, and protocol version numbers
+  are still the next ones free on `main`.
+
+## Pull requests from a fork
+
+This section applies only to PRs opened from a fork. PRs from branches in this
+repository are not limited by it.
+
+- Keep one unreviewed PR per stack. Open the next only after a maintainer has
+  reviewed the one below, even if you were asked to open the whole plan.
+  Review usually reshapes a PR, and everything built on it then has to be
+  rebuilt.
+- Keep at most 10 PRs open. Each one waits for a maintainer, and the ones
+  nobody gets to go stale. At 10, hold the next PR and tell the user. Leave
+  open PRs as they are.
 
 ## Commit Messages
 

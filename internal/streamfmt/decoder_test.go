@@ -2,6 +2,7 @@ package streamfmt
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -81,6 +82,26 @@ func TestLegacyMixedDecoderRendersAppendedProviders(t *testing.T) {
 	plain := StripANSI(out.String())
 	assert.Contains(t, plain, "classifier")
 	assert.Contains(t, plain, "design")
+}
+
+func TestLegacyMixedDecoderRendersCapturedAntigravityEvents(t *testing.T) {
+	var input strings.Builder
+	for _, path := range []string{
+		"../agent/testdata/antigravity-init-capture.jsonl",
+		"../agent/testdata/antigravity-success-result-capture.jsonl",
+	} {
+		captured, err := os.ReadFile(path)
+		require.NoError(t, err)
+		input.Write(captured)
+	}
+
+	var out bytes.Buffer
+	fmtr := New(&out, true, LegacyMixedDecoder("auto-design"))
+	require.NoError(t, RenderLogWith(strings.NewReader(input.String()), fmtr))
+
+	plain := StripANSI(out.String())
+	assert.Contains(t, plain, "Antigravity session started")
+	assert.Contains(t, plain, "RESUME_OK")
 }
 
 // If compatible agent aliases stop selecting the same protocol decoder,

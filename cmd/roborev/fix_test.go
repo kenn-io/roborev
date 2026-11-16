@@ -2102,7 +2102,7 @@ func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted"), 0o644))
 
 	tester := agent.NewTestAgent()
-	capture := agent.NewSessionCaptureWriter(io.Discard, nil)
+	capture := agent.NewSessionCaptureWriter(io.Discard, nil, nil)
 
 	_, err := fixJobDirect(t.Context(), fixJobParams{
 		RepoRoot:      dir,

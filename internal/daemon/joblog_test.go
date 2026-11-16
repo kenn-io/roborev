@@ -668,3 +668,62 @@ func TestParseJobIDFromLogName(t *testing.T) {
 		})
 	}
 }
+
+// countingPiLogWriter records writes to the persistent sink.
+type countingPiLogWriter struct {
+	bytes.Buffer
+	writes int
+}
+
+func (w *countingPiLogWriter) Write(p []byte) (int, error) {
+	w.writes++
+	return w.Buffer.Write(p)
+}
+
+func TestPiJobLogSink(t *testing.T) {
+	start := `{"type":"message_start","message":{"role":"assistant"}}` + "\n"
+	delta := func(kind, usage string) string {
+		return `{"type":"message_update","usage":` + usage + `,"assistantMessageEvent":{"type":"` + kind + `","delta":"x"}}` + "\r\n"
+	}
+	a := `{"input":12345678901234567890,"cost":{"total":0.000001},"extra":7}`
+	b := `{"input":2,"cost":{"total":0.000002},"extra":7}`
+	first := delta("text_delta", a)
+	repeated := delta("thinking_delta", a)
+	withoutUsage := `{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"x"}}` + "\r\n"
+	changed := delta("toolcall_delta", b)
+	reverted := delta("text_delta", a)
+	nondelta := delta("text_end", b)
+	end := `{"type":"message_end","message":{"role":"assistant","usage":` + a + `}}` + "\n"
+	older := `{"type":"message_update","message":{"usage":{"input":1}}}` + "\n"
+	cases := []struct {
+		name, input, want string
+	}{
+		{"repeat change revert", start + first + repeated + changed + reverted + nondelta + first, start + first + withoutUsage + changed + reverted + nondelta + first},
+		{"message end resets", start + first + end + start + repeated, start + first + end + start + repeated},
+		{"malformed resets", start + first + "not json\n" + repeated, start + first + "not json\n" + repeated},
+		{"older shape", start + first + older + repeated, start + first + older + repeated},
+		{"first member", start + `{"usage":` + a + `,"type":"message_update","assistantMessageEvent":{"type":"text_delta"}}` + "\n" + `{"usage":` + a + `,"type":"message_update","assistantMessageEvent":{"type":"text_delta"}}` + "\n", start + `{"usage":` + a + `,"type":"message_update","assistantMessageEvent":{"type":"text_delta"}}` + "\n" + `{"type":"message_update","assistantMessageEvent":{"type":"text_delta"}}` + "\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stored countingPiLogWriter
+			sink := &piJobLogSink{out: &stored}
+			_, err := io.WriteString(sink, tc.input)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, stored.String())
+			assert.Equal(t, 1, stored.writes)
+		})
+	}
+	t.Run("split records are durable and unchanged", func(t *testing.T) {
+		var stored countingPiLogWriter
+		sink := &piJobLogSink{out: &stored}
+		partial := repeated[:17]
+		_, err := io.WriteString(sink, start+first+partial)
+		require.NoError(t, err)
+		assert.Equal(t, start+first+partial, stored.String())
+		_, err = io.WriteString(sink, repeated[17:]+repeated+`{"type":"unfinished"`)
+		require.NoError(t, err)
+		assert.Equal(t, start+first+repeated+withoutUsage+`{"type":"unfinished"`, stored.String())
+		assert.Equal(t, 2, stored.writes)
+	})
+}

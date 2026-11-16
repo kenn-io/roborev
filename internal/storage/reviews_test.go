@@ -1077,13 +1077,13 @@ func TestFindReusableSessionCandidatesIncludesDirtyReviewJobs(t *testing.T) {
 	assert.Equal("dirty", candidates[0].GitRef)
 }
 
-func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testing.T) {
+func TestFindCompatibleReusableSessionCandidatesMatchesBranchSourceAndCLI(t *testing.T) {
 	t.Parallel()
 	db, repo := setupDBAndRepo(t, "compatible-session-source")
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 
-	enqueueCompleted := func(source, sessionID string) ReviewJob {
+	enqueueCompleted := func(source, sessionID, sessionCLI string) ReviewJob {
 		job, enqueueErr := db.EnqueueJob(EnqueueOpts{
 			RepoID: repo.ID, GitRef: "abc123", Branch: "feature/session",
 			Agent: "test", Source: source,
@@ -1093,27 +1093,34 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testin
 		require.NoError(t, claimErr)
 		require.Equal(t, job.ID, claimed.ID)
 		require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "No issues found."))
-		_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, job.ID)
+		_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, session_cli = ? WHERE id = ?`, sessionID, sessionCLI, job.ID)
 		require.NoError(t, updateErr)
 		return *job
 	}
 
-	local := enqueueCompleted("", "local-session")
+	local := enqueueCompleted("", "local-session", "agy")
 	query := ReusableSessionQuery{
 		RepoID: repo.ID, Branch: "feature/session", Source: JobSourceCI,
 		Agent: "test", Reasoning: "thorough", SourceMachineID: machineID,
+		SessionCLI: "agy",
 	}
 	candidates, err := db.FindCompatibleReusableSessionCandidates(query)
 	require.NoError(t, err)
 	assert.Empty(t, candidates)
 
-	ci := enqueueCompleted(JobSourceCI, "ci-session")
+	enqueueCompleted(JobSourceCI, "ci-gemini-session", "gemini")
+	candidates, err = db.FindCompatibleReusableSessionCandidates(query)
+	require.NoError(t, err)
+	assert.Empty(t, candidates)
+
+	ci := enqueueCompleted(JobSourceCI, "ci-agy-session", "agy")
 	candidates, err = db.FindCompatibleReusableSessionCandidates(query)
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, ci.ID, candidates[0].ID)
 	assert.NotEqual(t, local.ID, candidates[0].ID)
-	assert.Equal(t, "ci-session", candidates[0].SessionID)
+	assert.Equal(t, "ci-agy-session", candidates[0].SessionID)
+	assert.Equal(t, "agy", candidates[0].SessionCLI)
 }
 
 func TestFindCompatibleReusableSessionCandidatesMatchesCIPRNumber(t *testing.T) {

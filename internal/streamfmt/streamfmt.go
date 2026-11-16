@@ -158,11 +158,13 @@ func RenderLogChunkWith(r io.Reader, fmtr *Formatter) error {
 
 func renderLogWith(r io.Reader, fmtr *Formatter, final bool) error {
 	br := bufio.NewReader(r)
+	_, gemini := fmtr.decoder.(*geminiDecoder)
+	_, legacy := fmtr.decoder.(*legacyMixedDecoder)
 	for {
 		line, err := br.ReadString('\n')
 		line = strings.TrimRight(line, "\n\r")
 		if line != "" {
-			if LooksLikeJSON(line) {
+			if LooksLikeJSON(line) || ((gemini || legacy) && isAntigravityEvent(line)) {
 				if _, writeErr := fmtr.Write([]byte(line + "\n")); writeErr != nil {
 					return writeErr
 				}
@@ -212,4 +214,14 @@ func LooksLikeJSON(line string) bool {
 		}
 	}
 	return false
+}
+
+func isAntigravityEvent(line string) bool {
+	var probe struct {
+		Event string `json:"event"`
+	}
+	if json.Unmarshal([]byte(line), &probe) != nil {
+		return false
+	}
+	return probe.Event == "init" || probe.Event == "result" || probe.Event == "step_update"
 }

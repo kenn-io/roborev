@@ -341,13 +341,18 @@ func TestGoalWorkerRecordsUsageAndFindings(t *testing.T) {
 	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{RepoID: c.Repo.ID, Agent: "pi", GitRef: snapshot.ID(), JobType: storage.JobTypeGoalReview, ReviewType: "goal", Prompt: goalreview.BuildPrompt(snapshot), PromptPrebuilt: true})
 	require.NoError(t, err)
 	c.Pool.goalReviewRunner = func(_ context.Context, _ agent.Agent, _ string, _ goalreview.Snapshot, _ prompt.SnapshotResult, out io.Writer) ([]goalreview.Finding, error) {
-		_, err := io.WriteString(out, `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Checking goal evidence"}],"usage":{"input":100,"output":20,"cacheRead":10,"cacheWrite":5,"cost":{"total":0.25}}}}`+"\n")
+		start := `{"type":"message_start","message":{"role":"assistant"}}` + "\n"
+		delta := `{"type":"message_update","usage":{"input":100,"output":20},"assistantMessageEvent":{"type":"text_delta","delta":"x"}}` + "\n"
+		_, err := io.WriteString(out, start+delta+delta+`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Checking goal evidence"}],"usage":{"input":100,"output":20,"cacheRead":10,"cacheWrite":5,"cost":{"total":0.25}}}}`+"\n")
 		return []goalreview.Finding{{Severity: "high", Message: "Missing failure behavior", Fix: "Specify the response to invalid input.", Location: goalreview.Location{File: "spec.md", Line: 1}}}, err
 	}
 	claimed, err := c.DB.ClaimJob(testWorkerID)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	c.Pool.processJob(testWorkerID, claimed)
+	logBytes, err := os.ReadFile(JobLogPath(job.ID))
+	require.NoError(t, err)
+	assert.Contains(t, string(logBytes), `{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}`)
 	stored, err := c.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
 	usage := tokens.ParseJSON(stored.TokenUsage)

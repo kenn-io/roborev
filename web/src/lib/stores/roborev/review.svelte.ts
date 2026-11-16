@@ -3,6 +3,7 @@ import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
+import { retryIdempotentRead } from "../../api/retry-policy";
 import { addComment as addCommentRequest } from "../../api/generated/comments/comments";
 import { listJobs as listJobsRequest } from "../../api/generated/jobs/jobs";
 import type {
@@ -66,11 +67,19 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
     function* (jobId: number) {
+      const jobRead = executeRoborevRequest(
+        "GET Roborev review job",
+        (signal) =>
+          api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
+            signal,
+          }),
+      );
       const result = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
             api.getReview({ job_id: jobId }, { signal }),
           ).pipe(
+            retryIdempotentRead,
             Effect.map(Option.some),
             Effect.catchTag("RoborevHTTPError", (cause) =>
               cause.status === 404
@@ -88,6 +97,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             "GET Roborev review projection",
             (signal) => api.getReviewProjection({ job_id: jobId }, { signal }),
           ).pipe(
+            retryIdempotentRead,
             Effect.map(Option.some),
             Effect.catchTag("RoborevHTTPError", (cause) =>
               cause.status === 404
@@ -101,21 +111,21 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                   ),
             ),
           ),
-          job: executeRoborevRequest("GET Roborev review job", (signal) =>
-            api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
-              signal,
-            }),
-          ).pipe(Effect.option),
+          job: Effect.result(jobRead),
         },
         { concurrency: "unbounded" },
       );
 
       if (Option.isNone(result.review)) {
+        let first = true;
+        const job = yield* Effect.suspend(() => {
+          if (!first) return jobRead;
+          first = false;
+          return Effect.fromResult(result.job);
+        }).pipe(retryIdempotentRead);
         return {
           review: null,
-          selectedJob: Option.isSome(result.job)
-            ? (result.job.value.jobs?.[0] ?? null)
-            : null,
+          selectedJob: job.jobs?.[0] ?? null,
           responses: Option.isSome(result.projection)
             ? result.projection.value.responses
             : [],
@@ -132,8 +142,9 @@ export function createReviewStore(opts: ReviewStoreOptions) {
         );
       }
       const fetchedReview = result.review.value;
-      const fetchedJob = Option.isSome(result.job)
-        ? (result.job.value.jobs?.[0] ?? fetchedReview.job ?? null)
+      const job = yield* Effect.option(Effect.fromResult(result.job));
+      const fetchedJob = Option.isSome(job)
+        ? (job.value.jobs?.[0] ?? fetchedReview.job ?? null)
         : (fetchedReview.job ?? null);
       return {
         review: fetchedReview,
@@ -202,7 +213,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                 loadFailureReportedJobId = jobId;
                 reportErrorShown("review_viewed");
               }
-              opts.onError?.("Failed to load review");
             }),
           ),
           Effect.ensuring(

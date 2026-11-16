@@ -11,6 +11,7 @@ import (
 
 func (p *PgPool) restoreLegacyReviews(ctx context.Context) error {
 	restored, unstructured := 0, 0
+	defer func() { p.legacyProgress.Add(int64(restored)) }()
 	var after *uuid.UUID
 	for {
 		records, err := p.unresolvedLegacyReviews(ctx, after, legacyReviewBatchSize, true)

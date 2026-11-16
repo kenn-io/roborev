@@ -890,7 +890,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	memberOpts, synthOpts := plan.memberOpts, plan.synthOpts
 	repoCfg, rawRepoCfg := plan.repoCfg, plan.rawRepoCfg
 	for i := range memberOpts {
-		memberOpts[i].SessionID, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
+		memberOpts[i].SessionID, memberOpts[i].SessionCLI, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
 			ctx, p.db, repo.RootPath, pr.HeadRefOid, memberOpts[i],
 			repoCfg, rawRepoCfg, cfg, synthOpts.Experiment, pr.Number,
 		)
@@ -1381,7 +1381,7 @@ func (p *CIPoller) resolveCIMatrixMembers(
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
-		settings, err := config.ResolveReviewSettings(entry.ReviewType, nil, repoCfg, cfg)
+		settings, err := config.ResolveReviewSettings(entry.ReviewType, nil, false, repoCfg, cfg)
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
@@ -1746,14 +1746,15 @@ func (p *CIPoller) maybeAppendDesignMember(
 			)
 		}
 		return append(members, config.ResolvedMember{
-			Name:        "design",
-			Index:       len(members),
-			Agent:       designAgent,
-			Model:       designModel,
-			ReviewType:  config.ReviewTypeDesign,
-			Reasoning:   reasoning,
-			BackupAgent: backupAgent,
-			BackupModel: backupModel,
+			ReviewSettings: config.BuiltInReviewSettings(repoCfg, cfg),
+			Name:           "design",
+			Index:          len(members),
+			Agent:          designAgent,
+			Model:          designModel,
+			ReviewType:     config.ReviewTypeDesign,
+			Reasoning:      reasoning,
+			BackupAgent:    backupAgent,
+			BackupModel:    backupModel,
 		})
 	}
 	return members
@@ -3040,8 +3041,9 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	if err != nil || rev == nil {
 		return raw(), nil
 	}
-	maxFindings, whenClean := p.resolveCommentPolicy(row.GithubRepo)
+	maxFindings, minConfidence, whenClean := p.resolveCommentPolicy(row.GithubRepo)
 	commentConfig.MaxFindings = maxFindings
+	commentConfig.MinConfidence = minConfidence
 	commentConfig.FullReviewReference = fmt.Sprintf("roborev show --job %d", synth.ID)
 	prepared := preparePanelReviewComment(commentConfig, rev)
 	body := formatPreparedPanelPRCommentWithHead(
@@ -4601,7 +4603,7 @@ func (p *CIPoller) updateExistingPRComment(ghRepo string, prNumber int, body str
 
 // resolveCommentPolicy loads publication overrides from the default branch,
 // following the same precedence as existing comment upsert/cost settings.
-func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, bool) {
+func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, float64, bool) {
 	var repoCfg *config.RepoConfig
 	repo, err := p.findLocalRepo(context.Background(), ghRepo)
 	if err == nil && repo != nil {
@@ -4610,7 +4612,7 @@ func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, bool) {
 		}
 	}
 	cfg := p.cfgGetter.Config()
-	return config.ResolveCICommentMaxFindings(repoCfg, cfg), config.ResolveCICommentWhenClean(repoCfg, cfg)
+	return config.ResolveCICommentMaxFindings(repoCfg, cfg), config.ResolveCICommentMinConfidence(repoCfg, cfg), config.ResolveCICommentWhenClean(repoCfg, cfg)
 }
 
 // resolveUpsertComments determines whether to upsert PR comments
