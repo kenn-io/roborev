@@ -162,7 +162,8 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | PR reviews only after a draft is marked ready | Ask whether draft PRs should be skipped. For the daemon poller, global `[ci] skip_drafts = true` in `~/.roborev/config.toml` (default `false`; no repo override). Ready PRs become eligible next poll without a push, under normal throttle, quiet-hours, and dedup rules. Active reviews are not canceled. |
 | Rewrite checked CI findings | `[ci] rewrite = true` requires `check = true`. Two additional Codex calls use stored findings and escaped PR context, without checker output, in a fresh read-only clone; failure keeps the checked text. |
 | Shorter synthesized GitHub daemon comments | `[ci] comment_max_findings` caps structured findings; `0` (default) is unlimited. Stored reviews stay complete. |
-| Silence on clean synthesized GitHub daemon reviews | `[ci] comment_when_clean = false`; default `true` posts clean comments. Stored reviews stay unchanged. |
+| Hide low-confidence findings in synthesized GitHub daemon comments | `[ci] comment_min_confidence` accepts a finite `0`–`1` floor for the confidence recorded by synthesis. Unset globally disables filtering. Unset in a repo inherits the global floor, and repo `0` disables it. Findings with no stored score stay visible. Synthesis is instructed to use `0.5` when no source scored a finding, so a higher floor can hide it. |
+| Silence on clean synthesized GitHub daemon reviews | `[ci] comment_when_clean = false`; default `true` posts clean comments. With `false`, filtering can suppress a new comment even when the stored review has findings. |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
