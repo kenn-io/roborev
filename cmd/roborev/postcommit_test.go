@@ -149,6 +149,45 @@ func TestPostCommitFailedImmediateEnqueueKeepsCommitWhenBranchAdvances(t *testin
 		"the retry still covers the commit whose enqueue failed")
 }
 
+func TestPostCommitRepeatedFailuresKeepLatestCommitFlushable(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	requests := make(chan daemon.EnqueueRequest, 3)
+	var calls atomic.Int32
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		if calls.Add(1) <= 2 {
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.Run("checkout", "-b", "work")
+	repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	<-requests
+	head := repo.CommitFile("two.txt", "two", "two")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, base+".."+head, (<-requests).GitRef)
+	repo.Run("branch", "-m", "work", "renamed")
+
+	// Both enqueues failed. A tag pushed at the newer commit must flush the
+	// pending range through that commit, not only through the first one.
+	repo.Run("tag", "v1", head)
+	input := strings.NewReader(fmt.Sprintf(
+		"refs/tags/v1 %s refs/tags/v1 %s\n",
+		head, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+	require.Len(t, requests, 1)
+	assert.Equal(t, base+".."+head, (<-requests).GitRef)
+}
+
 func TestPostCommitFailedBranchReviewFlushesOnPush(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	requests := make(chan daemon.EnqueueRequest, 2)

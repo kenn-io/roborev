@@ -338,6 +338,7 @@ func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
 func TestClaimJobWithEmptyQueueSkipsWriteLock(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	lockConn, err := db.Conn(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, lockConn.Close()) })

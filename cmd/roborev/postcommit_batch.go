@@ -915,3 +915,32 @@ func rememberFailedPostCommit(ctx context.Context, root, branch, head string) (b
 	}
 	return true, nil
 }
+
+// extendPendingTip records decision.Head as the pending range's tip after the
+// daemon failed to queue that range, keeping the checkpoint. Batching already
+// records each new tip while planning, but draining a range with batching off
+// does not, so without this a push that carries the newer commits only by tag
+// or a renamed branch would flush the range through the older tip alone. A
+// recorded tip that is not an ancestor of the head belongs to other history
+// and is left alone. The caller must hold the batch lock.
+func extendPendingTip(
+	ctx context.Context, root string, decision postCommitBatchDecision,
+) error {
+	if decision.statePath == "" || decision.Branch == "" || decision.Head == "" {
+		return nil
+	}
+	state := decision.state
+	entry, ok := state.Branches[decision.Branch]
+	if !ok || entry.Tip == decision.Head {
+		return nil
+	}
+	if entry.Tip != "" {
+		_, onChain, err := git.FirstParentDistance(ctx, root, entry.Tip, decision.Head)
+		if err != nil || !onChain {
+			return err
+		}
+	}
+	entry.Tip = decision.Head
+	state.Branches[decision.Branch] = entry
+	return savePostCommitBatchState(decision.statePath, state)
+}

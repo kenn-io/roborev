@@ -197,6 +197,9 @@ func postCommitCmd() *cobra.Command {
 					if batch.Reason != "" {
 						return ""
 					}
+					if err := extendPendingTip(ctx, root, batch); err != nil {
+						hookLog(root, "fail", fmt.Sprintf("record pending tip: %v", err))
+					}
 					return "the next commit or push will retry it"
 				}
 				if !singleCommit || pendingHead == "" {
