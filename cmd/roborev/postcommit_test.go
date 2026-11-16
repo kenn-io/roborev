@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -491,6 +492,47 @@ func TestPostCommitLockTimeoutFailsOpenToImmediateReview(t *testing.T) {
 	_, err = os.Stat(statePath)
 	assert.ErrorIs(t, err, os.ErrNotExist,
 		"the lockless fallback must not touch batch state")
+}
+
+func TestPostCommitLockTimeoutFailedEnqueueRetriesWithNextCommit(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	unlock, err := acquirePostCommitBatchLock(t.Context(), repo.Dir)
+	require.NoError(t, err)
+	var once sync.Once
+	release := func() { once.Do(func() { _ = unlock() }) }
+	t.Cleanup(release)
+	requests := make(chan daemon.EnqueueRequest, 2)
+	var calls atomic.Int32
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		if calls.Add(1) == 1 {
+			// The other worktree's hook finishes while this request fails.
+			release()
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	})
+	old := postCommitBatchLockTimeout
+	postCommitBatchLockTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { postCommitBatchLockTimeout = old })
+
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CommitFile("one.txt", "one", "one")
+	// The hook could not take the lock, so it falls back to an immediate
+	// review, and that review fails. The daemon drops abandoned enqueues, so
+	// the hook must still keep the commit pending once the lock is free.
+	_, stderr, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, "HEAD", (<-requests).GitRef)
+	assert.Contains(t, stderr, "the next commit or push will retry it")
+
+	head := repo.CommitFile("two.txt", "two", "two")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, base+".."+head, (<-requests).GitRef)
 }
 
 func TestPostCommitBatchFlushesPendingCommits(t *testing.T) {

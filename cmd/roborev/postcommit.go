@@ -186,7 +186,7 @@ func postCommitCmd() *cobra.Command {
 			// Capture the commit before contacting the daemon: another
 			// process can advance the branch while this hook waits.
 			var pendingBranch, pendingHead string
-			if locked && !batch.Track {
+			if !batch.Track {
 				pendingBranch = git.GetCurrentBranch(root)
 				if pendingBranch != "" {
 					pendingHead, _ = git.ResolveSHACtx(ctx, root, "refs/heads/"+pendingBranch)
@@ -204,6 +204,18 @@ func postCommitCmd() *cobra.Command {
 				}
 				if !singleCommit || pendingHead == "" {
 					return ""
+				}
+				if !locked {
+					// This hook fell back to an immediate review because another
+					// hook held the batch lock. The daemon drops an enqueue its
+					// hook abandoned, so take the lock now, with the same bounded
+					// wait, to record the commit instead of losing it.
+					relock, err := acquirePostCommitBatchLock(ctx, root)
+					if err != nil {
+						hookLog(root, "fail", fmt.Sprintf("record pending commit: acquire post-commit lock: %v", err))
+						return ""
+					}
+					defer func() { _ = relock() }()
 				}
 				recorded, err := rememberFailedPostCommit(ctx, root, pendingBranch, pendingHead)
 				if err != nil {
