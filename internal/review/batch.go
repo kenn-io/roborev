@@ -219,7 +219,7 @@ func runSingle(
 	// An agent shown an empty diff reports no issues, which reads as a pass.
 	// A census failure leaves prompt building to report the Git error.
 	if census, censusErr := prompt.TakeReviewPathCensus(ctx, cfg.RepoPath, cfg.GitRef, excludes); censusErr == nil {
-		if emptyErr := census.Reviewable(); emptyErr != nil {
+		if emptyErr := census.Reviewable(ctx, settings.BinaryEvidence); emptyErr != nil {
 			result.Status = ResultFailed
 			result.Error = emptyErr.Error()
 			return result

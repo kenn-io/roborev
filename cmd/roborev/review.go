@@ -624,7 +624,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		// An agent shown an empty diff reports no issues, which reads as a
 		// pass. A census failure leaves prompt building to report the error.
 		if census, censusErr := prompt.TakeReviewPathCensus(ctx, repoPath, gitRef, excludes); censusErr == nil {
-			if err := census.Reviewable(); err != nil {
+			if err := census.Reviewable(ctx, settings.BinaryEvidence); err != nil {
 				return err
 			}
 		}

@@ -73,11 +73,14 @@ func coverageFromSets(total, reviewed map[string]struct{}) *storage.ReviewFileCo
 // review. An agent shown an empty diff reports no issues, which reads as a
 // pass. Retrying or failing over cannot change the diff, so the job fails
 // without either. A nil census (unmeasured) lets the review run.
-func (wp *WorkerPool) failUnreviewableCensus(workerID string, job *storage.ReviewJob, census *prompt.ReviewPathCensus) bool {
+func (wp *WorkerPool) failUnreviewableCensus(
+	ctx context.Context, workerID string, job *storage.ReviewJob,
+	census *prompt.ReviewPathCensus, binaryEvidence bool,
+) bool {
 	if census == nil {
 		return false
 	}
-	emptyErr := census.Reviewable()
+	emptyErr := census.Reviewable(ctx, binaryEvidence)
 	if emptyErr == nil {
 		return false
 	}

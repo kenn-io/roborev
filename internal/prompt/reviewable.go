@@ -13,6 +13,9 @@ type ReviewPathCensus struct {
 	Ref      string
 	Total    []string
 	Reviewed []string
+
+	repoPath string
+	excludes []string
 }
 
 // TakeReviewPathCensus lists the changed paths of a commit or range, with and
@@ -27,16 +30,29 @@ func TakeReviewPathCensus(ctx context.Context, repoPath, gitRef string, excludes
 	if err != nil {
 		return ReviewPathCensus{}, fmt.Errorf("list changed paths: %w", err)
 	}
-	return ReviewPathCensus{Ref: gitRef, Total: total, Reviewed: reviewed}, nil
+	return ReviewPathCensus{
+		Ref: gitRef, Total: total, Reviewed: reviewed,
+		repoPath: repoPath, excludes: excludes,
+	}, nil
 }
 
 // Reviewable returns a *NoReviewableChangesError when the review prompt would
-// carry nothing for an agent to review: no diff after exclusions and no
-// dependency metadata summary. Dependency metadata counts as content because
-// the prompt lists those files even though their bodies are excluded.
-func (c ReviewPathCensus) Reviewable() error {
+// carry nothing for an agent to review: no diff after exclusions, no
+// dependency metadata summary, and, when binaryEvidence is on, no committed
+// binary file. Dependency metadata counts because the prompt lists those files
+// even though their bodies are excluded. Binary evidence compares a merge with
+// its first parent, so a clean merge that brings in a binary file has evidence
+// even though its combined diff is empty. A failure to list binary files lets
+// the review run.
+func (c ReviewPathCensus) Reviewable(ctx context.Context, binaryEvidence bool) error {
 	if len(c.Reviewed) > 0 || HasDependencyMetadataFiles(c.Total) {
 		return nil
+	}
+	if binaryEvidence {
+		changes, err := git.ChangedBinaryFiles(ctx, c.repoPath, c.Ref, c.excludes...)
+		if err != nil || len(changes) > 0 {
+			return nil
+		}
 	}
 	return &NoReviewableChangesError{Ref: c.Ref, Excluded: len(c.Total)}
 }

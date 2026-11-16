@@ -1261,7 +1261,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// CI members prebuild their prompt from the PR diff, so an empty diff
 		// would pass the same way. Supplied prompts are the caller's content.
 		if job.Source == storage.JobSourceCI && job.IsReviewJob() {
-			if wp.failUnreviewableCensus(workerID, job, reviewPathCensusForJob(ctx, checkout.promptRepoPath, job, excludes)) {
+			census := reviewPathCensusForJob(ctx, checkout.promptRepoPath, job, excludes)
+			if wp.failUnreviewableCensus(ctx, workerID, job, census, settings.BinaryEvidence) {
 				return
 			}
 		}
@@ -1336,7 +1337,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
 			census := reviewPathCensusForJob(ctx, checkout.promptRepoPath, job, excludes)
-			if wp.failUnreviewableCensus(workerID, job, census) {
+			if wp.failUnreviewableCensus(ctx, workerID, job, census, settings.BinaryEvidence) {
 				return
 			}
 			reviewPrompt, err = pb.Build(
