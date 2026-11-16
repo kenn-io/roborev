@@ -525,6 +525,10 @@ Expect this behavior:
 - **A failed review is not retried.** Pull request reviews retry after a
     reviewer outage or an exhausted quota. A default-branch review reports the
     failure once; rerun it to review the commit.
+- **Invalid configuration does not block later commits.** A commit whose review
+    settings fail `roborev config validate`, such as a `[ci] panel` that names
+    no defined panel, gets an `error` status and is not reviewed. Later commits
+    are reviewed once the configuration is fixed.
 - **Quiet hours delay the reviews.** Commits that land during
     [quiet hours](#quiet-hours) are reviewed after quiet hours end.
 - **`batch_timeout` applies.** As with pull requests, a reviewer that runs past
