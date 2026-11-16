@@ -113,7 +113,7 @@ func TestCIAgentEnvironment(t *testing.T) {
 for arg in "$@"; do
   case "$arg" in *etxtbsy*) exit 0;; esac
   if [ "$arg" = --help ]; then
-    echo '--sandbox --full-auto --tools --effort --allow-all-tools --stream --output-format --disable-builtin-mcps'
+    echo '--sandbox --full-auto --tools --effort --allow-all-tools --stream --output-format --disable-builtin-mcps --ignore-user-config'
     exit 0
   fi
 done

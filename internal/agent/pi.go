@@ -230,6 +230,44 @@ func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema jsontext.Va
 	)
 }
 
+var piNoApproveSupport capabilityCache
+
+// piUntrustedCheckoutArgs returns the flags an untrusted checkout needs.
+// Pi loads extensions, MCP servers and packages from a trusted project's .pi
+// directory, and a user setting or saved trust entry can trust it. Pi also
+// reads the project's sessionDir before it checks trust, so a run without an
+// explicit session saves none. Pi releases without --no-approve load project
+// files unconditionally, so they cannot review an untrusted checkout.
+func (a *PiAgent) piUntrustedCheckoutArgs(ctx context.Context, sessionPath string) ([]string, error) {
+	if !untrustedCheckout(ctx) {
+		return nil, nil
+	}
+	if !piSupportsNoApprove(ctx, a.Command) {
+		return nil, fmt.Errorf("pi does not support --no-approve, which reviews of an untrusted checkout require; upgrade pi")
+	}
+	args := []string{"--no-approve"}
+	if sessionPath == "" {
+		args = append(args, "--no-session")
+	}
+	return args, nil
+}
+
+func piSupportsNoApprove(ctx context.Context, command string) bool {
+	cacheKey := capabilityCacheKey(command)
+	if cached, ok := piNoApproveSupport.Load(cacheKey); ok {
+		return cached.(bool)
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	configureCapabilityProbe(ctx, cmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	supported := strings.Contains(string(output), "--no-approve")
+	piNoApproveSupport.Store(cacheKey, supported)
+	return supported
+}
+
 func (a *PiAgent) jsonSchemaExtension() string {
 	if ext := strings.TrimSpace(a.JSONSchemaExtension); ext != "" {
 		return ext
@@ -261,6 +299,11 @@ func (a *PiAgent) ClassifyWithSchema(
 	outputPath := filepath.Join(tmpDir, "result.json")
 
 	args := a.classifyArgs(promptPath, outputPath, schema)
+	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, untrustedArgs...)
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	tracker := configureSubprocess(ctx, cmd)
@@ -325,13 +368,24 @@ func (a *PiAgent) ReviewWithSchema(
 	// extensions, so either way the schema extension is loaded explicitly,
 	// even when the user installed it.
 	readOnly := planningReadOnly(ctx)
+	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, sessionPath)
+	if err != nil {
+		return nil, err
+	}
+	// Pi ignores an untrusted checkout's settings, so its package list does
+	// not install the schema extension.
+	settingsRepo := repoPath
+	if untrustedCheckout(ctx) {
+		settingsRepo = ""
+	}
 	schemaInstalled := !readOnly && !piDisablesExtensions(a.LaunchArgs) &&
-		piSettingsInstallPackage(repoPath, a.jsonSchemaExtension())
+		piSettingsInstallPackage(settingsRepo, a.jsonSchemaExtension())
 	args := a.structuredReviewArgs(promptPath, outputPath, schema, agenticMode, sessionPath, schemaInstalled)
 	if readOnly {
 		// Disable discovered extensions; the explicit schema extension remains enabled.
 		args = append(args, "--no-extensions")
 	}
+	args = append(args, untrustedArgs...)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -405,6 +459,11 @@ func (a *PiAgent) Review(
 	if planningReadOnly(ctx) {
 		args = append(args, "--no-extensions")
 	}
+	untrustedArgs, err := a.piUntrustedCheckoutArgs(ctx, sessionPath)
+	if err != nil {
+		return "", err
+	}
+	args = append(args, untrustedArgs...)
 
 	// Add the prompt file as an input argument (prefixed with @)
 	// Pi treats @files as context/input.

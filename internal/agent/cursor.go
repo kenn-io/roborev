@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -104,13 +105,27 @@ func (a *CursorAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 
 	args := a.buildArgs(agenticMode)
+	env := os.Environ()
+	if untrustedCheckout(ctx) {
+		// Cursor keeps workspace trust grants in its data directory, and a
+		// grant for a parent directory also trusts the checkout. A trusted
+		// workspace runs hooks from .cursor/hooks.json and .claude settings.
+		// An empty data directory makes print mode refuse the checkout
+		// instead. Login is stored elsewhere and still works.
+		dataDir, err := os.MkdirTemp("", "roborev-cursor-data-")
+		if err != nil {
+			return "", fmt.Errorf("create cursor data dir: %w", err)
+		}
+		defer os.RemoveAll(dataDir)
+		env = append(filterEnv(env, "CURSOR_DATA_DIR"), "CURSOR_DATA_DIR="+dataDir)
+	}
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:    "cursor agent",
 		Command: a.Command,
 		Args:    args,
 		Dir:     repoPath,
-		Env:     os.Environ(),
+		Env:     env,
 		Stdin:   strings.NewReader(prompt),
 		Output:  output,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {

@@ -7,6 +7,13 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- Stop CI reviews from running hooks, MCP servers, and plugins that a pull
+    request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
+    Cursor, Grok, Copilot, and Kilo now skip project agent configuration in
+    `roborev ci review` and daemon CI reviews. Codex and Pi fail the review when
+    the installed CLI cannot skip it. See
+    [Agent configuration in the pull request](integrations/github.md#agent-configuration-in-the-pull-request)
+    for the agents that cannot.
 - Connect agent hooks and skills with `roborev agent setup`, optionally register
     MCP, and see hook trust and readiness in setup, quickstart, and doctor.
 - Sync runs while historical maintenance proceeds, and reconnecting machines
