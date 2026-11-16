@@ -1219,7 +1219,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		)
 		underlying = fmtr
 	}
-	capture := agent.NewSessionCaptureWriter(underlying, nil)
+	capture := agent.NewSessionCaptureWriter(underlying, nil, nil)
 
 	result, err := fixJobDirect(ctx, fixJobParams{
 		RepoRoot:      repoRoot,
@@ -1591,7 +1591,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			)
 			underlying = fmtr
 		}
-		capture := agent.NewSessionCaptureWriter(underlying, nil)
+		capture := agent.NewSessionCaptureWriter(underlying, nil, nil)
 
 		result, err := fixJobDirect(ctx, fixJobParams{
 			RepoRoot:      roots.worktreeRoot,

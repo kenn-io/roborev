@@ -578,7 +578,7 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 		// Run sync loop until disconnection or stop
 		// Only do initial sync if we made the connection (not if SyncNow connected for us)
 		// and skipInitialSync is not set
-		w.syncLoop(stopCh, interval, newConn && !skipInitialSync)
+		w.syncLoop(ctx, stopCh, interval, newConn && !skipInitialSync)
 
 		// If we get here, we disconnected - try to reconnect
 		w.mu.Lock()
@@ -731,7 +731,7 @@ func (w *SyncWorker) checkHealth(ctx context.Context, pool *PgPool) {
 
 // syncLoop runs the periodic sync until stop or disconnection
 // doInitialSync controls whether to sync immediately on entry (only when we made the connection)
-func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, doInitialSync bool) {
+func (w *SyncWorker) syncLoop(ctx context.Context, stopCh <-chan struct{}, interval time.Duration, doInitialSync bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -741,6 +741,26 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 		if err := w.doSync(); err != nil {
 			log.Printf("Sync: error: %v", err)
 		}
+	}
+
+	if pool, err := w.currentPool(); err == nil {
+		maintCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = backoff.Retry(maintCtx, func() (struct{}, error) {
+				passCtx, passCancel := context.WithTimeout(maintCtx, syncPassTimeout)
+				defer passCancel()
+				return struct{}{}, pool.legacyMaintenancePass(passCtx)
+			}, backoff.WithBackOff(backoff.NewConstantBackOff(interval)), backoff.WithMaxElapsedTime(0),
+				backoff.WithNotify(func(err error, _ time.Duration) {
+					log.Printf("Sync: historical review maintenance paused: %v", err)
+				}))
+		}()
+		defer func() {
+			cancel()
+			<-done
+		}()
 	}
 
 	for {
@@ -765,6 +785,8 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 	}
 }
 
+const syncPassTimeout = 5 * time.Minute
+
 // doSync performs a single sync cycle (push then pull)
 // Loops until all pending items are pushed.
 func (w *SyncWorker) doSync() error {
@@ -777,7 +799,7 @@ func (w *SyncWorker) doSync() error {
 	}
 
 	w.lockSync()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), syncPassTimeout)
 	defer cancel()
 
 	// Push all local changes to PostgreSQL (loop until no more pending)

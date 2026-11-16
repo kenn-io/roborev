@@ -94,6 +94,9 @@ func detectLegacyProtocol(line string) legacyProtocol {
 	if err := json.Unmarshal([]byte(line), &probe); err != nil {
 		return legacyLiteral
 	}
+	if isAntigravityEvent(line) {
+		return legacyGemini
+	}
 	var eventType string
 	if err := json.Unmarshal(probe["type"], &eventType); err != nil {
 		return legacyLiteral

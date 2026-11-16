@@ -164,12 +164,13 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | Review commits after they land on the default branch | Global `[ci] review_default_branch = true` in `~/.roborev/config.toml` (default `false`). Each new first-parent commit is reviewed against its parent with the CI panel; history before the first poll is not reviewed. A repo opts out with `[ci] review_default_branch = false` in `.roborev.toml`. Results are stored reviews plus an informational `roborev/default-branch` commit status; no PR comment. See <https://roborev.io/docs/integrations/github/#review-commits-on-the-default-branch> |
 | Rewrite checked CI findings | `[ci] rewrite = true` requires `check = true`. Two additional Codex calls use stored findings and escaped PR context, without checker output, in a fresh read-only clone; failure keeps the checked text. |
 | Shorter synthesized GitHub daemon comments | `[ci] comment_max_findings` caps structured findings; `0` (default) is unlimited. Stored reviews stay complete. |
-| Silence on clean synthesized GitHub daemon reviews | `[ci] comment_when_clean = false`; default `true` posts clean comments. Stored reviews stay unchanged. |
+| Hide low-confidence findings in synthesized GitHub daemon comments | `[ci] comment_min_confidence` accepts a finite `0`–`1` floor for the confidence recorded by synthesis. Unset globally disables filtering. Unset in a repo inherits the global floor, and repo `0` disables it. Findings with no stored score stay visible. Synthesis is instructed to use `0.5` when no source scored a finding, so a higher floor can hide it. |
+| Silence on clean synthesized GitHub daemon reviews | `[ci] comment_when_clean = false`; default `true` posts clean comments. With `false`, filtering can suppress a new comment even when the stored review has findings. |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
 | Failed reviews and findings filed as Kata issues | A `[[hooks]]` entry with `event = "review.*"` and `type = "kata"` |
-| Reviewers that read changed PDFs, scans, or images | `binary_evidence = true` on the type; see <https://roborev.io/docs/advanced/custom-review-types/#binary-evidence> |
+| Reviewers that read changed PDFs, scans, or images | `[review] binary_evidence = true` for built-in reviews or `binary_evidence = true` on a custom type; see <https://roborev.io/docs/advanced/custom-review-types/#binary-evidence> |
 | A reviewer that looks things up through an outside service | A strict `tools` policy on the type that grants exact MCP tools; see <https://roborev.io/docs/advanced/custom-review-types/#granting-mcp-tools> |
 | Files reviewers should skip | `exclude_patterns` |
 | Reviewers that skip the setup itself, for non-code material | `exclude_patterns = [".roborev.toml", "review-rubrics/"]` |
@@ -221,12 +222,16 @@ Rules that matter:
     text a check needs. If a source can be neither committed nor reached
     through an MCP grant, tell the user the reviewer can check only what the
     repository holds.
-- For PDFs, scans, and images, set `binary_evidence = true` on the type.
+- For PDFs, scans, and images, set `binary_evidence = true` under `[review]`
+    for built-in reviews, or on each custom type that needs it. The repository
+    setting overrides the global setting for built-in reviews; custom types
+    use their own setting independently.
     Reviews of a commit or range then get a saved copy of each binary file
     those commits add or change. Files the commits do not touch are not
     included, so for a source that stays unchanged, such as an exhibit that
-    later drafts cite, also commit an exported text copy beside it. Reviews of
-    uncommitted changes fail when the type sets `binary_evidence`.
+    later drafts cite, also commit an exported text copy beside it. Built-in
+    reviews of uncommitted changes omit evidence; custom dirty reviews fail
+    when their type enables it.
     `exclude_patterns` removes files from the evidence as well as the diff, so
     never exclude binary files a reviewer must read.
 - The reviewer opens each saved copy with its own tools, so match the agent to

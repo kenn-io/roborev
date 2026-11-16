@@ -36,7 +36,7 @@ func TestSyncStatusUsesDaemon(t *testing.T) {
 	command.SetOut(&out)
 	command.SetArgs([]string{})
 	require.NoError(t, command.Execute())
-	assert.Equal(t, "Sync: enabled\nInterval: 7m\nMachine name: test-machine\nWarning: configuration warning\nMachine ID: "+machineID.String()+"\n\nWarning: could not count all pending items\nPending push: >=1000 jobs, 2 reviews, 3 comments\n\nPostgreSQL: disconnected\nwaiting for connection\n", out.String())
+	assert.Equal(t, "Sync: enabled\nInterval: 7m\nMachine name: test-machine\nWarning: configuration warning\nMachine ID: "+machineID.String()+"\n\nWarning: some pending jobs, reviews, or comments may be missing from the counts\nPending push: >=1000 jobs, 2 reviews, 3 comments\n\nPostgreSQL: disconnected\nwaiting for connection\n", out.String())
 }
 
 func TestSyncStatusDisabled(t *testing.T) {

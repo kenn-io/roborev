@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	kitagenthook "go.kenn.io/kit/agenthook"
-
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/githook"
@@ -54,8 +52,6 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 	daemonUp := daemonReachable()
 	global, _ := loadClientConfig()
 	agent := resolveQuickstartReviewAgent(repoRoot, global)
-	claudePath, _ := kitagenthook.ConfigPath(kitagenthook.AgentClaude)
-	codexPath, _ := kitagenthook.ConfigPath(kitagenthook.AgentCodex)
 	grokPath := agenthook.DefaultGrokHooksPath()
 
 	checks := []quickstartCheck{
@@ -64,16 +60,22 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 		checkRepoRegistered(repoRoot, inGitRepo, daemonUp),
 		checkRepoConfig(repoRoot, inGitRepo, agent),
 		checkConfiguredAgent(repoRoot, inGitRepo, agent),
-		checkAgentHook("agent_hook_claude", claudePath, "claude",
-			"roborev agent-hook install --agent claude"),
-		checkAgentHook("agent_hook_codex", codexPath, "codex",
-			"roborev agent-hook install --agent codex"),
+		checkNativeAgentHook(ctx, "agent_hook_claude", "claude"),
+		checkNativeAgentHook(ctx, "agent_hook_codex", "codex"),
 		checkAgentHook("agent_hook_grok", grokPath, "grok",
 			"roborev agent-hook install --agent grok"),
 		checkSkills(),
 	}
 
 	return quickstartState{InGitRepo: inGitRepo, DaemonRunning: daemonUp, Checks: checks}
+}
+
+func checkNativeAgentHook(ctx context.Context, id, agent string) quickstartCheck {
+	// Kit bounds its native hook probe at 10 seconds.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	worst, details := agentReadiness(ctx, agent, true)
+	return quickstartCheck{ID: id, Status: checkStatus(worst.State), Details: strings.Join(details, "; "), FixCommand: worst.NextStep}
 }
 
 func resolveQuickstartReviewAgent(repoRoot string, global *config.Config) string {

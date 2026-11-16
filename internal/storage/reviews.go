@@ -276,6 +276,7 @@ type ReusableSessionQuery struct {
 	PanelMemberName       string
 	PanelMemberConfigJSON string
 	SourceMachineID       uuid.UUID
+	SessionCLI            string // when set, only sessions created by this CLI
 	CIPRNumber            int
 	Experiment            *ExperimentAssignmentInput
 	Limit                 int
@@ -291,7 +292,7 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		q.ReviewType = "default"
 	}
 	query := `
-		SELECT j.id, j.uuid, j.git_ref, j.session_id, COALESCE(c.sha, '')
+		SELECT j.id, j.uuid, j.git_ref, j.session_id, COALESCE(j.session_cli, ''), COALESCE(c.sha, '')
 		FROM review_jobs j
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN experiment_assignments a ON (
@@ -330,6 +331,10 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		  AND COALESCE(j.panel_member_config_json, '') = ?`
 		args = append(args, q.PanelName, q.PanelMemberName, q.PanelMemberConfigJSON)
 	}
+	if q.SessionCLI != "" {
+		query += ` AND COALESCE(j.session_cli, '') = ?`
+		args = append(args, q.SessionCLI)
+	}
 	if q.CIPRNumber > 0 {
 		query += `
 		  AND EXISTS (
@@ -365,7 +370,7 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		var job ReviewJob
 		var sessionID string
 		var commitSHA string
-		if err := rows.Scan(&job.ID, &job.UUID, &job.GitRef, &sessionID, &commitSHA); err != nil {
+		if err := rows.Scan(&job.ID, &job.UUID, &job.GitRef, &sessionID, &job.SessionCLI, &commitSHA); err != nil {
 			return nil, err
 		}
 		target := reusableSessionCandidateTarget(job.GitRef, commitSHA)

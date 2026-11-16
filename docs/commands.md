@@ -63,12 +63,35 @@ Regenerate shell completions with `roborev completion <shell>` to discover the
 new groups. Use `roborev job --help` or another group's help to find its
 actions.
 
+## Find a command
+
+Describe a task to find relevant commands without walking the help tree:
+
+```bash
+roborev cli search "review uncommitted changes"
+roborev cli search add a note to a review --json
+roborev cli search "show agent output log" --limit 3
+```
+
+Search reads the command tree locally. It needs no repository, configuration,
+daemon, credentials or network. It returns five commands by default; `--limit`
+accepts 1–20. Text output includes a help hint. `--json` returns `query` and
+`results`, with `command`, `summary` and `usage` for each result. No matches is
+success with an empty result list. Missing or blank tasks and invalid limits
+exit with code 2.
+
+Results use the preferred command paths. Hidden compatibility commands,
+help-only groups, interactive UIs and internal hook/server entry points are
+excluded. `roborev cli` shows discovery help. To search completed review
+content, use `roborev job search` instead.
+
 ## Direct CLI workflow
 
 Run these from your git checkout. Replace job `42` with the job ID printed by
 `review` or `list`:
 
 ```bash
+roborev cli search "review uncommitted changes"
 roborev doctor
 roborev init
 roborev review HEAD
@@ -96,7 +119,8 @@ stored repository identity, or filter as described by that command. Outside a
 checkout, `list` also discovers repositories in immediate child directories.
 Without `--server`, commands discover the local daemon through its runtime file
 under `ROBOREV_DATA_DIR` (default `~/.roborev`) and start it when needed.
-`doctor` diagnoses setup without starting a daemon.
+`doctor` diagnoses setup. MCP readiness checks may start the configured server
+and daemon, and Codex may create its own state and bundled skills.
 
 `--server` selects an existing loopback address, `unix://` socket, or remote
 HTTPS base URL. The CLI does not start or replace explicit targets. Remote HTTPS
@@ -343,6 +367,11 @@ the job from being queued.
 `roborev job list --json` and `roborev job show --json` include `web_url` when
 the daemon has an active browser listener. See
 [Review links](/docs/integrations/mcp/#review-links) for how to use these URLs.
+
+A local Git ref takes precedence when it has a review. If a positive numeric
+argument resolves to a ref with no review, `show` retries it as a job ID and
+prints a note on stderr that names the commit and the job. Use `--job` to skip
+the ref lookup.
 
 When the argument is a numeric job ID, `--prompt` can display the stored prompt
 while the job is queued or running; review output does not exist until the job
@@ -726,7 +755,7 @@ panel-era cursors are namespaced and cannot be resumed against each other.
 
 ```bash
 roborev job log 42             # Human-friendly rendered output
-roborev job log --raw 42       # Raw NDJSON bytes
+roborev job log --raw 42       # Stored log bytes
 roborev job log --path 42      # Print the log file path
 roborev --server 127.0.0.1:7373 log 42 # Select a running daemon
 
@@ -736,16 +765,19 @@ roborev job log clean --days 3       # Remove logs older than 3 days
 
 | Flag | Description |
 |------|-------------|
-| `--raw` | Print raw NDJSON without formatting |
+| `--raw` | Print exact stored bytes without formatting |
 | `--path` | Print the log file path instead of contents |
 
 Job logs are persisted to `~/.roborev/logs/jobs/` so agent output remains
 available after daemon restarts. By default, `roborev job log` renders NDJSON
 into compact, human-readable progress lines showing tool calls and agent text.
 It requests the log and its stored metadata through the daemon API to select
-that renderer. Use `--raw` for the original NDJSON when scripting, debugging, or
-reading an orphaned log file. For a daemon using a custom database, select that
-daemon with `--server`; the CLI does not open SQLite.
+that renderer. Use `--raw` for the exact stored bytes when scripting, debugging,
+or reading an orphaned log file. Stored Pi logs may omit repeated identical
+cumulative usage from message deltas. Changed and final usage remain in the
+stored log. Compaction leaves live rendering and invocation capture unchanged.
+For a daemon using a custom database, select that daemon with `--server`; the
+CLI does not open SQLite.
 
 To remove old logs automatically, set
 [`job_log_retention_days`](/docs/configuration/#stored-prompts-and-retention).
@@ -1426,6 +1458,7 @@ not start or restart a local daemon on its behalf.
 roborev daemon start             # Start background daemon
 roborev daemon stop              # Stop daemon
 roborev daemon restart           # Restart daemon
+roborev daemon restart --running=interrupt # Requeue running jobs and restart
 roborev daemon status            # Show daemon, web UI, and queue status
 roborev daemon run               # Run in foreground
 roborev daemon pause                    # Pause queue processing
@@ -1443,7 +1476,15 @@ roborev hook uninstall           # Remove hook
 | Flag | Description |
 |------|-------------|
 | `--json` | Emit daemon, web UI, and queue status as JSON. Includes the canonical browser origin as `web_url` (with `web_disabled_reason` set to `config` or `missing-web-assets` when the browser listener is not running), active snoozes under `daemon.active_snoozes`, and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
+| `--running=wait\|interrupt` | On daemon restart, finish running jobs by default (`wait`) or interrupt and requeue them (`interrupt`) |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
+
+Restart waits for running jobs to finish by default. With `--running=interrupt`,
+running jobs go back to the queue without using a retry and start over after the
+restart; rebuttals resume their agent session. A daemon from an older roborev
+release rejects the flag, so restart it once without it. If Ctrl-C stops a
+waiting restart, rerun it with `--running=interrupt` while the daemon is still
+draining.
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,
@@ -1471,10 +1512,11 @@ queue survives daemon restarts and is shown in `roborev daemon status` and the
 TUI. Use `cancel` when you need to stop one queued or running job instead of
 pausing the whole queue.
 
-Daemon shutdown also stops workers from claiming new jobs. If work is active,
-restart reports that it is waiting, lets running jobs and worker finalization
-finish without a timeout, and only then starts the replacement daemon. On macOS,
-`daemon restart` restarts an owned daemon through its LaunchAgent.
+Daemon shutdown also stops workers from claiming new jobs. If work is active, a
+graceful restart reports that it is waiting, lets running jobs and worker
+finalization finish without a timeout, and only then starts the replacement
+daemon. On macOS, `daemon restart` restarts an owned daemon through its
+LaunchAgent.
 
 !!! tip "Broken post-commit hook?"
 
@@ -1535,6 +1577,10 @@ See: [Configuration](/docs/configuration/#post-commit-review-mode) and
 ## Agent Hook
 
 ```bash
+roborev agent setup                     # Connect Claude Code and Codex
+roborev agent setup --mcp               # Also register MCP
+roborev agent setup --check             # Check readiness
+roborev agent setup --print             # Print Claude and Codex MCP commands
 roborev agent hook install              # Install profiles for detected agents
 roborev agent hook install --agent all  # Install all nine integrations
 roborev agent hook install --agent hermes --config ~/.hermes/config.yaml
@@ -1545,6 +1591,22 @@ roborev agent hook run --agent codex --source roborev-agent-hook              # 
 roborev agent hook status               # Tracked session counters as JSON
 roborev agent hook reset example-session   # Reset one session (or --all)
 ```
+
+If Codex asks for review, run `/hooks` in Codex, then recheck. The MCP check may
+start the configured server, and Codex may update its runtime state.
+
+### Setup flags
+
+| Flag | Description |
+|------|-------------|
+| `--agent <name>` | Select `claude` or `codex`; repeat or use a comma-separated list |
+| `--mcp[=false]` | Select MCP or CLI mode; omission keeps the installed mode |
+| `--check` | Check readiness without installing |
+| `--json` | Print the readiness report as JSON |
+| `--print` | Print manual MCP registration commands |
+| `--server <address>` | Select the daemon for setup or printed commands; cannot be combined with `--check` |
+
+### Hook install flags
 
 | Flag | Description |
 |------|-------------|
@@ -1572,8 +1634,8 @@ roborev doctor --repo /path/to/repo   # Check a different repository
 ```
 
 `roborev doctor` reads configuration and daemon state and reports problems with
-a suggested fix for each. It never starts or restarts the daemon, installs
-hooks, or edits config.
+a suggested fix for each. MCP readiness checks may start the configured server
+and daemon. Doctor reports the daemon's state before and after those checks.
 
 | Area | What doctor checks |
 |------|--------------------|
@@ -1757,7 +1819,8 @@ Choice [a]:
 The daemon continues accepting enqueues during an update drain but does not
 claim them until the replacement daemon is ready. A user cancellation remains
 terminal. An update interruption starts a fresh attempt and discards the partial
-attempt log. Non-interactive waits have no updater-specific deadline; they are
+attempt log, except that a rebuttal preserves and resumes its original agent
+session. Non-interactive waits have no updater-specific deadline; they are
 bounded by the configured job timeout (30 minutes by default).
 
 Successful updates use a compact phase summary. The final success line appears

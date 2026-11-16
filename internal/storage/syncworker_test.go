@@ -177,7 +177,7 @@ func TestSyncHealthRecordsSyncLoopPingAfterFailedProbe(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		worker.syncLoop(worker.stopCh, time.Millisecond, false)
+		worker.syncLoop(t.Context(), worker.stopCh, time.Millisecond, false)
 	}()
 	t.Cleanup(func() {
 		close(worker.stopCh)

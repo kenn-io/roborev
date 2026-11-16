@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -212,4 +213,32 @@ func seedJobs(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob
 		jobs[i] = enqueueJob(t, db, repo.ID, commit.ID, sha)
 	}
 	return repo, jobs
+}
+
+func seedJobsBeforeSessionCLIMigration(t *testing.T, db *DB, repoPath string, n int) (*Repo, []*ReviewJob) {
+	t.Helper()
+	repo := createRepo(t, db, repoPath)
+	jobs := make([]*ReviewJob, n)
+	for i := range n {
+		sha := fmt.Sprintf("%s-sha%d", filepath.Base(repoPath), i)
+		jobs[i] = enqueueJobBeforeSessionCLIMigration(t, db, repo.ID, createCommit(t, db, repo.ID, sha).ID, sha)
+	}
+	return repo, jobs
+}
+
+func enqueueJobBeforeSessionCLIMigration(t *testing.T, db *DB, repoID, commitID int64, sha string) *ReviewJob {
+	t.Helper()
+	jobUUID := uuid.New()
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	result, err := db.ExecContext(t.Context(), `
+		INSERT INTO review_jobs (uuid, source_machine_id, repo_id, commit_id, git_ref, agent)
+		VALUES (?, ?, ?, ?, ?, 'codex')`, jobUUID, machineID, repoID, commitID, sha)
+	require.NoError(t, err, "failed to seed a job before session_cli exists")
+	id, err := result.LastInsertId()
+	require.NoError(t, err)
+	return &ReviewJob{
+		ID: id, RepoID: repoID, CommitID: &commitID, GitRef: sha,
+		Agent: "codex", Status: JobStatusQueued, UUID: &jobUUID, SourceMachineID: &machineID,
+	}
 }

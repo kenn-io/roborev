@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"go.kenn.io/kit/agentmcp"
 	"gopkg.in/yaml.v3"
 
 	"go.kenn.io/roborev/internal/agentconfig"
@@ -45,6 +46,18 @@ func Install(opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if opts.Agent == skills.AgentClaude || opts.Agent == skills.AgentCodex {
+		result, err := agentmcp.PlanInstall(agentmcp.Agent(opts.Agent), agentmcp.InstallOptions{ConfigPath: name, Name: "roborev", Server: Server(opts)})
+		if err != nil {
+			return Result{}, err
+		}
+		if !opts.DryRun && result.Changed {
+			if err := agentconfig.Write(name, result.Data); err != nil {
+				return Result{}, err
+			}
+		}
+		return Result{Path: result.ConfigPath, Data: result.Data, Changed: result.Changed}, nil
+	}
 	original, err := os.ReadFile(name)
 	if err != nil && !os.IsNotExist(err) {
 		return Result{}, err
@@ -60,6 +73,22 @@ func Install(opts Options) (Result, error) {
 		}
 	}
 	return result, nil
+}
+
+// Server translates RoboRev's MCP options to Kit's server descriptor.
+func Server(opts Options) agentmcp.Server {
+	if opts.Transport == "http" {
+		return agentmcp.Server{Transport: agentmcp.TransportHTTP, URL: opts.URL}
+	}
+	binary := opts.Executable
+	if binary == "" {
+		binary = "roborev"
+	}
+	args := []string{"mcp", "serve"}
+	if opts.Server != "" {
+		args = append([]string{"--server", opts.Server}, args...)
+	}
+	return agentmcp.Server{Command: binary, Args: args}
 }
 
 // ConfigPath resolves the destination without reading or parsing configuration.
@@ -149,15 +178,8 @@ func Merge(data []byte, opts Options) ([]byte, error) {
 	}
 	entry := map[string]any{}
 	if opts.Transport == "stdio" {
-		binary := opts.Executable
-		if binary == "" {
-			binary = "roborev"
-		}
-		args := []string{"mcp", "serve"}
-		if opts.Server != "" {
-			args = append([]string{"--server", opts.Server}, args...)
-		}
-		entry["command"], entry["args"] = binary, args
+		server := Server(opts)
+		entry["command"], entry["args"] = server.Command, server.Args
 	} else {
 		urlKey := "url"
 		if opts.Agent == skills.AgentGemini || opts.Agent == skills.AgentQwen {

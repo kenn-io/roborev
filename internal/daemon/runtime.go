@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -656,10 +657,26 @@ func isLoopbackAddr(addr string) bool {
 	return ip.IsLoopback()
 }
 
+// ErrInterruptUnsupported means the running daemon predates interrupting
+// shutdown.
+var ErrInterruptUnsupported = errors.New(
+	"the running daemon does not support --running=interrupt; restart without it",
+)
+
 // KillDaemon requests graceful shutdown and waits until the daemon exits.
 // Returns nil if the daemon is no longer running.
 // Only removes runtime file if the daemon is confirmed dead.
 func KillDaemon(info *RuntimeInfo) error {
+	return stopDaemonProcess(info, false)
+}
+
+// InterruptDaemon is KillDaemon, except that the daemon requeues its running
+// jobs instead of waiting for them.
+func InterruptDaemon(info *RuntimeInfo) error {
+	return stopDaemonProcess(info, true)
+}
+
+func stopDaemonProcess(info *RuntimeInfo, interrupt bool) error {
 	if info == nil {
 		return nil
 	}
@@ -763,7 +780,7 @@ func KillDaemon(info *RuntimeInfo) error {
 			context.Background(), shutdownCleanupTimeout,
 		)
 		defer cancelShutdownCleanup()
-		if err := requestGracefulDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead); err != nil {
+		if err := requestDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead, interrupt); err != nil {
 			return err
 		}
 		waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
@@ -773,18 +790,24 @@ func KillDaemon(info *RuntimeInfo) error {
 	return fmt.Errorf("daemon shutdown was not accepted")
 }
 
-func requestGracefulDaemonShutdown(
+func requestDaemonShutdown(
 	ctx context.Context,
 	ep DaemonEndpoint,
 	confirmedDead func() bool,
+	interrupt bool,
 ) error {
 	client := ep.APIClient(0)
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		if confirmedDead() {
 			return struct{}{}, nil
 		}
-		resp, err := client.ShutdownRaw(ctx)
+		send := client.ShutdownRaw
+		if interrupt {
+			send = client.InterruptShutdownRaw
+		}
+		resp, err := send(ctx)
 		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 				return struct{}{}, nil
@@ -792,7 +815,10 @@ func requestGracefulDaemonShutdown(
 			if resp.StatusCode == http.StatusUnauthorized {
 				return struct{}{}, backoff.Permanent(ErrDaemonAccessDenied)
 			}
-			err = fmt.Errorf("daemon shutdown returned %s", resp.Status)
+			if interrupt && resp.StatusCode == http.StatusNotFound {
+				return struct{}{}, backoff.Permanent(ErrInterruptUnsupported)
+			}
+			err = fmt.Errorf("daemon shutdown returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 			if resp.StatusCode < http.StatusInternalServerError {
 				return struct{}{}, backoff.Permanent(err)
 			}

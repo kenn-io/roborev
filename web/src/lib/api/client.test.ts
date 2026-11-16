@@ -1,8 +1,14 @@
 import { Effect, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { decodeRoborevNdjson, roborevJobOutputStream } from "./client";
+import {
+  decodeRoborevNdjson,
+  executeRoborevRequest,
+  roborevJobOutputStream,
+} from "./client";
+import { retryIdempotentRead } from "./retry-policy";
 import { roborevFetch } from "./generated-fetch";
+import type { Fetch } from "./session";
 import { getListJobsUrl } from "./generated/jobs/jobs";
 import { getGetWebAnalyticsUrl } from "./generated/web-ui/web-ui";
 import { StreamingFetch } from "../browser/streaming-fetch";
@@ -13,6 +19,61 @@ afterEach(() => {
 });
 
 describe("native Roborev client", () => {
+  const readJobs = (fetch: Fetch) =>
+    executeRoborevRequest("jobs", (signal) =>
+      roborevFetch("/api/jobs", {
+        signal,
+        roborevTransport: { baseUrl: "/", fetch },
+      }),
+    ).pipe(retryIdempotentRead, Effect.exit);
+
+  test.each(["body", "loader", "malformed"])(
+    "handles %s read failures",
+    async (kind) => {
+      vi.useFakeTimers();
+      try {
+        const request = vi.fn();
+        let effect;
+        if (kind === "loader") {
+          request.mockRejectedValue(new TypeError("bad access"));
+          effect = executeRoborevRequest("jobs", request).pipe(
+            retryIdempotentRead,
+            Effect.exit,
+          );
+        } else {
+          if (kind === "body") {
+            const broken = new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.error(new TypeError("connection lost"));
+                },
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+            request
+              .mockResolvedValueOnce(broken)
+              .mockResolvedValue(Response.json({ jobs: [] }));
+          } else
+            request.mockResolvedValue(
+              new Response("{", {
+                headers: { "Content-Type": "application/json" },
+              }),
+            );
+          effect = readJobs(request);
+        }
+        const result = Effect.runPromise(effect);
+        await vi.runAllTimersAsync();
+        const exit = await result;
+        if (kind === "body")
+          expect(exit).toMatchObject({ _tag: "Success", value: { jobs: [] } });
+        else expect(exit._tag).toBe("Failure");
+        expect(request).toHaveBeenCalledTimes(kind === "body" ? 2 : 1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   beforeEach(() => {
     sessionStorage.clear();
   });

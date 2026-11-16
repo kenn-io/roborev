@@ -777,7 +777,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) { //nolint:paralleltest // sh
 		assert.Nil(t, success)
 	})
 
-	t.Run("worktree_path round-trips through batch upsert and pull", func(t *testing.T) {
+	t.Run("worktree_path and session round-trip through batch upsert and pull", func(t *testing.T) {
 		wtJobUUID := uuid.New()
 		// Use a distinct machine ID so we can exclude it when pulling
 		wtMachineID := uuid.New()
@@ -793,6 +793,8 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) { //nolint:paralleltest // sh
 				Agent:           "test",
 				Status:          "done",
 				WorktreePath:    "/worktrees/feature-x",
+				SessionID:       "antigravity-session",
+				SessionCLI:      "agy",
 				SourceMachineID: wtMachineID,
 				EnqueuedAt:      time.Now(),
 			},
@@ -837,6 +839,8 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) { //nolint:paralleltest // sh
 		}
 		require.NotNil(t, found, "expected job %s in pull results", wtJobUUID)
 		assert.Equal(t, "/worktrees/feature-x", found.WorktreePath)
+		assert.Equal(t, "antigravity-session", found.SessionID)
+		assert.Equal(t, "agy", found.SessionCLI)
 	})
 
 	t.Run("source round-trips through batch upsert and pull", func(t *testing.T) {

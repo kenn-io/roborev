@@ -52,13 +52,14 @@ type PanelSpec struct {
 
 // ReviewConfig holds the [review] table: panel selection defaults plus the
 // named subagent and panel maps. Present on both Config (global) and
-// RepoConfig (per-repo); MergeReviewConfig combines them.
+// RepoConfig (per-repo). ResolveReviewSettings handles binary evidence.
 type ReviewConfig struct {
-	DefaultPanel string                    `toml:"default_panel"`
-	HookPanel    string                    `toml:"hook_review_panel"`
-	Types        map[string]ReviewTypeSpec `toml:"types"`
-	Subagents    map[string]SubagentSpec   `toml:"subagents"`
-	Panels       map[string]PanelSpec      `toml:"panels"`
+	BinaryEvidence *bool                     `toml:"binary_evidence" comment:"Save committed changed binary files for built-in reviews to read."`
+	DefaultPanel   string                    `toml:"default_panel"`
+	HookPanel      string                    `toml:"hook_review_panel"`
+	Types          map[string]ReviewTypeSpec `toml:"types"`
+	Subagents      map[string]SubagentSpec   `toml:"subagents"`
+	Panels         map[string]PanelSpec      `toml:"panels"`
 }
 
 // MergeReviewConfig returns the effective review config: the subagent and
@@ -413,7 +414,7 @@ func resolveMemberFromConfig(
 	if err := validateSubagentTimeout(spec.Timeout); err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
-	settings, err := ResolveReviewSettings(reviewType, spec.Tools, repoCfg, globalCfg)
+	settings, err := ResolveReviewSettings(reviewType, spec.Tools, false, repoCfg, globalCfg)
 	if err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}

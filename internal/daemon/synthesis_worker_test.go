@@ -918,7 +918,7 @@ func TestSynthesisInvalidJSONRetriesWithoutStoringReview(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestSynthesisCapturesTokenUsage(t *testing.T) {
+func TestSynthesisCapturesReplacementSessionAndTokenUsage(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)
@@ -926,9 +926,31 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	const memberAgent = "panel-synthesis-token-member"
 	registerPassingAgent(t, memberAgent)
 
-	synthAgent := &synthesisEntrypointTestAgent{
-		name:       "panel-synthesis-token",
-		streamLine: `{"type":"thread.started","thread_id":"synth-session-123"}`,
+	const synthAgentName = "panel-synthesis-token"
+	geminiStream, err := os.ReadFile(filepath.Join("..", "agent", "testdata", "gemini-stream.jsonl"))
+	require.NoError(t, err)
+	geminiInit, _, found := strings.Cut(string(geminiStream), "\n")
+	require.True(t, found)
+	synthAgent := &agent.FakeAgent{
+		NameStr: synthAgentName,
+		ReviewFn: func(_ context.Context, _, _, _ string, output io.Writer) (string, error) {
+			firstInit := strings.Replace(geminiInit, "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", "abandoned-session", 1)
+			if _, err := io.WriteString(output, firstInit+"\n"); err != nil {
+				return "", err
+			}
+			resetter, ok := output.(interface{ ResetSessionID() error })
+			if !ok {
+				return "", fmt.Errorf("session output does not support reset")
+			}
+			if err := resetter.ResetSessionID(); err != nil {
+				return "", err
+			}
+			secondInit := strings.Replace(geminiInit, "d91bc4f1-01d9-4c9f-9b07-23ae0ecb39f2", "successful-session", 1)
+			if _, err := io.WriteString(output, secondInit+"\n"); err != nil {
+				return "", err
+			}
+			return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+		},
 	}
 	agent.RegisterForTest(t, synthAgent)
 
@@ -957,7 +979,7 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 		{name: "m0", agent: memberAgent},
 		{name: "m1", agent: memberAgent},
 	})
-	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
+	setSynthesisAgent(t, tc, runUUID, synthAgentName)
 	completeMember(t, tc, members[0].ID, memberAgent, "Review #1\n\n## Review Findings\n\n- Severity: Medium\n- Location: a.go:1\n- Problem: A\n- Fix: Fix A")
 	completeMember(t, tc, members[1].ID, memberAgent, "Review #2\n\n## Review Findings\n\n- Severity: Medium\n- Location: b.go:2\n- Problem: B\n- Fix: Fix B")
 
@@ -977,7 +999,7 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	case fetchedSession = <-fetching:
 	case <-processed:
 	}
-	require.Equal(t, "synth-session-123", fetchedSession, "synthesis must reach the blocked usage lookup")
+	require.Equal(t, "successful-session", fetchedSession, "synthesis must reach the blocked usage lookup with the replacement session")
 
 	next := tc.createAndClaimJobWithAgent(t, claimed.GitRef, "worker-next", "test")
 	// Wall-clock bound: StartJobAttempt reads the claimed row from SQLite.
@@ -991,6 +1013,7 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	<-processed
 
 	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	assert.Equal("successful-session", updated.SessionID)
 	assert.Contains(updated.TokenUsage, `"cost_usd":0.03`)
 	assert.Contains(updated.TokenUsage, `"has_cost":true`)
 	assert.Contains(usageAtCompletion, `"cost_usd":0.03`)

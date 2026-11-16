@@ -16,7 +16,7 @@ func currentReviewSettings(job storage.ReviewJob, repoCfg *config.RepoConfig, cf
 	if !job.IsReviewJob() || job.IsGoalReviewJob() || job.Source == storage.JobSourceRebuttal {
 		return config.ReviewSettings{}, nil
 	}
-	return config.ResolveReviewSettings(job.ReviewType, nil, repoCfg, cfg)
+	return config.ResolveReviewSettings(job.ReviewType, nil, job.IsDirtyJob(), repoCfg, cfg)
 }
 
 // currentReviewTools resolves the tool policy a review job's type has now.
@@ -25,9 +25,9 @@ func currentReviewTools(job storage.ReviewJob, repoCfg *config.RepoConfig, cfg *
 	return settings.Tools, err
 }
 
-// reviewJobSettings returns the settings frozen in a job's member config, so
-// queued jobs and reruns keep the settings they were enqueued with. Jobs
-// without frozen settings use their review type's current settings.
+// reviewJobSettings uses frozen settings for panel members, experiment arms,
+// and supplied settings, including on reruns. Other reviews load current type
+// settings, except goal, rebuttal, dirty built-in, and legacy prebuilt CI jobs.
 func reviewJobSettings(job *storage.ReviewJob, configRepoPath string, cfg *config.Config) (config.ReviewSettings, error) {
 	var settings config.ReviewSettings
 	if !job.IsReviewJob() {
@@ -47,11 +47,16 @@ func reviewJobSettings(job *storage.ReviewJob, configRepoPath string, cfg *confi
 		} else if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &settings); err != nil {
 			return settings, fmt.Errorf("decode frozen review settings: %w", err)
 		}
+		if job.IsDirtyJob() && config.IsBuiltInReviewType(job.ReviewType) {
+			settings.BinaryEvidence = false
+		}
 		var err error
 		settings.Tools, err = config.CanonicalReviewToolPolicy(settings.Tools)
 		return settings, err
 	}
-	if job.IsGoalReviewJob() || config.IsBuiltInReviewType(job.ReviewType) {
+	if job.IsGoalReviewJob() || job.Source == storage.JobSourceRebuttal ||
+		(config.IsBuiltInReviewType(job.ReviewType) &&
+			(job.IsDirtyJob() || (job.IsCIReview() && job.PromptPrebuilt && job.Prompt != ""))) {
 		return settings, nil
 	}
 	var repoCfg *config.RepoConfig

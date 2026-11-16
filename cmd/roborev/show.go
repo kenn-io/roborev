@@ -123,13 +123,15 @@ func showCmd() *cobra.Command {
 The argument can be either a job ID (numeric) or a commit SHA.
 Job IDs are displayed in review notifications and the TUI.
 
-In a git repo, the argument is first tried as a git ref. If that fails
-and it's numeric, it's treated as a job ID. Use --job to force job ID.
+In a git repo, the argument is first tried as a git ref. A positive numeric
+argument is tried as a job ID if the ref cannot be resolved or has no review.
+When the ref has no review, a note on stderr reports the retry.
+Use --job to force job ID.
 
 Examples:
   roborev show              # Show review for HEAD
   roborev show abc123       # Show review for commit
-  roborev show 42           # Job ID (if "42" is not a valid git ref)
+  roborev show 42           # Git ref first, then job ID if no review
   roborev show --job 42     # Force as job ID even if "42" is a valid ref
   roborev show --prompt 42  # Show the prompt sent to the agent`,
 		Args: cobra.MaximumNArgs(1),
@@ -178,6 +180,8 @@ Examples:
 			// review row yet) can fall back to the job's stored prompt for
 			// jobs without reviews. -1 means "not applicable" (SHA lookups).
 			jobIDForPromptFallback := int64(-1)
+			var numericRefJobID int64
+			var numericRefArg string
 
 			if len(args) == 0 {
 				if forceJobID {
@@ -229,12 +233,30 @@ Examples:
 					}
 					query.Set("sha", sha)
 					displayRef = gitrepo.ShortSHA(sha)
+					if id, err := strconv.ParseInt(arg, 10, 64); resolvedSHA != "" && err == nil && id > 0 {
+						numericRefJobID = id
+						numericRefArg = arg
+					}
 				}
 			}
 
 			resp, err := newDaemonAPI(addr, client).GetReviewRaw(ctx, nil, roborevclient.WithQuery(query))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
+			}
+			if resp.StatusCode == http.StatusNotFound && numericRefJobID > 0 {
+				resp.Body.Close()
+				// Say which lookup missed, so a reader of the job review (or of
+				// the job error below) knows the commit was tried first.
+				fmt.Fprintf(cmd.ErrOrStderr(), "note: no review found for commit %s; trying job %s\n", displayRef, numericRefArg)
+				query.Del("sha")
+				query.Set("job_id", numericRefArg)
+				displayRef = "job " + numericRefArg
+				jobIDForPromptFallback = numericRefJobID
+				resp, err = newDaemonAPI(addr, client).GetReviewRaw(ctx, nil, roborevclient.WithQuery(query))
+				if err != nil {
+					return fmt.Errorf("failed to connect to daemon while looking up %s", displayRef)
+				}
 			}
 			defer resp.Body.Close()
 

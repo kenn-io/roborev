@@ -95,6 +95,7 @@ func setupTestServer(t *testing.T) *Server {
 	db := testutil.OpenTestDB(t)
 
 	cfg := config.DefaultConfig()
+	cfg.Cost.Endpoint = "https://usage.example.test/{session_id}"
 	server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { server.Close() })
 	return server
@@ -218,6 +219,7 @@ func TestHealthAllowsRunningJobsWithinTheirTimeout(t *testing.T) {
 			// Reloading config must not shorten the running attempt's deadline.
 			server.configWatcher.cfgMu.Lock()
 			server.configWatcher.cfg = config.DefaultConfig()
+			server.configWatcher.cfg.Cost.Endpoint = "https://usage.example.test/{session_id}"
 			server.configWatcher.cfgMu.Unlock()
 
 			response := executeHealthCheck(t.Context(), server, http.MethodGet)
@@ -423,7 +425,9 @@ func TestHealthReportsUnavailableReviewAgent(t *testing.T) {
 	// The default config reviews with codex; the daemon PATH lacks it.
 	t.Setenv("PATH", t.TempDir())
 	db := testutil.OpenTestDB(t)
-	server := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	cfg := config.DefaultConfig()
+	cfg.Cost.Endpoint = "https://usage.example.test/{session_id}"
+	server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { server.Close() })
 	agents := func(health storage.HealthStatus) storage.ComponentHealth {
 		for _, c := range health.Components {

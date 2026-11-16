@@ -49,12 +49,12 @@ func TestCapabilityProbesRefreshAfterUpgrade(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "probes")
 			script := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\necho probe >> %q\necho '%%s'\n", marker)
 			command := writeTempCommand(t, fmt.Sprintf(script, ""))
-			for _, want := range []bool{false, true, false} {
+			for i, want := range []bool{false, true, false} {
 				if want {
 					flags := "--dangerously-skip-permissions --effort --tools --bare --ignore-user-config --dangerously-bypass-approvals-and-sandbox --sandbox --thread-source --allow-all-tools --stream --output-format --disable-builtin-mcps --available-tools"
 					require.NoError(t, os.WriteFile(command, []byte(fmt.Sprintf(script, flags)), 0o755))
 				} else {
-					require.NoError(t, os.WriteFile(command, []byte(fmt.Sprintf(script, "")), 0o755))
+					require.NoError(t, os.WriteFile(command, []byte(fmt.Sprintf(script, "")+strings.Repeat("#", i)), 0o755))
 				}
 				supported, err := probe(ctx, command)
 				require.NoError(t, err)
