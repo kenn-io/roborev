@@ -367,6 +367,12 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	results := review.RunBatch(ctx, batchCfg)
+	if reason, skipped := allResultsSkipped(results); skipped {
+		// Not a failure: nothing reached a reviewer, so there is no verdict
+		// to reach and nothing to post.
+		fmt.Println("roborev: skipped: " + reason)
+		return nil
+	}
 
 	// Determine HEAD SHA for comment formatting
 	headSHA := extractHeadSHA(gitRef)
@@ -418,6 +424,20 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	return nil
+}
+
+// allResultsSkipped reports whether every review was skipped, and the first
+// skip reason.
+func allResultsSkipped(results []review.ReviewResult) (string, bool) {
+	if len(results) == 0 {
+		return "", false
+	}
+	for _, r := range results {
+		if !r.Skipped {
+			return "", false
+		}
+	}
+	return results[0].SkipReason, true
 }
 
 func postCIReviewComment(

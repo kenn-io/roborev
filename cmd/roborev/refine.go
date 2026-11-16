@@ -706,6 +706,12 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 
 				if review == nil {
 					review, err = client.WaitForReview(ctx, jobID)
+					if skipped, ok := errors.AsType[*daemon.ReviewSkippedError](err); ok {
+						// Nothing on the branch reaches a reviewer, so
+						// there is nothing to fix.
+						fmt.Printf("\nSkipped: %s\n", skipped.Reason)
+						return nil
+					}
 					if err != nil {
 						return fmt.Errorf("branch review failed: %w", err)
 					}

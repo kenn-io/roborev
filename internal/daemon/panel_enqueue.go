@@ -270,9 +270,20 @@ func (s *Server) descriptorForRange(
 	startSHA, err := in.metadata.Resolve(parts[0])
 	if err != nil {
 		if before, ok := strings.CutSuffix(parts[0], "^"); ok {
-			if _, resolveErr := in.metadata.Resolve(before + "^{commit}"); resolveErr == nil {
-				startSHA = git.EmptyTreeSHA
-				err = nil
+			if first, resolveErr := in.metadata.Resolve(before + "^{commit}"); resolveErr == nil {
+				// Only a root commit diffs against the empty tree. The oldest
+				// commit of a shallow clone has a parent that was not fetched,
+				// and the empty tree would put the whole tree under review.
+				isRoot, rootErr := git.IsRootCommitCtx(ctx, in.checkoutRoot, first)
+				switch {
+				case rootErr != nil:
+					err = rootErr
+				case isRoot:
+					startSHA = git.EmptyTreeSHA
+					err = nil
+				default:
+					err = fmt.Errorf("the parent of %s is not in this clone; fetch more history (for example git fetch --deepen) and retry", git.ShortRef(first))
+				}
 			}
 		}
 		if err != nil {

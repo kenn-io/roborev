@@ -1168,6 +1168,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Resolve alias so "claude" checks cooldown for "claude-code".
 	canonicalAgent := agent.CanonicalName(job.Agent)
 	if wp.isAgentCoolingDown(canonicalAgent) {
+		// A review with nothing to review needs no agent, so it is skipped
+		// rather than failed for the agent's cooldown.
+		if wp.skipUnreviewableWithoutAgent(ctx, workerID, job, cfg) {
+			return
+		}
 		log.Printf("[%s] Agent %s in cooldown, skipping job %d",
 			workerID, canonicalAgent, job.ID)
 		wp.failCooldownOrFailoverContext(ctx, workerID, job, canonicalAgent,
@@ -1333,11 +1338,18 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			excludes := config.ResolveExcludePatterns(
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
+			census := reviewPathCensusForJob(ctx, checkout.promptRepoPath, job, excludes)
+			// The CI poller skips a PR with nothing to review before it
+			// enqueues, and publishes that skip on the PR.
+			if job.Source != storage.JobSourceCI &&
+				wp.skipUnreviewableCensus(ctx, workerID, job, census, settings.BinaryEvidence) {
+				return
+			}
 			reviewPrompt, err = pb.Build(
 				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
 			if err == nil {
-				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
+				fileCoverage = coverageFromCensus(census)
 			}
 		}
 	}

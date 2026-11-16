@@ -2334,6 +2334,38 @@ func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
 	}
 }
 
+// TestHandleEnqueueRangeShallowBoundaryRejects covers "roborev review <start>
+// <end>" in a shallow clone whose oldest commit is <start>. Its parent was not
+// fetched, so <start>^ does not resolve, but <start> is not a root commit:
+// diffing from the empty tree would review the whole tree instead of the range.
+func TestHandleEnqueueRangeShallowBoundaryRejects(t *testing.T) {
+	source := testutil.NewTestRepoWithCommit(t)
+	source.CommitFile("one.go", "package p\n", "one")
+	source.CommitFile("two.go", "package p\n", "two")
+	clone := filepath.Join(t.TempDir(), "shallow")
+	source.Run("clone", "--quiet", "--depth", "2", "--no-local", "file://"+source.Root, clone)
+	cloneGit := func(args ...string) string {
+		out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", clone}, args...)...).Output()
+		require.NoError(t, err)
+		return strings.TrimSpace(string(out))
+	}
+	boundary := cloneGit("rev-list", "--max-parents=0", "HEAD")
+	endSHA := cloneGit("rev-parse", "HEAD")
+	require.NotEqual(t, boundary, endSHA)
+
+	server, _, _ := newTestServer(t)
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath: clone,
+		GitRef:   boundary + "^.." + endSHA,
+		Agent:    "test",
+	})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "is not in this clone")
+}
+
 func TestHandleListJobsIDParsing(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	for _, id := range []string{"abc", "10abc", "1.5"} {
