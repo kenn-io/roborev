@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -2662,37 +2663,41 @@ func TestEnqueuePostCommitJobAllowsCanceledReplacement(t *testing.T) {
 
 func TestEnqueuePostCommitJobAbandonedByCallerInsertsNothing(t *testing.T) {
 	t.Parallel()
-	db := openTestDB(t)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	repo := createRepo(t, db, "/tmp/post-commit-abandoned")
-	commit := createCommit(t, db, repo.ID, "abc123")
-	// The daemon creates its machine ID at startup; create it before the lock.
-	_, err := db.GetMachineID()
-	require.NoError(t, err)
-	lockConn, err := db.Conn(t.Context())
-	require.NoError(t, err)
-	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
-	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+		repo := createRepo(t, db, "/tmp/post-commit-abandoned")
+		commit := createCommit(t, db, repo.ID, "abc123")
+		// The daemon creates its machine ID at startup; create it before the lock.
+		_, err := db.GetMachineID()
+		require.NoError(t, err)
+		holder, err := db.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { _ = holder.Rollback() }()
 
-	// The hook has stopped waiting while another writer holds the lock.
-	// The enqueue must give up rather than wait for the lock and insert a
-	// review the hook will request again on its next run.
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	job, _, err := db.EnqueuePostCommitJob(ctx, EnqueueOpts{
-		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+		// The enqueue waits behind another writer, then the hook stops
+		// waiting. It must give up rather than insert a review the hook
+		// will request again on its next run.
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, _, err := db.EnqueuePostCommitJob(ctx, EnqueueOpts{
+				RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+			})
+			done <- err
+		}()
+		synctest.Wait()
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+
+		require.NoError(t, holder.Rollback())
+		var count int
+		require.NoError(t, db.QueryRowContext(t.Context(),
+			`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repo.ID,
+		).Scan(&count))
+		assert.Zero(t, count)
 	})
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Nil(t, job)
-
-	_, err = lockConn.ExecContext(t.Context(), "ROLLBACK")
-	require.NoError(t, err)
-	require.NoError(t, lockConn.Close())
-	var count int
-	require.NoError(t, db.QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repo.ID,
-	).Scan(&count))
-	assert.Zero(t, count)
 }
 
 // Listings treat a non-NULL verdict_bool as proof that a non-empty review
