@@ -551,18 +551,21 @@ func TestClaudeReviewPassesArgs(t *testing.T) {
 // setting sources the launched process was told to load.
 func TestClaudeUntrustedCheckoutSkipsProjectConfig(t *testing.T) {
 	withUnsafeAgents(t, false)
-	ciCtx, cleanup, err := WithCIReview(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-
 	contexts := []struct {
 		name      string
-		ctx       context.Context
+		mark      func(t *testing.T, ctx context.Context) context.Context
 		untrusted bool
 	}{
-		{name: "local", ctx: t.Context()},
-		{name: "untrusted", ctx: WithUntrustedCheckout(t.Context()), untrusted: true},
-		{name: "ci", ctx: ciCtx, untrusted: true},
+		{name: "local", mark: func(_ *testing.T, ctx context.Context) context.Context { return ctx }},
+		{name: "untrusted", mark: func(_ *testing.T, ctx context.Context) context.Context {
+			return WithUntrustedCheckout(ctx)
+		}, untrusted: true},
+		{name: "ci", mark: func(t *testing.T, ctx context.Context) context.Context {
+			ciCtx, cleanup, err := WithCIReview(ctx)
+			require.NoError(t, err)
+			t.Cleanup(cleanup)
+			return ciCtx
+		}, untrusted: true},
 	}
 	calls := []struct {
 		name string
@@ -596,7 +599,7 @@ func TestClaudeUntrustedCheckoutSkipsProjectConfig(t *testing.T) {
 					StdoutLines: []string{`{"type":"result","result":"{\"design_review\":false,\"reason\":\"ok\"}"}`},
 				})
 
-				require.NoError(t, call.run(c.ctx, NewClaudeAgent(mock.CmdPath), repo))
+				require.NoError(t, call.run(c.mark(t, t.Context()), NewClaudeAgent(mock.CmdPath), repo))
 
 				args := readMockArgs(t, mock.ArgsFile)
 				if c.untrusted {
