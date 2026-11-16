@@ -97,6 +97,9 @@ var defaultLimitRules = []limitRule{
 	{Agents: []string{"claude-code"}, Substring: "you've hit your session limit", Kind: LimitKindSession},
 	// Claude Code weekly limits outlast same-agent retries.
 	{Agents: []string{"claude-code"}, Substring: "you've hit your weekly limit", Kind: LimitKindQuota},
+	// Factory Droid subscription allowance used up (HTTP 403), captured from a
+	// real droid failure. It lasts until the next billing period.
+	{Agents: []string{"droid"}, Substring: "allowance for this period is used up", Kind: LimitKindQuota},
 	{Agents: []string{"codex"}, Substring: "stream disconnected before completion: access denied", Kind: LimitKindPermanent},
 	// Codex sent no credentials (401). Retrying cannot fix a missing login.
 	{Agents: []string{"codex"}, Substring: "missing bearer or basic authentication", Kind: LimitKindPermanent},
