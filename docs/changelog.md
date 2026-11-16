@@ -7,6 +7,11 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- Droid reviews use the configured model, such as `model`, `review_model`,
+    `backup_model`, or `--model`, by passing it to `droid exec -m`. Set
+    `droid_cmd` to run a different Droid executable. When Droid's error output
+    says the subscription allowance for the period is used up, the job goes to
+    the backup agent without retries and Droid cools down.
 - Connect agent hooks and skills with `roborev agent setup`, optionally register
     MCP, and see hook trust and readiness in setup, quickstart, and doctor.
 - Sync runs while historical maintenance proceeds, and reconnecting machines
