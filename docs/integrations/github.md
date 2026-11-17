@@ -514,9 +514,9 @@ Expect this behavior:
     that landed in between.
 - **Opted-out commits are skipped.** A commit whose own `.roborev.toml` sets
     `review_default_branch = false` is never reviewed, even when a later commit
-    turns reviews back on before the next poll. When the branch has no committed
-    `.roborev.toml`, the poller's checkout of the repo decides, as it does for
-    pull request reviews.
+    turns reviews back on before the next poll or other settings in that file
+    are invalid. When the branch has no committed `.roborev.toml`, the poller's
+    checkout of the repo decides, as it does for pull request reviews.
 - **Each commit is reviewed once.** The poller records each reviewed commit in
     its local database. A restart or a repeated poll does not queue it again.
     Rerunning a default-branch review updates its commit status when the new
@@ -549,7 +549,10 @@ Expect this behavior:
     `git fetch` for each configured repo on each interval, even when no pull
     request changed. It also asks the repo's remote which branch is the default,
     with `git ls-remote --symref origin HEAD`, and fetches that branch when the
-    checkout's fetch settings leave it out, as in a single-branch clone.
+    checkout's fetch settings leave it out, as in a single-branch clone. When
+    the full fetch fails but the default branch can still be fetched, for
+    example because the clone only fetches a deleted branch, default-branch
+    reviews continue.
 - **No PR comment is posted.** The review is stored like any other review. Run
     `roborev list` or `roborev show <job-id>` to read it, or use a
     [review hook](/docs/guides/hooks/) to send results elsewhere.
