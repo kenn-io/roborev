@@ -168,6 +168,20 @@ func TestNewMockDaemon_ServerWiring(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestNewMockDaemonReplacesEndpointFromEarlierServerFlag(t *testing.T) {
+	origServerAddr, origParsedServerEndpoint := serverAddr, parsedServerEndpoint
+	t.Cleanup(func() { serverAddr, parsedServerEndpoint = origServerAddr, origParsedServerEndpoint })
+	// An earlier command run with --server leaves its parsed endpoint behind.
+	root := newRootCmd()
+	root.SetArgs([]string{"--server", "http://127.0.0.1:1", "version"})
+	require.NoError(t, root.Execute())
+	require.NotNil(t, parsedServerEndpoint)
+
+	md := NewMockDaemon(t, MockRefineHooks{})
+
+	assert.Equal(t, md.Server.URL, getDaemonEndpoint().BaseURL())
+}
+
 func TestNewMockDaemon_HookRouting(t *testing.T) {
 	tests := []struct {
 		name       string
