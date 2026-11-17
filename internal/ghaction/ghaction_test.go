@@ -340,21 +340,35 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 	}
 	lookup, _, found := strings.Cut(install, "ARCHIVE=")
 	require.True(t, found)
+	previousLookup := `set -euo pipefail
+ROBOREV_VERSION=$(curl -sfL https://api.github.com/repos/roborev-dev/roborev/releases/latest | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
+`
 	for _, tt := range []struct {
-		name, url, want string
-		invalid         bool
+		name, lookup, url, want, request string
+		invalid                          bool
 	}{
-		{"tag", "https://github.com/kenn-io/roborev/releases/tag/v0.52.0", "0.52.0", false},
-		{"release page", "https://github.com/kenn-io/roborev/releases", "could not resolve latest release tag", true},
-		{"empty tag", "https://github.com/kenn-io/roborev/releases/tag/v", "could not resolve latest release tag", true},
-		{"unprefixed tag", "https://github.com/kenn-io/roborev/releases/tag/0.52.0", "could not resolve latest release tag", true},
+		{"previous", previousLookup, "https://github.com/kenn-io/roborev/releases/tag/v0.52.0", "0.52.0", "https://api.github.com/repos/roborev-dev/roborev/releases/latest", false},
+		{"tag", lookup, "https://github.com/kenn-io/roborev/releases/tag/v0.52.0", "0.52.0", "https://github.com/roborev-dev/roborev/releases/latest", false},
+		{"release page", lookup, "https://github.com/kenn-io/roborev/releases", "could not resolve latest release tag", "https://github.com/roborev-dev/roborev/releases/latest", true},
+		{"empty tag", lookup, "https://github.com/kenn-io/roborev/releases/tag/v", "could not resolve latest release tag", "https://github.com/roborev-dev/roborev/releases/latest", true},
+		{"unprefixed tag", lookup, "https://github.com/kenn-io/roborev/releases/tag/0.52.0", "could not resolve latest release tag", "https://github.com/roborev-dev/roborev/releases/latest", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			args := filepath.Join(dir, "args")
-			fake := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CURL_ARGS\"\nprintf '%s' \"$CURL_URL\"\n"
+			fake := `#!/bin/sh
+found=0
+for arg in "$@"; do
+  case "$arg" in
+    https://api.github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s\n' '{"tag_name":"v0.52.0"}'; found=1 ;;
+    https://github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s' "$CURL_URL"; found=1 ;;
+    http://*|https://*) exit 1 ;;
+  esac
+done
+[ "$found" = 1 ]
+`
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(fake), 0o755))
-			cmd := exec.Command(bash, "-euo", "pipefail", "-c", lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
+			cmd := exec.Command(bash, "-euo", "pipefail", "-c", tt.lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
 			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CURL_ARGS="+args, "CURL_URL="+tt.url)
 			got, err := cmd.CombinedOutput()
 			if tt.invalid {
@@ -366,9 +380,7 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 			}
 			called, err := os.ReadFile(args)
 			require.NoError(t, err)
-			calls := strings.Split(strings.TrimSpace(string(called)), "\n")
-			require.Len(t, calls, 1)
-			assert.Contains(t, strings.Fields(calls[0]), "https://github.com/roborev-dev/roborev/releases/latest")
+			assert.Equal(t, tt.request+"\n", string(called))
 		})
 	}
 }
