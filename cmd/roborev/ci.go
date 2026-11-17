@@ -1382,7 +1382,8 @@ func postCIComment(
 		return err
 	}
 	if upsert {
-		return client.UpsertPRComment(ctx, ghRepo, prNumber, body)
+		_, err := client.UpsertPRComment(ctx, ghRepo, prNumber, body, 0)
+		return err
 	}
 	return client.CreatePRComment(ctx, ghRepo, prNumber, body)
 }

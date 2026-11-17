@@ -2,6 +2,7 @@ package github
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,12 +27,14 @@ type commentAPIServer struct {
 	inlineCommentsByPR map[int][]*googlegithub.PullRequestComment
 	collaborators      []*googlegithub.User
 
+	listCount       int
 	listIssueStatus int
 	createStatus    int
 	patchStatus     int
 
 	createdBodies []string
 	patchedBodies []string
+	patchedPaths  []string
 }
 
 func newCommentAPIServer(t *testing.T) *commentAPIServer {
@@ -73,6 +76,7 @@ func (s *commentAPIServer) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *commentAPIServer) writeIssueComments(w http.ResponseWriter, prNumber int) {
+	s.listCount++
 	if s.listIssueStatus != 0 {
 		w.WriteHeader(s.listIssueStatus)
 		_, _ = w.Write([]byte(`{"message":"list failed"}`))
@@ -114,7 +118,12 @@ func (s *commentAPIServer) capturePatch(w http.ResponseWriter, r *http.Request) 
 	}
 	assert.NoError(s.t, json.NewDecoder(r.Body).Decode(&payload))
 	s.patchedBodies = append(s.patchedBodies, payload.Body)
-	w.WriteHeader(s.patchStatus)
+	s.patchedPaths = append(s.patchedPaths, r.URL.Path)
+	status := s.patchStatus
+	if strings.HasSuffix(r.URL.Path, "/20") {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
 	assert.NoError(s.t, json.NewEncoder(w).Encode(&googlegithub.IssueComment{
 		ID:   ptr(int64(42)),
 		Body: ptr(payload.Body),
@@ -228,7 +237,10 @@ func TestUpsertPRComment_Create(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.UpsertPRComment(t.Context(), "owner/repo", 1, "review body"))
+	id, err := client.UpsertPRComment(t.Context(), "owner/repo", 1, "review body", 0)
+	require.NoError(t, err)
+	assert.Equal(t, int64(999), id)
+	assert.Equal(t, 1, api.listCount)
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.patchedBodies)
 	assert.True(t, strings.HasPrefix(api.createdBodies[0], CommentMarker+"\n"))
@@ -243,7 +255,10 @@ func TestUpsertPRComment_Update(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.UpsertPRComment(t.Context(), "owner/repo", 1, "updated body"))
+	id, err := client.UpsertPRComment(t.Context(), "owner/repo", 1, "updated body", 0)
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), id)
+	assert.Equal(t, 1, api.listCount)
 	require.Len(t, api.patchedBodies, 1)
 	assert.Empty(t, api.createdBodies)
 	assert.True(t, strings.HasPrefix(api.patchedBodies[0], CommentMarker+"\n"))
@@ -275,8 +290,9 @@ func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
 				defer srv.Close()
 
 				client := newTestGitHubClient(t, "", srv)
-				require.NoError(t, client.UpsertPRComment(
-					t.Context(), "owner/repo", 1, "updated body"))
+				_, err := client.UpsertPRComment(
+					t.Context(), "owner/repo", 1, "updated body", 0)
+				require.NoError(t, err)
 				require.Len(t, api.patchedBodies, 1)
 				require.Len(t, api.createdBodies, 1)
 				assert.Equal(1, strings.Count(api.createdBodies[0], CommentMarker))
@@ -295,8 +311,9 @@ func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
 				defer srv.Close()
 
 				client := newTestGitHubClient(t, "", srv)
-				require.NoError(t, client.UpsertPRComment(t.Context(),
-					"owner/repo", 1, strings.Repeat("x", review.MaxCommentLen+500)))
+				_, err := client.UpsertPRComment(t.Context(),
+					"owner/repo", 1, strings.Repeat("x", review.MaxCommentLen+500), 0)
+				require.NoError(t, err)
 				require.Len(t, api.createdBodies, 1)
 
 				body := api.createdBodies[0]
@@ -318,7 +335,7 @@ func TestUpsertPRComment_PatchErrorReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	err := client.UpsertPRComment(t.Context(), "owner/repo", 1, "updated body")
+	_, err := client.UpsertPRComment(t.Context(), "owner/repo", 1, "updated body", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "patch comment")
 }
@@ -445,8 +462,8 @@ func TestUpdateExistingPRComment(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(api.handler))
 			defer server.Close()
 			client := newTestGitHubClient(t, "token", server)
-			updated, err := client.UpdateExistingPRComment(t.Context(), "owner/repo", 1, "No findings.")
-			assert.Equal(t, tc.updated, updated)
+			updated, err := client.UpdateExistingPRComment(t.Context(), "owner/repo", 1, "No findings.", 0)
+			assert.Equal(t, tc.updated, updated > 0)
 			if tc.wantErr {
 				require.Error(t, err)
 			} else {
@@ -458,5 +475,81 @@ func TestUpdateExistingPRComment(t *testing.T) {
 				assert.Equal(t, CommentMarker+"\nNo findings.", api.patchedBodies[0])
 			}
 		})
+	}
+}
+
+func TestCommentKnownID(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		updateOnly bool
+		status     int
+		wantID     int64
+	}{
+		{"upsert", false, http.StatusOK, 42},
+		{"upsert deleted", false, http.StatusNotFound, 999},
+		{"update", true, http.StatusOK, 42},
+		{"update deleted", true, http.StatusNotFound, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newCommentAPIServer(t)
+			api.patchStatus = tc.status
+			server := httptest.NewServer(http.HandlerFunc(api.handler))
+			defer server.Close()
+			client := newTestGitHubClient(t, "", server)
+			var id int64
+			var err error
+			if tc.updateOnly {
+				id, err = client.UpdateExistingPRComment(t.Context(), "owner/repo", 1, "body", 42)
+			} else {
+				id, err = client.UpsertPRComment(t.Context(), "owner/repo", 1, "body", 42)
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantID, id)
+			if tc.status == http.StatusNotFound {
+				assert.Equal(t, 1, api.listCount)
+			} else {
+				assert.Zero(t, api.listCount)
+			}
+			require.Len(t, api.patchedBodies, 1)
+		})
+	}
+}
+
+func TestCommentKnownIDMissRescans(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
+		for _, updateOnly := range []bool{false, true} {
+			for _, remaining := range []bool{false, true} {
+				t.Run(fmt.Sprintf("status=%d/clean=%t/remaining=%t", status, updateOnly, remaining), func(t *testing.T) {
+					api := newCommentAPIServer(t)
+					api.patchStatus = status
+					if remaining {
+						api.issueCommentsByPR[1] = []*googlegithub.IssueComment{issueComment(20, CommentMarker, "alice", "User", "")}
+					}
+					server := httptest.NewServer(http.HandlerFunc(api.handler))
+					defer server.Close()
+					client := newTestGitHubClient(t, "", server)
+					var id int64
+					var err error
+					if updateOnly {
+						id, err = client.UpdateExistingPRComment(t.Context(), "owner/repo", 1, "body", 42)
+					} else {
+						id, err = client.UpsertPRComment(t.Context(), "owner/repo", 1, "body", 42)
+					}
+					require.NoError(t, err)
+					assert.Equal(t, 1, api.listCount)
+					if remaining {
+						assert.Equal(t, int64(20), id)
+						assert.Equal(t, []string{"/api/v3/repos/owner/repo/issues/comments/42", "/api/v3/repos/owner/repo/issues/comments/20"}, api.patchedPaths)
+						assert.Empty(t, api.createdBodies)
+					} else if updateOnly {
+						assert.Zero(t, id)
+						assert.Empty(t, api.createdBodies)
+					} else {
+						assert.Equal(t, int64(999), id)
+						assert.Len(t, api.createdBodies, 1)
+					}
+				})
+			}
+		}
 	}
 }

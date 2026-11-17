@@ -163,12 +163,18 @@ type CIPoller struct {
 	stopping           bool
 	pollStopping       bool
 	eventsStopping     bool
+	prCommentIDs       map[ciPRKey]int64                // guarded by mu
 	skipPublished      map[ciSkipKey]string             // guarded by mu
 	pollErrors         map[ciPollTarget]ciPollFailure   // guarded by mu
 	monitoredRepos     []string                         // last successful discovery; guarded by mu
 	dispatchingRetries map[ciPollTarget]int             // live retry enqueue owners; guarded by mu
 	codeowners         map[ciCodeownersKey]ciCodeowners // CODEOWNERS reads per repo and base branch for the current poll; guarded by mu
 	initialPollPending bool                             // guarded by mu; startup has not established health yet
+}
+
+type ciPRKey struct {
+	repo     string
+	prNumber int
 }
 
 type ciSkipKey struct {
@@ -220,6 +226,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		nowFn:              time.Now,
 		pollErrors:         make(map[ciPollTarget]ciPollFailure),
 		skipPublished:      make(map[ciSkipKey]string),
+		prCommentIDs:       make(map[ciPRKey]int64),
 		dispatchingRetries: make(map[ciPollTarget]int),
 		codeowners:         make(map[ciCodeownersKey]ciCodeowners),
 	}
@@ -4625,9 +4632,22 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 	if err != nil {
 		return err
 	}
+	key := ciPRKey{ghRepo, prNumber}
 	if p.resolveUpsertComments(ctx, ghRepo) {
-		return client.UpsertPRComment(ctx, ghRepo, prNumber, body)
+		p.mu.Lock()
+		knownID := p.prCommentIDs[key]
+		p.mu.Unlock()
+		id, err := client.UpsertPRComment(ctx, ghRepo, prNumber, body, knownID)
+		if err == nil {
+			p.mu.Lock()
+			p.prCommentIDs[key] = id
+			p.mu.Unlock()
+		}
+		return err
 	}
+	p.mu.Lock()
+	delete(p.prCommentIDs, key)
+	p.mu.Unlock()
 	return client.CreatePRComment(ctx, ghRepo, prNumber, body)
 }
 
@@ -4639,7 +4659,21 @@ func (p *CIPoller) updateExistingPRComment(ghRepo string, prNumber int, body str
 	if err != nil {
 		return false, err
 	}
-	return client.UpdateExistingPRComment(ctx, ghRepo, prNumber, body)
+	key := ciPRKey{ghRepo, prNumber}
+	p.mu.Lock()
+	knownID := p.prCommentIDs[key]
+	p.mu.Unlock()
+	id, err := client.UpdateExistingPRComment(ctx, ghRepo, prNumber, body, knownID)
+	if err == nil {
+		p.mu.Lock()
+		if id == 0 {
+			delete(p.prCommentIDs, key)
+		} else {
+			p.prCommentIDs[key] = id
+		}
+		p.mu.Unlock()
+	}
+	return id > 0, err
 }
 
 // resolveCommentPolicy loads publication overrides from the default branch,

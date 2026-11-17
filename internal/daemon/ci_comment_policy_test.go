@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -268,4 +269,146 @@ func TestCIPanelCommentMinConfidence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, body, "Published finding.")
 	assert.NotContains(t, body, "Filtered finding.")
+}
+
+func TestCICommentRemembersID(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	t.Setenv("GH_TOKEN", "test-token")
+	h.Cfg.CI.UpsertComments = true
+	var requests []string
+	deleted := false
+	missing := false
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+strings.TrimPrefix(r.URL.Path, "/api/v3"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			if missing {
+				_, _ = fmt.Fprint(w, `[]`)
+			} else {
+				_, _ = fmt.Fprint(w, `[{"id":42,"body":"<!-- roborev-pr-comment --> old"}]`)
+			}
+		case http.MethodPatch:
+			if deleted {
+				deleted = false
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = fmt.Fprint(w, `{}`)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{}`)
+		case http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"id":999}`)
+		}
+	}))
+	defer api.Close()
+	h.Poller.githubAPIURL = api.URL
+	h.Poller.postPRCommentFn = nil
+	require.NoError(t, h.Poller.postPRComment("acme/api", 7, "first"))
+	require.NoError(t, h.Poller.postPRComment("acme/api", 7, "second"))
+	updated, err := h.Poller.updateExistingPRComment("acme/api", 7, "clean")
+	require.NoError(t, err)
+	require.True(t, updated)
+	deleted = true
+	missing = true
+	require.NoError(t, h.Poller.postPRComment("acme/api", 7, "replacement"))
+	require.NoError(t, h.Poller.postPRComment("acme/api", 7, "next"))
+	assert.Equal(t, []string{
+		"GET /repos/acme/api/issues/7/comments",
+		"PATCH /repos/acme/api/issues/comments/42",
+		"PATCH /repos/acme/api/issues/comments/42",
+		"PATCH /repos/acme/api/issues/comments/42",
+		"PATCH /repos/acme/api/issues/comments/42",
+		"GET /repos/acme/api/issues/7/comments",
+		"POST /repos/acme/api/issues/7/comments",
+		"PATCH /repos/acme/api/issues/comments/999",
+	}, requests)
+}
+
+func TestCICommentRequestCounts(t *testing.T) {
+	for _, pages := range []int{1, 10} {
+		t.Run(fmt.Sprintf("pages=%d", pages), func(t *testing.T) {
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			t.Setenv("GH_TOKEN", "test-token")
+			h.Cfg.CI.UpsertComments = true
+			var lists, patches int
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method {
+				case http.MethodGet:
+					lists++
+					page := r.URL.Query().Get("page")
+					if page == "" {
+						page = "1"
+					}
+					n, err := strconv.Atoi(page)
+					require.NoError(t, err)
+					if n < pages {
+						w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?page=%d&per_page=100>; rel="next"`, r.Host, r.URL.Path, n+1))
+					}
+					comments := make([]map[string]any, 100)
+					for i := range comments {
+						comments[i] = map[string]any{"id": (n-1)*100 + i + 1, "body": "ordinary"}
+					}
+					if n == pages {
+						comments[99]["body"] = ghpkg.CommentMarker
+					}
+					require.NoError(t, json.NewEncoder(w).Encode(comments))
+				case http.MethodPatch:
+					patches++
+					assert.Equal(t, fmt.Sprintf("/api/v3/repos/acme/api/issues/comments/%d", pages*100), r.URL.Path)
+					_, _ = fmt.Fprint(w, `{}`)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+			}))
+			defer api.Close()
+			h.Poller.githubAPIURL = api.URL
+			require.NoError(t, h.Poller.postPRComment("acme/api", 7, "first"))
+			assert.Equal(t, pages, lists)
+			require.NoError(t, h.Poller.postPRComment("acme/api", 7, "second"))
+			assert.Equal(t, pages, lists)
+			assert.Equal(t, 2, patches)
+		})
+	}
+}
+
+func TestCICommentUpsertToggle(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	t.Setenv("GH_TOKEN", "test-token")
+	h.Cfg.CI.UpsertComments = true
+	var requests []string
+	created := false
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+strings.TrimPrefix(r.URL.Path, "/api/v3"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			if created {
+				_, _ = fmt.Fprint(w, `[{"id":42,"body":"<!-- roborev-pr-comment -->"},{"id":999,"body":"<!-- roborev-pr-comment -->"}]`)
+			} else {
+				_, _ = fmt.Fprint(w, `[{"id":42,"body":"<!-- roborev-pr-comment -->"}]`)
+			}
+		case http.MethodPost:
+			created = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"id":999}`)
+		case http.MethodPatch:
+			_, _ = fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer api.Close()
+	h.Poller.githubAPIURL = api.URL
+	require.NoError(t, h.Poller.postPRComment("acme/api", 7, "first"))
+	h.Cfg.CI.UpsertComments = false
+	require.NoError(t, h.Poller.postPRComment("acme/api", 7, "new"))
+	h.Cfg.CI.UpsertComments = true
+	require.NoError(t, h.Poller.postPRComment("acme/api", 7, "next"))
+	assert.Equal(t, []string{
+		"GET /repos/acme/api/issues/7/comments",
+		"PATCH /repos/acme/api/issues/comments/42",
+		"POST /repos/acme/api/issues/7/comments",
+		"GET /repos/acme/api/issues/7/comments",
+		"PATCH /repos/acme/api/issues/comments/999",
+	}, requests)
 }
