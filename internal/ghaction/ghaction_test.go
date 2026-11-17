@@ -331,8 +331,7 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 		{"unprefixed tag", "https://github.com/kenn-io/roborev/releases/tag/0.52.0", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			args := filepath.Join(dir, "args")
+			args := filepath.Join(t.TempDir(), "args")
 			fake := `curl() {
 local flags="" arg
 for arg in "$@"; do
