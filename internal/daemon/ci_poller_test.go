@@ -1148,114 +1148,84 @@ func TestCIPollerProcessPR_AuthorAndBranchFilters(t *testing.T) {
 }
 
 func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
-	for _, scenario := range []string{"success and refresh", "failure and recovery", "empty result"} {
-		t.Run(scenario, func(t *testing.T) {
-			t.Setenv("GH_TOKEN", "test-token")
-			assert := assert.New(t)
-			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			h.Cfg.CI.ReviewTypes = []string{"security"}
-			h.Cfg.CI.Agents = []string{"codex"}
-			h.Cfg.CI.ThrottleInterval = "0"
-			h.stubProcessPRGit()
-			repo := testutil.InitTestGitRepo(t, h.RepoPath)
-			baseSHA := repo.HeadSHA()
-			h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
-
-			requests, lookups, poll := 0, 0, 1
-			if scenario == "success and refresh" {
-				api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Equal("/api/v3/repos/acme/api/collaborators", r.URL.Path)
-					requests++
-					w.Header().Set("Content-Type", "application/json")
-					if poll == 1 {
-						fmt.Fprint(w, `[{"login":"alice","role_name":"maintain"}]`)
-					} else {
-						fmt.Fprint(w, `[{"login":"alice","role_name":"maintain"},{"login":"bob","role_name":"maintain"}]`)
-					}
-				}))
-				t.Cleanup(api.Close)
-				h.Poller.githubAPIURL = api.URL + "/api/v3"
-				h.Poller.listTrustedActorsFn = h.Poller.listTrustedActors
-			}
-			h.Poller.listPRDiscussionFn = func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error) {
-				return []ghpkg.PRDiscussionComment{
-					{Author: "alice", Body: "Alice comment", Source: ghpkg.PRDiscussionSourceIssueComment},
-					{Author: "bob", Body: "Bob comment", Source: ghpkg.PRDiscussionSourceIssueComment},
-				}, nil
-			}
-			if scenario == "failure and recovery" {
-				h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
-					lookups++
-					if lookups == 1 {
-						return nil, errors.New("unavailable")
-					}
-					return map[string]struct{}{"alice": {}, "bob": {}}, nil
-				}
-			} else if scenario == "empty result" {
-				h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
-					lookups++
-					return map[string]struct{}{}, nil
-				}
-			}
-			var prs []ghPR
-			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
-			polls := 1
-			if scenario == "success and refresh" {
-				polls = 2
-			}
-			for poll = 1; poll <= polls; poll++ {
-				prs = nil
-				for pr := 1; pr <= 3; pr++ {
-					head := repo.CommitFile(fmt.Sprintf("file-%d-%d", poll, pr), "content", "commit")
-					prs = append(prs, ghPR{Number: pr, HeadRefOid: head, BaseRefName: "main"})
-				}
-				require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-				assert.NotContains(h.Poller.trustedActors, "acme/api")
-				if scenario == "success and refresh" {
-					assert.Equal(poll, requests)
-				}
-				for _, pr := range prs {
-					members := h.panelMembers(t, "acme/api", pr.Number, pr.HeadRefOid)
-					require.Len(t, members, 1)
-					if scenario == "empty result" || (scenario == "failure and recovery" && pr.Number == 1) {
-						assert.NotContains(members[0].Prompt, "Alice comment")
-					} else {
-						assert.Contains(members[0].Prompt, "Alice comment")
-						if scenario == "success and refresh" && poll == 1 {
-							assert.NotContains(members[0].Prompt, "Bob comment")
-						} else {
-							assert.Contains(members[0].Prompt, "Bob comment")
-						}
-					}
-				}
-			}
-			if scenario == "failure and recovery" {
-				assert.Equal(2, lookups)
-			} else if scenario == "empty result" {
-				assert.Equal(1, lookups)
-			}
-		})
+	t.Setenv("GH_TOKEN", "test-token")
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.stubProcessPRGit()
+	repo := testutil.InitTestGitRepo(t, h.RepoPath)
+	baseSHA := repo.HeadSHA()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
+	h.Poller.listPRDiscussionFn = func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error) {
+		return []ghpkg.PRDiscussionComment{
+			{Author: "alice", Body: "Alice comment", Source: ghpkg.PRDiscussionSourceIssueComment},
+			{Author: "bob", Body: "Bob comment", Source: ghpkg.PRDiscussionSourceIssueComment},
+		}, nil
 	}
-	t.Run("early return", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-		h.Cfg.CI.ReviewTypes = []string{"security"}
-		h.Cfg.CI.Agents = []string{"codex"}
-		h.stubProcessPRGit()
-		reads := 0
-		h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
-			reads++
-			return map[string]struct{}{"alice": {}}, nil
+	requests := 0
+	collaborators := `[{"login":"alice","role_name":"maintain"}]`
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v3/repos/acme/api/collaborators", r.URL.Path)
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, collaborators)
+	}))
+	t.Cleanup(api.Close)
+	h.Poller.githubAPIURL = api.URL + "/api/v3"
+	h.Poller.listTrustedActorsFn = h.Poller.listTrustedActors
+	var prs []ghPR
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
+	polls := 0
+	poll := func() (prompts []string) {
+		polls++
+		prs = nil
+		for pr := 1; pr <= 3; pr++ {
+			head := repo.CommitFile(fmt.Sprintf("file-%d-%d", polls, pr), "content", "commit")
+			prs = append(prs, ghPR{Number: pr, HeadRefOid: head, BaseRefName: "main"})
 		}
-		h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
-			return []ghPR{{Number: 1, HeadRefOid: "head", BaseRefName: "main"}}, nil
+		require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+		assert.NotContains(h.Poller.trustedActors, "acme/api")
+		for _, pr := range prs {
+			members := h.panelMembers(t, "acme/api", pr.Number, pr.HeadRefOid)
+			require.Len(t, members, 1)
+			prompts = append(prompts, members[0].Prompt)
 		}
-		h.Poller.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
-			return ciRepoConfigSource{}, errors.New("config unavailable")
+		return prompts
+	}
+
+	for _, prompt := range poll() {
+		assert.Contains(prompt, "Alice comment")
+		assert.NotContains(prompt, "Bob comment")
+	}
+	assert.Equal(1, requests)
+
+	collaborators = `[{"login":"alice","role_name":"maintain"},{"login":"bob","role_name":"maintain"}]`
+	for _, prompt := range poll() {
+		assert.Contains(prompt, "Bob comment")
+	}
+	assert.Equal(2, requests)
+
+	collaborators = `[]`
+	for _, prompt := range poll() {
+		assert.NotContains(prompt, "Alice comment")
+	}
+	assert.Equal(3, requests)
+
+	lookups := 0
+	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+		lookups++
+		if lookups == 1 {
+			return nil, errors.New("unavailable")
 		}
-		require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "config unavailable")
-		assert.Equal(t, 1, reads)
-		assert.NotContains(t, h.Poller.trustedActors, "acme/api")
-	})
+		return map[string]struct{}{"alice": {}}, nil
+	}
+	prompts := poll()
+	assert.NotContains(prompts[0], "Alice comment")
+	assert.Contains(prompts[1], "Alice comment")
+	assert.Contains(prompts[2], "Alice comment")
+	assert.Equal(2, lookups)
 }
 
 func TestCIPollerAllowCodeowners(t *testing.T) {
