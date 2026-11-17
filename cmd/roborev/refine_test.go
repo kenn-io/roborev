@@ -852,6 +852,44 @@ func useIsolatedGlobalGitConfig(t *testing.T, dir string) string {
 	return configPath
 }
 
+func TestRefinePatchPreservesGlobalLineEndings(t *testing.T) {
+	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	parent := NewGitTestRepo(t)
+	parent.Run("config", "--file", globalConfig, "core.autocrlf", "true")
+	parent.CommitFile("file.txt", "before\ncontext\n", "base")
+	path := filepath.Join(parent.Dir, "file.txt")
+	// Re-checkout so the parent, like the refine worktree, has CRLF on disk.
+	require.NoError(t, os.Remove(path))
+	_, _, err := refineGitRunner().Run(t.Context(), parent.Dir, nil, "checkout", "--", "file.txt")
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "before\r\ncontext\r\n", string(before))
+
+	wt, err := createRefineWorktree(t.Context(), parent.Dir)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, wt.Close(context.WithoutCancel(t.Context())))
+	})
+	worktreePath := filepath.Join(wt.Dir, "file.txt")
+	content, err := os.ReadFile(worktreePath)
+	require.NoError(t, err)
+	require.Equal(t, before, content)
+	require.NoError(t, os.WriteFile(worktreePath, []byte("after\r\ncontext\r\n"), 0o644))
+	patch, err := wt.CapturePatch(t.Context())
+	require.NoError(t, err)
+	require.NotEmpty(t, patch)
+
+	require.NoError(t, git.CheckPatch(t.Context(), parent.Dir, patch))
+	unchanged, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, unchanged, "checking must not modify the parent")
+	require.NoError(t, git.ApplyPatch(t.Context(), parent.Dir, patch))
+	content, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "after\r\ncontext\r\n", string(content))
+}
+
 func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

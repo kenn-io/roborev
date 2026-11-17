@@ -978,7 +978,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 			_ = wt.Close(ctx)
 			return fmt.Errorf("capture worktree patch: %w", err)
 		}
-		if err := gitworktree.ApplyPatch(ctx, repoPath, patch); err != nil {
+		if err := git.ApplyPatch(ctx, repoPath, patch); err != nil {
 			_ = wt.Close(ctx)
 			return fmt.Errorf("apply worktree patch: %w", err)
 		}

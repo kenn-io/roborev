@@ -120,6 +120,13 @@ makes no changes without returning the severity-filter marker, refine skips the
 review and records a generic comment; it does not retain the report or close the
 review.
 
+## Line Endings
+
+Refine and TUI fix application use your existing Git line-ending settings,
+including global, system, and repository configuration and `.gitattributes`.
+roborev does not require a particular `core.autocrlf` value or change your Git
+settings.
+
 ## Repeated finding files
 
 Refine prints and saves an advisory when either of two independent streaks

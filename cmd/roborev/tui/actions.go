@@ -471,7 +471,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 	}
 
 	// Dry-run check — only trigger rebase on actual merge conflicts
-	if err := gitworktree.CheckPatch(ctx, targetDir, patch); err != nil {
+	if err := robogit.CheckPatch(ctx, targetDir, patch); err != nil {
 		if _, ok := errors.AsType[*gitworktree.PatchConflictError](err); ok {
 			return applyPatchResultMsg{jobID: jobID, rebase: true, err: err}
 		}
@@ -492,7 +492,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 	}
 
 	// Apply the patch
-	if err := gitworktree.ApplyPatch(ctx, targetDir, patch); err != nil {
+	if err := robogit.ApplyPatch(ctx, targetDir, patch); err != nil {
 		return applyPatchResultMsg{jobID: jobID, err: err}
 	}
 
