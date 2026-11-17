@@ -1632,3 +1632,33 @@ func TestCombinedResultsReportCallerWorktree(t *testing.T) {
 		})
 	}
 }
+
+// When every member found nothing to review, there is nothing to synthesize.
+// The run is skipped with the members' reason rather than failed.
+func TestSynthesisAllMembersSkippedSkipsRun(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+
+	var synthCalled bool
+	const synthAgent = "synth-all-skipped"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "all-skipped-panel", []memberSpec{
+		{name: "m0", agent: "test"},
+		{name: "m1", agent: "test"},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	const reason = "nothing to review in abc1234: the diff is empty"
+	for _, m := range members {
+		_, err := tc.DB.ExecContext(t.Context(),
+			`UPDATE review_jobs SET status = 'skipped', skip_reason = ? WHERE id = ?`, reason, m.ID)
+		require.NoError(t, err)
+	}
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processJob(testWorkerID, synth)
+
+	stored := tc.assertJobStatus(t, synth.ID, storage.JobStatusSkipped)
+	assert.Equal(t, reason, stored.SkipReason)
+	assert.False(t, synthCalled, "no agent should run when every member was skipped")
+}

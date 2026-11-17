@@ -529,6 +529,10 @@ Expect this behavior:
     settings fail `roborev config validate`, such as a `[ci] panel` that names
     no defined panel, gets an `error` status and is not reviewed. Later commits
     are reviewed once the configuration is fixed.
+- **A commit with nothing to review is skipped.** When no voting reviewer would
+    see a change, for example an empty commit or one that changes only excluded
+    files, the commit gets a `success` status with the description
+    `Review skipped: nothing to review` and no review is stored.
 - **Quiet hours delay the reviews.** Commits that land during
     [quiet hours](#quiet-hours) are reviewed after quiet hours end.
 - **`batch_timeout` applies.** As with pull requests, a reviewer that runs past
@@ -544,7 +548,8 @@ Expect this behavior:
 - **Every poll fetches every repo.** With the option on, the poller runs
     `git fetch` for each configured repo on each interval, even when no pull
     request changed. It also asks the repo's remote which branch is the default,
-    with `git remote set-head origin --auto`.
+    with `git ls-remote --symref origin HEAD`, and fetches that branch when the
+    checkout's fetch settings leave it out, as in a single-branch clone.
 - **No PR comment is posted.** The review is stored like any other review. Run
     `roborev list` or `roborev show <job-id>` to read it, or use a
     [review hook](/docs/guides/hooks/) to send results elsewhere.
@@ -556,9 +561,10 @@ fast-forward merge. It is informational: as with the pull request status, its
 state reports whether the review ran, and its description reports the result.
 
 A status that GitHub does not accept right away is sent again on the next poll.
-The poller stops trying when GitHub will never accept it: the token cannot write
-commit statuses, or GitHub no longer has the commit. The review itself is still
-stored.
+The poller stops trying when GitHub will never accept it: the daemon has no
+GitHub credentials, the token cannot write commit statuses, or GitHub no longer
+has the commit. A failed GitHub App token request is retried. The review itself
+is still stored.
 
 | State | Description | When |
 |-------|-------------|------|
@@ -1652,6 +1658,48 @@ These controls remove inherited Git capabilities; they are not filesystem
 isolation. The existing agent read-only tool permissions still apply. Regenerate
 existing workflows with `roborev init gh-action --force` to disable persisted
 checkout credentials and include Copilot's separate secret when selected.
+
+### Agent configuration in the pull request
+
+CI reviews run the agent inside a checkout of the pull request. This applies to
+`roborev ci review`, GitLab pipelines, and the daemon CI poller, which reviews
+each pull request head in a detached worktree. The pull request author controls
+that checkout. Several agent CLIs load configuration from their working
+directory that runs commands: hooks, MCP servers, and plugins. A hook is not a
+tool call, so read-only tool limits do not stop it.
+
+roborev tells each agent to skip the checkout's own configuration. User-level
+configuration, credentials, and context files such as `CLAUDE.md` still load.
+Local reviews of your own commits are unchanged.
+
+| Agent | What a CI review does |
+| --- | --- |
+| Claude Code | Passes `--setting-sources user --strict-mcp-config`, so `.claude/settings.json` hooks and `.mcp.json` servers are skipped. |
+| Codex | Always passes `--ignore-user-config`, which drops the user config's project trust list, so `.codex/config.toml` is skipped. Codex without that flag fails the review. |
+| Gemini | Sets `GEMINI_CLI_TRUST_WORKSPACE=false`. With folder trust off in your Gemini user settings, Gemini skips the checkout's settings; with it on, headless Gemini exits instead of reviewing. |
+| Pi | Passes `--no-approve`, and `--session-dir` set to Pi's default session directory so the checkout cannot choose where sessions are saved. Pi without `--no-approve` fails the review. |
+| Cursor | Starts with an empty `CURSOR_DATA_DIR`, so saved workspace trust does not apply and Cursor refuses the untrusted checkout. |
+| Grok | Sets `GROK_FOLDER_TRUST=1`, so folder trust stays on. A folder you trusted before is still trusted. |
+| Copilot | Removes `COPILOT_ALLOW_ALL` and the `GITHUB_COPILOT_PROMPT_MODE_*` variables. Prompt mode then skips repository hooks and workspace MCP servers. A folder you trusted before is still trusted. |
+| Kilo | Sets `KILO_DISABLE_PROJECT_CONFIG=1`, which skips project config, plugins, and MCP servers. |
+| Muse | Already runs non-agentic reviews in a private home without trusted workspaces. |
+
+Some agents have no way to skip project configuration. Do not use them to review
+pull requests from authors you do not trust:
+
+- **OpenCode** gets `OPENCODE_DISABLE_PROJECT_CONFIG=1`, which skips project MCP
+    servers and custom tools. OpenCode still imports plugins from
+    `.opencode/plugins/` and `opencode.json`.
+- **Droid** loads hooks and MCP servers from `.factory/`.
+- **Kiro** loads hooks and MCP servers from `.kiro/`. `roborev ci review`
+    already refuses Kiro.
+- **Antigravity** loads hooks and plugins from `.agents/`.
+- **ACP agents** load whatever the wrapped CLI loads. `claude-agent-acp` loads
+    project settings and hooks.
+
+These settings narrow what an agent reads from the checkout. They are not a
+sandbox. An agent running with `allow_unsafe_agents` can still run shell
+commands that the reviewed code asks for.
 
 ### Customizing via `.roborev.toml`
 

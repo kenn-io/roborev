@@ -789,6 +789,9 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	if _, err := p.enqueuePanelRun(ctx, ghRepo, pr, cfg); err != nil {
+		if nothing, ok := errors.AsType[*ciNothingToReviewError](err); ok {
+			return p.skipPR(ghRepo, pr, nothing.skip(), attempt)
+		}
 		if _, ok := errors.AsType[*ciConfigurationError](err); ok {
 			if statusErr := p.callSetCommitStatus(
 				ghRepo, pr.HeadRefOid, "error",
@@ -991,6 +994,9 @@ func (p *CIPoller) planCIPanel(
 	// Append one whole-range design member when auto-design warrants it and
 	// no member already covers the design review type (F8, F12).
 	members = p.maybeAppendDesignMember(ctx, members, t.repo, repoCfg, cfg, t.base, t.head)
+	if err := ciNothingToReview(ctx, t.repo.RootPath, t.base+".."+t.head, members, cfg); err != nil {
+		return ciPanelPlan{}, err
+	}
 
 	plan.memberOpts, plan.synthOpts, err = p.buildPanelOpts(
 		ctx,
@@ -2460,7 +2466,15 @@ func defaultPortForScheme(scheme string) string {
 func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
 	// The GitHub client helpers that call this do not carry the poll context
 	// yet, so token exchange and lookup start their own.
-	ctx := context.Background()
+	token, _ := p.resolveGitHubToken(context.Background(), ghRepo)
+	return token
+}
+
+// resolveGitHubToken returns the GitHub App token for ghRepo's owner, or the
+// fallback token. appErr is the GitHub App token failure that forced the
+// fallback, so a caller left without a token can tell a refresh that may
+// succeed later from a daemon that has no credentials.
+func (p *CIPoller) resolveGitHubToken(ctx context.Context, ghRepo string) (token string, appErr error) {
 	// Extract owner from "owner/repo"
 	owner, _, _ := strings.Cut(ghRepo, "/")
 	if p.tokenProvider != nil {
@@ -2470,12 +2484,13 @@ func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
 			log.Printf("CI poller: no installation ID for owner %q, using fallback GitHub token", owner)
 		} else if token, err := p.tokenProvider.TokenForInstallation(ctx, installationID); err != nil {
 			log.Printf("CI poller: WARNING: GitHub App token failed for %q, falling back to environment token: %v", owner, err)
+			appErr = err
 		} else {
-			return token
+			return token, nil
 		}
 	}
 	host, _ := gitHostForBaseURL(p.githubAPIBaseURL())
-	return ghpkg.ResolveAuthToken(ctx, ghpkg.EnvironmentToken(), host)
+	return ghpkg.ResolveAuthToken(ctx, ghpkg.EnvironmentToken(), host), appErr
 }
 
 func (p *CIPoller) gitEnvForRepo(ghRepo string) []string {
@@ -2487,11 +2502,15 @@ func (p *CIPoller) gitEnvForRepo(ghRepo string) []string {
 }
 
 func (p *CIPoller) githubClientForRepo(ghRepo string, opts ...ghpkg.ClientOption) (*ghpkg.Client, error) {
+	return p.githubClientWithToken(p.githubTokenForRepo(ghRepo), opts...)
+}
+
+func (p *CIPoller) githubClientWithToken(token string, opts ...ghpkg.ClientOption) (*ghpkg.Client, error) {
 	apiBaseURL, err := ghpkg.GitHubAPIBaseURL(p.githubAPIBaseURL())
 	if err != nil {
 		return nil, err
 	}
-	return ghpkg.NewClient(p.githubTokenForRepo(ghRepo), append([]ghpkg.ClientOption{ghpkg.WithBaseURL(apiBaseURL)}, opts...)...)
+	return ghpkg.NewClient(token, append([]ghpkg.ClientOption{ghpkg.WithBaseURL(apiBaseURL)}, opts...)...)
 }
 
 func (p *CIPoller) githubAPIBaseURL() string {
@@ -3421,6 +3440,16 @@ func (p *CIPoller) retryDueReviewAttempt(
 		return false // another sweep won the CAS
 	}
 	enqueued, err := p.enqueuePanelRun(ctx, ghRepo, pr, cfg)
+	if nothing, ok := errors.AsType[*ciNothingToReviewError](err); ok {
+		// The exclusions changed after the failed run: there is nothing left
+		// to retry. Drop the attempt so it is not re-armed; the earlier run's
+		// status stays on the PR.
+		log.Printf("CI poller: dropping retry for %s#%d@%s: %s",
+			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), nothing.reason)
+		err = p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA)
+		p.recordPollResult(ghRepo, attempt.PRNumber, attempt.HeadSHA, err)
+		return false
+	}
 	if err != nil {
 		// ClaimDueReviewAttempt already CAS-claimed this attempt to 'pending'
 		// (incremented attempt, cleared next_attempt_at), so a failed re-enqueue

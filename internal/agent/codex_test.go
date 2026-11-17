@@ -477,6 +477,57 @@ func TestCodexReviewOmitsIgnoreUserConfigWhenUnsupported(t *testing.T) {
 	assertNotContainsArg(t, args, codexIgnoreUserConfigFlag)
 }
 
+// TestCodexUntrustedCheckoutIgnoresUserConfig checks that an untrusted
+// checkout always runs Codex with --ignore-user-config, whose trust list would
+// otherwise let the checkout's .codex/config.toml start MCP servers.
+func TestCodexUntrustedCheckoutIgnoresUserConfig(t *testing.T) {
+	output := []string{`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`}
+	tests := []struct {
+		name       string
+		untrusted  bool
+		configured bool
+		help       string
+		wantFlag   bool
+		wantErr    string
+	}{
+		{name: "local keeps opt-out", help: "usage --sandbox " + codexIgnoreUserConfigFlag},
+		{name: "untrusted overrides opt-out", untrusted: true, help: "usage --sandbox " + codexIgnoreUserConfigFlag, wantFlag: true},
+		{name: "untrusted with opt-in", untrusted: true, configured: true, help: "usage --sandbox " + codexIgnoreUserConfigFlag, wantFlag: true},
+		{name: "untrusted fails without flag support", untrusted: true, help: "usage --sandbox", wantErr: "untrusted checkout require"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, mock := setupMockCodex(t, false, MockCLIOpts{
+				HelpOutput:  tt.help,
+				CaptureArgs: true,
+				StdoutLines: output,
+			})
+			setCodexUserConfig(t, "cli_auth_credentials_store = \"keyring\"\n")
+			a = WithCodexUserConfigIgnored(a, tt.configured).(*CodexAgent)
+			ctx := t.Context()
+			if tt.untrusted {
+				ctx = WithUntrustedCheckout(ctx)
+			}
+
+			_, err := a.Review(ctx, t.TempDir(), "deadbeef", "prompt", nil)
+
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			args := readMockArgs(t, mock.ArgsFile)
+			if tt.wantFlag {
+				assertContainsArg(t, args, codexIgnoreUserConfigFlag)
+				// Sign-in settings still reach Codex without the user config.
+				assertArgsContainContiguous(t, args, []string{"-c", `cli_auth_credentials_store="keyring"`})
+			} else {
+				assertNotContainsArg(t, args, codexIgnoreUserConfigFlag)
+			}
+		})
+	}
+}
+
 func setCodexUserConfig(t *testing.T, content string) {
 	t.Helper()
 	codexHome := t.TempDir()

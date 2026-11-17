@@ -34,15 +34,18 @@ type postCommitTimer struct {
 
 // Timers are daemon-owned. Git's existing batch checkpoints remain authoritative:
 // a canceled or lost timer leaves the range pending for the next commit or push.
+// A flush that returns an error did not queue its range, so its timer re-arms
+// with twice the previous wait until a flush succeeds or a newer commit on the
+// branch replaces the timer.
 type postCommitScheduler struct {
 	mu      sync.Mutex
 	timers  map[postCommitTimerKey]*postCommitTimer
 	stopped bool
 	wg      sync.WaitGroup
-	flush   func(context.Context, string, string, string)
+	flush   func(context.Context, string, string, string) error
 }
 
-func newPostCommitScheduler(flush func(context.Context, string, string, string)) *postCommitScheduler {
+func newPostCommitScheduler(flush func(context.Context, string, string, string) error) *postCommitScheduler {
 	return &postCommitScheduler{timers: make(map[postCommitTimerKey]*postCommitTimer), flush: flush}
 }
 
@@ -71,13 +74,22 @@ func (s *postCommitScheduler) schedule(repository, root, branch, head string, qu
 			}
 			s.mu.Unlock()
 		}()
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			if ctx.Err() == nil {
-				s.flush(ctx, root, branch, head)
+		wait := quietPeriod
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
 			}
+			if ctx.Err() != nil {
+				return
+			}
+			if err := s.flush(ctx, root, branch, head); err == nil || ctx.Err() != nil {
+				return
+			}
+			wait *= 2
+			log.Printf("Post-commit quiet flush for %s queued no review; retrying in %s", branch, wait)
+			timer.Reset(wait)
 		}
 	})
 	return nil
@@ -116,18 +128,22 @@ func (s *Server) humaPostCommitSchedule(ctx context.Context, input *PostCommitSc
 	return &PostCommitScheduleOutput{}, nil
 }
 
-func (s *Server) flushPostCommitBatch(ctx context.Context, root, branch, head string) {
+// flushPostCommitBatch runs the hook's flush for a quiet-period timer. The
+// flush exits with an error when the daemon did not queue its range.
+func (s *Server) flushPostCommitBatch(ctx context.Context, root, branch, head string) error {
 	binary, err := os.Executable()
 	if err != nil {
 		log.Printf("Post-commit quiet flush: %v", err)
-		return
+		return err
 	}
 	s.endpointMu.Lock()
 	endpoint := s.endpoint
 	s.endpointMu.Unlock()
 	cmd := HiddenCommand(ctx, binary, "post-commit", "--repo", root,
 		"--flush", "--flush-branch", branch, "--quiet-head", head, "--server", endpoint.ConfigAddr())
-	if output, err := cmd.CombinedOutput(); err != nil || len(output) > 0 {
+	output, err := cmd.CombinedOutput()
+	if err != nil || len(output) > 0 {
 		log.Printf("Post-commit quiet flush for %s: %v %s", branch, err, output)
 	}
+	return err
 }

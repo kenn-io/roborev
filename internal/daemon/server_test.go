@@ -321,6 +321,32 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	}
 }
 
+func TestWaitForServerReadyWaitsForSlowListener(t *testing.T) {
+	// A busy host can take longer than the failure budget to answer the first
+	// probe. The listener is serving, so startup must keep waiting. This test
+	// uses wall-clock time because the probe goes through a real socket.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"service":"roborev"}`))
+	}))
+	defer server.Close()
+
+	//nolint:kennlint // deadlinetest: the budget bounds refused connections; this listener accepts, so the result does not depend on timing
+	ready, serveExited, err := waitForServerReady(t.Context(), authEndpoint(t, server.URL), 50*time.Millisecond, make(chan error), config.ClientAuth{})
+	require.NoError(t, err)
+	assert.True(t, ready)
+	assert.False(t, serveExited)
+}
+
+func TestWaitForServerReadyGivesUpWhenNothingListens(t *testing.T) {
+	//nolint:kennlint // deadlinetest: nothing listens, so every probe is refused and the budget always expires
+	ready, serveExited, err := waitForServerReady(t.Context(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, make(chan error), config.ClientAuth{})
+	require.ErrorContains(t, err, "failed to become ready")
+	assert.False(t, ready)
+	assert.False(t, serveExited)
+}
+
 func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

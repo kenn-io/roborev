@@ -546,6 +546,74 @@ func TestClaudeReviewPassesArgs(t *testing.T) {
 	}
 }
 
+// TestClaudeUntrustedCheckoutSkipsProjectConfig runs each Claude entry point
+// against a checkout carrying a project hook and MCP server, and checks which
+// setting sources the launched process was told to load.
+func TestClaudeUntrustedCheckoutSkipsProjectConfig(t *testing.T) {
+	withUnsafeAgents(t, false)
+	contexts := []struct {
+		name      string
+		mark      func(t *testing.T, ctx context.Context) context.Context
+		untrusted bool
+	}{
+		{name: "local", mark: func(_ *testing.T, ctx context.Context) context.Context { return ctx }},
+		{name: "untrusted", mark: func(_ *testing.T, ctx context.Context) context.Context {
+			return WithUntrustedCheckout(ctx)
+		}, untrusted: true},
+		{name: "ci", mark: func(t *testing.T, ctx context.Context) context.Context {
+			ciCtx, cleanup, err := WithCIReview(ctx)
+			require.NoError(t, err)
+			t.Cleanup(cleanup)
+			return ciCtx
+		}, untrusted: true},
+	}
+	calls := []struct {
+		name string
+		run  func(ctx context.Context, a *ClaudeAgent, repo string) error
+	}{
+		{name: "Review", run: func(ctx context.Context, a *ClaudeAgent, repo string) error {
+			_, err := a.Review(ctx, repo, "deadbeef", "prompt", nil)
+			return err
+		}},
+		{name: "ReviewWithSchema", run: func(ctx context.Context, a *ClaudeAgent, repo string) error {
+			_, err := a.ReviewWithSchema(ctx, repo, "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+			return err
+		}},
+		{name: "ClassifyWithSchema", run: func(ctx context.Context, a *ClaudeAgent, repo string) error {
+			_, err := a.ClassifyWithSchema(ctx, repo, "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+			return err
+		}},
+	}
+	for _, c := range contexts {
+		for _, call := range calls {
+			t.Run(c.name+"/"+call.name, func(t *testing.T) {
+				repo := t.TempDir()
+				require.NoError(t, os.Mkdir(filepath.Join(repo, ".claude"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(repo, ".claude", "settings.json"),
+					[]byte(`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}}`), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(repo, ".mcp.json"),
+					[]byte(`{"mcpServers":{"probe":{"command":"true"}}}`), 0o644))
+				mock := mockAgentCLI(t, MockCLIOpts{
+					HelpOutput:  "usage: claude --tools",
+					CaptureArgs: true,
+					StdoutLines: []string{`{"type":"result","result":"{\"design_review\":false,\"reason\":\"ok\"}"}`},
+				})
+
+				require.NoError(t, call.run(c.mark(t, t.Context()), NewClaudeAgent(mock.CmdPath), repo))
+
+				args := readMockArgs(t, mock.ArgsFile)
+				if c.untrusted {
+					assertArgsContainContiguous(t, args, []string{"--setting-sources", "user"})
+					assertContainsArg(t, args, "--strict-mcp-config")
+				} else {
+					assertNotContainsArg(t, args, "--setting-sources")
+					assertNotContainsArg(t, args, "--strict-mcp-config")
+				}
+			})
+		}
+	}
+}
+
 func TestParseStreamJSON(t *testing.T) {
 	tests := []struct {
 		name           string

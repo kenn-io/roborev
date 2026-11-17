@@ -196,6 +196,16 @@ When the hook cannot queue a commit, it also prints a warning after
 itself still succeeds. Hooks installed before this warning existed discard it;
 the daemon upgrades them when it starts, or run `roborev init`.
 
+A commit the hook could not queue stays pending for its branch. The warning then
+adds `roborev: the next commit or push will retry it`: the next commit's hook
+queues one review covering both commits, and the pre-push hook queues it before
+a push. A root commit or a detached HEAD has no branch range to keep, so the
+warning omits that line.
+
+A busy host can make the daemon slower to answer than the hook waits, which is 3
+seconds by default (`hook_timeout_seconds`). The hook then reports a timeout,
+and the next commit or push retries the review.
+
 ```bash
 # View the last few hook invocations
 tail -5 ~/.roborev/post-commit.log | jq .

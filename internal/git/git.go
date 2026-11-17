@@ -2813,7 +2813,12 @@ func CommitCount(repoPath, rev string) (int, error) {
 // away the boundary commit's parents, so rev-list-based checks see a parentless
 // commit there, while the raw object still names its parents.
 func IsRootCommit(repoPath, rev string) (bool, error) {
-	cmd := newGitCmd("cat-file", "commit", rev)
+	return IsRootCommitCtx(context.Background(), repoPath, rev)
+}
+
+// IsRootCommitCtx is IsRootCommit with a caller context.
+func IsRootCommitCtx(ctx context.Context, repoPath, rev string) (bool, error) {
+	cmd := newGitCmdContext(ctx, "cat-file", "commit", rev)
 	cmd.Dir = repoPath
 
 	out, err := gitOutput(cmd)

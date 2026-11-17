@@ -7,6 +7,24 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- Keep reviewing commits when the daemon is too busy to answer the post-commit
+    hook. A commit the hook cannot queue stays pending, and the next commit or
+    push reviews it; a quiet-period batch that cannot be queued is retried. Idle
+    workers no longer take the database write lock to find an empty queue, so
+    enqueues wait less, and a daemon on a busy host no longer exits during
+    startup because its first readiness check was slow.
+- Stop CI reviews from running hooks, MCP servers, and plugins that a pull
+    request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
+    Cursor, Grok, Copilot, and Kilo now skip project agent configuration in
+    `roborev ci review` and daemon CI reviews. Codex and Pi fail the review when
+    the installed CLI cannot skip it. See
+    [Agent configuration in the pull request](integrations/github.md#agent-configuration-in-the-pull-request)
+    for the agents that cannot.
+- Droid reviews use the configured model, such as `model`, `review_model`,
+    `backup_model`, or `--model`, by passing it to `droid exec -m`. Set
+    `droid_cmd` to run a different Droid executable. When Droid's error output
+    says the subscription allowance for the period is used up, the job goes to
+    the backup agent without retries and Droid cools down.
 - Connect agent hooks and skills with `roborev agent setup`, optionally register
     MCP, and see hook trust and readiness in setup, quickstart, and doctor.
 - Sync runs while historical maintenance proceeds, and reconnecting machines

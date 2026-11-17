@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -277,6 +279,23 @@ func TestCIDefaultBranchReviewsRecordInvalidConfiguration(t *testing.T) {
 			assert.Equal(t, landed+".."+repaired, runs[0].GitRef)
 		})
 	}
+}
+
+func TestCIDefaultBranchReviewsSkipCommitsWithNothingToReview(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	empty := h.origin.CommitEmpty("empty")
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t), "an agent shown an empty diff would report a clean review")
+	assert.Equal(t, []branchStatus{{
+		SHA: empty, State: "success", Description: ciNothingToReviewSkipReason,
+	}}, h.takeStatuses())
+
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "a skipped commit does not block later commits")
+	assert.Equal(t, empty+".."+landed, runs[0].GitRef)
 }
 
 func TestCIDefaultBranchReviewFailureReportsError(t *testing.T) {
@@ -576,6 +595,29 @@ func TestCIDefaultBranchReviewsFollowNewDefaultBranchWhenOldOneRemains(t *testin
 	assert.Equal("develop", runs[0].HookBranch())
 }
 
+func TestCIDefaultBranchReviewsFollowNewDefaultBranchInSingleBranchCheckout(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	// A registered checkout can fetch only the branch it was cloned from.
+	out, err := exec.CommandContext(t.Context(), "git", "-C", h.clone, "config",
+		"remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main").CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	h.poll(t)
+	h.origin.CheckoutNewBranch("develop")
+	switched := h.origin.CommitFile("app.txt", "develop\n", "first commit on the new default")
+
+	h.poll(t)
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	assert.Equal(t, storage.CIBranchCursor{GithubRepo: branchReviewRepo, Branch: "develop", HeadSHA: switched}, *cursor)
+
+	landed := h.origin.CommitFile("app.txt", "next\n", "next commit on the new default")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "commits on the new default branch are fetched and reviewed")
+	assert.Equal(t, switched+".."+landed, runs[0].GitRef)
+}
+
 func TestCIDefaultBranchReviewsRestartAfterRepoLeavesThePoller(t *testing.T) {
 	h := newBranchReviewHarness(t)
 	h.cfg.CI.Repos = []string{branchReviewRepo}
@@ -669,6 +711,64 @@ func TestCIDefaultBranchStatusDelivery(t *testing.T) {
 			assert.Zero(published)
 		})
 	}
+}
+
+func TestCIDefaultBranchStatusWaitsForGitHubAppTokenRecovery(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	installFakeGHAuthToken(t, "")
+	var mu sync.Mutex
+	tokenFails := true
+	var published []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			if tokenFails {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token": "ghs_recovered", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+			})
+		case strings.Contains(r.URL.Path, "/statuses/"):
+			var status struct{ State string }
+			_ = json.NewDecoder(r.Body).Decode(&status)
+			published = append(published, status.State)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("{}"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(api.Close)
+	_, pemData := testKey(t)
+	provider, err := NewGitHubAppTokenProvider(testAppID, pemData)
+	require.NoError(t, err)
+	provider.baseURL = api.URL
+	h.poller.tokenProvider = provider
+	h.poller.githubAPIURL = api.URL
+	h.cfg.CI.GitHubAppInstallationID = testInstallationID
+	h.poller.setBranchStatusFn = nil
+
+	h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	h.runJobs(t)
+	h.poll(t)
+	mu.Lock()
+	assert.Empty(t, published)
+	tokenFails = false
+	mu.Unlock()
+	h.poll(t)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"success"}, published,
+		"a result whose GitHub App token failed is published once the token can be fetched")
 }
 
 func TestCIDefaultBranchStatusFailureIsTriedOncePerResultEachPoll(t *testing.T) {

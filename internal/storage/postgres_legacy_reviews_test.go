@@ -128,7 +128,8 @@ func TestIntegrationLegacyReviewScanUnreadableState(t *testing.T) { //nolint:par
 }
 
 func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
-	pool := openTestPgPool(t)
+	// A fresh schema keeps another test's interrupted scan from skipping these reviews.
+	pool := newIntegrationEnv(t).Pool
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
@@ -164,7 +165,8 @@ func TestIntegrationLegacyReviewMigration(t *testing.T) { //nolint:paralleltest 
 }
 
 func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
-	pool := openTestPgPool(t)
+	// A fresh schema keeps another test's interrupted scan from skipping these reviews.
+	pool := newIntegrationEnv(t).Pool
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
@@ -229,7 +231,8 @@ func TestIntegrationLegacyReviewExplicitConversion(t *testing.T) { //nolint:para
 }
 
 func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
-	pool := openTestPgPool(t)
+	// A fresh schema keeps another test's interrupted scan from skipping these reviews.
+	pool := newIntegrationEnv(t).Pool
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})
@@ -309,7 +312,8 @@ func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) { //nolint:par
 }
 
 func TestIntegrationRestoreLegacyAndImport(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
-	pool := openTestPgPool(t)
+	// A fresh schema keeps another test's interrupted scan from skipping these reviews.
+	pool := newIntegrationEnv(t).Pool
 	ctx := t.Context()
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID})

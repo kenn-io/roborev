@@ -63,6 +63,11 @@ func (wp *WorkerPool) processSynthesisJob(
 	}
 
 	switch {
+	case len(succeeded) == 0 && job.Source != storage.JobSourceCI && allMembersSkipped(results):
+		// Every member found nothing to review, so there is nothing to
+		// synthesize. The run is skipped, not failed. CI publishes its own
+		// skips before it enqueues, and its posting path expects a verdict.
+		wp.skipJob(ctx, workerID, job, results[0].SkipReason)
 	case len(succeeded) == 0:
 		errMsg, ok := allAvailabilitySkippedFailure(results)
 		if !ok {
@@ -103,6 +108,20 @@ func (wp *WorkerPool) processSynthesisJob(
 		// Combine and deduplicate via one agent call.
 		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded, neutral, cfg.Instructions, cfg.Check)
 	}
+}
+
+// allMembersSkipped reports whether every member was skipped, for example
+// because the change had nothing to review.
+func allMembersSkipped(results []reviewpkg.ReviewResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, r := range results {
+		if !r.Skipped {
+			return false
+		}
+	}
+	return true
 }
 
 func allAvailabilitySkippedFailure(results []reviewpkg.ReviewResult) (string, bool) {

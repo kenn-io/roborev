@@ -216,6 +216,17 @@ func runSingle(
 	excludes := config.ResolveExcludePatterns(
 		ctx, cfg.RepoPath, cfg.GlobalConfig, promptReviewType,
 	)
+	// An agent shown an empty diff reports no issues, which reads as a pass.
+	// Skip instead. A census failure leaves prompt building to report the
+	// Git error.
+	if census, censusErr := prompt.TakeReviewPathCensus(ctx, cfg.RepoPath, cfg.GitRef, excludes); censusErr == nil {
+		if emptyErr := census.Reviewable(ctx, settings.BinaryEvidence); emptyErr != nil {
+			result.Status = ResultSkipped
+			result.Skipped = true
+			result.SkipReason = emptyErr.Error()
+			return result
+		}
+	}
 	snapResult, err := builder.BuildWithSnapshot(
 		cfg.GitRef, cfg.ContextCount,
 		resolvedAgent.Name(), promptReviewType, cfg.MinSeverity, excludes)

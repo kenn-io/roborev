@@ -261,11 +261,18 @@ Examples:
 			defer resp.Body.Close()
 
 			var review storage.Review
+			skipped := false
 			if resp.StatusCode == http.StatusNotFound {
 				// Active, failed, and canceled jobs can have stored prompts
 				// without a review row. Use the job for prompt requests.
 				fallback := showPrompt && jobIDForPromptFallback >= 0 &&
 					fetchJobPromptReview(client, addr, jobIDForPromptFallback, &review)
+				// A skipped job has no review because no agent ran. Report
+				// the skip rather than a missing review.
+				if !showPrompt && jobIDForPromptFallback >= 0 {
+					skipped = fetchSkippedJobReview(client, addr, jobIDForPromptFallback, &review)
+					fallback = skipped
+				}
 				if !fallback {
 					return fmt.Errorf("no review found for %s", displayRef)
 				}
@@ -326,6 +333,11 @@ Examples:
 				return nil
 			}
 
+			if skipped {
+				fmt.Printf("Job %d was skipped: %s\n", review.JobID, review.Job.SkipReason)
+				return nil
+			}
+
 			// Avoid redundant "job X (job X, ...)" output
 			if strings.HasPrefix(displayRef, "job ") {
 				fmt.Printf("Review for %s (by %s)\n", displayRef, review.Agent)
@@ -383,6 +395,29 @@ Examples:
 	cmd.Flags().BoolVar(&showPrompt, "prompt", false, "show the prompt sent to the agent instead of the review output")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	return cmd
+}
+
+// fetchSkippedJobReview populates out with a skipped job, which has no review
+// because no agent ran. It reports false for any other job or lookup failure.
+func fetchSkippedJobReview(client *http.Client, addr string, jobID int64, out *storage.Review) bool {
+	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var result struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil || len(result.Jobs) == 0 ||
+		result.Jobs[0].Status != storage.JobStatusSkipped {
+		return false
+	}
+	job := result.Jobs[0]
+	*out = storage.Review{JobID: job.ID, Agent: job.Agent, Job: &job}
+	return true
 }
 
 // fetchJobPromptReview populates out from an active, failed, or canceled

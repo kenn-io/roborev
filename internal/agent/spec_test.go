@@ -61,6 +61,7 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 		OpenCodeCmd:   "custom-opencode",
 		GrokCmd:       "custom-grok",
 		MuseCmd:       "custom-muse",
+		DroidCmd:      "custom-droid",
 	}
 	expectedOverrides := map[string]string{
 		"codex":       "custom-codex",
@@ -71,6 +72,7 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 		"opencode":    "custom-opencode",
 		"grok":        "custom-grok",
 		"muse":        "custom-muse",
+		"droid":       "custom-droid",
 	}
 
 	for _, spec := range allAgentSpecs {
