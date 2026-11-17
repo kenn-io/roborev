@@ -158,13 +158,15 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 }
 
 // EnqueuePostCommitJob atomically inserts a hook-originated job unless a
-// non-canceled job already occupies the same (repo, ref, job type) key.
-func (db *DB) EnqueuePostCommitJob(opts EnqueueOpts) (*ReviewJob, bool, error) {
+// non-canceled job already occupies the same (repo, ref, job type) key. ctx
+// bounds the wait for the write lock: when the hook stops waiting, it keeps
+// the commit pending for its next run, so the insert is abandoned rather than
+// queued behind other writers to create a review the hook will request again.
+func (db *DB) EnqueuePostCommitJob(ctx context.Context, opts EnqueueOpts) (*ReviewJob, bool, error) {
 	opts.Source = JobSourcePostCommit
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 
-	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, false, err
@@ -424,8 +426,9 @@ func (db *DB) EnqueuePanelRerun(
 
 // EnqueuePostCommitPanelRun atomically inserts a hook-originated panel unless
 // a non-canceled job already occupies the target member's deduplication key.
+// Like EnqueuePostCommitJob, ctx bounds the wait for the write lock.
 func (db *DB) EnqueuePostCommitPanelRun(
-	members []EnqueueOpts, synthesis EnqueueOpts,
+	ctx context.Context, members []EnqueueOpts, synthesis EnqueueOpts,
 ) ([]*ReviewJob, *ReviewJob, bool, error) {
 	if len(members) == 0 {
 		return nil, nil, false, errors.New("post-commit panel requires at least one member")
@@ -435,7 +438,7 @@ func (db *DB) EnqueuePostCommitPanelRun(
 		members[i].Source = JobSourcePostCommit
 	}
 	synthesis.Source = JobSourcePostCommit
-	return db.enqueuePanelRun(context.Background(), members, synthesis, true, uuid.Nil(), 0, nil)
+	return db.enqueuePanelRun(ctx, members, synthesis, true, uuid.Nil(), 0, nil)
 }
 
 func (db *DB) enqueuePanelRun(
@@ -633,7 +636,14 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 // caller's context and the claim retry window both bound the operation. The
 // retry boundary owns a fresh connection and BEGIN IMMEDIATE transaction so
 // an interrupted SQLite statement cannot be retried on an invalid transaction.
+//
+// Idle workers poll often. A claim with no queued candidate returns before it
+// opens a write transaction, so polling never makes enqueues and other writers
+// wait for the write gate.
 func (db *DB) ClaimJobContext(ctx context.Context, workerID string) (*ReviewJob, error) {
+	if claimable, err := db.hasClaimableJob(ctx); err != nil || !claimable {
+		return nil, err
+	}
 	deadline := time.Now().Add(claimJobRetryWindow)
 	operationCtx, cancelOperation := context.WithDeadline(ctx, deadline)
 	defer cancelOperation()
@@ -641,6 +651,23 @@ func (db *DB) ClaimJobContext(ctx context.Context, workerID string) (*ReviewJob,
 	return retryOnSQLiteBusy(operationCtx, claimJobBusyAttempts, claimJobBusyAttemptTimeout, claimJobBusyBackoff, nil, func(attemptCtx context.Context) (*ReviewJob, error) {
 		return db.claimJobAttempt(attemptCtx, operationCtx, workerID)
 	})
+}
+
+// hasClaimableJob reports whether any queued job could be claimed now. It
+// applies the claim's cheap filters only, so a true result can still claim
+// nothing; a false result means the claim would find no candidate.
+func (db *DB) hasClaimableJob(ctx context.Context) (bool, error) {
+	var claimable bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM review_jobs
+			WHERE status = 'queued' AND claim_blocked = 0
+			  AND (retry_not_before IS NULL OR retry_not_before <= ?)
+		)`, preciseTimestampAt(time.Now())).Scan(&claimable)
+	if err != nil {
+		return false, fmt.Errorf("check for queued jobs: %w", err)
+	}
+	return claimable, nil
 }
 
 func (db *DB) claimJobAttempt(
@@ -1547,6 +1574,26 @@ func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate stri
 	return rows > 0, nil
 }
 
+// SkipJob ends the worker's running attempt as skipped, with a reason. A
+// skipped review ran no agent and has no verdict. It reports whether the job
+// was still running on that worker.
+func (db *DB) SkipJob(ctx context.Context, jobID int64, workerID, reason string) (bool, error) {
+	finished := time.Now()
+	result, err := db.ExecContext(ctx, `
+		UPDATE review_jobs
+		SET status = 'skipped', skip_reason = ?, finished_at = ?, updated_at = ?
+		WHERE id = ? AND status = 'running' AND worker_id = ?
+	`, sanitizeSkipReason(reason), preciseTimestampAt(finished), finished.Format(time.RFC3339), jobID, workerID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 // CancelJob marks a running or queued job as canceled
 func (db *DB) CancelJob(jobID int64) error {
 	finished := time.Now()
@@ -2309,12 +2356,13 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 			} else {
 				conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
 			}
-			// Failed and canceled jobs never produce a review to resolve, so
-			// they are not open. An explicit status filter wins: asking for
-			// failed jobs with the open filter on must still list them.
+			// Failed, canceled, and skipped jobs never produce a review to
+			// resolve, so they are not open. An explicit status filter wins:
+			// asking for failed jobs with the open filter on must still list
+			// them.
 			if statusFilter == "" {
-				conditions = append(conditions, "j.status NOT IN (?, ?)")
-				args = append(args, JobStatusFailed, JobStatusCanceled)
+				conditions = append(conditions, "j.status NOT IN (?, ?, ?)")
+				args = append(args, JobStatusFailed, JobStatusCanceled, JobStatusSkipped)
 			}
 		}
 	}

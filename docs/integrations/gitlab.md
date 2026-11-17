@@ -282,6 +282,12 @@ prompt-injected agent can reach; it does nothing about the job script itself,
 which is why the choice between the two setups above still decides the trust
 model.
 
+The checkout also carries agent configuration that the merge request author
+controls, such as `.claude/settings.json` hooks or a `.mcp.json` file. roborev
+tells each agent to skip it where the agent allows that. See
+[Agent configuration in the pull request](github.md#agent-configuration-in-the-pull-request)
+for what each agent does and which agents cannot skip it.
+
 Review text is model-generated and the merge request under review is part of its
 input, so the note body itself is untrusted. GitLab runs
 [quick actions](https://docs.gitlab.com/user/project/quick_actions/) —

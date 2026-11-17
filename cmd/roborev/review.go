@@ -621,6 +621,15 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		err = dirtyErr
 	} else {
 		excludes := config.ResolveExcludePatterns(ctx, repoPath, cfg, reviewType)
+		// An agent shown an empty diff reports no issues, which reads as a
+		// pass. Skip instead. A census failure leaves prompt building to
+		// report the error.
+		if census, censusErr := prompt.TakeReviewPathCensus(ctx, repoPath, gitRef, excludes); censusErr == nil {
+			if empty := census.Reviewable(ctx, settings.BinaryEvidence); empty != nil {
+				fmt.Fprintf(out, "Skipped: %s\n", empty)
+				return nil
+			}
+		}
 		result, buildErr := pb.BuildWithSnapshot(gitRef, contextCount, a.Name(), reviewType, resolvedMinSev, excludes)
 		reviewPrompt = result.Prompt
 		snapshotCleanup = result.Cleanup

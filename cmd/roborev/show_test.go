@@ -586,6 +586,32 @@ func TestShowPromptForJob(t *testing.T) {
 	})
 }
 
+// A skipped job has no review because no agent ran. show reports the skip and
+// its reason, in text and JSON, instead of a missing review.
+func TestShowSkippedJob(t *testing.T) {
+	const reason = "nothing to review in abc1234: the diff is empty"
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/review":
+			http.Error(w, "not found", http.StatusNotFound)
+		case "/api/jobs":
+			json.NewEncoder(w).Encode(map[string]any{"jobs": []storage.ReviewJob{{
+				ID: 42, Agent: "codex", Status: storage.JobStatusSkipped, SkipReason: reason,
+			}}})
+		default:
+			http.Error(w, "unexpected path: "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+
+	assert.Contains(t, runShowCmd(t, "--job", "42"), "Job 42 was skipped: "+reason)
+
+	var review storage.Review
+	require.NoError(t, json.Unmarshal([]byte(runShowCmd(t, "--job", "42", "--json")), &review))
+	require.NotNil(t, review.Job)
+	assert.Equal(t, storage.JobStatusSkipped, review.Job.Status)
+	assert.Equal(t, reason, review.Job.SkipReason)
+}
+
 func TestShowNoComments(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")
@@ -615,7 +641,7 @@ func TestShowNumericRefFallback(t *testing.T) {
 	}{
 		{name: "commit review takes precedence", args: []string{"12345"}, refStatus: http.StatusOK, wantOutput: "commit review", wantCalls: []string{"sha"}},
 		{name: "missing commit review retries job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusOK, wantOutput: "job review", wantNote: true, wantCalls: []string{"sha", "job"}},
-		{name: "missing both identifies job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantError: "no review found for job 12345", wantNote: true, wantCalls: []string{"sha", "job"}},
+		{name: "missing both identifies job", args: []string{"12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantError: "no review found for job 12345", wantNote: true, wantCalls: []string{"sha", "job", "prompt"}}, // the job lookup checks for a skip
 		{name: "server error does not retry", args: []string{"12345"}, refStatus: http.StatusInternalServerError, wantError: "500", wantCalls: []string{"sha"}},
 		{name: "prompt falls back to stored job", args: []string{"--prompt", "12345"}, refStatus: http.StatusNotFound, jobStatus: http.StatusNotFound, wantOutput: "stored prompt", wantNote: true, wantCalls: []string{"sha", "job", "prompt"}},
 		{name: "explicit job skips ref", args: []string{"--job", "12345"}, jobStatus: http.StatusOK, wantOutput: "job review", wantCalls: []string{"job"}},

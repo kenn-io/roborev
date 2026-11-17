@@ -203,6 +203,25 @@ func TestHTTPClientWaitForReviewStopsWhenCanceled(t *testing.T) {
 	assert.Equal(t, int32(1), polls.Load())
 }
 
+// A skipped job has no review to wait for. WaitForReview ends with the skip
+// reason instead of polling until the caller gives up.
+func TestHTTPClientWaitForReviewReturnsSkip(t *testing.T) {
+	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		assertRequest(t, r, http.MethodGet, "/api/jobs")
+		writeTestJSON(t, w, map[string]any{
+			"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusSkipped, SkipReason: "nothing to review in abc1234: the diff is empty"}},
+		})
+	})
+	client.SetPollInterval(time.Hour)
+
+	review, err := client.WaitForReview(t.Context(), 1)
+
+	var skipped *ReviewSkippedError
+	require.ErrorAs(t, err, &skipped)
+	assert.Equal(t, "nothing to review in abc1234: the diff is empty", skipped.Reason)
+	assert.Nil(t, review)
+}
+
 func TestFindJobForCommit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

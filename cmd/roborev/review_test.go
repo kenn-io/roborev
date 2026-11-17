@@ -295,6 +295,32 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 	})
 }
 
+// A skipped review ran no agent and has no verdict. --wait reports the reason
+// and exits zero: having nothing to review is not a failure.
+func TestWaitForJobSkipped(t *testing.T) {
+	setupFastPolling(t)
+	repo, mux := setupTestEnvironment(t)
+	setupRepoWithCommits(t, repo,
+		repoCommitSpec{"file.txt", "content", "initial commit"},
+	)
+	mockEnqueueQueued(mux, "abc123")
+	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, _ *http.Request) {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"jobs": []storage.ReviewJob{{
+				ID: 1, GitRef: "abc123", Agent: "test", Status: storage.JobStatusSkipped,
+				SkipReason: "nothing to review in abc123: the diff is empty",
+			}},
+			"has_more": false,
+		})
+	})
+
+	stdout, _, err := executeReviewCmd("--repo", repo.Dir, "--wait")
+
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Skipped: nothing to review in abc123: the diff is empty")
+	assert.Equal(t, 1, strings.Count(strings.ToLower(stdout), "skipped"), "the outcome is printed once")
+}
+
 func TestWaitForJobUnknownStatus(t *testing.T) {
 	setupFastPolling(t)
 

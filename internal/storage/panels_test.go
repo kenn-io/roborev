@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -1061,6 +1062,50 @@ func TestGetReviewByCommitSHAPendingSynthesisHidesStaleReview(t *testing.T) {
 		"a pending synthesis must hide the stale older standalone review")
 }
 
+func TestEnqueuePostCommitPanelRunAbandonedByCallerInsertsNothing(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+		repo := createRepo(t, db, "/tmp/post-commit-panel-abandoned")
+		runID := testUUID("abandoned-run")
+		members := []EnqueueOpts{{
+			RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+			JobType: JobTypeRange, PanelRunUUID: &runID,
+			PanelMemberName: "default", PanelMemberIndex: 0,
+		}}
+		synthesis := EnqueueOpts{
+			RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+			JobType: JobTypeSynthesis, PanelRunUUID: &runID, PanelName: "panel",
+		}
+		// The daemon creates its machine ID at startup; create it before the lock.
+		_, err := db.GetMachineID()
+		require.NoError(t, err)
+		holder, err := db.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+		defer func() { _ = holder.Rollback() }()
+
+		// The panel waits behind another writer, then the hook stops waiting.
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, _, _, err := db.EnqueuePostCommitPanelRun(ctx, members, synthesis)
+			done <- err
+		}()
+		synctest.Wait()
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+
+		require.NoError(t, holder.Rollback())
+		var count int
+		require.NoError(t, db.QueryRowContext(t.Context(),
+			`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repo.ID,
+		).Scan(&count))
+		assert.Zero(t, count)
+	})
+}
+
 func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
@@ -1090,7 +1135,7 @@ func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
 	}
 
 	firstMembers, firstSynthesis := panelOpts("run-1")
-	createdMembers, createdSynthesis, duplicate, err := db.EnqueuePostCommitPanelRun(
+	createdMembers, createdSynthesis, duplicate, err := db.EnqueuePostCommitPanelRun(t.Context(),
 		firstMembers, firstSynthesis,
 	)
 	require.NoError(t, err)
@@ -1099,7 +1144,7 @@ func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
 	assert.False(t, duplicate)
 
 	secondMembers, secondSynthesis := panelOpts("run-2")
-	createdMembers, createdSynthesis, duplicate, err = db.EnqueuePostCommitPanelRun(
+	createdMembers, createdSynthesis, duplicate, err = db.EnqueuePostCommitPanelRun(t.Context(),
 		secondMembers, secondSynthesis,
 	)
 	require.NoError(t, err)

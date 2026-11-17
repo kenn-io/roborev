@@ -608,11 +608,17 @@ func (s *Server) stopPanelSweep() {
 	}
 }
 
+// waitForServerReady probes the new listener until it answers. timeout bounds
+// failures that show the server is not serving, such as a refused connection
+// or a rejected handshake. A probe that times out shows the server is serving
+// but slow, as on a host with far more runnable work than CPUs, so startup
+// keeps waiting and gives the next probe twice as long.
 func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, serveErrCh <-chan error, startup config.ClientAuth) (bool, bool, error) {
 	deadline := time.Now().Add(timeout)
+	probeTimeout := 200 * time.Millisecond
 	var lastErr error
 
-	for time.Now().Before(deadline) {
+	for lastErr == nil || isTimeoutError(lastErr) || time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return false, false, nil
 		}
@@ -627,11 +633,15 @@ func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Dur
 			return false, true, err
 		default:
 		}
-		client := ep.readinessHTTPClient(200*time.Millisecond, startup)
-		if _, err := probeDaemonHTTP(ctx, ep, 200*time.Millisecond, client); err == nil {
+		client := ep.readinessHTTPClient(probeTimeout, startup)
+		_, err := probeDaemonHTTP(ctx, ep, probeTimeout, client)
+		if err == nil {
 			return true, false, nil
-		} else {
-			lastErr = err
+		}
+		lastErr = err
+		if isTimeoutError(err) {
+			probeTimeout *= 2
+			continue
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -654,6 +664,14 @@ func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Dur
 		lastErr = fmt.Errorf("server did not respond before timeout")
 	}
 	return false, false, fmt.Errorf("daemon failed to become ready on %s within %s: %w", ep, timeout, lastErr)
+}
+
+// isTimeoutError reports whether err is a request that ran out of time.
+func isTimeoutError(err error) bool {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 func awaitServeExitOnUnreadyStartup(serveExited bool, serveErrCh <-chan error) error {
@@ -3493,7 +3511,7 @@ func (s *Server) enqueueSingleAgent(
 	var duplicate bool
 	var err error
 	if in.req.Source == storage.JobSourcePostCommit {
-		job, duplicate, err = s.db.EnqueuePostCommitJob(o)
+		job, duplicate, err = s.db.EnqueuePostCommitJob(ctx, o)
 	} else {
 		job, err = s.db.EnqueueJob(o)
 	}

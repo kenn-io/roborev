@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,7 +65,7 @@ func postCommitCmd() *cobra.Command {
 			ctx := cmd.Context()
 			notQueued := func(root, reason string) {
 				hookLog(root, "fail", reason)
-				warnNotQueued(cmd.ErrOrStderr(), reason)
+				warnNotQueued(cmd.ErrOrStderr(), reason, "")
 			}
 			if repoPath == "" {
 				repoPath = "."
@@ -102,6 +103,7 @@ func postCommitCmd() *cobra.Command {
 			batchSize := 0
 			quietPeriod := time.Duration(0)
 			unlock, err := acquirePostCommitBatchLock(ctx, root)
+			locked := err == nil
 			switch {
 			case err != nil && (flush || flushBranch != ""):
 				// A flush can wait: its pending range is recorded, so a
@@ -109,6 +111,10 @@ func postCommitCmd() *cobra.Command {
 				hookLog(root, "fail", fmt.Sprintf(
 					"acquire post-commit lock: %v", err,
 				))
+				if quietHead != "" {
+					// The daemon retries a quiet flush that reports failure.
+					return fmt.Errorf("acquire post-commit lock: %w", err)
+				}
 				return nil
 			case err != nil:
 				// Fail open like every other error: an immediate
@@ -171,9 +177,74 @@ func postCommitCmd() *cobra.Command {
 				}
 			}
 
-			if err := ensureDaemon(); err != nil {
-				notQueued(root, fmt.Sprintf("daemon unavailable: %v", err))
+			// keepPending runs when the daemon did not accept the review and
+			// returns how the commit will still be reviewed. A planned range
+			// keeps its checkpoint on failure, so the next hook retries it. An
+			// immediate review has no range yet, so record one that starts at
+			// this commit; the next commit or push then reviews it. Writing
+			// state requires the batch lock this hook holds.
+			// Capture the commit before contacting the daemon: another
+			// process can advance the branch while this hook waits.
+			var pendingBranch, pendingHead string
+			if !batch.Track {
+				pendingBranch = git.GetCurrentBranch(root)
+				if pendingBranch != "" {
+					pendingHead, _ = git.ResolveSHACtx(ctx, root, "refs/heads/"+pendingBranch)
+				}
+			}
+			keepPending := func(singleCommit bool) string {
+				if batch.Track {
+					if batch.Reason != "" {
+						return ""
+					}
+					if err := extendPendingTip(ctx, root, batch); err != nil {
+						hookLog(root, "fail", fmt.Sprintf("record pending tip: %v", err))
+					}
+					return "the next commit or push will retry it"
+				}
+				if !singleCommit || pendingHead == "" {
+					return ""
+				}
+				if !locked {
+					// This hook fell back to an immediate review because another
+					// hook held the batch lock. The daemon drops an enqueue its
+					// hook abandoned, so take the lock now, with the same bounded
+					// wait, to record the commit instead of losing it.
+					relock, err := acquirePostCommitBatchLock(ctx, root)
+					if err != nil {
+						hookLog(root, "fail", fmt.Sprintf("record pending commit: acquire post-commit lock: %v", err))
+						return ""
+					}
+					defer func() { _ = relock() }()
+				}
+				recorded, err := rememberFailedPostCommit(ctx, root, pendingBranch, pendingHead)
+				if err != nil {
+					hookLog(root, "fail", fmt.Sprintf("record pending commit: %v", err))
+				}
+				if !recorded {
+					return ""
+				}
+				return "the next commit or push will retry it"
+			}
+			// failed reports a review the daemon did not accept. Git ignores
+			// a hook's exit status, but a daemon-scheduled quiet flush reads
+			// it: an error makes the daemon retry the flush.
+			failed := func(reason, shown string, singleCommit bool) error {
+				retry := keepPending(singleCommit)
+				if retry != "" {
+					reason += "; " + retry
+				}
+				hookLog(root, "fail", reason)
+				warnNotQueued(cmd.ErrOrStderr(), shown, retry)
+				if quietHead != "" {
+					return errors.New("quiet flush not queued: " + reason)
+				}
 				return nil
+			}
+
+			if err := ensureDaemon(); err != nil {
+				reason := fmt.Sprintf("daemon unavailable: %v", err)
+				return failed(reason, reason, !batch.Enabled)
 			}
 
 			gitRef := "HEAD"
@@ -201,6 +272,9 @@ func postCommitCmd() *cobra.Command {
 			); ok {
 				gitRef = ref
 			}
+			// A retry of a failed branch review drains the recorded range
+			// through tryBranchReviewForRef, so it keeps the branch scope.
+			singleCommit := !batch.Enabled
 
 			reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 				RepoPath: root,
@@ -220,20 +294,18 @@ func postCommitCmd() *cobra.Command {
 			ep := getDaemonEndpoint()
 			resp, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(ep, timeout)).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
-				notQueued(root, fmt.Sprintf("enqueue request failed: %v", err))
-				return nil
+				reason := fmt.Sprintf("enqueue request failed: %v", err)
+				return failed(reason, reason, singleCommit)
 			}
 			defer resp.Body.Close()
 
 			body, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode >= 400 {
-				hookLog(root, "fail", fmt.Sprintf(
+				return failed(fmt.Sprintf(
 					"daemon returned %d: %s",
 					resp.StatusCode,
 					truncateBytes(body, 200),
-				))
-				warnNotQueued(cmd.ErrOrStderr(), daemonErrorMessage(resp.StatusCode, body))
-				return nil
+				), daemonErrorMessage(resp.StatusCode, body), singleCommit)
 			}
 
 			checkpointErr := advancePostCommitBatch(ctx, root, batch)
@@ -368,14 +440,16 @@ func postCommitLogPath() string {
 	return filepath.Join(config.DataDir(), "post-commit.log")
 }
 
-// hookLog appends a single JSONL entry to the post-commit log.
-// Best-effort: errors are silently ignored so the hook never
-// blocks a commit.
 // warnNotQueued tells the committer that this commit will not be reviewed.
 // Without it the failure would only reach the hook log.
-func warnNotQueued(w io.Writer, reason string) {
+// retry, when set, says how the commit will still get a review.
+func warnNotQueued(w io.Writer, reason, retry string) {
 	reason, _, _ = strings.Cut(reason, "\n")
-	fmt.Fprintf(w, "roborev: commit not queued for review: %s\nroborev: run 'roborev doctor' to diagnose\n", reason)
+	fmt.Fprintf(w, "roborev: commit not queued for review: %s\n", reason)
+	if retry != "" {
+		fmt.Fprintf(w, "roborev: %s\n", retry)
+	}
+	fmt.Fprintln(w, "roborev: run 'roborev doctor' to diagnose")
 }
 
 // daemonErrorMessage returns the error a daemon response reports, or the
@@ -390,6 +464,9 @@ func daemonErrorMessage(status int, body []byte) string {
 	return fmt.Sprintf("daemon returned %d", status)
 }
 
+// hookLog appends a single JSONL entry to the post-commit log.
+// Best-effort: errors are silently ignored so the hook never
+// blocks a commit.
 func hookLog(repo, outcome, message string) {
 	logPath := postCommitLogPath()
 

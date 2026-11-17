@@ -789,6 +789,9 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	if _, err := p.enqueuePanelRun(ctx, ghRepo, pr, cfg); err != nil {
+		if nothing, ok := errors.AsType[*ciNothingToReviewError](err); ok {
+			return p.skipPR(ghRepo, pr, nothing.skip(), attempt)
+		}
 		if _, ok := errors.AsType[*ciConfigurationError](err); ok {
 			if statusErr := p.callSetCommitStatus(
 				ghRepo, pr.HeadRefOid, "error",
@@ -991,6 +994,9 @@ func (p *CIPoller) planCIPanel(
 	// Append one whole-range design member when auto-design warrants it and
 	// no member already covers the design review type (F8, F12).
 	members = p.maybeAppendDesignMember(ctx, members, t.repo, repoCfg, cfg, t.base, t.head)
+	if err := ciNothingToReview(ctx, t.repo.RootPath, t.base+".."+t.head, members, cfg); err != nil {
+		return ciPanelPlan{}, err
+	}
 
 	plan.memberOpts, plan.synthOpts, err = p.buildPanelOpts(
 		ctx,
@@ -3421,6 +3427,16 @@ func (p *CIPoller) retryDueReviewAttempt(
 		return false // another sweep won the CAS
 	}
 	enqueued, err := p.enqueuePanelRun(ctx, ghRepo, pr, cfg)
+	if nothing, ok := errors.AsType[*ciNothingToReviewError](err); ok {
+		// The exclusions changed after the failed run: there is nothing left
+		// to retry. Drop the attempt so it is not re-armed; the earlier run's
+		// status stays on the PR.
+		log.Printf("CI poller: dropping retry for %s#%d@%s: %s",
+			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), nothing.reason)
+		err = p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA)
+		p.recordPollResult(ghRepo, attempt.PRNumber, attempt.HeadSHA, err)
+		return false
+	}
 	if err != nil {
 		// ClaimDueReviewAttempt already CAS-claimed this attempt to 'pending'
 		// (incremented attempt, cleared next_attempt_at), so a failed re-enqueue

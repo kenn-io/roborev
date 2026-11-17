@@ -883,3 +883,88 @@ func advancePostCommitBatch(
 	state.Branches[decision.Branch] = entry
 	return savePostCommitBatchState(decision.statePath, state)
 }
+
+// rememberFailedPostCommit records head, the commit a failed immediate review
+// targeted on branch, as pending: a range from head's parent through head. The
+// next hook run drains that range together with its own commit, and a push
+// flushes it, so a commit the daemon could not accept still gets a review.
+// Another hook may have recorded a range for the branch first, so head merges
+// into it, keeping the earlier checkpoint and the later tip on the same
+// history. It reports whether the pending range now covers head; a range from
+// other history is left alone and does not. The caller must hold the batch
+// lock. A root commit has no parent to anchor the range. If the daemon queued
+// the commit but its reply was lost, the commit is reviewed again with the
+// next range; a redundant review is the cost of never dropping one.
+func rememberFailedPostCommit(ctx context.Context, root, branch, head string) (bool, error) {
+	checkpoint, err := git.ResolveSHACtx(ctx, root, head+"^1")
+	if err != nil {
+		return false, nil
+	}
+	statePath, err := postCommitBatchStatePath(root)
+	if err != nil {
+		return false, err
+	}
+	state, _, err := loadPostCommitBatchState(statePath)
+	if err != nil {
+		return false, err
+	}
+	entry, pending := state.Branches[branch]
+	if !pending {
+		entry = postCommitBatchEntry{Checkpoint: checkpoint, Tip: head}
+	} else {
+		// onChain reports whether from is on to's first-parent chain.
+		onChain := func(from, to string) bool {
+			_, on, err := git.FirstParentDistance(ctx, root, from, to)
+			return err == nil && on
+		}
+		merged := entry
+		if merged.Checkpoint != "" && onChain(checkpoint, merged.Checkpoint) {
+			merged.Checkpoint = checkpoint
+		}
+		if merged.Tip == "" || onChain(merged.Tip, head) {
+			merged.Tip = head
+		}
+		if (merged.Checkpoint != "" && !onChain(merged.Checkpoint, checkpoint)) ||
+			!onChain(head, merged.Tip) {
+			return false, nil
+		}
+		if merged == entry {
+			return true, nil
+		}
+		entry = merged
+	}
+	state.Branches[branch] = entry
+	if err := savePostCommitBatchState(statePath, state); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// extendPendingTip records decision.Head as the pending range's tip after the
+// daemon failed to queue that range, keeping the checkpoint. Batching already
+// records each new tip while planning, but draining a range with batching off
+// does not, so without this a push that carries the newer commits only by tag
+// or a renamed branch would flush the range through the older tip alone. A
+// recorded tip that is not an ancestor of the head belongs to other history
+// and is left alone. The caller must hold the batch lock.
+func extendPendingTip(
+	ctx context.Context, root string, decision postCommitBatchDecision,
+) error {
+	if decision.statePath == "" || decision.Branch == "" || decision.Head == "" {
+		return nil
+	}
+	state := decision.state
+	entry, ok := state.Branches[decision.Branch]
+	if !ok || entry.Tip == decision.Head {
+		return nil
+	}
+	if entry.Tip != "" {
+		_, onChain, err := git.FirstParentDistance(ctx, root, entry.Tip, decision.Head)
+		if err != nil || !onChain {
+			return err
+		}
+	}
+	entry.Tip = decision.Head
+	state.Branches[decision.Branch] = entry
+	return savePostCommitBatchState(decision.statePath, state)
+}

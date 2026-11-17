@@ -182,6 +182,12 @@ func (p *CIPoller) enqueueBranchCommit(
 			return p.db.RecordCIBranchCommitOutcome(ctx, ghRepo, branch, sha, "error",
 				"Review could not be queued; run roborev config validate")
 		}
+		if nothing, ok := errors.AsType[*ciNothingToReviewError](err); ok {
+			log.Printf("CI poller: skipping default-branch commit %s@%s because %s",
+				ghRepo, gitpkg.ShortSHA(sha), nothing.reason)
+			return p.db.RecordCIBranchCommitOutcome(ctx, ghRepo, branch, sha, "success",
+				ciNothingToReviewSkipReason)
+		}
 		return err
 	}
 	if len(plan.memberOpts) == 0 {

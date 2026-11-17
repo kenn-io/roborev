@@ -274,6 +274,23 @@ func TestCIDefaultBranchReviewsRecordInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestCIDefaultBranchReviewsSkipCommitsWithNothingToReview(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	empty := h.origin.CommitEmpty("empty")
+	h.poll(t)
+	assert.Empty(t, h.synthesisJobs(t), "an agent shown an empty diff would report a clean review")
+	assert.Equal(t, []branchStatus{{
+		SHA: empty, State: "success", Description: ciNothingToReviewSkipReason,
+	}}, h.takeStatuses())
+
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "a skipped commit does not block later commits")
+	assert.Equal(t, empty+".."+landed, runs[0].GitRef)
+}
+
 func TestCIDefaultBranchReviewFailureReportsError(t *testing.T) {
 	h := newBranchReviewHarness(t)
 	h.fail = true
