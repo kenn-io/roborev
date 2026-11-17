@@ -251,7 +251,6 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	t.Parallel()
 	const workers = 4
 	tc := newWorkerTestContext(t, workers)
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
 	const agentName = "worker-concurrency-blocking"
 	started := make(chan struct{}, workers+1)
@@ -269,8 +268,18 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 		},
 	})
 
+	// Task jobs carry their prompt, so workers reach the agent without the
+	// dozens of git commands a commit review runs first. On a loaded Windows
+	// runner those commands took longer than the wait below.
 	for range workers + 1 {
-		tc.createJobWithAgent(t, sha, agentName)
+		_, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+			RepoID:  tc.Repo.ID,
+			GitRef:  "prompt",
+			Agent:   agentName,
+			Prompt:  "Review this codebase",
+			JobType: storage.JobTypeTask,
+		})
+		require.NoError(t, err)
 	}
 
 	tc.startPool()
