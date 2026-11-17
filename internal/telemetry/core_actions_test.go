@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,41 +57,45 @@ func coreActionCapture(t *testing.T) (*telemetry.Reporter, func() []testutil.Pos
 }
 
 func TestCoreActionDailyClaims(t *testing.T) {
-	reporter, messages, post := coreActionCapture(t)
-	surfacesOf := func(messages []testutil.PostHogMessage) []string {
-		var result []string
-		for _, message := range messages {
-			result = append(result, message.Event+":"+message.Properties["surface"].(string))
-		}
-		return result
-	}
-	for _, event := range []string{"review_viewed", "finding_fixed", "review_closed"} {
-		for _, surface := range []string{"web", "tui", "cli"} {
-			if event == "finding_fixed" && surface == "web" {
-				continue
+	// Each capture has a one-second deadline. A loaded runner can spend that
+	// long writing the daily claims file, so the deadline runs on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		reporter, messages, post := coreActionCapture(t)
+		surfacesOf := func(messages []testutil.PostHogMessage) []string {
+			var result []string
+			for _, message := range messages {
+				result = append(result, message.Event+":"+message.Properties["surface"].(string))
 			}
-			body := `{"event":"` + event + `","properties":{"surface":"` + surface + `"}}`
-			assert.Equal(t, http.StatusAccepted, post(body).Code)
-			assert.Equal(t, http.StatusAccepted, post(body).Code)
+			return result
 		}
-	}
-	// Review views and screen views have independent daily claims.
-	assert.Equal(t, http.StatusAccepted, post(`{"event":"screen_viewed","properties":{"screen":"review","surface":"tui"}}`).Code)
-	for range 2 {
-		assert.Equal(t, http.StatusAccepted, post(`{"event":"error_shown","properties":{"surface":"tui","kind":"review_closed"}}`).Code)
-	}
-	require.NoError(t, reporter.Close())
-	sent := messages()
-	require.Len(t, sent, 11)
-	assert.Equal(t, []string{
-		"review_viewed:web", "review_viewed:tui", "review_viewed:cli",
-		"finding_fixed:tui", "finding_fixed:cli",
-		"review_closed:web", "review_closed:tui", "review_closed:cli",
-		"screen_viewed:tui",
-		"error_shown:tui", "error_shown:tui",
-	}, surfacesOf(sent))
-	assert.Equal(t, "review_closed", sent[9].Properties["kind"])
-	assert.Equal(t, "review_closed", sent[10].Properties["kind"])
+		for _, event := range []string{"review_viewed", "finding_fixed", "review_closed"} {
+			for _, surface := range []string{"web", "tui", "cli"} {
+				if event == "finding_fixed" && surface == "web" {
+					continue
+				}
+				body := `{"event":"` + event + `","properties":{"surface":"` + surface + `"}}`
+				assert.Equal(t, http.StatusAccepted, post(body).Code)
+				assert.Equal(t, http.StatusAccepted, post(body).Code)
+			}
+		}
+		// Review views and screen views have independent daily claims.
+		assert.Equal(t, http.StatusAccepted, post(`{"event":"screen_viewed","properties":{"screen":"review","surface":"tui"}}`).Code)
+		for range 2 {
+			assert.Equal(t, http.StatusAccepted, post(`{"event":"error_shown","properties":{"surface":"tui","kind":"review_closed"}}`).Code)
+		}
+		require.NoError(t, reporter.Close())
+		sent := messages()
+		require.Len(t, sent, 11)
+		assert.Equal(t, []string{
+			"review_viewed:web", "review_viewed:tui", "review_viewed:cli",
+			"finding_fixed:tui", "finding_fixed:cli",
+			"review_closed:web", "review_closed:tui", "review_closed:cli",
+			"screen_viewed:tui",
+			"error_shown:tui", "error_shown:tui",
+		}, surfacesOf(sent))
+		assert.Equal(t, "review_closed", sent[9].Properties["kind"])
+		assert.Equal(t, "review_closed", sent[10].Properties["kind"])
+	})
 }
 
 func TestSubmittedEmptySearchCapture(t *testing.T) {
