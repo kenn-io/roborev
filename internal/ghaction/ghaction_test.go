@@ -338,7 +338,7 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 	}
 	lookup, _, found := strings.Cut(install, "ARCHIVE=")
 	require.True(t, found)
-	// Freeze the command from base 28e21025 for the same-workload comparison.
+	// Baseline for comparing request counts on the same workload.
 	previousLookup := `ROBOREV_VERSION=$(curl -sfL https://api.github.com/repos/roborev-dev/roborev/releases/latest | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
 `
 	for _, tt := range []struct {
