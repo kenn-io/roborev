@@ -333,20 +333,21 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			args := filepath.Join(dir, "args")
-			fake := `#!/bin/sh
+			fake := `curl() {
+local flags="" arg
 for arg in "$@"; do
   case "$arg" in
     https://*) printf '%s\n' "$arg" >> "$CURL_ARGS" ;;
     -[!-]*) flags="$flags$arg" ;;
   esac
 done
-case "$flags" in *f*L*|*L*f*) ;; *) exit 1 ;; esac
-case " $* " in *" -w %{url_effective} "*) ;; *) exit 1 ;; esac
+case "$flags" in *f*L*|*L*f*) ;; *) return 1 ;; esac
+case " $* " in *" -w %{url_effective} "*) ;; *) return 1 ;; esac
 printf '%s' "$CURL_URL"
+}
 `
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(fake), 0o755))
-			cmd := exec.CommandContext(t.Context(), bash, "-euo", "pipefail", "-c", lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
-			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CURL_ARGS="+args, "CURL_URL="+tt.url)
+			cmd := exec.CommandContext(t.Context(), bash, "-euo", "pipefail", "-c", fake+lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
+			cmd.Env = append(os.Environ(), "CURL_ARGS="+args, "CURL_URL="+tt.url)
 			got, err := cmd.CombinedOutput()
 			if tt.want == "" {
 				require.Error(t, err)
