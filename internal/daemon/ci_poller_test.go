@@ -2982,7 +2982,7 @@ func TestLoadCIRepoConfig_LoadsFromDefaultBranch(t *testing.T) {
 	}
 	require.NotNil(t, repoConfig.Config, "expected non-nil config")
 	assert.Equal(t, []string{"claude"}, repoConfig.Config.CI.Agents, "agents")
-	assert.Equal(t, "origin/main", repoConfig.Ref)
+	assert.Equal(t, "refs/remotes/origin/main", repoConfig.Ref)
 }
 
 func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
@@ -3041,7 +3041,7 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 		}, "expected ConfigParseError, got: %v", err)
 	}
 	assert.Nil(t, repoConfig.Config)
-	assert.Equal(t, "origin/main", repoConfig.Ref)
+	assert.Equal(t, "refs/remotes/origin/main", repoConfig.Ref)
 }
 
 func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
