@@ -38,7 +38,9 @@ func New(backend Backend, version string, activity func(context.Context)) *Serve
 			},
 		},
 	)
-	guides.Register(s.mcp)
+	guideTool := guides.Tool()
+	guideTool.Annotations.DestructiveHint = new(false)
+	s.mcp.AddTool(guideTool, guides.Handler)
 	s.registerTools()
 	s.registerWriteTools()
 	s.registerGuidance()

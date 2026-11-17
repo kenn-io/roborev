@@ -254,10 +254,10 @@ catalog entry. The workflow guide maps CLI operations to the actual MCP tools
 and explains which steps still need local CLI, Git, or code access.
 
 Names are exact and case-sensitive. Empty, null, unknown, or path-like names,
-wrong argument types, and extra fields return a JSON-RPC invalid-params error.
-This tool reads only shipped allowlisted guides. It does not load arbitrary
-files or execute a skill. Reading a guide does not satisfy its explicit
-invocation requirement or change a hook's supplied review scope.
+wrong argument types, and extra fields return a tool error with guidance to list
+the available guides. This tool reads only shipped allowlisted guides. It does
+not load arbitrary files or execute a skill. Reading a guide does not satisfy
+its explicit invocation requirement or change a hook's supplied review scope.
 
 ## Guidance resource
 

@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/quick"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 )
 
 func TestMCPGuidesReuseInstalledContentAndPolicy(t *testing.T) {
@@ -47,17 +47,17 @@ func TestMCPGuidesAreIndependent(t *testing.T) {
 	t.Parallel()
 	expected, err := MCPGuides()
 	require.NoError(t, err)
-	hegel.Test(t, func(ht *hegel.T) {
-		index := hegel.Draw(ht, hegel.Integers(0, len(expected)-1))
-		text := hegel.Draw(ht, hegel.Text())
+	property := func(indexSeed uint64, text string) bool {
+		index := int(indexSeed % uint64(len(expected)))
 		guides, err := MCPGuides()
-		require.NoError(ht, err)
+		require.NoError(t, err)
 		guides[index].Name, guides[index].Title = text, text
 		guides[index].Summary, guides[index].Markdown = text, text
 		actual, err := MCPGuides()
-		require.NoError(ht, err)
-		assert.Equal(ht, expected, actual)
-	}, hegel.WithTestCases(1000), hegel.WithDatabase(""))
+		require.NoError(t, err)
+		return assert.Equal(t, expected, actual)
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
 
 func TestMCPGuidesIgnoreInstalledContent(t *testing.T) {
@@ -69,13 +69,13 @@ func TestMCPGuidesIgnoreInstalledContent(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(installed), 0o755))
 	expected, err := MCPGuides()
 	require.NoError(t, err)
-	hegel.Test(t, func(ht *hegel.T) {
-		text := hegel.Draw(ht, hegel.Text())
-		require.NoError(ht, os.WriteFile(installed, []byte(text), 0o600))
+	property := func(text string) bool {
+		require.NoError(t, os.WriteFile(installed, []byte(text), 0o600))
 		actual, err := MCPGuides()
-		require.NoError(ht, err)
-		assert.Equal(ht, expected, actual)
-	}, hegel.WithTestCases(1000), hegel.WithDatabase(""))
+		require.NoError(t, err)
+		return assert.Equal(t, expected, actual)
+	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 1000}))
 }
 
 func TestMCPGuidesPreserveWorkflowBoundaries(t *testing.T) {
