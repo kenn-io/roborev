@@ -10,19 +10,10 @@ source_dir=""
 push=false
 generate=true
 
-expected_assets=(
-  "web-ui.png"
-  "tui-hero.svg"
-  "tui-queue.svg"
-  "tui-review.svg"
-  "tui-copy.svg"
-  "tui-respond.svg"
-  "tui-help.svg"
-  "tui-address.svg"
-  "cli-help.svg"
-  "cli-repo-list.svg"
-  "cli-status.svg"
-)
+expected_assets=()
+while IFS= read -r asset; do
+  expected_assets+=("$asset")
+done < "$script_dir/expected-assets.txt"
 
 usage() {
   cat <<EOF

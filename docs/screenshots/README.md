@@ -46,3 +46,24 @@ bash docs/screenshots/update-generated-assets-branch.sh --skip-generate
 
 Add `--push` only when the updated `docs-generated-assets` branch is ready to
 publish.
+
+## Capture From an Approved Corpus
+
+An automated screenshot runner has no `~/.roborev/reviews.db`, so it captures
+from a reviewed corpus instead. After preparing and inspecting a demo database,
+write it as a corpus generation:
+
+```bash
+python3 docs/screenshots/corpus.py write \
+  "${TMPDIR:-/tmp}/roborev-demo-data/reviews.db" GENERATION_DIR
+```
+
+The command prints the manifest's SHA-256, which pins the generation. A runner
+then sets `DOCS_SCREENSHOTS_OUTPUT` to a new directory, `DOCS_SCREENSHOTS_CORPUS`
+to the generation's `manifest.json`, and `DOCS_SCREENSHOTS_DATE` to the
+corpus reference time, and runs `make docs-screenshots`. The target checks the
+database against the manifest before it builds anything, labels the build with
+the newest release tag, measures the web view's relative times from the
+reference time, and writes every file of the `docs-generated-assets` branch
+under `assets/` in the output directory. The host needs Bash, Git, Python 3 and
+Docker.

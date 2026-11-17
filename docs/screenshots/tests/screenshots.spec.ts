@@ -5,7 +5,14 @@ import { findFirstFailingJob } from "./review-selection";
 
 const outputDir = process.env.SCREENSHOT_DIR ?? "/output";
 
+// Relative times such as "3d ago" are measured from this instant when set, so
+// a corpus renders the same way on every capture date.
+const screenshotNow = process.env.ROBOREV_SCREENSHOT_NOW;
+
 test("review workspace with an open finding", async ({ page }) => {
+  if (screenshotNow) {
+    await page.clock.setFixedTime(new Date(screenshotNow));
+  }
   await page.goto("/reviews");
 
   const jobs = page.getByRole("region", { name: "Review jobs" });

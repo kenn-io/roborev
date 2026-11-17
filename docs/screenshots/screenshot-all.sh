@@ -69,7 +69,7 @@ fi
 
 # --- Step 2: Build Docker image ---
 if [[ "$SKIP_BUILD" == false ]]; then
-    ROBOREV_VERSION=$(cd "$REPO" && git tag --sort=-v:refname | grep -E '^v[0-9]+\.' | head -1 || echo "dev")
+    ROBOREV_VERSION="${ROBOREV_SCREENSHOT_VERSION:-$(cd "$REPO" && git tag --sort=-v:refname | grep -E '^v[0-9]+\.' | head -1 || echo "dev")}"
     echo "==> Building Docker image: $IMAGE_NAME (version: $ROBOREV_VERSION)"
     DOCKER_BUILDKIT=1 docker build \
         --build-arg "VERSION=$ROBOREV_VERSION" \
@@ -86,6 +86,7 @@ echo "==> Generating documentation screenshots..."
 # runtimes such as Colima share only some host directories with their VM, and
 # an unshared bind mount silently becomes an empty directory.
 CONTAINER_ID=$(docker create -e ROBOREV_DATA_DIR=/data \
+    -e ROBOREV_SCREENSHOT_NOW="${ROBOREV_SCREENSHOT_NOW:-}" \
     "$IMAGE_NAME" /screenshots/generate-screenshots.sh /output)
 trap 'docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true' EXIT
 docker cp "$DEMO_DATA_DIR/." "$CONTAINER_ID:/data"
