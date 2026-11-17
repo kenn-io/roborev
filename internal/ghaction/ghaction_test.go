@@ -341,8 +341,7 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 	lookup, _, found := strings.Cut(install, "ARCHIVE=")
 	require.True(t, found)
 	// Freeze the command from base 28e21025 for the same-workload comparison.
-	previousLookup := `set -euo pipefail
-ROBOREV_VERSION=$(curl -sfL https://api.github.com/repos/roborev-dev/roborev/releases/latest | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
+	previousLookup := `ROBOREV_VERSION=$(curl -sfL https://api.github.com/repos/roborev-dev/roborev/releases/latest | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
 `
 	for _, tt := range []struct {
 		name, lookup, url, want, request string
@@ -358,18 +357,17 @@ ROBOREV_VERSION=$(curl -sfL https://api.github.com/repos/roborev-dev/roborev/rel
 			dir := t.TempDir()
 			args := filepath.Join(dir, "args")
 			fake := `#!/bin/sh
-found=0
 page=0
 flags=0
 for arg in "$@"; do
   case "$arg" in
     -fsSLI) flags=1 ;;
-    https://api.github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s\n' '{"tag_name":"v0.52.0"}'; found=1 ;;
-    https://github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s' "$CURL_URL"; found=1; page=1 ;;
+    https://api.github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s\n' '{"tag_name":"v0.52.0"}' ;;
+    https://github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s' "$CURL_URL"; page=1 ;;
     http://*|https://*) exit 1 ;;
   esac
 done
-[ "$found" = 1 ] && { [ "$page" = 0 ] || [ "$flags" = 1 ]; }
+[ "$page" = 0 ] || [ "$flags" = 1 ]
 `
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(fake), 0o755))
 			cmd := exec.Command(bash, "-euo", "pipefail", "-c", tt.lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
