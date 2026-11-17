@@ -7,10 +7,12 @@ binds the exact database the screenshots were made from.
 """
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import sys
 
 DATABASE = "reviews.db"
@@ -27,7 +29,14 @@ def digest(path):
 def write(source, directory):
     directory.mkdir(parents=True)
     database = directory / DATABASE
-    shutil.copyfile(source, database)
+    # A plain file copy misses changes still in the source's write-ahead log,
+    # for example after inspecting the demo database in the TUI. SQLite's
+    # backup reads a consistent snapshot, and the copy leaves WAL mode so it
+    # stands alone as one file.
+    with closing(sqlite3.connect(f"{Path(source).resolve().as_uri()}?mode=ro", uri=True)) as reader, \
+            closing(sqlite3.connect(database)) as writer:
+        reader.backup(writer)
+        writer.execute("PRAGMA journal_mode=DELETE")
     manifest = {"schema": 1, "files": {DATABASE: {"sha256": digest(database),
                                                   "size": database.stat().st_size}}}
     path = directory / "manifest.json"

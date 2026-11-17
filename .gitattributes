@@ -4,6 +4,8 @@
 internal/mcpserver/assets/*.png binary
 internal/skills/*/*/SKILL.md text eol=lf
 internal/skills/*/*/agents/openai.yaml text eol=lf
+# Shell scripts read this list line by line; a CR would end every asset name.
+docs/screenshots/expected-assets.txt text eol=lf
 
 # Generated files. GitHub collapses them in pull request diffs and leaves them
 # out of language stats.
