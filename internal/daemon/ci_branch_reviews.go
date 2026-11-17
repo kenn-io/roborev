@@ -54,7 +54,9 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 		log.Printf("CI poller: git fetch failed for %s; reviewing %s from its own fetch: %v",
 			ghRepo, branch, fetchErr)
 	}
-	head, err := gitText(ctx, repo.RootPath, "rev-parse", "--verify", "origin/"+branch+"^{commit}")
+	// The full name keeps a local branch named origin/<branch> from shadowing
+	// the fetched one.
+	head, err := gitText(ctx, repo.RootPath, "rev-parse", "--verify", "refs/remotes/origin/"+branch+"^{commit}")
 	if err != nil {
 		return fmt.Errorf("resolve origin/%s: %w", branch, err)
 	}
