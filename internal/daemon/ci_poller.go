@@ -168,6 +168,7 @@ type CIPoller struct {
 	monitoredRepos     []string                         // last successful discovery; guarded by mu
 	dispatchingRetries map[ciPollTarget]int             // live retry enqueue owners; guarded by mu
 	codeowners         map[ciCodeownersKey]ciCodeowners // CODEOWNERS reads per repo and base branch for the current poll; guarded by mu
+	trustedActors      map[string]map[string]struct{}   // collaborator reads per repo for the current poll; guarded by mu
 	initialPollPending bool                             // guarded by mu; startup has not established health yet
 }
 
@@ -222,6 +223,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		skipPublished:      make(map[ciSkipKey]string),
 		dispatchingRetries: make(map[ciPollTarget]int),
 		codeowners:         make(map[ciCodeownersKey]ciCodeowners),
+		trustedActors:      make(map[string]map[string]struct{}),
 	}
 	p.listOpenPRsFn = p.listOpenPRs
 	p.listTrustedActorsFn = p.listTrustedActors
@@ -553,9 +555,8 @@ func (p *CIPoller) poll(ctx context.Context) {
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
-	// Clear the cache so heads not yet reviewed, including those skipped by
-	// the author filter, see current ownership on each poll.
-	p.forgetCodeowners(ghRepo)
+	// Clear cached reads so each poll sees current ownership and collaborators.
+	p.forgetPollReads(ghRepo)
 
 	// List open PRs via the GitHub API
 	prs, err := p.callListOpenPRs(ctx, ghRepo)
@@ -1114,9 +1115,10 @@ func (p *CIPoller) codeownerLogins(ctx context.Context, ghRepo, ref string) (map
 	return read.logins, read.err
 }
 
-func (p *CIPoller) forgetCodeowners(ghRepo string) {
+func (p *CIPoller) forgetPollReads(ghRepo string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	delete(p.trustedActors, ghRepo)
 	for key := range p.codeowners {
 		if key.repo == ghRepo {
 			delete(p.codeowners, key)
@@ -4013,10 +4015,24 @@ func (p *CIPoller) callListPRDiscussionComments(ctx context.Context, ghRepo stri
 }
 
 func (p *CIPoller) callListTrustedActors(ctx context.Context, ghRepo string) (map[string]struct{}, error) {
-	if p.listTrustedActorsFn != nil {
-		return p.listTrustedActorsFn(ctx, ghRepo)
+	p.mu.Lock()
+	logins, ok := p.trustedActors[ghRepo]
+	p.mu.Unlock()
+	if ok {
+		return logins, nil
 	}
-	return p.listTrustedActors(ctx, ghRepo)
+	var err error
+	if p.listTrustedActorsFn != nil {
+		logins, err = p.listTrustedActorsFn(ctx, ghRepo)
+	} else {
+		logins, err = p.listTrustedActors(ctx, ghRepo)
+	}
+	if err == nil {
+		p.mu.Lock()
+		p.trustedActors[ghRepo] = logins
+		p.mu.Unlock()
+	}
+	return logins, err
 }
 
 func (p *CIPoller) panelPostTarget(
