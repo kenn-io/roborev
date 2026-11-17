@@ -345,7 +345,7 @@ case " $* " in *" -w %{url_effective} "*) ;; *) exit 1 ;; esac
 printf '%s' "$CURL_URL"
 `
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(fake), 0o755))
-			cmd := exec.Command(bash, "-euo", "pipefail", "-c", lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
+			cmd := exec.CommandContext(t.Context(), bash, "-euo", "pipefail", "-c", lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
 			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CURL_ARGS="+args, "CURL_URL="+tt.url)
 			got, err := cmd.CombinedOutput()
 			if tt.want == "" {
