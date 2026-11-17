@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"context"
 	_ "embed"
 	"strings"
 	"testing"
@@ -51,6 +52,13 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	// Wipe any pre-existing roborev schema so we start clean.
 	_, err = pool.pool.Exec(ctx, `DROP SCHEMA IF EXISTS roborev CASCADE`)
 	require.NoError(t, err, "drop existing roborev schema")
+	// The fixture omits indexes that EnsureSchema creates outside the embedded
+	// schema, so an upgraded fixture lacks them. Later tests share the schema
+	// and must not inherit one that no real database has.
+	t.Cleanup(func() {
+		_, err := pool.pool.Exec(context.WithoutCancel(ctx), `DROP SCHEMA IF EXISTS roborev CASCADE`)
+		require.NoError(t, err, "drop fixture roborev schema")
+	})
 
 	schemas := map[int]string{
 		11: postgresV11Schema,
