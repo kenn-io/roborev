@@ -31,6 +31,7 @@ type commentAPIServer struct {
 	listIssueStatus int
 	createStatus    int
 	patchStatus     int
+	patchStatusByID map[int64]int
 
 	createdBodies []string
 	patchedBodies []string
@@ -119,13 +120,13 @@ func (s *commentAPIServer) capturePatch(w http.ResponseWriter, r *http.Request) 
 	assert.NoError(s.t, json.NewDecoder(r.Body).Decode(&payload))
 	s.patchedBodies = append(s.patchedBodies, payload.Body)
 	s.patchedPaths = append(s.patchedPaths, r.URL.Path)
-	status := s.patchStatus
-	if strings.HasSuffix(r.URL.Path, "/20") {
-		status = http.StatusOK
-	}
-	w.WriteHeader(status)
 	id, err := strconv.ParseInt(r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:], 10, 64)
 	assert.NoError(s.t, err)
+	status := s.patchStatus
+	if override, ok := s.patchStatusByID[id]; ok {
+		status = override
+	}
+	w.WriteHeader(status)
 	assert.NoError(s.t, json.NewEncoder(w).Encode(&googlegithub.IssueComment{
 		ID:   ptr(id),
 		Body: ptr(payload.Body),
@@ -260,6 +261,9 @@ func TestUpsertPRComment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			api := newCommentAPIServer(t)
 			api.patchStatus = tc.status
+			if tc.known != 0 && tc.found != 0 && tc.known != tc.found {
+				api.patchStatusByID = map[int64]int{tc.found: http.StatusOK}
+			}
 			if tc.found != 0 {
 				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{issueComment(tc.found, CommentMarker, "alice", "User", "")}
 			}
@@ -431,6 +435,9 @@ func TestUpdateExistingPRComment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			api := newCommentAPIServer(t)
 			api.patchStatus = tc.status
+			if tc.known != 0 && tc.found != 0 && tc.known != tc.found {
+				api.patchStatusByID = map[int64]int{tc.found: http.StatusOK}
+			}
 			if tc.found != 0 {
 				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{issueComment(tc.found, CommentMarker, "alice", "User", "")}
 			}
