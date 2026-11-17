@@ -1184,7 +1184,6 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 			prs = append(prs, ghPR{Number: pr, HeadRefOid: head, BaseRefName: "main"})
 		}
 		require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-		assert.NotContains(h.Poller.trustedActors, "acme/api")
 		for _, pr := range prs {
 			members := h.panelMembers(t, "acme/api", pr.Number, pr.HeadRefOid)
 			require.Len(t, members, 1)
@@ -1197,6 +1196,7 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 		assert.NotContains(prompt, "Alice comment")
 	}
 	assert.Equal(1, requests)
+	assert.NotContains(h.Poller.trustedActors, "acme/api")
 
 	lookups := 0
 	trusted := map[string]struct{}{"alice": {}}
