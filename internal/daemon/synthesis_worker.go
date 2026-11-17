@@ -63,7 +63,7 @@ func (wp *WorkerPool) processSynthesisJob(
 	}
 
 	switch {
-	case len(succeeded) == 0 && job.Source != storage.JobSourceCI && allMembersSkipped(results):
+	case len(succeeded) == 0 && !ciPollerJob(job) && allMembersSkipped(results):
 		// Every member found nothing to review, so there is nothing to
 		// synthesize. The run is skipped, not failed. CI publishes its own
 		// skips before it enqueues, and its posting path expects a verdict.

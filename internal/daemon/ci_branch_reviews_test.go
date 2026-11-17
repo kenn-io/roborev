@@ -298,6 +298,29 @@ func TestCIDefaultBranchReviewsSkipCommitsWithNothingToReview(t *testing.T) {
 	assert.Equal(t, empty+".."+landed, runs[0].GitRef)
 }
 
+func TestCIDefaultBranchReviewPublishesWhenExclusionsChangeBeforeItRuns(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	// Without a prompt built at enqueue, each reviewer builds its own when it
+	// runs.
+	h.poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
+		return "", errors.New("prompt unavailable")
+	}
+	h.poll(t)
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	h.poll(t)
+	h.takeStatuses()
+	// The poller found something to review. The exclusions change before the
+	// reviewers run, as they can for pull request reviews.
+	h.cfg.ExcludePatterns = []string{"app.txt"}
+	h.runJobs(t)
+	h.poll(t)
+
+	statuses := h.takeStatuses()
+	require.Len(t, statuses, 1, "the commit does not stay pending")
+	assert.Equal(t, landed, statuses[0].SHA)
+	assert.Equal(t, "success", statuses[0].State)
+}
+
 func TestCIDefaultBranchReviewFailureReportsError(t *testing.T) {
 	h := newBranchReviewHarness(t)
 	h.fail = true
