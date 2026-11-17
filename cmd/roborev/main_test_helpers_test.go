@@ -170,13 +170,15 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 		daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: mockAddr}, nil, version.Version, nil),
 		"failed to write daemon runtime")
 
-	origServerAddr := serverAddr
+	origServerAddr, origParsedServerEndpoint := serverAddr, parsedServerEndpoint
 	origGetAnyRunningDaemon := getAnyRunningDaemon
-	serverAddr = ts.URL
+	// An endpoint parsed from an earlier test's --server flag would take
+	// precedence over this address, so drop it with the address it parsed.
+	serverAddr, parsedServerEndpoint = ts.URL, nil
 
 	t.Cleanup(func() {
 		ts.Close()
-		serverAddr = origServerAddr
+		serverAddr, parsedServerEndpoint = origServerAddr, origParsedServerEndpoint
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 	})
 
