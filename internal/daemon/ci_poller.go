@@ -532,11 +532,6 @@ func (p *CIPoller) poll(ctx context.Context) {
 				delete(p.skipPublished, key)
 			}
 		}
-		for repo := range p.trustedActors {
-			if !slices.Contains(repos, repo) {
-				delete(p.trustedActors, repo)
-			}
-		}
 		for target := range p.pollErrors {
 			if !slices.Contains(repos, target.repo) {
 				delete(p.pollErrors, target)
@@ -562,6 +557,11 @@ func (p *CIPoller) poll(ctx context.Context) {
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
 	// Clear cached reads so each poll sees current ownership and collaborators.
 	p.forgetPollReads(ghRepo)
+	defer func() {
+		p.mu.Lock()
+		delete(p.trustedActors, ghRepo)
+		p.mu.Unlock()
+	}()
 
 	// List open PRs via the GitHub API
 	prs, err := p.callListOpenPRs(ctx, ghRepo)
