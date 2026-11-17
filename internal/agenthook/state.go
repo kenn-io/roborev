@@ -1804,6 +1804,21 @@ func currentGitScopeSubprocess(parent context.Context, cwd string) (gitScope, bo
 }
 
 func unbornGitScope(parent context.Context, cwd string) (gitScope, bool) {
+	if cwd == "" {
+		return gitScope{}, false
+	}
+	if metadata, err := roborevgit.ReadUnbornCheckoutMetadata(cwd); err == nil {
+		return gitScope{
+			WorktreeRoot: metadata.WorktreeRoot,
+			GitDir:       metadata.GitDir,
+			CommonDir:    metadata.CommonDir,
+			Branch:       metadata.Branch,
+		}, true
+	}
+	return unbornGitScopeSubprocess(parent, cwd)
+}
+
+func unbornGitScopeSubprocess(parent context.Context, cwd string) (gitScope, bool) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	out, err := agentHookGit.Output(ctx, cwd, "rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir")
