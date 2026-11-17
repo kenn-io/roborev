@@ -548,7 +548,8 @@ Expect this behavior:
 - **Every poll fetches every repo.** With the option on, the poller runs
     `git fetch` for each configured repo on each interval, even when no pull
     request changed. It also asks the repo's remote which branch is the default,
-    with `git remote set-head origin --auto`.
+    with `git ls-remote --symref origin HEAD`, and fetches that branch when the
+    checkout's fetch settings leave it out, as in a single-branch clone.
 - **No PR comment is posted.** The review is stored like any other review. Run
     `roborev list` or `roborev show <job-id>` to read it, or use a
     [review hook](/docs/guides/hooks/) to send results elsewhere.
@@ -560,9 +561,10 @@ fast-forward merge. It is informational: as with the pull request status, its
 state reports whether the review ran, and its description reports the result.
 
 A status that GitHub does not accept right away is sent again on the next poll.
-The poller stops trying when GitHub will never accept it: the token cannot write
-commit statuses, or GitHub no longer has the commit. The review itself is still
-stored.
+The poller stops trying when GitHub will never accept it: the daemon has no
+GitHub credentials, the token cannot write commit statuses, or GitHub no longer
+has the commit. A failed GitHub App token request is retried. The review itself
+is still stored.
 
 | State | Description | When |
 |-------|-------------|------|

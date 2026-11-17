@@ -400,10 +400,16 @@ func (p *CIPoller) callSetBranchStatus(ctx context.Context, ghRepo, sha, state, 
 	if p.setBranchStatusFn != nil {
 		return p.setBranchStatusFn(ghRepo, sha, state, description)
 	}
-	if strings.TrimSpace(p.githubTokenForRepo(ghRepo)) == "" {
+	token, appErr := p.resolveGitHubToken(ctx, ghRepo)
+	if strings.TrimSpace(token) == "" {
+		if appErr != nil {
+			// The token exchange can succeed on a later poll, so the status
+			// stays unpublished instead of being dropped as uncredentialed.
+			return fmt.Errorf("get GitHub App token: %w", appErr)
+		}
 		return errBranchStatusNoToken
 	}
-	client, err := p.githubClientForRepo(ghRepo)
+	client, err := p.githubClientWithToken(token)
 	if err != nil {
 		return err
 	}
@@ -419,26 +425,62 @@ func (p *CIPoller) callSetBranchStatus(ctx context.Context, ghRepo, sha, state, 
 // GitHub would never be followed. Pull request reviews read their repository
 // configuration through origin/HEAD too, so they follow the change as well.
 func (p *CIPoller) remoteDefaultBranch(ctx context.Context, ghRepo, repoPath string) (string, error) {
+	env := p.gitEnvForRepo(ghRepo)
+	out, err := runGitEnv(ctx, repoPath, env, "ls-remote", "--symref", "origin", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("read the remote default branch: %w", err)
+	}
+	branch, head, ok := parseRemoteHead(out)
+	if !ok {
+		return "", errors.New("the remote does not report a default branch")
+	}
 	unlock := lockGitMetadata(repoPath)
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "remote", "set-head", "origin", "--auto")
+	defer unlock()
+	// A checkout that fetches only some branches has no current copy of a
+	// branch that became the default after it was cloned.
+	tracking := "refs/remotes/origin/" + branch
+	if local, err := gitText(ctx, repoPath, "rev-parse", "--verify", "--quiet", tracking+"^{commit}"); err != nil || local != head {
+		if _, err := runGitEnv(ctx, repoPath, env, "fetch", "--quiet", "origin", "+refs/heads/"+branch+":"+tracking); err != nil {
+			return "", fmt.Errorf("fetch origin/%s: %w", branch, err)
+		}
+	}
+	if _, err := runGitEnv(ctx, repoPath, env, "remote", "set-head", "origin", branch); err != nil {
+		return "", fmt.Errorf("update origin/HEAD: %w", err)
+	}
+	return branch, nil
+}
+
+// parseRemoteHead reads the default branch and its commit from the output of
+// git ls-remote --symref origin HEAD.
+func parseRemoteHead(out string) (branch, head string, ok bool) {
+	for line := range strings.Lines(out) {
+		target, name, found := strings.Cut(strings.TrimSpace(line), "\t")
+		if !found || name != "HEAD" {
+			continue
+		}
+		if ref, isSymref := strings.CutPrefix(target, "ref: "); isSymref {
+			branch, _ = strings.CutPrefix(ref, "refs/heads/")
+			if branch == ref {
+				branch = ""
+			}
+		} else {
+			head = target
+		}
+	}
+	return branch, head, branch != "" && head != ""
+}
+
+func runGitEnv(ctx context.Context, repoPath string, env []string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoPath}, args...)...)
 	procutil.HideConsole(cmd)
-	if env := p.gitEnvForRepo(ghRepo); env != nil {
+	if env != nil {
 		cmd.Env = env
 	}
 	out, err := cmd.CombinedOutput()
-	unlock()
 	if err != nil {
-		return "", fmt.Errorf("update origin/HEAD: %w: %s", err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
-	ref, err := gitpkg.GetDefaultBranch(repoPath)
-	if err != nil {
-		return "", err
-	}
-	branch, ok := strings.CutPrefix(ref, "origin/")
-	if !ok {
-		return "", errors.New("origin/HEAD does not name a fetched branch")
-	}
-	return branch, nil
+	return string(out), nil
 }
 
 func gitText(ctx context.Context, repoPath string, args ...string) (string, error) {

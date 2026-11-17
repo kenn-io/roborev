@@ -2466,7 +2466,15 @@ func defaultPortForScheme(scheme string) string {
 func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
 	// The GitHub client helpers that call this do not carry the poll context
 	// yet, so token exchange and lookup start their own.
-	ctx := context.Background()
+	token, _ := p.resolveGitHubToken(context.Background(), ghRepo)
+	return token
+}
+
+// resolveGitHubToken returns the GitHub App token for ghRepo's owner, or the
+// fallback token. appErr is the GitHub App token failure that forced the
+// fallback, so a caller left without a token can tell a refresh that may
+// succeed later from a daemon that has no credentials.
+func (p *CIPoller) resolveGitHubToken(ctx context.Context, ghRepo string) (token string, appErr error) {
 	// Extract owner from "owner/repo"
 	owner, _, _ := strings.Cut(ghRepo, "/")
 	if p.tokenProvider != nil {
@@ -2476,12 +2484,13 @@ func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
 			log.Printf("CI poller: no installation ID for owner %q, using fallback GitHub token", owner)
 		} else if token, err := p.tokenProvider.TokenForInstallation(ctx, installationID); err != nil {
 			log.Printf("CI poller: WARNING: GitHub App token failed for %q, falling back to environment token: %v", owner, err)
+			appErr = err
 		} else {
-			return token
+			return token, nil
 		}
 	}
 	host, _ := gitHostForBaseURL(p.githubAPIBaseURL())
-	return ghpkg.ResolveAuthToken(ctx, ghpkg.EnvironmentToken(), host)
+	return ghpkg.ResolveAuthToken(ctx, ghpkg.EnvironmentToken(), host), appErr
 }
 
 func (p *CIPoller) gitEnvForRepo(ghRepo string) []string {
@@ -2493,11 +2502,15 @@ func (p *CIPoller) gitEnvForRepo(ghRepo string) []string {
 }
 
 func (p *CIPoller) githubClientForRepo(ghRepo string, opts ...ghpkg.ClientOption) (*ghpkg.Client, error) {
+	return p.githubClientWithToken(p.githubTokenForRepo(ghRepo), opts...)
+}
+
+func (p *CIPoller) githubClientWithToken(token string, opts ...ghpkg.ClientOption) (*ghpkg.Client, error) {
 	apiBaseURL, err := ghpkg.GitHubAPIBaseURL(p.githubAPIBaseURL())
 	if err != nil {
 		return nil, err
 	}
-	return ghpkg.NewClient(p.githubTokenForRepo(ghRepo), append([]ghpkg.ClientOption{ghpkg.WithBaseURL(apiBaseURL)}, opts...)...)
+	return ghpkg.NewClient(token, append([]ghpkg.ClientOption{ghpkg.WithBaseURL(apiBaseURL)}, opts...)...)
 }
 
 func (p *CIPoller) githubAPIBaseURL() string {
