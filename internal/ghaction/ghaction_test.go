@@ -339,14 +339,10 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 	}
 	lookup, _, found := strings.Cut(install, "ARCHIVE=")
 	require.True(t, found)
-	// Baseline for comparing request counts on the same workload.
-	previousLookup := `ROBOREV_VERSION=$(curl -sfL https://api.github.com/repos/roborev-dev/roborev/releases/latest | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
-`
 	for _, tt := range []struct {
 		name, lookup, url, want, request string
 		invalid                          bool
 	}{
-		{"previous", previousLookup, "https://github.com/kenn-io/roborev/releases/tag/v0.52.0", "0.52.0", "https://api.github.com/repos/roborev-dev/roborev/releases/latest", false},
 		{"tag", lookup, "https://github.com/kenn-io/roborev/releases/tag/v0.52.0", "0.52.0", "https://github.com/roborev-dev/roborev/releases/latest", false},
 		{"release page", lookup, "https://github.com/kenn-io/roborev/releases", "could not resolve latest release tag", "https://github.com/roborev-dev/roborev/releases/latest", true},
 		{"empty tag", lookup, "https://github.com/kenn-io/roborev/releases/tag/v", "could not resolve latest release tag", "https://github.com/roborev-dev/roborev/releases/latest", true},
