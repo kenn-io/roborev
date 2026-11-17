@@ -64,6 +64,17 @@ sleep 0.3
 # =====================
 echo "==> TUI screenshots"
 
+# The daemon reports health as degraded when it cannot find a review agent or
+# agentsview on PATH. The screenshots show a configured installation, and no
+# review runs during capture, so stand-ins that only answer --version suffice.
+STAND_INS=/tmp/screenshot-tools
+mkdir -p "$STAND_INS"
+for tool in codex agentsview; do
+    printf '#!/bin/sh\necho "%s 0.0.0"\n' "$tool" > "$STAND_INS/$tool"
+    chmod +x "$STAND_INS/$tool"
+done
+send "export PATH=$STAND_INS:\$PATH" Enter
+
 # Start the daemon in the background and wait for it to be ready
 # Keep daemon logs out of the pane so they cannot draw over the TUI.
 send "roborev daemon run >/tmp/roborev-daemon.log 2>&1 &" Enter

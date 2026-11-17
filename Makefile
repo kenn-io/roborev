@@ -130,8 +130,15 @@ markdown-ci:
 	cd docs && uv run --frozen python -m unittest scripts/test_format_markdown.py
 	cd docs && uv run --frozen python scripts/format_markdown.py --check
 
+# With DOCS_SCREENSHOTS_OUTPUT and DOCS_SCREENSHOTS_CORPUS set, build the
+# complete docs-generated-assets tree into $(DOCS_SCREENSHOTS_OUTPUT)/assets
+# from an approved corpus, using only Docker on the host.
 docs-screenshots:
+ifdef DOCS_SCREENSHOTS_OUTPUT
+	bash docs/screenshots/build-generated-assets.sh "$(DOCS_SCREENSHOTS_OUTPUT)"
+else
 	bash docs/screenshots/screenshot-all.sh
+endif
 
 docs-assets-branch:
 	bash docs/assets/update-static-assets-branch.sh

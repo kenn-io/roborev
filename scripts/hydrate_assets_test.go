@@ -134,6 +134,13 @@ func installAssetScript(t *testing.T, repo, scriptRel string) string {
 	scriptPath := filepath.Join(repo, scriptRel)
 	require.NoError(t, os.MkdirAll(filepath.Dir(scriptPath), 0o755))
 	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
+	// The generated asset publisher reads its asset list from beside it.
+	list, err := os.ReadFile(filepath.Join("..", filepath.Dir(scriptRel), "expected-assets.txt"))
+	if err == nil {
+		require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(scriptPath), "expected-assets.txt"), list, 0o644))
+	} else {
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
 	return scriptPath
 }
 
