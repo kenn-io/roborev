@@ -477,6 +477,19 @@ func TestCIDefaultBranchReviewsSkipCommitsLandedWhileOptedOutBetweenPolls(t *tes
 	assert.Equal(t, skipped+".."+optIn, runs[0].GitRef)
 }
 
+func TestCIDefaultBranchReviewsHonorOptOutBesideInvalidSettings(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	optOut := h.origin.CommitFile(".roborev.toml",
+		"[ci]\nreview_default_branch = false\ncomment_max_findings = -1\n", "opt out with an invalid setting")
+	optIn := h.origin.CommitFile(".roborev.toml", "[ci]\nreview_default_branch = true\n", "repair and opt in")
+	h.poll(t)
+
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "an invalid setting elsewhere in the file does not cancel the opt-out")
+	assert.Equal(t, optOut+".."+optIn, runs[0].GitRef)
+}
+
 func TestCIDefaultBranchPendingStatusPrecedesReviewJobs(t *testing.T) {
 	h := newBranchReviewHarness(t)
 	h.poll(t)
@@ -639,6 +652,42 @@ func TestCIDefaultBranchReviewsFollowNewDefaultBranchInSingleBranchCheckout(t *t
 	runs := h.synthesisJobs(t)
 	require.Len(t, runs, 1, "commits on the new default branch are fetched and reviewed")
 	assert.Equal(t, switched+".."+landed, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewsFollowRenamedDefaultBranchInSingleBranchCheckout(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	out, err := exec.CommandContext(t.Context(), "git", "-C", h.clone, "config",
+		"remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main").CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	h.poll(t)
+	// Renaming deletes main, the only branch the checkout fetches.
+	h.origin.Run("branch", "-m", "main", "trunk")
+	renamed := h.origin.CommitFile("app.txt", "renamed\n", "landed after the rename")
+
+	h.poll(t)
+	cursor, err := h.db.GetCIBranchCursor(t.Context(), branchReviewRepo)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	assert.Equal(t, storage.CIBranchCursor{GithubRepo: branchReviewRepo, Branch: "trunk", HeadSHA: renamed}, *cursor)
+
+	landed := h.origin.CommitFile("app.txt", "next\n", "next")
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1)
+	assert.Equal(t, renamed+".."+landed, runs[0].GitRef)
+}
+
+func TestCIDefaultBranchReviewsReportFetchFailures(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	h.poller.gitFetchFn = func(context.Context, string, []string) error {
+		return errors.New("connection refused")
+	}
+	out, err := exec.CommandContext(t.Context(), "git", "-C", h.clone, "remote", "set-url",
+		"origin", filepath.Join(t.TempDir(), "missing")).CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	err = h.poller.pollRepo(t.Context(), branchReviewRepo, h.cfg)
+	require.ErrorContains(t, err, "connection refused", "an unreachable remote still reports the fetch failure")
 }
 
 func TestCIDefaultBranchReviewsRestartAfterRepoLeavesThePoller(t *testing.T) {

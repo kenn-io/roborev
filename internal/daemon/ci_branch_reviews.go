@@ -40,13 +40,19 @@ func (p *CIPoller) pollDefaultBranch(ctx context.Context, ghRepo string, cfg *co
 	if err != nil {
 		return fmt.Errorf("find local repo for %s: %w", ghRepo, err)
 	}
-	if err := p.callGitFetch(ctx, ghRepo, repo.RootPath); err != nil {
-		return fmt.Errorf("git fetch: %w", err)
-	}
-
+	fetchErr := p.callGitFetch(ctx, ghRepo, repo.RootPath)
 	branch, err := p.remoteDefaultBranch(ctx, ghRepo, repo.RootPath)
-	if err != nil {
+	switch {
+	case fetchErr != nil && err != nil:
+		return fmt.Errorf("git fetch: %w", fetchErr)
+	case err != nil:
 		return fmt.Errorf("detect default branch: %w", err)
+	case fetchErr != nil:
+		// A checkout that fetches only a deleted former default branch fails
+		// every fetch. remoteDefaultBranch fetched the current default branch,
+		// so its reviews continue.
+		log.Printf("CI poller: git fetch failed for %s; reviewing %s from its own fetch: %v",
+			ghRepo, branch, fetchErr)
 	}
 	head, err := gitText(ctx, repo.RootPath, "rev-parse", "--verify", "origin/"+branch+"^{commit}")
 	if err != nil {
@@ -151,12 +157,14 @@ func landedCommits(ctx context.Context, repoPath, cursor, head string) ([]landed
 // default-branch reviews off, so a commit that lands while a repo has opted
 // out is skipped even when the opt-out was reverted before the next poll. A
 // commit without the file follows loaded, the configuration the poll uses,
-// when it came from the poller's checkout because the branch commits none. A
-// file that cannot be read leaves the decision to the global config.
+// when it came from the poller's checkout because the branch commits none. An
+// explicit opt-out holds even when other settings in the file are invalid. A
+// file that cannot be parsed leaves the decision to the global config.
 func commitOptedOut(repoPath, sha string, cfg *config.Config, loaded ciRepoConfigSource) bool {
 	repoCfg, err := config.LoadRepoConfigFromRef(repoPath, sha)
 	if err != nil {
-		return false
+		enabled := config.RepoCIReviewDefaultBranchAtRef(repoPath, sha)
+		return enabled != nil && !*enabled
 	}
 	if repoCfg == nil && loaded.Ref == "" {
 		repoCfg = loaded.Config

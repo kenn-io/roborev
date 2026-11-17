@@ -1730,6 +1730,26 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	return cfg, err
 }
 
+// RepoCIReviewDefaultBranchAtRef reads only [ci] review_default_branch from
+// the .roborev.toml at ref, so an explicit setting is found even when other
+// settings in the file fail validation. It returns nil when the file or the
+// key is absent, or when the file is not valid TOML.
+func RepoCIReviewDefaultBranchAtRef(repoPath, ref string) *bool {
+	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
+	if err != nil {
+		return nil
+	}
+	var file struct {
+		CI struct {
+			ReviewDefaultBranch *bool `toml:"review_default_branch"`
+		} `toml:"ci"`
+	}
+	if _, err := toml.Decode(string(data), &file); err != nil {
+		return nil
+	}
+	return file.CI.ReviewDefaultBranch
+}
+
 // LoadRepoConfigFromRefWithRaw loads typed and raw repository configuration
 // from a git ref. The raw map preserves whether zero values were explicitly
 // configured, which experiment overlays need for recursive merging.
