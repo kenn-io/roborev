@@ -1362,35 +1362,40 @@ func TestCaptureTokenUsageForSessionKeepsJobLogWhenSessionIsReused(t *testing.T)
 
 func TestCaptureTokenUsageForSessionRetriesUntilFreshSessionIsIndexed(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	tc := newWorkerTestContext(t, 1)
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
+	// The retry window is measured on the clock, so a slow runner could use it
+	// up before the third lookup. Fake time makes the lookups and the waits
+	// between them take exactly the configured intervals.
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		sha := testutil.GetHeadSHA(t, tc.TmpDir)
+		job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+		require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
 
-	var attempts atomic.Int32
-	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
-		if attempts.Add(1) < 3 {
-			return nil, nil
+		var attempts atomic.Int32
+		tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+			if attempts.Add(1) < 3 {
+				return nil, nil
+			}
+			return &tokens.Usage{
+				OutputTokens: 481,
+				CostUSD:      0.17,
+				HasCost:      true,
+			}, nil
 		}
-		return &tokens.Usage{
-			OutputTokens: 481,
-			CostUSD:      0.17,
-			HasCost:      true,
-		}, nil
-	}
 
-	tc.Pool.captureTokenUsageForSession(
-		t.Context(), testWorkerID, job, "fresh-session-123",
-	)
+		tc.Pool.captureTokenUsageForSession(
+			t.Context(), testWorkerID, job, "fresh-session-123",
+		)
 
-	updated, err := tc.DB.GetJobByID(job.ID)
-	require.NoError(t, err)
-	usage := tokens.ParseJSON(updated.TokenUsage)
-	require.NotNil(t, usage)
-	assert.Equal(t, int32(3), attempts.Load())
-	assert.Equal(t, int64(481), usage.OutputTokens)
-	assert.True(t, usage.HasCost)
-	assert.InDelta(t, 0.17, usage.CostUSD, 1e-9)
+		updated, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		require.NotNil(t, usage)
+		assert.Equal(t, int32(3), attempts.Load())
+		assert.Equal(t, int64(481), usage.OutputTokens)
+		assert.True(t, usage.HasCost)
+		assert.InDelta(t, 0.17, usage.CostUSD, 1e-9)
+	})
 }
 
 func TestCaptureTokenUsageForSessionDoesNotRetryUnavailableProvider(t *testing.T) {
