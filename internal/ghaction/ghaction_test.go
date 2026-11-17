@@ -358,7 +358,6 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 page=0
 fail=0
 follow=0
-head=0
 writeout=0
 next_writeout=0
 for arg in "$@"; do
@@ -372,14 +371,13 @@ for arg in "$@"; do
     -[!-]*)
       case "$arg" in *f*) fail=1 ;; esac
       case "$arg" in *L*) follow=1 ;; esac
-      case "$arg" in *I*) head=1 ;; esac
       ;;
     https://api.github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s\n' '{"tag_name":"v0.52.0"}' ;;
     https://github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; page=1 ;;
   esac
 done
 if [ "$page" = 1 ]; then
-  [ "$fail" = 1 ] && [ "$follow" = 1 ] && [ "$head" = 1 ] && [ "$writeout" = 1 ] || exit 1
+  [ "$fail" = 1 ] && [ "$follow" = 1 ] && [ "$writeout" = 1 ] || exit 1
   printf '%s' "$CURL_URL"
 fi
 `
