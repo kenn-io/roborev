@@ -88,9 +88,9 @@ func (c *Client) createPreparedComment(ctx context.Context, ghRepo string, prNum
 func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string, knownID int64) (int64, error) {
 	body = prepareBody(body)
 
-	patched, err := c.patchKnown(ctx, ghRepo, knownID, body)
-	if err != nil {
-		return 0, err
+	patched, knownErr := c.patchKnown(ctx, ghRepo, knownID, body)
+	if knownErr != nil && !isGitHubStatus(knownErr, 403) {
+		return 0, knownErr
 	}
 	if patched {
 		return knownID, nil
@@ -100,6 +100,9 @@ func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber in
 		return 0, fmt.Errorf("find existing comment: %w", err)
 	}
 
+	if knownErr != nil && existingID == knownID {
+		return c.createPreparedComment(ctx, ghRepo, prNumber, body)
+	}
 	if existingID > 0 {
 		if err := c.patchComment(ctx, ghRepo, existingID, body); err != nil {
 			if isGitHubStatus(err, 403, 404) {
@@ -119,9 +122,9 @@ func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber in
 // retain the caller's normal delivery and retry behavior.
 func (c *Client) UpdateExistingPRComment(ctx context.Context, ghRepo string, prNumber int, body string, knownID int64) (int64, error) {
 	body = prepareBody(body)
-	patched, err := c.patchKnown(ctx, ghRepo, knownID, body)
-	if err != nil {
-		return 0, err
+	patched, knownErr := c.patchKnown(ctx, ghRepo, knownID, body)
+	if knownErr != nil && !isGitHubStatus(knownErr, 403) {
+		return 0, knownErr
 	}
 	if patched {
 		return knownID, nil
@@ -132,6 +135,9 @@ func (c *Client) UpdateExistingPRComment(ctx context.Context, ghRepo string, prN
 	}
 	if existingID == 0 {
 		return 0, nil
+	}
+	if knownErr != nil && existingID == knownID {
+		return 0, knownErr
 	}
 	if err := c.patchComment(ctx, ghRepo, existingID, body); err != nil {
 		if isGitHubStatus(err, 404) {
@@ -147,7 +153,7 @@ func (c *Client) patchKnown(ctx context.Context, ghRepo string, knownID int64, b
 		return false, nil
 	}
 	if err := c.patchComment(ctx, ghRepo, knownID, body); err != nil {
-		if isGitHubStatus(err, 403, 404) {
+		if isGitHubStatus(err, 404) {
 			return false, nil
 		}
 		return false, fmt.Errorf("patch comment %d: %w", knownID, err)

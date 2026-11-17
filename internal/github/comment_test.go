@@ -553,3 +553,32 @@ func TestCommentKnownIDMissRescans(t *testing.T) {
 		}
 	}
 }
+
+func TestCommentKnownIDForbiddenSameMatch(t *testing.T) {
+	for _, updateOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("clean=%t", updateOnly), func(t *testing.T) {
+			api := newCommentAPIServer(t)
+			api.patchStatus = http.StatusForbidden
+			api.issueCommentsByPR[1] = []*googlegithub.IssueComment{issueComment(42, CommentMarker, "alice", "User", "")}
+			server := httptest.NewServer(http.HandlerFunc(api.handler))
+			defer server.Close()
+			client := newTestGitHubClient(t, "", server)
+			var id int64
+			var err error
+			if updateOnly {
+				id, err = client.UpdateExistingPRComment(t.Context(), "owner/repo", 1, "body", 42)
+				require.Error(t, err)
+				assert.True(t, isGitHubStatus(err, http.StatusForbidden))
+				assert.Zero(t, id)
+				assert.Empty(t, api.createdBodies)
+			} else {
+				id, err = client.UpsertPRComment(t.Context(), "owner/repo", 1, "body", 42)
+				require.NoError(t, err)
+				assert.Equal(t, int64(999), id)
+				assert.Len(t, api.createdBodies, 1)
+			}
+			assert.Equal(t, 1, api.listCount)
+			assert.Equal(t, []string{"/api/v3/repos/owner/repo/issues/comments/42"}, api.patchedPaths)
+		})
+	}
+}
