@@ -421,7 +421,14 @@ func (p *CIPoller) callSetBranchStatus(ctx context.Context, ghRepo, sha, state, 
 	if err != nil {
 		return err
 	}
-	return client.SetNamedCommitStatus(ctx, ghRepo, sha, ciBranchStatusContext, state, description)
+	err = client.SetNamedCommitStatus(ctx, ghRepo, sha, ciBranchStatusContext, state, description)
+	if err != nil && appErr != nil {
+		// The fallback token stood in for a GitHub App token that could not be
+		// fetched. Its rejection says nothing about what the App may do, so the
+		// GitHub error is not wrapped and the status stays retryable.
+		return fmt.Errorf("get GitHub App token: %w; fallback token: %s", appErr, err.Error())
+	}
+	return err
 }
 
 // remoteDefaultBranch asks the remote which branch is its default and returns
