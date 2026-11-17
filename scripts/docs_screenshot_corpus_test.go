@@ -37,7 +37,7 @@ func TestDocsScreenshotCorpusKeepsWriteAheadLogChanges(t *testing.T) {
 	require.Positive(t, wal.Size(), "the insert must still be in the write-ahead log")
 
 	corpus := filepath.Join(tempDir, "corpus")
-	runCorpusScript(t, "write", source, corpus)
+	runCorpusScript(t, "write", bashPath(t, source), newBashPath(t, corpus))
 
 	assert.NoFileExists(t, filepath.Join(corpus, "reviews.db-wal"))
 	copied, err := sql.Open("sqlite", filepath.Join(corpus, "reviews.db"))
@@ -60,13 +60,13 @@ func TestDocsScreenshotCaptureRejectsChangedCorpus(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	corpus := filepath.Join(tempDir, "corpus")
-	runCorpusScript(t, "write", source, corpus)
+	runCorpusScript(t, "write", bashPath(t, source), newBashPath(t, corpus))
 	approved, err := os.ReadFile(filepath.Join(corpus, "reviews.db"))
 	require.NoError(t, err)
 
 	// An unchanged corpus yields exactly the approved database.
 	copied := filepath.Join(tempDir, "copied")
-	runCorpusScript(t, "extract", filepath.Join(corpus, "manifest.json"), copied)
+	runCorpusScript(t, "extract", bashPath(t, filepath.Join(corpus, "manifest.json")), newBashPath(t, copied))
 	content, err := os.ReadFile(filepath.Join(copied, "reviews.db"))
 	require.NoError(t, err)
 	assert.Equal(t, approved, content)
@@ -76,13 +76,13 @@ func TestDocsScreenshotCaptureRejectsChangedCorpus(t *testing.T) {
 	require.NoError(t, os.MkdirAll(bin, 0o755))
 	dockerCalls := filepath.Join(tempDir, "docker-calls")
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"),
-		[]byte("#!/usr/bin/env bash\necho \"$@\" >> "+shellQuote(bashPath(t, dockerCalls))+"\n"), 0o755))
+		[]byte("#!/usr/bin/env bash\necho \"$@\" >> "+shellQuote(newBashPath(t, dockerCalls))+"\n"), 0o755))
 
 	script := filepath.Join("..", "docs", "screenshots", "build-generated-assets.sh")
 	cmd := exec.CommandContext(t.Context(), "bash", "-c",
 		"export PATH="+shellQuote(bashPath(t, bin))+":\"$PATH\""+
 			" DOCS_SCREENSHOTS_CORPUS="+shellQuote(bashPath(t, filepath.Join(corpus, "manifest.json")))+
-			"; exec bash "+shellQuote(bashPath(t, script))+" "+shellQuote(bashPath(t, filepath.Join(tempDir, "output"))))
+			"; exec bash "+shellQuote(bashPath(t, script))+" "+shellQuote(newBashPath(t, filepath.Join(tempDir, "output"))))
 	cmd.Env = testenv.UserEnv()
 	output, err := cmd.CombinedOutput()
 
@@ -92,17 +92,25 @@ func TestDocsScreenshotCaptureRejectsChangedCorpus(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(tempDir, "output", "assets"))
 }
 
+// runCorpusScript runs corpus.py with arguments already translated for bash.
 func runCorpusScript(t *testing.T, subcommand string, paths ...string) {
 	t.Helper()
 	command := "exec python3 " + shellQuote(bashPath(t, filepath.Join("..", "docs", "screenshots", "corpus.py"))) +
 		" " + subcommand
 	for _, arg := range paths {
-		command += " " + shellQuote(bashPath(t, arg))
+		command += " " + shellQuote(arg)
 	}
 	cmd := exec.CommandContext(t.Context(), "bash", "-c", command)
 	cmd.Env = testenv.UserEnv()
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
+}
+
+// newBashPath translates a path the script under test creates. bashPath
+// translates only existing paths on Windows, so this translates the parent.
+func newBashPath(t *testing.T, path string) string {
+	t.Helper()
+	return bashPath(t, filepath.Dir(path)) + "/" + filepath.Base(path)
 }
 
 // requirePython skips where python3 is missing; capture workers and the
