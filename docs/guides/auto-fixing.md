@@ -127,7 +127,7 @@ including global, system, and repository configuration and `.gitattributes`.
 roborev does not require a particular `core.autocrlf` value or change your Git
 settings.
 
-## Repeated finding files
+## Repeated Finding Files
 
 Refine prints and saves an advisory when either of two independent streaks
 reaches three consecutive completed fix/re-review rounds:
@@ -225,7 +225,7 @@ combined with `--list`. Refine planning also has a clean-working-tree
 precondition; see the
 [refine command options](/docs/commands/#auto-fix-agentic-loop) for details.
 
-### Skipping trivial re-reviews
+### Skipping Trivial Re-reviews
 
 With `roborev refine --skip-trivial-rereview`, refine does not wait for the
 re-review of a fix commit when every path the fix changes matches `**/*.md`,
