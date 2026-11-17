@@ -345,6 +345,10 @@ jobs:
           ROBOREV_VERSION="{{ .RoborevVersion }}"
           {{- else }}
           LATEST_URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/roborev-dev/roborev/releases/latest)
+          case "$LATEST_URL" in
+            */releases/tag/v?*) ;;
+            *) echo "Error: could not resolve latest release tag from $LATEST_URL" >&2; exit 1 ;;
+          esac
           ROBOREV_VERSION="${LATEST_URL##*/releases/tag/v}"
           {{- end }}
           ARCHIVE="roborev_${ROBOREV_VERSION}_linux_amd64.tar.gz"

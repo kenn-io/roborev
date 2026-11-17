@@ -340,18 +340,37 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 	}
 	lookup, _, found := strings.Cut(install, "ARCHIVE=")
 	require.True(t, found)
-	dir := t.TempDir()
-	args := filepath.Join(dir, "args")
-	fake := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$CURL_ARGS\"\nprintf '%s' 'https://github.com/kenn-io/roborev/releases/tag/v0.52.0'\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(fake), 0o755))
-	cmd := exec.Command(bash, "-euo", "pipefail", "-c", lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
-	cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CURL_ARGS="+args)
-	got, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", got)
-	assert.Equal(t, "0.52.0", string(got))
-	called, err := os.ReadFile(args)
-	require.NoError(t, err)
-	assert.Equal(t, "-fsSLI\n-o\n/dev/null\n-w\n%{url_effective}\nhttps://github.com/roborev-dev/roborev/releases/latest\n", string(called))
+	for _, tt := range []struct {
+		name, url, want string
+		invalid         bool
+	}{
+		{"tag", "https://github.com/kenn-io/roborev/releases/tag/v0.52.0", "0.52.0", false},
+		{"release page", "https://github.com/kenn-io/roborev/releases", "could not resolve latest release tag", true},
+		{"empty tag", "https://github.com/kenn-io/roborev/releases/tag/v", "could not resolve latest release tag", true},
+		{"unprefixed tag", "https://github.com/kenn-io/roborev/releases/tag/0.52.0", "could not resolve latest release tag", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			args := filepath.Join(dir, "args")
+			fake := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CURL_ARGS\"\nprintf '%s' \"$CURL_URL\"\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(fake), 0o755))
+			cmd := exec.Command(bash, "-euo", "pipefail", "-c", lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CURL_ARGS="+args, "CURL_URL="+tt.url)
+			got, err := cmd.CombinedOutput()
+			if tt.invalid {
+				require.Error(t, err)
+				assert.Contains(t, string(got), tt.want)
+			} else {
+				require.NoError(t, err, "%s", got)
+				assert.Equal(t, tt.want, string(got))
+			}
+			called, err := os.ReadFile(args)
+			require.NoError(t, err)
+			calls := strings.Split(strings.TrimSpace(string(called)), "\n")
+			require.Len(t, calls, 1)
+			assert.Contains(t, strings.Fields(calls[0]), "https://github.com/roborev-dev/roborev/releases/latest")
+		})
+	}
 }
 
 func TestGenerate_DraftPolicy(t *testing.T) {
