@@ -49,6 +49,11 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 		if !daemon.HookEventFires(h.Event) {
 			hookProblems = append(hookProblems, fmt.Sprintf("%s: event never fires; use one of %s, or review.*", label, strings.Join(daemon.HookEvents, ", ")))
 		}
+		for _, source := range h.Sources {
+			if !slices.Contains(daemon.HookSources, source) {
+				hookProblems = append(hookProblems, fmt.Sprintf("%s: source %q matches no review; use one of %s", label, source, strings.Join(daemon.HookSources, ", ")))
+			}
+		}
 		switch h.Type {
 		case "webhook":
 			if strings.TrimSpace(h.URL) == "" {

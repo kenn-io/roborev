@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // quote wraps a string in platform-appropriate shell quoting (matches ShellEscape output).
@@ -502,7 +503,7 @@ func TestHookRunnerGoalReviewEvents(t *testing.T) {
 	assert.Equal("Missing acceptance criteria", event.Findings)
 
 	assert.Empty(beadsCommand(event), "code-review issue hooks do not process intent findings")
-	_, create := kataCreateRequest(config.HookConfig{Type: "kata"}, event)
+	_, create := kataCreateRequest(config.HookConfig{Type: "kata"}, event, kataCommit{})
 	assert.False(create, "goal-review findings must not feed back into the watched task graph")
 }
 
@@ -1192,4 +1193,32 @@ func TestHookEventFires(t *testing.T) {
 	assert.True(HookEventFires("review.*"))
 	assert.False(HookEventFires("review.done"))
 	assert.False(HookEventFires("job.*"))
+}
+
+func TestHookRunnerSourceFilter(t *testing.T) {
+	tmpDir := t.TempDir()
+	markerFile := filepath.Join(tmpDir, "source-hook-fired")
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{{
+			Event:   "review.completed",
+			Sources: []string{storage.JobSourceCIBranch},
+			Command: touchCmd(markerFile),
+		}},
+	}
+	hr, broadcaster := setupRunner(t, cfg)
+	event := func(jobID int64, source string) Event {
+		return Event{
+			Type: "review.completed", TS: time.Now(), JobID: jobID, Repo: tmpDir,
+			RepoName: "test", SHA: "abc", Branch: "main", Source: source, Verdict: "F",
+		}
+	}
+
+	broadcaster.Broadcast(event(1, storage.JobSourceCI))
+	broadcaster.Broadcast(event(2, ""))
+	hr.WaitUntilIdle()
+	assert.NoFileExists(t, markerFile, "pull request and explicit reviews do not match a ci_branch hook")
+
+	broadcaster.Broadcast(event(3, storage.JobSourceCIBranch))
+	hr.WaitUntilIdle()
+	assert.FileExists(t, markerFile)
 }

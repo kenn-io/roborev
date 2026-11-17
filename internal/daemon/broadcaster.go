@@ -19,6 +19,8 @@ type Event struct {
 	RepoName          string     `json:"repo_name"`
 	SHA               string     `json:"sha"`
 	Branch            string     `json:"branch,omitempty"`
+	Source            string     `json:"source,omitempty"`     // Job source; empty for explicit reviews
+	PanelRole         string     `json:"panel_role,omitempty"` // "member" or "synthesis" for panel jobs
 	Agent             string     `json:"agent,omitempty"`
 	Verdict           string     `json:"verdict,omitempty"`
 	Findings          string     `json:"findings,omitempty"`
@@ -26,6 +28,11 @@ type Event struct {
 	WorktreePath      string     `json:"worktree_path,omitempty"`
 	SuppressRepoHooks bool       `json:"-"`
 	SuppressHooks     bool       `json:"-"`
+	// PanelFailureSummary marks a panel failure that no synthesis agent caused.
+	// It lets Kata hooks receive the event despite SuppressHooks: they skip
+	// reviewer events, so it is their one issue for the panel, while other
+	// hooks and alerts already saw the reviewers' own failures.
+	PanelFailureSummary bool `json:"-"`
 }
 
 func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Event {
@@ -39,6 +46,8 @@ func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Eve
 	event.RepoName = job.RepoName
 	event.SHA = job.GitRef
 	event.Branch = job.HookBranch()
+	event.Source = job.Source
+	event.PanelRole = job.PanelRole
 	event.Agent = job.Agent
 	event.SuppressHooks = suppressJobHooks(job)
 	event.SuppressRepoHooks = hasSuppliedReviewSettings(job)
@@ -153,6 +162,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		RepoName     string     `json:"repo_name"`
 		SHA          string     `json:"sha"`
 		Branch       string     `json:"branch,omitempty"`
+		Source       string     `json:"source,omitempty"`
+		PanelRole    string     `json:"panel_role,omitempty"`
 		Agent        string     `json:"agent,omitempty"`
 		Verdict      string     `json:"verdict,omitempty"`
 		Findings     string     `json:"findings,omitempty"`
@@ -167,6 +178,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		RepoName:     e.RepoName,
 		SHA:          e.SHA,
 		Branch:       e.Branch,
+		Source:       e.Source,
+		PanelRole:    e.PanelRole,
 		Agent:        e.Agent,
 		Verdict:      e.Verdict,
 		Findings:     e.Findings,

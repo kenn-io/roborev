@@ -7,7 +7,6 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"time"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -351,18 +350,9 @@ func (wp *WorkerPool) broadcastClassifyFailed(job *storage.ReviewJob, errMsg str
 	if wp.broadcaster == nil {
 		return
 	}
-	wp.broadcaster.Broadcast(Event{
-		Type:     "review.failed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		JobUUID:  job.UUID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    job.Agent,
-		Error:    errMsg,
-	})
+	event := eventForJob("review.failed", job, job.ID)
+	event.Error = errMsg
+	wp.broadcaster.Broadcast(event)
 }
 
 // broadcastClassifyTerminal emits a review.completed event after a
@@ -376,17 +366,7 @@ func (wp *WorkerPool) broadcastClassifyTerminal(job *storage.ReviewJob) {
 	if wp.broadcaster == nil {
 		return
 	}
-	wp.broadcaster.Broadcast(Event{
-		Type:     "review.completed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		JobUUID:  job.UUID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    job.Agent,
-	})
+	wp.broadcaster.Broadcast(eventForJob("review.completed", job, job.ID))
 }
 
 // resolveClassifyDiff returns the diff to feed to the classifier. When
