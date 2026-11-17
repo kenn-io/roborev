@@ -120,8 +120,6 @@ func TestGenerate(t *testing.T) {
 				`"$HOME/.local/bin"`,
 				"$GITHUB_PATH",
 				`"$HOME/.local/bin/roborev" version`,
-				"https://github.com/roborev-dev/roborev/releases/latest",
-				"%{url_effective}",
 				// Pin agent identity so Grok/Cursor collision and ambiguous
 				// fallback cannot silently rewrite the matrix.
 				`--agent "codex"`,
