@@ -342,6 +342,7 @@ for arg in "$@"; do
 done
 case "$flags" in *f*L*|*L*f*) ;; *) return 1 ;; esac
 case " $* " in *" -w %{url_effective} "*) ;; *) return 1 ;; esac
+case " $* " in *" -o /dev/null "*) ;; *) return 1 ;; esac
 printf '%s' "$CURL_URL"
 }
 `
