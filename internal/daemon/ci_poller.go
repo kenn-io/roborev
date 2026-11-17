@@ -532,6 +532,11 @@ func (p *CIPoller) poll(ctx context.Context) {
 				delete(p.skipPublished, key)
 			}
 		}
+		for repo := range p.trustedActors {
+			if !slices.Contains(repos, repo) {
+				delete(p.trustedActors, repo)
+			}
+		}
 		for target := range p.pollErrors {
 			if !slices.Contains(repos, target.repo) {
 				delete(p.pollErrors, target)

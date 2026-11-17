@@ -1227,6 +1227,27 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 	assert.Equal(8, discussionReads)
 }
 
+func TestCIPollerForgetsCollaboratorsWhenRepoIsRemoved(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+		return map[string]struct{}{"alice": {}}, nil
+	}
+	_, err := h.Poller.callListTrustedActors(t.Context(), "acme/api")
+	require.NoError(t, err)
+
+	h.Cfg.CI.Repos = []string{"acme/*"}
+	h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) {
+		return nil, errors.New("discovery unavailable")
+	}
+	h.Poller.poll(t.Context())
+	assert.Contains(t, h.Poller.trustedActors, "acme/api", "incomplete discovery must retain the cache")
+
+	h.Cfg.CI.Repos = nil
+	h.Poller.poll(t.Context())
+	assert.NotContains(t, h.Poller.trustedActors, "acme/api", "complete discovery releases a removed repo")
+}
+
 func TestCIPollerAllowCodeowners(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
