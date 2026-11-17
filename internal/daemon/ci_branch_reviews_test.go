@@ -823,6 +823,20 @@ func TestCIDefaultBranchStatusFailureIsTriedOncePerResultEachPoll(t *testing.T) 
 		"recovering several results must not send each failing status again for every result")
 }
 
+func TestCIDefaultBranchReviewsIgnoreLocalBranchNamedLikeOrigin(t *testing.T) {
+	h := newBranchReviewHarness(t)
+	h.poll(t)
+	out, err := exec.CommandContext(t.Context(), "git", "-C", h.clone, "branch", "origin/main", "main").CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	start := h.origin.HeadSHA()
+	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+
+	h.poll(t)
+	runs := h.synthesisJobs(t)
+	require.Len(t, runs, 1, "a local branch named origin/main does not hide the fetched branch")
+	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+}
+
 func TestGitFetchUpdatesOriginWhenCheckoutTracksAnotherRemote(t *testing.T) {
 	origin := testutil.NewGitRepo(t)
 	origin.CommitFile("app.txt", "start\n", "initial")
