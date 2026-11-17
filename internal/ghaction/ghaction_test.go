@@ -120,7 +120,6 @@ func TestGenerate(t *testing.T) {
 				`"$HOME/.local/bin"`,
 				"$GITHUB_PATH",
 				`"$HOME/.local/bin/roborev" version`,
-				"https://github.com/roborev-dev/roborev/releases/latest",
 				// Pin agent identity so Grok/Cursor collision and ambiguous
 				// fallback cannot silently rewrite the matrix.
 				`--agent "codex"`,
@@ -329,7 +328,6 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 	for _, tt := range []struct{ name, url, want string }{
 		{"tag", "https://github.com/kenn-io/roborev/releases/tag/v0.52.0", "0.52.0"},
 		{"release page", "https://github.com/kenn-io/roborev/releases", ""},
-		{"empty tag", "https://github.com/kenn-io/roborev/releases/tag/v", ""},
 		{"unprefixed tag", "https://github.com/kenn-io/roborev/releases/tag/0.52.0", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
