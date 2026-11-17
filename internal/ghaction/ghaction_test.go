@@ -376,7 +376,6 @@ for arg in "$@"; do
       ;;
     https://api.github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s\n' '{"tag_name":"v0.52.0"}' ;;
     https://github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; page=1 ;;
-    http://*|https://*) exit 1 ;;
   esac
 done
 if [ "$page" = 1 ]; then
