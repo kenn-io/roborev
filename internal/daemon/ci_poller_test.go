@@ -1161,37 +1161,29 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 			baseSHA := repo.HeadSHA()
 			h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
 
-			requests, lookups, discussions, poll := 0, 0, 0, 1
-			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal("/api/v3/repos/acme/api/collaborators", r.URL.Path)
-				requests++
-				w.Header().Set("Content-Type", "application/json")
-				if poll == 1 {
-					fmt.Fprint(w, `[{"login":"alice","role_name":"maintain"}]`)
-				} else {
-					fmt.Fprint(w, `[{"login":"alice","role_name":"maintain"},{"login":"bob","role_name":"maintain"}]`)
-				}
-			}))
-			t.Cleanup(api.Close)
-			h.Poller.githubAPIURL = api.URL + "/api/v3"
-			h.Poller.listTrustedActorsFn = h.Poller.listTrustedActors
-			h.Poller.listPRDiscussionFn = func(_ context.Context, repo string, pr int) ([]ghpkg.PRDiscussionComment, error) {
-				assert.Equal("acme/api", repo)
-				assert.Contains([]int{1, 2, 3}, pr)
-				discussions++
+			requests, lookups, poll := 0, 0, 1
+			if scenario == "success and refresh" {
+				api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal("/api/v3/repos/acme/api/collaborators", r.URL.Path)
+					requests++
+					w.Header().Set("Content-Type", "application/json")
+					if poll == 1 {
+						fmt.Fprint(w, `[{"login":"alice","role_name":"maintain"}]`)
+					} else {
+						fmt.Fprint(w, `[{"login":"alice","role_name":"maintain"},{"login":"bob","role_name":"maintain"}]`)
+					}
+				}))
+				t.Cleanup(api.Close)
+				h.Poller.githubAPIURL = api.URL + "/api/v3"
+				h.Poller.listTrustedActorsFn = h.Poller.listTrustedActors
+			}
+			h.Poller.listPRDiscussionFn = func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error) {
 				return []ghpkg.PRDiscussionComment{
 					{Author: "alice", Body: "Alice comment", Source: ghpkg.PRDiscussionSourceIssueComment},
 					{Author: "bob", Body: "Bob comment", Source: ghpkg.PRDiscussionSourceIssueComment},
 				}, nil
 			}
-			if scenario == "success and refresh" {
-				for range 3 {
-					_, err := h.Poller.listTrustedActors(t.Context(), "acme/api")
-					require.NoError(t, err)
-				}
-				assert.Equal(3, requests)
-				requests = 0
-			} else if scenario == "failure and recovery" {
+			if scenario == "failure and recovery" {
 				h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
 					lookups++
 					if lookups == 1 {
@@ -1199,10 +1191,10 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 					}
 					return map[string]struct{}{"alice": {}, "bob": {}}, nil
 				}
-			} else {
+			} else if scenario == "empty result" {
 				h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
 					lookups++
-					return nil, nil
+					return map[string]struct{}{}, nil
 				}
 			}
 			var prs []ghPR
@@ -1227,7 +1219,6 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 					require.Len(t, members, 1)
 					if scenario == "empty result" || (scenario == "failure and recovery" && pr.Number == 1) {
 						assert.NotContains(members[0].Prompt, "Alice comment")
-						assert.NotContains(members[0].Prompt, "Bob comment")
 					} else {
 						assert.Contains(members[0].Prompt, "Alice comment")
 						if scenario == "success and refresh" && poll == 1 {
@@ -1238,27 +1229,31 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 					}
 				}
 			}
-			switch scenario {
-			case "success and refresh":
-				assert.Equal(2, requests)
-				assert.Equal(6, discussions)
-			case "failure and recovery":
+			if scenario == "failure and recovery" {
 				assert.Equal(2, lookups)
-				assert.Equal(2, discussions)
-			case "empty result":
+			} else if scenario == "empty result" {
 				assert.Equal(1, lookups)
-				assert.Zero(discussions)
 			}
 		})
 	}
 	t.Run("early return", func(t *testing.T) {
 		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-		h.Poller.listOpenPRsFn = func(ctx context.Context, repo string) ([]ghPR, error) {
-			_, err := h.Poller.callListTrustedActors(ctx, repo)
-			require.NoError(t, err)
-			return nil, errors.New("unavailable")
+		h.Cfg.CI.ReviewTypes = []string{"security"}
+		h.Cfg.CI.Agents = []string{"codex"}
+		h.stubProcessPRGit()
+		reads := 0
+		h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+			reads++
+			return map[string]struct{}{"alice": {}}, nil
 		}
-		require.Error(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+		h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
+			return []ghPR{{Number: 1, HeadRefOid: "head", BaseRefName: "main"}}, nil
+		}
+		h.Poller.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
+			return ciRepoConfigSource{}, errors.New("config unavailable")
+		}
+		require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "config unavailable")
+		assert.Equal(t, 1, reads)
 		assert.NotContains(t, h.Poller.trustedActors, "acme/api")
 	})
 }

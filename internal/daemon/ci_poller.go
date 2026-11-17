@@ -555,8 +555,9 @@ func (p *CIPoller) poll(ctx context.Context) {
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
-	// Clear cached reads so each poll sees current ownership and collaborators.
-	p.forgetPollReads(ghRepo)
+	// Clear the cache so heads not yet reviewed, including those skipped by
+	// the author filter, see current ownership on each poll.
+	p.forgetCodeowners(ghRepo)
 	defer func() {
 		p.mu.Lock()
 		delete(p.trustedActors, ghRepo)
@@ -1120,10 +1121,9 @@ func (p *CIPoller) codeownerLogins(ctx context.Context, ghRepo, ref string) (map
 	return read.logins, read.err
 }
 
-func (p *CIPoller) forgetPollReads(ghRepo string) {
+func (p *CIPoller) forgetCodeowners(ghRepo string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.trustedActors, ghRepo)
 	for key := range p.codeowners {
 		if key.repo == ghRepo {
 			delete(p.codeowners, key)
