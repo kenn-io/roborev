@@ -1165,12 +1165,10 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 		}, nil
 	}
 	requests := 0
-	collaborators := `[{"login":"alice","role_name":"maintain"}]`
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v3/repos/acme/api/collaborators", r.URL.Path)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, collaborators)
+		fmt.Fprint(w, `[]`)
 	}))
 	t.Cleanup(api.Close)
 	h.Poller.githubAPIURL = api.URL + "/api/v3"
@@ -1196,24 +1194,29 @@ func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
 	}
 
 	for _, prompt := range poll() {
-		assert.Contains(prompt, "Alice comment")
-		assert.NotContains(prompt, "Bob comment")
+		assert.NotContains(prompt, "Alice comment")
 	}
 	assert.Equal(1, requests)
 
-	collaborators = `[{"login":"alice","role_name":"maintain"},{"login":"bob","role_name":"maintain"}]`
+	lookups := 0
+	trusted := map[string]struct{}{"alice": {}}
+	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+		lookups++
+		return trusted, nil
+	}
+	for _, prompt := range poll() {
+		assert.Contains(prompt, "Alice comment")
+		assert.NotContains(prompt, "Bob comment")
+	}
+	assert.Equal(1, lookups)
+
+	trusted = map[string]struct{}{"alice": {}, "bob": {}}
 	for _, prompt := range poll() {
 		assert.Contains(prompt, "Bob comment")
 	}
-	assert.Equal(2, requests)
+	assert.Equal(2, lookups)
 
-	collaborators = `[]`
-	for _, prompt := range poll() {
-		assert.NotContains(prompt, "Alice comment")
-	}
-	assert.Equal(3, requests)
-
-	lookups := 0
+	lookups = 0
 	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
 		lookups++
 		if lookups == 1 {
