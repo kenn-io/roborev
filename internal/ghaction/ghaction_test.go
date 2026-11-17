@@ -2,6 +2,7 @@ package ghaction
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,7 +120,8 @@ func TestGenerate(t *testing.T) {
 				`"$HOME/.local/bin"`,
 				"$GITHUB_PATH",
 				`"$HOME/.local/bin/roborev" version`,
-				"api.github.com",
+				"https://github.com/roborev-dev/roborev/releases/latest",
+				"%{url_effective}",
 				// Pin agent identity so Grok/Cursor collision and ambiguous
 				// fallback cannot silently rewrite the matrix.
 				`--agent "codex"`,
@@ -312,6 +314,44 @@ func TestGenerate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found")
+	}
+	out, err := Generate(DefaultConfig())
+	require.NoError(t, err)
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(out), &workflow))
+	var install string
+	for _, step := range workflow.Jobs["review"].Steps {
+		if step.Name == "Install roborev" {
+			install = step.Run
+		}
+	}
+	lookup, _, found := strings.Cut(install, "ARCHIVE=")
+	require.True(t, found)
+	dir := t.TempDir()
+	args := filepath.Join(dir, "args")
+	fake := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$CURL_ARGS\"\nprintf '%s' 'https://github.com/kenn-io/roborev/releases/tag/v0.52.0'\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(fake), 0o755))
+	cmd := exec.Command(bash, "-euo", "pipefail", "-c", lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
+	cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CURL_ARGS="+args)
+	got, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", got)
+	assert.Equal(t, "0.52.0", string(got))
+	called, err := os.ReadFile(args)
+	require.NoError(t, err)
+	assert.Equal(t, "-fsSLI\n-o\n/dev/null\n-w\n%{url_effective}\nhttps://github.com/roborev-dev/roborev/releases/latest\n", string(called))
 }
 
 func TestGenerate_DraftPolicy(t *testing.T) {

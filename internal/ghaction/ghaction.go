@@ -344,7 +344,8 @@ jobs:
           {{- if .RoborevVersion }}
           ROBOREV_VERSION="{{ .RoborevVersion }}"
           {{- else }}
-          ROBOREV_VERSION=$(curl -sfL https://api.github.com/repos/roborev-dev/roborev/releases/latest | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
+          LATEST_URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/roborev-dev/roborev/releases/latest)
+          ROBOREV_VERSION="${LATEST_URL##*/releases/tag/v}"
           {{- end }}
           ARCHIVE="roborev_${ROBOREV_VERSION}_linux_amd64.tar.gz"
           curl -sfLO "https://github.com/roborev-dev/roborev/releases/download/v${ROBOREV_VERSION}/${ARCHIVE}"
