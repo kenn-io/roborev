@@ -104,7 +104,7 @@ func (db *DB) ExportCICosts(opts ExportCICostOptions) (ExportCICostPage, error) 
 func (db *DB) exportRegularCICosts(opts ExportCICostOptions, cursor *ciCostCursor) (ExportCICostPage, error) {
 	finishedExpr := sqliteNormalizedTimestampExpr("j.finished_at")
 	conditions := []string{regularCICostOwnershipCondition, costEligible}
-	args := []any{JobSourceCI}
+	args := []any{JobSourceCI, JobSourceCIBranch}
 	conditions, args = appendCICostBounds(conditions, args, finishedExpr, opts, cursor)
 	args = append(args, opts.Limit+1)
 
@@ -120,7 +120,7 @@ func (db *DB) exportRegularCICosts(opts ExportCICostOptions, cursor *ciCostCurso
 	return db.queryCICostPage(query, args, opts.Limit, false, opts.Since, opts.Until)
 }
 
-const regularCICostOwnershipCondition = `(j.source = ? OR EXISTS (
+const regularCICostOwnershipCondition = `(j.source IN (?, ?) OR EXISTS (
 	SELECT 1 FROM ci_pr_panels p WHERE p.panel_run_uuid = j.panel_run_uuid
 ))`
 
@@ -368,7 +368,7 @@ func (db *DB) ciCostCursorRowExists(cursor ciCostCursor, legacy bool) (bool, err
 	query := `SELECT COUNT(1) FROM review_jobs j
 		WHERE j.id = ? AND ` + regularCICostOwnershipCondition + ` AND ` + costEligible + `
 		  AND ` + sqliteNormalizedTimestampExpr("j.finished_at") + ` = datetime(?)`
-	args := []any{cursor.JobID, JobSourceCI, cursor.FinishedAt}
+	args := []any{cursor.JobID, JobSourceCI, JobSourceCIBranch, cursor.FinishedAt}
 	if legacy {
 		eraEnd, err := db.legacyPanelEraEnd()
 		if err != nil {

@@ -486,3 +486,20 @@ func TestCICheckCompletionBelowSeverityThreshold(t *testing.T) {
 	assert.False(t, ran)
 	assert.Equal(t, 0, calls)
 }
+
+func TestCICheckUsesRepositoryAuthForDefaultBranchReviews(t *testing.T) {
+	tc, job, _, _ := setupCICheckCompletion(t, "high", "", nil)
+	_, err := tc.DB.ExecContext(t.Context(), `INSERT INTO ci_branch_reviews
+		(github_repo, branch, sha, panel_run_uuid, synthesis_job_id, created_at)
+		VALUES ('acme/api', 'main', 'landed', ?, ?, datetime('now'))`, job.PanelRunUUID, job.ID)
+	require.NoError(t, err)
+	tc.Pool.ciGitEnv = func(ghRepo string) []string { return []string{"AUTH_FOR=" + ghRepo} }
+	var gotEnv []string
+	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, env []string, _ io.Writer) (structuredreview.Document, error) {
+		gotEnv = env
+		return doc, nil
+	}
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
+	assert.Equal(t, []string{"AUTH_FOR=acme/api"}, gotEnv,
+		"the checker can fetch private dependencies for a landed-commit review")
+}

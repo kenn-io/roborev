@@ -26,7 +26,11 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 	source, err := scanCIPanel(conn.QueryRowContext(ctx, `SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels WHERE synthesis_job_id = ?`, sourceJobID))
 	if errors.Is(err, sql.ErrNoRows) {
-		if synth.Source == JobSourceCI {
+		found, err := rerunCIBranchReviewTx(ctx, conn, sourceJobID, synth, now)
+		if err != nil || found {
+			return err
+		}
+		if synth.Source == JobSourceCI || synth.Source == JobSourceCIBranch {
 			return ErrCIPanelTargetMissing
 		}
 		return nil // local panel, not a CI rerun

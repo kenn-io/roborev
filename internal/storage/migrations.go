@@ -52,6 +52,7 @@ var schemaMigrations = []schemaMigration{
 	{16, "token cost lookup state", migrateTokenCostLookups},
 	{17, "supplied panel enqueue receipts", migratePanelEnqueueRequests},
 	{18, "session CLI provenance", migrateSessionCLI},
+	{19, "CI default-branch commit reviews", migrateCIBranchReviews},
 }
 
 func migrateSessionCLI(ctx context.Context, db *DB) error {

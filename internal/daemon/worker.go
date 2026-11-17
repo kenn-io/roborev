@@ -824,7 +824,7 @@ func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, 
 	if job == nil || job.PanelRunUUID == nil || job.IsFixJob() {
 		return false, nil
 	}
-	if job.Source == storage.JobSourceCI {
+	if job.Source == storage.JobSourceCI || job.Source == storage.JobSourceCIBranch {
 		return true, nil
 	}
 	if wp.db == nil {
@@ -1339,9 +1339,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
 			census := reviewPathCensusForJob(ctx, checkout.promptRepoPath, job, excludes)
-			// The CI poller skips a PR with nothing to review before it
-			// enqueues, and publishes that skip on the PR.
-			if job.Source != storage.JobSourceCI &&
+			// The CI poller skips a PR or landed commit with nothing to
+			// review before it enqueues, and publishes that skip itself.
+			if !ciPollerJob(job) &&
 				wp.skipUnreviewableCensus(ctx, workerID, job, census, settings.BinaryEvidence) {
 				return
 			}

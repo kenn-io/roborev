@@ -2982,7 +2982,7 @@ func TestLoadCIRepoConfig_LoadsFromDefaultBranch(t *testing.T) {
 	}
 	require.NotNil(t, repoConfig.Config, "expected non-nil config")
 	assert.Equal(t, []string{"claude"}, repoConfig.Config.CI.Agents, "agents")
-	assert.Equal(t, "origin/main", repoConfig.Ref)
+	assert.Equal(t, "refs/remotes/origin/main", repoConfig.Ref)
 }
 
 func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
@@ -3041,7 +3041,7 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 		}, "expected ConfigParseError, got: %v", err)
 	}
 	assert.Nil(t, repoConfig.Config)
-	assert.Equal(t, "origin/main", repoConfig.Ref)
+	assert.Equal(t, "refs/remotes/origin/main", repoConfig.Ref)
 }
 
 func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
@@ -4144,6 +4144,28 @@ func TestCIPollerProcessPR_ExperimentValidationFailureSetsConfigurationStatus(t 
 
 	require.ErrorContains(t, err, "ci.min_severity")
 	require.Len(t, *statuses, 1)
+	assert.Equal(t, "error", (*statuses)[0].State)
+	assert.Contains(t, (*statuses)[0].Desc, "roborev config validate")
+}
+
+func TestCIPollerProcessPR_UndefinedPanelSetsConfigurationStatus(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	h.Poller.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
+		return ciRepoConfigSource{Config: &config.RepoConfig{CI: config.RepoCIConfig{Panel: "missing"}}}, nil
+	}
+	statuses := h.CaptureCommitStatuses()
+
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
+		Number: 96, HeadRefOid: "head-sha-96", HeadRefName: "feature",
+		BaseRefName: "main",
+	}, h.Cfg)
+
+	require.ErrorContains(t, err, "missing")
+	require.Len(t, *statuses, 1, "without an experiment, an undefined panel is still a configuration error")
 	assert.Equal(t, "error", (*statuses)[0].State)
 	assert.Contains(t, (*statuses)[0].Desc, "roborev config validate")
 }

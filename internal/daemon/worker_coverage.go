@@ -112,6 +112,13 @@ func (wp *WorkerPool) skipJob(ctx context.Context, workerID string, job *storage
 	})
 }
 
+// ciPollerJob reports whether the CI poller enqueued job, for a pull request
+// or a landed commit. The poller skips a change with nothing to review before
+// it enqueues, and its result handling expects every run to reach a verdict.
+func ciPollerJob(job *storage.ReviewJob) bool {
+	return job.Source == storage.JobSourceCI || job.Source == storage.JobSourceCIBranch
+}
+
 // skipUnreviewableWithoutAgent skips an ordinary committed review whose diff
 // is empty after exclusions, before the worker prepares a checkout or an
 // agent. The worker uses it when the agent cannot run, so a review with
@@ -120,7 +127,7 @@ func (wp *WorkerPool) skipUnreviewableWithoutAgent(
 	ctx context.Context, workerID string, job *storage.ReviewJob, cfg *config.Config,
 ) bool {
 	if !job.IsReviewJob() || job.IsDirtyJob() || job.IsGoalReviewJob() || job.UsesStoredPrompt() ||
-		job.PromptPrebuilt || job.Source == storage.JobSourceCI || job.Source == storage.JobSourceRebuttal {
+		job.PromptPrebuilt || ciPollerJob(job) || job.Source == storage.JobSourceRebuttal {
 		return false
 	}
 	// Validate the worktree like checkout preparation does: a stale path
