@@ -829,12 +829,22 @@ func TestCIDefaultBranchReviewsIgnoreLocalBranchNamedLikeOrigin(t *testing.T) {
 	out, err := exec.CommandContext(t.Context(), "git", "-C", h.clone, "branch", "origin/main", "main").CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	start := h.origin.HeadSHA()
-	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	landed := h.origin.CommitFile(".roborev.toml", "[ci]\nreview_types = [\"security\"]\n", "review security")
 
 	h.poll(t)
 	runs := h.synthesisJobs(t)
 	require.Len(t, runs, 1, "a local branch named origin/main does not hide the fetched branch")
 	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+	jobs, err := h.db.ListJobs("", "", 100, 0)
+	require.NoError(t, err)
+	var reviewTypes []string
+	for _, job := range jobs {
+		if !job.IsSynthesisJob() {
+			reviewTypes = append(reviewTypes, job.ReviewType)
+		}
+	}
+	assert.Equal(t, []string{"security"}, reviewTypes,
+		"reviewers come from the fetched branch's configuration, not the local branch")
 }
 
 func TestGitFetchUpdatesOriginWhenCheckoutTracksAnotherRemote(t *testing.T) {

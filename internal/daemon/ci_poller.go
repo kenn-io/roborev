@@ -3819,6 +3819,12 @@ func loadCIRepoConfig(repoPath string) (ciRepoConfigSource, error) {
 		// — fall back to filesystem.
 		return config.LoadRepoConfigWithFallback(repoPath, "")
 	}
+	// GetDefaultBranch names the fetched branch origin/<branch>, which Git
+	// resolves to a local branch of that name first. The full name keeps
+	// such a branch from supplying the configuration.
+	if strings.HasPrefix(defaultBranch, "origin/") {
+		defaultBranch = "refs/remotes/" + defaultBranch
+	}
 	return config.LoadRepoConfigWithFallback(repoPath, defaultBranch)
 }
 
