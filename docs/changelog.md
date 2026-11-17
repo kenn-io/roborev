@@ -7,6 +7,12 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- Run the agent you pick with `--agent` on its own default model when you do not
+    also pass `--model`. A workflow model such as `review_model` or `fix_model`
+    set for a different agent is no longer passed to it, so
+    `roborev review --agent claude-code` no longer fails every retry on a Codex
+    model. This covers `roborev compact` and panel members that set only
+    `agent`; ACP agents already worked this way.
 - Keep reviewing commits when the daemon is too busy to answer the post-commit
     hook. A commit the hook cannot queue stays pending, and the next commit or
     push reviews it; a quiet-period batch that cannot be queued is retried. Idle

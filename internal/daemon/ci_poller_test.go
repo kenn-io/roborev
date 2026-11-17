@@ -3793,6 +3793,7 @@ func TestCIExperimentModelsOverrideGlobalCIModel(t *testing.T) {
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.Cfg.CI.ReviewTypes = []string{"design"}
 	h.Cfg.ReviewMinSeverity = "high"
+	h.Cfg.ReviewAgent = "test"
 	h.Cfg.DesignAgent = "test"
 	h.Poller.agentResolverFn = func(name string) (string, error) {
 		return name, nil

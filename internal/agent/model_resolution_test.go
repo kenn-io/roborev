@@ -76,9 +76,9 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			want:          "gpt-5.4-custom",
 		},
 		{
-			// Scope guard: non-ACP selected agent keeps legacy behavior
-			// (workflow model still applies).
-			name: "non-acp selected differing from default -> workflow model",
+			// Native agents follow the same pairing rule; see
+			// TestModelForSelectedAgentNativeWorkflowModelPairing.
+			name: "non-acp selected differing from default -> agent default",
 			cfg: &config.Config{
 				DefaultAgent: "codex",
 				ReviewModel:  "gpt-5.4",
@@ -87,7 +87,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			workflow:      "review",
 			level:         "standard",
 			selectedAgent: "gemini",
-			want:          "gpt-5.4",
+			want:          "",
 		},
 		{
 			// Existing fallback: no workflow model anywhere -> acp model.
@@ -190,6 +190,121 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			assert.Equal(tt.want, got,
 				"ModelForSelectedAgent(%q, %q) = %q, want %q",
 				tt.selectedAgent, tt.cliModel, got, tt.want)
+		})
+	}
+}
+
+// TestModelForSelectedAgentNativeWorkflowModelPairing pins the pairing rule
+// for native CLI agents: a workflow model applies only when the workflow's
+// configured agent for that level is the selected agent. Claude Code rejects
+// a model it does not know, so handing it a Codex review_model after
+// `--agent claude-code` fails the job on every retry.
+func TestModelForSelectedAgentNativeWorkflowModelPairing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		cfg           *config.Config
+		level         string
+		selectedAgent string
+		cliModel      string
+		want          string
+	}{
+		{
+			name: "review_model pairs with default agent, other agent selected -> agent default",
+			cfg: &config.Config{
+				DefaultAgent: "codex",
+				ReviewModel:  "gpt-5.4",
+			},
+			selectedAgent: "claude-code",
+			want:          "",
+		},
+		{
+			name: "review_model pairs with default agent, alias of default selected -> workflow model",
+			cfg: &config.Config{
+				DefaultAgent: "claude",
+				ReviewModel:  "claude-sonnet",
+			},
+			selectedAgent: "claude-code",
+			want:          "claude-sonnet",
+		},
+		{
+			name: "review_agent is the selected agent -> workflow model",
+			cfg: &config.Config{
+				DefaultAgent: "codex",
+				ReviewAgent:  "claude",
+				ReviewModel:  "claude-sonnet",
+			},
+			selectedAgent: "claude-code",
+			want:          "claude-sonnet",
+		},
+		{
+			name: "explicit cli model wins over pairing",
+			cfg: &config.Config{
+				DefaultAgent: "codex",
+				ReviewModel:  "gpt-5.4",
+			},
+			selectedAgent: "claude-code",
+			cliModel:      "claude-opus",
+			want:          "claude-opus",
+		},
+		{
+			name: "selected default agent, review_agent differs -> generic model",
+			cfg: &config.Config{
+				DefaultAgent: "claude-code",
+				DefaultModel: "claude-sonnet",
+				ReviewAgent:  "codex",
+				ReviewModel:  "gpt-5.4",
+			},
+			selectedAgent: "claude-code",
+			want:          "claude-sonnet",
+		},
+		{
+			name: "selected default agent, review_agent differs, no generic model -> agent default",
+			cfg: &config.Config{
+				DefaultAgent: "claude-code",
+				ReviewAgent:  "codex",
+				ReviewModel:  "gpt-5.4",
+			},
+			selectedAgent: "claude-code",
+			want:          "",
+		},
+		{
+			name: "leveled workflow agent differs from selected -> agent default",
+			cfg: &config.Config{
+				DefaultAgent:        "claude-code",
+				ReviewAgentThorough: "codex",
+				ReviewModelThorough: "gpt-5.4-thorough",
+			},
+			level:         "thorough",
+			selectedAgent: "claude-code",
+			want:          "",
+		},
+		{
+			name: "leveled workflow agent is selected -> leveled model",
+			cfg: &config.Config{
+				DefaultAgent:        "codex",
+				ReviewAgentThorough: "claude-code",
+				ReviewModelThorough: "claude-opus",
+			},
+			level:         "thorough",
+			selectedAgent: "claude-code",
+			want:          "claude-opus",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			level := tt.level
+			if level == "" {
+				level = "standard"
+			}
+			resolution, err := ResolveWorkflowConfigFromConfig(
+				tt.selectedAgent, nil, tt.cfg, "review", level,
+			)
+			require.NoError(t, err)
+			got := resolution.ModelForSelectedAgent(tt.selectedAgent, tt.cliModel)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
