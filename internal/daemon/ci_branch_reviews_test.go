@@ -786,61 +786,74 @@ func TestCIDefaultBranchStatusDelivery(t *testing.T) {
 }
 
 func TestCIDefaultBranchStatusWaitsForGitHubAppTokenRecovery(t *testing.T) {
-	h := newBranchReviewHarness(t)
-	h.poll(t)
-	t.Setenv("GH_TOKEN", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	installFakeGHAuthToken(t, "")
-	var mu sync.Mutex
-	tokenFails := true
-	var published []string
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
-			if tokenFails {
-				w.WriteHeader(http.StatusBadGateway)
-				return
-			}
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"token": "ghs_recovered", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
-			})
-		case strings.Contains(r.URL.Path, "/statuses/"):
-			var status struct{ State string }
-			_ = json.NewDecoder(r.Body).Decode(&status)
-			published = append(published, status.State)
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte("{}"))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	t.Cleanup(api.Close)
-	_, pemData := testKey(t)
-	provider, err := NewGitHubAppTokenProvider(testAppID, pemData)
-	require.NoError(t, err)
-	provider.baseURL = api.URL
-	h.poller.tokenProvider = provider
-	h.poller.githubAPIURL = api.URL
-	h.cfg.CI.GitHubAppInstallationID = testInstallationID
-	h.poller.setBranchStatusFn = nil
+	for _, tt := range []struct{ name, fallback string }{
+		{name: "no fallback token"},
+		// The fallback token can read the repo but not write statuses.
+		{name: "fallback token without status access", fallback: "fallback_token"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newBranchReviewHarness(t)
+			h.poll(t)
+			t.Setenv("GH_TOKEN", tt.fallback)
+			t.Setenv("GITHUB_TOKEN", "")
+			installFakeGHAuthToken(t, "")
+			var mu sync.Mutex
+			tokenFails := true
+			var published []string
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+					if tokenFails {
+						w.WriteHeader(http.StatusBadGateway)
+						return
+					}
+					w.WriteHeader(http.StatusCreated)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"token": "ghs_recovered", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+					})
+				case strings.Contains(r.URL.Path, "/statuses/"):
+					if !strings.Contains(r.Header.Get("Authorization"), "ghs_recovered") {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
+						return
+					}
+					var status struct{ State string }
+					_ = json.NewDecoder(r.Body).Decode(&status)
+					published = append(published, status.State)
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte("{}"))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(api.Close)
+			_, pemData := testKey(t)
+			provider, err := NewGitHubAppTokenProvider(testAppID, pemData)
+			require.NoError(t, err)
+			provider.baseURL = api.URL
+			h.poller.tokenProvider = provider
+			h.poller.githubAPIURL = api.URL
+			h.cfg.CI.GitHubAppInstallationID = testInstallationID
+			h.poller.setBranchStatusFn = nil
 
-	h.origin.CommitFile("app.txt", "changed\n", "change")
-	h.poll(t)
-	h.runJobs(t)
-	h.poll(t)
-	mu.Lock()
-	assert.Empty(t, published)
-	tokenFails = false
-	mu.Unlock()
-	h.poll(t)
+			h.origin.CommitFile("app.txt", "changed\n", "change")
+			h.poll(t)
+			h.runJobs(t)
+			h.poll(t)
+			mu.Lock()
+			assert.Empty(t, published)
+			tokenFails = false
+			mu.Unlock()
+			h.poll(t)
 
-	mu.Lock()
-	defer mu.Unlock()
-	assert.Equal(t, []string{"success"}, published,
-		"a result whose GitHub App token failed is published once the token can be fetched")
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, []string{"success"}, published,
+				"a result whose GitHub App token failed is published once the token can be fetched")
+		})
+	}
 }
 
 func TestCIDefaultBranchStatusFailureIsTriedOncePerResultEachPoll(t *testing.T) {
@@ -865,28 +878,31 @@ func TestCIDefaultBranchStatusFailureIsTriedOncePerResultEachPoll(t *testing.T) 
 		"recovering several results must not send each failing status again for every result")
 }
 
-func TestCIDefaultBranchReviewsFetchOriginWhenCheckoutTracksAnotherRemote(t *testing.T) {
-	h := newBranchReviewHarness(t)
-	h.poll(t)
+func TestGitFetchUpdatesOriginWhenCheckoutTracksAnotherRemote(t *testing.T) {
+	origin := testutil.NewGitRepo(t)
+	origin.CommitFile("app.txt", "start\n", "initial")
+	clone := filepath.Join(t.TempDir(), "clone")
 	// The registered checkout's current branch follows a contributor's fork,
 	// so a fetch that names no remote would update the fork, not origin.
 	fork := testutil.NewGitRepo(t)
-	fork.CommitFile("fork.txt", "fork\n", "fork commit")
+	forkHead := fork.CommitFile("fork.txt", "fork\n", "fork commit")
 	for _, args := range [][]string{
-		{"remote", "add", "fork", fork.Path()},
-		{"config", "branch.main.remote", "fork"},
-		{"config", "branch.main.merge", "refs/heads/main"},
+		{"clone", "--quiet", origin.Path(), clone},
+		{"-C", clone, "remote", "add", "fork", fork.Path()},
+		{"-C", clone, "config", "branch.main.remote", "fork"},
+		{"-C", clone, "config", "branch.main.merge", "refs/heads/main"},
 	} {
-		out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", h.clone}, args...)...).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
 		require.NoError(t, err, "%s", out)
 	}
-	start := h.origin.HeadSHA()
-	landed := h.origin.CommitFile("app.txt", "changed\n", "change")
+	landed := origin.CommitFile("app.txt", "changed\n", "change")
 
-	h.poll(t)
-	runs := h.synthesisJobs(t)
-	require.Len(t, runs, 1, "the commit that landed on origin is reviewed")
-	assert.Equal(t, start+".."+landed, runs[0].GitRef)
+	require.NoError(t, gitFetchCtx(t.Context(), clone, nil))
+	got, err := gitText(t.Context(), clone, "rev-parse", "refs/remotes/origin/main")
+	require.NoError(t, err)
+	assert.Equal(t, landed, got, "the fetch updates origin")
+	_, err = gitText(t.Context(), clone, "rev-parse", "--verify", "--quiet", "refs/remotes/fork/main")
+	require.Error(t, err, "the fork %s is not fetched", forkHead)
 }
 
 func TestCIDefaultBranchCompletionPublishesOnlyItsOwnStatus(t *testing.T) {

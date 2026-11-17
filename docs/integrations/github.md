@@ -566,8 +566,8 @@ state reports whether the review ran, and its description reports the result.
 A status that GitHub does not accept right away is sent again on the next poll.
 The poller stops trying when GitHub will never accept it: the daemon has no
 GitHub credentials, the token cannot write commit statuses, or GitHub no longer
-has the commit. A failed GitHub App token request is retried. The review itself
-is still stored.
+has the commit. When the GitHub App token request fails, the status is retried,
+even if the fallback token was refused. The review itself is still stored.
 
 | State | Description | When |
 |-------|-------------|------|
