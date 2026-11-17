@@ -210,7 +210,7 @@ func TestGenerate(t *testing.T) {
 				`ROBOREV_VERSION="0.33.1"`,
 			},
 			notWantStrs: []string{
-				"api.github.com",
+				"https://github.com/roborev-dev/roborev/releases/latest",
 			},
 		},
 		{
@@ -358,16 +358,33 @@ func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
 			args := filepath.Join(dir, "args")
 			fake := `#!/bin/sh
 page=0
-flags=0
+fail=0
+follow=0
+head=0
+writeout=0
+next_writeout=0
 for arg in "$@"; do
+  if [ "$next_writeout" = 1 ]; then
+    [ "$arg" = '%{url_effective}' ] && writeout=1
+    next_writeout=0
+    continue
+  fi
   case "$arg" in
-    -fsSLI) flags=1 ;;
+    -w) next_writeout=1 ;;
+    -[!-]*)
+      case "$arg" in *f*) fail=1 ;; esac
+      case "$arg" in *L*) follow=1 ;; esac
+      case "$arg" in *I*) head=1 ;; esac
+      ;;
     https://api.github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s\n' '{"tag_name":"v0.52.0"}' ;;
-    https://github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; printf '%s' "$CURL_URL"; page=1 ;;
+    https://github.com/*) printf '%s\n' "$arg" >> "$CURL_ARGS"; page=1 ;;
     http://*|https://*) exit 1 ;;
   esac
 done
-[ "$page" = 0 ] || [ "$flags" = 1 ]
+if [ "$page" = 1 ]; then
+  [ "$fail" = 1 ] && [ "$follow" = 1 ] && [ "$head" = 1 ] && [ "$writeout" = 1 ] || exit 1
+  printf '%s' "$CURL_URL"
+fi
 `
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "curl"), []byte(fake), 0o755))
 			cmd := exec.Command(bash, "-euo", "pipefail", "-c", tt.lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
