@@ -39,7 +39,9 @@ func surfacesOf(messages []testutil.PostHogMessage) []string {
 }
 
 func TestReporterKeepsStartupConsent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv(EnabledEnv, "")
 	t.Setenv(GenericEnabledEnv, "")
 	require.NoError(t, posthog.RecordConsent(true))
