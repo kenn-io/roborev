@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -104,6 +104,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 
 	claims := posthog.NewDailyClaims(opts.DailyClaimsPath)
 	return posthog.NewReporter(posthog.Options{
+		Logger:      slog.New(slog.DiscardHandler),
 		APIKey:      opts.APIKey,
 		Endpoint:    opts.Endpoint,
 		Application: "roborev",
@@ -127,7 +128,6 @@ func DisabledReporter() *Reporter {
 func NewReporterOrDisabled(opts Options) *Reporter {
 	reporter, err := NewReporter(opts)
 	if err != nil {
-		log.Printf("Warning: telemetry disabled: %v", err)
 		return DisabledReporter()
 	}
 	return reporter
@@ -231,7 +231,6 @@ func loadOrCreateInstall(database *storage.DB) (string, time.Time, error) {
 	}
 	installedAt, err := time.Parse(time.RFC3339Nano, stored)
 	if err != nil {
-		log.Printf("Warning: telemetry install time unreadable, sending events without an install age: %v", err)
 		return id, time.Time{}, nil
 	}
 	return id, installedAt, nil

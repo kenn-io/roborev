@@ -25,16 +25,13 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 		bucket  string
 		send    func(t *testing.T, url string)
 	}{
-		// PostHog batches until Close, so only the single message counted after Close shows that the
-		// calls before readiness and after opt-out sent nothing.
+		// The call before readiness sends nothing; the startup answer still applies after opt-out.
 		{telemetry.SurfaceTUI, telemetry.Duration1To5m, func(t *testing.T, url string) {
 			m := newModel(testEndpointFromURL(url), withExternalIODisabled())
 			m.reportSessionEnded(2 * time.Minute)
 			close(m.ready)
 			t.Setenv(telemetry.EnabledEnv, "0")
 			m.reportSessionEnded(time.Minute)
-			enableTelemetryEnv(t)
-			m.reportSessionEnded(2 * time.Minute)
 		}},
 		{telemetry.SurfaceWeb, telemetry.DurationUnder1m, func(t *testing.T, url string) {
 			body := `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"under_1m"}}`

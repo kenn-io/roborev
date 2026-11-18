@@ -146,6 +146,7 @@ type model struct {
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
 	telemetryGate        *telemetry.ClientGate
+	telemetryEnabled     bool
 	reviewReadSent       bool     // review_viewed issued on screenDay
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
@@ -917,6 +918,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		currentView:         viewQueue,
 		screenDay:           time.Now().UTC().Format(time.DateOnly),
 		telemetryGate:       new(telemetry.ClientGate),
+		telemetryEnabled:    telemetry.EnabledFromEnv(),
 		screensSent:         []string{viewQueue.String()}, // Init reports the queue
 		width:               80,                           // sensible defaults until we get WindowSizeMsg
 		height:              24,

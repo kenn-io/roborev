@@ -393,7 +393,7 @@ func (m model) checkForUpdate() tea.Cmd {
 
 // reportAppOpened tells the daemon the TUI started; its result never reaches Update, so a slow, old or missing daemon changes nothing on screen.
 func (m model) reportAppOpened() tea.Cmd {
-	if !telemetry.EnabledFromEnv() {
+	if !m.telemetryEnabled {
 		return nil
 	}
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
@@ -409,7 +409,7 @@ func (m model) reportSessionEnded(elapsed time.Duration) {
 	default:
 		return
 	}
-	if !telemetry.EnabledFromEnv() {
+	if !m.telemetryEnabled {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), telemetry.NotificationTimeout)
@@ -437,7 +437,7 @@ func (m model) screensShown() []string {
 }
 
 func (m model) postScreen(screen string) tea.Cmd {
-	if !telemetry.EnabledFromEnv() {
+	if !m.telemetryEnabled {
 		return nil
 	}
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
@@ -1533,7 +1533,7 @@ func (m *model) requestFetchFixJobs() tea.Cmd {
 }
 
 func (m model) reportAction(event string, props map[string]any) tea.Cmd {
-	if !telemetry.EnabledFromEnv() {
+	if !m.telemetryEnabled {
 		return nil
 	}
 	day := time.Now().UTC().Format(time.DateOnly)

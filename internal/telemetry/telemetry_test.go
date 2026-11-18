@@ -1,8 +1,11 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -25,17 +28,22 @@ func TestDailyClaimsPath(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "telemetry-daily.json"), DailyClaimsPath(filepath.Join(dir, "reviews.db")))
 }
 
-func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
+func TestEnabledFromEnvFollowsKennConsent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	testutil.SetTelemetryReleaseEnv(t)
 	t.Setenv(GenericEnabledEnv, "")
+	t.Setenv(EnabledEnv, "")
+	assert.False(t, EnabledFromEnv())
+	require.NoError(t, kittelemetry.RecordConsent(true))
+	assert.True(t, EnabledFromEnv())
 	t.Setenv(EnabledEnv, "0")
 	assert.False(t, EnabledFromEnv())
-
-	t.Setenv(EnabledEnv, "1")
+	t.Setenv(EnabledEnv, "")
+	require.NoError(t, kittelemetry.RecordConsent(false))
+	t.Setenv(GenericEnabledEnv, "1")
 	assert.True(t, EnabledFromEnv())
-
-	t.Setenv(GenericEnabledEnv, "0")
-	assert.False(t, EnabledFromEnv())
 }
 
 func TestCountBucket(t *testing.T) {
@@ -84,6 +92,38 @@ func TestNewReporterDisabledByEnvDoesNotCreateInstallID(t *testing.T) {
 	assert.Empty(installedAt)
 }
 
+func TestNewReporterFollowsKennConsent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
+	t.Setenv(EnabledEnv, "")
+	t.Setenv(GenericEnabledEnv, "")
+	endpoint, messages := testutil.NewPostHogStub(t)
+	database := openTestDB(t)
+	opts := Options{Database: database, Version: releaseVersion, APIKey: testutil.PostHogTestAPIKey, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+
+	reporter, err := NewReporter(opts)
+	require.NoError(t, err)
+	assert.False(t, reporter.Enabled())
+	installID, err := database.GetSyncState(installIDMetadataKey)
+	require.NoError(t, err)
+	assert.Empty(t, installID)
+	_ = reporter.Capture(EventDaemonStarted, nil)
+	require.NoError(t, reporter.Close())
+	assert.Empty(t, messages())
+
+	require.NoError(t, kittelemetry.RecordConsent(true))
+	reporter, err = NewReporter(opts)
+	require.NoError(t, err)
+	assert.True(t, reporter.Enabled())
+	require.NoError(t, reporter.Capture(EventDaemonStarted, nil))
+	require.NoError(t, reporter.Close())
+	require.Len(t, messages(), 1)
+	assert.Equal(t, EventDaemonStarted, messages()[0].Event)
+	assert.Equal(t, true, messages()[0].Properties["telemetry_consent"])
+}
+
 func TestLoadOrCreateInstallIsStableAndAnonymous(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -130,6 +170,21 @@ func TestLoadOrCreateInstallLeavesExistingIDWithoutTimeUnaged(t *testing.T) {
 	stored, err := database.GetSyncState(installedAtKey)
 	require.NoError(err)
 	assert.Empty(stored)
+}
+
+func TestLoadOrCreateInstallUnreadableTimeIsQuiet(t *testing.T) {
+	database := openTestDB(t)
+	require.NoError(t, database.SetSyncState(installIDMetadataKey, "existing-install-id"))
+	require.NoError(t, database.SetSyncState(installedAtKey, "invalid"))
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	id, installedAt, err := loadOrCreateInstall(database)
+	require.NoError(t, err)
+	assert.Equal(t, "existing-install-id", id)
+	assert.True(t, installedAt.IsZero())
+	assert.Empty(t, output.String())
 }
 
 func TestLoadOrCreateInstallKeepsCreationTimeAcrossRestart(t *testing.T) {
@@ -405,7 +460,12 @@ func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
 	reporter := NewReporterOrDisabled(Options{})
+	assert.Empty(t, output.String())
 
 	assert.False(t, reporter.Enabled())
 	recorder := postCaptureEvent(t.Context(), (&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened"}`)
@@ -418,4 +478,30 @@ func postCaptureEvent(ctx context.Context, handler http.Handler, body string) *h
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	return recorder
+}
+
+func TestReporterQuietOnRejectedBatch(t *testing.T) {
+	version := testutil.SetTelemetryReleaseEnv(t)
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	database := testutil.OpenTestDB(t)
+	var standard, structured bytes.Buffer
+	previousWriter := log.Writer()
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&structured, nil)))
+	log.SetOutput(&standard)
+	t.Cleanup(func() { slog.SetDefault(previousLogger); log.SetOutput(previousWriter) })
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "rejected", http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+	reporter, err := NewReporter(Options{Database: database, Version: version, APIKey: testutil.PostHogTestAPIKey, Endpoint: server.URL, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
+	require.NoError(t, err)
+	require.NoError(t, reporter.Capture(EventDaemonStarted, nil))
+	_ = reporter.Close()
+	assert.Positive(t, requests)
+	assert.Empty(t, standard.String())
+	assert.Empty(t, structured.String())
 }

@@ -404,3 +404,22 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool { return isClosed(runDone) && !isClosed(release) }, 5*time.Second, 10*time.Millisecond)
 }
+
+func TestTUIKeepsConsentAtLaunch(t *testing.T) {
+	enableTelemetryEnv(t)
+	var requests atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"queued"}`))
+	}))
+	t.Cleanup(ts.Close)
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	t.Setenv(telemetry.GenericEnabledEnv, "0")
+	cmd := m.reportAppOpened()
+	require.NotNil(t, cmd)
+	cmd()
+	assert.Equal(t, int32(1), requests.Load())
+	newModel := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	assert.Nil(t, newModel.reportAppOpened())
+}

@@ -95,6 +95,11 @@ var (
 	cliSends       telemetry.SendGroup
 )
 
+func snapshotCLIConsent() {
+	enabled := telemetry.EnabledFromEnv()
+	cliTelemetryEnabled = func() bool { return enabled }
+}
+
 // armCLIUse selects human or agent activity for commands that work through the daemon.
 func armCLIUse(cmd *cobra.Command) {
 	path := stableCommandPath(cmd)

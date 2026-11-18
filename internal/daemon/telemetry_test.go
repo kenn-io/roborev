@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/testutil/setupclaim"
 )
@@ -64,6 +67,20 @@ func waitSetupFinished(t *testing.T, client *fakeTelemetryClient) {
 func (f *fakeTelemetryClient) Close() error { return nil }
 
 func (f *fakeTelemetryClient) Enabled() bool { return f.enabled }
+
+func TestTelemetryFailuresDoNotWriteWarnings(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true, captureErr: errors.New("collector unavailable")}
+	server.SetTelemetry(client)
+	require.NoError(t, db.Close())
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	server.captureTelemetryEvent(t.Context(), telemetry.EventDaemonActive, nil)
+	assert.Equal(t, []string{telemetry.EventDaemonActive}, client.recordedEvents())
+	assert.Empty(t, output.String())
+}
 
 func TestCaptureDaemonStartedTelemetry(t *testing.T) {
 	assert := assert.New(t)
