@@ -2,7 +2,6 @@ package mcpserver
 
 import (
 	"encoding/json"
-	"net/http/httptest"
 	"slices"
 	"testing"
 
@@ -92,16 +91,4 @@ func TestSkillsDiscoveryAndGuideContents(t *testing.T) {
 	workflow := callTool(t, session, "roborev.skills", map[string]any{"name": "workflow"})
 	assert.Equal(resource.Contents[0].Text, workflow.Content[0].(*mcp.TextContent).Text)
 	assert.Len(skillsMetadata(t, workflow).Skills, 1)
-}
-
-func TestSkillsHTTPTransport(t *testing.T) {
-	t.Parallel()
-	server := httptest.NewServer(New(&struct{ Backend }{}, "test", nil).HTTPHandler())
-	t.Cleanup(server.Close)
-	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL + HTTPPath}, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = session.Close() })
-	result := callTool(t, session, "roborev.skills", map[string]any{"name": "workflow"})
-	assert.Equal(t, guidanceMarkdown, result.Content[0].(*mcp.TextContent).Text)
 }

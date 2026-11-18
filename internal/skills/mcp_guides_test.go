@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/quick"
@@ -45,8 +46,10 @@ func TestMCPGuidesReuseInstalledContentAndPolicy(t *testing.T) {
 
 func TestMCPGuidesAreIndependent(t *testing.T) {
 	t.Parallel()
-	expected, err := MCPGuides()
+	guides, err := MCPGuides()
 	require.NoError(t, err)
+	// Copy the baseline so a shared backing array cannot change it too.
+	expected := slices.Clone(guides)
 	property := func(indexSeed uint64, text string) bool {
 		index := int(indexSeed % uint64(len(expected)))
 		guides, err := MCPGuides()
