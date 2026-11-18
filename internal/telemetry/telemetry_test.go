@@ -1,8 +1,10 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -167,6 +169,21 @@ func TestLoadOrCreateInstallLeavesExistingIDWithoutTimeUnaged(t *testing.T) {
 	stored, err := database.GetSyncState(installedAtKey)
 	require.NoError(err)
 	assert.Empty(stored)
+}
+
+func TestLoadOrCreateInstallUnreadableTimeIsQuiet(t *testing.T) {
+	database := openTestDB(t)
+	require.NoError(t, database.SetSyncState(installIDMetadataKey, "existing-install-id"))
+	require.NoError(t, database.SetSyncState(installedAtKey, "invalid"))
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	id, installedAt, err := loadOrCreateInstall(database)
+	require.NoError(t, err)
+	assert.Equal(t, "existing-install-id", id)
+	assert.True(t, installedAt.IsZero())
+	assert.Empty(t, output.String())
 }
 
 func TestLoadOrCreateInstallKeepsCreationTimeAcrossRestart(t *testing.T) {
@@ -442,7 +459,12 @@ func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
 	reporter := NewReporterOrDisabled(Options{})
+	assert.Empty(t, output.String())
 
 	assert.False(t, reporter.Enabled())
 	recorder := postCaptureEvent(t.Context(), (&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened"}`)

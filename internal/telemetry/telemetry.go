@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -68,7 +67,21 @@ type SendGroup = posthog.SendGroup
 
 type Client = posthog.Client
 
-type Reporter = posthog.Reporter
+type Reporter struct {
+	*posthog.Reporter
+	version string
+}
+
+func (r *Reporter) Enabled() bool {
+	return r != nil && r.Reporter.Enabled() && posthog.Eligible("ROBOREV", r.version)
+}
+
+func (r *Reporter) Capture(event string, properties map[string]any) error {
+	if !r.Enabled() {
+		return nil
+	}
+	return r.Reporter.Capture(event, properties)
+}
 
 type Options struct {
 	Database *storage.DB
@@ -91,7 +104,8 @@ func EnabledFromEnv() bool {
 func NewReporter(opts Options) (*Reporter, error) {
 	if !EnabledFromEnv() {
 		// An opted-out kit reporter keeps the allowlist, so the capture route can still reject unknown events.
-		return posthog.NewReporter(posthog.Options{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
+		reporter, err := posthog.NewReporter(posthog.Options{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
+		return &Reporter{Reporter: reporter, version: opts.Version}, err
 	}
 	if opts.Database == nil {
 		return nil, errors.New("telemetry database is required")
@@ -103,7 +117,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 	}
 
 	claims := posthog.NewDailyClaims(opts.DailyClaimsPath)
-	return posthog.NewReporter(posthog.Options{
+	reporter, err := posthog.NewReporter(posthog.Options{
 		APIKey:      opts.APIKey,
 		Endpoint:    opts.Endpoint,
 		Application: "roborev",
@@ -118,16 +132,16 @@ func NewReporter(opts Options) (*Reporter, error) {
 		posthog.WithDailyEvent(EventFindingFixed, PropertySurface, claims),
 		posthog.WithDailyEvent(EventReviewClosed, PropertySurface, claims),
 	)...)
+	return &Reporter{Reporter: reporter, version: opts.Version}, err
 }
 
 func DisabledReporter() *Reporter {
-	return posthog.DisabledReporter()
+	return &Reporter{Reporter: posthog.DisabledReporter()}
 }
 
 func NewReporterOrDisabled(opts Options) *Reporter {
 	reporter, err := NewReporter(opts)
 	if err != nil {
-		log.Printf("Warning: telemetry disabled: %v", err)
 		return DisabledReporter()
 	}
 	return reporter
@@ -231,7 +245,6 @@ func loadOrCreateInstall(database *storage.DB) (string, time.Time, error) {
 	}
 	installedAt, err := time.Parse(time.RFC3339Nano, stored)
 	if err != nil {
-		log.Printf("Warning: telemetry install time unreadable, sending events without an install age: %v", err)
 		return id, time.Time{}, nil
 	}
 	return id, installedAt, nil

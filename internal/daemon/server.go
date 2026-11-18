@@ -989,7 +989,7 @@ func (s *Server) runSetupFinishedTelemetry(ctx context.Context) {
 			return
 		case <-s.setupFinishedWake:
 		}
-		_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		_, _ = backoff.Retry(ctx, func() (struct{}, error) {
 			if s.setupFinishedClaimed.Load() {
 				return struct{}{}, nil
 			}
@@ -1004,15 +1004,10 @@ func (s *Server) runSetupFinishedTelemetry(ctx context.Context) {
 				s.setupFinishedClaimed.Store(true)
 			}
 			if claim == storage.SetupFinishedNewClaim {
-				if err := s.telemetry.Capture(telemetry.EventSetupFinished, nil); err != nil {
-					log.Printf("Warning: capture setup finished telemetry: %v", err)
-				}
+				_ = s.telemetry.Capture(telemetry.EventSetupFinished, nil)
 			}
 			return struct{}{}, nil
 		}, backoff.WithMaxElapsedTime(0))
-		if err != nil && ctx.Err() == nil {
-			log.Printf("Warning: claim setup finished telemetry: %v", err)
-		}
 	}
 }
 
@@ -1056,22 +1051,16 @@ func (s *Server) captureTelemetryEvent(ctx context.Context, event string, cfg *c
 	}
 
 	props := s.telemetryProperties(ctx, cfg)
-	if err := s.telemetry.Capture(event, props); err != nil {
-		log.Printf("Warning: capture telemetry event: %v", err)
-	}
+	_ = s.telemetry.Capture(event, props)
 }
 
 func (s *Server) telemetryProperties(ctx context.Context, cfg *config.Config) map[string]any {
 	repoCount := 0
-	if repos, err := s.db.ListRepos(); err != nil {
-		log.Printf("Warning: failed to count repos for telemetry: %v", err)
-	} else {
+	if repos, err := s.db.ListRepos(); err == nil {
 		repoCount = len(repos)
 	}
 	reviewCount := 0
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
-		log.Printf("Warning: failed to count reviews for telemetry: %v", err)
-	}
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews`).Scan(&reviewCount)
 
 	props := map[string]any{
 		"repo_count":   telemetry.CountBucket(repoCount),
@@ -1094,12 +1083,10 @@ func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 		if s.telemetry == nil || !s.telemetry.Enabled() {
 			return
 		}
-		if err := s.telemetry.Capture(telemetry.EventSyncFailed, map[string]any{
+		_ = s.telemetry.Capture(telemetry.EventSyncFailed, map[string]any{
 			telemetry.PropertySyncSource: telemetry.SyncSourcePostgres,
 			telemetry.PropertyReason:     reason,
-		}); err != nil {
-			log.Printf("Warning: capture sync failed telemetry: %v", err)
-		}
+		})
 	})
 	sw.SetAfterPull(s.captureSetupFinishedTelemetry)
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -54,6 +55,21 @@ func coreActionCapture(t *testing.T) (*telemetry.Reporter, func() []testutil.Pos
 		return recorder
 	}
 	return reporter, messages, post
+}
+
+func TestDaemonCaptureFollowsChangedConsent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	reporter, messages, post := coreActionCapture(t)
+	t.Setenv(telemetry.GenericEnabledEnv, "")
+	require.NoError(t, posthog.RecordConsent(false))
+	rec := post(`{"event":"app_opened","properties":{"surface":"web"}}`)
+	assert.JSONEq(t, `{"status":"disabled"}`, rec.Body.String())
+	t.Setenv(telemetry.GenericEnabledEnv, "1")
+	rec = post(`{"event":"app_opened","properties":{"surface":"web"}}`)
+	assert.JSONEq(t, `{"status":"queued"}`, rec.Body.String())
+	require.NoError(t, reporter.Close())
+	require.Len(t, messages(), 1)
+	assert.Equal(t, "app_opened", messages()[0].Event)
 }
 
 func TestCoreActionDailyClaims(t *testing.T) {

@@ -381,11 +381,7 @@ func daemonRunCmd() *cobra.Command {
 			telemetryReporter := newDaemonTelemetry(owner, telemetry.Options{
 				Database: db,
 			})
-			defer func() {
-				if err := telemetryReporter.Close(); err != nil {
-					log.Printf("Warning: close telemetry: %v", err)
-				}
-			}()
+			defer telemetryReporter.Close()
 
 			// Start sync worker if enabled
 			var syncWorker *storage.SyncWorker
