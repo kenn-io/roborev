@@ -930,7 +930,10 @@ roborev embeds an invisible HTML marker in its PR comments to identify them.
 When upserting, it searches for the marker, patches the matching comment via the
 GitHub API, and falls back to creating a new comment if the existing one can't
 be updated (e.g., token mismatch between the original poster and the current
-auth).
+auth). The daemon remembers the comment for one run and edits it without listing
+the comments. It scans after a restart or when GitHub reports the remembered
+comment is missing or cannot be edited. While it remains editable, the daemon
+leaves any newer marked comment from another process untouched.
 
 Per-repo overrides in `.roborev.toml` can enable or disable upsert independently
 of the global setting:

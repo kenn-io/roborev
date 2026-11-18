@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,12 +27,15 @@ type commentAPIServer struct {
 	inlineCommentsByPR map[int][]*googlegithub.PullRequestComment
 	collaborators      []*googlegithub.User
 
+	listCount       int
 	listIssueStatus int
 	createStatus    int
 	patchStatus     int
+	patchStatusByID map[int64]int
 
 	createdBodies []string
 	patchedBodies []string
+	patchedPaths  []string
 }
 
 func newCommentAPIServer(t *testing.T) *commentAPIServer {
@@ -73,6 +77,7 @@ func (s *commentAPIServer) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *commentAPIServer) writeIssueComments(w http.ResponseWriter, prNumber int) {
+	s.listCount++
 	if s.listIssueStatus != 0 {
 		w.WriteHeader(s.listIssueStatus)
 		_, _ = w.Write([]byte(`{"message":"list failed"}`))
@@ -114,9 +119,16 @@ func (s *commentAPIServer) capturePatch(w http.ResponseWriter, r *http.Request) 
 	}
 	assert.NoError(s.t, json.NewDecoder(r.Body).Decode(&payload))
 	s.patchedBodies = append(s.patchedBodies, payload.Body)
-	w.WriteHeader(s.patchStatus)
+	s.patchedPaths = append(s.patchedPaths, r.URL.Path)
+	id, err := strconv.ParseInt(r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:], 10, 64)
+	assert.NoError(s.t, err)
+	status := s.patchStatus
+	if override, ok := s.patchStatusByID[id]; ok {
+		status = override
+	}
+	w.WriteHeader(status)
 	assert.NoError(s.t, json.NewEncoder(w).Encode(&googlegithub.IssueComment{
-		ID:   ptr(int64(42)),
+		ID:   ptr(id),
 		Body: ptr(payload.Body),
 	}))
 }
@@ -222,105 +234,80 @@ func TestFindExistingComment_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "list issue comments")
 }
 
-func TestUpsertPRComment_Create(t *testing.T) {
-	api := newCommentAPIServer(t)
-	srv := httptest.NewServer(http.HandlerFunc(api.handler))
-	defer srv.Close()
-
-	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.UpsertPRComment(t.Context(), "owner/repo", 1, "review body"))
-	require.Len(t, api.createdBodies, 1)
-	assert.Empty(t, api.patchedBodies)
-	assert.True(t, strings.HasPrefix(api.createdBodies[0], CommentMarker+"\n"))
-}
-
-func TestUpsertPRComment_Update(t *testing.T) {
-	api := newCommentAPIServer(t)
-	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
-		issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
-	}
-	srv := httptest.NewServer(http.HandlerFunc(api.handler))
-	defer srv.Close()
-
-	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.UpsertPRComment(t.Context(), "owner/repo", 1, "updated body"))
-	require.Len(t, api.patchedBodies, 1)
-	assert.Empty(t, api.createdBodies)
-	assert.True(t, strings.HasPrefix(api.patchedBodies[0], CommentMarker+"\n"))
-}
-
-// Both statuses reach the create fallback through a different isGitHubStatus
-// branch, so both must post the already-prepared body: one marker, and one
-// truncation pass. Table-driven to keep the two branches in lockstep, matching
-// the GitLab twin.
-func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
-	statuses := []struct {
-		name   string
-		status int
+func TestUpsertPRComment(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		known, found               int64
+		status                     int
+		wantID                     int64
+		paths                      []string
+		lists                      int
+		create, wantErr, oversized bool
 	}{
-		{"Forbidden", http.StatusForbidden},
-		{"NotFound", http.StatusNotFound},
-	}
-
-	for _, tt := range statuses {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Run("PreparesBodyOnce", func(t *testing.T) {
-				assert := assert.New(t)
-				api := newCommentAPIServer(t)
-				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
-					issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+		{name: "create", wantID: 999, lists: 1, create: true},
+		{name: "update", found: 42, wantID: 42, paths: []string{"42"}, lists: 1},
+		{name: "known", known: 42, wantID: 42, paths: []string{"42"}},
+		{name: "forbidden", found: 42, status: 403, wantID: 999, paths: []string{"42"}, lists: 1, create: true},
+		{name: "deleted", found: 42, status: 404, wantID: 999, paths: []string{"42"}, lists: 1, create: true},
+		{name: "oversized forbidden", found: 42, status: 403, wantID: 999, paths: []string{"42"}, lists: 1, create: true, oversized: true},
+		{name: "oversized deleted", found: 42, status: 404, wantID: 999, paths: []string{"42"}, lists: 1, create: true, oversized: true},
+		{name: "transient", found: 42, status: 500, paths: []string{"42"}, lists: 1, wantErr: true},
+		{name: "known deleted missing", known: 42, status: 404, wantID: 999, paths: []string{"42"}, lists: 1, create: true},
+		{name: "known forbidden missing", known: 42, status: 403, wantID: 999, paths: []string{"42"}, lists: 1, create: true},
+		{name: "known deleted alternate", known: 42, found: 20, status: 404, wantID: 20, paths: []string{"42", "20"}, lists: 1},
+		{name: "known forbidden alternate", known: 42, found: 20, status: 403, wantID: 20, paths: []string{"42", "20"}, lists: 1},
+		{name: "known forbidden same", known: 42, found: 42, status: 403, wantID: 999, paths: []string{"42"}, lists: 1, create: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newCommentAPIServer(t)
+			api.patchStatus = tc.status
+			if tc.known != 0 && tc.found != 0 && tc.known != tc.found {
+				api.patchStatusByID = map[int64]int{tc.found: http.StatusOK}
+			}
+			if tc.found != 0 {
+				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{issueComment(tc.found, CommentMarker, "alice", "User", "")}
+			}
+			server := httptest.NewServer(http.HandlerFunc(api.handler))
+			defer server.Close()
+			client := newTestGitHubClient(t, "", server)
+			body := "body"
+			if tc.oversized {
+				body = strings.Repeat("x", review.MaxCommentLen+500)
+			}
+			id, err := client.UpsertPRComment(t.Context(), "owner/repo", 1, body, tc.known)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.True(t, isGitHubStatus(err, http.StatusInternalServerError))
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.wantID, id)
+			assert.Equal(t, tc.lists, api.listCount)
+			require.Len(t, api.patchedPaths, len(tc.paths))
+			for i, path := range tc.paths {
+				assert.Equal(t, "/api/v3/repos/owner/repo/issues/comments/"+path, api.patchedPaths[i])
+				if tc.oversized {
+					assert.LessOrEqual(t, len(api.patchedBodies[i]), review.MaxCommentLen)
+					assert.Equal(t, 1, strings.Count(api.patchedBodies[i], CommentMarker))
+					assert.Equal(t, 1, strings.Count(api.patchedBodies[i], review.CommentTruncSuffix))
+				} else {
+					assert.Equal(t, CommentMarker+"\nbody", api.patchedBodies[i])
 				}
-				api.patchStatus = tt.status
-				srv := httptest.NewServer(http.HandlerFunc(api.handler))
-				defer srv.Close()
-
-				client := newTestGitHubClient(t, "", srv)
-				require.NoError(t, client.UpsertPRComment(
-					t.Context(), "owner/repo", 1, "updated body"))
-				require.Len(t, api.patchedBodies, 1)
+			}
+			if tc.create {
 				require.Len(t, api.createdBodies, 1)
-				assert.Equal(1, strings.Count(api.createdBodies[0], CommentMarker))
-			})
-
-			// An oversized body pins the other half of the double-prepare bug:
-			// preparing twice would truncate an already-capped body again.
-			t.Run("TruncatesOnce", func(t *testing.T) {
-				assert := assert.New(t)
-				api := newCommentAPIServer(t)
-				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
-					issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+				if tc.oversized {
+					assert.LessOrEqual(t, len(api.createdBodies[0]), review.MaxCommentLen)
+					assert.Equal(t, 1, strings.Count(api.createdBodies[0], CommentMarker))
+					assert.Equal(t, 1, strings.Count(api.createdBodies[0], review.CommentTruncSuffix))
+				} else {
+					assert.Equal(t, CommentMarker+"\nbody", api.createdBodies[0])
 				}
-				api.patchStatus = tt.status
-				srv := httptest.NewServer(http.HandlerFunc(api.handler))
-				defer srv.Close()
-
-				client := newTestGitHubClient(t, "", srv)
-				require.NoError(t, client.UpsertPRComment(t.Context(),
-					"owner/repo", 1, strings.Repeat("x", review.MaxCommentLen+500)))
-				require.Len(t, api.createdBodies, 1)
-
-				body := api.createdBodies[0]
-				assert.LessOrEqual(len(body), review.MaxCommentLen)
-				assert.Equal(1, strings.Count(body, CommentMarker))
-				assert.Equal(1, strings.Count(body, review.CommentTruncSuffix))
-			})
+			} else {
+				assert.Empty(t, api.createdBodies)
+			}
 		})
 	}
-}
-
-func TestUpsertPRComment_PatchErrorReturnsError(t *testing.T) {
-	api := newCommentAPIServer(t)
-	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
-		issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
-	}
-	api.patchStatus = http.StatusInternalServerError
-	srv := httptest.NewServer(http.HandlerFunc(api.handler))
-	defer srv.Close()
-
-	client := newTestGitHubClient(t, "", srv)
-	err := client.UpsertPRComment(t.Context(), "owner/repo", 1, "updated body")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "patch comment")
 }
 
 func TestCreatePRComment_TruncationUTF8Safe(t *testing.T) {
@@ -425,37 +412,51 @@ func TestCloneURL(t *testing.T) {
 // Silent cleanup must never create, including after an update loses its target.
 func TestUpdateExistingPRComment(t *testing.T) {
 	for _, tc := range []struct {
-		name             string
-		existing         bool
-		status           int
-		updated, wantErr bool
+		name         string
+		known, found int64
+		status       int
+		wantID       int64
+		paths        []string
+		lists        int
+		wantErr      bool
 	}{
-		{"missing", false, 0, false, false},
-		{"updated", true, 200, true, false},
-		{"deleted", true, 404, false, false},
-		{"forbidden", true, 403, false, true},
-		{"transient", true, 500, false, true},
+		{name: "missing", lists: 1},
+		{name: "updated", found: 42, wantID: 42, paths: []string{"42"}, lists: 1},
+		{name: "deleted", found: 42, status: 404, paths: []string{"42"}, lists: 1},
+		{name: "forbidden", found: 42, status: 403, paths: []string{"42"}, lists: 1, wantErr: true},
+		{name: "transient", found: 42, status: 500, paths: []string{"42"}, lists: 1, wantErr: true},
+		{name: "known", known: 42, wantID: 42, paths: []string{"42"}},
+		{name: "known deleted missing", known: 42, status: 404, paths: []string{"42"}, lists: 1},
+		{name: "known forbidden missing", known: 42, status: 403, paths: []string{"42"}, lists: 1},
+		{name: "known deleted alternate", known: 42, found: 20, status: 404, wantID: 20, paths: []string{"42", "20"}, lists: 1},
+		{name: "known forbidden alternate", known: 42, found: 20, status: 403, wantID: 20, paths: []string{"42", "20"}, lists: 1},
+		{name: "known forbidden same", known: 42, found: 42, status: 403, paths: []string{"42"}, lists: 1, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := newCommentAPIServer(t)
 			api.patchStatus = tc.status
-			if tc.existing {
-				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{{ID: ptr(int64(42)), Body: ptr(CommentMarker + "\nstale")}}
+			if tc.known != 0 && tc.found != 0 && tc.known != tc.found {
+				api.patchStatusByID = map[int64]int{tc.found: http.StatusOK}
+			}
+			if tc.found != 0 {
+				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{issueComment(tc.found, CommentMarker, "alice", "User", "")}
 			}
 			server := httptest.NewServer(http.HandlerFunc(api.handler))
 			defer server.Close()
 			client := newTestGitHubClient(t, "token", server)
-			updated, err := client.UpdateExistingPRComment(t.Context(), "owner/repo", 1, "No findings.")
-			assert.Equal(t, tc.updated, updated)
+			id, err := client.UpdateExistingPRComment(t.Context(), "owner/repo", 1, "No findings.", tc.known)
 			if tc.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 			}
+			assert.Equal(t, tc.wantID, id)
+			assert.Equal(t, tc.lists, api.listCount)
 			assert.Empty(t, api.createdBodies)
-			if tc.existing {
-				require.Len(t, api.patchedBodies, 1)
-				assert.Equal(t, CommentMarker+"\nNo findings.", api.patchedBodies[0])
+			require.Len(t, api.patchedPaths, len(tc.paths))
+			for i, path := range tc.paths {
+				assert.Equal(t, "/api/v3/repos/owner/repo/issues/comments/"+path, api.patchedPaths[i])
+				assert.Equal(t, CommentMarker+"\nNo findings.", api.patchedBodies[i])
 			}
 		})
 	}

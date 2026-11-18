@@ -61,46 +61,57 @@ func prepareBody(body string) string {
 // CommentMarker and truncates to review.MaxCommentLen, then always
 // creates a new comment (no find/patch).
 func (c *Client) CreatePRComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
-	return c.createPreparedComment(ctx, ghRepo, prNumber, prepareBody(body))
+	_, err := c.createPreparedComment(ctx, ghRepo, prNumber, prepareBody(body))
+	return err
 }
 
 // createPreparedComment posts a body that already went through prepareBody.
 // Keeping the raw POST separate is what lets UpsertPRComment fall back to a
 // create without prepending a second marker or truncating twice.
-func (c *Client) createPreparedComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
+func (c *Client) createPreparedComment(ctx context.Context, ghRepo string, prNumber int, body string) (int64, error) {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, _, err = c.api.Issues.CreateComment(ctx, owner, repo, prNumber, googlegithub.IssueCommentRequest{
+	comment, _, err := c.api.Issues.CreateComment(ctx, owner, repo, prNumber, googlegithub.IssueCommentRequest{
 		Body: body,
 	})
 	if err != nil {
-		return fmt.Errorf("create PR comment: %w", err)
+		return 0, fmt.Errorf("create PR comment: %w", err)
 	}
-	return nil
+	return comment.GetID(), nil
 }
 
 // UpsertPRComment creates or updates a roborev PR comment. It prepends
 // the CommentMarker, truncates to review.MaxCommentLen, and either
 // patches an existing comment or creates a new one.
-func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
+func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber int, body string, knownID int64) (int64, error) {
 	body = prepareBody(body)
 
+	patched, knownErr := c.patchKnown(ctx, ghRepo, knownID, body)
+	if knownErr != nil && !isGitHubStatus(knownErr, 403) {
+		return 0, knownErr
+	}
+	if patched {
+		return knownID, nil
+	}
 	existingID, err := c.FindExistingComment(ctx, ghRepo, prNumber)
 	if err != nil {
-		return fmt.Errorf("find existing comment: %w", err)
+		return 0, fmt.Errorf("find existing comment: %w", err)
 	}
 
+	if knownErr != nil && existingID == knownID {
+		return c.createPreparedComment(ctx, ghRepo, prNumber, body)
+	}
 	if existingID > 0 {
 		if err := c.patchComment(ctx, ghRepo, existingID, body); err != nil {
 			if isGitHubStatus(err, 403, 404) {
 				log.Printf("warning: patch comment %d: %v (falling back to new comment)", existingID, err)
 			} else {
-				return fmt.Errorf("patch comment %d: %w", existingID, err)
+				return 0, fmt.Errorf("patch comment %d: %w", existingID, err)
 			}
 		} else {
-			return nil
+			return existingID, nil
 		}
 	}
 	return c.createPreparedComment(ctx, ghRepo, prNumber, body)
@@ -109,19 +120,43 @@ func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber in
 // UpdateExistingPRComment updates a marker comment without creating a new one.
 // Missing or concurrently deleted comments are successful no-ops. Other errors
 // retain the caller's normal delivery and retry behavior.
-func (c *Client) UpdateExistingPRComment(ctx context.Context, ghRepo string, prNumber int, body string) (bool, error) {
+func (c *Client) UpdateExistingPRComment(ctx context.Context, ghRepo string, prNumber int, body string, knownID int64) (int64, error) {
+	body = prepareBody(body)
+	patched, knownErr := c.patchKnown(ctx, ghRepo, knownID, body)
+	if knownErr != nil && !isGitHubStatus(knownErr, 403) {
+		return 0, knownErr
+	}
+	if patched {
+		return knownID, nil
+	}
 	existingID, err := c.FindExistingComment(ctx, ghRepo, prNumber)
 	if err != nil {
-		return false, fmt.Errorf("find existing comment: %w", err)
+		return 0, fmt.Errorf("find existing comment: %w", err)
 	}
 	if existingID == 0 {
+		return 0, nil
+	}
+	if knownErr != nil && existingID == knownID {
+		return 0, knownErr
+	}
+	if err := c.patchComment(ctx, ghRepo, existingID, body); err != nil {
+		if isGitHubStatus(err, 404) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("patch comment %d: %w", existingID, err)
+	}
+	return existingID, nil
+}
+
+func (c *Client) patchKnown(ctx context.Context, ghRepo string, knownID int64, body string) (bool, error) {
+	if knownID == 0 {
 		return false, nil
 	}
-	if err := c.patchComment(ctx, ghRepo, existingID, prepareBody(body)); err != nil {
+	if err := c.patchComment(ctx, ghRepo, knownID, body); err != nil {
 		if isGitHubStatus(err, 404) {
 			return false, nil
 		}
-		return false, fmt.Errorf("patch comment %d: %w", existingID, err)
+		return false, fmt.Errorf("patch comment %d: %w", knownID, err)
 	}
 	return true, nil
 }
