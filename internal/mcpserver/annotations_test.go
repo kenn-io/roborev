@@ -23,7 +23,7 @@ func TestToolAnnotations(t *testing.T) {
 		"roborev_snooze":       {true, false},
 		"roborev_complete_fix": {true, true},
 	}
-	require.Len(t, result.Tools, 12)
+	require.Len(t, result.Tools, 13)
 	for _, tool := range result.Tools {
 		t.Run(tool.Name, func(t *testing.T) {
 			assert := assert.New(t)

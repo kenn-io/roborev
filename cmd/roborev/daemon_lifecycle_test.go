@@ -513,13 +513,16 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 	}{
 		{"private", "example-key\n", "ok", "", 0o600},
 		{"empty", "\n", "missing", "file is empty", 0o600},
-		{"insecure", "example-key", "missing", "must be private", 0o644},
+		{"insecure", "example-key", "missing", "trusted permissions", 0o644},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if runtime.GOOS == "windows" && tc.name == "insecure" {
 				t.Skip("Unix permissions")
 			}
-			path := filepath.Join(t.TempDir(), "embedding.key")
+			dir := t.TempDir()
+			// Secret-file resolution checks parent permissions, independent of umask.
+			require.NoError(t, os.Chmod(dir, 0o700))
+			path := filepath.Join(dir, "embedding.key")
 			file, err := safefileio.CreatePrivateFile(path)
 			require.NoError(t, err)
 			_, err = file.WriteString(tc.contents)
