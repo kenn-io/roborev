@@ -1147,6 +1147,90 @@ func TestCIPollerProcessPR_AuthorAndBranchFilters(t *testing.T) {
 	}
 }
 
+func TestCIPollerReadsCollaboratorsOncePerPoll(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "0"
+	h.stubProcessPRGit()
+	repo := testutil.InitTestGitRepo(t, h.RepoPath)
+	baseSHA := repo.HeadSHA()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
+	h.Poller.listPRDiscussionFn = func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error) {
+		return []ghpkg.PRDiscussionComment{
+			{Author: "alice", Body: "Alice comment", Source: ghpkg.PRDiscussionSourceIssueComment},
+			{Author: "bob", Body: "Bob comment", Source: ghpkg.PRDiscussionSourceIssueComment},
+		}, nil
+	}
+	requests := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[]`)
+	}))
+	t.Cleanup(api.Close)
+	h.Poller.githubAPIURL = api.URL + "/api/v3"
+	h.Poller.listTrustedActorsFn = h.Poller.listTrustedActors
+	var prs []ghPR
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
+	polls := 0
+	poll := func() (prompts []string) {
+		polls++
+		prs = nil
+		for pr := 1; pr <= 3; pr++ {
+			head := repo.CommitFile(fmt.Sprintf("file-%d-%d", polls, pr), "content", "commit")
+			prs = append(prs, ghPR{Number: pr, HeadRefOid: head, BaseRefName: "main"})
+		}
+		require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+		for _, pr := range prs {
+			members := h.panelMembers(t, "acme/api", pr.Number, pr.HeadRefOid)
+			require.Len(t, members, 1)
+			prompts = append(prompts, members[0].Prompt)
+		}
+		return prompts
+	}
+
+	for _, prompt := range poll() {
+		assert.NotContains(prompt, "Alice comment")
+	}
+	assert.Equal(1, requests)
+	assert.NotContains(h.Poller.trustedActors, "acme/api")
+
+	lookups := 0
+	trusted := map[string]struct{}{"alice": {}}
+	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+		lookups++
+		return trusted, nil
+	}
+	for _, prompt := range poll() {
+		assert.Contains(prompt, "Alice comment")
+		assert.NotContains(prompt, "Bob comment")
+	}
+	assert.Equal(1, lookups)
+
+	trusted = map[string]struct{}{"alice": {}, "bob": {}}
+	for _, prompt := range poll() {
+		assert.Contains(prompt, "Bob comment")
+	}
+	assert.Equal(2, lookups)
+
+	lookups = 0
+	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+		lookups++
+		if lookups == 1 {
+			return nil, errors.New("unavailable")
+		}
+		return map[string]struct{}{"alice": {}}, nil
+	}
+	prompts := poll()
+	assert.NotContains(prompts[0], "Alice comment")
+	assert.Contains(prompts[1], "Alice comment")
+	assert.Contains(prompts[2], "Alice comment")
+	assert.Equal(2, lookups)
+}
+
 func TestCIPollerAllowCodeowners(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")

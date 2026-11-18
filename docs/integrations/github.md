@@ -21,7 +21,8 @@ The CI poller runs inside the roborev daemon. On each interval it:
     commit. If that commit cannot be fetched, daemon health reports the PR as
     failed and the next poll tries again
 1. Computes the frozen merge-base range (`base..head`) and includes human PR
-    discussion from trusted collaborators in the review prompt
+    discussion from trusted collaborators in the review prompt. Changes to
+    collaborator roles take effect on the next poll
 1. Loads `.roborev.toml` from the repo's default branch, then resolves either
     `[ci] panel` or the compatible CI matrix (`agents`, `review_types`, or
     `[ci.reviews]`)
