@@ -61,6 +61,7 @@ func TestHelpCompactInheritedFlags(t *testing.T) {
 	root.SetArgs([]string{"--help"})
 	require.NoError(t, root.Execute())
 	assert.Contains(out.String(), "daemon address (loopback")
+	assert.NotContains(strings.ToLower(out.String()), "telemetry")
 	for _, group := range []string{"Review code:", "Fix findings:", "Set up and diagnose:", "Manage daemon and data:", "Maintain roborev:"} {
 		assert.Contains(out.String(), group)
 	}

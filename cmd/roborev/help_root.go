@@ -166,7 +166,6 @@ Output and errors:
 Environment:
   ROBOREV_DATA_DIR changes the local config, runtime, database and log directory.
   ROBOREV_COLOR_MODE selects auto/dark/light/none; NO_COLOR disables color.
-  ROBOREV_TELEMETRY_ENABLED=0 disables anonymous usage telemetry.
   EDITOR chooses the editor for job comment when no message is provided.
   GH_TOKEN/GITHUB_TOKEN and GITLAB_TOKEN/GL_TOKEN authenticate CI forge access.
 Run roborev quickstart for repository-specific setup and workflow guidance.`

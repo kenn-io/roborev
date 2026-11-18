@@ -25,17 +25,22 @@ func TestDailyClaimsPath(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "telemetry-daily.json"), DailyClaimsPath(filepath.Join(dir, "reviews.db")))
 }
 
-func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
+func TestEnabledFromEnvFollowsKennConsent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	testutil.SetTelemetryReleaseEnv(t)
 	t.Setenv(GenericEnabledEnv, "")
+	t.Setenv(EnabledEnv, "")
+	assert.False(t, EnabledFromEnv())
+	require.NoError(t, kittelemetry.RecordConsent(true))
+	assert.True(t, EnabledFromEnv())
 	t.Setenv(EnabledEnv, "0")
 	assert.False(t, EnabledFromEnv())
-
-	t.Setenv(EnabledEnv, "1")
+	t.Setenv(EnabledEnv, "")
+	require.NoError(t, kittelemetry.RecordConsent(false))
+	t.Setenv(GenericEnabledEnv, "1")
 	assert.True(t, EnabledFromEnv())
-
-	t.Setenv(GenericEnabledEnv, "0")
-	assert.False(t, EnabledFromEnv())
 }
 
 func TestCountBucket(t *testing.T) {
@@ -82,6 +87,38 @@ func TestNewReporterDisabledByEnvDoesNotCreateInstallID(t *testing.T) {
 	installedAt, err := database.GetSyncState(installedAtKey)
 	require.NoError(err)
 	assert.Empty(installedAt)
+}
+
+func TestNewReporterFollowsKennConsent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
+	t.Setenv(EnabledEnv, "")
+	t.Setenv(GenericEnabledEnv, "")
+	endpoint, messages := testutil.NewPostHogStub(t)
+	database := openTestDB(t)
+	opts := Options{Database: database, Version: releaseVersion, APIKey: testutil.PostHogTestAPIKey, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+
+	reporter, err := NewReporter(opts)
+	require.NoError(t, err)
+	assert.False(t, reporter.Enabled())
+	installID, err := database.GetSyncState(installIDMetadataKey)
+	require.NoError(t, err)
+	assert.Empty(t, installID)
+	_ = reporter.Capture(EventDaemonStarted, nil)
+	require.NoError(t, reporter.Close())
+	assert.Empty(t, messages())
+
+	require.NoError(t, kittelemetry.RecordConsent(true))
+	reporter, err = NewReporter(opts)
+	require.NoError(t, err)
+	assert.True(t, reporter.Enabled())
+	require.NoError(t, reporter.Capture(EventDaemonStarted, nil))
+	require.NoError(t, reporter.Close())
+	require.Len(t, messages(), 1)
+	assert.Equal(t, EventDaemonStarted, messages()[0].Event)
+	assert.Equal(t, true, messages()[0].Properties["telemetry_consent"])
 }
 
 func TestLoadOrCreateInstallIsStableAndAnonymous(t *testing.T) {
