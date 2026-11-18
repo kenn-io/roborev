@@ -15,7 +15,6 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
 	gitworktree "go.kenn.io/kit/git/worktree"
 	"go.kenn.io/kit/pathresolve"
@@ -1670,37 +1669,6 @@ type refineSubmoduleSnapshot struct {
 	gitmodulesIndex   string
 }
 
-// refineGitRunner builds the git runner refine uses to create its temporary
-// worktree.
-//
-// StripEnv is kept from kit's automation default: refine can run from a git
-// hook whose GIT_DIR, GIT_WORK_TREE, and GIT_INDEX_FILE bind a child git to the
-// triggering repository. TerminalPrompt stays false so kit sets
-// GIT_TERMINAL_PROMPT=0 and nothing can block waiting for input.
-//
-// Unlike gitcmd.New this does not enable NullGlobalConfig or NoSystemConfig.
-// Submodule clones resolve credential helpers, url.insteadOf rewrites, and
-// proxy settings from the user's persistent git config, so hiding it makes a
-// private HTTPS submodule unclonable while prompts are disabled. internal/git's
-// gitRunner keeps the persistent config readable for the same reason, and with
-// it readable git reads safe.directory natively, so forwarding those entries as
-// command-scope config would only add a redundant subprocess.
-//
-// Env must be non-nil: gitworktree.Create replaces a runner whose Env is nil
-// with gitcmd.New(). Disable hooks for every setup command, including submodule
-// checkouts, where a relative core.hooksPath could run tracked scripts.
-func refineGitRunner() gitcmd.Runner {
-	return gitcmd.Runner{
-		Env:      os.Environ(),
-		StripEnv: true,
-		Config: []gitcmd.Config{
-			{Key: "core.askPass", Value: ""},
-			{Key: "core.hooksPath", Value: os.DevNull},
-		},
-		DisableSafeDirectoryForward: true,
-	}
-}
-
 // createRefineWorktree creates the detached worktree refine runs the agent in.
 func createRefineWorktree(ctx context.Context, repoPath string) (*gitworktree.Worktree, error) {
 	return createRefineWorktreeAtRef(ctx, repoPath, "HEAD")
@@ -1711,7 +1679,7 @@ func createRefineWorktreeAtRef(ctx context.Context, repoPath, ref string) (*gitw
 		Prefix:         "roborev-worktree-",
 		InitSubmodules: true,
 		PullLFS:        true,
-		Runner:         refineGitRunner(),
+		Runner:         git.UserConfigRunner(),
 	})
 }
 

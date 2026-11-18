@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gitcmd "go.kenn.io/kit/git/cmd"
 	"go.kenn.io/kit/stacktest"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -834,7 +835,7 @@ func TestCleanupStaleCIWorktreesRemovesOrphanedDetachedWorktree(t *testing.T) {
 		ID:       42,
 		RepoPath: repo.Path(),
 		GitRef:   headSHA,
-	})
+	}, gitcmd.Runner{})
 	require.NoError(t, err)
 	require.NotEmpty(t, worktreeDir)
 	require.NotNil(t, normalCleanup)

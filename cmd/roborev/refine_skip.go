@@ -14,7 +14,7 @@ import (
 func refineTrivialFixCommits(
 	ctx context.Context, repo, before, after string,
 ) ([]string, bool) {
-	raw, err := refineGitRunner().Output(
+	raw, err := git.UserConfigRunner().Output(
 		ctx, repo, "diff-tree", "--name-only", "-z", "-r", "--no-renames",
 		before, after, "--",
 	)

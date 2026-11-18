@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
-	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
 	gitworktree "go.kenn.io/kit/git/worktree"
+
+	gitpkg "go.kenn.io/roborev/internal/git"
 )
 
 type planningContextKey struct{}
@@ -33,12 +33,7 @@ func RunPlan(ctx context.Context, a Agent, repoPath, ref, planningPrompt string,
 	}
 	wt, err := gitworktree.Create(ctx, repoPath, sha, gitworktree.Options{
 		Prefix: "roborev-plan-", InitSubmodules: true, PullLFS: true,
-		// Preserve user URL rewrites and credentials, while disabling hooks
-		// for every setup command, including nested submodule checkouts.
-		Runner: gitcmd.Runner{
-			Env: os.Environ(), StripEnv: true, DisableSafeDirectoryForward: true,
-			Config: []gitcmd.Config{{Key: "core.askPass", Value: ""}, {Key: "core.hooksPath", Value: os.DevNull}},
-		},
+		Runner: gitpkg.UserConfigRunner(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("create planning worktree: %w", err)
