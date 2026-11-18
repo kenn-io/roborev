@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -67,21 +68,7 @@ type SendGroup = posthog.SendGroup
 
 type Client = posthog.Client
 
-type Reporter struct {
-	*posthog.Reporter
-	version string
-}
-
-func (r *Reporter) Enabled() bool {
-	return r != nil && r.Reporter.Enabled() && posthog.Eligible("ROBOREV", r.version)
-}
-
-func (r *Reporter) Capture(event string, properties map[string]any) error {
-	if !r.Enabled() {
-		return nil
-	}
-	return r.Reporter.Capture(event, properties)
-}
+type Reporter = posthog.Reporter
 
 type Options struct {
 	Database *storage.DB
@@ -104,8 +91,7 @@ func EnabledFromEnv() bool {
 func NewReporter(opts Options) (*Reporter, error) {
 	if !EnabledFromEnv() {
 		// An opted-out kit reporter keeps the allowlist, so the capture route can still reject unknown events.
-		reporter, err := posthog.NewReporter(posthog.Options{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
-		return &Reporter{Reporter: reporter, version: opts.Version}, err
+		return posthog.NewReporter(posthog.Options{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
 	}
 	if opts.Database == nil {
 		return nil, errors.New("telemetry database is required")
@@ -117,7 +103,8 @@ func NewReporter(opts Options) (*Reporter, error) {
 	}
 
 	claims := posthog.NewDailyClaims(opts.DailyClaimsPath)
-	reporter, err := posthog.NewReporter(posthog.Options{
+	return posthog.NewReporter(posthog.Options{
+		Logger:      slog.New(slog.DiscardHandler),
 		APIKey:      opts.APIKey,
 		Endpoint:    opts.Endpoint,
 		Application: "roborev",
@@ -132,11 +119,10 @@ func NewReporter(opts Options) (*Reporter, error) {
 		posthog.WithDailyEvent(EventFindingFixed, PropertySurface, claims),
 		posthog.WithDailyEvent(EventReviewClosed, PropertySurface, claims),
 	)...)
-	return &Reporter{Reporter: reporter, version: opts.Version}, err
 }
 
 func DisabledReporter() *Reporter {
-	return &Reporter{Reporter: posthog.DisabledReporter()}
+	return posthog.DisabledReporter()
 }
 
 func NewReporterOrDisabled(opts Options) *Reporter {

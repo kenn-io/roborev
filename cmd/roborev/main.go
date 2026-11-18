@@ -18,6 +18,7 @@ var (
 )
 
 func main() {
+	snapshotCLIConsent()
 	code := executeCLI(newRootCmd(), os.Args[1:])
 	waitCLIUse()
 	if code != 0 {

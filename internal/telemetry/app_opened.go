@@ -32,14 +32,7 @@ const appOpenedMaxBodyBytes = 64 << 10
 // Build it per request if needed; the state lives on the limiter.
 func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var client *posthog.Reporter
-		if reporter != nil {
-			client = reporter.Reporter
-			if client.Enabled() && !reporter.Enabled() {
-				client, _ = posthog.NewReporter(posthog.Options{EnvPrefix: "ROBOREV"}, allowedEventOptions()...)
-			}
-		}
-		capture := posthog.NewCaptureHandler(client)
+		capture := posthog.NewCaptureHandler(reporter)
 		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if r.Method != http.MethodPost || err != nil || mediaType != "application/json" {
 			capture.ServeHTTP(w, r)

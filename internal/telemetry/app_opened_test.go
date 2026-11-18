@@ -38,24 +38,19 @@ func surfacesOf(messages []testutil.PostHogMessage) []string {
 	return surfaces
 }
 
-func TestReporterStopsAfterConsentIsRevoked(t *testing.T) {
+func TestReporterKeepsStartupConsent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(EnabledEnv, "")
 	t.Setenv(GenericEnabledEnv, "")
 	require.NoError(t, posthog.RecordConsent(true))
 	reporter, messages := newPostHogStubReporter(t)
-	limiter := &AppOpenedLimiter{}
 	require.NoError(t, reporter.Capture(EventDaemonStarted, nil))
 	require.NoError(t, posthog.RecordConsent(false))
-	assert.False(t, reporter.Enabled())
 	require.NoError(t, reporter.Capture(EventDaemonActive, nil))
-	rec := postThroughLimiter(t.Context(), limiter, reporter, `{"event":"app_opened","properties":{"surface":"web"}}`)
-	assert.JSONEq(t, `{"status":"disabled"}`, rec.Body.String())
-	t.Setenv(GenericEnabledEnv, "1")
-	rec = postThroughLimiter(t.Context(), limiter, reporter, `{"event":"app_opened","properties":{"surface":"web"}}`)
+	rec := postThroughLimiter(t.Context(), &AppOpenedLimiter{}, reporter, `{"event":"app_opened","properties":{"surface":"web"}}`)
 	assert.JSONEq(t, `{"status":"queued"}`, rec.Body.String())
 	require.NoError(t, reporter.Close())
-	assert.Equal(t, []string{"daemon_started:", "app_opened:web"}, surfacesOf(messages()))
+	assert.Equal(t, []string{"daemon_started:", "daemon_active:", "app_opened:web"}, surfacesOf(messages()))
 }
 
 func TestAppOpenedLimiterSendsOncePerSurfacePerDay(t *testing.T) {

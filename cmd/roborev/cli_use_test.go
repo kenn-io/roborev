@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 const cliUseBody = `{"event":"app_opened","properties":{"surface":"cli"}}`
@@ -989,5 +991,32 @@ func TestCLIActionHonorsDisabledReceipt(t *testing.T) {
 	cliOutputIsTerminal = func(io.Writer) bool { return true }
 	reportCLIActionOutput(io.Discard, telemetry.EventReviewViewed)
 	drainCLIReports()
+	assert.Equal(t, int32(1), calls.Load())
+}
+
+func TestMCPKeepsConsentAtProcessStart(t *testing.T) {
+	if os.Getenv("ROBOREV_TEST_DAEMON_TELEMETRY") != "1" {
+		executable, err := os.Executable()
+		require.NoError(t, err)
+		cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestMCPKeepsConsentAtProcessStart$")
+		cmd.Env = append(os.Environ(), "ROBOREV_TEST_DAEMON_TELEMETRY=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+	resetCLIUse(t)
+	testutil.SetTelemetryReleaseEnv(t)
+	t.Setenv(telemetry.EnabledEnv, "1")
+	t.Setenv(telemetry.GenericEnabledEnv, "1")
+	snapshotCLIConsent()
+	t.Setenv(telemetry.GenericEnabledEnv, "0")
+	var calls atomic.Int32
+	cliAgentPost = func(context.Context, *http.Client, string) { calls.Add(1) }
+	reportMCPActivity(t.Context(), daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"})
+	waitCLIUse()
+	assert.Equal(t, int32(1), calls.Load())
+	snapshotCLIConsent()
+	reportMCPActivity(t.Context(), daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"})
+	waitCLIUse()
 	assert.Equal(t, int32(1), calls.Load())
 }

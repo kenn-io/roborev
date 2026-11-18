@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -477,4 +478,30 @@ func postCaptureEvent(ctx context.Context, handler http.Handler, body string) *h
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	return recorder
+}
+
+func TestReporterQuietOnRejectedBatch(t *testing.T) {
+	version := testutil.SetTelemetryReleaseEnv(t)
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	database := testutil.OpenTestDB(t)
+	var standard, structured bytes.Buffer
+	previousWriter := log.Writer()
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&structured, nil)))
+	log.SetOutput(&standard)
+	t.Cleanup(func() { slog.SetDefault(previousLogger); log.SetOutput(previousWriter) })
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "rejected", http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+	reporter, err := NewReporter(Options{Database: database, Version: version, APIKey: testutil.PostHogTestAPIKey, Endpoint: server.URL, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
+	require.NoError(t, err)
+	require.NoError(t, reporter.Capture(EventDaemonStarted, nil))
+	_ = reporter.Close()
+	assert.Positive(t, requests)
+	assert.Empty(t, standard.String())
+	assert.Empty(t, structured.String())
 }
