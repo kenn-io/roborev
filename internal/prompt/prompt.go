@@ -1492,7 +1492,7 @@ func FormatUserComments(comments []storage.Response) string {
 func (b *Builder) BuildAddressPrompt(review *storage.Review, previousAttempts []storage.Response, minSeverity string) (string, error) {
 	view := addressPromptView{
 		SeverityFilter: config.SeverityInstruction(minSeverity),
-		ReviewFindings: review.Output,
+		ReviewFindings: storage.FixReviewContext(review),
 		JobID:          review.JobID,
 	}
 

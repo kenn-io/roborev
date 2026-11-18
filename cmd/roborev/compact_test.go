@@ -6,16 +6,22 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"uuid"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func TestFilterReviewJobs(t *testing.T) {
@@ -123,86 +129,31 @@ func TestExtractJobIDs(t *testing.T) {
 }
 
 func mockJobReview(id int64, ref, output string) jobReview {
-	return jobReview{
-		jobID: id,
-		job:   &storage.ReviewJob{ID: id, GitRef: ref},
-		review: &storage.Review{
-			VerdictBool: testutil.ReviewFixtureVerdict(output), Output: output,
-		},
-	}
+	doc := structuredreview.Document{SchemaVersion: 3, Summary: "Original source", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: output, Fix: "Correct the reported behavior"}}}
+	raw, _ := json.Marshal(doc)
+	var fields storage.StructuredOutput
+	_ = json.Unmarshal(raw, &fields)
+	return jobReview{jobID: id, job: &storage.ReviewJob{ID: id, GitRef: ref}, review: &storage.Review{UUID: new(uuid.New()), Output: output, StructuredOutput: fields}}
 }
 
 func TestBuildCompactPrompt(t *testing.T) {
-	tests := []struct {
-		name           string
-		jobReviews     []jobReview
-		branch         string
-		wantContains   []string
-		wantNotContain []string
-	}{
-		{
-			name: "single_job_no_branch",
-			jobReviews: []jobReview{
-				mockJobReview(123, "abc123def456", "Finding 1: Issue in main.go"),
-			},
-			branch: "",
-			wantContains: []string{
-				// One marker per composed block: agent review system
-				// prompt, compact preamble, verify/dedupe instructions.
-				// Content wording is pinned by prompt-package goldens,
-				// not re-asserted here.
-				"You are a code reviewer. Review the code changes shown below.",
-				"Verification and Consolidation Request",
-				"Verify each finding against the current codebase",
-				"1 open review",
-				"Job 123",
-				"Finding 1: Issue in main.go",
-				"abc123d", // short SHA
-			},
-		},
-		{
-			name: "multiple_jobs_with_branch",
-			jobReviews: []jobReview{
-				mockJobReview(123, "sha1", "Issue 1"),
-				mockJobReview(124, "sha2", "Issue 2"),
-			},
-			branch: "main",
-			wantContains: []string{
-				"2 open reviews from branch main",
-				"Job 123",
-				"Job 124",
-				"Issue 1",
-				"Issue 2",
-			},
-		},
-		{
-			name: "all_branches",
-			jobReviews: []jobReview{
-				mockJobReview(100, "", "Finding"),
-			},
-			branch: "",
-			wantContains: []string{
-				"1 open review",
-			},
-			wantNotContain: []string{
-				"from branch",
-			},
-		},
-	}
+	sources := []jobReview{mockJobReview(123, "synthetic-ref", "Cross-tenant invoice lookup"), mockJobReview(124, "other-ref", "Missing cancellation")}
+	got, err := buildCompactPrompt(t.Context(), sources, "main", "", "codex")
+	require.NoError(t, err)
+	manifest, err := buildCompactManifest(sources)
+	require.NoError(t, err)
+	require.NoError(t, review.ValidateCompactManifest(got, manifest))
+	assert.Contains(t, got, "Cross-tenant invoice lookup")
+	assert.Contains(t, got, "Missing cancellation")
+	assert.Contains(t, got, "### F1")
+	assert.Contains(t, got, "### F2")
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := buildCompactPrompt(t.Context(), tt.jobReviews, tt.branch, "", "codex")
-
-			for _, want := range tt.wantContains {
-				assert.Contains(t, got, want, "buildCompactPrompt() missing")
-			}
-
-			for _, notWant := range tt.wantNotContain {
-				assert.NotContains(t, got, notWant, "buildCompactPrompt() should not contain")
-			}
-		})
-	}
+func TestCompactRefusesUnparseableLegacyBeforeEnqueue(t *testing.T) {
+	source := mockJobReview(123, "HEAD", "unparseable historical prose")
+	source.review.StructuredOutput = nil
+	_, err := buildCompactPrompt(t.Context(), []jobReview{source}, "main", "", "codex")
+	require.ErrorContains(t, err, "source job 123 cannot be completely parsed")
 }
 
 func TestBuildCompactOutputPrefix(t *testing.T) {
@@ -219,7 +170,7 @@ func TestBuildCompactOutputPrefix(t *testing.T) {
 			branch:   "main",
 			jobIDs:   []int64{123, 124, 125},
 			wantContains: []string{
-				"Verified and consolidated 3 open reviews from branch main",
+				"Accounting for findings from 3 open reviews from branch main",
 				"Original jobs: 123, 124, 125",
 			},
 		},
@@ -229,7 +180,7 @@ func TestBuildCompactOutputPrefix(t *testing.T) {
 			branch:   "",
 			jobIDs:   []int64{100, 200},
 			wantContains: []string{
-				"Verified and consolidated 2 open reviews",
+				"Accounting for findings from 2 open reviews",
 				"Original jobs: 100, 200",
 			},
 		},
@@ -239,7 +190,7 @@ func TestBuildCompactOutputPrefix(t *testing.T) {
 			branch:   "feature",
 			jobIDs:   []int64{999},
 			wantContains: []string{
-				"Verified and consolidated 1 open review from branch feature",
+				"Accounting for findings from 1 open review from branch feature",
 				"Original jobs: 999",
 			},
 		},
@@ -336,4 +287,91 @@ func TestCompactWorktreeBranchResolution(t *testing.T) {
 
 	require.NotEmpty(t, receivedRepo, "expected repo param to be sent")
 	assert.Equal(t, repo.Dir, receivedRepo, "repo: want main repo path")
+}
+
+func TestBuildCompactPromptCarriesTrustedHistory(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	source := repo.CommitFile("guard.go", "package fixture\n// unchecked\n", "feat: original")
+	repaired := repo.CommitFile("guard.go", "package fixture\n// tenant checked\n", "fix: check tenant")
+	jr := mockJobReview(123, source, "Cross-tenant lookup")
+	got, err := buildCompactPrompt(t.Context(), []jobReview{jr}, "main", repo.Root, "pi")
+	require.NoError(t, err)
+	assert.Contains(t, got, repaired)
+	assert.Contains(t, got, "+// tenant checked")
+}
+
+func TestBuildCompactPromptFiltersHistoryWithConfiguredExcludes(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("exclude_patterns = [\"global-secret.go\"]\n"), 0o600))
+
+	repo := testutil.InitTestRepo(t)
+	repo.CommitFile(".roborev.toml", "exclude_patterns = [\"repo-secret.go\"]\n", "config: exclude private paths")
+	source := repo.CommitFiles(map[string]string{
+		"global-secret.go": "package fixture\n// global baseline\n",
+		"repo-secret.go":   "package fixture\n// repo baseline\n",
+		"visible.go":       "package fixture\n// visible baseline\n",
+	}, "feat: source files")
+	repo.CommitFiles(map[string]string{
+		"global-secret.go": "package fixture\n// GLOBAL_SECRET_CHANGE\n",
+		"repo-secret.go":   "package fixture\n// REPO_SECRET_CHANGE\n",
+		"visible.go":       "package fixture\n// visible change\n",
+	}, "fix: update source files")
+	got, err := buildCompactPrompt(t.Context(), []jobReview{mockJobReview(123, source, "Visible behavior")}, "main", repo.Root, "pi")
+	require.NoError(t, err)
+	assert.Contains(t, got, "visible.go")
+	assert.Contains(t, got, "+// visible change")
+	assert.NotContains(t, got, "global-secret.go")
+	assert.NotContains(t, got, "repo-secret.go")
+	assert.NotContains(t, got, "GLOBAL_SECRET_CHANGE")
+	assert.NotContains(t, got, "REPO_SECRET_CHANGE")
+}
+
+func TestCompactEnqueuePreservesCallerCheckout(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo, worktree := setupWorktree(t)
+	sourceSHA := repo.Run("rev-parse", "HEAD")
+	mainSHA := repo.CommitFile("different.txt", "main checkout only\n", "chore: main change")
+	require.NoError(t, os.WriteFile(filepath.Join(worktree, ".roborev.toml"), []byte("review_guidelines = \"Caller worktree guide\"\n"), 0o600))
+	var received daemon.EnqueueRequest
+	_ = newMockDaemonBuilder(t).WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, storage.ReviewJob{ID: 900})
+	}).Build()
+	_, err := enqueueConsolidation(t.Context(), &cobra.Command{}, repo.Dir, []jobReview{mockJobReview(123, sourceSHA, "Original finding")}, "wt-branch", compactOptions{agentName: "test", quiet: true, worktreePath: worktree})
+	require.NoError(t, err)
+	assert.Equal(t, worktree, received.RepoPath, "server derives checkout binding and canonical repo identity from this path")
+	assert.Contains(t, received.CustomPrompt, "Caller worktree guide")
+	assert.Contains(t, received.CustomPrompt, "Captured current HEAD: "+sourceSHA)
+	assert.NotContains(t, received.CustomPrompt, "Captured current HEAD: "+mainSHA)
+}
+
+func TestCompactAPIKeepsCanonicalIdentityAndCallerCheckout(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo, caller := setupWorktree(t)
+	sha := repo.Run("rev-parse", "HEAD")
+	db := testutil.OpenTestDB(t)
+	cfg := config.DefaultConfig()
+	server := daemon.NewServer(db, cfg, "")
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	previous := serverAddr
+	serverAddr = httpServer.URL
+	t.Cleanup(func() { serverAddr = previous })
+	id, err := enqueueConsolidation(t.Context(), &cobra.Command{}, repo.Dir, []jobReview{mockJobReview(123, sha, "Original finding")}, "wt-branch", compactOptions{agentName: "test", quiet: true, worktreePath: caller})
+	require.NoError(t, err)
+	stored, err := db.GetJobByID(id)
+	require.NoError(t, err)
+	canonicalRepo, err := filepath.EvalSymlinks(repo.Dir)
+	require.NoError(t, err)
+	storedRepo, err := filepath.EvalSymlinks(stored.RepoPath)
+	require.NoError(t, err)
+	assert.Equal(t, canonicalRepo, storedRepo)
+	canonicalCaller, err := filepath.EvalSymlinks(caller)
+	require.NoError(t, err)
+	storedCaller, err := filepath.EvalSymlinks(stored.WorktreePath)
+	require.NoError(t, err)
+	assert.Equal(t, canonicalCaller, storedCaller)
 }

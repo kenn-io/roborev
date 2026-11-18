@@ -400,6 +400,9 @@ type MockServerOpts struct {
 	OnEnqueue func(w http.ResponseWriter, r *http.Request)
 	// OnJobs is an optional callback for /api/jobs requests. If set, overrides default behavior.
 	OnJobs func(w http.ResponseWriter, r *http.Request)
+	// OnReview is an optional callback for /api/review requests. If set, it
+	// overrides the default prose-only review response.
+	OnReview func(w http.ResponseWriter, r *http.Request)
 	// OnClose is an optional callback for /api/review/close requests.
 	OnClose func(w http.ResponseWriter, r *http.Request)
 }
@@ -478,6 +481,10 @@ func (h *mockServerHandler) handleReview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	atomic.AddInt32(&h.state.ReviewCount, 1)
+	if h.opts.OnReview != nil {
+		h.opts.OnReview(w, r)
+		return
+	}
 	output := h.opts.ReviewOutput
 	if output == "" {
 		output = "review output"
