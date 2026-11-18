@@ -2,6 +2,7 @@ package ghaction
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,7 +120,6 @@ func TestGenerate(t *testing.T) {
 				`"$HOME/.local/bin"`,
 				"$GITHUB_PATH",
 				`"$HOME/.local/bin/roborev" version`,
-				"api.github.com",
 				// Pin agent identity so Grok/Cursor collision and ambiguous
 				// fallback cannot silently rewrite the matrix.
 				`--agent "codex"`,
@@ -208,7 +208,7 @@ func TestGenerate(t *testing.T) {
 				`ROBOREV_VERSION="0.33.1"`,
 			},
 			notWantStrs: []string{
-				"api.github.com",
+				"https://github.com/roborev-dev/roborev/releases/latest",
 			},
 		},
 		{
@@ -310,6 +310,55 @@ func TestGenerate(t *testing.T) {
 					assert.Equal(t, 1, envDefCount)
 				}
 			}
+		})
+	}
+}
+
+func TestGenerate_LatestVersionResolvesFromRedirect(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found")
+	}
+	out, err := Generate(DefaultConfig())
+	require.NoError(t, err)
+	start, end := strings.Index(out, "LATEST_URL="), strings.Index(out, "ARCHIVE=")
+	require.Positive(t, start)
+	require.Greater(t, end, start)
+	lookup := out[start:end]
+	for _, tt := range []struct{ name, url, want string }{
+		{"tag", "https://github.com/kenn-io/roborev/releases/tag/v0.52.0", "0.52.0"},
+		{"release page", "https://github.com/kenn-io/roborev/releases", ""},
+		{"unprefixed tag", "https://github.com/kenn-io/roborev/releases/tag/0.52.0", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := filepath.Join(t.TempDir(), "args")
+			fake := `curl() {
+local flags="" arg
+for arg in "$@"; do
+  case "$arg" in
+    https://*) printf '%s\n' "$arg" >> "$CURL_ARGS" ;;
+    -[!-]*) flags="$flags$arg" ;;
+  esac
+done
+case "$flags" in *f*L*|*L*f*) ;; *) return 1 ;; esac
+case " $* " in *" -w %{url_effective} "*) ;; *) return 1 ;; esac
+case " $* " in *" -o /dev/null "*) ;; *) return 1 ;; esac
+printf '%s' "$CURL_URL"
+}
+`
+			cmd := exec.CommandContext(t.Context(), bash, "-euo", "pipefail", "-c", fake+lookup+"\nprintf '%s' \"$ROBOREV_VERSION\"")
+			cmd.Env = append(os.Environ(), "CURL_ARGS="+args, "CURL_URL="+tt.url)
+			got, err := cmd.CombinedOutput()
+			if tt.want == "" {
+				require.Error(t, err)
+				assert.Contains(t, string(got), "could not resolve latest release tag")
+			} else {
+				require.NoError(t, err, "%s", got)
+				assert.Equal(t, tt.want, string(got))
+			}
+			called, err := os.ReadFile(args)
+			require.NoError(t, err)
+			assert.Equal(t, "https://github.com/roborev-dev/roborev/releases/latest\n", string(called))
 		})
 	}
 }
