@@ -530,7 +530,7 @@ func (row exportReviewRow) toExportReview(profile ExportProfile, machineID uuid.
 		Experiments:         []ExperimentAssignment{},
 		ResumeSourceJobUUID: nil,
 	}
-	if row.sourceMachineID.Valid {
+	if row.sourceMachineID.Valid && row.sourceMachineID.V != uuid.Nil() {
 		review.SourceMachineID = row.sourceMachineID.V
 	}
 	if row.resumeSourceJobUUID.Valid {

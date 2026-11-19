@@ -32,6 +32,9 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 	// Older enqueue code could store an empty ID when machine ID lookup failed.
 	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = '' WHERE id = ?`, legacy.JobID)
 	require.NoError(t, err)
+	zeroSource := seedCompletedExportReview(t, db, repo.ID, "3333333333333333333333333333333333333333", "2026-06-29 00:00:02", false)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, uuid.Nil(), zeroSource.JobID)
+	require.NoError(t, err)
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 	remoteID := testUUID("machine-a")
@@ -48,7 +51,7 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 		t.Run(string(profile), func(t *testing.T) {
 			page, err := db.ExportReviews(ExportReviewsOptions{Profile: profile})
 			require.NoError(t, err)
-			require.Len(t, page.Reviews, 3)
+			require.Len(t, page.Reviews, 4)
 			byID := make(map[uuid.UUID]ExportReview)
 			for _, review := range page.Reviews {
 				byID[review.ReviewID] = review
@@ -56,6 +59,7 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 			}
 			assert.Equal(t, machineID, byID[*local.UUID].SourceMachineID)
 			assert.Equal(t, machineID, byID[*legacy.UUID].SourceMachineID)
+			assert.Equal(t, machineID, byID[*zeroSource.UUID].SourceMachineID)
 			assert.Equal(t, remoteID, byID[pulledID].SourceMachineID)
 		})
 	}
