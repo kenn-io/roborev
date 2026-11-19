@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 // maxPromptArgLen is a conservative limit for passing prompts as
@@ -184,7 +186,7 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := proctrack.Run(ctx, cmd); err != nil {
 		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return "", ctxErr
 		}

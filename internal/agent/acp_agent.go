@@ -13,6 +13,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/proctrack"
 	"go.kenn.io/roborev/internal/procutil"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -277,10 +278,12 @@ func (a *ACPAgent) runPrompt(
 	}
 
 	// Start the agent process
-	if err := cmd.Start(); err != nil {
+	proc, err := proctrack.Start(ctx, cmd)
+	if err != nil {
 		_ = pipesCleanup()
 		return "", fmt.Errorf("failed to start ACP agent: %w", err)
 	}
+	agentStdout := proc.Pipe(stdoutPipe)
 
 	repoRoot := repoPath
 	cwd := repoPath
@@ -300,6 +303,7 @@ func (a *ACPAgent) runPrompt(
 		repoRoot:       repoRoot,
 		terminals:      make(map[string]*acpTerminal),
 		nextTerminalID: 1,
+		procScope:      proctrack.FromContext(ctx),
 	}
 
 	// Deferred cleanup to ensure no orphaned terminal processes
@@ -321,12 +325,12 @@ func (a *ACPAgent) runPrompt(
 			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 				_ = cmd.Process.Kill()
 			}
-			_ = cmd.Wait()
+			_ = proc.Wait()
 		}
 	}()
 
 	// Create the ACP connection
-	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
+	conn := acp.NewClientSideConnection(client, stdinPipe, agentStdout)
 
 	if _, err := conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,

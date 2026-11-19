@@ -111,6 +111,15 @@ func newScope(ctx context.Context, t *tracker, parent *Scope) (context.Context, 
 	return context.WithValue(ctx, ctxKey{}, s), s
 }
 
+// ContextWith returns ctx carrying s, for a launch whose context does not
+// derive from the scope's own, such as one that must outlive a request.
+func ContextWith(ctx context.Context, s *Scope) context.Context {
+	if s == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxKey{}, s)
+}
+
 // FromContext returns the innermost scope in ctx, or nil.
 func FromContext(ctx context.Context) *Scope {
 	s, _ := ctx.Value(ctxKey{}).(*Scope)
