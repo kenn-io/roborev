@@ -106,9 +106,8 @@ check that both agents are ready:
 roborev agent setup --check
 ```
 
-roborev 0.75.0 and earlier lack `agent setup`; use `roborev agent hook install`
-there. For other agents, or to install only the skills, run
-`roborev agent skills install`.
+roborev 0.75.0 lacks `agent setup`; use `roborev agent hook install` there. For
+other agents, or to install only the skills, run `roborev agent skills install`.
 
 Then from your agent session, run the fix skill to discover and address all open
 review findings in one pass:
