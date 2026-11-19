@@ -423,6 +423,7 @@ hook, so a configured integration never goes dark unnoticed.
 | Variable | Description |
 |----------|-------------|
 | `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to turn off usage telemetry |
 | `EDITOR` | Editor used by `roborev job comment` when no message is supplied |
 | `GH_TOKEN`, `GITHUB_TOKEN` | GitHub authentication for CI commands |
 | `GITLAB_TOKEN`, `GL_TOKEN` | GitLab authentication for CI commands |
