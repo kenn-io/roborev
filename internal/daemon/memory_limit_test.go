@@ -128,3 +128,46 @@ func TestClassifyMemoryBreachSkipsBackup(t *testing.T) {
 	assert.Contains(t, failed.Error, "over agent_memory_max_mb (64 MiB)")
 	assert.Empty(t, backupInvoked)
 }
+
+// A synthesis agent canceled by a breach used to look like a user
+// cancellation, which records nothing, so the job stayed running.
+func TestSynthesisMemoryBreachFailsJob(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.AgentMemoryMaxMB = 64
+	tc.reconfigurePool(cfg)
+	const synth = "memory-hog-synthesis"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: synth, ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+		return "", fmt.Errorf("agent exited: %w", runMemoryHog(ctx))
+	}})
+	run, members, _ := enqueuePanelRun(t, tc, "memory-panel", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
+	setSynthesisAgent(t, tc, run, synth)
+	completeMember(t, tc, members[0].ID, "test", "first finding")
+	completeMember(t, tc, members[1].ID, "test", "second finding")
+	job := releaseAndClaimSynthesis(t, tc, run)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	failed := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Contains(t, failed.Error, "over agent_memory_max_mb (64 MiB)")
+}
+
+// A checker that returns verdicts after its processes breached must not have
+// them applied: the breach decides the check's outcome.
+func TestCICheckBreachOverridesReturnedVerdicts(t *testing.T) {
+	tc, job, doc, original := setupCICheckCompletion(t, "high", "", nil)
+	tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
+		_ = runMemoryHog(ctx)
+		doc.Findings = doc.Findings[:1]
+		return doc, nil
+	}
+	ctx, scope := proctrack.New(t.Context(), 64<<20)
+	defer scope.Close()
+
+	tc.Pool.processSynthesisJob(ctx, testWorkerID, job)
+
+	stored, checked := readCICheckCompletionReview(t, tc, job)
+	assert.Equal(t, original.review.Output, stored.Output)
+	doc.Check = &structuredreview.Check{Status: structuredreview.CheckFailed}
+	assert.Equal(t, doc, checked)
+}
