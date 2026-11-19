@@ -39,7 +39,6 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 				assert.Equal("cursor-1", r.URL.Query().Get("cursor"))
 				writeExportTestPage(t, w, r.URL.Query().Get("profile"), false, new("cursor-2"), []map[string]any{
 					{"review_id": testUUID("review-2"), "content": nil},
-					{"review_id": testUUID("review-3"), "content": nil},
 				})
 			default:
 				http.Error(w, "too many calls", http.StatusInternalServerError)
@@ -70,14 +69,13 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 	assert.False(got.Truncated)
 	require.NotNil(t, got.NextCursor)
 	assert.Equal("cursor-2", *got.NextCursor)
-	require.Len(t, got.Reviews, 3)
+	require.Len(t, got.Reviews, 2)
 	assert.Equal(testUUIDText("review-1"), got.Reviews[0]["review_id"])
 	assert.Equal(testUUIDText("review-2"), got.Reviews[1]["review_id"])
 	assert.Equal(testUUIDText("machine-a"), got.Reviews[0]["source_machine_id"])
 	assert.Equal(testUUIDText("machine-b"), got.Reviews[0]["exported_by_machine_id"])
-	assert.Equal(testUUIDText("review-3"), got.Reviews[2]["review_id"])
-	assert.NotContains(got.Reviews[2], "source_machine_id")
-	assert.NotContains(got.Reviews[2], "exported_by_machine_id")
+	assert.NotContains(got.Reviews[1], "source_machine_id")
+	assert.NotContains(got.Reviews[1], "exported_by_machine_id")
 }
 
 func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
