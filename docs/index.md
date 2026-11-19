@@ -59,7 +59,8 @@ roborev ui                    # or in the native browser application
 
 `roborev agent setup` installs the Agent Hook and skills. If Codex asks you to
 review hooks, run `/hooks` in Codex, then `roborev agent setup --check`. For
-other agents, use `roborev agent hook install`.
+other agents, or on roborev 0.75.0 and earlier, which lack `agent setup`, use
+`roborev agent hook install`.
 
 New here? Hand your coding agent the [Agent-Assisted Setup](agent-setup.md)
 prompt. It installs the hooks and skills, asks before each change, and explains
