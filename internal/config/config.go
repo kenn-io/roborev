@@ -720,8 +720,8 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
-	if c.AgentMemoryMaxMB < 0 {
-		return fmt.Errorf("agent_memory_max_mb must be 0 or more, got %d", c.AgentMemoryMaxMB)
+	if err := validateAgentMemoryMaxMB(c.AgentMemoryMaxMB); err != nil {
+		return err
 	}
 	if err := validateReviewMCPAllowedTools(c.ReviewMCPAllowedTools); err != nil {
 		return err
@@ -1127,10 +1127,17 @@ func LoadGlobalFrom(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := errors.Join(cfg.daemonErrs...); err != nil {
+	if err := errors.Join(errors.Join(cfg.daemonErrs...), validateAgentMemoryMaxMB(cfg.AgentMemoryMaxMB)); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
+}
+
+func validateAgentMemoryMaxMB(mib int) error {
+	if mib < 0 {
+		return fmt.Errorf("agent_memory_max_mb must be 0 or more, got %d", mib)
+	}
+	return nil
 }
 
 // parseGlobalFrom decodes the global file and migrates deprecated keys.
