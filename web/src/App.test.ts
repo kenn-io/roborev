@@ -79,6 +79,7 @@ describe("App", () => {
     render(App);
 
     expect(screen.getByText("Checking browser session…")).toBeInTheDocument();
+    expect(document.title).toBe("Checking · Roborev");
   });
 
   test("renders token login when remote authentication is required", async () => {
@@ -91,6 +92,7 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "Connect to Roborev" }),
     ).toBeInTheDocument();
+    expect(document.title).toBe("Connect · Roborev");
     expect(screen.getByLabelText("Daemon token")).toHaveAttribute(
       "autocomplete",
       "current-password",
@@ -122,6 +124,7 @@ describe("App", () => {
       "page",
     );
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
+    expect(document.title).toBe("Reviews · Roborev");
     await fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([
       ["reviews"],
@@ -131,6 +134,13 @@ describe("App", () => {
       screen.getByRole("heading", { name: "Review analytics" }),
     ).toBeInTheDocument();
     expect(location.pathname).toBe("/analytics");
+    expect(document.title).toBe("Analytics · Roborev");
+    history.pushState(null, "", "/reviews/9");
+    await fireEvent.popState(window);
+    expect(document.title).toBe("Review (#9) · Roborev");
+    history.pushState(null, "", "/analytics");
+    await fireEvent.popState(window);
+    expect(document.title).toBe("Analytics · Roborev");
     expect(token).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     expect(JSON.stringify(fetchMock.mock.calls)).toContain("one-time-secret");
@@ -299,6 +309,7 @@ describe("App", () => {
     render(App);
 
     expect(await screen.findByText("offline")).toBeInTheDocument();
+    expect(document.title).toBe("Unavailable · Roborev");
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(
       await screen.findByRole("region", { name: "Review jobs" }),
@@ -327,6 +338,7 @@ describe("App", () => {
   test("shows action failures in the application shell", async () => {
     const job = {
       id: 17,
+      commit_subject: "Fix login race",
       agent: "test",
       agentic: false,
       enqueued_at: "2026-08-13T20:00:00Z",
@@ -376,6 +388,9 @@ describe("App", () => {
     const row = await screen.findByRole("button", { name: /17.*abc123/i });
     await fireEvent.click(row);
     expect(location.pathname).toBe("/reviews/17");
+    expect(document.title).toBe(
+      "Fix login race (#17) · example/repo · Roborev",
+    );
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -462,6 +477,9 @@ describe("App", () => {
     render(App);
 
     expect(await screen.findByText("Review in progress…")).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Review (#42) · example/repo · Roborev"),
+    );
     await vi.waitFor(() => expect(eventStream).toBeDefined());
 
     completed = true;
@@ -522,6 +540,7 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "Connect to Roborev" }),
     ).toBeInTheDocument();
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
+    expect(document.title).toBe("Connect · Roborev");
     await fireEvent.input(screen.getByLabelText("Daemon token"), {
       target: { value: "replacement-token" },
     });

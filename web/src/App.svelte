@@ -25,6 +25,10 @@
     rerunJob: false,
   };
 
+  $: if (view !== "authenticated") {
+    document.title = `${{ checking: "Checking", login: "Connect", error: "Unavailable" }[view]} · Roborev`;
+  }
+
   onMount(() => {
     const handleSessionLost = () => void checkSession();
     globalThis.addEventListener(sessionLostEvent, handleSessionLost);

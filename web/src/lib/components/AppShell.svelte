@@ -23,6 +23,7 @@
     reportScreenViewed,
     setupAppOpenedReporting,
   } from "../utils/app-opened";
+  import { tabTitle } from "../utils/tab-title";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
   import BrandMark from "./BrandMark.svelte";
@@ -61,6 +62,16 @@
   provideReviewStores(stores);
   onMount(setupAppOpenedReporting);
   $effect(() => reportScreenViewed(page));
+  $effect(() => {
+    const job =
+      route.page === "reviews" && route.jobId !== undefined
+        ? (stores.roborevJobs
+            ?.getVisibleJobs()
+            .find((j) => j.id === route.jobId) ??
+          stores.roborevReview?.getSelectedJob())
+        : undefined;
+    document.title = tabTitle(route, job);
+  });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
     operation: "poll Roborev daemon status",

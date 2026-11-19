@@ -36,6 +36,8 @@ All notable changes to roborev, grouped by minor release.
 
 **New features**
 
+- Browser tabs name the current workspace or open review.
+
 - Review commits that land on the default branch. With global
     `[ci] review_default_branch = true`, the CI poller reviews each new
     first-parent commit on each polled repo's default branch, with the same
