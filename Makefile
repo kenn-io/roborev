@@ -306,7 +306,7 @@ test-postgres-run:
 		export TEST_PG_PUBLISH='127.0.0.1::5432'; \
 		docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres; \
 		address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432); \
-		TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test" $(MAKE) test-postgres-ci
+		$(MAKE) test-postgres-ci TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test"
 
 .PHONY: test-postgres-growth
 test-postgres-growth:
@@ -399,13 +399,13 @@ POSTGRES_REPORT_DIR = $(GO_TEST_REPORT_DIR)$(if $(TEST_SERVICE_LEASE),/$(TEST_SE
 test-postgres-ci:
 	@mkdir -p "$(POSTGRES_REPORT_DIR)"
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-		--jsonfile $(POSTGRES_REPORT_DIR)/postgres-storage.json \
-		--rerun-fails=2 --rerun-fails-report $(POSTGRES_REPORT_DIR)/postgres-storage-reruns.txt \
+		--jsonfile "$(POSTGRES_REPORT_DIR)/postgres-storage.json" \
+		--rerun-fails=2 --rerun-fails-report "$(POSTGRES_REPORT_DIR)/postgres-storage-reruns.txt" \
 		--packages "./internal/storage/..." \
 		-- -tags=postgres -v -run Integration
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-		--jsonfile $(POSTGRES_REPORT_DIR)/postgres-daemon.json \
-		--rerun-fails=2 --rerun-fails-report $(POSTGRES_REPORT_DIR)/postgres-daemon-reruns.txt \
+		--jsonfile "$(POSTGRES_REPORT_DIR)/postgres-daemon.json" \
+		--rerun-fails=2 --rerun-fails-report "$(POSTGRES_REPORT_DIR)/postgres-daemon-reruns.txt" \
 		--packages "./internal/daemon/..." \
 		-- -tags=postgres -v -run '^TestIntegration'
 

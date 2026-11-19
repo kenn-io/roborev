@@ -195,6 +195,46 @@ func TestPostgresLeaseReportPaths(t *testing.T) {
 	}
 }
 
+func TestPostgresLeaseOverridesCallerURLAndWritesSpacedReports(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	require.NoError(t, os.Mkdir(bin, 0700))
+	docker := `#!/bin/sh
+case " $* " in
+  *' port '*) echo 127.0.0.1:45678 ;;
+esac
+`
+	goTool := `#!/bin/sh
+if [ "$1" = env ]; then exit 0; fi
+printf '%s\n' "$TEST_POSTGRES_URL" >> "$URL_LOG"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --jsonfile|--rerun-fails-report)
+      shift
+      case "$1" in "$GO_TEST_REPORT_DIR/$TEST_SERVICE_LEASE/"*) ;; *) exit 2 ;; esac
+      printf '%s\n' "${1##*/}" >> "$REPORT_LOG"
+      printf report > "$1" || exit 1 ;;
+  esac
+  shift
+done
+`
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0700))
+	reports := filepath.Join(dir, "reports with spaces")
+	urlLog := filepath.Join(dir, "urls")
+	cmd := exec.CommandContext(t.Context(), "make", "test-postgres", "TEST_POSTGRES_URL=postgres://caller/example")
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+reports, "URL_LOG="+urlLog, "REPORT_LOG="+filepath.Join(dir, "report-log"))
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	urls, err := os.ReadFile(urlLog)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("postgres://roborev_test:roborev_test_password@127.0.0.1:45678/roborev_test\n", 2), string(urls))
+	reportNames, err := os.ReadFile(filepath.Join(dir, "report-log"))
+	require.NoError(t, err)
+	assert.Equal(t, "postgres-storage.json\npostgres-storage-reruns.txt\npostgres-daemon.json\npostgres-daemon-reruns.txt\n", string(reportNames))
+}
+
 func TestLeaseRequiresPython(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "docker.log")
