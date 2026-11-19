@@ -285,7 +285,7 @@ postgres-down:
 
 # Postgres tests use a separate database for each run.
 test-postgres:
-	@scripts/test-lease.sh roborev $(MAKE) test-postgres-run
+	@scripts/test-lease.sh roborev sh -c 'exec "$$@" TEST_SERVICE_LEASE="$$TEST_SERVICE_LEASE"' sh $(MAKE) test-postgres-run
 
 .PHONY: test-postgres-run
 test-postgres-run:

@@ -79,17 +79,22 @@ func TestPostgresLeaseRecipe(t *testing.T) {
 	require.NoError(t, os.Mkdir(bin, 0700))
 	log := filepath.Join(dir, "docker.log")
 	docker := `#!/bin/sh
-printf '%s\n' "$*" >> "$DOCKER_LOG"
+printf '%s [%s]\n' "$*" "$TEST_SERVICE_LEASE" >> "$DOCKER_LOG"
 case " $* " in
+  *' up '*) python3 -c 'import fcntl, os, sys
+with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", os.environ["TEST_SERVICE_LEASE"])) as f:
+ try: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+ except BlockingIOError: sys.exit(0)
+ sys.exit(1)' || exit 8 ;;
   *' port '*) echo 127.0.0.1:45678 ;;
   *' down '*) exit 1 ;;
 esac
 `
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexit 17\n"), 0700))
-	cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
+	cmd := exec.CommandContext(t.Context(), "make", "test-postgres", "TEST_SERVICE_LEASE=other-1-1")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"), "TEST_SERVICE_LEASE=other-1-1")
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"))
 	out, err := cmd.CombinedOutput()
 	require.Error(t, err, string(out))
 	assert.Contains(t, string(out), "cleanup failed; scheduled cleanup will retry")
@@ -100,7 +105,7 @@ esac
 	require.Len(t, entries, 1)
 	lease := entries[0].Name()
 	assert.NotEqual(t, "other-1-1", lease)
-	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres")
+	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+"]")
 	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans")
 	assert.Contains(t, string(out), "Error 17")
 }
