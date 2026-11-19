@@ -16,5 +16,6 @@ func setProcessGroup(*exec.Cmd)                          {}
 func waitExit(int) error                                 { return errUnsupported }
 func killIdentity(ident) error                           { return errUnsupported }
 func readTable() (map[int]Proc, map[int]struct{}, error) { return nil, nil, errUnsupported }
+func readProc(int) (Proc, error)                         { return Proc{}, errUnsupported }
 
 var killGroup = func(int) error { return errUnsupported }

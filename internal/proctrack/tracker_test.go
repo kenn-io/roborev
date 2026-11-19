@@ -32,6 +32,20 @@ func TestMain(m *testing.M) {
 		if _, err := syscall.Setsid(); err != nil {
 			os.Exit(2)
 		}
+	case "setsid-later":
+		// Stay in the group long enough for samples to see it, then leave.
+		if err := os.WriteFile(os.Getenv("PROCTRACK_PIDFILE"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			os.Exit(2)
+		}
+		time.Sleep(400 * time.Millisecond)
+		if _, err := syscall.Setsid(); err != nil {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(os.Getenv("PROCTRACK_PIDFILE")+".left", nil, 0o600); err != nil {
+			os.Exit(2)
+		}
+		time.Sleep(time.Minute)
+		os.Exit(0)
 	}
 	if err := os.WriteFile(os.Getenv("PROCTRACK_PIDFILE"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		os.Exit(2)
@@ -289,4 +303,76 @@ func TestBreachInPhaseCancelsOnlyThePhase(t *testing.T) {
 
 	// The attempt can still start processes after the phase ends.
 	require.NoError(t, Run(ctx, exec.CommandContext(ctx, "/bin/sh", "-c", "exit 0")))
+}
+
+func TestCloseStopsProcessThatLeftItsGroupAfterSampling(t *testing.T) {
+	fastSampling(t)
+	ctx, s := New(t.Context(), 1<<40) // sample, never breach
+	run, pidFile := helper(t, "setsid-later", 0)
+	p, err := Start(ctx, exec.CommandContext(ctx, "/bin/sh", "-c", run+" & wait"))
+	require.NoError(t, err)
+	pid := readPID(t, pidFile)
+	killOnCleanup(t, pid)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(pidFile + ".left")
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond)
+
+	err = s.Close()
+	_ = p.Wait()
+	if runtime.GOOS == "linux" {
+		require.NoError(t, err)
+		requireGone(t, pid)
+	} else {
+		// No pidfd: the process is reported, never signaled by number.
+		require.ErrorContains(t, err, fmt.Sprintf("(pid %d)", pid))
+	}
+}
+
+func TestPipeKeepsBufferedOutputForSlowReader(t *testing.T) {
+	ctx, s := New(t.Context(), 0)
+	defer s.Close()
+	run, pidFile := helper(t, "setsid", 0)
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", fmt.Sprintf("%s & while [ ! -s %s ]; do sleep 0.01; done; echo result", run, pidFile))
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	p, err := Start(ctx, cmd)
+	require.NoError(t, err)
+	killOnCleanup(t, readPID(t, pidFile))
+	pipe := p.Pipe(stdout)
+	<-p.r.handedOff
+
+	time.Sleep(2 * outputGrace) // a reader busy past the output window
+	began := time.Now()
+	out, err := io.ReadAll(pipe)
+	require.NoError(t, err)
+	assert.Equal(t, "result\n", string(out))
+	assert.Less(t, time.Since(began), 3*time.Second)
+	require.NoError(t, p.Wait())
+}
+
+func TestSampleSkipsRootRegisteredDuringScan(t *testing.T) {
+	orig := killGroup
+	killGroup = func(int) error { return nil }
+	t.Cleanup(func() { killGroup = orig })
+	ctx, s := New(t.Context(), 64<<20)
+	defer s.Close()
+	scanned := time.Now()
+	// The snapshot still lists an older, large process under the PID that a
+	// root registered after the scan began now uses.
+	const pid = 1 << 22
+	table := map[int]Proc{pid: {PID: pid, PGID: pid, RSS: 1 << 30, Name: "old"}}
+	r := &root{scope: s, pid: pid, registered: scanned.Add(time.Millisecond), handedOff: make(chan struct{})}
+	close(r.handedOff)
+	s.t.mu.Lock()
+	s.roots[pid] = r
+	s.t.mu.Unlock()
+
+	s.t.sample(table, nil, scanned)
+	assert.Nil(t, s.Breach())
+
+	// The same snapshot taken after registration counts the root.
+	s.t.sample(table, nil, scanned.Add(time.Second))
+	assert.NotNil(t, s.Breach())
+	<-ctx.Done() // the breach's cleanup has finished
 }

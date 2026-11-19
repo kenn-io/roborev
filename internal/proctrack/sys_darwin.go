@@ -1,6 +1,7 @@
 package proctrack
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"syscall"
@@ -77,20 +78,34 @@ func readTable() (map[int]Proc, map[int]struct{}, error) {
 	pids = pids[:min(int(int32(n)), len(pids))]
 	table := make(map[int]Proc, len(pids))
 	unreadable := map[int]struct{}{}
-	var buf [taskAllInfoSize]byte
 	for _, pid := range pids {
 		if pid <= 0 {
 			continue
 		}
-		size, _, errno := purego.SyscallN(f.pidInfo, uintptr(pid), procPidTaskAllInfo, 0,
-			uintptr(unsafe.Pointer(&buf[0])), taskAllInfoSize)
-		p, err := parseTaskAllInfo(int(pid), buf[:], int(int32(size)))
+		p, err := readProc(int(pid))
 		switch {
 		case err == nil:
 			table[int(pid)] = p
-		case syscall.Errno(errno) == syscall.EPERM:
+		case errors.Is(err, syscall.EPERM):
 			unreadable[int(pid)] = struct{}{}
 		}
 	}
 	return table, unreadable, nil
+}
+
+// readProc reads one process. A zombie has no task information, so it reads
+// as gone.
+func readProc(pid int) (Proc, error) {
+	f, err := libSystem()
+	if err != nil {
+		return Proc{}, err
+	}
+	var buf [taskAllInfoSize]byte
+	size, _, errno := purego.SyscallN(f.pidInfo, uintptr(pid), procPidTaskAllInfo, 0,
+		uintptr(unsafe.Pointer(&buf[0])), taskAllInfoSize)
+	p, err := parseTaskAllInfo(pid, buf[:], int(int32(size)))
+	if err != nil && errno != 0 {
+		return Proc{}, fmt.Errorf("%w: %w", err, syscall.Errno(errno))
+	}
+	return p, err
 }

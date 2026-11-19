@@ -240,12 +240,13 @@ could keep the job open until its timeout.
   bounds that copy once the watcher calls `cmd.Wait()`.
 - When an adapter reads a pipe from `StdoutPipe` or `StderrPipe`, as Claude's
   schema path and the ACP agent do, nothing bounds the read today. Once the root
-  has exited and its group has been cleaned up, the handle sets a read deadline
-  one second ahead on those pipes. Reads first return everything already
-  buffered, which includes everything the root wrote before it exited, then a
-  deadline error that the readers treat as end of output. Later writes from the
-  detached holder are discarded. `os.Pipe` files on Linux and macOS support read
-  deadlines through the runtime poller.
+  has exited and its group has been cleaned up, each read on those pipes may
+  wait at most one second for more bytes. Buffered output, which includes
+  everything the root wrote before it exited, is returned however slowly the
+  adapter reads; a read ends the output only after a full second with nothing
+  written. Reads also end 30 seconds after the root exits, so a detached
+  process that keeps writing cannot hold the adapter open. `os.Pipe` files on
+  Linux and macOS support read deadlines through the runtime poller.
 
 ### Which launches count
 
@@ -455,7 +456,8 @@ Behavior:
   the scope's SIGTERM-then-SIGKILL sequence, up to five seconds. The scope's own
   `MemoryMax` bounds it meanwhile.
 - **Detached output.** After a root exits, output that a detached process writes
-  to the root's pipes more than one second later is discarded.
+  to the root's pipes after a one-second pause, or more than 30 seconds after
+  the exit, is discarded.
 - **Invisible processes.** With `hidepid=2`, other users' processes are absent
   from `/proc`.
 - **Processes started outside the job.** A service the agent reaches over a

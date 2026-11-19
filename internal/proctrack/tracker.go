@@ -34,6 +34,9 @@ var (
 	// outputGrace is how long readers of a root's pipes may keep reading after
 	// the root exits. Data the root wrote before exiting is already buffered.
 	outputGrace = time.Second
+	// outputLimit ends reads this long after the root exits, so a detached
+	// process that keeps writing cannot hold the reader open forever.
+	outputLimit = 30 * time.Second
 )
 
 // startWatch is a variable so tests can delay the watcher past the root's exit.
@@ -67,11 +70,13 @@ type Scope struct {
 }
 
 type root struct {
-	scope     *Scope
-	pid       int
-	stop      func()
-	pipes     []*os.File
-	handedOff chan struct{}
+	scope      *Scope
+	pid        int
+	stop       func()
+	pipes      []*os.File
+	registered time.Time // when Start registered the root's group
+	exitedAt   time.Time // set before handedOff is closed
+	handedOff  chan struct{}
 }
 
 // New starts tracking processes for one job attempt. limitBytes is the summed
@@ -205,12 +210,10 @@ func (s *Scope) cleanup() error {
 			}
 		}
 	}
-	var detached []Proc
+	var remembered []Proc
 	for _, sc := range scopes {
 		for _, p := range sc.remembered {
-			if _, ok := owned[p.PGID]; !ok {
-				detached = append(detached, p)
-			}
+			remembered = append(remembered, p)
 		}
 	}
 	t.mu.Unlock()
@@ -221,7 +224,16 @@ func (s *Scope) cleanup() error {
 		stop()
 	}
 	var left []string
-	for _, p := range detached {
+	for _, p := range remembered {
+		// Decide from the process as it is now, not as the last sample saw it:
+		// it may have exited, or left its group after that sample.
+		cur, err := readProc(p.PID)
+		if err != nil || cur.Start != p.Start {
+			continue
+		}
+		if _, ok := owned[cur.PGID]; ok {
+			continue // the group SIGKILL above reached it
+		}
 		switch err := killIdentity(ident{p.PID, p.Start}); {
 		case errors.Is(err, errNoPidfd):
 			left = append(left, describe(p))
@@ -297,6 +309,7 @@ func Start(ctx context.Context, cmd *exec.Cmd, opts ...StartOption) (*Process, e
 	t.pending--
 	if err == nil {
 		r.pid = cmd.Process.Pid
+		r.registered = time.Now()
 		s.roots[r.pid] = r
 	}
 	t.cond.Broadcast()
@@ -356,23 +369,40 @@ func (p *Process) Pipe(rc io.ReadCloser) io.ReadCloser {
 	t.mu.Lock()
 	select {
 	case <-p.r.handedOff:
-		_ = f.SetReadDeadline(time.Now().Add(outputGrace))
 	default:
+		// The watcher sets a deadline at the root's exit, to wake a read
+		// that is already waiting.
 		p.r.pipes = append(p.r.pipes, f)
 	}
 	t.mu.Unlock()
-	return deadlineEOF{f}
+	return &boundedPipe{f: f, r: p.r}
 }
 
-type deadlineEOF struct{ *os.File }
+// boundedPipe gives each read after the root's exit a fresh window to wait for
+// more bytes. Buffered output is returned however slowly the caller reads; a
+// read ends with io.EOF only after waiting a full window with nothing written.
+type boundedPipe struct {
+	f *os.File
+	r *root
+}
 
-func (d deadlineEOF) Read(b []byte) (int, error) {
-	n, err := d.File.Read(b)
+func (b *boundedPipe) Read(p []byte) (int, error) {
+	select {
+	case <-b.r.handedOff:
+		if time.Since(b.r.exitedAt) > outputLimit {
+			return 0, io.EOF
+		}
+		_ = b.f.SetReadDeadline(time.Now().Add(outputGrace))
+	default:
+	}
+	n, err := b.f.Read(p)
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		err = io.EOF
 	}
 	return n, err
 }
+
+func (b *boundedPipe) Close() error { return b.f.Close() }
 
 // watch observes the root's exit without reaping it, stops its group while the
 // zombie root still reserves the group ID, then hands the root to Wait.
@@ -394,6 +424,7 @@ func (r *root) watch() {
 		}
 	}
 	delete(r.scope.roots, r.pid)
+	r.exitedAt = time.Now()
 	for _, f := range r.pipes {
 		_ = f.SetReadDeadline(time.Now().Add(outputGrace))
 	}

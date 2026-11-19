@@ -74,6 +74,7 @@ func sampleLoop() {
 		}
 		sampling.mu.Unlock()
 
+		scanned := time.Now()
 		table, unreadable, err := readTable()
 		if err != nil {
 			if err.Error() != lastErr {
@@ -84,14 +85,17 @@ func sampleLoop() {
 		}
 		lastErr = ""
 		for _, t := range trackers {
-			t.sample(table, unreadable)
+			t.sample(table, unreadable, scanned)
 		}
 	}
 }
 
 // sample sums the attempt's RSS in one table snapshot and, over the limit,
 // records a breach on the innermost open scope, then stops and cancels it.
-func (t *tracker) sample(table map[int]Proc, unreadable map[int]struct{}) {
+//
+// A root registered after the scan began is left for the next sample: its PID
+// may name an older process in this snapshot.
+func (t *tracker) sample(table map[int]Proc, unreadable map[int]struct{}, scanned time.Time) {
 	t.mu.Lock()
 	scopes := t.attempt.treeLocked()
 	seen := map[ident]struct{}{}
@@ -103,7 +107,13 @@ func (t *tracker) sample(table map[int]Proc, unreadable map[int]struct{}) {
 			continue
 		}
 		target = s
-		found := collect(table, s.roots, s.remembered)
+		groups := make(map[int]struct{}, len(s.roots))
+		for pgid, r := range s.roots {
+			if r.registered.Before(scanned) {
+				groups[pgid] = struct{}{}
+			}
+		}
+		found := collect(table, groups, s.remembered)
 		s.remembered = found
 		for id, p := range found {
 			if _, dup := seen[id]; dup {
