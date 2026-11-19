@@ -925,9 +925,10 @@ func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 		WorktreePath: worktreeRepo,
 	}
 
-	model, provider, err := resolveRerunModelProvider(
-		job, config.DefaultConfig(),
-	)
+	// Pair review_model with the job's agent so the configured model applies.
+	cfg := config.DefaultConfig()
+	cfg.ReviewAgent = "test"
+	model, provider, err := resolveRerunModelProvider(job, cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "worktree-model", model)
 	assert.Empty(t, provider)

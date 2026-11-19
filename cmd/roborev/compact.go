@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/prompt"
@@ -231,19 +230,11 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	// Build verification prompt after agent resolution so compact can reuse
 	// the selected agent's regular review output contract.
 	compactPrompt := buildCompactPrompt(ctx, jobReviews, branchFilter, repoRoot, agentName)
-	// Resolve model locally for display; the daemon re-resolves with
-	// its own canonical-agent comparison to skip generic default_model
-	// when the agent was overridden on CLI.
-	configAgent := config.ResolveAgentForWorkflow("", repoRoot, cfg, "fix", reasoning)
-	cliAgentChanged := opts.agentName != "" &&
-		agent.CanonicalName(opts.agentName) != agent.CanonicalName(configAgent)
-	var model string
-	if cliAgentChanged && opts.model == "" {
-		model = config.ResolveWorkflowModel(repoRoot, cfg, "fix", reasoning)
-	} else {
-		model = config.ResolveModelForWorkflow(
-			opts.model, repoRoot, cfg, "fix", reasoning,
-		)
+	// The daemon treats the sent model as explicit, so resolve it for the
+	// selected agent: models paired with a different agent are skipped.
+	model, err := resolveFixModel(agentName, opts.model, repoRoot, cfg, reasoning)
+	if err != nil {
+		return 0, fmt.Errorf("resolve agent/model: %w", err)
 	}
 
 	if !opts.quiet {

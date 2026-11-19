@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -308,6 +309,52 @@ func TestWriteCompactMetadata(t *testing.T) {
 			require.NoError(t, json.Unmarshal(data, &metadata), "Failed to parse metadata JSON")
 
 			assert.Equal(t, tt.sourceIDs, metadata.SourceJobIDs, "SourceJobIDs")
+		})
+	}
+}
+
+// TestEnqueueConsolidationModelFollowsSelectedAgent checks that compact does
+// not send a fix_model paired with the default agent to an agent chosen with
+// --agent; the daemon treats the sent model as explicit.
+func TestEnqueueConsolidationModelFollowsSelectedAgent(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentName string
+		model     string
+		want      string
+	}{
+		{name: "override agent keeps its own default", agentName: "claude-code", want: ""},
+		{name: "paired default agent uses fix_model", agentName: "codex", want: "gpt-5.4"},
+		{name: "explicit model wins", agentName: "claude-code", model: "claude-opus", want: "claude-opus"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got daemon.EnqueueRequest
+			_ = newMockDaemonBuilder(t).
+				WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+					w.WriteHeader(http.StatusCreated)
+					writeJSON(w, storage.ReviewJob{ID: 1})
+				}).
+				Build()
+			require.NoError(t, os.WriteFile(
+				filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "config.toml"),
+				[]byte("default_agent = \"codex\"\nfix_model = \"gpt-5.4\"\n"),
+				0o644,
+			))
+
+			repo := newTestGitRepo(t)
+			cmd := &cobra.Command{}
+			cmd.SetOut(&bytes.Buffer{})
+			_, err := enqueueConsolidation(
+				t.Context(), cmd, repo.Dir, nil, "",
+				compactOptions{agentName: tt.agentName, model: tt.model, quiet: true},
+			)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.agentName, got.Agent)
+			assert.Equal(t, tt.want, got.Model)
 		})
 	}
 }

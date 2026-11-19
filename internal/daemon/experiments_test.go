@@ -296,6 +296,8 @@ func TestExperimentStandaloneRerunPreservesFrozenPlan(t *testing.T) {
 	enabled := true
 	ratio := 1.0
 	cfg := server.configWatcher.Config()
+	// Pair review_model with the job's agent so the experiment model applies.
+	cfg.ReviewAgent = "test"
 	cfg.Experiments = map[string]config.ExperimentDefinition{
 		"frozen-plan-v1": {
 			Enabled: &enabled, Ratio: &ratio,

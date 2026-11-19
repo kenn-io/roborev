@@ -287,8 +287,10 @@ The member workflow is chosen from `review_type`: `default` uses review workflow
 config, `security` uses security workflow config, `design` uses design workflow
 config, and fieldless types such as `lookahead` and `test-value` can be pinned
 with `[analyze.lookahead]` or `[analyze.test-value]`. If a member sets `agent`
-but omits `model`, roborev inherits only a workflow specific model. It does not
-pair that explicit agent with an unrelated generic `default_model`.
+but omits `model`, roborev inherits a workflow-specific model only when the
+workflow's own agent is that member's agent. It does not pair that explicit
+agent with an unrelated generic `default_model`. Otherwise the member runs on
+its agent's default model.
 
 `allow_failure` is how you mark a flaky or best-effort reviewer. The member
 still runs and its findings are included when it succeeds, but a failed or

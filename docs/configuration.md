@@ -629,6 +629,16 @@ The fallback hierarchy for each workflow is:
     `{workflow}_agent_{level}`** > **global `{workflow}_agent`** > **global
     `default_agent`** > `codex`
 
+A workflow model belongs to the agent that its workflow and level resolve to
+without a CLI flag. When `--agent` or a panel member's `agent` selects a
+different agent and no `--model` is given, roborev does not pass that workflow
+model to it, because agents reject models they do not know. A generic `model` or
+`default_model` still applies when the selected agent is the default agent.
+Otherwise the selected agent runs on its own default model, and an ACP agent
+uses its `[acp.<name>].model`. For example, with `default_agent = "codex"` and
+`review_model = "gpt-5.5"`, `roborev review --agent claude-code` runs Claude
+Code on its default model.
+
 #### Per-type `[analyze.<type>]` override
 
 Some review types have no dedicated `{type}_agent` / `{type}_model` keys. Those

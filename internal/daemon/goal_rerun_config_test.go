@@ -22,6 +22,8 @@ func TestGoalReviewRerunConfigPolicy(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	server.configWatcher.Config().PiCmd = executable
+	// Pair review_model with the job's agent so the configured model applies.
+	server.configWatcher.Config().ReviewAgent = "pi"
 
 	for _, tt := range []struct {
 		name           string
