@@ -177,6 +177,65 @@ exit "$GO_EXIT"
 	}
 }
 
+func TestPostgresReportsRetainActiveAndLatestRun(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	require.NoError(t, os.Mkdir(bin, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\ncase \" $* \" in *' port '*) echo 127.0.0.1:45678 ;; esac\n"), 0700))
+	goTool := `#!/bin/sh
+if [ "$1" = env ]; then exit 0; fi
+while [ "$#" -gt 0 ]; do
+  case "$1" in --jsonfile|--rerun-fails-report) shift; printf report > "$1" ;; esac
+  shift
+done
+if [ "$HOLD" = 1 ]; then
+  touch "$READY"
+  while [ ! -e "$RELEASE" ]; do sleep .05; done
+fi
+`
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0700))
+	reports := filepath.Join(dir, "reports")
+	ready, release := filepath.Join(dir, "ready"), filepath.Join(dir, "release")
+	t.Cleanup(func() { _ = os.WriteFile(release, nil, 0600) })
+	command := func(hold string) *exec.Cmd {
+		cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
+		cmd.Dir = ".."
+		cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+reports, "HOLD="+hold, "READY="+ready, "RELEASE="+release)
+		return cmd
+	}
+	first := command("1")
+	require.NoError(t, first.Start())
+	t.Cleanup(func() {
+		_ = os.WriteFile(release, nil, 0600)
+		if first.ProcessState == nil {
+			_ = first.Wait()
+		}
+	})
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 50*time.Millisecond)
+	second := command("0")
+	out, err := second.CombinedOutput()
+	require.NoError(t, err, string(out))
+	entries, err := os.ReadDir(reports)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	for _, entry := range entries {
+		_, err := os.Stat(filepath.Join(reports, entry.Name(), "postgres-storage.json"))
+		require.NoError(t, err)
+	}
+	require.NoError(t, os.WriteFile(release, nil, 0600))
+	require.NoError(t, first.Wait())
+	third := command("0")
+	out, err = third.CombinedOutput()
+	require.NoError(t, err, string(out))
+	entries, err = os.ReadDir(reports)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	for _, name := range []string{"postgres-storage.json", "postgres-storage-reruns.txt", "postgres-daemon.json", "postgres-daemon-reruns.txt"} {
+		_, err := os.Stat(filepath.Join(reports, entries[0].Name(), name))
+		require.NoError(t, err)
+	}
+}
+
 func TestLeaseRequiresHome(t *testing.T) {
 	for _, home := range []string{"unset", "empty"} {
 		t.Run(home, func(t *testing.T) {

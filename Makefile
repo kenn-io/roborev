@@ -290,6 +290,7 @@ test-postgres:
 .PHONY: test-postgres-run
 test-postgres-run:
 	@set -e; \
+		python3 scripts/prune-postgres-reports.py "$(GO_TEST_REPORT_DIR)"; \
 		cleanup() { status=$$?; trap - EXIT HUP INT TERM; \
 			if ! docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans; then \
 				echo 'cleanup failed; scheduled cleanup will retry' >&2; \
