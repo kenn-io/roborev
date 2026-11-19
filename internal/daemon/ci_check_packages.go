@@ -334,7 +334,7 @@ for index, value in enumerate(sys.argv[2:], 1):
 json.dump(accepted, sys.stdout)`
 	parse := exec.CommandContext(ctx, python, append([]string{"-I", "-c", script, manifest.Project.Name}, requirements...)...)
 	parse.Dir, parse.Env, parse.Stderr = stage, env, out
-	data, err = parse.Output()
+	data, err = proctrack.Output(ctx, parse)
 	if err == nil {
 		err = json.Unmarshal(data, &requirements)
 	}

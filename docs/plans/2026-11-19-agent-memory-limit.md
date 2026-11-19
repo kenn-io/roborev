@@ -257,7 +257,7 @@ Roots of the attempt:
 | Adapters with their own start and wait, such as Droid (`cmd.Run()`) and Claude's schema path | Changed to admit, start, register, and the handle's `Wait`. |
 | ACP agent | Uses the tracker from the attempt context. |
 | ACP terminal commands | `CreateTerminal` builds its command from `context.Background()`, so the ACP client receives the tracker explicitly when the agent creates it. |
-| CI checker package installers and the npm manifest parser | They run package managers and Node on files from the pull request. |
+| CI checker package installers and manifest parsers | They run package managers, Node, Bun, and Python on files from the pull request. |
 | CI checker `go mod download` | Fetches and unpacks modules the pull request names. |
 | CI checker sandbox self-check | A sandboxed root with the scope stop operation. |
 | CI checker and rewrite agents | Sandboxed roots with the scope stop operation. |
@@ -458,6 +458,9 @@ Behavior:
   to the root's pipes after a one-second pause is discarded. A detached process
   that writes at least once a second holds the adapter's read until the job
   timeout, as it did before this change.
+- **Late breach.** A sample that records a breach after the attempt chose its
+  outcome stops the processes but leaves that outcome, such as a completed
+  review or a retry.
 - **Invisible processes.** With `hidepid=2`, other users' processes are absent
   from `/proc`.
 - **Processes started outside the job.** A service the agent reaches over a

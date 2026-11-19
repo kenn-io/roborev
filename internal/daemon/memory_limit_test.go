@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -198,6 +199,31 @@ func TestSynthesisBreachBeforeCheckFailsJob(t *testing.T) {
 	completeMember(t, tc, members[0].ID, "test", "first finding")
 	completeMember(t, tc, members[1].ID, "test", "second finding")
 	job := releaseAndClaimSynthesis(t, tc, run)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	failed := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Contains(t, failed.Error, "over agent_memory_max_mb (64 MiB)")
+}
+
+// A breach cancels the agent before the job's deadline; if the deadline then
+// passes before the outcome is recorded, the breach still decides it.
+func TestMemoryBreachBeforeDeadlineFailsJob(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.AgentMemoryMaxMB = 64
+	tc.reconfigurePool(cfg)
+	const hog = "memory-hog-deadline"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: hog, ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+		err := runMemoryHog(ctx)
+		<-ctx.Done()
+		deadline, _ := ctx.Deadline()
+		time.Sleep(time.Until(deadline) + 200*time.Millisecond)
+		return "", fmt.Errorf("agent exited: %w", err)
+	}})
+	enqueuePanelRun(t, tc, "memory-deadline-panel", []memberSpec{{name: "only", agent: hog, timeout: "6s"}})
+	job, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
 
 	tc.Pool.processJob(testWorkerID, job)
 

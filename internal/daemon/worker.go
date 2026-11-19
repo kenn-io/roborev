@@ -47,7 +47,7 @@ type runningJobCancellation struct {
 	deadline              time.Time
 	callerBroadcastsEvent bool
 	// memoryBreach reports the attempt's memory-limit breach while user
-	// cancellation, timeout, and interrupt shutdown have not ended the attempt.
+	// cancellation and interrupt shutdown have not ended the attempt.
 	memoryBreach func() *proctrack.Breach
 }
 
@@ -1093,7 +1093,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Every process the attempt starts belongs to this scope.
 	ctx, procScope := proctrack.New(ctx, uint64(max(cfg.AgentMemoryMaxMB, 0))<<20)
 	memoryBreach := func() *proctrack.Breach {
-		if attemptCtx.Err() != nil {
+		// Cancellation and interrupt shutdown take precedence over a breach;
+		// a deadline that passes after the breach does not.
+		if errors.Is(attemptCtx.Err(), context.Canceled) {
 			return nil
 		}
 		return procScope.Breach()
