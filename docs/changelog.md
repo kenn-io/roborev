@@ -143,6 +143,7 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
+- Usage telemetry is off unless you have opted in or set `TELEMETRY_ENABLED=1`.
 - Stop CI reviews from running hooks, MCP servers, and plugins that a pull
     request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
     Cursor, Grok, Copilot, and Kilo now skip project agent configuration in
@@ -558,9 +559,18 @@ reserved `test-value` review type and source-build requirements.
     pane. See the [Reviews workspace](/docs/web-ui/#reviews-workspace).
 - Submit browser searches immediately by pressing Enter, without waiting for the
     preview delay.
+- Anonymous telemetry records review reads, fixes, closes, the first readable
+    review, searches with no results, displayed errors, and PostgreSQL sync
+    outages. Reports omit search queries and error text. Repository and review
+    totals use ranges instead of exact counts. See
+    [telemetry](/docs/configuration/#telemetry) for event details and opt-outs.
 
 **Bug fixes**
 
+- Anonymous telemetry respects `DO_NOT_TRACK=1` and stays off in CI and
+    non-release builds. Clients stop sending reports after the daemon says
+    telemetry is disabled, and the browser excludes that time from session
+    length.
 - Client commands retain their settings when an unrelated daemon configuration
     section is invalid and report the bad section in a warning. Daemon startup
     and configuration validation still reject invalid settings.
@@ -571,6 +581,8 @@ reserved `test-value` review type and source-build requirements.
 - Reviews detect Claude Code, Codex, and Copilot upgrades without requiring a
     daemon restart. This prevents stale capability information from breaking
     Copilot's structured review output.
+- CLI commands, MCP processes, and the terminal interface limit telemetry exit
+    waits to 50 ms when the daemon stalls.
 - New builds include the certificate distrust fix for
     [CVE-2026-111943](https://pkg.go.dev/vuln/GO-2026-6809). Building from
     source requires Go 1.27.3 or later. DOMPurify, Vite, Vitest, Orval, and
@@ -587,14 +599,15 @@ Thanks to everyone who contributed to this release:
     [#1396](https://github.com/kenn-io/roborev/pull/1396), and updated build
     tools and CI checks.
 - [Rod Boev](https://github.com/rodboev) added Muse Code support in
-    [#1382](https://github.com/kenn-io/roborev/pull/1382), recovered managed
-    daemons through systemd, preserved diagram pan and zoom, and improved search
-    submission and CI reliability.
+    [#1382](https://github.com/kenn-io/roborev/pull/1382), improved telemetry
+    and its opt-outs, recovered managed daemons through systemd, preserved
+    diagram pan and zoom, and improved search submission and CI reliability.
 - [Rusty Shackleford](https://github.com/salmonumbrella) added embedding text
     prefixes and suffixes in
     [#1346](https://github.com/kenn-io/roborev/pull/1346), preserved client
     settings when daemon configuration is invalid in
-    [#1386](https://github.com/kenn-io/roborev/pull/1386).
+    [#1386](https://github.com/kenn-io/roborev/pull/1386), and isolated
+    telemetry test settings.
 - [Wes McKinney](https://github.com/wesm) updated Go and browser security
     dependencies in [#1433](https://github.com/kenn-io/roborev/pull/1433),
     restored lint checks, moved CI to GitHub-hosted runners, and documented
@@ -643,6 +656,10 @@ Upgrade all machines sharing a PostgreSQL mirror together.
 - Receive failed-review reminders in ZCode through `roborev agent-hook install`.
     The installer detects ZCode and delivers reminders at session start and
     prompt submission. See [ZCode reminders](/docs/agent-hook/#zcode).
+- Anonymous telemetry now records daily screen use, session duration, and agent
+    activity through MCP tools, hooks, and commands marked `--from-skill`. Agent
+    activity counts separately from human app opens. Existing telemetry opt-outs
+    apply. See [telemetry](/docs/configuration/#telemetry).
 
 **Improvements**
 
@@ -745,8 +762,12 @@ Thanks to everyone who contributed to this release:
     [#1344](https://github.com/kenn-io/roborev/pull/1344), fixed fork PR head
     selection and Windows configuration replacement, improved detached-HEAD
     hooks and subprocess errors, and updated dependencies.
-- [Rod Boev](https://github.com/rodboev) improved Codex failure handling,
-    recovered stuck jobs, and maintained CI and lint checks.
+- [Rod Boev](https://github.com/rodboev) added screen, session, and agent
+    activity telemetry in [#1335](https://github.com/kenn-io/roborev/pull/1335),
+    [#1336](https://github.com/kenn-io/roborev/pull/1336), and
+    [#1337](https://github.com/kenn-io/roborev/pull/1337). Rod also improved
+    Codex failure handling, recovered stuck jobs, and maintained CI and lint
+    checks.
 - [Rusty Shackleford](https://github.com/salmonumbrella) added fix planning in
     [#1293](https://github.com/kenn-io/roborev/pull/1293), goal reviews in
     [#1294](https://github.com/kenn-io/roborev/pull/1294), remote history in
@@ -834,6 +855,13 @@ release-notes shortcut and the removed `roborev log --db` flag.
     unavailable, the command returns an error instead of starting a local
     daemon. You no longer stop the daemon before converting or importing legacy
     reviews. See [Global Flags](/docs/commands/#global-flags).
+- Anonymous telemetry now records opens of the web UI, the TUI, and CLI commands
+    that work through the daemon. The daemon sends at most one `app_opened`
+    event per surface (`web`, `tui`, or `cli`) per UTC day. Git hooks, agent
+    hooks, MCP, and commands run by the bundled agent skills are not counted.
+    Events also carry the install's age in hours when it is known.
+    `ROBOREV_TELEMETRY_ENABLED=0` turns all telemetry off. See
+    [Telemetry](/docs/configuration/#telemetry).
 
 **Bug fixes**
 
@@ -877,7 +905,12 @@ Thanks to everyone who contributed to this release:
     error handling in [#1279](https://github.com/kenn-io/roborev/pull/1279).
 - [Phillip Cloud](https://github.com/cpcloud) added panel `synthesis_reasoning`
     in [#1305](https://github.com/kenn-io/roborev/pull/1305).
-- [Rod Boev](https://github.com/rodboev) fixed Codex structured reviews in
+- [Rod Boev](https://github.com/rodboev) added web, TUI, and CLI open reporting
+    in [#1299](https://github.com/kenn-io/roborev/pull/1299),
+    [#1300](https://github.com/kenn-io/roborev/pull/1300), and
+    [#1302](https://github.com/kenn-io/roborev/pull/1302), tagged telemetry with
+    install age in [#1283](https://github.com/kenn-io/roborev/pull/1283), and
+    fixed Codex structured reviews in
     [#1287](https://github.com/kenn-io/roborev/pull/1287).
 - [Rusty Shackleford](https://github.com/salmonumbrella) added budget routing in
     [#1289](https://github.com/kenn-io/roborev/pull/1289), daemon authentication
@@ -2234,6 +2267,12 @@ ______________________________________________________________________
     retries genuine member failures up to a bounded cap, and rechecks PR open
     state, HEAD SHA, and repo identity before retrying or posting. See
     [Safe CI Retries](/docs/integrations/github/#safe-ci-retries).
+- Anonymous daemon telemetry. roborev sends limited anonymous daemon lifecycle
+    telemetry on startup and once every 24 hours while running, with repo and
+    review counts plus high-level feature flags. It does not send repo names,
+    paths, remotes, prompts, review output, provider tokens, usernames, or IP
+    geolocation. Disable with `ROBOREV_TELEMETRY_ENABLED=0` or
+    `TELEMETRY_ENABLED=0`. See [Telemetry](/docs/configuration/#telemetry).
 - DEB and RPM release artifacts. Linux releases now include `.deb` and `.rpm`
     packages for `amd64` and `arm64`, including user-level systemd units. See
     [Linux Packages](/docs/installation/#linux-packages-deb-and-rpm).
@@ -2279,10 +2318,10 @@ ______________________________________________________________________
 
 **Acknowledgements**
 
-- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for kit
-    daemon lifecycle and git helper adoption, hook binary resolution fixes, Pi
-    classifier schema support, Copilot streaming handling, and the OpenCode
-    install source fix.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for
+    anonymous daemon telemetry, kit daemon lifecycle and git helper adoption,
+    hook binary resolution fixes, Pi classifier schema support, Copilot
+    streaming handling, and the OpenCode install source fix.
 - Thanks to [Phillip Cloud](https://github.com/cpcloud) for Nix vendorHash
     handling on Dependabot PRs, safer review retry logging, classifier log
     retention, configurable cost lookup, CI poller test isolation, Claude

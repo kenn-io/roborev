@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-18
+last_edited: 2026-11-19
 title: Command Cheat Sheet
 description: Quick reference for all roborev commands and flags
 ---
@@ -173,6 +173,7 @@ output.
 | `ROBOREV_DATA_DIR` | Local config, runtime, database and logs; default `~/.roborev`. |
 | `ROBOREV_COLOR_MODE` | Color theme: `auto`, `dark`, `light`, or `none`. |
 | `NO_COLOR` | Disable color output. |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to turn off usage telemetry. |
 | `EDITOR` | Editor opened by `comment` when no message is supplied. |
 | `GH_TOKEN`, `GITHUB_TOKEN` | GitHub authentication for CI commands. |
 | `GITLAB_TOKEN`, `GL_TOKEN` | GitLab authentication for CI commands. |

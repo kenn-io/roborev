@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-18
+last_edited: 2026-11-19
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -2048,8 +2048,21 @@ systemctl --user enable --now roborev
 |----------|-------------|
 | `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
 | `ROBOREV_COLOR_MODE` | Color theme: `auto` (default), `dark`, `light`, `none`. See [Color Mode](#color-mode) |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to turn off usage telemetry. See [Usage Reporting](#telemetry) |
+| `TELEMETRY_ENABLED` | Set to `1` to turn on usage telemetry, or `0` to turn it off |
+| `DO_NOT_TRACK` | Set to `1` to turn off usage telemetry |
 | `VOYAGE_API_KEY` | Example credential source for Voyage when named by `search.embeddings.api_key = { env = "VOYAGE_API_KEY" }` |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
+
+### Usage Reporting {#telemetry}
+
+roborev can send general, anonymous usage telemetry. Usage telemetry is off
+unless you have opted in or set `TELEMETRY_ENABLED=1`. Any of these turns it
+off, even after you opted in: `ROBOREV_TELEMETRY_ENABLED=0`,
+`TELEMETRY_ENABLED=0`, `DO_NOT_TRACK=1`, or `CI` set to any value. The daemon
+reads these from its own environment when it starts, so set them where the
+daemon starts, such as its launchd or systemd service, and restart it.
+Development builds never send it.
 
 ### Color Mode
 
