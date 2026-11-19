@@ -241,16 +241,9 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.StatusCode)
 
 	server.workerPool.wg.Done()
-	var stopErr error
-	// Wall-clock wait: real browser listener and worker shutdown.
-	require.Eventually(t, func() bool {
-		select {
-		case stopErr = <-stopDone:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, time.Millisecond)
+	// Wait for graceful HTTP teardown too. net/http may wait for connections
+	// that have been accepted but have not sent request headers yet.
+	stopErr := <-stopDone
 	require.NoError(t, stopErr)
 	// Wall-clock wait: real browser listener and worker shutdown.
 	assert.Eventually(t, func() bool {
