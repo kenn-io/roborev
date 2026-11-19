@@ -39,6 +39,7 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 				assert.Equal("cursor-1", r.URL.Query().Get("cursor"))
 				writeExportTestPage(t, w, r.URL.Query().Get("profile"), false, new("cursor-2"), []map[string]any{
 					{"review_id": testUUID("review-2"), "source_machine_id": testUUID("machine-b"), "exported_by_machine_id": testUUID("machine-b"), "content": nil},
+					{"review_id": testUUID("review-3"), "content": nil},
 				})
 			default:
 				http.Error(w, "too many calls", http.StatusInternalServerError)
@@ -69,39 +70,16 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 	assert.False(got.Truncated)
 	require.NotNil(t, got.NextCursor)
 	assert.Equal("cursor-2", *got.NextCursor)
-	require.Len(t, got.Reviews, 2)
+	require.Len(t, got.Reviews, 3)
 	assert.Equal(testUUIDText("review-1"), got.Reviews[0]["review_id"])
 	assert.Equal(testUUIDText("review-2"), got.Reviews[1]["review_id"])
 	assert.Equal(testUUIDText("machine-a"), got.Reviews[0]["source_machine_id"])
 	assert.Equal(testUUIDText("machine-b"), got.Reviews[1]["source_machine_id"])
 	assert.Equal(testUUIDText("machine-b"), got.Reviews[0]["exported_by_machine_id"])
 	assert.Equal(testUUIDText("machine-b"), got.Reviews[1]["exported_by_machine_id"])
-}
-
-func TestExportReviewsCmdAcceptsOlderDaemon(t *testing.T) {
-	NewMockDaemon(t, MockRefineHooks{
-		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
-			if r.URL.Path != "/api/export/reviews" {
-				return false
-			}
-			writeExportTestPage(t, w, "content", false, nil, []map[string]any{
-				{"review_id": testUUID("review-1")},
-				{"review_id": testUUID("review-2")},
-			})
-			return true
-		},
-	})
-
-	output := runExportCmd(t, "reviews")
-	var got struct {
-		Reviews []map[string]any `json:"reviews"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(output), &got))
-	require.Len(t, got.Reviews, 2)
-	for _, review := range got.Reviews {
-		assert.NotContains(t, review, "source_machine_id")
-		assert.NotContains(t, review, "exported_by_machine_id")
-	}
+	assert.Equal(testUUIDText("review-3"), got.Reviews[2]["review_id"])
+	assert.NotContains(got.Reviews[2], "source_machine_id")
+	assert.NotContains(got.Reviews[2], "exported_by_machine_id")
 }
 
 func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
