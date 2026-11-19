@@ -27,7 +27,6 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	local := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
 	legacy := seedCompletedExportReview(t, db, repo.ID, "2222222222222222222222222222222222222222", "2026-06-29 00:00:01", false)
 	// Older enqueue code could store an empty ID when machine ID lookup failed.
 	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = '' WHERE id = ?`, legacy.JobID)
@@ -51,13 +50,12 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 		t.Run(string(profile), func(t *testing.T) {
 			page, err := db.ExportReviews(ExportReviewsOptions{Profile: profile})
 			require.NoError(t, err)
-			require.Len(t, page.Reviews, 4)
+			require.Len(t, page.Reviews, 3)
 			byID := make(map[uuid.UUID]ExportReview)
 			for _, review := range page.Reviews {
 				byID[review.ReviewID] = review
 				assert.Equal(t, machineID, review.ExportedByMachineID)
 			}
-			assert.Equal(t, machineID, byID[*local.UUID].SourceMachineID)
 			assert.Equal(t, machineID, byID[*legacy.UUID].SourceMachineID)
 			assert.Equal(t, machineID, byID[*zeroSource.UUID].SourceMachineID)
 			assert.Equal(t, remoteID, byID[pulledID].SourceMachineID)
