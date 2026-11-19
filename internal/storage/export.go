@@ -440,7 +440,7 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 	}
 
 	query := `
-		SELECT rv.uuid, j.source_machine_id, j.uuid, rv.verdict_bool, rv.created_at,
+		SELECT rv.uuid, NULLIF(j.source_machine_id, ''), j.uuid, rv.verdict_bool, rv.created_at,
 		       COALESCE(rv.closed, 0), rv.updated_at, ` + outputExpr + `,
 		       j.status, j.enqueued_at, j.started_at, j.finished_at, j.agent, j.model,
 		       j.git_ref, COALESCE(j.job_type, 'review'), j.branch, j.ci_base_branch,
