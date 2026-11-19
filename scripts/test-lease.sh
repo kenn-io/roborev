@@ -9,19 +9,23 @@
 # Missing or invalid labels/files and held locks preserve resources. A scheduled
 # cleaner uses the lease to reclaim run containers and project networks after unlock.
 set -eu
-if [ -n "${TEST_SERVICE_LEASE:-}" ]; then
-    shift
-    exec "$@"
+if [ -z "${HOME:-}" ]; then
+    echo 'HOME must be set to create a test service lease' >&2
+    exit 2
 fi
 if ! command -v python3 >/dev/null 2>&1; then
     echo 'python3 is required; use make postgres-up for a manual database' >&2
     exit 2
 fi
 exec python3 - "$@" <<'PY'
-import fcntl
 import os
 import sys
 import time
+
+try:
+    import fcntl
+except ImportError:
+    sys.exit("test service leases require a platform with Python fcntl support")
 
 name, *command = sys.argv[1:]
 lease = f"{name}-{int(time.time())}-{os.getpid()}"
