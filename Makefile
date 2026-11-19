@@ -290,6 +290,7 @@ test-postgres:
 .PHONY: test-postgres-run
 test-postgres-run:
 	@set -e; \
+		if [ -z "$$TEST_SERVICE_LEASE" ]; then echo 'TEST_SERVICE_LEASE is required; use make test-postgres' >&2; exit 1; fi; \
 		if [ -d "$(GO_TEST_REPORT_DIR)" ]; then find "$(GO_TEST_REPORT_DIR)" -mindepth 1 -maxdepth 1 -type d -name 'roborev-[0-9]*-[0-9]*' -mtime +7 -exec sh -c 'for dir do find "$$dir" -maxdepth 1 -type f \( -name postgres-storage.json -o -name postgres-storage-reruns.txt -o -name postgres-daemon.json -o -name postgres-daemon-reruns.txt \) -delete; rmdir "$$dir" 2>/dev/null || true; done' sh {} +; fi; \
 		export TEST_PG_PUBLISH='127.0.0.1::5432'; \
 		docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres; \

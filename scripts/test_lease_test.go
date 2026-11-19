@@ -512,3 +512,17 @@ while True: time.sleep(1)`)
 		})
 	}
 }
+
+func TestPostgresRunRequiresLease(t *testing.T) {
+	dir := t.TempDir()
+	dockerLog := filepath.Join(dir, "docker-called")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0700))
+	cmd := exec.CommandContext(t.Context(), "make", "test-postgres-run", "TEST_SERVICE_LEASE=")
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+dockerLog, "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"))
+	out, err := cmd.CombinedOutput()
+	require.Error(t, err, string(out))
+	assert.Contains(t, string(out), "TEST_SERVICE_LEASE is required")
+	_, err = os.Stat(dockerLog)
+	assert.True(t, os.IsNotExist(err), "docker ran without a lease")
+}
