@@ -171,3 +171,36 @@ func TestCICheckBreachOverridesReturnedVerdicts(t *testing.T) {
 	doc.Check = &structuredreview.Check{Status: structuredreview.CheckFailed}
 	assert.Equal(t, doc, checked)
 }
+
+// A synthesis agent that returns a document after its processes breached used
+// to leave the job running: the check saw the canceled attempt and skipped
+// completion, and no other path recorded an outcome.
+func TestSynthesisBreachBeforeCheckFailsJob(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.AgentMemoryMaxMB = 64
+	tc.reconfigurePool(cfg)
+	const synth = "memory-hog-synthesis-result"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: synth, ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+		_ = runMemoryHog(ctx)
+		<-ctx.Done()
+		return `{"schema_version":3,"summary":"combined","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]}]}`, nil
+	}})
+	tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, _ structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
+		return structuredreview.Document{}, ctx.Err()
+	}
+	run, members, _ := enqueuePanelRun(t, tc, "memory-check-panel", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
+	setSynthesisAgent(t, tc, run, synth)
+	encoded, err := (synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high"}}).encode()
+	require.NoError(t, err)
+	_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", encoded, run)
+	require.NoError(t, err)
+	completeMember(t, tc, members[0].ID, "test", "first finding")
+	completeMember(t, tc, members[1].ID, "test", "second finding")
+	job := releaseAndClaimSynthesis(t, tc, run)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	failed := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Contains(t, failed.Error, "over agent_memory_max_mb (64 MiB)")
+}

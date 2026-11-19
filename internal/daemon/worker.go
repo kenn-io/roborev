@@ -1113,6 +1113,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		if err := procScope.Close(); err != nil {
 			log.Printf("[%s] Job %d: %v", workerID, job.ID, err)
 		}
+		// A path that returned without recording an outcome must not leave a
+		// breached attempt running. A recorded outcome makes this a no-op.
+		if b := memoryBreach(); b != nil {
+			wp.runAttemptTransition(workerID, job, func() {
+				wp.failNonRetryableJobLocked(workerID, job, job.Agent, b.Error())
+			})
+		}
 	}()
 	if ctx.Err() != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
