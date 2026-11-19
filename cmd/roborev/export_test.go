@@ -78,6 +78,38 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 	assert.Equal(testUUIDText("machine-b"), got.Reviews[1]["exported_by_machine_id"])
 }
 
+func TestExportReviewsCmdRejectsMissingExporter(t *testing.T) {
+	var calls int
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/reviews" {
+				return false
+			}
+			calls++
+			if calls == 1 {
+				writeExportTestPage(t, w, "content", true, new("cursor-1"), []map[string]any{
+					{"review_id": testUUID("review-1")},
+				})
+			} else {
+				_, err := w.Write([]byte(`{"schema_version":2,"truncated":false,"reviews":[{"review_id":"00000000-0000-4000-8000-000000000002","exported_by_machine_id":"00000000-0000-4000-8000-000000000001"},{"review_id":"00000000-0000-4000-8000-000000000003"}]}`))
+				require.NoError(t, err)
+			}
+			return true
+		},
+	})
+
+	var out bytes.Buffer
+	cmd := exportCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"reviews"})
+	err := cmd.Execute()
+	require.ErrorContains(t, err, "daemon returned a review without exported_by_machine_id")
+	assert.Empty(t, out.String())
+	assert.Equal(t, 2, calls)
+}
+
 func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
 	assert := assert.New(t)
 	var calls int
@@ -369,6 +401,11 @@ func runExportCmd(t *testing.T, args ...string) string {
 
 func writeExportTestPage(t *testing.T, w http.ResponseWriter, profile string, truncated bool, nextCursor *string, reviews []map[string]any) {
 	t.Helper()
+	for _, review := range reviews {
+		if _, ok := review["exported_by_machine_id"]; !ok {
+			review["exported_by_machine_id"] = testUUID("export-machine")
+		}
+	}
 	if profile == "" {
 		profile = "content"
 	}
