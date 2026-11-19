@@ -295,7 +295,7 @@ test-postgres-run:
 				echo 'cleanup failed; scheduled cleanup will retry' >&2; \
 				if [ "$$status" -eq 0 ]; then status=1; fi; \
 			fi; \
-			if [ "$$status" -eq 0 ]; then \
+			if [ "$$status" -eq 0 ] && [ ! -s "$(GO_TEST_REPORT_DIR)/$$TEST_SERVICE_LEASE/postgres-storage-reruns.txt" ] && [ ! -s "$(GO_TEST_REPORT_DIR)/$$TEST_SERVICE_LEASE/postgres-daemon-reruns.txt" ]; then \
 				for name in postgres-storage.json postgres-storage-reruns.txt postgres-daemon.json postgres-daemon-reruns.txt; do \
 					file="$(GO_TEST_REPORT_DIR)/$$TEST_SERVICE_LEASE/$$name"; \
 					if [ -f "$$file" ]; then rm "$$file"; fi; \

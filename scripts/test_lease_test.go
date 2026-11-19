@@ -114,12 +114,14 @@ func TestPostgresLeaseCleanupAndReports(t *testing.T) {
 	root, err := filepath.Abs("..")
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name, goExit, downExit string
-		wantError, wantReport  bool
+		name, goExit, downExit, rerun string
+		wantError, wantReport         bool
 	}{
-		{"success", "0", "0", false, false},
-		{"cleanup failure", "0", "1", true, true},
-		{"test failure", "17", "0", true, true},
+		{"success", "0", "0", "", false, false},
+		{"storage retry succeeds", "0", "0", "postgres-storage-reruns.txt", false, true},
+		{"daemon retry succeeds", "0", "0", "postgres-daemon-reruns.txt", false, true},
+		{"cleanup failure", "0", "1", "", true, true},
+		{"test failure", "17", "0", "", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -133,7 +135,10 @@ esac
 `
 			goTool := `#!/bin/sh
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--jsonfile" ]; then shift; printf report > "$1"; break; fi
+  case "$1" in
+    --jsonfile) shift; printf report > "$1" ;;
+    --rerun-fails-report) shift; : > "$1"; if [ "${1##*/}" = "$RERUN" ]; then printf flaky > "$1"; fi ;;
+  esac
   shift
 done
 exit "$GO_EXIT"
@@ -142,7 +147,7 @@ exit "$GO_EXIT"
 			require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0700))
 			cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
 			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"), "GO_EXIT="+tc.goExit, "DOWN_EXIT="+tc.downExit)
+			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"), "GO_EXIT="+tc.goExit, "DOWN_EXIT="+tc.downExit, "RERUN="+tc.rerun)
 			out, err := cmd.CombinedOutput()
 			if tc.wantError {
 				require.Error(t, err, string(out))
@@ -157,6 +162,15 @@ exit "$GO_EXIT"
 				assert.NoError(t, err)
 			} else {
 				assert.True(t, os.IsNotExist(err))
+			}
+			if tc.rerun != "" {
+				for _, name := range []string{"postgres-storage.json", "postgres-storage-reruns.txt", "postgres-daemon.json", "postgres-daemon-reruns.txt"} {
+					data, err := os.ReadFile(filepath.Join(dir, "reports", entries[0].Name(), name))
+					require.NoError(t, err)
+					if name == tc.rerun {
+						assert.Equal(t, "flaky", string(data))
+					}
+				}
 			}
 		})
 	}
