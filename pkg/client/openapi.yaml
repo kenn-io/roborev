@@ -2041,6 +2041,10 @@ components:
           items:
             $ref: "#/components/schemas/ExperimentAssignment"
           type: array
+        exported_by_machine_id:
+          description: The machine running this export.
+          format: uuid
+          type: string
         model:
           type:
             - string
@@ -2066,6 +2070,12 @@ components:
         review_id:
           format: uuid
           type: string
+        source_machine_id:
+          description: The roborev machine that ran the review. Another machine's ID for a review pulled through sync; null when unknown.
+          format: uuid
+          type:
+            - string
+            - "null"
         status:
           type: string
         subagents:
@@ -2080,6 +2090,8 @@ components:
           type: string
       required:
         - review_id
+        - source_machine_id
+        - exported_by_machine_id
         - status
         - verdict
         - created_at

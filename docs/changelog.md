@@ -102,6 +102,7 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
+- Include the source and exporting machine IDs in review exports.
 - `roborev status` reports the `cost` component as unhealthy when the daemon has
     no usage source, and the daemon logs a warning at startup. Install
     `agentsview` or set `[agentsview] url` or `[cost] endpoint` to get complete

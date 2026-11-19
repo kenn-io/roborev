@@ -22,6 +22,61 @@ import (
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
+func TestExportReviewsReportsSourceMachine(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	local := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	remoteID := testUUID("machine-a")
+	now := time.Now().UTC().Truncate(time.Second)
+	job := PulledJob{UUID: testUUID("pulled-job"), RepoIdentity: repo.RootPath, GitRef: "HEAD", Agent: "test", JobType: JobTypeReview, Status: string(JobStatusDone), SourceMachineID: remoteID, EnqueuedAt: now, UpdatedAt: now}
+	require.NoError(t, db.UpsertPulledJob(job, repo.ID, nil))
+	pulledID := testUUID("pulled-review")
+	require.NoError(t, db.UpsertPulledReview(PulledReview{
+		UUID: pulledID, JobUUID: job.UUID, JobEnqueuedAt: now, JobSourceMachineID: remoteID,
+		Agent: "test", StructuredOutput: reviewFixtureJSON("No issues found."), VerdictBool: new(true),
+		UpdatedByMachineID: machineID, CreatedAt: now, UpdatedAt: now,
+	}))
+	for _, profile := range []ExportProfile{ExportProfileContent, ExportProfileMetadata} {
+		t.Run(string(profile), func(t *testing.T) {
+			page, err := db.ExportReviews(ExportReviewsOptions{Profile: profile})
+			require.NoError(t, err)
+			require.Len(t, page.Reviews, 2)
+			byID := make(map[uuid.UUID]ExportReview)
+			for _, review := range page.Reviews {
+				byID[review.ReviewID] = review
+				assert.Equal(t, machineID, review.ExportedByMachineID)
+			}
+			require.NotNil(t, byID[*local.UUID].SourceMachineID)
+			assert.Equal(t, machineID, *byID[*local.UUID].SourceMachineID)
+			require.NotNil(t, byID[pulledID].SourceMachineID)
+			assert.Equal(t, remoteID, *byID[pulledID].SourceMachineID)
+		})
+	}
+}
+
+func TestExportReviewsPreservesUnknownSourceMachine(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	review := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = NULL WHERE id = ?`, review.JobID)
+	require.NoError(t, err)
+	page, err := db.ExportReviews(ExportReviewsOptions{})
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	encoded, err := json.Marshal(page.Reviews[0])
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &got))
+	assert.Contains(t, got, "source_machine_id")
+	assert.Nil(t, got["source_machine_id"])
+}
+
 func TestExportReviewsPagesUseCompletedIndex(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

@@ -67,6 +67,8 @@ type ExportReviewsPage struct {
 
 type ExportReview struct {
 	ReviewID            uuid.UUID              `json:"review_id"`
+	SourceMachineID     *uuid.UUID             `json:"source_machine_id" nullable:"true" doc:"The roborev machine that ran the review. Another machine's ID for a review pulled through sync; null when unknown."`
+	ExportedByMachineID uuid.UUID              `json:"exported_by_machine_id" doc:"The machine running this export."`
 	Status              string                 `json:"status"`
 	Verdict             string                 `json:"verdict" doc:"pass, fail, or unknown when a legacy review has no recorded verdict."`
 	CreatedAt           string                 `json:"created_at"`
@@ -277,6 +279,7 @@ type exportCursor struct {
 
 type exportReviewRow struct {
 	reviewID            uuid.UUID
+	sourceMachineID     sql.Null[uuid.UUID]
 	jobUUID             uuid.UUID
 	verdictBool         sql.NullInt64
 	reviewCreated       string
@@ -325,6 +328,10 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 	if err != nil {
 		return ExportReviewsPage{}, err
 	}
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return ExportReviewsPage{}, err
+	}
 
 	rows, err := db.queryExportReviewRows(opts, cursor)
 	if err != nil {
@@ -343,7 +350,7 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 			page.Truncated = true
 			break
 		}
-		review := row.toExportReview(opts.Profile)
+		review := row.toExportReview(opts.Profile, machineID)
 		review.Experiments, err = db.GetExperimentAssignmentsForJobUUID(row.jobUUID)
 		if err != nil {
 			return ExportReviewsPage{}, err
@@ -433,7 +440,7 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 	}
 
 	query := `
-		SELECT rv.uuid, j.uuid, rv.verdict_bool, rv.created_at,
+		SELECT rv.uuid, j.source_machine_id, j.uuid, rv.verdict_bool, rv.created_at,
 		       COALESCE(rv.closed, 0), rv.updated_at, ` + outputExpr + `,
 		       j.status, j.enqueued_at, j.started_at, j.finished_at, j.agent, j.model,
 		       j.git_ref, COALESCE(j.job_type, 'review'), j.branch, j.ci_base_branch,
@@ -454,6 +461,7 @@ func scanExportReviewRow(rows *sql.Rows) (exportReviewRow, error) {
 	var row exportReviewRow
 	err := rows.Scan(
 		&row.reviewID,
+		&row.sourceMachineID,
 		&row.jobUUID,
 		&row.verdictBool,
 		&row.reviewCreated,
@@ -493,7 +501,7 @@ func scanExportReviewRow(rows *sql.Rows) (exportReviewRow, error) {
 	return row, err
 }
 
-func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
+func (row exportReviewRow) toExportReview(profile ExportProfile, machineID uuid.UUID) ExportReview {
 	completed := parseSQLiteTime(row.reviewCreated)
 	repo := row.project
 	if row.repoIdentity.Valid && strings.TrimSpace(row.repoIdentity.String) != "" {
@@ -501,6 +509,7 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 	}
 	review := ExportReview{
 		ReviewID:            row.reviewID,
+		ExportedByMachineID: machineID,
 		Status:              row.status,
 		Verdict:             exportVerdict(row.verdictBool),
 		CreatedAt:           formatExportTime(parseSQLiteTime(row.enqueuedAt)),
@@ -519,6 +528,9 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 		Subagents:           []ExportSubagent{},
 		Experiments:         []ExperimentAssignment{},
 		ResumeSourceJobUUID: nil,
+	}
+	if row.sourceMachineID.Valid {
+		review.SourceMachineID = &row.sourceMachineID.V
 	}
 	if row.resumeSourceJobUUID.Valid {
 		review.ResumeSourceJobUUID = &row.resumeSourceJobUUID.V

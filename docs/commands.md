@@ -507,6 +507,13 @@ roborev export reviews --updated-since 2026-07-01T00:00:00Z
 | `--limit <n>` | Maximum top-level reviews to emit |
 
 `roborev export reviews` emits one JSON document containing completed reviews.
+Both profiles include these fields on each top-level review:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `source_machine_id` | UUID or `null` | Machine that ran the review. It differs from `exported_by_machine_id` when sync pulled the review from another machine, and is `null` when the original machine is unknown |
+| `exported_by_machine_id` | UUID | Machine running the export |
+
 roborev stores each review as a JSON review document. The default `content`
 profile exports that document in two fields, on every top-level review and on
 every review nested under `subagents`:

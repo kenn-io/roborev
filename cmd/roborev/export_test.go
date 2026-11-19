@@ -32,13 +32,13 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 				assert.Equal("2026-06-29", r.URL.Query().Get("since"))
 				assert.Empty(r.URL.Query().Get("cursor"))
 				writeExportTestPage(t, w, r.URL.Query().Get("profile"), true, new("cursor-1"), []map[string]any{
-					{"review_id": testUUID("review-1"), "content": nil},
+					{"review_id": testUUID("review-1"), "source_machine_id": testUUID("machine-a"), "exported_by_machine_id": testUUID("machine-b"), "content": nil},
 				})
 			case 2:
 				assert.Empty(r.URL.Query().Get("since"))
 				assert.Equal("cursor-1", r.URL.Query().Get("cursor"))
 				writeExportTestPage(t, w, r.URL.Query().Get("profile"), false, new("cursor-2"), []map[string]any{
-					{"review_id": testUUID("review-2"), "content": nil},
+					{"review_id": testUUID("review-2"), "source_machine_id": testUUID("machine-b"), "exported_by_machine_id": testUUID("machine-b"), "content": nil},
 				})
 			default:
 				http.Error(w, "too many calls", http.StatusInternalServerError)
@@ -72,6 +72,10 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 	require.Len(t, got.Reviews, 2)
 	assert.Equal(testUUIDText("review-1"), got.Reviews[0]["review_id"])
 	assert.Equal(testUUIDText("review-2"), got.Reviews[1]["review_id"])
+	assert.Equal(testUUIDText("machine-a"), got.Reviews[0]["source_machine_id"])
+	assert.Equal(testUUIDText("machine-b"), got.Reviews[1]["source_machine_id"])
+	assert.Equal(testUUIDText("machine-b"), got.Reviews[0]["exported_by_machine_id"])
+	assert.Equal(testUUIDText("machine-b"), got.Reviews[1]["exported_by_machine_id"])
 }
 
 func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
