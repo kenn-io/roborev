@@ -91,7 +91,7 @@ func TestExportReviewsCmdRejectsMissingExporter(t *testing.T) {
 					{"review_id": testUUID("review-1")},
 				})
 			} else {
-				_, err := w.Write([]byte(`{"schema_version":2,"truncated":false,"reviews":[{"review_id":"00000000-0000-4000-8000-000000000002","exported_by_machine_id":"00000000-0000-4000-8000-000000000001"},{"review_id":"00000000-0000-4000-8000-000000000003"}]}`))
+				_, err := w.Write([]byte(`{"schema_version":2,"truncated":false,"reviews":[{"review_id":"00000000-0000-4000-8000-000000000002"},{"review_id":"00000000-0000-4000-8000-000000000003"}]}`))
 				require.NoError(t, err)
 			}
 			return true
