@@ -1891,18 +1891,24 @@ type ExportReview struct {
 	CreatedAt   string           `json:"created_at" validate:"required"`
 
 	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
-	Document            ExportReview_Document  `json:"document"`
-	DurationMs          *int64                 `json:"duration_ms"`
-	Experiments         []ExperimentAssignment `json:"experiments" validate:"required"`
-	Model               *string                `json:"model" validate:"required"`
-	PrNumber            *int64                 `json:"pr_number"`
-	PrURL               *string                `json:"pr_url" validate:"required"`
-	Project             string                 `json:"project" validate:"required"`
-	Repo                string                 `json:"repo" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" validate:"required"`
-	ReviewID            uuid.UUID              `json:"review_id" validate:"required"`
-	Status              string                 `json:"status" validate:"required"`
-	Subagents           []ExportSubagent       `json:"subagents" validate:"required"`
+	Document    ExportReview_Document  `json:"document"`
+	DurationMs  *int64                 `json:"duration_ms"`
+	Experiments []ExperimentAssignment `json:"experiments" validate:"required"`
+
+	// ExportedByMachineID The machine running this export.
+	ExportedByMachineID *uuid.UUID `json:"exported_by_machine_id,omitempty"`
+	Model               *string    `json:"model" validate:"required"`
+	PrNumber            *int64     `json:"pr_number"`
+	PrURL               *string    `json:"pr_url" validate:"required"`
+	Project             string     `json:"project" validate:"required"`
+	Repo                string     `json:"repo" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
+	ReviewID            uuid.UUID  `json:"review_id" validate:"required"`
+
+	// SourceMachineID The roborev machine that ran the review. Another machine's ID for a review pulled through sync.
+	SourceMachineID *uuid.UUID       `json:"source_machine_id,omitempty"`
+	Status          string           `json:"status" validate:"required"`
+	Subagents       []ExportSubagent `json:"subagents" validate:"required"`
 
 	// UpdatedAt RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time.
 	UpdatedAt string `json:"updated_at" validate:"required"`
@@ -1957,6 +1963,13 @@ func (e ExportReview) Validate() error {
 			}
 		}
 	}
+	if e.ExportedByMachineID != nil {
+		if v, ok := any(e.ExportedByMachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ExportedByMachineID", err)
+			}
+		}
+	}
 	if e.Model != nil {
 		if err := typesValidator.Var(e.Model, "required"); err != nil {
 			errors = errors.Append("Model", err)
@@ -1983,6 +1996,13 @@ func (e ExportReview) Validate() error {
 	if v, ok := any(e.ReviewID).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ReviewID", err)
+		}
+	}
+	if e.SourceMachineID != nil {
+		if v, ok := any(e.SourceMachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SourceMachineID", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(e.Status, "required"); err != nil {

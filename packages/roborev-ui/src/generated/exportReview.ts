@@ -25,6 +25,8 @@ export interface ExportReview {
   /** @nullable */
   duration_ms: number | null;
   experiments: ExperimentAssignment[];
+  /** The machine running this export. */
+  exported_by_machine_id?: string;
   /** @nullable */
   model: string | null;
   /** @nullable */
@@ -36,6 +38,8 @@ export interface ExportReview {
   /** @nullable */
   resume_source_job_uuid: string | null;
   review_id: string;
+  /** The roborev machine that ran the review. Another machine's ID for a review pulled through sync. */
+  source_machine_id?: string;
   status: string;
   subagents: ExportSubagent[];
   /** RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time. */
