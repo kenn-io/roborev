@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -777,7 +778,7 @@ func TestLocalAgentHookSurfacesDiagnosisOnStderr(t *testing.T) {
 	assert.Equal(t, "{}", stdout.String())
 }
 
-func TestZcodeUserPromptSubmitDropsDefaultInstruction(t *testing.T) {
+func TestZcodeInjectedEventsClearBuiltinInstructionsForOlderDaemons(t *testing.T) {
 	var captured agenthook.Request
 	oldPost := postAgentHook
 	postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
@@ -786,29 +787,69 @@ func TestZcodeUserPromptSubmitDropsDefaultInstruction(t *testing.T) {
 	}
 	t.Cleanup(func() { postAgentHook = oldPost })
 	opts := agenthook.DefaultOptions()
+	instructions := []struct {
+		name     string
+		value    string
+		injected string
+	}{
+		{name: "current built-in", value: agenthook.DefaultInstruction},
+		{name: "whitespace-wrapped built-in", value: "\n" + agenthook.DefaultInstruction + "\n"},
+		{name: "historical built-in", value: "Invoke the $roborev-fix skill now."},
+		{name: "custom", value: "Custom injected instruction.", injected: "Custom injected instruction."},
+	}
+	for _, event := range []string{"UserPromptSubmit", "SessionStart"} {
+		for _, tc := range instructions {
+			t.Run(event+"/"+tc.name, func(t *testing.T) {
+				opts.Instruction = tc.value
+				err := runLocalAgentHook(agenthook.AgentZcode, opts,
+					strings.NewReader(fmt.Sprintf(`{"session_id":"s1","hook_event_name":%q,"cwd":"/repo"}`, event)),
+					&bytes.Buffer{}, io.Discard)
+				require.NoError(t, err)
+				assert.Equal(t, tc.injected, captured.Instruction)
+			})
+		}
+	}
 
-	err := runLocalAgentHook(
-		agenthook.AgentZcode, opts,
-		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
-		&bytes.Buffer{}, io.Discard,
-	)
-	require.NoError(t, err)
-	assert.Empty(t, captured.Instruction, "default-filled instruction must not override injected guidance")
+	for _, tc := range instructions {
+		t.Run("Stop/"+tc.name, func(t *testing.T) {
+			opts.Instruction = tc.value
+			err := runLocalAgentHook(agenthook.AgentZcode, opts,
+				strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop","cwd":"/repo"}`),
+				&bytes.Buffer{}, io.Discard)
+			require.NoError(t, err)
+			assert.Equal(t, tc.value, captured.Instruction)
+		})
+	}
+}
 
-	opts.Instruction = "Custom injected instruction."
-	err = runLocalAgentHook(
-		agenthook.AgentZcode, opts,
-		strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
-		&bytes.Buffer{}, io.Discard,
-	)
-	require.NoError(t, err)
-	assert.Equal(t, "Custom injected instruction.", captured.Instruction)
+func TestAgentHookRunHelpDescribesBuiltinInstruction(t *testing.T) {
+	cmd := agentHookRunCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--help"})
 
-	err = runLocalAgentHook(
-		agenthook.AgentZcode, opts,
-		strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop","cwd":"/repo"}`),
-		&bytes.Buffer{}, io.Discard,
-	)
-	require.NoError(t, err)
-	assert.Equal(t, "Custom injected instruction.", captured.Instruction)
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), `default "built-in triage flow"`)
+	assert.NotContains(t, out.String(), "digraph roborev_triage")
+}
+
+func TestPostAgentHookFixReasonAfterFence(t *testing.T) {
+	id := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	reason := "Reminder.\n\n" + agenthook.DefaultInstruction + "\n\n5 Stop hooks reached. Review job IDs: 7."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewEncoder(w).Encode(agenthook.Response{Triggered: true, FixSessionID: new(id), Reason: reason}))
+	}))
+	t.Cleanup(server.Close)
+	for _, mcp := range []bool{false, true} {
+		response, err := postAgentHookRequest(t.Context(), server.URL, agenthook.Request{MCP: mcp})
+		require.NoError(t, err)
+		assert.Contains(t, response.Reason, "\n~~~\n\n5 Stop hooks reached. Review job IDs: 7.\n\n")
+		assert.Less(t, strings.Index(response.Reason, "Review job IDs:"), strings.Index(response.Reason, "After "))
+		if mcp {
+			assert.Contains(t, response.Reason, "roborev_complete_fix")
+		} else {
+			assert.Contains(t, response.Reason, "agent-hook fix-done")
+		}
+	}
 }
