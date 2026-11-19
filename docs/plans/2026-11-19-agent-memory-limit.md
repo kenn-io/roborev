@@ -183,16 +183,18 @@ All steps that change which groups are owned run under one tracker lock.
    own stop operation for a sandboxed root (below). The zombie root still
    reserves the number.
 5. **Hand off.** Still under the lock, the watcher removes the group from the
-   owned set, so neither the sampler nor cleanup can signal it again. It then
-   releases the lock and calls `cmd.Wait()`, which reaps the root and returns its
+   owned set, so neither the sampler nor cleanup can signal it again.
+6. **Reap.** The launch helper returns a handle. Its `Wait` blocks until the
+   handoff, then calls `cmd.Wait()`, which reaps the root and returns its
    original exit status.
 
-The watcher is the only code that reaps a tracked root. The launch helper
-returns a handle whose `Wait` joins the watcher and returns the exit status the
-watcher collected. Attempt cleanup also joins the watcher instead of reaping on
-its own. Adapters keep the `*exec.Cmd` for pipes and environment but never call
-`cmd.Wait()` or `cmd.Run()` on a tracked command. The behavior tests below fail
-if a launch site reaps early.
+The handle's `Wait` is the only code that reaps a tracked root, and it cannot
+run before the handoff. Reaping stays with the adapter's own `Wait` call rather
+than the watcher because `cmd.Wait()` closes pipes from `StdoutPipe`; reaping
+from the watcher would close a pipe the adapter is still reading. Adapters keep
+the `*exec.Cmd` for pipes and environment but never call `cmd.Wait()` or
+`cmd.Run()` on a tracked command. The behavior tests below fail if a launch site
+reaps early.
 
 ### Sandboxed roots
 
@@ -368,8 +370,11 @@ Cleanup of a scope stops everything that scope can prove it owns:
 3. For each remembered descendant outside those groups that still exists:
    signal it through a pidfd on Linux 5.3 and later. Otherwise, do not signal
    it, and record it as left running.
-4. Join the roots' exit watchers. The watchers do the reaping, as described in
-   [Root lifecycle](#root-lifecycle).
+4. Wait, up to 15 seconds, for each root's watcher to reach the handoff. A
+   process in uninterruptible sleep can delay its exit after SIGKILL, and a
+   sandboxed stop takes up to five seconds; a root still running after the wait
+   is reported as left running. Reaping stays with the handle's `Wait`, as
+   described in [Root lifecycle](#root-lifecycle).
 5. If any process could not be signaled, or a signal failed with a permission
    error, log cleanup as incomplete and name the processes.
 
