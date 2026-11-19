@@ -16,6 +16,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"go.kenn.io/kit/atomicfile"
 	gitcmd "go.kenn.io/kit/git/cmd"
+
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 // Package installers see only committed metadata and private writable state.
@@ -103,7 +105,7 @@ func runCICheckInstaller(ctx context.Context, command, dir string, env, args []s
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir, cmd.Env = dir, env
 	// Package-manager output can contain authenticated URLs. Report the failing step only.
-	if err := cmd.Run(); err != nil {
+	if err := proctrack.Run(ctx, cmd); err != nil {
 		fmt.Fprintf(out, "CI checker package preparation failed (%s %s): %v\n", filepath.Base(command), strings.Join(args[:min(5, len(args))], " "), err)
 		return false
 	}
@@ -178,7 +180,7 @@ const legacyLocal = lock => !lock?.packages && Object.entries(lock?.dependencies
 process.stdout.write(JSON.stringify(member || local || legacyLocal(input.lock)));`
 	parse := exec.CommandContext(ctx, node, "--input-type=commonjs", "--eval", script, npm)
 	parse.Dir, parse.Env, parse.Stdin = stage, env, bytes.NewReader(input)
-	output, err := parse.Output()
+	output, err := proctrack.Output(ctx, parse)
 	if err != nil {
 		return false, err
 	}
@@ -191,7 +193,7 @@ func ciCheckBunSources(ctx context.Context, command, stage string, data []byte, 
 	// Bun's JSONC parser handles comments, trailing commas, and escaped source paths.
 	parse := exec.CommandContext(ctx, command, "--no-env-file", "--eval", `process.stdout.write(JSON.stringify(Bun.JSONC.parse(await Bun.stdin.text())))`)
 	parse.Dir, parse.Env, parse.Stdin = stage, env, bytes.NewReader(data)
-	decoded, err := parse.Output()
+	decoded, err := proctrack.Output(ctx, parse)
 	if err != nil {
 		return nil, err
 	}

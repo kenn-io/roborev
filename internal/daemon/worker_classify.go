@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/proctrack"
 	"go.kenn.io/roborev/internal/review/autotype"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -198,6 +199,7 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 		return
 	}
 	if err != nil &&
+		proctrack.FromContext(ctx).Breach() == nil &&
 		backup != "" &&
 		agent.CanonicalName(backup) != agent.CanonicalName(primary) &&
 		agent.CanonicalName(selected) != agent.CanonicalName(backup) {

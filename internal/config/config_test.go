@@ -3158,6 +3158,12 @@ func TestConfigValidateRejectsInvalidReasoningAndSeverity(t *testing.T) {
 	}
 }
 
+func TestConfigValidateAgentMemoryLimit(t *testing.T) {
+	require.ErrorContains(t, (&Config{AgentMemoryMaxMB: -1}).Validate(), "agent_memory_max_mb")
+	require.NoError(t, (&Config{AgentMemoryMaxMB: 0}).Validate())
+	require.NoError(t, (&Config{AgentMemoryMaxMB: 16384}).Validate())
+}
+
 func TestRepoConfigValidateRejectsInvalidReasoning(t *testing.T) {
 	tests := []struct {
 		name string

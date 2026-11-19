@@ -9,6 +9,7 @@
 package proctrack
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -314,6 +315,23 @@ func Run(ctx context.Context, cmd *exec.Cmd, opts ...StartOption) error {
 		return err
 	}
 	return p.Wait()
+}
+
+// Output runs cmd and returns its standard output, like cmd.Output.
+func Output(ctx context.Context, cmd *exec.Cmd, opts ...StartOption) ([]byte, error) {
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	err := Run(ctx, cmd, opts...)
+	return stdout.Bytes(), err
+}
+
+// CombinedOutput runs cmd and returns its standard output and standard error
+// together, like cmd.CombinedOutput.
+func CombinedOutput(ctx context.Context, cmd *exec.Cmd, opts ...StartOption) ([]byte, error) {
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := Run(ctx, cmd, opts...)
+	return out.Bytes(), err
 }
 
 // Wait waits until the root's group has been stopped, then reaps the root with

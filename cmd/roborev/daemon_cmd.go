@@ -344,6 +344,10 @@ func daemonRunCmd() *cobra.Command {
 				}
 			}
 
+			if runtime.GOOS == "windows" && cfg.AgentMemoryMaxMB > 0 {
+				log.Printf("agent_memory_max_mb is set but has no effect on Windows")
+			}
+
 			// Apply flag overrides
 			if addr != "" {
 				cfg.ServerAddr = addr
