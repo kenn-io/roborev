@@ -285,19 +285,12 @@ postgres-down:
 
 # Postgres tests use a separate database for each run.
 test-postgres:
-	@scripts/test-lease.sh roborev sh -c 'exec "$$@" TEST_SERVICE_LEASE="$$TEST_SERVICE_LEASE"' sh $(MAKE) test-postgres-run
+	@scripts/test-lease.sh roborev 'docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans' sh -c 'exec "$$@" TEST_SERVICE_LEASE="$$TEST_SERVICE_LEASE"' sh $(MAKE) test-postgres-run
 
 .PHONY: test-postgres-run
 test-postgres-run:
 	@set -e; \
-		python3 scripts/prune-postgres-reports.py "$(GO_TEST_REPORT_DIR)"; \
-		cleanup() { status=$$?; trap - EXIT HUP INT TERM; \
-			if ! docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans; then \
-				echo 'cleanup failed; scheduled cleanup will retry' >&2; \
-				if [ "$$status" -eq 0 ]; then status=1; fi; \
-			fi; \
-			exit $$status; }; \
-		trap cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; \
+		if [ -d "$(GO_TEST_REPORT_DIR)" ]; then find "$(GO_TEST_REPORT_DIR)" -mindepth 1 -maxdepth 1 -type d -name 'roborev-[0-9]*-[0-9]*' -mtime +7 -exec sh -c 'for dir do find "$$dir" -maxdepth 1 -type f \( -name postgres-storage.json -o -name postgres-storage-reruns.txt -o -name postgres-daemon.json -o -name postgres-daemon-reruns.txt \) -delete; rmdir "$$dir" 2>/dev/null || true; done' sh {} +; fi; \
 		export TEST_PG_PUBLISH='127.0.0.1::5432'; \
 		docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres; \
 		address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432); \
