@@ -7,6 +7,155 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**Upgrade notes**
+
+- Back up the database before you upgrade. This release adds five SQLite
+    migrations (schema versions 15 through 19), and an older release refuses to
+    open the upgraded database. To roll back, you need a copy made before the
+    upgrade: stop the daemon with `roborev daemon stop`, then back up its data
+    directory (`~/.roborev` or `$ROBOREV_DATA_DIR`).
+- Merge gates and scripts that read review verdicts must handle `skipped`. A
+    review with nothing to review, such as an empty commit or a commit whose
+    changed files are all excluded, now ends as `skipped` with no verdict
+    instead of passing. See
+    [Exclude Patterns](/docs/configuration/#exclude-patterns).
+- CI reviews with Codex or Pi fail when the installed CLI cannot skip project
+    configuration. roborev checks for the flag, not a version. Run
+    `codex exec --ignore-user-config --help` and `pi --help`, and upgrade the
+    CLI if the first exits with an error or the second does not list
+    `--no-approve`.
+- Regenerate GitHub Actions workflows with `roborev init gh-action --force` so
+    they find the latest release without calling the GitHub API. Existing
+    workflows keep the API call, which shared runners can push past GitHub's
+    limit of 60 unauthenticated requests per hour.
+- Source builds need Go 1.27.4 or newer, which fixes
+    [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859).
+- If a CI host runs the findings checker and shares a PostgreSQL mirror, upgrade
+    the other machines on that mirror before or with it. Older releases stop
+    pulling at the first checked review; see the CI checker entry below.
+
+**New features**
+
+- Review commits that land on the default branch. With global
+    `[ci] review_default_branch = true`, the CI poller reviews each new
+    first-parent commit on each polled repo's default branch, with the same
+    panel and `.roborev.toml` as pull request reviews, and posts the result as
+    the `roborev/default-branch` commit status. Turning it on does not review
+    past commits, and a failed review is not retried automatically. See
+    [Review commits on the default branch](/docs/integrations/github/#review-commits-on-the-default-branch).
+- Kata hooks file one issue per review panel, from its synthesis review; panel
+    members no longer file their own. A review of a landed commit reuses its
+    issue across reruns. New issue titles name the reviewed commit and its
+    subject instead of a job ID, and existing issues are not duplicated. Add
+    `sources = ["ci_branch"]` to a hook to file issues only for landed commits.
+    Reviews you start yourself have no source and never match a `sources` list.
+    Review events and webhook payloads now include `source` and `panel_role`.
+    See
+    [Filing Findings as Kata Issues](/docs/integrations/kata/#filing-findings-as-kata-issues).
+- Connect agent hooks and skills with `roborev agent setup`, optionally register
+    MCP, and see hook trust and readiness in setup, quickstart, and doctor. If
+    Codex asks you to review hooks, run `/hooks` in Codex, then
+    `roborev agent setup --check`. See [Agent Hook](/docs/agent-hook/).
+- Find the command for a task with `roborev cli search "<task>"`, for example
+    `roborev cli search "review uncommitted changes"`. It works without a
+    daemon. See [Find a command](/docs/commands/#find-a-command).
+- Restart a busy daemon without waiting for long reviews with
+    `roborev daemon restart --running=interrupt`. Running jobs go back in the
+    queue without using a retry and start over after the restart. A daemon from
+    an older release rejects the flag, so restart it once without it.
+- Show committed images and other binary files to built-in reviews with
+    `[review] binary_evidence = true` in global or repository config. It applies
+    to reviews of commits and ranges, not uncommitted changes. See
+    [Binary Evidence](/docs/configuration/#binary-evidence).
+- Hide low-confidence findings from synthesized pull request comments with
+    `[ci] comment_min_confidence`, for example `0.8`. The stored review keeps
+    every finding, and findings without a score stay visible. See
+    [Comment display policy](/docs/integrations/github/#comment-display-policy).
+- Gemini and Antigravity reviews support
+    [session reuse](/docs/guides/reviewing-code/#session-reuse). Gemini needs
+    0.20.0 or later and Antigravity 1.1.8 or later; older Antigravity versions
+    also print plain text instead of streamed JSON. A failed resume starts a new
+    conversation.
+- MCP clients can list and read roborev's bundled guides and skills with the
+    `roborev.skills` tool, without installing the skills locally. See
+    [MCP](/docs/integrations/mcp/).
+- Run review panels through the daemon API. `POST /api/panel/enqueue` takes a
+    prompt and settings for each reviewer. `hold_synthesis: true` with
+    `POST /api/panel/synthesize` lets you read member reviews before combining
+    them. `GET /api/job/invocations` returns each agent call's output, error,
+    and usage, including retries, backup agents, and synthesis. An optional
+    `request_id` lets you resend a submission whose response was lost without
+    starting a second paid review. The generated Go and TypeScript clients
+    include these operations. See
+    [Manual Panel Synthesis](/docs/automation/manual-panel-synthesis/) and
+    [Supplied Review Prompts](/docs/automation/supplied-review-prompts/).
+- Read the CI checker's results as data. A checked review's document has a
+    `check` member that says whether checking completed or failed and, for each
+    finding, whether it was kept or dropped, with the checker's evidence and
+    reason. Dropped findings keep their full text. See the
+    [review document format](/docs/commands/#exporting-reviews). Older releases
+    reject these documents: a machine on an older release that shares a
+    PostgreSQL mirror with a checking CI host stops pulling reviews and comments
+    at the first checked review, and Go programs that decode documents with an
+    older `pkg/structuredreview` fail on them. Upgrade those machines and
+    programs before or with the CI host.
+
+**Improvements**
+
+- `roborev status` reports the `cost` component as unhealthy when the daemon has
+    no usage source, and the daemon logs a warning at startup. Install
+    `agentsview` or set `[agentsview] url` or `[cost] endpoint` to get complete
+    cost totals.
+- Claude Code reviews record input, cache, and output tokens and the CLI's cost
+    from the job log, without a usage provider. Run
+    `roborev storage backfill-tokens` to fill in older jobs.
+- The daemon stops asking for usage of sessions that have none, such as Codex
+    reviews that end within a second. One daemon could send thousands of these
+    requests a day. With AgentsView 0.47.0 or later, usage lookups run in
+    batches, so pricing a backlog of 21 jobs starts AgentsView twice instead of
+    21 times.
+- `roborev job show` on an open failed review ends with a hint that shows how to
+    comment on and close it. `--json` returns the hint in a `hints` array.
+- Receive failed-review reminders only for commits the session gains during
+    `git commit`, `git cherry-pick`, or `git revert`, including amends and
+    batched reviews containing them. Find older reviews and reviews moved by a
+    rebase in the TUI or `/roborev-fix`. ZCode's prompt-only events leave
+    automatic reminders silent.
+- Sync runs while historical maintenance proceeds, and reconnecting machines
+    keep the original reviews on the PostgreSQL mirror. Maintenance resumes
+    immediately after making progress.
+- The web UI retries brief connection failures while it loads jobs, reviews,
+    branches, and analytics. The review drawer and branch picker show a failed
+    load with a Retry button instead of an empty result. Search, analytics, and
+    error messages use plainer wording; JSON fields and reason strings are
+    unchanged.
+- MCP tools declare whether they are read-only, destructive, or idempotent, and
+    whether they reach outside services, so MCP clients can set permissions
+    without guessing. Review search counts as reaching outside services, because
+    semantic and hybrid modes send the query to the embedding provider.
+- Pi job logs no longer repeat unchanged usage data on every message delta, so
+    they take less disk space.
+- Droid reviews use the configured model, such as `model`, `review_model`,
+    `backup_model`, or `--model`, by passing it to `droid exec -m`. Set
+    `droid_cmd` to run a different Droid executable. When Droid's error output
+    says the subscription allowance for the period is used up, the job goes to
+    the backup agent without retries and Droid cools down.
+
+**Bug fixes**
+
+- Stop CI reviews from running hooks, MCP servers, and plugins that a pull
+    request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
+    Cursor, Grok, Copilot, and Kilo now skip project agent configuration in
+    `roborev ci review` and daemon CI reviews. Codex and Pi fail the review when
+    the installed CLI cannot skip it. See
+    [Agent configuration in the pull request](/docs/integrations/github/#agent-configuration-in-the-pull-request)
+    for the agents that cannot.
+- A review with nothing to review ends as `skipped` with a reason and no
+    verdict, instead of passing. No agent runs. `--wait` prints
+    `Skipped: <reason>` and exits 0, and the CI poller posts a `success` status
+    that reads "Review skipped: nothing to review". In a shallow clone,
+    `roborev review <start> <end>` fails when the parent of `<start>` was not
+    fetched, instead of reviewing the whole tree.
 - Run the agent you pick with `--agent` on its own default model when you do not
     also pass `--model`. A workflow model such as `review_model` or `fix_model`
     set for a different agent is no longer passed to it, so
@@ -18,69 +167,248 @@ All notable changes to roborev, grouped by minor release.
     configuration, so credential helpers and `url.insteadOf` rewrites apply, as
     they already did for refine. Before, these reviews failed during checkout
     setup with `could not read Username` while terminal prompts were disabled.
-    See [Isolated Review Checkouts](configuration.md#isolated-review-checkouts).
+    See
+    [Isolated Review Checkouts](/docs/configuration/#isolated-review-checkouts).
 - Keep reviewing commits when the daemon is too busy to answer the post-commit
     hook. A commit the hook cannot queue stays pending, and the next commit or
     push reviews it; a quiet-period batch that cannot be queued is retried. Idle
     workers no longer take the database write lock to find an empty queue, so
     enqueues wait less, and a daemon on a busy host no longer exits during
     startup because its first readiness check was slow.
-- Stop CI reviews from running hooks, MCP servers, and plugins that a pull
-    request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
-    Cursor, Grok, Copilot, and Kilo now skip project agent configuration in
-    `roborev ci review` and daemon CI reviews. Codex and Pi fail the review when
-    the installed CLI cannot skip it. See
-    [Agent configuration in the pull request](integrations/github.md#agent-configuration-in-the-pull-request)
-    for the agents that cannot.
-- Droid reviews use the configured model, such as `model`, `review_model`,
-    `backup_model`, or `--model`, by passing it to `droid exec -m`. Set
-    `droid_cmd` to run a different Droid executable. When Droid's error output
-    says the subscription allowance for the period is used up, the job goes to
-    the backup agent without retries and Droid cools down.
-- Connect agent hooks and skills with `roborev agent setup`, optionally register
-    MCP, and see hook trust and readiness in setup, quickstart, and doctor.
-- Sync runs while historical maintenance proceeds, and reconnecting machines
-    keep the original reviews on the PostgreSQL mirror. Maintenance resumes
-    immediately after making progress.
-- Receive failed-review reminders only for commits the session gains during
-    `git commit`, `git cherry-pick`, or `git revert`, including amends and
-    batched reviews containing them. Find older reviews and reviews moved by a
-    rebase in the TUI or `/roborev-fix`. ZCode's prompt-only events leave
-    automatic reminders silent.
-- Report the provider error when a Pi review or classification fails, instead of
-    a missing `result.json`. When Amazon Bedrock rejects image input for a
-    text-only model, the job goes to the backup agent without retries.
-- Explain unfiltered, empty multi-word lexical searches with complete coverage
-    and a hint to try fewer words. CLI output writes the hint to stderr; JSON
-    and MCP return its code and message.
-- Find review records under `job`, aggregate reports under `report`, Git hooks
-    under `hook`, and provider checks and integrations under `agent`. Queue
-    controls live under `daemon`; repair commands live under `storage` and
-    remote key creation under `signing init`. Previous spellings remain hidden
-    compatibility commands for at least one release. See the
-    [command mapping](/docs/commands/#command-groups-and-migration).
-- Use root help as a guide to the review workflow, job IDs, target selection,
-    output modes and recovery. Commands are grouped by purpose and include
-    examples; `ls` aliases `list` and `resolve` aliases `close`.
-- Read recovery hints in CLI errors. Human errors use `hint:`, search agent
-    output uses `Hint:`, and commands supporting `--json` write an error
-    envelope to stderr. Success output stays unchanged. Usage mistakes now exit
-    2 and invalid values exit 4; runtime failures and FAIL verdicts keep exit 1,
-    and export cursor resets keep exit 3.
-- Report daemon startup failure when its child exits, with the startup log and a
-    diagnostic command, instead of waiting for the readiness timeout.
-- Read the CI checker's results as data. A checked review's document has a
-    `check` member that says whether checking completed or failed and, for each
-    finding, whether it was kept or dropped, with the checker's evidence and
-    reason. Dropped findings keep their full text. See the
-    [review document format](/docs/commands/#exporting-reviews). Older releases
-    reject these documents: a machine on an older release that shares a
-    PostgreSQL mirror with a checking CI host stops pulling reviews and comments
-    at the first checked review, and Go programs that decode documents with an
-    older `pkg/structuredreview` fail on them. Upgrade those machines and
-    programs before or with the CI host.
+- A CI wildcard such as `jane/*` for a personal account finds the account's
+    private repositories when the poller authenticates as a GitHub App. Before,
+    only public ones were reviewed. Forks count toward `max_repos` (100 by
+    default), so an installation on all of an account's repositories can now
+    reach it.
+- `roborev refine` and fix patches applied from the TUI work when global Git
+    config sets `core.autocrlf = true`. Before, the patch failed to apply to a
+    CRLF working tree unless the repository set it locally.
+- `roborev show 12345` shows job 12345 when `12345` also resolves as a Git ref
+    with no review.
+- roborev waits up to five seconds for the Cursor CLI's version check, so a slow
+    Cursor CLI is no longer treated as missing. An uncached check can take
+    longer than the post-commit hook's default 3-second timeout on Linux and
+    macOS; raise `hook_timeout_seconds` if hooks time out.
 - The generated Go client's `Validate` accepts review findings whose `location`
     is `null`, as the API documents.
+
+## 0.75.0
+
+<small>2026-11-09</small>
+
+Reviews check whether a change does what it says, `--type exhaustive` reports
+every problem a reviewer can support, and the CI poller can check findings
+before posting them. CLI commands moved into groups and exit codes changed, so
+check scripts that call roborev before updating.
+
+**New features**
+
+- Reviews now check whether a change does what its commit messages and pull
+    request description say it should. Findings also carry a kind, topic,
+    confidence, and file and line location, and roborev ranks them by severity,
+    panel agreement, and confidence. Rendered reviews look the same as before.
+    Exported reviews use schema version 3, so export clients generated for
+    schema version 2 or lower need to be regenerated.
+- `roborev review --type exhaustive` asks the reviewer to report every problem
+    it can support, including small concrete ones. It works with CI
+    `review_types` and panel members too. In our tests it found about 50% more
+    real issues at the same accuracy, but reviews take longer and cost more, so
+    it is opt-in. The name `exhaustive` is now reserved, and a custom review
+    type with that name no longer loads.
+- Review panels accept `synthesis_instructions`. When set, the synthesis agent
+    can read the repository with read-only tools, for example to check each
+    finding against the code or label which findings are safe to fix. Commit and
+    range reviews run synthesis against a checkout of the reviewed commit, and
+    reruns keep the instructions the run was queued with.
+- The CI poller can check findings before posting them. With
+    `[ci] check = true`, roborev-ci tests each synthesized finding in a
+    sandboxed copy of the pull request and posts only the findings that hold up.
+    On a held-out set, precision rose from 56% to 82% and every real finding was
+    kept. Findings that suggest removing a test are posted only when the checker
+    shows another test catches the same changes. The checker can install npm,
+    Bun, and PyPI packages and use installed mise toolchains for Node, Bun,
+    OpenTofu, and Terraform. It needs Linux on amd64, a pinned nono build,
+    Codex, and a few host tools, all listed in the GitHub integration docs. If the
+    checker fails, roborev posts the original review unchanged.
+- With `[ci] rewrite = true` set alongside `check`, the checker rewrites kept
+    findings in plain words and names where each fix goes.
+- New `[ci]` settings control which pull requests the poller reviews:
+    - `skip_drafts = true` skips draft pull requests until they are marked ready.
+    - `allowed_authors` and `allowed_author_associations` limit reviews to trusted
+        authors, which keeps outside contributors' prompt text away from review
+        agents.
+    - `allow_codeowners = true` also trusts anyone the base branch's `CODEOWNERS`
+        file names.
+    - `include_branches` and `exclude_branches` filter pull requests by head
+        branch name, for example to skip `dependabot/*`.
+- `[ci] comment_max_findings` caps how many findings a pull request comment
+    shows and links to the full review. `comment_when_clean = false` skips the
+    comment when a review finds nothing.
+- `roborev init gh-action` now generates workflows that skip draft pull requests
+    and cancel older runs for the same pull request. Pass `--include-drafts` to
+    keep reviewing drafts, and regenerate an existing workflow with `--force` to
+    pick up the change.
+- Automatic reviews can batch commits machine-wide. `post_commit_batch_size` now
+    works in the global config, and the new `post_commit_quiet_period` setting
+    queues one review after the branch has gone quiet for that long. Repository
+    settings still override the global ones.
+- `roborev refine` keeps earlier fix attempts in the next round, with or without
+    `--plan`, and records why a round made no changes. It also applies your
+    `fix_guidelines` while making fixes, and its summaries list declined
+    findings with evidence and the commands the agent actually ran.
+- `roborev refine` warns when three fix rounds in a row keep touching the same
+    files or fail to reduce High and Medium findings. `--stop-on-stall` stops
+    the loop at that point.
+- `roborev refine --skip-trivial-rereview` skips the wait for a re-review when a
+    fix commit only changes docs or tests. The branch review still covers those
+    commits.
+- Related CLI commands are grouped under `job`, `agent`, `hook`, `report`,
+    `storage`, and `signing`, and queue controls live under `daemon pause` and
+    `daemon resume`. Root help lists 27 commands, down from 47. The old
+    spellings still work for at least one release and print a migration notice.
+    See the [command mapping](/docs/commands/#command-groups-and-migration).
+- CLI help explains the review workflow, output modes, environment variables,
+    and exit codes. Errors include a hint, and commands with `--json` write a
+    JSON error object to stderr. Usage mistakes now exit with code 2 and invalid
+    values with code 4, so scripts that check exit codes may need updating.
+    Runtime failures and FAIL verdicts keep exit code 1, and export cursor
+    resets keep exit code 3. `ls` aliases `list`, and `resolve` aliases `close`.
+- The daemon API accepts a `review_prompt` with a commit or range and runs it as
+    a normal review in a detached checkout. Callers can also send
+    `review_settings` to choose file exclusions, tool restrictions, binary
+    attachments, and backup agents without the repository's `.roborev.toml`
+    changing them. Retries, reruns, and synced copies keep the prompt and
+    settings.
+- roborev can read usage from an authenticated AgentsView server. Set
+    `[agentsview] url` and an optional `token_file` in the global config, or use
+    `AGENTSVIEW_SERVER_TOKEN`. Subagent spend is included, and `roborev doctor`
+    checks the connection.
+- `roborev summary` shows CI run health, including panel outcomes, retirement
+    reasons, runs and cost per pull request, and turnaround. `roborev doctor`
+    warns when one pull request started more than 10 CI runs within an hour.
+- Changing `max_workers` in `config.toml` resizes the running daemon's worker
+    pool without a restart. Running reviews finish before extra workers retire.
+- Exported panel reviews mark advisory members with `non_voting`.
+
+**Improvements**
+
+- Agent Hook reminders now ask agents to triage findings: fix them, decline
+    them, mark them invalid, or ask you. The `roborev-fix` skill works the same
+    way, and the reminder puts your latest instruction first. Design reviews no
+    longer count toward the failed-review threshold, and a design review of a
+    change with no design document passes.
+- Fix agents get clearer findings. Each finding describes what triggers the
+    problem, the wrong result, the expected behavior, and the cases a fix must
+    keep working.
+- Low severity now means a real problem with minor impact or a named
+    code-quality fix. Ideas with no concrete problem go in the review summary
+    instead.
+- `roborev insights` reads each panel's combined review, with its comments and
+    closed state, and no longer counts member reviews separately.
+- The web Reviews page loads older jobs as you scroll, and sorting a column
+    sorts the whole job list on the daemon, so a cost sort no longer misses
+    expensive jobs you haven't scrolled to yet.
+- New users see how to get their first review in an empty queue in both the web
+    UI and the TUI.
+- `roborev job list` explains where matching jobs are when the current directory
+    or branch hides them. `fix` and `compact` give similar hints outside a
+    repository.
+- An empty multi-word `roborev search --lexical` explains that every word must
+    match. JSON and MCP output include the same hint.
+- `roborev list --json` and `status --json` no longer include stored prompts for
+    finished jobs, which cut 50 jobs from 448 KB to 37 KB.
+    `roborev job show --prompt` prints the prompt, including for failed and
+    canceled jobs.
+- The post-commit hook tells the committer when a commit was not queued for
+    review and points to `roborev doctor`. Existing hooks update when the daemon
+    next starts.
+- On macOS and Linux the daemon adds common tool directories, such as mise and
+    asdf shims, Nix profiles, Homebrew, and `~/.local/bin`, to its `PATH`, so it
+    finds agents even when a service manager starts it. If a configured agent
+    still can't run, `roborev status` and `roborev doctor` report it.
+- On macOS, `roborev daemon restart`, `roborev update`, and automatic recovery
+    restart a LaunchAgent-managed daemon through launchd, so you end up with one
+    daemon.
+- The MCP server reports roborev's website and icon, and the web UI has a
+    favicon.
+- macOS users can install roborev with `brew install roborev` from Homebrew
+    core.
+- PostgreSQL sync is much faster on large histories:
+    - The first push of 20,000 reviews takes about 3 s, down from 100 s.
+    - A new machine's first pull takes 35% less time.
+    - `roborev sync status` takes 0.05 s at 1M jobs, down from 6 s.
+    - `roborev sync now` shows progress at once while a background push runs.
+    - Status commands stay responsive when the PostgreSQL connection stalls.
+    - Teams with 100,000 central reviews can connect again without hitting the
+        connect timeout.
+- Writes during a sync pull, such as enqueueing a review, commenting, or closing
+    a review, no longer stall for seconds or fail with "database is locked".
+- Large local databases are faster across the board. On 100,000-job databases:
+    - Branch-filtered and closed-review queue pages return in milliseconds.
+    - `roborev export` of 94,000 reviews takes 8 s, down from 90 s.
+    - `summary` and `doctor` time windows use indexes.
+    - The TUI cost header refreshes in 24 ms.
+    - `insights --since` queues in milliseconds.
+    - Daemon startup no longer rereads every review.
+    - The Agent Hook's failed-review lookup stays near 1.5 ms.
+- Several schema migrations build new indexes once on the first daemon start
+    after upgrading. At 1M jobs this can take up to about 30 seconds.
+- Review search stays fast as history grows. A search that matches nothing takes
+    a few milliseconds, common-word searches run about 5x faster, the idle
+    background sweep no longer re-renders every review, and sync no longer
+    forces a full search rescan.
+- The CI poller uses far less GitHub API quota. It revalidates pull request
+    lists with ETags and stops rereading `CODEOWNERS` for heads it already
+    reviewed. It also publishes each skip once per commit, posts "Review
+    deferred" once, and backs off failed repository lookups.
+- After a GitHub secondary rate limit, roborev pauses every client on that token
+    for as long as GitHub asks, or one minute if GitHub doesn't say. During the
+    pause, errors read `rate limit cooldown`.
+- Range reviews build their prompt in milliseconds in repositories with
+    thousands of past range reviews.
+- Agents that print very long lines no longer stall the daemon.
+- The daemon's memory use no longer grows with core count. A 256-core machine
+    saves about 300 MB.
+- Status stays fast with many worktrees or deleted repositories registered.
+- The Agent Hook drops sessions idle for 30 days from its state file, which
+    keeps each tool call fast.
+- The web UI's DOMPurify dependency is updated to 3.4.17, which fixes three
+    security advisories.
+
+**Bug fixes**
+
+- `job_timeout_minutes` now counts wall-clock time, so a review that spans a
+    laptop sleep times out on schedule.
+- `roborev analyze` runs with read-only agent permissions. `--fix` still edits
+    in a separate step.
+- Agents that roborev launches for reviews, synthesis, and fixes no longer
+    trigger the Agent Hook.
+- A launchd or systemd daemon that briefly stops answering HTTP keeps running.
+    Commands no longer drain and restart it, and `roborev status --json` reports
+    it as running.
+- `roborev daemon restart` and post-upgrade restarts finish in containers
+    without an init process.
+- Pi reviews report the provider's real error message. Amazon Bedrock's
+    rejection of image input for text-only models moves the job to the backup
+    agent without retrying.
+- Linked worktrees of a bare repository that keeps `core.bare` in
+    `config.worktree` work again.
+- With the TUI's "(none)" branch filter active, the queue stays responsive,
+    scrolling loads more jobs, and the listed jobs match the picker's count.
+- Scrolling TUI release notes is no longer slow.
+- Ctrl-C now stops `roborev refine` while it waits for a review.
+- When a newly started daemon exits during startup, commands report the failure
+    at once, with the startup log and a diagnostic command, instead of waiting
+    for the readiness timeout.
+- `roborev ui` prints the URL before it opens the browser, so you can open it
+    yourself if the browser doesn't appear.
+- On Windows, the daemon no longer flashes console windows during background
+    work.
+- Web UI content no longer jumps sideways when a scrollbar appears on the
+    Analytics page, the job table, the repository picker, release notes, or the
+    login page.
+
+______________________________________________________________________
 
 ## 0.74.0
 
