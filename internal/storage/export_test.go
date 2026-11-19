@@ -29,6 +29,7 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	local := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
 	legacy := seedCompletedExportReview(t, db, repo.ID, "2222222222222222222222222222222222222222", "2026-06-29 00:00:01", false)
+	// Older enqueue code could store an empty ID when machine ID lookup failed.
 	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = '' WHERE id = ?`, legacy.JobID)
 	require.NoError(t, err)
 	machineID, err := db.GetMachineID()

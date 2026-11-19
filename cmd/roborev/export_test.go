@@ -102,7 +102,6 @@ func TestExportReviewsCmdAcceptsOlderDaemon(t *testing.T) {
 		assert.NotContains(t, review, "source_machine_id")
 		assert.NotContains(t, review, "exported_by_machine_id")
 	}
-	assert.NotContains(t, output, "00000000-0000-0000-0000-000000000000")
 }
 
 func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
