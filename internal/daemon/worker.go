@@ -17,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/cenkalti/backoff/v7"
+	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
 	gitworktree "go.kenn.io/kit/git/worktree"
 
@@ -741,7 +742,14 @@ func (wp *WorkerPool) prepareJobCheckout(
 		}
 		checkout.isolatedLocalReview = true
 	}
-	agentRepoPath, cleanup, err := wp.createExactCheckout(ctx, workerID, job)
+	// A CI checkout can be a fork's pull request head, so it keeps kit's
+	// isolated git config. A local review checks out the user's own commits
+	// and needs their credentials and URL rewrites to clone private submodules.
+	var setupRunner gitcmd.Runner
+	if checkout.isolatedLocalReview {
+		setupRunner = gitpkg.UserConfigRunner()
+	}
+	agentRepoPath, cleanup, err := wp.createExactCheckout(ctx, workerID, job, setupRunner)
 	if err != nil {
 		return preparedJobCheckout{}, err
 	}
@@ -841,8 +849,10 @@ func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, 
 
 // createExactCheckout shares the CI checkout lifecycle, including its on-disk
 // directory and marker format so startup cleanup handles all detached reviews.
+// A zero setupRunner uses kit's isolated gitcmd.New configuration.
 func (wp *WorkerPool) createExactCheckout(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
+	setupRunner gitcmd.Runner,
 ) (string, func(), error) {
 	headRef := strings.TrimSpace(headOf(job.GitRef))
 	if headRef == "" {
@@ -862,6 +872,7 @@ func (wp *WorkerPool) createExactCheckout(
 		Prefix:         fmt.Sprintf("%s%d-", ciWorktreePrefix, job.ID),
 		InitSubmodules: true,
 		PullLFS:        true,
+		Runner:         setupRunner,
 	})
 	if createErr == nil {
 		// Bare-backed repositories may be registered at a disposable checkout.

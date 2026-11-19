@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gitcmd "go.kenn.io/kit/git/cmd"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -116,7 +117,7 @@ func TestCICheckRecovery(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	sha := repo.HeadSHA()
 	wp := &WorkerPool{}
-	checkout, closeCheckout, err := wp.createExactCheckout(t.Context(), "ci-checker", &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha})
+	checkout, closeCheckout, err := wp.createExactCheckout(t.Context(), "ci-checker", &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, gitcmd.Runner{})
 	require.NoError(t, err)
 	t.Cleanup(ciCheckCleanup(checkout, closeCheckout))
 	root, err := os.MkdirTemp(checkout, "roborev-ci-check-")

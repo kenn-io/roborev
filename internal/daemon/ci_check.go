@@ -203,7 +203,7 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if err != nil {
 		return
 	}
-	checkout, closeCheckout, err := wp.createExactCheckout(ctx, "ci-checker", job)
+	checkout, closeCheckout, err := wp.createExactCheckout(ctx, "ci-checker", job, gitcmd.Runner{})
 	if err != nil {
 		return
 	}

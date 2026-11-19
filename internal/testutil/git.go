@@ -647,3 +647,16 @@ func GetHeadSHA(t *testing.T, dir string) string {
 	}
 	return runGit(t, dir, nil, "rev-parse", "HEAD")
 }
+
+// UseIsolatedGlobalGitConfig points git's ~/.gitconfig at dir for this test
+// and returns the file's path. testenv's GIT_CONFIG_GLOBAL cannot be used:
+// git.UserConfigRunner strips every GIT_* variable before running git.
+func UseIsolatedGlobalGitConfig(t *testing.T, dir string) string {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	configPath := filepath.Join(dir, ".gitconfig")
+	config := "[user]\n\tname = Synthetic Test User\n\temail = synthetic@example.invalid\n[init]\n\tdefaultBranch = main\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(config), 0o644))
+	return configPath
+}

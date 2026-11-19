@@ -223,20 +223,23 @@ func configureGitForTests(tmpDir string) {
 	// Without this, commit.gpgsign=true in global config triggers
 	// gpg-agent/pinentry during test commits.
 	//
-	// Point GIT_CONFIG_GLOBAL at an empty regular file rather than os.DevNull.
+	// Point GIT_CONFIG_GLOBAL at a regular file rather than os.DevNull.
 	// On Windows os.DevNull is "NUL" (the null device), and Git-for-Windows
 	// fails with "fatal: unable to access 'NUL': Invalid argument" when told to
 	// read its global config from that device — which broke essentially every
-	// git invocation in the suite on Windows (notably Windows-on-ARM). An empty
-	// file is a valid, no-op global config on every platform. On Unix
-	// /dev/null happens to work, but the empty file is correct everywhere.
-	emptyGlobalConfig := filepath.Join(tmpDir, ".gitconfig")
-	if f, err := os.OpenFile(emptyGlobalConfig, os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-		_ = f.Close()
-	}
-	_ = os.Setenv("GIT_CONFIG_GLOBAL", emptyGlobalConfig)
+	// git invocation in the suite on Windows (notably Windows-on-ARM). A
+	// regular file is a valid global config on every platform. On Unix
+	// /dev/null happens to work, but the file is correct everywhere.
+	//
+	// Runners that strip GIT_* variables (git.UserConfigRunner) ignore
+	// GIT_CONFIG_NOSYSTEM and read the system config. Git for Windows sets
+	// core.autocrlf=true there, which would rewrite LF fixtures as CRLF in
+	// checkouts those runners create. The global config overrides it.
+	globalConfig := filepath.Join(tmpDir, ".gitconfig")
+	_ = os.WriteFile(globalConfig, []byte("[core]\n\tautocrlf = false\n"), 0o644)
+	_ = os.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
 	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	// Git runners strip GIT_* variables, so the empty file must also be the
+	// Git runners strip GIT_* variables, so this file must also be the
 	// default global config under HOME.
 	_ = os.Setenv("HOME", tmpDir)
 	_ = os.Setenv("USERPROFILE", tmpDir)

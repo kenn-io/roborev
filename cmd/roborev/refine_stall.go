@@ -9,6 +9,7 @@ import (
 
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
@@ -164,7 +165,7 @@ func refineFindingFiles(ctx context.Context, repoPath string, review *storage.Re
 	if err != nil {
 		return nil
 	}
-	tree, _, err := refineGitRunner().Run(ctx, repoPath, nil, "ls-tree", "-r", "--name-only", "-z", resolved)
+	tree, _, err := git.UserConfigRunner().Run(ctx, repoPath, nil, "ls-tree", "-r", "--name-only", "-z", resolved)
 	if err != nil {
 		return nil
 	}

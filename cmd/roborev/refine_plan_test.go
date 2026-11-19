@@ -258,7 +258,7 @@ func (a *refinePlanReasoningAgent) WithReasoning(level agent.ReasoningLevel) age
 }
 
 func TestRefinePlanOnlyAllBranchesUsesTargetConfig(t *testing.T) {
-	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	globalConfig := testutil.UseIsolatedGlobalGitConfig(t, t.TempDir())
 	hookMarker := filepath.Join(t.TempDir(), "post-checkout-ran")
 	t.Setenv("ROBOREV_PLAN_HOOK_MARKER", filepath.ToSlash(hookMarker))
 	repo := newPlanTestRepo(t, map[string]string{

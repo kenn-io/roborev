@@ -45,6 +45,37 @@ import (
 // command-scope config would only add a redundant subprocess.
 var gitRunner = gitcmd.Runner{StripEnv: true, DisableSafeDirectoryForward: true}
 
+// UserConfigRunner returns the git runner for setting up a temporary checkout
+// of the user's own repository, such as refine's worktree or an isolated
+// review checkout, including its submodules and Git LFS files.
+//
+// Like gitRunner, it strips inherited GIT_* variables but leaves the user's
+// global and system git config readable. Submodule clones and LFS pulls resolve
+// credential helpers, url.insteadOf rewrites, and proxy settings from that
+// config, so hiding it (the gitcmd.New default) makes a private HTTPS
+// submodule unclonable while terminal prompts are disabled.
+//
+// Hooks stay disabled for every command, including submodule checkouts, where
+// a relative core.hooksPath could run tracked scripts. core.askPass is cleared
+// and TerminalPrompt stays false, so nothing can wait for input.
+//
+// Checkouts of code the user did not write, such as CI checkouts of pull
+// request heads, keep gitcmd.New's isolated config instead.
+//
+// Env must be non-nil: gitworktree.Create replaces a runner whose Env is nil
+// with gitcmd.New().
+func UserConfigRunner() gitcmd.Runner {
+	return gitcmd.Runner{
+		Env:      os.Environ(),
+		StripEnv: true,
+		Config: []gitcmd.Config{
+			{Key: "core.askPass", Value: ""},
+			{Key: "core.hooksPath", Value: os.DevNull},
+		},
+		DisableSafeDirectoryForward: true,
+	}
+}
+
 // newGitCmd builds a "git" command that does not open a console window on
 // Windows. All git invocations in this package must go through newGitCmd or
 // newGitCmdContext so a detached daemon's git children never flash a console.

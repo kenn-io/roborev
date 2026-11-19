@@ -13,6 +13,12 @@ All notable changes to roborev, grouped by minor release.
     `roborev review --agent claude-code` no longer fails every retry on a Codex
     model. This covers `roborev compact` and panel members that set only
     `agent`; ACP agents already worked this way.
+- Review repositories with private submodules when `isolate_reviews` is on. The
+    daemon's isolated checkout now clones submodules with your normal Git
+    configuration, so credential helpers and `url.insteadOf` rewrites apply, as
+    they already did for refine. Before, these reviews failed during checkout
+    setup with `could not read Username` while terminal prompts were disabled.
+    See [Isolated Review Checkouts](configuration.md#isolated-review-checkouts).
 - Keep reviewing commits when the daemon is too busy to answer the post-commit
     hook. A commit the hook cannot queue stays pending, and the next commit or
     push reviews it; a quiet-period batch that cannot be queued is retried. Idle

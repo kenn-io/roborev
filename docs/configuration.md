@@ -1208,9 +1208,18 @@ remains available.
 
 Isolated agents see committed files, without the source checkout's local edits,
 untracked files, or ignored build artifacts. Creating the checkout adds disk use
-and setup time; submodules and Git LFS files are prepared as for CI reviews.
-Checkout failures follow the normal job retry policy without falling back to
-running the agent in the source worktree.
+and setup time, because the daemon initializes submodules and pulls Git LFS
+files in it. Checkout failures follow the normal job retry policy without
+falling back to running the agent in the source worktree.
+
+Checkout setup uses your normal Git configuration, as
+[refine's worktree](guides/auto-fixing.md#requirements) does. Credential
+helpers, `url.insteadOf` rewrites, and proxy settings from your global and
+system config apply, so private submodules clone the same way they do for you.
+Terminal prompts and askpass stay disabled, so the credential source has to be
+non-interactive, and Git hooks do not run during setup. CI review checkouts keep
+an isolated Git configuration, because they can check out pull requests from
+forks.
 
 Dirty reviews and their synthesis jobs continue to use the source checkout.
 Tasks, compact jobs, and background fixes keep their existing behavior. CI

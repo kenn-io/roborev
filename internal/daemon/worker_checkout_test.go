@@ -90,6 +90,65 @@ func TestIsolatedCheckoutFailureDoesNotUseSource(t *testing.T) {
 	assert.Empty(t, checkout.agentRepoPath)
 }
 
+// TestExactCheckoutSubmoduleGitConfig verifies that an isolated local review
+// initializes a submodule that only the user's global url.insteadOf can
+// resolve, without running the user's hooks, while a CI checkout keeps kit's
+// isolated git config and cannot resolve it.
+func TestExactCheckoutSubmoduleGitConfig(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	globalConfig := testutil.UseIsolatedGlobalGitConfig(t, t.TempDir())
+
+	submodule := testutil.NewGitRepo(t)
+	submoduleSHA := submodule.CommitFile("sub.txt", "submodule content\n", "submodule base")
+	bare := filepath.Join(t.TempDir(), "sub.git")
+	submodule.Run("clone", "--bare", submodule.Path(), bare)
+
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("parent.txt", "parent\n", "parent base")
+	repo.WriteFile(".gitmodules", "[submodule \"vendor/sub\"]\n\tpath = vendor/sub\n\turl = file:///roborev-test-placeholder/sub.git\n")
+	repo.Run("add", ".gitmodules")
+	repo.Run("update-index", "--add", "--cacheinfo", "160000,"+submoduleSHA+",vendor/sub")
+	repo.Run("commit", "-m", "add submodule")
+	head := repo.HeadSHA()
+
+	hookDir := t.TempDir()
+	markerPath := filepath.Join(t.TempDir(), "post-checkout.marker")
+	t.Setenv("ROBOREV_HOOK_MARKER", filepath.ToSlash(markerPath))
+	hookScript := "#!/bin/sh\nprintf 'hook ran\\n' > \"$ROBOREV_HOOK_MARKER\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(hookDir, "post-checkout"), []byte(hookScript), 0o755))
+	repo.Run("config", "--file", globalConfig, "url.file://"+filepath.ToSlash(bare)+".insteadOf", "file:///roborev-test-placeholder/sub.git")
+	repo.Run("config", "--file", globalConfig, "core.hooksPath", filepath.ToSlash(hookDir))
+
+	cfg := config.DefaultConfig()
+	cfg.IsolateReviews = true
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+
+	t.Run("local review uses user git config", func(t *testing.T) {
+		checkout, err := pool.prepareJobCheckout(t.Context(), testWorkerID, &storage.ReviewJob{
+			ID: 1, RepoPath: repo.Path(), GitRef: head, JobType: storage.JobTypeReview,
+		}, cfg)
+		require.NoError(t, err)
+		require.NotNil(t, checkout.cleanup)
+		t.Cleanup(checkout.cleanup)
+
+		assert.True(t, checkout.isolatedLocalReview)
+		content, err := os.ReadFile(filepath.Join(checkout.agentRepoPath, "vendor", "sub", "sub.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "submodule content\n", strings.ReplaceAll(string(content), "\r\n", "\n"))
+		assert.NoFileExists(t, markerPath, "checkout setup must not run the user's hooks")
+	})
+
+	t.Run("CI checkout keeps isolated git config", func(t *testing.T) {
+		panelRun := uuid.New()
+		_, err := pool.prepareJobCheckout(t.Context(), testWorkerID, &storage.ReviewJob{
+			ID: 2, RepoPath: repo.Path(), GitRef: head, JobType: storage.JobTypeReview,
+			Source: storage.JobSourceCI, PanelRunUUID: &panelRun,
+		}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "git submodule update")
+	})
+}
+
 // TestOnlySynthesisInstructionsForceExactCheckout verifies that with
 // isolate_reviews off, a synthesis job's instructions move it to an exact
 // checkout, while a member's own reviewer instructions, stored under the same

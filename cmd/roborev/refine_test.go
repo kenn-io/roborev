@@ -839,28 +839,15 @@ func TestCommitWithHookRetryUsesCommitOptions(t *testing.T) {
 	assert.Contains(t, show, "Co-authored-by: Pair Reviewer <pair@example.com>")
 }
 
-// useIsolatedGlobalGitConfig points git's ~/.gitconfig at dir for this test.
-// testenv's GIT_CONFIG_GLOBAL cannot be used: refine's runner strips every
-// GIT_* variable before running git.
-func useIsolatedGlobalGitConfig(t *testing.T, dir string) string {
-	t.Helper()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
-	configPath := filepath.Join(dir, ".gitconfig")
-	config := "[user]\n\tname = Synthetic Test User\n\temail = synthetic@example.invalid\n[init]\n\tdefaultBranch = main\n"
-	require.NoError(t, os.WriteFile(configPath, []byte(config), 0o644))
-	return configPath
-}
-
 func TestRefinePatchPreservesGlobalLineEndings(t *testing.T) {
-	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	globalConfig := testutil.UseIsolatedGlobalGitConfig(t, t.TempDir())
 	parent := NewGitTestRepo(t)
 	parent.Run("config", "--file", globalConfig, "core.autocrlf", "true")
 	parent.CommitFile("file.txt", "before\ncontext\n", "base")
 	path := filepath.Join(parent.Dir, "file.txt")
 	// Re-checkout so the parent, like the refine worktree, has CRLF on disk.
 	require.NoError(t, os.Remove(path))
-	_, _, err := refineGitRunner().Run(t.Context(), parent.Dir, nil, "checkout", "--", "file.txt")
+	_, _, err := git.UserConfigRunner().Run(t.Context(), parent.Dir, nil, "checkout", "--", "file.txt")
 	require.NoError(t, err)
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -895,7 +882,7 @@ func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *te
 		t.Skip("git not available")
 	}
 
-	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	globalConfig := testutil.UseIsolatedGlobalGitConfig(t, t.TempDir())
 	submoduleSource := NewGitTestRepo(t)
 	markerPath := filepath.Join(t.TempDir(), "post-checkout.marker")
 	t.Setenv("ROBOREV_HOOK_MARKER", filepath.ToSlash(markerPath))
@@ -940,7 +927,7 @@ func TestCreateRefineWorktreeIgnoresInheritedGitEnvironment(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	useIsolatedGlobalGitConfig(t, t.TempDir())
+	testutil.UseIsolatedGlobalGitConfig(t, t.TempDir())
 	parent := NewGitTestRepo(t)
 	parent.CommitFile("parent.txt", "parent\n", "parent base")
 	parentHead := parent.Run("rev-parse", "HEAD")
@@ -961,7 +948,7 @@ func TestCreateRefineWorktreeDoesNotRunUserHooksOnWorktreeAdd(t *testing.T) {
 		t.Skip("git not available")
 	}
 
-	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	globalConfig := testutil.UseIsolatedGlobalGitConfig(t, t.TempDir())
 	parent := NewGitTestRepo(t)
 	parent.CommitFile("parent.txt", "parent\n", "parent base")
 	hookDir := t.TempDir()
@@ -981,12 +968,12 @@ func TestCreateRefineWorktreeDoesNotRunUserHooksOnWorktreeAdd(t *testing.T) {
 	t.Log("core.hooksPath=os.DevNull suppressed post-checkout; marker file is absent")
 }
 
-func TestRefineGitRunnerCredentialHelper(t *testing.T) {
+func TestUserConfigRunnerCredentialHelper(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
 
-	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	globalConfig := testutil.UseIsolatedGlobalGitConfig(t, t.TempDir())
 	storePath := filepath.Join(t.TempDir(), "credentials")
 	store := "https://synthetic-user:synthetic-password@credential-test.invalid/private/repo.git\n"
 	require.NoError(t, os.WriteFile(storePath, []byte(store), 0o600))
@@ -995,7 +982,7 @@ func TestRefineGitRunnerCredentialHelper(t *testing.T) {
 	require.NoError(t, config.Run())
 
 	request := strings.NewReader("protocol=https\nhost=credential-test.invalid\npath=private/repo.git\n\n")
-	stdout, _, err := refineGitRunner().Run(t.Context(), t.TempDir(), request, "credential", "fill")
+	stdout, _, err := git.UserConfigRunner().Run(t.Context(), t.TempDir(), request, "credential", "fill")
 	require.NoError(t, err)
 	assert.Contains(t, string(stdout), "username=synthetic-user")
 	assert.Contains(t, string(stdout), "password=synthetic-password")
@@ -1025,7 +1012,7 @@ func TestCreateRefineWorktreeDoesNotRunConfiguredAskPass(t *testing.T) {
 	parent.Run("update-index", "--add", "--cacheinfo", "160000,"+submoduleSHA+",vendor/sub")
 	parent.Run("commit", "-m", "add submodule")
 
-	globalConfig := useIsolatedGlobalGitConfig(t, t.TempDir())
+	globalConfig := testutil.UseIsolatedGlobalGitConfig(t, t.TempDir())
 	markerPath := filepath.Join(t.TempDir(), "askpass.marker")
 	t.Setenv("ROBOREV_ASKPASS_MARKER", filepath.ToSlash(markerPath))
 	askPassPath := filepath.Join(t.TempDir(), "askpass")
