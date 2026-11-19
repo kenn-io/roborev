@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
@@ -846,10 +847,10 @@ func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, 
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
+	proc, err := proctrack.Start(ctx, cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
-
 	var stream io.Reader = stdout
 	if out != nil {
 		stream = io.TeeReader(stdout, out)
@@ -857,10 +858,10 @@ func (a *ClaudeAgent) classifyWithSchema(ctx context.Context, repoPath, gitRef, 
 	buf, readErr := io.ReadAll(stream)
 	if readErr != nil {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		_ = proc.Wait()
 		return nil, fmt.Errorf("read stdout: %w", readErr)
 	}
-	if err := cmd.Wait(); err != nil {
+	if err := proc.Wait(); err != nil {
 		return nil, a.schemaWaitError(err, buf, stderr.String())
 	}
 	return parseClaudeClassifyStream(strings.NewReader(string(buf)))
@@ -920,18 +921,19 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
+	proc, err := proctrack.Start(ctx, cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 	buf, readErr := io.ReadAll(stdout)
 	if readErr != nil {
-		_ = cmd.Wait()
+		_ = proc.Wait()
 		return nil, fmt.Errorf("read stdout: %w", readErr)
 	}
 	if out != nil {
 		_, _ = out.Write(buf)
 	}
-	if err := cmd.Wait(); err != nil {
+	if err := proc.Wait(); err != nil {
 		return nil, a.schemaWaitError(err, buf, stderr.String())
 	}
 	return parseClaudeClassifyStream(bytes.NewReader(buf))

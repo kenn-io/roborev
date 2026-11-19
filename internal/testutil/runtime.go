@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/atomicfile"
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
@@ -61,7 +62,8 @@ func RuntimeWriterMain(write func() (string, error)) bool {
 	must(os.MkdirAll(os.Getenv("XDG_RUNTIME_DIR"), 0o700))
 	path, err := write()
 	must(err)
-	must(os.WriteFile(ready, []byte(path), 0o600))
+	// The parent waits for ready to exist, so it must appear with its contents.
+	must(atomicfile.WriteFile(ready, []byte(path)))
 	_, err = io.Copy(io.Discard, os.Stdin)
 	must(err)
 	return true

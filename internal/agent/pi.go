@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 const (
@@ -341,7 +342,7 @@ func (a *PiAgent) ClassifyWithSchema(
 		cmd.Stderr = &stderrBuf
 	}
 
-	if err := cmd.Run(); err != nil {
+	if err := proctrack.Run(ctx, cmd); err != nil {
 		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return nil, ctxErr
 		}
@@ -421,7 +422,7 @@ func (a *PiAgent) ReviewWithSchema(
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
 	}
-	if err := cmd.Run(); err != nil {
+	if err := proctrack.Run(ctx, cmd); err != nil {
 		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return nil, ctxErr
 		}
@@ -518,7 +519,7 @@ func (a *PiAgent) Review(
 		cmd.Stderr = &stderrBuf
 	}
 
-	if err := cmd.Run(); err != nil {
+	if err := proctrack.Run(ctx, cmd); err != nil {
 		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return "", ctxErr
 		}

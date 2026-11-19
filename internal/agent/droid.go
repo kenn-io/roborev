@@ -7,6 +7,8 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 // DroidAgent runs code reviews using Factory's Droid CLI
@@ -140,7 +142,7 @@ func (a *DroidAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		cmd.Stderr = &stderr
 	}
 
-	if err := cmd.Run(); err != nil {
+	if err := proctrack.Run(ctx, cmd); err != nil {
 		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return "", ctxErr
 		}

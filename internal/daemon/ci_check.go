@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/proctrack"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
@@ -84,7 +85,19 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 			checker = wp.runCICheck
 		}
 		capture := tokens.NewCodexUsageCaptureWriter()
-		checked, checkErr := checker(ctx, job, *check, doc, env, io.MultiWriter(outputWriter, capture))
+		// The checker runs in its own phase: a memory breach there stops and
+		// cancels only the checker, so the finished review is still completed.
+		checkCtx, checkScope := proctrack.OpenScope(ctx)
+		checked, checkErr := checker(checkCtx, job, *check, doc, env, io.MultiWriter(outputWriter, capture))
+		// Close first: a sample taken while the checker's processes were
+		// exiting can still record a breach. A breach discards the checker's
+		// verdicts even if it returned them, so the review keeps one outcome.
+		if err := checkScope.Close(); err != nil {
+			log.Printf("CI checker for job %d: %v", job.ID, err)
+		}
+		if b := checkScope.Breach(); b != nil {
+			checkErr = b
+		}
 		capture.Flush()
 		res.checkerUsage = capture.Usage()
 		if res.checkerUsage != nil {
@@ -154,6 +167,9 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 		return doc, err
 	}
 	if cfg.Rewrite {
+		// The rewrite is a phase of its own: a breach there keeps the checked
+		// review instead of discarding the check.
+		rewriteCtx, rewriteScope := proctrack.OpenScope(ctx)
 		var repo string
 		var rewriteAgent *agent.CodexAgent
 		phase := 0
@@ -177,8 +193,14 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 			}
 			phase++
 			fmt.Fprintf(out, "CI rewrite phase %d\n", phase)
-			return rewriteAgent.ReviewWithSchema(ctx, repo, job.GitRef, text, schema, out)
+			return rewriteAgent.ReviewWithSchema(rewriteCtx, repo, job.GitRef, text, schema, out)
 		})
+		if closeErr := rewriteScope.Close(); closeErr != nil {
+			log.Printf("CI rewrite for job %d: %v", job.ID, closeErr)
+		}
+		if b := rewriteScope.Breach(); b != nil {
+			err = b
+		}
 		if err != nil {
 			fmt.Fprintf(out, "CI rewrite failed; keeping checked review: %v\n", err)
 		} else {
@@ -460,7 +482,7 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 	warm := HiddenCommand(ctx, filepath.Join(paths[0], "bin", "go"), "mod", "download")
 	warm.Dir = checkout
 	warm.Env = gitEnv
-	if output, err := warm.CombinedOutput(); err != nil {
+	if output, err := proctrack.CombinedOutput(ctx, warm); err != nil {
 		fmt.Fprintf(out, "CI checker module warming failed: %v: %s\n", err, output)
 	}
 

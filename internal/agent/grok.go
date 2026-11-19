@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 const (
@@ -662,7 +664,7 @@ func (a *GrokAgent) classifyWithSchema(
 		cmd.Stderr = &stderrBuf
 	}
 
-	if err := cmd.Run(); err != nil {
+	if err := proctrack.Run(ctx, cmd); err != nil {
 		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return nil, ctxErr
 		}
@@ -736,7 +738,7 @@ func (a *GrokAgent) reviewWithSchema(
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
 	}
-	if err := cmd.Run(); err != nil {
+	if err := proctrack.Run(ctx, cmd); err != nil {
 		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return nil, ctxErr
 		}

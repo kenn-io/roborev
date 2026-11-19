@@ -27,6 +27,7 @@ import (
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/proctrack"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/rebuttal"
 	"go.kenn.io/roborev/internal/review"
@@ -46,6 +47,9 @@ type runningJobCancellation struct {
 	cancel                context.CancelFunc
 	deadline              time.Time
 	callerBroadcastsEvent bool
+	// memoryBreach reports the attempt's memory-limit breach while user
+	// cancellation and interrupt shutdown have not ended the attempt.
+	memoryBreach func() *proctrack.Breach
 }
 
 // WorkerPool manages a pool of review workers
@@ -446,12 +450,15 @@ func (wp *WorkerPool) isJobCancellable(job *storage.ReviewJob) bool {
 // registerRunningJob tracks a running job for potential cancellation.
 // If the job was already marked for cancellation (race condition), it
 // immediately cancels it.
-func (wp *WorkerPool) registerRunningJob(jobID int64, cancel context.CancelFunc, deadline time.Time) {
+func (wp *WorkerPool) registerRunningJob(
+	jobID int64, cancel context.CancelFunc, deadline time.Time, memoryBreach func() *proctrack.Breach,
+) {
 	wp.runningJobsMu.Lock()
 	callerBroadcastsEvent, pending := wp.pendingCancels[jobID]
 	_, updateInterrupted := wp.updateInterruptTargets[jobID]
 	wp.runningJobs[jobID] = runningJobCancellation{
 		cancel: cancel, deadline: deadline, callerBroadcastsEvent: callerBroadcastsEvent,
+		memoryBreach: memoryBreach,
 	}
 
 	// Check if this job was canceled before we registered it
@@ -604,11 +611,28 @@ func (wp *WorkerPool) runAttemptTransition(
 	if wp.handleUpdateInterruptionLocked(workerID, job) {
 		return true
 	}
+	// A memory breach decides the attempt's one outcome, whatever error the
+	// agent returned: no retry, failover, or backup agent.
+	if b := wp.attemptMemoryBreach(job.ID); b != nil {
+		transition = func() {
+			wp.failNonRetryableJobLocked(workerID, job, job.Agent, b.Error())
+		}
+	}
 	ran, err := wp.db.RunJobAttempt(job, workerID, transition)
 	if err != nil {
 		log.Printf("[%s] Job %d: validate attempt: %v", workerID, job.ID, err)
 	}
 	return !ran
+}
+
+func (wp *WorkerPool) attemptMemoryBreach(jobID int64) *proctrack.Breach {
+	wp.runningJobsMu.Lock()
+	memoryBreach := wp.runningJobs[jobID].memoryBreach
+	wp.runningJobsMu.Unlock()
+	if memoryBreach == nil {
+		return nil
+	}
+	return memoryBreach()
 }
 
 // IsJobPendingCancel reports whether a job is in the pendingCancels set.
@@ -1076,14 +1100,40 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	defer releaseAttempt()
 
+	attemptCtx := ctx
+	// Every process the attempt starts belongs to this scope.
+	ctx, procScope := proctrack.New(ctx, uint64(max(cfg.AgentMemoryMaxMB, 0))<<20)
+	memoryBreach := func() *proctrack.Breach {
+		// Cancellation and interrupt shutdown take precedence over a breach;
+		// a deadline that passes after the breach does not.
+		if errors.Is(attemptCtx.Err(), context.Canceled) {
+			return nil
+		}
+		return procScope.Breach()
+	}
+
 	// Register for cancellation tracking
 	deadline, _ := ctx.Deadline()
-	wp.registerRunningJob(job.ID, cancel, deadline)
+	wp.registerRunningJob(job.ID, cancel, deadline, memoryBreach)
 	// Cleanup must still reach the database after the job context ends.
 	defer wp.finishRunningJob(context.WithoutCancel(ctx), workerID, job.ID)
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
+	// Stop the attempt's leftover processes before its claim is released, so a
+	// rerun never overlaps them.
+	defer func() {
+		if err := procScope.Close(); err != nil {
+			log.Printf("[%s] Job %d: %v", workerID, job.ID, err)
+		}
+		// A path that returned without recording an outcome must not leave a
+		// breached attempt running. A recorded outcome makes this a no-op.
+		if b := memoryBreach(); b != nil {
+			wp.runAttemptTransition(workerID, job, func() {
+				wp.failNonRetryableJobLocked(workerID, job, job.Agent, b.Error())
+			})
+		}
+	}()
 	if ctx.Err() != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, "job timed out waiting for previous attempt cleanup")

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 func (j Job) check(ctx context.Context, wrapper, env []string, cancel func()) error {
@@ -92,7 +94,11 @@ exit "$failed"
 	}
 	cmd.Dir = j.WorkDir
 	cmd.Env = append(append([]string{}, env...), "ROBOREV_SANDBOX_CANARY=planted")
-	output, err := cmd.CombinedOutput()
+	var opts []proctrack.StartOption
+	if cancel != nil {
+		opts = append(opts, proctrack.WithStop(cancel))
+	}
+	output, err := proctrack.CombinedOutput(ctx, cmd, opts...)
 	if err != nil {
 		return fmt.Errorf("sandbox self-check failed: %s: %w", strings.TrimSpace(string(output)), cmp.Or(ctx.Err(), err))
 	}

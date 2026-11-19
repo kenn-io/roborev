@@ -245,6 +245,7 @@ type Config struct {
 	DaemonTLS                  DaemonTLSConfig                 `toml:"daemon_tls"`
 	ServerAddr                 string                          `toml:"server_addr"`
 	MaxWorkers                 int                             `toml:"max_workers"`
+	AgentMemoryMaxMB           int                             `toml:"agent_memory_max_mb" comment:"Fail a job when its processes' resident memory (RSS), added together, exceeds this many MiB. Shared pages count once per process, so the sum can read well above the memory actually used. 0 or unset disables the limit. Linux and macOS only."`
 	ReviewContextCount         int                             `toml:"review_context_count"`
 	ReuseReviewSessionLookback int                             `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 	Experiments                map[string]ExperimentDefinition `toml:"experiments"`
@@ -719,6 +720,9 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if err := validateAgentMemoryMaxMB(c.AgentMemoryMaxMB); err != nil {
+		return err
+	}
 	if err := validateReviewMCPAllowedTools(c.ReviewMCPAllowedTools); err != nil {
 		return err
 	}
@@ -1123,10 +1127,17 @@ func LoadGlobalFrom(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := errors.Join(cfg.daemonErrs...); err != nil {
+	if err := errors.Join(errors.Join(cfg.daemonErrs...), validateAgentMemoryMaxMB(cfg.AgentMemoryMaxMB)); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
+}
+
+func validateAgentMemoryMaxMB(mib int) error {
+	if mib < 0 {
+		return fmt.Errorf("agent_memory_max_mb must be 0 or more, got %d", mib)
+	}
+	return nil
 }
 
 // parseGlobalFrom decodes the global file and migrates deprecated keys.
