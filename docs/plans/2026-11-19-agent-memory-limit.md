@@ -1,6 +1,7 @@
 # Proposed per-job agent memory limit
 
-This is a proposal, not implemented behavior.
+Implemented on Linux. The macOS process table and exit watcher compile and
+share their parsing tests with Linux, but have not yet run on native macOS.
 
 ## Purpose
 
@@ -178,10 +179,11 @@ All steps that change which groups are owned run under one tracker lock.
    returns at once for a root that exited before the watcher started. (A macOS
    kqueue `NOTE_EXIT` filter would not: it is edge-triggered, so a root that
    exits before the filter is registered never produces the event.)
-4. **Clean up the group.** When the root exits, the watcher stops the group
-   under the lock: SIGKILL to the group ID for an ordinary root, or the root's
-   own stop operation for a sandboxed root (below). The zombie root still
-   reserves the number.
+4. **Clean up the group.** When the root exits, the watcher stops the group:
+   SIGKILL to the group ID under the lock for an ordinary root, or the root's
+   own stop operation for a sandboxed root (below). The stop operation targets
+   the sandbox's systemd scope, not a process number, so it runs outside the
+   lock. The zombie root still reserves the number.
 5. **Hand off.** Still under the lock, the watcher removes the group from the
    owned set, so neither the sampler nor cleanup can signal it again.
 6. **Reap.** The launch helper returns a handle. Its `Wait` blocks until the
@@ -419,17 +421,19 @@ Behavior:
 
 ## Where the code goes
 
-- `internal/procutil`: process groups, the non-reaping exit watcher, pidfd
-  signaling, pipe read deadlines, and the Linux and macOS process-table readers. Unix, Linux, macOS,
-  and Windows files follow the existing `command_unix.go` and
-  `command_windows.go` split.
-- `internal/agent`: the job tracker, the tracked launch helper, the tracker's
-  `Wait`, and the launch-site changes in the table above.
+- `internal/proctrack`: the job tracker and its scopes, the tracked launch
+  helper (`Start`, `Run`, `Output`, `CombinedOutput`, `Process.Wait`,
+  `Process.Pipe`), process groups, the non-reaping exit watcher, pidfd
+  signaling, the shared sampler, and the Linux and macOS process-table readers.
+  It is its own package because `internal/agent`, `internal/sandbox`, and
+  `internal/daemon` all launch through it, and `internal/agent` already imports
+  `internal/sandbox`.
+- `internal/agent`: the launch-site changes in the table above.
 - `internal/daemon`: creating a tracker for each attempt, the checker scope and
-  its child context, the shared sampler, breach-first outcome handling in the
-  worker, classifier, and checker, and the SIGINT change.
-- `internal/sandbox`: exposing the scope cleanup callback as a root's stop
-  operation, with its contract unchanged.
+  its child context, breach-first outcome handling in the worker, classifier,
+  and checker, and the SIGINT change.
+- `internal/sandbox`: the self-check launches through the tracker with the
+  check scope's stop as its stop operation.
 
 ## Known limits
 
