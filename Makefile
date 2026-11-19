@@ -283,12 +283,22 @@ postgres-up:
 postgres-down:
 	docker compose -f docker-compose.test.yml down
 
-# Postgres tests (requires postgres running)
-test-postgres: postgres-up
-	@echo "Waiting for postgres to be ready..."
-	@sleep 2
-	TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test" \
-		$(MAKE) test-postgres-ci
+# Postgres tests use a separate database for each run.
+test-postgres:
+	@scripts/test-lease.sh roborev $(MAKE) test-postgres-run
+
+.PHONY: test-postgres-run
+test-postgres-run:
+	@set -e; \
+		cleanup() { status=$$?; trap - EXIT HUP INT TERM; \
+			if ! docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans; then \
+				echo 'cleanup failed; scheduled cleanup will retry' >&2; \
+			fi; exit $$status; }; \
+		trap cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; \
+		export TEST_PG_PUBLISH='127.0.0.1::5432'; \
+		docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres; \
+		address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432); \
+		TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test" $(MAKE) test-postgres-ci
 
 .PHONY: test-postgres-growth
 test-postgres-growth:
@@ -376,15 +386,18 @@ install-hooks:
 	prek install
 
 # CI target: run postgres tests without managing docker (assumes postgres is running)
+GO_TEST_REPORT_DIR ?= gotestsum
+POSTGRES_REPORT_DIR = $(GO_TEST_REPORT_DIR)$(if $(TEST_SERVICE_LEASE),/$(TEST_SERVICE_LEASE))
 test-postgres-ci:
+	@mkdir -p "$(POSTGRES_REPORT_DIR)"
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-		--jsonfile gotestsum/postgres-storage.json \
-		--rerun-fails=2 --rerun-fails-report gotestsum/postgres-storage-reruns.txt \
+		--jsonfile $(POSTGRES_REPORT_DIR)/postgres-storage.json \
+		--rerun-fails=2 --rerun-fails-report $(POSTGRES_REPORT_DIR)/postgres-storage-reruns.txt \
 		--packages "./internal/storage/..." \
 		-- -tags=postgres -v -run Integration
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-		--jsonfile gotestsum/postgres-daemon.json \
-		--rerun-fails=2 --rerun-fails-report gotestsum/postgres-daemon-reruns.txt \
+		--jsonfile $(POSTGRES_REPORT_DIR)/postgres-daemon.json \
+		--rerun-fails=2 --rerun-fails-report $(POSTGRES_REPORT_DIR)/postgres-daemon-reruns.txt \
 		--packages "./internal/daemon/..." \
 		-- -tags=postgres -v -run '^TestIntegration'
 

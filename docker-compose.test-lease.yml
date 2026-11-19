@@ -1,0 +1,4 @@
+services:
+  postgres:
+    labels:
+      test-service.lease: "${TEST_SERVICE_LEASE}"
