@@ -116,23 +116,30 @@ size the setting accordingly.
 
 ## Ownership model
 
-Every launch the daemon makes for a job goes through a **job tracker** carried
-in the job context. Code that cannot find a tracker starts no tracked process:
-the launch helper requires one. Capability probes, such as `codex --help`, run
-outside a job and are not tracked.
+Every process the daemon starts for a job attempt goes through a **job
+tracker**. The worker creates one tracker per attempt and carries it in the
+attempt's context.
+
+The tracked launch helper also serves callers without a tracker. Foreground
+commands such as `roborev fix` and `roborev refine` call the same adapters
+directly, outside the daemon. When the context carries no tracker, and on
+Windows, the helper starts and waits for the command exactly as adapters do
+today: no process group, no exit watcher, no cleanup.
 
 The tracker owns three kinds of identity:
 
-1. **Roots.** Each process the daemon starts for the job: CLI agents, ACP
-   agents, ACP terminal commands, the CI checker's package installers, and the
-   CI checker agent. Each root starts in its own process group (`Setpgid`), so
-   its PID is also its group ID.
-2. **Group members.** Any process whose group ID is an owned root's group, found
-   on each sample. A child whose parent exited gets a new parent PID but keeps
-   its group, so the group, not the parent chain, is how the tracker finds it.
+1. **Roots.** Each process the daemon starts for the attempt, from the list in
+   [Which launches count](#which-launches-count). Each root starts in its own
+   process group (`Setpgid`), so its PID is also its group ID.
+2. **Group members.** Any process whose group ID belongs to a group the tracker
+   currently owns (see the next section), found on each sample. A child whose
+   parent exited gets a new parent PID but keeps its group, so the group, not the
+   parent chain, is how the tracker finds it.
 3. **Remembered descendants.** Any process seen, on any sample, as a descendant
-   of a root or group member by parent PID. This catches a process that left the
-   group with `setsid` after the tracker saw it.
+   of a root, a group member, or another remembered descendant, by parent PID.
+   Live remembered descendants are starting points for later parent walks, so a
+   process that left its group with `setsid` keeps contributing the children it
+   starts afterward.
 
 A process identity is its PID plus its start time. Each identity is counted
 once per sample, however many of these sets it appears in.
@@ -142,33 +149,64 @@ once per sample, however many of these sets it appears in.
 A process group number is safe to signal only while the job can prove the group
 still exists and is its own. The rule:
 
-> **A root's process group is signaled only while that root has exited but is
-> not yet reaped, or is still running.** The root is never reaped until its
-> group has been cleaned up.
+> **A root's process group is owned, and may be signaled, from the root's
+> `Start()` until the moment the tracker hands the root to `cmd.Wait()` for
+> reaping.** The handoff happens only after the group has been cleaned up, and
+> it removes the group from every path that can signal it.
 
 This holds because the kernel does not reuse a PID, and so does not reuse that
-PID as a group ID, while the process is a zombie. Once the root is reaped and
-its last group member exits, the number can be reused, and the tracker forgets
-the group.
+PID as a group ID, while the process is running or is an unreaped zombie. Once
+the root is reaped and its last group member exits, the number can be reused.
+By then the tracker no longer owns it.
 
-To enforce the rule, the tracker owns waiting:
+### Root lifecycle
 
-1. After `cmd.Start()`, the launch helper registers the root and starts an exit
-   watcher that observes the root's exit **without reaping it**. Linux uses
-   `waitid(P_PID, pid, WEXITED|WNOWAIT)`. macOS uses a kqueue `EVFILT_PROC`
-   `NOTE_EXIT` event.
-2. When the root exits, the watcher kills the root's group (SIGKILL to the group
-   ID). The zombie root still reserves the number.
-3. The watcher then allows reaping. The launch helper returns a handle, and the
-   handle's `Wait` is the only way to wait: it waits for step 2 and then calls
-   `cmd.Wait()`. Adapters keep the `*exec.Cmd` for pipes and environment but do
-   not call `cmd.Wait()` or `cmd.Run()` on a tracked command. The behavior tests
-   below (stdout held open, early terminal exit) fail if a launch site reaps
-   early.
+All steps that change which groups are owned run under one tracker lock.
 
-Killing the group when its root exits is what releases a grandchild that holds
-the agent's stdout. The adapter's read then reaches EOF and the result the agent
-already wrote is preserved.
+1. **Admit.** Before `cmd.Start()`, the launch helper reserves a slot under the
+   lock. If cleanup has started, admission fails and nothing is started. A
+   refused ACP terminal command never runs.
+2. **Start and register.** The helper calls `cmd.Start()` outside the lock,
+   then registers the root and its group under the lock. If `Start()` fails, the
+   reservation is released. Cleanup waits for every admitted launch to finish
+   registering or fail before it signals anything, so an admitted process is
+   never missed. A process the root starts before registration is in the root's
+   group, so it is covered too.
+3. **Watch.** The helper starts one exit watcher per root. The watcher observes
+   the root's exit **without reaping it**, using
+   `waitid(P_PID, pid, WEXITED|WNOWAIT)` on both Linux and macOS. This also
+   returns at once for a root that exited before the watcher started. (A macOS
+   kqueue `NOTE_EXIT` filter would not: it is edge-triggered, so a root that
+   exits before the filter is registered never produces the event.)
+4. **Clean up the group.** When the root exits, the watcher stops the group
+   under the lock: SIGKILL to the group ID for an ordinary root, or the root's
+   own stop operation for a sandboxed root (below). The zombie root still
+   reserves the number.
+5. **Hand off.** Still under the lock, the watcher removes the group from the
+   owned set, so neither the sampler nor cleanup can signal it again. It then
+   releases the lock and calls `cmd.Wait()`, which reaps the root and returns its
+   original exit status.
+
+The watcher is the only code that reaps a tracked root. The launch helper
+returns a handle whose `Wait` joins the watcher and returns the exit status the
+watcher collected. Attempt cleanup also joins the watcher instead of reaping on
+its own. Adapters keep the `*exec.Cmd` for pipes and environment but never call
+`cmd.Wait()` or `cmd.Run()` on a tracked command. The behavior tests below fail
+if a launch site reaps early.
+
+### Sandboxed roots
+
+The CI checker's sandbox requires that its own cleanup callback stop its
+systemd scope. That callback runs `systemctl --user stop`, which sends SIGTERM
+so `nono` can remove its files, then escalates to SIGKILL after the scope's
+five-second stop timeout.
+
+A sandboxed root registers that callback as its **stop operation**. Wherever
+the tracker would SIGKILL an ordinary root's group, it calls the stop operation
+instead. The tracker still counts the root's memory and still owns waiting. The
+stop operation is not a tracked launch, so it still runs after admission has
+closed. A breach in a sandboxed root can therefore run up to five seconds past
+the kill decision; the scope's own `MemoryMax` bounds it meanwhile.
 
 ### When an individual process may be signaled
 
@@ -183,25 +221,52 @@ operation tied to the observed identity:
   does not signal the process. It reports cleanup as incomplete and names the
   process.
 
-### Registration and cleanup races
+### Output after the root exits
 
-- Registration and cleanup share one lock. If cleanup has started, registering a
-  new root fails: the launch helper kills that root's group itself (the root is
-  unreaped, so the group is safe to signal), reaps it, and returns an error to
-  the adapter.
-- A process that a root starts between `Start()` and registration is in the
-  root's group, so the group kill covers it.
+Killing the root's group releases a grandchild in that group that holds the
+agent's stdout. The adapter's read then reaches EOF, and the result the agent
+already wrote is preserved.
 
-### What each launch site needs
+A pipe holder outside the group is not released that way. Some adapters read
+stdout to EOF before waiting (for example, Claude's schema path), so that holder
+could keep the job open until its timeout.
 
-| Launch site | Change |
+- When an adapter gives `os/exec` an `io.Writer`, as `runStreamingCLI` does,
+  `os/exec` copies the output itself, and the existing `WaitDelay` already
+  bounds that copy once the watcher calls `cmd.Wait()`.
+- When an adapter reads a pipe from `StdoutPipe` or `StderrPipe`, as Claude's
+  schema path and the ACP agent do, nothing bounds the read today. Once the root
+  has exited and its group has been cleaned up, the handle sets a read deadline
+  one second ahead on those pipes. Reads first return everything already
+  buffered, which includes everything the root wrote before it exited, then a
+  deadline error that the readers treat as end of output. Later writes from the
+  detached holder are discarded. `os.Pipe` files on Linux and macOS support read
+  deadlines through the runtime poller.
+
+### Which launches count
+
+Roots of the attempt:
+
+| Launch | Notes |
 | --- | --- |
-| `runStreamingCLI` (most adapters) | Use the tracked launch helper and the tracker's `Wait`. |
-| Adapters that call `configureSubprocess` with `cmd.Run()` or their own `Wait()`, such as Droid and Claude's schema path | Replace with start, register, and the tracker's `Wait`. |
-| ACP agent launch | Same, with the job tracker from the job context. |
-| ACP terminal commands | `CreateTerminal` builds its command from `context.Background()`, so the ACP client receives the job tracker explicitly when it is created. A terminal started after cleanup begins is refused by the registration rule. |
-| CI checker package installers | Run as roots of the job. Their memory counts against the job. |
-| CI checker agent | Runs as a root. The sandbox still stops its scope with `systemctl --user stop`; the tracker's group kill is an extra, harmless step. The sandbox's cleanup contract is unchanged. |
+| CLI agents through `runStreamingCLI` | Most adapters. |
+| Adapters with their own start and wait, such as Droid (`cmd.Run()`) and Claude's schema path | Changed to admit, start, register, and the handle's `Wait`. |
+| ACP agent | Uses the tracker from the attempt context. |
+| ACP terminal commands | `CreateTerminal` builds its command from `context.Background()`, so the ACP client receives the tracker explicitly when the agent creates it. |
+| CI checker package installers and the npm manifest parser | They run package managers and Node on files from the pull request. |
+| CI checker `go mod download` | Fetches and unpacks modules the pull request names. |
+| CI checker sandbox self-check | A sandboxed root with the scope stop operation. |
+| CI checker and rewrite agents | Sandboxed roots with the scope stop operation. |
+
+Not roots, and not counted:
+
+- Git commands the daemon runs to prepare checkouts and worktrees.
+- Agent capability probes, such as `codex --help`, which run before an attempt.
+- Post-review hooks, which run after the attempt finishes.
+
+Every launch in the first table is reachable only through the tracked helper
+when the attempt has a tracker. A launch added later decides which table it
+belongs in.
 
 ## Sampling
 
@@ -237,65 +302,92 @@ interval keeps the cost flat as `max_workers` grows.
 
 ## Breach handling
 
-A breach must produce one terminal outcome for the attempt. The order:
+A breach must produce one terminal outcome for the attempt.
 
-1. Record the breach on the tracker: the limit, the summed RSS, and the largest
-   process (name, PID, RSS). The record is written before any signal.
-2. Start cleanup (below).
-3. Cancel the attempt's context so the adapter returns.
-4. When the adapter returns, the worker checks the tracker's breach record
+### Phases
+
+The tracker has an attempt scope and, while the CI checker runs, a **checker
+scope** nested inside it. The checker runs with a child context of the attempt
+context, created with the checker scope. Its roots register in the checker
+scope. The rewrite phase uses the same checker scope.
+
+When a breach is detected, the tracker attributes it to the innermost open
+scope. During the checker phase, the review agents have already exited and
+their groups have been cleaned up, so the checker's processes are the job's
+remaining processes.
+
+### Order
+
+1. Record the breach under the tracker lock: the scope, the limit, the summed
+   RSS, and the largest process (name, PID, RSS). The record is written before
+   any signal.
+2. Clean up that scope's processes (see [Cleanup](#cleanup)).
+3. Cancel that scope's context: the checker's child context for a checker
+   breach, the attempt context otherwise.
+4. When the code that owns the scope returns, it checks the breach record
    **before** it looks at `ctx.Err()`, retry, failover, or backup logic. If a
-   breach is recorded, the outcome is decided by the breach, whatever error the
-   adapter returned.
+   breach is recorded for its scope, the breach decides the outcome, whatever
+   error the adapter returned.
 
-What the breach decides:
+User cancellation and interrupt shutdown still win. They cancel the attempt
+context, which also cancels the checker's child context. If the attempt context
+is canceled when the outcome is decided, the existing cancellation or
+interruption handling runs and the breach is only logged.
 
-| Job phase | Outcome |
+### Outcomes
+
+| Scope | Outcome |
 | --- | --- |
-| Any agent job (review, fix, synthesis, classify, panel member, and so on) | Fail through the existing attempt-guarded non-retryable path (`failNonRetryableJobLocked`). No retry, no failover, no backup agent. |
-| CI checker phase, after the review agent finished | Treat as a checker failure: keep the original review, the same as any other checker failure today, and record the memory message as the checker's error. |
+| Attempt (review, fix, synthesis, classify, panel member, and so on) | Fail through the existing attempt-guarded non-retryable path (`failNonRetryableJobLocked`). No retry, no failover, no backup agent. |
+| Checker, during the check | Keep the original review's findings and verdict. Store `check.status = "failed"`, write the memory message to the job log, and complete through the existing attempt-guarded completion path. |
+| Checker, during the rewrite | Keep the checked review, as a failed rewrite does today, and write the memory message to the job log. |
 
-The CI checker row follows the checker's existing contract: a checker failure,
-including the sandbox's own 8 GiB scope limit, already keeps the review. Failing
-the whole CI job would discard a finished, paid review because of the checker's
-own work. *(Proposer's call; the alternative is to fail the job in every phase.)*
+A checker failure already keeps the review today, including when the checker
+hits the sandbox's own 8 GiB scope limit. Failing the whole CI job would discard
+a finished, paid review because of the checker's own work.
 
-The failure message:
+`checkAndCompleteSynthesis` today returns without saving when the context is
+canceled. With a checker scope, a checker breach cancels only the child
+context, so the attempt context stays live and completion proceeds.
+
+### Failure message
 
 ```text
 agent processes' summed RSS reached 17.2 GiB, over agent_memory_max_mb
 (16384 MiB); largest: python3 (pid 12345) at 16.9 GiB
 ```
 
-Tests run with a backup agent configured and assert: one failed job, one
-failure event, and zero backup invocations. The same test covers classify jobs,
-whose backup path runs on any error today.
-
 ## Cleanup
 
-Cleanup kills everything the job can prove it owns:
+Cleanup of a scope stops everything that scope can prove it owns:
 
-1. For each root that is running or unreaped: SIGKILL its process group.
-2. For each remembered descendant outside those groups that still exists:
-   signal it through a pidfd on Linux 5.3 and later, as described above.
-   Otherwise, do not signal it, and record it as left running.
-3. Reap the roots through their exit watchers.
-4. If any process could not be signaled, or a signal failed with a permission
+1. Close admission for the scope and wait for admitted launches to register or
+   fail.
+2. For each owned root group: SIGKILL the group, or call the root's stop
+   operation for a sandboxed root.
+3. For each remembered descendant outside those groups that still exists:
+   signal it through a pidfd on Linux 5.3 and later. Otherwise, do not signal
+   it, and record it as left running.
+4. Join the roots' exit watchers. The watchers do the reaping, as described in
+   [Root lifecycle](#root-lifecycle).
+5. If any process could not be signaled, or a signal failed with a permission
    error, log cleanup as incomplete and name the processes.
 
 Cleanup runs:
 
-- when a root exits (its own group only, before it is reaped),
-- when the job's attempt ends for any reason: completion, failure, cancellation,
-  timeout, breach, or shutdown.
+- for a single root's group, when that root exits (step 4 of the lifecycle);
+- for the checker scope, when the checker phase ends for any reason;
+- for the attempt scope, when the attempt ends for any reason: completion,
+  failure, cancellation, timeout, breach, or shutdown.
 
-SIGKILL rather than SIGTERM: a process that is filling memory may not handle
-SIGTERM in time, and a grace period allows more growth. The same signal is used
-for ordinary end-of-job cleanup. Processes left at that point are leftovers by
-definition; the agent itself has already exited or been cancelled.
+SIGKILL rather than SIGTERM for ordinary roots: a process that is filling
+memory may not handle SIGTERM in time, and a grace period allows more growth.
+The same signal is used for ordinary end-of-job cleanup. Processes left at that
+point are leftovers by definition; the agent itself has already exited or been
+cancelled.
 
 With the limit unset, nothing is sampled, so a job has no remembered
-descendants. Cleanup reaches roots' groups only. A process that left its group
+descendants. Cleanup reaches root groups only. A process that left its group
 survives, as every descendant does today.
 
 ## Shutdown and Ctrl-C
@@ -305,31 +397,34 @@ foreground process group, and the daemon's signal handler calls `Server.Stop`,
 which stops new claims and waits for running jobs. Moving agents into their own
 groups removes the first effect, so Ctrl-C would wait for whole reviews.
 
-Proposed behavior:
+Behavior:
 
-- **SIGINT** (Ctrl-C) uses the existing interrupt shutdown path: running
-  attempts return to the queue without consuming a retry, their trackers clean
-  up, and the daemon exits.
+- **SIGINT** (Ctrl-C) uses the existing interrupt shutdown path. It closes
+  claims before taking the running-job snapshot, returns running attempts to the
+  queue without consuming a retry, lets their trackers clean up, and exits.
+- **SIGINT during an update drain.** The interrupt path refuses while an update
+  drain is active. In that case the handler logs that the update drain is
+  waiting for running jobs and falls back to today's graceful `Server.Stop`, so
+  the signal still shuts the daemon down.
 - **SIGTERM** keeps today's graceful behavior: stop claims, let running jobs
   finish, then exit. Service managers send SIGTERM and set their own stop
   timeout.
 - The API's graceful and interrupt shutdown requests keep their current
   meanings.
 
-*(Proposer's call; it changes Ctrl-C from "fail running jobs by killing their
-agents" to "requeue running jobs".)*
-
 ## Where the code goes
 
 - `internal/procutil`: process groups, the non-reaping exit watcher, pidfd
-  signaling, and the Linux and macOS process-table readers. Unix, Linux, macOS,
+  signaling, pipe read deadlines, and the Linux and macOS process-table readers. Unix, Linux, macOS,
   and Windows files follow the existing `command_unix.go` and
   `command_windows.go` split.
 - `internal/agent`: the job tracker, the tracked launch helper, the tracker's
   `Wait`, and the launch-site changes in the table above.
-- `internal/daemon`: creating a tracker for each attempt, the shared sampler,
-  breach-first outcome handling in the worker and classifier, the checker-phase
-  rule, and the SIGINT change.
+- `internal/daemon`: creating a tracker for each attempt, the checker scope and
+  its child context, the shared sampler, breach-first outcome handling in the
+  worker, classifier, and checker, and the SIGINT change.
+- `internal/sandbox`: exposing the scope cleanup callback as a root's stop
+  operation, with its contract unchanged.
 
 ## Known limits
 
@@ -347,6 +442,11 @@ agents" to "requeue running jobs".)*
   descendant outside its group is not signaled. Its memory still counts, so a
   breach still fails the job, but that process can keep running. The daemon
   reports it.
+- **Sandboxed stop delay.** A breach in a sandboxed checker root stops through
+  the scope's SIGTERM-then-SIGKILL sequence, up to five seconds. The scope's own
+  `MemoryMax` bounds it meanwhile.
+- **Detached output.** After a root exits, output that a detached process writes
+  to the root's pipes more than one second later is discarded.
 - **Invisible processes.** With `hidepid=2`, other users' processes are absent
   from `/proc`.
 - **Processes started outside the job.** A service the agent reaches over a
@@ -359,7 +459,7 @@ agents" to "requeue running jobs".)*
 Unit tests with a fake process table:
 
 - group-member discovery after the parent exits, without `setsid`;
-- remembered descendants after `setsid`;
+- remembered descendants after `setsid`, including children they start later;
 - each identity counted once across roots, groups, and remembered descendants;
 - PID reuse with a different start time is neither counted nor signaled;
 - a process that exits mid-scan;
@@ -367,33 +467,41 @@ Unit tests with a fake process table:
 
 Integration tests on Linux and macOS CI, with real processes:
 
-- **Breach:** a root forks a grandchild that allocates past a small limit.
-  Assert one failed job, one failure event, zero backup invocations with a
-  backup configured, no surviving job processes, and that a concurrent job
-  completes.
-- **Parent exits first:** a launcher forks a child that keeps the group, then
-  exits before the first sample. Assert the child's RSS is counted and the child
-  is stopped at cleanup.
-- **Stdout held open, limit unset:** the root writes a valid result and exits;
-  a sleeping grandchild keeps stdout open. Assert the job completes with the
-  result well before its timeout and the grandchild is gone.
+- **Breach:** a root forks a grandchild that allocates past a small limit, with
+  a backup agent configured. Assert one failed job, one failure event, zero
+  backup invocations, no surviving job processes, and that a concurrent job
+  completes. Repeat for a classify job, whose backup runs on any error today.
+- **Exit before the watcher:** let a root exit before its watcher starts. Assert
+  that cleanup runs and the handle returns the root's original exit status. This
+  test is decisive for the macOS watcher and must run on native macOS.
+- **Parent exits first:** the tracked root stays alive while an intermediate
+  child forks a grandchild that keeps the group, then exits before the first
+  sample. Assert the grandchild's RSS is counted and the grandchild is stopped
+  at cleanup.
+- **Stdout held in the group, limit unset:** the root writes a valid result and
+  exits; a sleeping grandchild in its group keeps stdout open. Assert the job
+  completes with the result well before its timeout and the grandchild is gone.
+- **Stdout held outside the group, limit unset:** the same, with the grandchild
+  in its own session. Assert the job completes with the result within the
+  one-second output bound.
 - **Early terminal exit:** an ACP terminal command exits early in a long job.
   Assert end-of-job cleanup sends no signal to that terminal's former group.
+- **Refused terminal:** start cleanup, then request an ACP terminal. Assert the
+  command never runs.
 - **Cancel:** cancel a job whose agent left a sleeping grandchild. Assert the
   grandchild is gone.
 - **Ctrl-C, limit unset:** SIGINT to a foreground daemon with a running review.
   Assert the attempt is requeued without consuming a retry and the daemon exits
-  promptly.
-- **CI checker breach:** assert the original review is kept and the checker
-  records the memory message.
+  promptly. Repeat during an update drain and assert the graceful fallback.
+- **CI checker breach:** read back the stored review. Assert the original
+  findings and verdict, `check.status = "failed"`, and the memory message in the
+  job log. Repeat for a breach during the rewrite phase and assert the checked
+  review is stored.
+- **CI checker cleanup:** a breach in the sandboxed checker runs the scope stop
+  operation, not a direct group SIGKILL.
+- **Foreground callers:** `roborev fix` without a daemon tracker runs its agent
+  normally.
 - **Windows:** a nonzero setting logs the warning and jobs run normally.
 
-macOS behavior (RSS values, permissions, and signaling) must be verified on
-native macOS CI, not only by cross-compiling.
-
-## Open questions
-
-1. **CI checker phase.** Keep the review on a checker-phase breach (proposed),
-   or fail the job in every phase?
-2. **Ctrl-C.** Requeue running jobs on SIGINT (proposed), or keep the graceful
-   drain and accept that Ctrl-C waits for running reviews?
+macOS behavior (RSS values, permissions, waiting, and signaling) must be
+verified on native macOS CI, not only by cross-compiling.
