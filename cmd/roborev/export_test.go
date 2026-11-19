@@ -78,36 +78,31 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 	assert.Equal(testUUIDText("machine-b"), got.Reviews[1]["exported_by_machine_id"])
 }
 
-func TestExportReviewsCmdRejectsMissingExporter(t *testing.T) {
-	var calls int
+func TestExportReviewsCmdAcceptsOlderDaemon(t *testing.T) {
 	NewMockDaemon(t, MockRefineHooks{
 		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			if r.URL.Path != "/api/export/reviews" {
 				return false
 			}
-			calls++
-			if calls == 1 {
-				writeExportTestPage(t, w, "content", true, new("cursor-1"), []map[string]any{
-					{"review_id": testUUID("review-1")},
-				})
-			} else {
-				_, err := w.Write([]byte(`{"schema_version":2,"truncated":false,"reviews":[{"review_id":"00000000-0000-4000-8000-000000000002"},{"review_id":"00000000-0000-4000-8000-000000000003"}]}`))
-				require.NoError(t, err)
-			}
+			writeExportTestPage(t, w, "content", false, nil, []map[string]any{
+				{"review_id": testUUID("review-1")},
+				{"review_id": testUUID("review-2")},
+			})
 			return true
 		},
 	})
 
-	var out bytes.Buffer
-	cmd := exportCmd()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SilenceUsage = true
-	cmd.SetArgs([]string{"reviews"})
-	err := cmd.Execute()
-	require.ErrorContains(t, err, "daemon returned a review without exported_by_machine_id")
-	assert.Empty(t, out.String())
-	assert.Equal(t, 2, calls)
+	output := runExportCmd(t, "reviews")
+	var got struct {
+		Reviews []map[string]any `json:"reviews"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &got))
+	require.Len(t, got.Reviews, 2)
+	for _, review := range got.Reviews {
+		assert.NotContains(t, review, "source_machine_id")
+		assert.NotContains(t, review, "exported_by_machine_id")
+	}
+	assert.NotContains(t, output, "00000000-0000-0000-0000-000000000000")
 }
 
 func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
@@ -401,11 +396,6 @@ func runExportCmd(t *testing.T, args ...string) string {
 
 func writeExportTestPage(t *testing.T, w http.ResponseWriter, profile string, truncated bool, nextCursor *string, reviews []map[string]any) {
 	t.Helper()
-	for _, review := range reviews {
-		if _, ok := review["exported_by_machine_id"]; !ok {
-			review["exported_by_machine_id"] = testUUID("export-machine")
-		}
-	}
 	if profile == "" {
 		profile = "content"
 	}

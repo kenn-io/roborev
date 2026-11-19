@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"uuid"
 
 	"github.com/spf13/cobra"
 
@@ -150,11 +149,6 @@ func fetchAllExportReviews(ep daemon.DaemonEndpoint, opts exportReviewsOpts, lim
 		page, err := fetchExportReviewsPage(ep, opts, cursor, pageLimit)
 		if err != nil {
 			return nil, err
-		}
-		for _, review := range page.Reviews {
-			if review.ExportedByMachineID == uuid.Nil() {
-				return nil, fmt.Errorf("daemon returned a review without exported_by_machine_id; update the daemon and retry")
-			}
 		}
 		if out == nil {
 			copy := page

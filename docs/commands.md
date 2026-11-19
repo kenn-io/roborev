@@ -511,8 +511,10 @@ Both profiles include these fields on each top-level review:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `source_machine_id` | UUID or `null` | Machine that ran the review. It differs from `exported_by_machine_id` when sync pulled the review from another machine, and is `null` when the original machine is unknown |
+| `source_machine_id` | UUID | Machine that ran the review. It differs from `exported_by_machine_id` when sync pulled the review from another machine |
 | `exported_by_machine_id` | UUID | Machine running the export |
+
+A daemon that predates these fields omits both.
 
 roborev stores each review as a JSON review document. The default `content`
 profile exports that document in two fields, on every top-level review and on

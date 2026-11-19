@@ -67,8 +67,8 @@ type ExportReviewsPage struct {
 
 type ExportReview struct {
 	ReviewID            uuid.UUID              `json:"review_id"`
-	SourceMachineID     *uuid.UUID             `json:"source_machine_id" nullable:"true" doc:"The roborev machine that ran the review. Another machine's ID for a review pulled through sync; null when unknown."`
-	ExportedByMachineID uuid.UUID              `json:"exported_by_machine_id" doc:"The machine running this export."`
+	SourceMachineID     uuid.UUID              `json:"source_machine_id,omitzero" doc:"The roborev machine that ran the review. Another machine's ID for a review pulled through sync."`
+	ExportedByMachineID uuid.UUID              `json:"exported_by_machine_id,omitzero" doc:"The machine running this export."`
 	Status              string                 `json:"status"`
 	Verdict             string                 `json:"verdict" doc:"pass, fail, or unknown when a legacy review has no recorded verdict."`
 	CreatedAt           string                 `json:"created_at"`
@@ -509,6 +509,7 @@ func (row exportReviewRow) toExportReview(profile ExportProfile, machineID uuid.
 	}
 	review := ExportReview{
 		ReviewID:            row.reviewID,
+		SourceMachineID:     machineID,
 		ExportedByMachineID: machineID,
 		Status:              row.status,
 		Verdict:             exportVerdict(row.verdictBool),
@@ -530,7 +531,7 @@ func (row exportReviewRow) toExportReview(profile ExportProfile, machineID uuid.
 		ResumeSourceJobUUID: nil,
 	}
 	if row.sourceMachineID.Valid {
-		review.SourceMachineID = &row.sourceMachineID.V
+		review.SourceMachineID = row.sourceMachineID.V
 	}
 	if row.resumeSourceJobUUID.Valid {
 		review.ResumeSourceJobUUID = &row.resumeSourceJobUUID.V

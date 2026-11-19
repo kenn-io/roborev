@@ -1896,7 +1896,7 @@ type ExportReview struct {
 	Experiments []ExperimentAssignment `json:"experiments" validate:"required"`
 
 	// ExportedByMachineID The machine running this export.
-	ExportedByMachineID uuid.UUID  `json:"exported_by_machine_id" validate:"required"`
+	ExportedByMachineID *uuid.UUID `json:"exported_by_machine_id,omitempty"`
 	Model               *string    `json:"model" validate:"required"`
 	PrNumber            *int64     `json:"pr_number"`
 	PrURL               *string    `json:"pr_url" validate:"required"`
@@ -1905,8 +1905,8 @@ type ExportReview struct {
 	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
 	ReviewID            uuid.UUID  `json:"review_id" validate:"required"`
 
-	// SourceMachineID The roborev machine that ran the review. Another machine's ID for a review pulled through sync; null when unknown.
-	SourceMachineID *uuid.UUID       `json:"source_machine_id" validate:"required"`
+	// SourceMachineID The roborev machine that ran the review. Another machine's ID for a review pulled through sync.
+	SourceMachineID *uuid.UUID       `json:"source_machine_id,omitempty"`
 	Status          string           `json:"status" validate:"required"`
 	Subagents       []ExportSubagent `json:"subagents" validate:"required"`
 
@@ -1963,9 +1963,11 @@ func (e ExportReview) Validate() error {
 			}
 		}
 	}
-	if v, ok := any(e.ExportedByMachineID).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("ExportedByMachineID", err)
+	if e.ExportedByMachineID != nil {
+		if v, ok := any(e.ExportedByMachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ExportedByMachineID", err)
+			}
 		}
 	}
 	if e.Model != nil {
