@@ -33,11 +33,17 @@ func TestMain(m *testing.M) {
 			os.Exit(2)
 		}
 	case "setsid-later":
-		// Stay in the group long enough for samples to see it, then leave.
+		// Stay in the group until the test has seen a sample record it, then
+		// leave.
 		if err := os.WriteFile(os.Getenv("PROCTRACK_PIDFILE"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 			os.Exit(2)
 		}
-		time.Sleep(400 * time.Millisecond)
+		for {
+			if _, err := os.Stat(os.Getenv("PROCTRACK_PIDFILE") + ".go"); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 		if _, err := syscall.Setsid(); err != nil {
 			os.Exit(2)
 		}
@@ -293,6 +299,17 @@ func TestCloseStopsProcessThatLeftItsGroupAfterSampling(t *testing.T) {
 	require.NoError(t, err)
 	pid := readPID(t, pidFile)
 	killOnCleanup(t, pid)
+	require.Eventually(t, func() bool {
+		s.t.mu.Lock()
+		defer s.t.mu.Unlock()
+		for id := range s.remembered {
+			if id.pid == pid {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 10*time.Millisecond, "no sample recorded the process")
+	require.NoError(t, os.WriteFile(pidFile+".go", nil, 0o600))
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(pidFile + ".left")
 		return err == nil
