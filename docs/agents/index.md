@@ -115,6 +115,13 @@ model = "gpt-4.1"  # Override for this repo
 Model resolution priority: CLI flag > per-repo config > global config > agent
 default.
 
+A workflow model such as `review_model` goes only to the agent its workflow
+selects. If you pick another agent with `--agent` and pass no `--model`, roborev
+skips that workflow model. The generic `model` or `default_model` still applies
+when you pick the default agent; any other agent runs on its own default model.
+See
+[Workflow-Specific Agent and Model](/docs/configuration/#workflow-specific-agent-and-model).
+
 ## Strict Claude Code Reviews
 
 A custom review type with `tools.mode = "read-only"` runs as a strict review.

@@ -2390,8 +2390,12 @@ ignore_review_user_config = true   # Ignore user config for reviews and non-edit
 | `disable_review_skills` | bool | true | Run Codex review jobs with `skills.include_instructions=false` so model-visible skill instructions are stripped from the prompt |
 | `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex reviews and non-agentic stored-prompt jobs so user-level Codex config is not loaded |
 
-Set either to `false` to restore the prior behavior if you rely on Codex skill
-instructions or user-level Codex config during reviews.
+Set either to `false` if you rely on Codex skill instructions or user-level
+Codex config during local reviews. CI reviews always pass
+`--ignore-user-config`, even with `ignore_review_user_config = false`, so a pull
+request cannot use the user config's trusted projects to load its own
+`.codex/config.toml`. A Codex CLI without the flag fails CI reviews. See
+[Agent configuration in the pull request](/docs/integrations/github/#agent-configuration-in-the-pull-request).
 
 #### Custom Codex Config (Model Providers)
 

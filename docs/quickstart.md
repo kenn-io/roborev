@@ -91,11 +91,23 @@ you've handled the feedback, press `a` in the TUI to mark the review as closed.
 
 ### Use the `/roborev-fix` skill
 
-If you use Claude Code or Codex, install the roborev agent skills:
+If you use Claude Code or Codex, connect them to roborev. This installs the
+agent skills and the [Agent Hook](/docs/agent-hook/), which reminds your agent
+about failed reviews in repositories with their own review guidelines:
 
 ```bash
-roborev agent skills install
+roborev agent setup
 ```
+
+If Codex asks you to review hooks, run `/hooks` in Codex to trust them, then
+check that both agents are ready:
+
+```bash
+roborev agent setup --check
+```
+
+roborev 0.75.0 lacks `agent setup`; use `roborev agent hook install` there. For
+other agents, or to install only the skills, run `roborev agent skills install`.
 
 Then from your agent session, run the fix skill to discover and address all open
 review findings in one pass:

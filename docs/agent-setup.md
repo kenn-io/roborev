@@ -251,14 +251,35 @@ user whether to install it. Do not install it by default.
 - `fix_guidelines` in the same file adds a standing policy to every
     hook-triggered fix, for example "explain findings you decide not to apply."
 
-If the user says yes, preview the changes first and show them the output:
+If the user says yes and uses Claude Code or Codex, show what is missing first:
+
+```bash
+roborev agent setup --check
+```
+
+After the user approves, connect those agents:
+
+```bash
+roborev agent setup
+```
+
+It installs the hook and skills for each of the two agents it finds. To set up
+only one, pass `--agent claude` or `--agent codex`. Codex ignores new hooks
+until the user trusts them: if the output marks Codex `[needs you]`, ask the
+user to run `/hooks` in Codex and approve the roborev hooks, then run
+`roborev agent setup --check` again. Every row should show `ok`.
+
+`roborev agent setup` has no `--binary` flag. Use `roborev agent hook install`
+instead when step 3 needed `--binary`, for other agents, or when this roborev
+version has no `agent setup` command. Preview the changes and show the user the
+output:
 
 ```bash
 roborev agent hook install --dry-run
 ```
 
 Detection installs for every agent it finds. If the user wants only some agents,
-use `--agent <profile>` (for example, `--agent claude`) once per agent. If step
+use `--agent <profile>` (for example, `--agent gemini`) once per agent. If step
 3 needed `--binary`, pass the same flag here. After the user approves the
 preview, run the same command without `--dry-run`.
 

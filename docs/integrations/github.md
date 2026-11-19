@@ -446,11 +446,12 @@ The status context is `roborev` and progresses through these states:
 | `failure` | At least one member failed to run for a genuine reason while another member still produced usable review output |
 | `error` | No reviewer produced usable output and no retry remains, or no agent is available |
 
-Skipped PRs, whether from `skip_drafts`, `skip_labels`, or the
-[author and branch filters](#filtering-which-prs-get-reviewed), get a `success`
-commit status that names the skip reason, because commit statuses do not have a
-skipped state. With GitHub App authentication the poller also creates a roborev
-check run that completes with a `skipped` conclusion.
+Skipped PRs, whether from `skip_drafts`, `skip_labels`, the
+[author and branch filters](#filtering-which-prs-get-reviewed), or a change that
+leaves no reviewer anything to review, get a `success` commit status that names
+the skip reason, because commit statuses do not have a skipped state. With
+GitHub App authentication the poller also creates a roborev check run that
+completes with a `skipped` conclusion.
 
 Status checks require **Commit statuses: Read and write**. Skipped checks also
 require **Checks: Read and write**. The setup guide above includes both
