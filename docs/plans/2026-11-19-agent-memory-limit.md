@@ -244,8 +244,7 @@ could keep the job open until its timeout.
   wait at most one second for more bytes. Buffered output, which includes
   everything the root wrote before it exited, is returned however slowly the
   adapter reads; a read ends the output only after a full second with nothing
-  written. Reads also end 30 seconds after the root exits, so a detached
-  process that keeps writing cannot hold the adapter open. `os.Pipe` files on
+  written. `os.Pipe` files on
   Linux and macOS support read deadlines through the runtime poller.
 
 ### Which launches count
@@ -456,8 +455,9 @@ Behavior:
   the scope's SIGTERM-then-SIGKILL sequence, up to five seconds. The scope's own
   `MemoryMax` bounds it meanwhile.
 - **Detached output.** After a root exits, output that a detached process writes
-  to the root's pipes after a one-second pause, or more than 30 seconds after
-  the exit, is discarded.
+  to the root's pipes after a one-second pause is discarded. A detached process
+  that writes at least once a second holds the adapter's read until the job
+  timeout, as it did before this change.
 - **Invisible processes.** With `hidepid=2`, other users' processes are absent
   from `/proc`.
 - **Processes started outside the job.** A service the agent reaches over a

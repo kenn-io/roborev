@@ -34,9 +34,6 @@ var (
 	// outputGrace is how long readers of a root's pipes may keep reading after
 	// the root exits. Data the root wrote before exiting is already buffered.
 	outputGrace = time.Second
-	// outputLimit ends reads this long after the root exits, so a detached
-	// process that keeps writing cannot hold the reader open forever.
-	outputLimit = 30 * time.Second
 )
 
 // startWatch is a variable so tests can delay the watcher past the root's exit.
@@ -75,7 +72,6 @@ type root struct {
 	stop       func()
 	pipes      []*os.File
 	registered time.Time // when Start registered the root's group
-	exitedAt   time.Time // set before handedOff is closed
 	handedOff  chan struct{}
 }
 
@@ -389,9 +385,6 @@ type boundedPipe struct {
 func (b *boundedPipe) Read(p []byte) (int, error) {
 	select {
 	case <-b.r.handedOff:
-		if time.Since(b.r.exitedAt) > outputLimit {
-			return 0, io.EOF
-		}
 		_ = b.f.SetReadDeadline(time.Now().Add(outputGrace))
 	default:
 	}
@@ -424,7 +417,6 @@ func (r *root) watch() {
 		}
 	}
 	delete(r.scope.roots, r.pid)
-	r.exitedAt = time.Now()
 	for _, f := range r.pipes {
 		_ = f.SetReadDeadline(time.Now().Add(outputGrace))
 	}

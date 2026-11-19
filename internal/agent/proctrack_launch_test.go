@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -102,4 +103,40 @@ func TestACPTerminalRefusedAfterAttemptCleanup(t *testing.T) {
 	require.ErrorIs(t, err, proctrack.ErrClosed)
 	time.Sleep(100 * time.Millisecond)
 	assert.NoFileExists(t, marker)
+}
+
+// A background job in its own process group survives the terminal group's
+// stop and keeps the output pipe open; waiting for the terminal used to hang
+// until that job exited.
+func TestACPTerminalExitWithDetachedOutputHolder(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	// perl leaves the group, then records its pid; the script exits only after
+	// that, so the group stop cannot catch it first.
+	cmdPath := writeTempCommand(t, fmt.Sprintf(`#!/bin/sh
+`+etxtbsyGuard+`perl -e 'setpgrp(0, 0); open(my $f, ">", $ARGV[0]) or die; print $f "$$\n"; close $f; exec "sleep", "60"' %[1]q &
+while [ ! -s %[1]q ]; do sleep 0.01; done
+echo finished
+`, pidFile))
+	client := newTerminalTestClient(t, t.TempDir())
+	_, scope := proctrack.New(t.Context(), 0)
+	defer scope.Close()
+	client.procScope = scope
+
+	created, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
+		SessionId: acp.SessionId("session-1"), Command: cmdPath,
+	})
+	require.NoError(t, err)
+	holder := readPIDFile(t, pidFile)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, err = client.WaitForTerminalExit(ctx, acp.WaitForTerminalExitRequest{
+		SessionId: acp.SessionId("session-1"), TerminalId: created.TerminalId,
+	})
+	require.NoError(t, err)
+	out, err := client.TerminalOutput(t.Context(), acp.TerminalOutputRequest{
+		SessionId: acp.SessionId("session-1"), TerminalId: created.TerminalId,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out.Output, "finished")
+	require.NoError(t, syscall.Kill(holder, 0), "the detached holder must still be running: %s", out.Output)
 }

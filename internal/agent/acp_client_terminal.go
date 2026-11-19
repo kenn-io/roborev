@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -348,6 +349,9 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	cmd := exec.CommandContext(terminalCtx, params.Command, params.Args...)
 	procutil.HideConsole(cmd)
 	cmd.Dir = cwd
+	// A detached process can hold the output pipe open after the command
+	// exits; stop copying from it a second later.
+	cmd.WaitDelay = time.Second
 
 	// The agent chooses this command line, so it is the most direct
 	// exfiltration channel there is: never hand it forge credentials
