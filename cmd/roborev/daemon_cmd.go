@@ -461,6 +461,9 @@ func daemonRunCmd() *cobra.Command {
 				select {
 				case sig := <-sigCh:
 					log.Printf("Received signal %v, shutting down...", sig)
+					if sig == os.Interrupt {
+						interruptRunningJobs(ctx, server)
+					}
 				case <-server.ShutdownRequested():
 					log.Printf("Shutdown requested via API, shutting down...")
 				case <-cmd.Context().Done():
@@ -501,4 +504,17 @@ func stopDaemonWithRetry(stop func() error, retryDelay time.Duration) {
 		backoff.WithNotify(func(err error, _ time.Duration) {
 			log.Printf("Prepare daemon shutdown failed; retrying: %v", err)
 		}))
+}
+
+// interruptRunningJobs returns running attempts to the queue on Ctrl-C, so the
+// daemon exits promptly. Agents run in their own process groups and do not
+// receive the terminal's SIGINT themselves. If an update drain refuses the
+// interrupt, the graceful stop that follows still shuts the daemon down.
+func interruptRunningJobs(ctx context.Context, server *daemon.Server) {
+	switch err := server.InterruptShutdown(context.WithoutCancel(ctx)); {
+	case errors.Is(err, daemon.ErrUpdateDrainActive):
+		log.Printf("An update drain is waiting for running jobs; they finish before the daemon exits")
+	case err != nil:
+		log.Printf("Interrupt shutdown failed (%v); running jobs finish before the daemon exits", err)
+	}
 }
