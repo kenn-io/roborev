@@ -115,13 +115,13 @@ func TestPostgresLeaseCleanupAndReports(t *testing.T) {
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		name, goExit, downExit, rerun string
-		wantError, wantReport         bool
+		wantError                     bool
 	}{
-		{"success", "0", "0", "", false, false},
-		{"storage retry succeeds", "0", "0", "postgres-storage-reruns.txt", false, true},
-		{"daemon retry succeeds", "0", "0", "postgres-daemon-reruns.txt", false, true},
-		{"cleanup failure", "0", "1", "", true, true},
-		{"test failure", "17", "0", "", true, true},
+		{"success", "0", "0", "", false},
+		{"storage retry succeeds", "0", "0", "postgres-storage-reruns.txt", false},
+		{"daemon retry succeeds", "0", "0", "postgres-daemon-reruns.txt", false},
+		{"cleanup failure", "0", "1", "", true},
+		{"test failure", "17", "0", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -157,14 +157,15 @@ exit "$GO_EXIT"
 			entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
-			_, err = os.Stat(filepath.Join(dir, "reports", entries[0].Name(), "postgres-storage.json"))
-			if tc.wantReport {
-				assert.NoError(t, err)
-			} else {
-				assert.True(t, os.IsNotExist(err))
+			for _, name := range []string{"postgres-storage.json", "postgres-storage-reruns.txt"} {
+				data, err := os.ReadFile(filepath.Join(dir, "reports", entries[0].Name(), name))
+				require.NoError(t, err)
+				if name == tc.rerun {
+					assert.Equal(t, "flaky", string(data))
+				}
 			}
-			if tc.rerun != "" {
-				for _, name := range []string{"postgres-storage.json", "postgres-storage-reruns.txt", "postgres-daemon.json", "postgres-daemon-reruns.txt"} {
+			if tc.goExit == "0" {
+				for _, name := range []string{"postgres-daemon.json", "postgres-daemon-reruns.txt"} {
 					data, err := os.ReadFile(filepath.Join(dir, "reports", entries[0].Name(), name))
 					require.NoError(t, err)
 					if name == tc.rerun {
@@ -265,11 +266,20 @@ func TestLeaseRequiresPython(t *testing.T) {
 }
 
 func TestPostgresManualUp(t *testing.T) {
-	cmd := exec.CommandContext(t.Context(), "make", "-n", "postgres-up")
-	cmd.Dir = ".."
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	assert.Contains(t, string(out), "docker compose -f docker-compose.test.yml up -d --wait")
+	dir := t.TempDir()
+	log := filepath.Join(dir, "docker.log")
+	docker := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0700))
+	for _, target := range []string{"postgres-up", "postgres-down"} {
+		cmd := exec.CommandContext(t.Context(), "make", target)
+		cmd.Dir = ".."
+		cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	data, err := os.ReadFile(log)
+	require.NoError(t, err)
+	assert.Equal(t, "compose -f docker-compose.test.yml up -d --wait\ncompose -f docker-compose.test.yml down\n", string(data))
 }
 
 func TestLeaseSurvivesGoTestLauncher(t *testing.T) {

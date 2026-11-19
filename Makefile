@@ -295,13 +295,7 @@ test-postgres-run:
 				echo 'cleanup failed; scheduled cleanup will retry' >&2; \
 				if [ "$$status" -eq 0 ]; then status=1; fi; \
 			fi; \
-			if [ "$$status" -eq 0 ] && [ ! -s "$(GO_TEST_REPORT_DIR)/$$TEST_SERVICE_LEASE/postgres-storage-reruns.txt" ] && [ ! -s "$(GO_TEST_REPORT_DIR)/$$TEST_SERVICE_LEASE/postgres-daemon-reruns.txt" ]; then \
-				for name in postgres-storage.json postgres-storage-reruns.txt postgres-daemon.json postgres-daemon-reruns.txt; do \
-					file="$(GO_TEST_REPORT_DIR)/$$TEST_SERVICE_LEASE/$$name"; \
-					if [ -f "$$file" ]; then rm "$$file"; fi; \
-				done; \
-				rmdir "$(GO_TEST_REPORT_DIR)/$$TEST_SERVICE_LEASE" 2>/dev/null || :; \
-			fi; exit $$status; }; \
+			exit $$status; }; \
 		trap cleanup EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; \
 		export TEST_PG_PUBLISH='127.0.0.1::5432'; \
 		docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres; \
