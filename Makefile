@@ -386,7 +386,6 @@ install-hooks:
 GO_TEST_REPORT_DIR ?= gotestsum
 POSTGRES_REPORT_DIR = $(GO_TEST_REPORT_DIR)$(if $(TEST_SERVICE_LEASE),/$(TEST_SERVICE_LEASE))
 test-postgres-ci:
-	@mkdir -p "$(POSTGRES_REPORT_DIR)"
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
 		--jsonfile "$(POSTGRES_REPORT_DIR)/postgres-storage.json" \
 		--rerun-fails=2 --rerun-fails-report "$(POSTGRES_REPORT_DIR)/postgres-storage-reruns.txt" \

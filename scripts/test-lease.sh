@@ -14,21 +14,13 @@ if [ -z "${HOME:-}" ]; then
     echo 'HOME must be set to create a test service lease' >&2
     exit 2
 fi
-if ! command -v python3 >/dev/null 2>&1; then
-    echo 'python3 is required; use make postgres-up for a manual database' >&2
-    exit 2
-fi
 exec python3 - "$@" <<'PY'
+import fcntl
 import os
 import signal
 import subprocess
 import sys
 import time
-
-try:
-    import fcntl
-except ImportError:
-    sys.exit("test service leases require a platform with Python fcntl support")
 
 name, cleanup, *command = sys.argv[1:]
 lease = f"{name}-{int(time.time())}-{os.getpid()}"

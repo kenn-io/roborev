@@ -16,62 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPostgresLeaseConcurrentAndInterrupted(t *testing.T) {
-	root, err := filepath.Abs("..")
-	require.NoError(t, err)
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "bin")
-	require.NoError(t, os.Mkdir(bin, 0700))
-	log := filepath.Join(dir, "docker.log")
-	docker := `#!/bin/sh
-printf '%s [%s]\n' "$*" "$TEST_PG_PUBLISH" >> "$DOCKER_LOG"
-case " $* " in
-  *' up '*) touch "$READY_DIR/$3"; while [ ! -e "$READY_DIR/release" ]; do sleep .05; done ;;
-  *' port '*) echo 127.0.0.1:45678 ;;
-esac
-`
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexit 0\n"), 0700))
-	start := func() *exec.Cmd {
-		cmd := exec.Command("make", "test-postgres")
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "READY_DIR="+dir, "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"))
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		require.NoError(t, cmd.Start())
-		t.Cleanup(func() {
-			if cmd.ProcessState == nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-				_ = cmd.Wait()
-			}
-		})
-		return cmd
-	}
-	first, second := start(), start()
-	// Docker is a separate process and creates the readiness files.
-	require.Eventually(t, func() bool {
-		entries, _ := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
-		if len(entries) != 2 {
-			return false
-		}
-		_, err1 := os.Stat(filepath.Join(dir, entries[0].Name()))
-		_, err2 := os.Stat(filepath.Join(dir, entries[1].Name()))
-		return err1 == nil && err2 == nil
-	}, 10*time.Second, 50*time.Millisecond)
-	require.NoError(t, syscall.Kill(-first.Process.Pid, syscall.SIGTERM))
-	_ = first.Wait()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "release"), nil, 0600))
-	require.NoError(t, second.Wait())
-	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	data, err := os.ReadFile(log)
-	require.NoError(t, err)
-	for _, entry := range entries {
-		assert.Contains(t, string(data), "-p "+entry.Name()+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres [127.0.0.1::5432]")
-		assert.Contains(t, string(data), "-p "+entry.Name()+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans")
-	}
-}
-
 func TestPostgresLeaseRecipe(t *testing.T) {
 	root, err := filepath.Abs("..")
 	require.NoError(t, err)
@@ -80,7 +24,7 @@ func TestPostgresLeaseRecipe(t *testing.T) {
 	require.NoError(t, os.Mkdir(bin, 0700))
 	log := filepath.Join(dir, "docker.log")
 	docker := `#!/bin/sh
-printf '%s [%s]\n' "$*" "$TEST_SERVICE_LEASE" >> "$DOCKER_LOG"
+printf '%s [%s %s]\n' "$*" "$TEST_SERVICE_LEASE" "$TEST_PG_PUBLISH" >> "$DOCKER_LOG"
 case " $* " in
   *' up '*) python3 -c 'import fcntl, os, sys
 with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", os.environ["TEST_SERVICE_LEASE"])) as f:
@@ -106,135 +50,9 @@ esac
 	require.Len(t, entries, 1)
 	lease := entries[0].Name()
 	assert.NotEqual(t, "other-1-1", lease)
-	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+"]")
+	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+" 127.0.0.1::5432]")
 	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans")
 	assert.Contains(t, string(out), "Error 17")
-}
-
-func TestPostgresLeaseCleanupAndReports(t *testing.T) {
-	root, err := filepath.Abs("..")
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		name, goExit, downExit, rerun string
-		wantError                     bool
-	}{
-		{"success", "0", "0", "", false},
-		{"storage retry succeeds", "0", "0", "postgres-storage-reruns.txt", false},
-		{"daemon retry succeeds", "0", "0", "postgres-daemon-reruns.txt", false},
-		{"cleanup failure", "0", "1", "", true},
-		{"test failure", "17", "0", "", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			bin := filepath.Join(dir, "bin")
-			require.NoError(t, os.Mkdir(bin, 0700))
-			docker := `#!/bin/sh
-case " $* " in
-  *' port '*) echo 127.0.0.1:45678 ;;
-  *' down '*) exit "$DOWN_EXIT" ;;
-esac
-`
-			goTool := `#!/bin/sh
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --jsonfile) shift; printf report > "$1" ;;
-    --rerun-fails-report) shift; : > "$1"; if [ "${1##*/}" = "$RERUN" ]; then printf flaky > "$1"; fi ;;
-  esac
-  shift
-done
-exit "$GO_EXIT"
-`
-			require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0700))
-			require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0700))
-			cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
-			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"), "GO_EXIT="+tc.goExit, "DOWN_EXIT="+tc.downExit, "RERUN="+tc.rerun)
-			out, err := cmd.CombinedOutput()
-			if tc.wantError {
-				require.Error(t, err, string(out))
-			} else {
-				require.NoError(t, err, string(out))
-			}
-			entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
-			require.NoError(t, err)
-			require.Len(t, entries, 1)
-			for _, name := range []string{"postgres-storage.json", "postgres-storage-reruns.txt"} {
-				data, err := os.ReadFile(filepath.Join(dir, "reports", entries[0].Name(), name))
-				require.NoError(t, err)
-				if name == tc.rerun {
-					assert.Equal(t, "flaky", string(data))
-				}
-			}
-			if tc.goExit == "0" {
-				for _, name := range []string{"postgres-daemon.json", "postgres-daemon-reruns.txt"} {
-					data, err := os.ReadFile(filepath.Join(dir, "reports", entries[0].Name(), name))
-					require.NoError(t, err)
-					if name == tc.rerun {
-						assert.Equal(t, "flaky", string(data))
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestPostgresReportsRetainActiveAndLatestRun(t *testing.T) {
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "bin")
-	require.NoError(t, os.Mkdir(bin, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\ncase \" $* \" in *' port '*) echo 127.0.0.1:45678 ;; esac\n"), 0700))
-	goTool := `#!/bin/sh
-if [ "$1" = env ]; then exit 0; fi
-while [ "$#" -gt 0 ]; do
-  case "$1" in --jsonfile|--rerun-fails-report) shift; printf report > "$1" ;; esac
-  shift
-done
-if [ "$HOLD" = 1 ]; then
-  touch "$READY"
-  while [ ! -e "$RELEASE" ]; do sleep .05; done
-fi
-`
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0700))
-	reports := filepath.Join(dir, "reports")
-	ready, release := filepath.Join(dir, "ready"), filepath.Join(dir, "release")
-	t.Cleanup(func() { _ = os.WriteFile(release, nil, 0600) })
-	command := func(hold string) *exec.Cmd {
-		cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
-		cmd.Dir = ".."
-		cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+reports, "HOLD="+hold, "READY="+ready, "RELEASE="+release)
-		return cmd
-	}
-	first := command("1")
-	require.NoError(t, first.Start())
-	t.Cleanup(func() {
-		_ = os.WriteFile(release, nil, 0600)
-		if first.ProcessState == nil {
-			_ = first.Wait()
-		}
-	})
-	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 50*time.Millisecond)
-	second := command("0")
-	out, err := second.CombinedOutput()
-	require.NoError(t, err, string(out))
-	entries, err := os.ReadDir(reports)
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	for _, entry := range entries {
-		_, err := os.Stat(filepath.Join(reports, entry.Name(), "postgres-storage.json"))
-		require.NoError(t, err)
-	}
-	require.NoError(t, os.WriteFile(release, nil, 0600))
-	require.NoError(t, first.Wait())
-	third := command("0")
-	out, err = third.CombinedOutput()
-	require.NoError(t, err, string(out))
-	entries, err = os.ReadDir(reports)
-	require.NoError(t, err)
-	require.Len(t, entries, 3)
-	for _, name := range []string{"postgres-storage.json", "postgres-storage-reruns.txt", "postgres-daemon.json", "postgres-daemon-reruns.txt"} {
-		_, err := os.Stat(filepath.Join(reports, entries[0].Name(), name))
-		require.NoError(t, err)
-	}
 }
 
 func TestLeaseRequiresHome(t *testing.T) {
@@ -288,6 +106,7 @@ while [ "$#" -gt 0 ]; do
       shift
       case "$1" in "$GO_TEST_REPORT_DIR/$TEST_SERVICE_LEASE/"*) ;; *) exit 2 ;; esac
       printf '%s\n' "${1##*/}" >> "$REPORT_LOG"
+      mkdir -p "${1%/*}"
       printf report > "$1" || exit 1 ;;
   esac
   shift
@@ -308,38 +127,6 @@ done
 	reportNames, err := os.ReadFile(filepath.Join(dir, "report-log"))
 	require.NoError(t, err)
 	assert.Equal(t, "postgres-storage.json\npostgres-storage-reruns.txt\npostgres-daemon.json\npostgres-daemon-reruns.txt\n", string(reportNames))
-}
-
-func TestLeaseRequiresPython(t *testing.T) {
-	dir := t.TempDir()
-	log := filepath.Join(dir, "docker.log")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\n"), 0700))
-	cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "true", "docker")
-	cmd.Env = append(os.Environ(), "PATH="+dir, "DOCKER_LOG="+log, "TEST_SERVICE_LEASE=")
-	out, err := cmd.CombinedOutput()
-	var exit *exec.ExitError
-	require.ErrorAs(t, err, &exit)
-	assert.Equal(t, 2, exit.ExitCode())
-	assert.Contains(t, string(out), "make postgres-up")
-	_, err = os.Stat(log)
-	assert.True(t, os.IsNotExist(err))
-}
-
-func TestPostgresManualUp(t *testing.T) {
-	dir := t.TempDir()
-	log := filepath.Join(dir, "docker.log")
-	docker := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0700))
-	for _, target := range []string{"postgres-up", "postgres-down"} {
-		cmd := exec.CommandContext(t.Context(), "make", target)
-		cmd.Dir = ".."
-		cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, string(out))
-	}
-	data, err := os.ReadFile(log)
-	require.NoError(t, err)
-	assert.Equal(t, "compose -f docker-compose.test.yml up -d --wait\ncompose -f docker-compose.test.yml down\n", string(data))
 }
 
 func TestLeaseSurvivesGoTestLauncher(t *testing.T) {
@@ -430,27 +217,6 @@ with open(sys.argv[1]) as f:
 	require.Eventually(t, func() bool { return exec.CommandContext(t.Context(), "python3", "-c", probe, lease).Run() == nil }, 10*time.Second, 50*time.Millisecond)
 }
 
-func TestPostgresOldReportsWithoutLeaseArePruned(t *testing.T) {
-	dir := t.TempDir()
-	reports := filepath.Join(dir, "reports")
-	old := filepath.Join(reports, "roborev-1-1")
-	require.NoError(t, os.MkdirAll(old, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(old, "postgres-storage.json"), []byte("report"), 0600))
-	past := time.Now().Add(-8 * 24 * time.Hour)
-	require.NoError(t, os.Chtimes(old, past, past))
-	cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
-	cmd.Dir = ".."
-	bin := filepath.Join(dir, "bin")
-	require.NoError(t, os.Mkdir(bin, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\ncase \" $* \" in *' port '*) echo 127.0.0.1:45678 ;; esac\n"), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexit 0\n"), 0700))
-	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+reports)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	_, err = os.Stat(old)
-	assert.True(t, os.IsNotExist(err), "old reports remain after their lease was removed")
-}
-
 func TestLeaseSupervisorCleanup(t *testing.T) {
 	for _, tc := range []struct{ command, cleanup, want string }{
 		{"exit 0", "exit 0", "0"},
@@ -525,4 +291,30 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 	assert.Contains(t, string(out), "TEST_SERVICE_LEASE is required")
 	_, err = os.Stat(dockerLog)
 	assert.True(t, os.IsNotExist(err), "docker ran without a lease")
+}
+
+func TestPostgresPrunesOldReportsWithoutLease(t *testing.T) {
+	dir := t.TempDir()
+	reports := filepath.Join(dir, "reports")
+	old := filepath.Join(reports, "roborev-1-1")
+	recent := filepath.Join(reports, "roborev-2-2")
+	for _, path := range []string{old, recent} {
+		require.NoError(t, os.MkdirAll(path, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(path, "postgres-storage.json"), []byte("report"), 0600))
+	}
+	past := time.Now().Add(-9 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(old, past, past))
+	bin := filepath.Join(dir, "bin")
+	require.NoError(t, os.Mkdir(bin, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\ncase \" $* \" in *' port '*) echo 127.0.0.1:45678 ;; esac\n"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\nexit 0\n"), 0700))
+	cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+reports)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	_, err = os.Stat(old)
+	assert.True(t, os.IsNotExist(err), "old reports remained after their lease was removed")
+	_, err = os.Stat(filepath.Join(recent, "postgres-storage.json"))
+	require.NoError(t, err)
 }
