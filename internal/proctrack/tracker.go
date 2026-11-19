@@ -13,9 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -28,13 +26,8 @@ var ErrClosed = errors.New("job processes are being stopped")
 
 var errNoPidfd = errors.New("no pidfd support")
 
-var (
-	// handoffWait bounds how long cleanup waits for stopped roots to exit.
-	handoffWait = 15 * time.Second
-	// outputGrace is how long readers of a root's pipes may keep reading after
-	// the root exits. Data the root wrote before exiting is already buffered.
-	outputGrace = time.Second
-)
+// handoffWait bounds how long cleanup waits for stopped roots to exit.
+var handoffWait = 15 * time.Second
 
 // startWatch is a variable so tests can delay the watcher past the root's exit.
 var startWatch = func(r *root) { go r.watch() }
@@ -70,7 +63,6 @@ type root struct {
 	scope      *Scope
 	pid        int
 	stop       func()
-	pipes      []*os.File
 	registered time.Time // when Start registered the root's group
 	handedOff  chan struct{}
 }
@@ -352,51 +344,6 @@ func (p *Process) Wait() error {
 	return p.cmd.Wait()
 }
 
-// Pipe bounds reads from a pipe the command writes, such as one from
-// cmd.StdoutPipe. Once the root has exited, reads return buffered output for
-// one more second, then end with io.EOF, so a detached process holding the
-// pipe open cannot keep the reader waiting.
-func (p *Process) Pipe(rc io.ReadCloser) io.ReadCloser {
-	f, ok := rc.(*os.File)
-	if p.r == nil || !ok {
-		return rc
-	}
-	t := p.r.scope.t
-	t.mu.Lock()
-	select {
-	case <-p.r.handedOff:
-	default:
-		// The watcher sets a deadline at the root's exit, to wake a read
-		// that is already waiting.
-		p.r.pipes = append(p.r.pipes, f)
-	}
-	t.mu.Unlock()
-	return &boundedPipe{f: f, r: p.r}
-}
-
-// boundedPipe gives each read after the root's exit a fresh window to wait for
-// more bytes. Buffered output is returned however slowly the caller reads; a
-// read ends with io.EOF only after waiting a full window with nothing written.
-type boundedPipe struct {
-	f *os.File
-	r *root
-}
-
-func (b *boundedPipe) Read(p []byte) (int, error) {
-	select {
-	case <-b.r.handedOff:
-		_ = b.f.SetReadDeadline(time.Now().Add(outputGrace))
-	default:
-	}
-	n, err := b.f.Read(p)
-	if errors.Is(err, os.ErrDeadlineExceeded) {
-		err = io.EOF
-	}
-	return n, err
-}
-
-func (b *boundedPipe) Close() error { return b.f.Close() }
-
 // watch observes the root's exit without reaping it, stops its group while the
 // zombie root still reserves the group ID, then hands the root to Wait.
 func (r *root) watch() {
@@ -417,8 +364,5 @@ func (r *root) watch() {
 		}
 	}
 	delete(r.scope.roots, r.pid)
-	for _, f := range r.pipes {
-		_ = f.SetReadDeadline(time.Now().Add(outputGrace))
-	}
 	close(r.handedOff)
 }

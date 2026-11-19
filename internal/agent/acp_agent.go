@@ -283,7 +283,6 @@ func (a *ACPAgent) runPrompt(
 		_ = pipesCleanup()
 		return "", fmt.Errorf("failed to start ACP agent: %w", err)
 	}
-	agentStdout := proc.Pipe(stdoutPipe)
 
 	repoRoot := repoPath
 	cwd := repoPath
@@ -330,7 +329,7 @@ func (a *ACPAgent) runPrompt(
 	}()
 
 	// Create the ACP connection
-	conn := acp.NewClientSideConnection(client, stdinPipe, agentStdout)
+	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
 
 	if _, err := conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,

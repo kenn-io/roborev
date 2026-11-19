@@ -163,32 +163,12 @@ func TestOutputAfterRootExitGroupHolder(t *testing.T) {
 	killOnCleanup(t, holder)
 
 	began := time.Now()
-	out, err := io.ReadAll(p.Pipe(stdout))
+	out, err := io.ReadAll(stdout)
 	require.NoError(t, err)
 	assert.Equal(t, "result\n", string(out))
 	require.NoError(t, p.Wait())
 	assert.Less(t, time.Since(began), 5*time.Second)
 	requireGone(t, holder)
-}
-
-func TestOutputAfterRootExitDetachedHolder(t *testing.T) {
-	ctx, s := New(t.Context(), 0)
-	defer s.Close()
-	run, pidFile := helper(t, "setsid", 0)
-	// Wait for the detached holder before exiting, so it holds stdout.
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", fmt.Sprintf("%s & while [ ! -s %s ]; do sleep 0.01; done; echo result", run, pidFile))
-	stdout, err := cmd.StdoutPipe()
-	require.NoError(t, err)
-	p, err := Start(ctx, cmd)
-	require.NoError(t, err)
-	killOnCleanup(t, readPID(t, pidFile))
-
-	began := time.Now()
-	out, err := io.ReadAll(p.Pipe(stdout))
-	require.NoError(t, err)
-	assert.Equal(t, "result\n", string(out))
-	require.NoError(t, p.Wait())
-	assert.Less(t, time.Since(began), 3*time.Second)
 }
 
 func TestCancelStopsGrandchild(t *testing.T) {
@@ -327,28 +307,6 @@ func TestCloseStopsProcessThatLeftItsGroupAfterSampling(t *testing.T) {
 		// No pidfd: the process is reported, never signaled by number.
 		require.ErrorContains(t, err, fmt.Sprintf("(pid %d)", pid))
 	}
-}
-
-func TestPipeKeepsBufferedOutputForSlowReader(t *testing.T) {
-	ctx, s := New(t.Context(), 0)
-	defer s.Close()
-	run, pidFile := helper(t, "setsid", 0)
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", fmt.Sprintf("%s & while [ ! -s %s ]; do sleep 0.01; done; echo result", run, pidFile))
-	stdout, err := cmd.StdoutPipe()
-	require.NoError(t, err)
-	p, err := Start(ctx, cmd)
-	require.NoError(t, err)
-	killOnCleanup(t, readPID(t, pidFile))
-	pipe := p.Pipe(stdout)
-	<-p.r.handedOff
-
-	time.Sleep(2 * outputGrace) // a reader busy past the output window
-	began := time.Now()
-	out, err := io.ReadAll(pipe)
-	require.NoError(t, err)
-	assert.Equal(t, "result\n", string(out))
-	assert.Less(t, time.Since(began), 3*time.Second)
-	require.NoError(t, p.Wait())
 }
 
 func TestSampleSkipsRootRegisteredDuringScan(t *testing.T) {

@@ -231,21 +231,16 @@ Killing the root's group releases a grandchild in that group that holds the
 agent's stdout. The adapter's read then reaches EOF, and the result the agent
 already wrote is preserved.
 
-A pipe holder outside the group is not released that way. Some adapters read
-stdout to EOF before waiting (for example, Claude's schema path), so that holder
-could keep the job open until its timeout.
+A pipe holder outside the group is not released that way.
 
-- When an adapter gives `os/exec` an `io.Writer`, as `runStreamingCLI` does,
-  `os/exec` copies the output itself, and the existing `WaitDelay` already
-  bounds that copy once the watcher calls `cmd.Wait()`.
+- When an adapter gives `os/exec` an `io.Writer`, as `runStreamingCLI` and ACP
+  terminal commands do, `os/exec` copies the output itself, and `WaitDelay`
+  bounds that copy once the root has exited.
 - When an adapter reads a pipe from `StdoutPipe` or `StderrPipe`, as Claude's
-  schema path and the ACP agent do, nothing bounds the read today. Once the root
-  has exited and its group has been cleaned up, each read on those pipes may
-  wait at most one second for more bytes. Buffered output, which includes
-  everything the root wrote before it exited, is returned however slowly the
-  adapter reads; a read ends the output only after a full second with nothing
-  written. `os.Pipe` files on
-  Linux and macOS support read deadlines through the runtime poller.
+  schema path and the ACP agent do, a holder outside the group keeps the read
+  open until the holder exits or the job times out, as before this change. A
+  bound on those reads would have to guess when the output has ended, and a
+  wrong guess loses the end of a finished result.
 
 ### Which launches count
 
@@ -422,8 +417,8 @@ Behavior:
 ## Where the code goes
 
 - `internal/proctrack`: the job tracker and its scopes, the tracked launch
-  helper (`Start`, `Run`, `Output`, `CombinedOutput`, `Process.Wait`,
-  `Process.Pipe`), process groups, the non-reaping exit watcher, pidfd
+  helper (`Start`, `Run`, `Output`, `CombinedOutput`, `Process.Wait`),
+  process groups, the non-reaping exit watcher, pidfd
   signaling, the shared sampler, and the Linux and macOS process-table readers.
   It is its own package because `internal/agent`, `internal/sandbox`, and
   `internal/daemon` all launch through it, and `internal/agent` already imports
@@ -454,10 +449,9 @@ Behavior:
 - **Sandboxed stop delay.** A breach in a sandboxed checker root stops through
   the scope's SIGTERM-then-SIGKILL sequence, up to five seconds. The scope's own
   `MemoryMax` bounds it meanwhile.
-- **Detached output.** After a root exits, output that a detached process writes
-  to the root's pipes after a one-second pause is discarded. A detached process
-  that writes at least once a second holds the adapter's read until the job
-  timeout, as it did before this change.
+- **Detached output.** A process in its own group or session that holds the
+  stdout pipe Claude's schema path or the ACP agent reads keeps that read open
+  until it exits or the job times out, as before this change.
 - **Late breach.** A sample that records a breach after the attempt chose its
   outcome stops the processes but leaves that outcome, such as a completed
   review or a retry.
@@ -495,9 +489,9 @@ Integration tests on Linux and macOS CI, with real processes:
 - **Stdout held in the group, limit unset:** the root writes a valid result and
   exits; a sleeping grandchild in its group keeps stdout open. Assert the job
   completes with the result well before its timeout and the grandchild is gone.
-- **Stdout held outside the group, limit unset:** the same, with the grandchild
-  in its own session. Assert the job completes with the result within the
-  one-second output bound.
+- **Terminal output held outside the group:** an ACP terminal command starts a
+  background process in its own group that holds the output pipe, then exits.
+  Assert waiting for the terminal returns with the command's output.
 - **Early terminal exit:** an ACP terminal command exits early in a long job.
   Assert end-of-job cleanup sends no signal to that terminal's former group.
 - **Refused terminal:** start cleanup, then request an ACP terminal. Assert the
