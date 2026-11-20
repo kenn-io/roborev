@@ -139,7 +139,7 @@ describe("App", () => {
         });
     });
     await screen.findByText(/review in progress/i);
-    expect(document.title).toBe("Review (#17) · Roborev");
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
   });
 
   test("clears the missing title when opening another review", async () => {
@@ -162,6 +162,16 @@ describe("App", () => {
     await fireEvent.click(
       await screen.findByRole("button", { name: /17.*abc123/i }),
     );
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
+  });
+
+  test("uses the job ID when a review has no commit subject", async () => {
+    renderAuthenticatedApp("/reviews/17", (url) => {
+      if (url.pathname === "/api/review") return response(404);
+      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+        return response(200, { jobs: [{ ...job, commit_subject: "" }] });
+    });
+    await screen.findByText(/review in progress/i);
     expect(document.title).toBe("Review (#17) · Roborev");
   });
 
@@ -482,7 +492,7 @@ describe("App", () => {
     const row = await screen.findByRole("button", { name: /17.*abc123/i });
     await fireEvent.click(row);
     expect(location.pathname).toBe("/reviews/17");
-    expect(document.title).toBe("Review (#17) · Roborev");
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -617,7 +627,7 @@ describe("App", () => {
         });
     });
     await vi.waitFor(() =>
-      expect(document.title).toBe("Review (#17) · Roborev"),
+      expect(document.title).toBe("Fix login race (#17) · Roborev"),
     );
     window.dispatchEvent(new Event(sessionLostEvent));
     await vi.waitFor(() => expect(document.title).toBe("Checking · Roborev"));

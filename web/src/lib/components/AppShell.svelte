@@ -71,10 +71,18 @@
       review.isReviewNotFound() &&
       !review.getSelectedJob();
     const daemon = stores.roborevDaemon;
+    const jobId = route.page === "reviews" ? route.jobId : undefined;
+    const job =
+      stores.roborevJobs.getVisibleJobs().find((job) => job.id === jobId) ??
+      review.getSelectedJob();
     document.title =
       route.page === "reviews" && daemon.isInitiallyUnavailable()
         ? sessionTitle("error")
-        : tabTitle(route, notFound);
+        : tabTitle(
+            route,
+            notFound,
+            job && job.id === jobId ? job.commit_subject : undefined,
+          );
   });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {

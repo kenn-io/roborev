@@ -12,9 +12,13 @@ export function sessionTitle(screen: SessionScreen): string {
   return sessionTitles[screen];
 }
 
-export function tabTitle(route: AppRoute, notFound: boolean): string {
+export function tabTitle(
+  route: AppRoute,
+  notFound: boolean,
+  subject?: string,
+): string {
   if (route.page === "analytics") return "Analytics · Roborev";
   if (route.jobId === undefined) return "Reviews · Roborev";
   if (notFound) return `Review not found (#${route.jobId}) · Roborev`;
-  return `Review (#${route.jobId}) · Roborev`;
+  return `${subject?.trim() || "Review"} (#${route.jobId}) · Roborev`;
 }
