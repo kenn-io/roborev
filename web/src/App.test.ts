@@ -129,6 +129,7 @@ describe("App", () => {
   test.each([
     ["Fix login race", "Fix login race (#17) · Roborev"],
     [undefined, "Review (#17) · Roborev"],
+    ["", "Review (#17) · Roborev"],
   ])("names an off-page queued job with subject %j", async (subject, title) => {
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/review") return response(404);
@@ -147,32 +148,24 @@ describe("App", () => {
 
   test("offers retry when a review fails while its job lookup stalls", async () => {
     let retry = false;
-    let resolveJob: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/review")
         return retry ? response(404) : response(500);
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
         return retry
           ? response(200, { jobs: [job] })
-          : new Promise<Response>((resolve) => {
-              resolveJob = resolve;
-            });
+          : new Promise<Response>(() => {});
     });
     expect(
       await screen.findByText("Failed to load review"),
     ).toBeInTheDocument();
-    await vi.waitFor(() => expect(resolveJob).toBeDefined());
-    resolveJob?.(response(200, { jobs: [job] }));
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Fix login race (#17) · Roborev"),
-    );
     retry = true;
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByText(/review in progress/i);
     expect(document.title).toBe("Fix login race (#17) · Roborev");
   });
 
-  test("names an off-page review while its review request is pending", async () => {
+  test("names an off-page review after its review request resolves", async () => {
     let resolveReview: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/review")
@@ -182,11 +175,13 @@ describe("App", () => {
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
         return response(200, { jobs: [job] });
     });
+    await vi.waitFor(() => expect(resolveReview).toBeDefined());
+    expect(document.title).toBe("Review (#17) · Roborev");
+    expect(screen.getByText("Loading review…")).toBeInTheDocument();
+    resolveReview?.(response(404));
     await vi.waitFor(() =>
       expect(document.title).toBe("Fix login race (#17) · Roborev"),
     );
-    expect(screen.getByText("Loading review…")).toBeInTheDocument();
-    resolveReview?.(response(404));
   });
 
   test("names the unavailable daemon and recovery", async () => {

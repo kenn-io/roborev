@@ -1,6 +1,6 @@
 import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
 import { retryIdempotentRead } from "../../api/retry-policy";
@@ -64,49 +64,16 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   let selectedJobId = $state<number | undefined>(undefined);
   let reviewNotFound = $state(false);
   let storeError = $state<string | null>(null);
-  let jobReadGeneration = 0;
-  let interruptJobRead: (() => void) | undefined;
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
-    function* (jobId: number, publishEarly = false) {
-      const generation = publishEarly ? ++jobReadGeneration : undefined;
-      if (publishEarly) interruptJobRead?.();
+    function* (jobId: number) {
       const jobRead = executeRoborevRequest(
         "GET Roborev review job",
         (signal) =>
           api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
             signal,
           }),
-      ).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            const job = result.jobs?.[0];
-            if (
-              publishEarly &&
-              selectedJobId === jobId &&
-              job?.id === jobId &&
-              generation === jobReadGeneration
-            )
-              selectedJob = job;
-          }),
-        ),
       );
-      let jobResult = Effect.result(jobRead);
-      if (publishEarly) {
-        const jobExecution = opts.runtime.runCommand(jobResult, {
-          operation: "load Roborev review job",
-          safeContext: { jobId },
-          onFailure: () => {},
-        });
-        interruptJobRead = jobExecution.interrupt;
-        jobResult = jobExecution.await.pipe(
-          Effect.flatMap((exit) =>
-            Exit.isSuccess(exit)
-              ? Effect.succeed(exit.value)
-              : Effect.failCause(exit.cause),
-          ),
-        );
-      }
       const result = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
@@ -144,7 +111,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                   ),
             ),
           ),
-          job: jobResult,
+          job: Effect.result(jobRead),
         },
         { concurrency: "unbounded" },
       );
@@ -232,9 +199,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             reviewNotFound = false;
             storeError = null;
             review = null;
+            selectedJob = null;
             responses = [];
           });
-          const authority = yield* fetchReviewAuthority(jobId, true);
+          const authority = yield* fetchReviewAuthority(jobId);
           yield* publishReviewAuthority(jobId, authority);
         }).pipe(
           Effect.catch(() =>
@@ -435,9 +403,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function setSelectedJobId(jobId: number | undefined): void {
     if (jobId !== selectedJobId) {
-      jobReadGeneration++;
-      interruptJobRead?.();
-      interruptJobRead = undefined;
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
       reviewNotFound = false;

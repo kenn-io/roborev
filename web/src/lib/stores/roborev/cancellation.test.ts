@@ -55,6 +55,31 @@ function abortingRequest() {
 }
 
 describe("Roborev request cancellation", () => {
+  it("aborts the job lookup when the mounted review load is interrupted", async () => {
+    let signal: AbortSignal | undefined;
+    const store = reviewStore({
+      getReview: abortingRequest(),
+      getReviewProjection: abortingRequest(),
+      listJobs: vi.fn((_query, options?: { signal?: AbortSignal }) => {
+        signal = options?.signal;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () =>
+            reject(new DOMException("request aborted", "AbortError")),
+          );
+        });
+      }),
+    } as never);
+    store.setSelectedJobId(42);
+    const execution = runtime!.runCommand(store.loadReviewEffect(42), {
+      operation: "load mounted review",
+      safeContext: {},
+      onFailure: () => {},
+    });
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    execution.interrupt();
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+  });
+
   it("finishes an acknowledged comment after selection changes during reconciliation", async () => {
     const reconciliationJob = Promise.withResolvers<{ jobs: [] }>();
     const listJobs = vi
@@ -62,14 +87,12 @@ describe("Roborev request cancellation", () => {
       .mockResolvedValueOnce({ jobs: [] })
       .mockReturnValue(reconciliationJob.promise);
     const store = reviewStore({
-      getReview: vi
-        .fn()
-        .mockResolvedValue({
-          id: 7,
-          job_id: 42,
-          output: "review",
-          closed: false,
-        }),
+      getReview: vi.fn().mockResolvedValue({
+        id: 7,
+        job_id: 42,
+        output: "review",
+        closed: false,
+      }),
       getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
       listJobs,
       addComment: vi
@@ -98,29 +121,6 @@ describe("Roborev request cancellation", () => {
     await vi.waitFor(() => expect(store.isReviewNotFound()).toBe(true));
     store.setSelectedJobId(43);
     expect(store.isReviewNotFound()).toBe(false);
-  });
-
-  it("retains job details when a review load fails and retries", async () => {
-    const getReview = vi
-      .fn()
-      .mockRejectedValue(new Response(null, { status: 500 }));
-    const store = reviewStore({
-      getReview,
-      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
-      listJobs: vi.fn().mockResolvedValue({
-        jobs: [{ id: 42, commit_subject: "Fix login race" }],
-      }),
-    } as never);
-    store.setSelectedJobId(42);
-    store.loadReview(42);
-    await vi.waitFor(() =>
-      expect(store.getError()).toBe("Failed to load review"),
-    );
-    expect(store.getSelectedJob()?.commit_subject).toBe("Fix login race");
-    store.loadReview(42);
-    await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
-    expect(store.getSelectedJob()?.commit_subject).toBe("Fix login race");
   });
 
   it("retries review and comment reads before displaying them", async () => {

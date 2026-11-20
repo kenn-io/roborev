@@ -14,5 +14,5 @@ export function tabTitle(
   if (route.page === "analytics") return "Analytics · Roborev";
   if (route.jobId === undefined) return "Reviews · Roborev";
   if (notFound) return `Review not found (#${route.jobId}) · Roborev`;
-  return `${subject ?? "Review"} (#${route.jobId}) · Roborev`;
+  return `${subject?.trim() || "Review"} (#${route.jobId}) · Roborev`;
 }

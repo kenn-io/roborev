@@ -462,7 +462,11 @@ export const makeRoborevWorkflow: Effect.Effect<
       request: Effect.Effect<A, E, R>,
     ) =>
       FiberMap.run(reviewFibers, owner, request).pipe(
-        Effect.flatMap(Fiber.join),
+        Effect.flatMap((fiber) =>
+          Fiber.join(fiber).pipe(
+            Effect.onInterrupt(() => Fiber.interrupt(fiber)),
+          ),
+        ),
       ),
     stopReview: (owner: string) => FiberMap.remove(reviewFibers, owner),
     log: <A, E, R>(
