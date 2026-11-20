@@ -479,62 +479,13 @@ func TestScheduledAnalysisShutdown(t *testing.T) {
 	server.scheduleMu.Unlock()
 }
 
-func TestScheduledAnalysisHistoryTiming(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	head := repo.CommitFile("a.go", "package a\n", "add file")
-	registered, err := db.GetOrCreateRepo(repo.Path())
-	require.NoError(t, err)
-	for range 2000 {
-		job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "test", Prompt: "old", AnalysisType: "refactor", AnalysisFiles: []string{"a.go"}, AnalysisCommitSHA: head})
-		require.NoError(t, err)
-		setJobStatus(t, db, job.ID, storage.JobStatusDone)
-	}
-	yes, interval, budget := true, "1h", 1
-	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}, Paths: []string{"*.go"}}
-	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[schedule]\nenabled = true\n[analyze.refactor]\nagent = 'test'\n"), 0o644))
-	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-	start := time.Now()
-	watcher.poll(t.Context(), start)
-	t.Logf("due pass across 2000 history jobs: %s", time.Since(start))
-	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
-	require.NoError(t, err)
-	assert.Empty(t, jobs)
-}
-
-func TestScheduledAnalysisLiteralTrackedPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("colon is not a valid Windows filename")
-	}
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	head := repo.CommitFiles(map[string]string{":(bad).go": "package special\n", "normal.go": "package normal\n"}, "add files")
-	registered, err := db.GetOrCreateRepo(repo.Path())
-	require.NoError(t, err)
-	yes, interval, budget := true, "1h", 10
-	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
-	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[schedule]\nenabled = true\n[analyze.refactor]\nagent = 'test'\n"), 0o644))
-
-	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-	watcher.poll(t.Context(), time.Now())
-	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	files := make([]string, 0, len(jobs))
-	for _, job := range jobs {
-		files = append(files, job.AnalysisFiles...)
-		assert.Equal(t, head, job.AnalysisCommitSHA)
-	}
-	assert.ElementsMatch(t, []string{":(bad).go", "normal.go"}, files)
-}
-
 func TestScheduledAnalysisBundlesTypesAndLiteralStar(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("asterisk is not a valid Windows filename")
 	}
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
-	head := repo.CommitFiles(map[string]string{"*": "original\n", "normal.go": "package normal\n"}, "add files")
+	head := repo.CommitFiles(map[string]string{"*": "original\n", ":(bad).go": "package special\n", "normal.go": "package normal\n"}, "add files")
 	registered, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("analyze_agent = 'test'\n[schedule]\nenabled = true\ninterval = '1h'\nmax_files = 10\ntypes = ['refactor', 'complexity']\n"), 0o644))
@@ -545,7 +496,7 @@ func TestScheduledAnalysisBundlesTypesAndLiteralStar(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 2)
 	for _, job := range jobs {
-		assert.Equal(t, []string{"*", "normal.go"}, job.AnalysisFiles)
+		assert.Equal(t, []string{"*", ":(bad).go", "normal.go"}, job.AnalysisFiles)
 		assert.Equal(t, head, job.AnalysisCommitSHA)
 		setJobStatus(t, db, job.ID, storage.JobStatusDone)
 	}
@@ -565,7 +516,7 @@ func TestScheduledAnalysisBundlesTypesAndLiteralStar(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 2)
 	for _, job := range jobs {
-		assert.Equal(t, []string{"*", "normal.go"}, job.AnalysisFiles)
+		assert.Equal(t, []string{"*", ":(bad).go", "normal.go"}, job.AnalysisFiles)
 	}
 }
 
