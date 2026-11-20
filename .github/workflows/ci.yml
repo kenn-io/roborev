@@ -323,7 +323,7 @@ jobs:
           go tool gotestsum --format pkgname-and-test-fails --format-icons text \
             --jsonfile "gotestsum/$SUITE.json" \
             --rerun-fails=2 --rerun-fails-report "gotestsum/$SUITE-reruns.txt" \
-            --packages "./..." \
+            --packages "./cmd/roborev ./internal/daemon ./..." \
             -- -timeout 15m -shuffle=on -tags integration
 
       - name: Test (Windows)
