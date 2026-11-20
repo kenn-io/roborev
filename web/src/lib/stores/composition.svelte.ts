@@ -19,6 +19,17 @@ import {
 } from "./roborev/review.svelte";
 import { makeRoborevOwner } from "./roborev/workflow";
 
+export function getSelectedJob(
+  stores: ReviewStores,
+  jobId: number | undefined,
+) {
+  if (jobId === undefined) return undefined;
+  const job =
+    stores.roborevJobs?.getVisibleJobs().find((job) => job.id === jobId) ??
+    stores.roborevReview?.getSelectedJob();
+  return job;
+}
+
 export interface ReviewStores {
   roborevDaemon: DaemonStore;
   roborevJobs: JobsStore;

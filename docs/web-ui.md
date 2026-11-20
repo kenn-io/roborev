@@ -40,6 +40,9 @@ The application has two workspaces:
 - **Analytics** summarizes cost, latency, failures, outcomes, and agent attempts
     from the daemon's SQLite history.
 
+Browser tabs name the current workspace. An open review shows its commit subject
+and job ID, or `Review (#ID) · Roborev` when the subject is unavailable.
+
 The theme button in the application header switches between light, dark, and the
 operating system's setting. The browser remembers the choice.
 

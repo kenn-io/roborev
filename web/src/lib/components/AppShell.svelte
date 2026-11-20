@@ -17,12 +17,16 @@
   import { createRouter } from "../router/router.svelte";
   import { setAppRuntime } from "../runtime/context";
   import { makeAppRuntime } from "../runtime/runtime";
-  import { createReviewStores } from "../stores/composition.svelte";
+  import {
+    createReviewStores,
+    getSelectedJob,
+  } from "../stores/composition.svelte";
   import { provideReviewStores } from "../stores/context";
   import {
     reportScreenViewed,
     setupAppOpenedReporting,
   } from "../utils/app-opened";
+  import { tabTitle } from "../utils/tab-title";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
   import BrandMark from "./BrandMark.svelte";
@@ -61,6 +65,14 @@
   provideReviewStores(stores);
   onMount(setupAppOpenedReporting);
   $effect(() => reportScreenViewed(page));
+  $effect(() => {
+    const jobId = route.page === "reviews" ? route.jobId : undefined;
+    const job = getSelectedJob(stores, jobId);
+    document.title = tabTitle(
+      route,
+      job?.id === jobId ? job?.commit_subject : undefined,
+    );
+  });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
     operation: "poll Roborev daemon status",

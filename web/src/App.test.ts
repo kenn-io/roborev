@@ -40,6 +40,21 @@ const status = {
   version: "test",
 };
 
+const job = {
+  id: 17,
+  commit_subject: "Fix login race",
+  agent: "test",
+  agentic: false,
+  enqueued_at: "2026-08-13T20:00:00Z",
+  git_ref: "abc123",
+  job_type: "review",
+  prompt_prebuilt: false,
+  repo_id: 1,
+  repo_name: "example/repo",
+  retry_count: 0,
+  status: "queued",
+};
+
 function applicationResponse(input: RequestInfo | URL): Response {
   const url = new URL(
     input instanceof Request ? input.url : input,
@@ -59,6 +74,29 @@ function applicationResponse(input: RequestInfo | URL): Response {
   return response(404);
 }
 
+function renderAuthenticatedApp(
+  path: string,
+  respond: (url: URL) => Response | Promise<Response> | undefined,
+): void {
+  history.replaceState(null, "", path);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(
+        input instanceof Request ? input.url : input,
+        location.origin,
+      );
+      return Promise.resolve(
+        respond(url) ??
+          (url.pathname === "/api/ui/session/bootstrap"
+            ? response(200, credentials)
+            : applicationResponse(input)),
+      );
+    }),
+  );
+  render(App);
+}
+
 describe("App", () => {
   beforeEach(() => {
     sessionStorage.clear();
@@ -69,6 +107,26 @@ describe("App", () => {
     appOpened.setupAppOpenedReporting.mockClear();
     appOpened.reportScreenViewed.mockClear();
     appOpened.reportCoreAction.mockClear();
+  });
+
+  test.each([
+    ["off-page job", "Fix login race", "Fix login race (#17) · Roborev"],
+    ["subjectless review URL", undefined, "Review (#17) · Roborev"],
+  ])("names the tab for %s", async (_label, subject, title) => {
+    renderAuthenticatedApp("/reviews/17", (url) => {
+      if (subject === undefined) return;
+      if (url.pathname === "/api/ui/review-projection")
+        return response(200, { responses: [] });
+      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+        return response(200, {
+          jobs: [{ ...job, commit_subject: subject }],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 1 },
+        });
+    });
+    await vi.waitFor(() => expect(document.title).toBe(title));
+    if (subject !== undefined) await screen.findByText(/review in progress/i);
+    expect(document.title).toBe(title);
   });
 
   test("checks the ambient browser session on mount", () => {
@@ -97,12 +155,36 @@ describe("App", () => {
     );
   });
 
-  test("clears the token input after login and renders the review workspace", async () => {
+  test("connects and names the review list, analytics, and selected reviews", async () => {
+    let resolveJob17: ((value: Response) => void) | undefined;
+    let resolveJob18: ((value: Response) => void) | undefined;
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response(401))
       .mockResolvedValueOnce(response(200, credentials))
-      .mockImplementation(applicationResponse);
+      .mockImplementation((input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : input,
+          location.origin,
+        );
+        if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+          return new Promise<Response>((resolve) => {
+            resolveJob17 = resolve;
+          });
+        if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "18")
+          return new Promise<Response>((resolve) => {
+            resolveJob18 = resolve;
+          });
+        if (url.pathname === "/api/ui/review-projection")
+          return response(200, { responses: [] });
+        if (url.pathname === "/api/jobs")
+          return response(200, {
+            jobs: [job],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 1 },
+          });
+        return applicationResponse(input);
+      });
     vi.stubGlobal("fetch", fetchMock);
     render(App);
 
@@ -122,6 +204,7 @@ describe("App", () => {
       "page",
     );
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
+    expect(document.title).toBe("Reviews · Roborev");
     await fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([
       ["reviews"],
@@ -131,6 +214,27 @@ describe("App", () => {
       screen.getByRole("heading", { name: "Review analytics" }),
     ).toBeInTheDocument();
     expect(location.pathname).toBe("/analytics");
+    expect(document.title).toBe("Analytics · Roborev");
+    await fireEvent.click(screen.getByRole("button", { name: "Reviews" }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /17.*abc123/i }),
+    );
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
+    await vi.waitFor(() => expect(resolveJob17).toBeDefined());
+    resolveJob17?.(response(200, { jobs: [job] }));
+    await screen.findByText(/review in progress/i);
+    history.pushState(null, "", "/reviews/18");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await vi.waitFor(() => expect(resolveJob18).toBeDefined());
+    expect(document.title).toBe("Review (#18) · Roborev");
+    resolveJob18?.(
+      response(200, {
+        jobs: [{ ...job, id: 18, commit_subject: "Add tests" }],
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Add tests (#18) · Roborev"),
+    );
     expect(token).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     expect(JSON.stringify(fetchMock.mock.calls)).toContain("one-time-secret");
@@ -325,19 +429,6 @@ describe("App", () => {
   });
 
   test("shows action failures in the application shell", async () => {
-    const job = {
-      id: 17,
-      agent: "test",
-      agentic: false,
-      enqueued_at: "2026-08-13T20:00:00Z",
-      git_ref: "abc123",
-      job_type: "review",
-      prompt_prebuilt: false,
-      repo_id: 1,
-      repo_name: "example/repo",
-      retry_count: 0,
-      status: "queued",
-    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
