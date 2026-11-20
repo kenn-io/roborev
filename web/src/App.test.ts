@@ -146,27 +146,35 @@ describe("App", () => {
   });
 
   test("names the selected review after the daemon disconnects", async () => {
-    let online = true;
-    renderAuthenticatedApp("/reviews/999", (url) => {
-      if (url.pathname === "/api/status" && !online)
-        return Promise.reject(new Error("offline"));
-      if (url.pathname === "/api/jobs" && !url.searchParams.has("id"))
-        return response(200, {
-          jobs: [job],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 1 },
-        });
-    });
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Review not found (#999) · Roborev"),
-    );
-    online = false;
-    await screen.findByText("Disconnected", {}, { timeout: 35000 });
-    await fireEvent.click(
-      await screen.findByRole("button", { name: /17.*abc123/i }),
-    );
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
-  }, 40000);
+    vi.useFakeTimers();
+    try {
+      let online = true;
+      renderAuthenticatedApp("/reviews/999", (url) => {
+        if (url.pathname === "/api/status" && !online)
+          return Promise.reject(new Error("offline"));
+        if (url.pathname === "/api/jobs" && !url.searchParams.has("id"))
+          return response(200, {
+            jobs: [job],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 1 },
+          });
+      });
+      await vi.waitFor(() =>
+        expect(document.title).toBe("Review not found (#999) · Roborev"),
+      );
+      online = false;
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() =>
+        expect(screen.getByText("Disconnected")).toBeInTheDocument(),
+      );
+      await fireEvent.click(
+        await screen.findByRole("button", { name: /17.*abc123/i }),
+      );
+      expect(document.title).toBe("Fix login race (#17) · Roborev");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   test("keeps an off-page review subject when loading fails and retries", async () => {
     let reviewCalls = 0;
