@@ -23,7 +23,7 @@
     reportScreenViewed,
     setupAppOpenedReporting,
   } from "../utils/app-opened";
-  import { tabTitle } from "../utils/tab-title";
+  import { sessionTitle, tabTitle } from "../utils/tab-title";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
   import BrandMark from "./BrandMark.svelte";
@@ -70,7 +70,13 @@
       review.getSelectedJobId() === route.jobId &&
       review.isReviewNotFound() &&
       !review.getSelectedJob();
-    document.title = tabTitle(route, notFound);
+    const daemon = stores.roborevDaemon;
+    document.title =
+      route.page === "reviews" &&
+      !daemon.isAvailable() &&
+      !daemon.getWasEverAvailable()
+        ? sessionTitle("error")
+        : tabTitle(route, notFound);
   });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {

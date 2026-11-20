@@ -165,6 +165,26 @@ describe("App", () => {
     expect(document.title).toBe("Review (#17) · Roborev");
   });
 
+  test.each([
+    ["/reviews", "Reviews · Roborev"],
+    ["/reviews/17", "Review (#17) · Roborev"],
+  ])("names the unavailable daemon and recovery at %s", async (path, title) => {
+    let available = false;
+    renderAuthenticatedApp(path, (url) => {
+      if (url.pathname === "/api/status") {
+        if (!available) return Promise.reject(new Error("offline"));
+        return response(200, status);
+      }
+      if (url.pathname === "/api/review")
+        return new Promise<Response>(() => {});
+    });
+    await screen.findByText("Roborev daemon not reachable");
+    expect(document.title).toBe("Unavailable · Roborev");
+    available = true;
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await vi.waitFor(() => expect(document.title).toBe(title));
+  });
+
   test("checks the ambient browser session on mount", () => {
     vi.stubGlobal(
       "fetch",
