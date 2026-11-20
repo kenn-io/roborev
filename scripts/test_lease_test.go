@@ -99,12 +99,14 @@ with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", o
     esac ;;
   *' port '*)
     [ "$2" = -p ] && [ "$3" = "$TEST_SERVICE_LEASE" ] || exit 9
+    case " $* " in *' port postgres 5432 '*) ;; *) exit 9 ;; esac
     case "$MODE" in port-fails) echo 'port lookup failed' >&2; exit 1 ;; port-empty) exit 0 ;; esac
     echo 127.0.0.1:45678 ;;
 esac
 `
 			goTool := `#!/bin/sh
 if [ "$1" = env ]; then exit 0; fi
+if [ "$1" = tool ] && [ "$2" = gotestsum ]; then printf '%s\n' "$*" >> "$HOME/gotestsum.log"; fi
 printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 [ "$MODE" != test-fails ]
 `
@@ -152,18 +154,27 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 			} else {
 				assert.Empty(t, entries)
 			}
+			if tc.mode == "success" || tc.mode == "test-fails" || tc.mode == "down-fails" {
+				reportDir := filepath.Join("..", "gotestsum", lease)
+				t.Cleanup(func() { _ = os.RemoveAll(reportDir) })
+				reportCalls, err := os.ReadFile(filepath.Join(dir, "gotestsum.log"))
+				require.NoError(t, err)
+				assert.Contains(t, string(reportCalls), "--jsonfile "+filepath.Join("gotestsum", lease, "postgres-storage.json"))
+				assert.Contains(t, string(reportCalls), "--rerun-fails-report "+filepath.Join("gotestsum", lease, "postgres-storage-reruns.txt"))
+				if tc.mode != "test-fails" {
+					assert.Contains(t, string(reportCalls), "--jsonfile "+filepath.Join("gotestsum", lease, "postgres-daemon.json"))
+					assert.Contains(t, string(reportCalls), "--rerun-fails-report "+filepath.Join("gotestsum", lease, "postgres-daemon-reruns.txt"))
+				}
+			}
 			assert.Equal(t, "compose -p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down", lines[len(lines)-1])
 		})
 	}
 }
 
 func TestPostgresCleanupWaitsForDescendant(t *testing.T) {
-	for _, killed := range []bool{false, true} {
-		name := "command fails"
-		if killed {
-			name = "supervisor killed"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, mode := range []string{"command fails", "supervisor killed", "signal while child holds lock"} {
+		killed := mode == "supervisor killed"
+		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			ready := filepath.Join(dir, "ready")
 			release := filepath.Join(dir, "release")
@@ -246,6 +257,30 @@ exit 7
 					finished = true
 					t.Fatalf("run exited before its child: %v", err)
 				default:
+				}
+				if mode == "signal while child holds lock" {
+					parts := strings.Split(entries[0].Name(), "-")
+					supervisor, err := strconv.Atoi(parts[len(parts)-1])
+					require.NoError(t, err)
+					args, err := exec.CommandContext(t.Context(), "ps", "-p", strconv.Itoa(supervisor), "-o", "args=").Output()
+					require.NoError(t, err)
+					require.Contains(t, string(args), "test-service-leases")
+					require.NoError(t, syscall.Kill(supervisor, syscall.SIGTERM))
+					select {
+					case err := <-done:
+						finished = true
+						var exit *exec.ExitError
+						require.ErrorAs(t, err, &exit)
+						assert.Equal(t, 2, exit.ExitCode())
+					case <-time.After(10 * time.Second):
+						t.Fatal("cleanup did not finish after the launcher was signalled")
+					}
+					calls, err := os.ReadFile(log)
+					require.NoError(t, err)
+					assert.Contains(t, string(calls), " down\n")
+					_, err = os.Stat(leasePath)
+					require.ErrorIs(t, err, os.ErrNotExist)
+					return
 				}
 			}
 			require.ErrorIs(t, syscall.Flock(int(lease.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), syscall.EWOULDBLOCK)

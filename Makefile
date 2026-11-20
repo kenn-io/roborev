@@ -302,7 +302,9 @@ ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
 	@$(MAKE) test-postgres-ci TEST_POSTGRES_URL=postgres://roborev_test:roborev_test_password@127.0.0.1:PORT/roborev_test
 else
 	@address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432) && [ -n "$$address" ] || { echo 'could not determine postgres port' >&2; exit 1; }; \
-	$(MAKE) test-postgres-ci TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test"
+	report_dir="gotestsum/$$TEST_SERVICE_LEASE"; \
+	mkdir -p "$$report_dir"; \
+	$(MAKE) test-postgres-ci TEST_POSTGRES_REPORT_DIR="$$report_dir" TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test"
 endif
 
 .PHONY: test-postgres-growth
@@ -391,15 +393,16 @@ install-hooks:
 	prek install
 
 # CI target: run postgres tests without managing docker (assumes postgres is running)
+TEST_POSTGRES_REPORT_DIR ?= gotestsum
 test-postgres-ci:
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-		--jsonfile gotestsum/postgres-storage.json \
-		--rerun-fails=2 --rerun-fails-report gotestsum/postgres-storage-reruns.txt \
+		--jsonfile $(TEST_POSTGRES_REPORT_DIR)/postgres-storage.json \
+		--rerun-fails=2 --rerun-fails-report $(TEST_POSTGRES_REPORT_DIR)/postgres-storage-reruns.txt \
 		--packages "./internal/storage/..." \
 		-- -tags=postgres -v -run Integration
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-		--jsonfile gotestsum/postgres-daemon.json \
-		--rerun-fails=2 --rerun-fails-report gotestsum/postgres-daemon-reruns.txt \
+		--jsonfile $(TEST_POSTGRES_REPORT_DIR)/postgres-daemon.json \
+		--rerun-fails=2 --rerun-fails-report $(TEST_POSTGRES_REPORT_DIR)/postgres-daemon-reruns.txt \
 		--packages "./internal/daemon/..." \
 		-- -tags=postgres -v -run '^TestIntegration'
 

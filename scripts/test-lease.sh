@@ -35,24 +35,26 @@ os.environ["TEST_SERVICE_LEASE_FD"] = str(fd)
 
 # A separate open file description can wait for every inherited lock holder.
 wait_fd = os.open(os.path.join(directory, lease), os.O_RDONLY)
-process = None
+process_group = None
 interrupted = 0
 def interrupt(signum, frame):
     global interrupted
     interrupted = signum
-    if process is not None and process.poll() is None:
+    if process_group is not None:
         try:
-            process.send_signal(signum)
+            os.killpg(process_group, signum)
         except ProcessLookupError:
             pass
 signal.signal(signal.SIGINT, interrupt)
 signal.signal(signal.SIGTERM, interrupt)
-process = subprocess.Popen(command, pass_fds=(fd,))
+process = subprocess.Popen(command, pass_fds=(fd,), start_new_session=True)
+process_group = process.pid
 if interrupted:
     interrupt(interrupted, None)
 status = process.wait()
 os.close(fd)
 fcntl.flock(wait_fd, fcntl.LOCK_EX)
+process_group = None
 cleanup = subprocess.run(["docker", "compose", "-p", lease, "-f", "docker-compose.test.yml", "-f", "docker-compose.test-lease.yml", "down"]).returncode
 if cleanup == 0:
     os.unlink(os.path.join(directory, lease))
