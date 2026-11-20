@@ -372,3 +372,28 @@ func TestGoalWorkerRecordsUsageAndFindings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(log), "Checking goal evidence")
 }
+
+func TestGoalWorkerRetriesWhenResultCannotBeStored(t *testing.T) {
+	c := newWorkerTestContext(t, 1)
+	registerGoalReviewPi(t, c.Pool.cfgGetter.Config())
+	c.Pool.goalReviewRunner = goalReviewTestRunner(func(context.Context, goalreview.Snapshot, prompt.SnapshotResult) ([]goalreview.Finding, error) {
+		return nil, nil
+	})
+	_, err := c.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
+		BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`)
+	require.NoError(t, err)
+	snapshot := goalreview.Snapshot{Source: "superpowers", Stage: "spec", Artifacts: []goalreview.Artifact{{Kind: "spec", Path: "spec.md", Content: "# Frozen\n"}}}
+	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: c.Repo.ID, Agent: "pi", GitRef: snapshot.ID(), ReviewType: "goal",
+		JobType: storage.JobTypeGoalReview, Prompt: goalreview.BuildPrompt(snapshot), PromptPrebuilt: true,
+	})
+	require.NoError(t, err)
+	claimed, err := c.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	c.Pool.processJob(testWorkerID, claimed)
+
+	stored := c.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, 1, stored.RetryCount)
+}

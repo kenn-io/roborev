@@ -1863,11 +1863,20 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
 		// canceled between agent finish and now. A store error goes through
 		// retry/fail: a job left running would only be failed later by the
-		// orphan sweep, with an error that hides the real cause.
+		// orphan sweep, with an error that hides the real cause. An agentic
+		// task already edited the checkout, so a rerun would repeat its edits;
+		// it fails without retry.
+		storeFailed := func(errorMsg string) {
+			if job.Agentic && job.IsTaskJob() {
+				wp.failNonRetryableJobLocked(workerID, job, agentName, errorMsg)
+				return
+			}
+			wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, false, nil)
+		}
 		if job.IsFixJob() {
 			if err := wp.db.CompleteFixJob(job.ID, agentName, output, fixPatch); err != nil {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
-				wp.failOrRetryInnerLocked(workerID, job, agentName, fmt.Sprintf("store fix review: %v", err), false, nil)
+				storeFailed(fmt.Sprintf("store fix review: %v", err))
 				return
 			}
 		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
@@ -1882,7 +1891,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				},
 			); err != nil {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
-				wp.failOrRetryInnerLocked(workerID, job, agentName, fmt.Sprintf("store review: %v", err), false, nil)
+				storeFailed(fmt.Sprintf("store review: %v", err))
 				return
 			}
 		} else if err := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
@@ -1890,7 +1899,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			FileCoverage: fileCoverage,
 		}); err != nil {
 			log.Printf("[%s] Error storing review: %v", workerID, err)
-			wp.failOrRetryInnerLocked(workerID, job, agentName, fmt.Sprintf("store review: %v", err), false, nil)
+			storeFailed(fmt.Sprintf("store review: %v", err))
 			return
 		}
 

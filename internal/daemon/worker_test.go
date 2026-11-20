@@ -4712,3 +4712,47 @@ func TestProcessJob_ReviewStoreFailureRetriesThenFails(t *testing.T) {
 	assert.Contains(t, failed.Error, "store review: ")
 	assert.Contains(t, failed.Error, "database or disk is full")
 }
+
+func TestProcessJob_TaskStoreFailureRetriesOnlyWithoutEdits(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name       string
+		agentic    bool
+		status     storage.JobStatus
+		retryCount int
+		wantError  string
+	}{
+		{name: "read-only task retries", agentic: false, status: storage.JobStatusQueued, retryCount: 1},
+		{name: "agentic task fails without rerun", agentic: true, status: storage.JobStatusFailed, wantError: "database or disk is full"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert := assert.New(t)
+			agentName := "task-store-failure-" + strings.ReplaceAll(tt.name, " ", "-")
+			agent.RegisterForTest(t, &agent.FakeAgent{
+				NameStr: agentName,
+				ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+					return "Task completed.", nil
+				},
+			})
+			tc := newWorkerTestContext(t, 1)
+			_, err := tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
+				BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`)
+			require.NoError(t, err)
+			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+				RepoID: tc.Repo.ID, GitRef: "run:store-failure", Agent: agentName,
+				Prompt: "Do the task", JobType: storage.JobTypeTask, Agentic: tt.agentic,
+			})
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.Equal(t, job.ID, claimed.ID)
+
+			tc.Pool.processJob(testWorkerID, claimed)
+
+			stored := tc.assertJobStatus(t, job.ID, tt.status)
+			assert.Equal(tt.retryCount, stored.RetryCount)
+			assert.Contains(stored.Error, tt.wantError)
+		})
+	}
+}
