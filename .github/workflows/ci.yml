@@ -320,6 +320,7 @@ jobs:
         run: |
           # Go's race detector can intermittently hang/crash while spawning child
           # processes on darwin/arm64; Linux keeps the race coverage for CI.
+          # Start long packages first; ./... keeps the full package set.
           go tool gotestsum --format pkgname-and-test-fails --format-icons text \
             --jsonfile "gotestsum/$SUITE.json" \
             --rerun-fails=2 --rerun-fails-report "gotestsum/$SUITE-reruns.txt" \
