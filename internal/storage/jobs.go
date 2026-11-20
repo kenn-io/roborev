@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -2044,6 +2045,7 @@ const emptyBranchCondition = "(j.branch = '' OR j.branch IS NULL OR j.branch = '
 
 type listJobsOptions struct {
 	gitRef             string
+	search             string
 	branch             string
 	branchEmpty        bool
 	branchIncludeEmpty bool
@@ -2090,6 +2092,28 @@ func WithFailedReviewsSince(since time.Time) ListJobsOption {
 // WithGitRef filters jobs by git ref.
 func WithGitRef(ref string) ListJobsOption {
 	return func(o *listJobsOptions) { o.gitRef = ref }
+}
+
+// WithSearch matches jobs whose git ref, or the head of a range ref, starts
+// with query. A number, optionally written as "#123" or "PR 123", also matches
+// CI reviews of that pull request.
+func WithSearch(query string) ListJobsOption {
+	return func(o *listJobsOptions) { o.search = strings.TrimSpace(query) }
+}
+
+// searchPRNumber returns the pull request number a search names, or 0 when it
+// names none.
+func searchPRNumber(query string) int64 {
+	digits := strings.TrimSpace(query)
+	if len(digits) >= 2 && strings.EqualFold(digits[:2], "pr") {
+		digits = strings.TrimSpace(digits[2:])
+	}
+	digits = strings.TrimPrefix(digits, "#")
+	n, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // WithAnalysisType filters jobs by the recorded analysis type.
@@ -2313,6 +2337,23 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 	if o.gitRef != "" {
 		conditions = append(conditions, "j.git_ref = ?")
 		args = append(args, o.gitRef)
+	}
+	if o.search != "" {
+		escaped := escapeLike(o.search)
+		clause := `(j.git_ref LIKE ? ESCAPE '!' OR j.git_ref LIKE ? ESCAPE '!'`
+		args = append(args, escaped+"%", "%.."+escaped+"%")
+		if pr := searchPRNumber(o.search); pr > 0 {
+			clause += `
+			OR EXISTS (
+				SELECT 1 FROM ci_pr_panels cp
+				WHERE cp.pr_number = ?
+				  AND (cp.synthesis_job_id = j.id OR cp.panel_run_uuid = j.panel_run_uuid))
+			OR EXISTS (
+				SELECT 1 FROM ci_pr_reviews cr
+				WHERE cr.pr_number = ? AND cr.job_id = j.id)`
+			args = append(args, pr, pr)
+		}
+		conditions = append(conditions, clause+")")
 	}
 	if o.analysisType != "" {
 		conditions = append(conditions, "j.analysis_type = ?")

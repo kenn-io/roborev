@@ -187,6 +187,9 @@ type ListJobsQuery struct {
 	// GitRef Filter by git ref
 	GitRef *string `json:"git_ref,omitempty"`
 
+	// Search Match jobs whose git ref or range head starts with this text, or CI reviews of a pull request number (123, #123, or PR 123)
+	Search *string `json:"search,omitempty"`
+
 	// AnalysisType Filter by recorded analysis type
 	AnalysisType *string `json:"analysis_type,omitempty"`
 

@@ -71,8 +71,10 @@ panel's closed state.
 
 If loading branches or a review fails, use **Retry** in the affected view.
 
-Ref search previews results as you type. Press Enter to submit the current text
-immediately, without waiting for the preview delay.
+Ref search matches jobs whose ref, or the end of a range ref, starts with the
+text you type. A number such as `123`, `#123`, or `PR 123` also matches CI
+reviews of that pull request. Search previews results as you type. Press Enter
+to submit the current text immediately, without waiting for the preview delay.
 
 The table loads the most recent jobs first. Scroll to the end of the table to
 load the next page; loading continues until the table fills its scroll area or
@@ -90,8 +92,11 @@ previous rows and shows an error under the headers with a **Retry** button.
 
 Each row fits on one line: the commit column shows the repository, branch, short
 ref, and commit subject, and the Agent column shows the model beside the agent.
-Panel reviews appear as a synthesis row that can be expanded to show its
-individual reviewers.
+The Findings column counts a completed review's findings like the TUI does:
+critical and high, then medium, then low, as in `2/1/0`. It shows `--` when the
+review has no counts, such as a job that has not finished. The Findings column
+does not sort. Panel reviews appear as a synthesis row that can be expanded to
+show its individual reviewers.
 
 The detail drawer shows the job's recorded reasoning level beside the agent and
 model. In an owner-local browser session, the drawer also shows the recorded

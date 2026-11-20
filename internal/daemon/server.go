@@ -1739,6 +1739,9 @@ func (s *Server) humaListJobs(
 			listOpts, storage.WithGitRef(input.GitRef),
 		)
 	}
+	if input.Search != "" {
+		listOpts = append(listOpts, storage.WithSearch(input.Search))
+	}
 	if input.AnalysisType != "" {
 		listOpts = append(listOpts, storage.WithAnalysisType(input.AnalysisType))
 	}
@@ -1898,6 +1901,9 @@ func (s *Server) humaListJobs(
 	}
 	if input.GitRef != "" {
 		statsOpts = append(statsOpts, storage.WithGitRef(input.GitRef))
+	}
+	if input.Search != "" {
+		statsOpts = append(statsOpts, storage.WithSearch(input.Search))
 	}
 	if input.AnalysisType != "" {
 		statsOpts = append(statsOpts, storage.WithAnalysisType(input.AnalysisType))

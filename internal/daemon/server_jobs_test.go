@@ -255,6 +255,35 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 }
 
+func TestListJobsWithSearch(t *testing.T) {
+	server, db, _ := newTestServer(t)
+
+	repo, err := db.GetOrCreateRepo("/tmp/test-repo-search")
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc1234", "A", "S", time.Now())
+	require.NoError(t, err)
+	local, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc1234", Agent: "codex"})
+	require.NoError(t, err)
+	members := []storage.EnqueueOpts{{RepoID: repo.ID, GitRef: "base..cafe000", Agent: "test", PanelMemberIndex: 0}}
+	synthesis := storage.EnqueueOpts{RepoID: repo.ID, GitRef: "base..cafe000", Agent: "test"}
+	_, _, synth, err := db.CreateCIPanelRun("o/r", 4242, "cafe000", members, synthesis)
+	require.NoError(t, err)
+
+	t.Run("ref prefix", func(t *testing.T) {
+		resp := fetchJobs(t, server, "search=abc")
+		require.Len(t, resp.Jobs, 1)
+		assert.Equal(t, local.ID, resp.Jobs[0].ID)
+		assert.Equal(t, 1, resp.Stats.Queued)
+	})
+
+	t.Run("pull request number", func(t *testing.T) {
+		resp := fetchJobs(t, server, "search="+url.QueryEscape("#4242"))
+		require.Len(t, resp.Jobs, 1)
+		assert.Equal(t, synth.ID, resp.Jobs[0].ID)
+		assert.Equal(t, 1, resp.Stats.Queued+resp.Stats.Running+resp.Stats.Done)
+	})
+}
+
 func TestHandleListJobsClosedFilter(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()

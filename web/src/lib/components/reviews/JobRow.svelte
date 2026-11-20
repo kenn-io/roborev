@@ -69,6 +69,18 @@
     return ref;
   }
 
+  // Grouped like the TUI's findings column: critical and high together,
+  // then medium, then low.
+  const findings = $derived.by(() => {
+    const counts = job.finding_counts;
+    if (!counts) return undefined;
+    return {
+      high: counts.critical + counts.high,
+      medium: counts.medium,
+      low: counts.low,
+    };
+  });
+
   function closedLabel(j: ReviewJob): string {
     if (member || j.panel_role === "member" || j.closed === undefined) {
       return "--";
@@ -148,6 +160,26 @@
   </td>
   <td class="col-verdict">
     <VerdictBadge verdict={job.verdict} />
+  </td>
+  <td
+    class="col-findings"
+    title={findings
+      ? `${findings.high} critical or high, ${findings.medium} medium, ${findings.low} low`
+      : undefined}
+  >
+    {#if findings}
+      <span class="finding-count" class:sev-high={findings.high > 0}
+        >{findings.high}</span
+      ><span class="finding-sep">/</span><span
+        class="finding-count"
+        class:sev-medium={findings.medium > 0}>{findings.medium}</span
+      ><span class="finding-sep">/</span><span
+        class="finding-count"
+        class:sev-low={findings.low > 0}>{findings.low}</span
+      >
+    {:else}
+      --
+    {/if}
   </td>
   <td class="col-closed">{closedLabel(job)}</td>
   <td class="col-elapsed">
@@ -335,6 +367,28 @@
 
   .col-review-type,
   .col-closed {
+    color: var(--text-secondary);
+  }
+
+  .col-findings {
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  .finding-sep {
+    margin: 0 1px;
+  }
+
+  .finding-count.sev-high {
+    color: var(--accent-red);
+    font-weight: 600;
+  }
+
+  .finding-count.sev-medium {
+    color: var(--accent-amber);
+  }
+
+  .finding-count.sev-low {
     color: var(--text-secondary);
   }
 

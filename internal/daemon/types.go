@@ -106,6 +106,7 @@ type ListJobsInput struct {
 	Status              string    `query:"status" doc:"Filter by job status"`
 	Repo                []string  `query:"repo,explode" doc:"Filter by repo root path (repeatable)"`
 	GitRef              string    `query:"git_ref" doc:"Filter by git ref"`
+	Search              string    `query:"search" doc:"Match jobs whose git ref or range head starts with this text, or CI reviews of a pull request number (123, #123, or PR 123)"`
 	AnalysisType        string    `query:"analysis_type" doc:"Filter by recorded analysis type"`
 	AnalysisFile        []string  `query:"analysis_file,explode" doc:"Filter by recorded analysis file (repeatable)"`
 	Branch              string    `query:"branch" doc:"Filter by branch name"`

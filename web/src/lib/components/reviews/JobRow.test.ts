@@ -42,6 +42,33 @@ describe("JobRow", () => {
     expect(screen.getByText("~$0.42")).toBeTruthy();
   });
 
+  it.each([
+    [
+      "groups critical with high, then medium and low",
+      { critical: 1, high: 2, medium: 0, low: 4 },
+      "3/0/4",
+    ],
+    ["shows a review without counts as unknown", undefined, "--"],
+  ])("%s", (_name, counts, expected) => {
+    const view = render(JobRow, {
+      props: {
+        job: { ...makeJob(), finding_counts: counts },
+        selected: false,
+        highlighted: false,
+        onclick: () => {},
+      },
+    });
+
+    const cell = view.container.querySelector(".col-findings");
+    expect(cell).toHaveTextContent(new RegExp(`^${expected}$`));
+    if (counts) {
+      expect(cell).toHaveAttribute(
+        "title",
+        "3 critical or high, 0 medium, 4 low",
+      );
+    }
+  });
+
   it("shows only the review type for standard review jobs", () => {
     const view = render(JobRow, {
       props: {

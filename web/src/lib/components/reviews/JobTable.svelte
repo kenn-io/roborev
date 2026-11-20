@@ -9,7 +9,7 @@
   const jobsStore = stores.roborevJobs;
 
   interface ColumnDef {
-    key: SortColumn;
+    key: SortColumn | "findings";
     label: string;
     numeric?: boolean;
   }
@@ -21,6 +21,7 @@
     { key: "review_type", label: "Type" },
     { key: "status", label: "Status" },
     { key: "verdict", label: "Verdict" },
+    { key: "findings", label: "Findings", numeric: true },
     { key: "closed", label: "Closed" },
     { key: "elapsed", label: "Elapsed", numeric: true },
     { key: "cost", label: "Cost", numeric: true },
@@ -124,9 +125,11 @@
           <TableHeaderCell
             label={col.label}
             numeric={col.numeric ?? false}
-            sortable
+            sortable={col.key !== "findings"}
             sortDirection={sortDirection(col)}
-            onsort={() => sortBy(col.key)}
+            onsort={() => {
+              if (col.key !== "findings") sortBy(col.key);
+            }}
             class={`th-${col.key}`}
           />
         {/each}

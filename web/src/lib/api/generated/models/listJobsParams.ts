@@ -29,6 +29,10 @@ export type ListJobsParams = {
    */
   git_ref?: string;
   /**
+   * Match jobs whose git ref or range head starts with this text, or CI reviews of a pull request number (123, #123, or PR 123)
+   */
+  search?: string;
+  /**
    * Filter by recorded analysis type
    */
   analysis_type?: string;
