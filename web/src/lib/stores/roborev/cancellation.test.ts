@@ -55,19 +55,6 @@ function abortingRequest() {
 }
 
 describe("Roborev request cancellation", () => {
-  it("clears a missing review when the selection changes", async () => {
-    const store = reviewStore({
-      getReview: vi.fn().mockRejectedValue(new Response(null, { status: 404 })),
-      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
-      listJobs: vi.fn().mockResolvedValue({ jobs: [] }),
-    } as never);
-    store.setSelectedJobId(42);
-    store.loadReview(42);
-    await vi.waitFor(() => expect(store.isReviewNotFound()).toBe(true));
-    store.setSelectedJobId(43);
-    expect(store.isReviewNotFound()).toBe(false);
-  });
-
   it("retries review and comment reads before displaying them", async () => {
     const getReview = vi
       .fn()

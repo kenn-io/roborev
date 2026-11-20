@@ -405,10 +405,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     if (jobId !== selectedJobId) {
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
-      reviewNotFound = false;
     }
     selectedJobId = jobId;
     if (jobId === undefined) {
+      reviewNotFound = false;
       review = null;
       selectedJob = null;
       responses = [];

@@ -2,7 +2,6 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App.svelte";
-import { sessionLostEvent } from "./lib/api/session";
 
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
@@ -139,29 +138,6 @@ describe("App", () => {
         });
     });
     await screen.findByText(/review in progress/i);
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
-  });
-
-  test("clears the missing title when opening another review", async () => {
-    renderAuthenticatedApp("/reviews/999", (url) => {
-      if (
-        url.pathname === "/api/review" &&
-        url.searchParams.get("job_id") === "17"
-      )
-        return new Promise<Response>(() => {});
-      if (url.pathname === "/api/jobs" && !url.searchParams.has("id"))
-        return response(200, {
-          jobs: [job],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 1 },
-        });
-    });
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Review not found (#999) · Roborev"),
-    );
-    await fireEvent.click(
-      await screen.findByRole("button", { name: /17.*abc123/i }),
-    );
     expect(document.title).toBe("Fix login race (#17) · Roborev");
   });
 
@@ -612,25 +588,6 @@ describe("App", () => {
     expect(
       await screen.findByRole("button", { name: "Reopen" }),
     ).toBeInTheDocument();
-  });
-
-  test("updates the title when a session ends with a review open", async () => {
-    let bootstrapCalls = 0;
-    renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/ui/session/bootstrap" && bootstrapCalls++ > 0)
-        return new Promise<Response>(() => {});
-      if (url.pathname === "/api/jobs")
-        return response(200, {
-          jobs: [job],
-          has_more: false,
-          stats: { done: 0, closed: 0, open: 1 },
-        });
-    });
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Fix login race (#17) · Roborev"),
-    );
-    window.dispatchEvent(new Event(sessionLostEvent));
-    await vi.waitFor(() => expect(document.title).toBe("Checking · Roborev"));
   });
 
   test("returns to session bootstrap when the current session is rejected", async () => {

@@ -64,12 +64,7 @@
   $effect(() => reportScreenViewed(page));
   $effect(() => {
     const review = stores.roborevReview;
-    const notFound =
-      route.page === "reviews" &&
-      route.jobId !== undefined &&
-      review.getSelectedJobId() === route.jobId &&
-      review.isReviewNotFound() &&
-      !review.getSelectedJob();
+    const notFound = review.isReviewNotFound() && !review.getSelectedJob();
     const daemon = stores.roborevDaemon;
     const jobId = route.page === "reviews" ? route.jobId : undefined;
     const job =
