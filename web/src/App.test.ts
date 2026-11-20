@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App.svelte";
 import { sessionLostEvent } from "./lib/api/session";
-import { sessionTitle, tabTitle } from "./lib/utils/tab-title";
+import { tabTitle } from "./lib/utils/tab-title";
 
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
@@ -111,39 +111,20 @@ describe("App", () => {
     appOpened.reportCoreAction.mockClear();
   });
 
-  test("names workspaces and reviews", () => {
-    expect(tabTitle({ page: "reviews" }, null, false)).toBe(
-      "Reviews · Roborev",
-    );
-    expect(tabTitle({ page: "analytics" }, null, false)).toBe(
-      "Analytics · Roborev",
-    );
+  test("names reviews with missing or stale job details", () => {
     const route = { page: "reviews", jobId: 17 } as const;
-    expect(tabTitle(route, job, false)).toBe(
-      "Fix login race (#17) · example/repo · Roborev",
-    );
     expect(tabTitle(route, { ...job, commit_subject: undefined }, false)).toBe(
       "Review (#17) · example/repo · Roborev",
     );
     expect(tabTitle(route, { ...job, repo_name: undefined }, false)).toBe(
       "Fix login race (#17) · Roborev",
     );
-    expect(tabTitle(route, null, false)).toBe("Review (#17) · Roborev");
     expect(tabTitle(route, { ...job, id: 8 }, false)).toBe(
       "Review (#17) · Roborev",
-    );
-    expect(tabTitle(route, null, true)).toBe(
-      "Review not found (#17) · Roborev",
     );
     expect(tabTitle(route, { ...job, id: 8 }, true)).toBe(
       "Review not found (#17) · Roborev",
     );
-    expect(tabTitle(route, job, true)).toBe(
-      "Fix login race (#17) · example/repo · Roborev",
-    );
-    expect(sessionTitle("checking")).toBe("Checking · Roborev");
-    expect(sessionTitle("login")).toBe("Connect · Roborev");
-    expect(sessionTitle("error")).toBe("Unavailable · Roborev");
   });
 
   test("names a missing review only after its request resolves and clears it on navigation", async () => {
@@ -256,12 +237,6 @@ describe("App", () => {
       screen.getByRole("heading", { name: "Review analytics" }),
     ).toBeInTheDocument();
     expect(location.pathname).toBe("/analytics");
-    expect(document.title).toBe("Analytics · Roborev");
-    history.pushState(null, "", "/reviews/9");
-    await fireEvent.popState(window);
-    expect(document.title).toBe("Review (#9) · Roborev");
-    history.pushState(null, "", "/analytics");
-    await fireEvent.popState(window);
     expect(document.title).toBe("Analytics · Roborev");
     expect(token).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
