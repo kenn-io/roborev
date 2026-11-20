@@ -41,9 +41,7 @@ The application has two workspaces:
     from the daemon's SQLite history.
 
 Browser tabs name the current workspace. An open review shows its commit subject
-and job ID, or `Review (#ID) · Roborev` when the subject is unavailable. Session
-failures show `Connect failed · Roborev`; an unreachable daemon shows
-`Unavailable · Roborev`.
+and job ID, or `Review (#ID) · Roborev` when the subject is unavailable.
 
 The theme button in the application header switches between light, dark, and the
 operating system's setting. The browser remembers the choice.

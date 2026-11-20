@@ -1,6 +1,6 @@
 import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
-import { Effect, Fiber, Option } from "effect";
+import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
 import { retryIdempotentRead } from "../../api/retry-policy";
@@ -23,7 +23,6 @@ import {
   RoborevResponseError,
   RoborevWorkflow,
 } from "./workflow";
-import { createSelectedJob } from "./selected-job.svelte";
 
 type ListJobsQuery = ListJobsParams;
 
@@ -59,32 +58,22 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   // State
   let review = $state.raw<Review | null>(null);
-  const selected = createSelectedJob();
+  let selectedJob = $state.raw<ReviewJob | null>(null);
   let responses = $state.raw<ReviewResponse[]>([]);
   let loading = $state(false);
   let selectedJobId = $state<number | undefined>(undefined);
   let reviewNotFound = $state(false);
   let storeError = $state<string | null>(null);
 
-  const readJob = (jobId: number, onJob?: (job: ReviewJob) => void) =>
-    executeRoborevRequest("GET Roborev review job", (signal) =>
-      api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
-        signal,
-      }),
-    ).pipe(
-      Effect.tap((listed) =>
-        Effect.sync(() => listed.jobs?.[0] && onJob?.(listed.jobs[0])),
-      ),
-    );
-
-  const readJobResult = (jobId: number, onJob?: (job: ReviewJob) => void) =>
-    Effect.result(readJob(jobId, onJob));
-
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
-    function* (
-      jobId: number,
-      firstJob: ReturnType<typeof readJobResult> = readJobResult(jobId),
-    ) {
+    function* (jobId: number) {
+      const jobRead = executeRoborevRequest(
+        "GET Roborev review job",
+        (signal) =>
+          api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
+            signal,
+          }),
+      );
       const result = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
@@ -122,7 +111,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                   ),
             ),
           ),
-          job: firstJob,
+          job: Effect.result(jobRead),
         },
         { concurrency: "unbounded" },
       );
@@ -130,7 +119,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       if (Option.isNone(result.review)) {
         let first = true;
         const job = yield* Effect.suspend(() => {
-          if (!first) return readJob(jobId);
+          if (!first) return jobRead;
           first = false;
           return Effect.fromResult(result.job);
         }).pipe(retryIdempotentRead);
@@ -187,7 +176,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       if (selectedJobId !== jobId) return;
       loadFailureReportedJobId = undefined;
       review = authority.review;
-      selected.set(authority.selectedJob);
+      selectedJob = authority.selectedJob;
       responses = [...authority.responses];
       reviewNotFound = authority.reviewNotFound;
       storeError = null;
@@ -197,16 +186,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     fetchReviewAuthority(jobId).pipe(
       Effect.tap((authority) => publishReviewAuthority(jobId, authority)),
     );
-
-  const failLoad = (jobId: number) =>
-    Effect.sync(() => {
-      if (selectedJobId !== jobId) return;
-      storeError = "Failed to load review";
-      if (loadFailureReportedJobId !== jobId) {
-        loadFailureReportedJobId = jobId;
-        reportErrorShown("review_viewed");
-      }
-    });
 
   const loadReviewEffect = (jobId: number) =>
     Effect.gen(function* () {
@@ -220,32 +199,30 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             reviewNotFound = false;
             storeError = null;
             review = null;
-            selected.set(null);
+            selectedJob = null;
             responses = [];
           });
-          // Outlives a failed review read, so a late job still names the tab.
-          const job = yield* Effect.forkChild(
-            readJobResult(jobId, (listed) => {
-              if (selectedJobId === jobId && listed.id === jobId)
-                selected.set(listed);
+          const authority = yield* fetchReviewAuthority(jobId);
+          yield* publishReviewAuthority(jobId, authority);
+        }).pipe(
+          Effect.catch(() =>
+            Effect.sync(() => {
+              if (selectedJobId !== jobId) return;
+              storeError = "Failed to load review";
+              if (loadFailureReportedJobId !== jobId) {
+                loadFailureReportedJobId = jobId;
+                reportErrorShown("review_viewed");
+              }
             }),
-            { startImmediately: true },
-          );
-          return yield* fetchReviewAuthority(jobId, Fiber.join(job)).pipe(
-            Effect.flatMap((authority) =>
-              publishReviewAuthority(jobId, authority),
-            ),
-            Effect.catch(() => failLoad(jobId)),
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (selectedJobId !== undefined && selectedJobId !== jobId)
-                  return;
-                loading = false;
-              }),
-            ),
-            Effect.tap(() => Fiber.join(job)),
-          );
-        }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (selectedJobId !== undefined && selectedJobId !== jobId)
+                return;
+              loading = false;
+            }),
+          ),
+        ),
       );
     });
 
@@ -428,13 +405,13 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     if (jobId !== selectedJobId) {
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
-      reviewNotFound = false;
     }
     selectedJobId = jobId;
     if (jobId === undefined) {
       review = null;
-      selected.set(null);
+      selectedJob = null;
       responses = [];
+      reviewNotFound = false;
       opts.runtime.runCommand(
         Effect.gen(function* () {
           const workflow = yield* RoborevWorkflow;
@@ -466,7 +443,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     return reviewNotFound;
   }
   function getPrompt(): string {
-    return review?.prompt ?? selected.job?.prompt ?? "";
+    return review?.prompt ?? selectedJob?.prompt ?? "";
   }
   function getOutput(): string {
     return review?.output ?? "";
@@ -478,13 +455,12 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     return storeError;
   }
   function getSelectedJob(): ReviewJob | null {
-    return selected.job;
+    return selectedJob;
   }
 
   return {
     getReview,
     getSelectedJob,
-    getSubject: selected.subject,
     getResponses,
     isLoading,
     getSelectedJobId,

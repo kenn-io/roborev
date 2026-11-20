@@ -7,7 +7,6 @@ const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
   reportScreenViewed: vi.fn(),
   reportCoreAction: vi.fn(),
-  reportErrorShown: vi.fn(),
 }));
 // Shell effects are checked here; authenticated requests are checked beside the helper.
 vi.mock("./lib/utils/app-opened", () => appOpened);
@@ -110,22 +109,6 @@ describe("App", () => {
     appOpened.reportCoreAction.mockClear();
   });
 
-  test("names a missing review after its request resolves", async () => {
-    let resolveReview: ((value: Response) => void) | undefined;
-    renderAuthenticatedApp("/reviews/999", (url) => {
-      if (url.pathname === "/api/review")
-        return new Promise<Response>((resolve) => {
-          resolveReview = resolve;
-        });
-    });
-    await vi.waitFor(() => expect(resolveReview).toBeDefined());
-    expect(document.title).toBe("Review (#999) · Roborev");
-    resolveReview?.(response(404));
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Review not found (#999) · Roborev"),
-    );
-  });
-
   test.each([
     ["Fix login race", "Fix login race (#17) · Roborev"],
     [undefined, "Review (#17) · Roborev"],
@@ -146,180 +129,13 @@ describe("App", () => {
         });
     });
     await vi.waitFor(() => expect(resolveReview).toBeDefined());
-    await vi.waitFor(() => expect(document.title).toBe(title));
     resolveReview?.(response(404));
+    await vi.waitFor(() => expect(document.title).toBe(title));
     await screen.findByText(/review in progress/i);
     expect(document.title).toBe(title);
   });
 
-  test("names the unavailable daemon", async () => {
-    renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/status")
-        return Promise.reject(new Error("offline"));
-      if (url.pathname === "/api/review")
-        return new Promise<Response>(() => {});
-    });
-    await screen.findByText("Roborev daemon not reachable");
-    expect(document.title).toBe("Unavailable · Roborev");
-  });
-
-  test("names a legacy review when its job arrives after the error", async () => {
-    let resolveJob: ((value: Response) => void) | undefined;
-    renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
-        return new Promise<Response>((resolve) => {
-          resolveJob = resolve;
-        });
-      if (url.pathname === "/api/review") return response(409);
-      if (url.pathname === "/api/ui/review-projection")
-        return new Promise<Response>(() => {});
-    });
-    await screen.findByText("Failed to load review");
-    expect(resolveJob).toBeDefined();
-    expect(document.title).toBe("Review (#17) · Roborev");
-    resolveJob?.(response(200, { jobs: [{ ...job, status: "done" }] }));
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Fix login race (#17) · Roborev"),
-    );
-  });
-
-  test.each(["review", "projection"])(
-    "keeps the off-page subject when %s fails",
-    async (failed) => {
-      let resolveFailure: ((value: Response) => void) | undefined;
-      let resolveLegacyProjection: ((value: Response) => void) | undefined;
-      let jobRead = false;
-      renderAuthenticatedApp("/reviews/17", (url) => {
-        if (
-          url.pathname === "/api/jobs" &&
-          url.searchParams.get("id") === "17"
-        ) {
-          jobRead = true;
-          return response(200, { jobs: [{ ...job, status: "done" }] });
-        }
-        if (url.pathname === "/api/review") {
-          if (failed === "review")
-            return new Promise<Response>((resolve) => {
-              resolveFailure = resolve;
-            });
-          return response(200, {
-            id: 7,
-            job_id: 17,
-            output: "review",
-            closed: false,
-          });
-        }
-        if (url.pathname === "/api/ui/review-projection") {
-          if (failed === "projection")
-            return new Promise<Response>((resolve) => {
-              resolveFailure = resolve;
-            });
-          return new Promise<Response>((resolve) => {
-            resolveLegacyProjection = resolve;
-          });
-        }
-      });
-      await vi.waitFor(() => expect(jobRead && resolveFailure).toBeTruthy());
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      resolveFailure?.(response(failed === "review" ? 409 : 500));
-      resolveLegacyProjection?.(response(500));
-      expect(
-        await screen.findByText("Failed to load review"),
-      ).toBeInTheDocument();
-      expect(document.title).toBe("Fix login race (#17) · Roborev");
-    },
-  );
-
-  test("keeps the off-page subject after a failed refresh", async () => {
-    let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
-    let failed = false;
-    let resolveJob: ((value: Response) => void) | undefined;
-    let resolveProjection: ((value: Response) => void) | undefined;
-    renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
-        return failed
-          ? new Promise<Response>((resolve) => {
-              resolveJob = resolve;
-            })
-          : response(200, { jobs: [job] });
-      if (url.pathname === "/api/review")
-        return failed
-          ? response(200, {
-              id: 7,
-              job_id: 17,
-              output: "review",
-              closed: false,
-            })
-          : response(404);
-      if (url.pathname === "/api/ui/review-projection")
-        return failed
-          ? new Promise<Response>((resolve) => {
-              resolveProjection = resolve;
-            })
-          : response(200, { responses: [] });
-      if (url.pathname === "/api/stream/events")
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              stream = controller;
-            },
-          }),
-          { status: 200 },
-        );
-    });
-    await screen.findByText(/review in progress/i);
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
-    await vi.waitFor(() => expect(stream).toBeDefined());
-    failed = true;
-    stream?.enqueue(
-      new TextEncoder().encode(
-        `${JSON.stringify({ type: "review.completed", ts: "2026-08-13T20:01:00Z", job_id: 17, repo: "/workspace/repo", repo_name: "repo", sha: "abc123" })}\n`,
-      ),
-    );
-    await vi.waitFor(() => expect(resolveJob).toBeDefined());
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
-    resolveJob?.(response(200, { jobs: [{ ...job, status: "done" }] }));
-    await vi.waitFor(() => expect(resolveProjection).toBeDefined());
-    resolveProjection?.(response(500));
-    expect(
-      await screen.findByText("Failed to load review"),
-    ).toBeInTheDocument();
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
-  });
-
-  test("hides Cancel when the refreshed job lookup fails", async () => {
-    let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
-    let refresh = false;
-    renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
-        return refresh ? response(500) : response(200, { jobs: [job] });
-      if (url.pathname === "/api/review") return response(404);
-      if (url.pathname === "/api/ui/review-projection")
-        return response(200, { responses: [] });
-      if (url.pathname === "/api/stream/events")
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              stream = controller;
-            },
-          }),
-          { status: 200 },
-        );
-    });
-    await screen.findByRole("button", { name: "Cancel" });
-    await vi.waitFor(() => expect(stream).toBeDefined());
-    refresh = true;
-    stream?.enqueue(
-      new TextEncoder().encode(
-        `${JSON.stringify({ type: "review.completed", ts: "2026-08-13T20:01:00Z", job_id: 17, repo: "/workspace/repo", repo_name: "repo", sha: "abc123" })}\n`,
-      ),
-    );
-    await screen.findByText("Failed to load review");
-    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
-  });
-
-  test("names the checking session on mount", () => {
+  test("checks the ambient browser session on mount", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => new Promise<Response>(() => {})),
@@ -327,7 +143,6 @@ describe("App", () => {
     render(App);
 
     expect(screen.getByText("Checking browser session…")).toBeInTheDocument();
-    expect(document.title).toBe("Checking · Roborev");
   });
 
   test("renders token login when remote authentication is required", async () => {
@@ -557,7 +372,7 @@ describe("App", () => {
     expect(location.pathname).toBe("/analytics");
   });
 
-  test("names an unavailable session and offers a retry", async () => {
+  test("offers a retry after a bootstrap error", async () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
@@ -567,7 +382,6 @@ describe("App", () => {
     render(App);
 
     expect(await screen.findByText("offline")).toBeInTheDocument();
-    expect(document.title).toBe("Connect failed · Roborev");
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(
       await screen.findByRole("region", { name: "Review jobs" }),
@@ -753,7 +567,7 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  test("names the connect screen when the session is rejected", async () => {
+  test("returns to session bootstrap when the current session is rejected", async () => {
     let statusCalls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(
@@ -778,7 +592,6 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "Connect to Roborev" }),
     ).toBeInTheDocument();
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
-    expect(document.title).toBe("Connect · Roborev");
     await fireEvent.input(screen.getByLabelText("Daemon token"), {
       target: { value: "replacement-token" },
     });

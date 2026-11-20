@@ -275,7 +275,7 @@
 <div class="reviews-view">
   {#if !stores.roborevDaemon}
     <EmptyState title="Roborev integration is not configured." />
-  {:else if stores.roborevDaemon.isInitiallyUnavailable()}
+  {:else if !stores.roborevDaemon.isAvailable() && !stores.roborevDaemon.getWasEverAvailable()}
     <EmptyState
       title="Roborev daemon not reachable"
       description={stores.roborevDaemon.getEndpoint()}

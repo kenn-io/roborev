@@ -66,21 +66,9 @@
   onMount(setupAppOpenedReporting);
   $effect(() => reportScreenViewed(page));
   $effect(() => {
-    const review = stores.roborevReview;
-    const daemon = stores.roborevDaemon;
     const jobId = route.page === "reviews" ? route.jobId : undefined;
     const job = getSelectedJob(stores, jobId);
-    document.title =
-      route.page === "reviews" && daemon.isInitiallyUnavailable()
-        ? "Unavailable · Roborev"
-        : tabTitle(
-            route,
-            review.getSelectedJobId() === jobId &&
-              review.isReviewNotFound() &&
-              job?.id !== jobId,
-            (job?.id === jobId ? job?.commit_subject : undefined) ??
-              review.getSubject(jobId),
-          );
+    document.title = tabTitle(route, job?.id === jobId ? job?.commit_subject : undefined);
   });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {

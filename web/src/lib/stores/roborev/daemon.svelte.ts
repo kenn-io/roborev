@@ -110,7 +110,6 @@ export function createDaemonStore(opts: DaemonStoreOptions) {
 
   return {
     isAvailable: () => available,
-    isInitiallyUnavailable: () => !available && !wasEverAvailable,
     getVersion: () => version,
     getEndpoint: () => endpoint,
     isLoading: () => loading,

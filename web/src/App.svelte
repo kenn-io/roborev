@@ -9,7 +9,6 @@
   } from "./lib/api/session";
   import AppShell from "./lib/components/AppShell.svelte";
   import BrandMark from "./lib/components/BrandMark.svelte";
-  import { sessionTitles } from "./lib/utils/tab-title";
 
   type ViewState = "checking" | "login" | "authenticated" | "error";
 
@@ -25,10 +24,6 @@
     cancelReviewJob: false,
     rerunJob: false,
   };
-
-  $: if (view !== "authenticated") {
-    document.title = sessionTitles[view];
-  }
 
   onMount(() => {
     const handleSessionLost = () => void checkSession();
