@@ -36,9 +36,9 @@ numeric review URL is not portable between machines.
 The application has two workspaces:
 
 - **Reviews** provides the live queue, filters, logs, prompts, rendered review
-  output, comments, and review actions.
+    output, comments, and review actions.
 - **Analytics** summarizes cost, latency, failures, outcomes, and agent attempts
-  from the daemon's SQLite history.
+    from the daemon's SQLite history.
 
 Browser tabs name the current workspace. An open review shows its commit subject
 and job ID, or `Review (#ID) · Roborev` when the subject is unavailable. Session
@@ -136,18 +136,18 @@ remote sessions have the narrower mutation policy described under
 
 The most common keyboard controls are:
 
-| Key              | Action                            |
-| ---------------- | --------------------------------- |
-| `j` / `k`        | Move down or up through the queue |
-| `Enter`          | Open the selected review          |
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move down or up through the queue |
+| `Enter` | Open the selected review |
 | `Left` / `Right` | Collapse or expand a review panel |
-| `/`              | Focus ref search                  |
-| `a`              | Close or reopen the open review   |
-| `c`              | Focus its comment field           |
-| `l` / `p`        | Show its log or prompt            |
-| `y`              | Copy its review output            |
-| `Esc`            | Close the detail drawer           |
-| `?`              | Show all keyboard shortcuts       |
+| `/` | Focus ref search |
+| `a` | Close or reopen the open review |
+| `c` | Focus its comment field |
+| `l` / `p` | Show its log or prompt |
+| `y` | Copy its review output |
+| `Esc` | Close the detail drawer |
+| `?` | Show all keyboard shortcuts |
 
 Review deep links and Analytics filters are stored in the URL. They can be
 bookmarked on one daemon, but numeric job IDs and local data are not portable to
@@ -186,33 +186,33 @@ with the same display name are intentionally grouped together.
 The page separates two populations:
 
 - A **logical review** is a standalone review, range review, dirty review,
-  compact review, or panel synthesis parent. Panel member jobs are not counted
-  as additional logical reviews.
+    compact review, or panel synthesis parent. Panel member jobs are not counted
+    as additional logical reviews.
 - An **agent attempt** is a terminal job that actually invoked an agent. Cost
-  and attempt latency use this population.
+    and attempt latency use this population.
 
 The headline values have these meanings:
 
 - **Failure rate** is failing review verdicts divided by all rated reviews:
-  `F / (P + F)`. Both open and addressed failures remain failures. Reviews
-  without a parsed verdict do not enter the denominator.
+    `F / (P + F)`. Both open and addressed failures remain failures. Reviews
+    without a parsed verdict do not enter the denominator.
 - **Run errors** are logical reviews whose daemon jobs failed to complete. They
-  are operational errors, not failing review verdicts, and are reported
-  separately with canceled and skipped reviews.
+    are operational errors, not failing review verdicts, and are reported
+    separately with canceled and skipped reviews.
 - **Review latency** runs from enqueue to finish. A panel synthesis parent's
-  latency therefore includes the complete panel run. Percentiles use linear
-  interpolation.
+    latency therefore includes the complete panel run. Percentiles use linear
+    interpolation.
 - **Estimated cost** includes eligible attempts that have a readable cost in
-  their token-usage data. It counts attempts by `finished_at` within the
-  selected half-open time range and is not an external billing total.
+    their token-usage data. It counts attempts by `finished_at` within the
+    selected half-open time range and is not an external billing total.
 - **Agent runs with known cost** is priced eligible attempts divided by all
-  eligible attempts. When coverage is incomplete, estimated cost is a lower
-  bound. Retries clear the prior job's token-usage data, so historical retried
-  work can also be undercounted.
+    eligible attempts. When coverage is incomplete, estimated cost is a lower
+    bound. Retries clear the prior job's token-usage data, so historical retried
+    work can also be undercounted.
 - **Outcomes** partition verdicts into pass, fail-open, and fail-addressed. The
-  failure-rate card shows them as a bar. Addressed means the review's mutable
-  `closed` state is true. Historical outcome mixes can therefore change when a
-  user closes or reopens a review.
+    failure-rate card shows them as a bar. Addressed means the review's mutable
+    `closed` state is true. Historical outcome mixes can therefore change when a
+    user closes or reopens a review.
 
 Agent and model filters apply to attempt metrics. Logical-review metrics retain
 their review-based population rather than silently changing meaning.
@@ -335,7 +335,7 @@ An alternative proxy must:
 - terminate HTTPS and preserve the public `Host`;
 - set conventional forwarding headers;
 - pass streaming responses without buffering, especially `/api/stream/events`
-  and `/api/job/output?stream=1`; and
+    and `/api/job/output?stream=1`; and
 - route only the browser listener, never the CLI listener.
 
 Forwarding headers do not authenticate a request. In proxy mode, network and
