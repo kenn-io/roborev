@@ -55,6 +55,38 @@ function abortingRequest() {
 }
 
 describe("Roborev request cancellation", () => {
+  it("finishes an acknowledged comment after selection changes during reconciliation", async () => {
+    const reconciliationJob = Promise.withResolvers<{ jobs: [] }>();
+    const listJobs = vi
+      .fn()
+      .mockResolvedValueOnce({ jobs: [] })
+      .mockReturnValue(reconciliationJob.promise);
+    const store = reviewStore({
+      getReview: vi
+        .fn()
+        .mockResolvedValue({
+          id: 7,
+          job_id: 42,
+          output: "review",
+          closed: false,
+        }),
+      getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
+      listJobs,
+      addComment: vi
+        .fn()
+        .mockResolvedValue({ id: 1, job_id: 42, response: "comment" }),
+    } as never);
+    const onSuccess = vi.fn();
+    store.setSelectedJobId(42);
+    store.loadReview(42);
+    await vi.waitFor(() => expect(store.getReview()?.job_id).toBe(42));
+    store.addComment(42, "comment", { onSuccess });
+    await vi.waitFor(() => expect(listJobs).toHaveBeenCalledTimes(2));
+    store.setSelectedJobId(43);
+    reconciliationJob.resolve({ jobs: [] });
+    await vi.waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+  });
+
   it("clears a missing review when the selection changes", async () => {
     const store = reviewStore({
       getReview: vi.fn().mockRejectedValue(new Response(null, { status: 404 })),
@@ -75,11 +107,9 @@ describe("Roborev request cancellation", () => {
     const store = reviewStore({
       getReview,
       getReviewProjection: vi.fn().mockResolvedValue({ responses: [] }),
-      listJobs: vi
-        .fn()
-        .mockResolvedValue({
-          jobs: [{ id: 42, commit_subject: "Fix login race" }],
-        }),
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [{ id: 42, commit_subject: "Fix login race" }],
+      }),
     } as never);
     store.setSelectedJobId(42);
     store.loadReview(42);

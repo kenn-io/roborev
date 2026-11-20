@@ -68,9 +68,9 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   let interruptJobRead: (() => void) | undefined;
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
-    function* (jobId: number) {
-      const generation = ++jobReadGeneration;
-      interruptJobRead?.();
+    function* (jobId: number, publishEarly = false) {
+      const generation = publishEarly ? ++jobReadGeneration : undefined;
+      if (publishEarly) interruptJobRead?.();
       const jobRead = executeRoborevRequest(
         "GET Roborev review job",
         (signal) =>
@@ -82,6 +82,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           Effect.sync(() => {
             const job = result.jobs?.[0];
             if (
+              publishEarly &&
               selectedJobId === jobId &&
               job?.id === jobId &&
               generation === jobReadGeneration
@@ -90,12 +91,22 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           }),
         ),
       );
-      const jobExecution = opts.runtime.runCommand(Effect.result(jobRead), {
-        operation: "load Roborev review job",
-        safeContext: { jobId },
-        onFailure: () => {},
-      });
-      interruptJobRead = jobExecution.interrupt;
+      let jobResult = Effect.result(jobRead);
+      if (publishEarly) {
+        const jobExecution = opts.runtime.runCommand(jobResult, {
+          operation: "load Roborev review job",
+          safeContext: { jobId },
+          onFailure: () => {},
+        });
+        interruptJobRead = jobExecution.interrupt;
+        jobResult = jobExecution.await.pipe(
+          Effect.flatMap((exit) =>
+            Exit.isSuccess(exit)
+              ? Effect.succeed(exit.value)
+              : Effect.failCause(exit.cause),
+          ),
+        );
+      }
       const result = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
@@ -133,13 +144,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                   ),
             ),
           ),
-          job: jobExecution.await.pipe(
-            Effect.flatMap((exit) =>
-              Exit.isSuccess(exit)
-                ? Effect.succeed(exit.value)
-                : Effect.failCause(exit.cause),
-            ),
-          ),
+          job: jobResult,
         },
         { concurrency: "unbounded" },
       );
@@ -229,7 +234,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             review = null;
             responses = [];
           });
-          const authority = yield* fetchReviewAuthority(jobId);
+          const authority = yield* fetchReviewAuthority(jobId, true);
           yield* publishReviewAuthority(jobId, authority);
         }).pipe(
           Effect.catch(() =>

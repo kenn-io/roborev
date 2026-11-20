@@ -4,6 +4,7 @@
   import { getStackDepth } from "../keyboard/modal-stack.svelte";
   import { getAppRuntime } from "../runtime/context";
   import { getReviewStores } from "../stores/context";
+  import { getSelectedJob } from "../stores/composition.svelte";
   import FilterBar from "../components/reviews/FilterBar.svelte";
   import DaemonStatus from "../components/reviews/DaemonStatus.svelte";
   import JobTable from "../components/reviews/JobTable.svelte";
@@ -129,9 +130,7 @@
       case "x": {
         const jobsStore = stores.roborevJobs;
         const xId = jobsStore?.getSelectedJobId();
-        const selected =
-          jobsStore?.getVisibleJobs().find((job) => job.id === xId) ??
-          stores.roborevReview?.getSelectedJob();
+        const selected = getSelectedJob(stores, xId);
         if (
           jobsStore &&
           xId !== undefined &&
@@ -146,9 +145,7 @@
       case "r": {
         const jobsStore = stores.roborevJobs;
         const rId = jobsStore?.getSelectedJobId();
-        const selected =
-          jobsStore?.getVisibleJobs().find((job) => job.id === rId) ??
-          stores.roborevReview?.getSelectedJob();
+        const selected = getSelectedJob(stores, rId);
         if (
           jobsStore &&
           rId !== undefined &&
