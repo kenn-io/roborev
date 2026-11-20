@@ -2741,7 +2741,7 @@ func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
 	assert.False(t, verdict.Valid)
 }
 
-func TestHasClaimableReview(t *testing.T) {
+func TestClaimableForegroundReviews(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, t.TempDir())

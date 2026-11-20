@@ -160,8 +160,8 @@ func TestBuildPromptWithPaths(t *testing.T) {
 	bIdx := strings.Index(prompt, "b.go")
 	assert.Less(t, aIdx, bIdx, "paths should be in sorted order (a.go before b.go)")
 
-	// Check for the "too large" message
-	assert.Contains(t, prompt, "too large to embed", "prompt missing 'too large' explanation")
+	// Check that the agent is asked to read the paths.
+	assert.Contains(t, prompt, "Please read the following files directly:")
 
 	// Check instructions section
 	assert.Contains(t, prompt, "## Instructions", "prompt missing '## Instructions' header")

@@ -47,23 +47,3 @@ func TestResolveSchedule(t *testing.T) {
 		assert.Error(t, err)
 	}
 }
-
-func TestAnalyzeDefaultsPrecedence(t *testing.T) {
-	global := &Config{DefaultAgent: "default", AnalyzeAgent: "global-analysis", AnalyzeModel: "global-model", AnalyzeReasoning: "low", Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "global-type"}}}
-	repo := &RepoConfig{AnalyzeAgent: "repo-analysis", AnalyzeModel: "repo-model", AnalyzeReasoning: "high", Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "repo-type"}}}
-	got, err := ResolveAnalyzeConfigFromConfig("", "", "", repo, global, "refactor", "review", "")
-	require.NoError(t, err)
-	assert.Equal(t, "repo-type", got.Agent)
-	assert.Equal(t, "repo-model", got.Model)
-	assert.Equal(t, "high", got.Reasoning)
-	got, err = ResolveAnalyzeConfigFromConfig("", "", "", nil, global, "refactor", "review", "")
-	require.NoError(t, err)
-	assert.Equal(t, "global-type", got.Agent)
-	assert.Equal(t, "global-model", got.Model)
-	assert.Equal(t, "low", got.Reasoning)
-	got, err = ResolveAnalyzeConfigFromConfig("cli-agent", "cli-model", "medium", repo, global, "refactor", "review", "")
-	require.NoError(t, err)
-	assert.Equal(t, AnalyzeConfig{Agent: "cli-agent", Model: "cli-model", Reasoning: "medium"}, got)
-	assert.Error(t, (&Config{AnalyzeReasoning: "invalid"}).Validate())
-	assert.Error(t, (&RepoConfig{AnalyzeReasoning: "invalid"}).Validate())
-}

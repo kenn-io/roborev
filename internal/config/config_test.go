@@ -2486,6 +2486,19 @@ func TestResolveAnalyzeConfig(t *testing.T) {
 			assert.Equal(t, tt.wantModel, got.Model)
 		})
 	}
+	t.Run("analysis defaults precedence", func(t *testing.T) {
+		global := &Config{DefaultAgent: "default", AnalyzeAgent: "global-analysis", AnalyzeModel: "global-model", AnalyzeReasoning: "low", Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "global-type"}}}
+		repo := &RepoConfig{AnalyzeAgent: "repo-analysis", AnalyzeModel: "repo-model", AnalyzeReasoning: "high", Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "repo-type"}}}
+		got, err := ResolveAnalyzeConfigFromConfig("", "", "", repo, global, "refactor", "review", "")
+		require.NoError(t, err)
+		assert.Equal(t, AnalyzeConfig{Agent: "repo-type", Model: "repo-model", Reasoning: "high"}, got)
+		got, err = ResolveAnalyzeConfigFromConfig("", "", "", nil, global, "refactor", "review", "")
+		require.NoError(t, err)
+		assert.Equal(t, AnalyzeConfig{Agent: "global-type", Model: "global-model", Reasoning: "low"}, got)
+		got, err = ResolveAnalyzeConfigFromConfig("cli-agent", "cli-model", "medium", repo, global, "refactor", "review", "")
+		require.NoError(t, err)
+		assert.Equal(t, AnalyzeConfig{Agent: "cli-agent", Model: "cli-model", Reasoning: "medium"}, got)
+	})
 }
 
 func TestResolveModelForWorkflow(t *testing.T) {
@@ -3135,6 +3148,7 @@ func TestConfigValidateRejectsInvalidReasoningAndSeverity(t *testing.T) {
 		{name: "refine reasoning", key: "refine_reasoning", set: func(cfg *Config) { cfg.RefineReasoning = "urgent" }},
 		{name: "fix reasoning", key: "fix_reasoning", set: func(cfg *Config) { cfg.FixReasoning = "urgent" }},
 		{name: "classify reasoning", key: "classify_reasoning", set: func(cfg *Config) { cfg.ClassifyReasoning = "urgent" }},
+		{name: "analysis default reasoning", key: "analyze_reasoning", set: func(cfg *Config) { cfg.AnalyzeReasoning = "urgent" }},
 		{name: "analyze reasoning", key: "analyze.refactor.reasoning", set: func(cfg *Config) {
 			cfg.Analyze = map[string]AnalyzeConfig{"refactor": {Reasoning: "urgent"}}
 		}},
@@ -3197,6 +3211,7 @@ func TestRepoConfigValidateRejectsInvalidReasoning(t *testing.T) {
 		{name: "fix", key: "fix_reasoning", set: func(cfg *RepoConfig) { cfg.FixReasoning = "urgent" }},
 		{name: "classify", key: "classify_reasoning", set: func(cfg *RepoConfig) { cfg.ClassifyReasoning = "urgent" }},
 		{name: "ci", key: "ci.reasoning", set: func(cfg *RepoConfig) { cfg.CI.Reasoning = "urgent" }},
+		{name: "analysis default", key: "analyze_reasoning", set: func(cfg *RepoConfig) { cfg.AnalyzeReasoning = "urgent" }},
 		{name: "analyze", key: "analyze.refactor.reasoning", set: func(cfg *RepoConfig) {
 			cfg.Analyze = map[string]AnalyzeConfig{"refactor": {Reasoning: "urgent"}}
 		}},
