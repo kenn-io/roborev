@@ -9,9 +9,9 @@
   } from "./lib/api/session";
   import AppShell from "./lib/components/AppShell.svelte";
   import BrandMark from "./lib/components/BrandMark.svelte";
-  import { sessionTitle, type SessionScreen } from "./lib/utils/tab-title";
+  import { sessionTitles } from "./lib/utils/tab-title";
 
-  type ViewState = SessionScreen | "authenticated";
+  type ViewState = "checking" | "login" | "error" | "authenticated";
 
   let view: ViewState = "checking";
   let token = "";
@@ -27,7 +27,7 @@
   };
 
   $: if (view !== "authenticated") {
-    document.title = sessionTitle(view);
+    document.title = sessionTitles[view];
   }
 
   onMount(() => {

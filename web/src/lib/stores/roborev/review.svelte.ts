@@ -1,6 +1,6 @@
 import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
-import { Effect, Option } from "effect";
+import { Effect, Option, Result } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
 import { retryIdempotentRead } from "../../api/retry-policy";
@@ -64,31 +64,17 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   let selectedJobId = $state<number | undefined>(undefined);
   let reviewNotFound = $state(false);
   let storeError = $state<string | null>(null);
-  let jobReadGeneration = 0;
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
     function* (jobId: number) {
-      const generation = ++jobReadGeneration;
       const jobRead = executeRoborevRequest(
         "GET Roborev review job",
         (signal) =>
           api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
             signal,
           }),
-      ).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            const job = result.jobs?.[0];
-            if (
-              selectedJobId === jobId &&
-              job?.id === jobId &&
-              generation === jobReadGeneration
-            )
-              selectedJob = job;
-          }),
-        ),
       );
-      const result = yield* Effect.all(
+      const settled = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
             api.getReview({ job_id: jobId }, { signal }),
@@ -125,20 +111,18 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                   ),
             ),
           ),
-          job: Effect.result(jobRead),
+          job: jobRead,
         },
-        { concurrency: "unbounded" },
-      ).pipe(
-        Effect.tapError(() =>
-          Effect.sync(() => {
-            opts.runtime.runCommand(jobRead, {
-              operation: "load Roborev review job after review failure",
-              safeContext: { jobId },
-              onFailure: () => {},
-            });
-          }),
-        ),
+        { concurrency: "unbounded", mode: "result" },
       );
+      if (selectedJobId === jobId && Result.isSuccess(settled.job)) {
+        selectedJob = settled.job.success.jobs?.[0] ?? null;
+      }
+      const result = {
+        review: yield* Effect.fromResult(settled.review),
+        projection: yield* Effect.fromResult(settled.projection),
+        job: settled.job,
+      };
 
       if (Option.isNone(result.review)) {
         let first = true;
@@ -426,7 +410,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function setSelectedJobId(jobId: number | undefined): void {
     if (jobId !== selectedJobId) {
-      jobReadGeneration++;
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
       reviewNotFound = false;
@@ -434,7 +417,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     }
     selectedJobId = jobId;
     if (jobId === undefined) {
-      reviewNotFound = false;
       review = null;
       selectedJob = null;
       responses = [];

@@ -23,7 +23,7 @@
     reportScreenViewed,
     setupAppOpenedReporting,
   } from "../utils/app-opened";
-  import { sessionTitle, tabTitle } from "../utils/tab-title";
+  import { sessionTitles, tabTitle } from "../utils/tab-title";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
   import BrandMark from "./BrandMark.svelte";
@@ -64,12 +64,6 @@
   $effect(() => reportScreenViewed(page));
   $effect(() => {
     const review = stores.roborevReview;
-    const notFound =
-      route.page === "reviews" &&
-      route.jobId !== undefined &&
-      review.getSelectedJobId() === route.jobId &&
-      review.isReviewNotFound() &&
-      !review.getSelectedJob();
     const daemon = stores.roborevDaemon;
     const jobId = route.page === "reviews" ? route.jobId : undefined;
     const job =
@@ -77,11 +71,11 @@
       review.getSelectedJob();
     document.title =
       route.page === "reviews" && daemon.isInitiallyUnavailable()
-        ? sessionTitle("error")
+        ? sessionTitles.error
         : tabTitle(
             route,
-            notFound,
-            job && job.id === jobId ? job.commit_subject : undefined,
+            review.isReviewNotFound() && !job,
+            job?.commit_subject,
           );
   });
 
