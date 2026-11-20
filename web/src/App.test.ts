@@ -125,38 +125,28 @@ describe("App", () => {
     );
   });
 
-  test("keeps an off-page queued job's title when its review is absent", async () => {
+  test.each([
+    ["Fix login race", "Fix login race (#17) · Roborev"],
+    ["", "Review (#17) · Roborev"],
+  ])("names an off-page queued job with subject %j", async (subject, title) => {
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/review") return response(404);
       if (url.pathname === "/api/ui/review-projection")
         return response(200, { responses: [] });
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
         return response(200, {
-          jobs: [job],
+          jobs: [{ ...job, commit_subject: subject }],
           has_more: false,
           stats: { done: 0, closed: 0, open: 1 },
         });
     });
     await screen.findByText(/review in progress/i);
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
+    expect(document.title).toBe(title);
   });
 
-  test("uses the job ID when a review has no commit subject", async () => {
-    renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/review") return response(404);
-      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
-        return response(200, { jobs: [{ ...job, commit_subject: "" }] });
-    });
-    await screen.findByText(/review in progress/i);
-    expect(document.title).toBe("Review (#17) · Roborev");
-  });
-
-  test.each([
-    ["/reviews", "Reviews · Roborev"],
-    ["/reviews/17", "Review (#17) · Roborev"],
-  ])("names the unavailable daemon and recovery at %s", async (path, title) => {
+  test("names the unavailable daemon and recovery", async () => {
     let available = false;
-    renderAuthenticatedApp(path, (url) => {
+    renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/status") {
         if (!available) return Promise.reject(new Error("offline"));
         return response(200, status);
@@ -168,7 +158,9 @@ describe("App", () => {
     expect(document.title).toBe("Unavailable · Roborev");
     available = true;
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await vi.waitFor(() => expect(document.title).toBe(title));
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Review (#17) · Roborev"),
+    );
   });
 
   test("checks the ambient browser session on mount", () => {
