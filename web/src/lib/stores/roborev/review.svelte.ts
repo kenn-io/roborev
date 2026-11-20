@@ -1,6 +1,6 @@
 import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
-import { Effect, Option, Result } from "effect";
+import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
 import { retryIdempotentRead } from "../../api/retry-policy";
@@ -73,8 +73,15 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
             signal,
           }),
+      ).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            const job = result.jobs?.[0];
+            if (selectedJobId === jobId && job?.id === jobId) selectedJob = job;
+          }),
+        ),
       );
-      const settled = yield* Effect.all(
+      const result = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
             api.getReview({ job_id: jobId }, { signal }),
@@ -111,18 +118,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                   ),
             ),
           ),
-          job: jobRead,
+          job: Effect.result(jobRead),
         },
-        { concurrency: "unbounded", mode: "result" },
+        { concurrency: "unbounded" },
       );
-      if (selectedJobId === jobId && Result.isSuccess(settled.job)) {
-        selectedJob = settled.job.success.jobs?.[0] ?? null;
-      }
-      const result = {
-        review: yield* Effect.fromResult(settled.review),
-        projection: yield* Effect.fromResult(settled.projection),
-        job: settled.job,
-      };
 
       if (Option.isNone(result.review)) {
         let first = true;

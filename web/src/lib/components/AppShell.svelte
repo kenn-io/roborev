@@ -17,7 +17,10 @@
   import { createRouter } from "../router/router.svelte";
   import { setAppRuntime } from "../runtime/context";
   import { makeAppRuntime } from "../runtime/runtime";
-  import { createReviewStores } from "../stores/composition.svelte";
+  import {
+    createReviewStores,
+    getSelectedJob,
+  } from "../stores/composition.svelte";
   import { provideReviewStores } from "../stores/context";
   import {
     reportScreenViewed,
@@ -66,15 +69,15 @@
     const review = stores.roborevReview;
     const daemon = stores.roborevDaemon;
     const jobId = route.page === "reviews" ? route.jobId : undefined;
-    const job =
-      stores.roborevJobs.getVisibleJobs().find((job) => job.id === jobId) ??
-      review.getSelectedJob();
+    const job = getSelectedJob(stores, jobId);
     document.title =
       route.page === "reviews" && daemon.isInitiallyUnavailable()
         ? sessionTitles.error
         : tabTitle(
             route,
-            review.isReviewNotFound() && !job,
+            review.getSelectedJobId() === jobId &&
+              review.isReviewNotFound() &&
+              !job,
             job?.commit_subject,
           );
   });
