@@ -4,6 +4,7 @@ package scripts
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -250,6 +251,68 @@ while True: time.sleep(1)`)
 			assert.Equal(t, tc.code, exit.ExitCode())
 			_, err = os.Stat(cleaned)
 			require.NoError(t, err)
+		})
+	}
+}
+
+func TestPostgresCancellationStopsForegroundWork(t *testing.T) {
+	for _, phase := range []string{"setup", "test"} {
+		t.Run(phase, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "bin")
+			require.NoError(t, os.Mkdir(bin, 0o700))
+			program := `#!/usr/bin/env python3
+import os, signal, sys, time
+name = os.path.basename(sys.argv[0])
+if name == "docker" and "port" in sys.argv:
+    print("127.0.0.1:45678")
+    sys.exit(0)
+if (name == "docker" and "up" in sys.argv and os.environ["PHASE"] == "setup") or (name == "go" and "tool" in sys.argv and os.environ["PHASE"] == "test"):
+    def terminate(signum, frame):
+        open(os.environ["STOPPED"], "w").close()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, terminate)
+    with open(os.environ["READY"], "w") as f:
+        f.write(f'{os.environ["TEST_SERVICE_LEASE"].rsplit("-", 1)[1]} {os.getpid()}')
+    while True: time.sleep(1)
+`
+			for _, name := range []string{"docker", "go"} {
+				require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte(program), 0o700))
+			}
+			ready, stopped := filepath.Join(dir, "ready"), filepath.Join(dir, "stopped")
+			cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
+			cmd.Dir = ".."
+			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "PHASE="+phase, "READY="+ready, "STOPPED="+stopped, "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"))
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			require.NoError(t, cmd.Start())
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			var childPID int
+			waited := false
+			t.Cleanup(func() {
+				if _, err := os.Stat(stopped); err != nil && childPID != 0 {
+					_ = syscall.Kill(childPID, syscall.SIGKILL)
+				}
+				if !waited {
+					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+					<-done
+				}
+			})
+			require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 50*time.Millisecond)
+			data, err := os.ReadFile(ready)
+			require.NoError(t, err)
+			var wrapperPID int
+			_, err = fmt.Sscanf(string(data), "%d %d", &wrapperPID, &childPID)
+			require.NoError(t, err)
+			require.NoError(t, syscall.Kill(wrapperPID, syscall.SIGTERM))
+			select {
+			case err := <-done:
+				waited = true
+				require.Error(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("make did not stop after cancellation")
+			}
+			require.Eventually(t, func() bool { _, err := os.Stat(stopped); return err == nil }, 3*time.Second, 50*time.Millisecond)
 		})
 	}
 }

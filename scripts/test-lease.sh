@@ -31,9 +31,14 @@ fd = os.open(os.path.join(directory, lease), os.O_CREAT | os.O_EXCL | os.O_RDWR,
 os.set_inheritable(fd, True)
 fcntl.flock(fd, fcntl.LOCK_EX)
 os.environ["TEST_SERVICE_LEASE"] = lease
-child = subprocess.Popen(command, pass_fds=(fd,))
+child = subprocess.Popen(command, pass_fds=(fd,), start_new_session=True)
+def forward(signum, frame):
+    try:
+        os.killpg(child.pid, signum)
+    except ProcessLookupError:
+        pass
 for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
-    signal.signal(sig, lambda signum, frame: child.send_signal(signum) if child.poll() is None else None)
+    signal.signal(sig, forward)
 status = child.wait()
 os.close(fd)
 try:
