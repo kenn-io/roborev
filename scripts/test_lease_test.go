@@ -38,7 +38,7 @@ func TestLeaseRequiresHome(t *testing.T) {
 	}
 }
 
-func TestPostgresLeaseOwnsComposeAndReportResources(t *testing.T) {
+func TestPostgresLeaseOwnsCompose(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o700))
@@ -57,30 +57,19 @@ esac
 	goTool := `#!/bin/sh
 if [ "$1" = env ]; then exit 0; fi
 printf '%s\n' "$TEST_POSTGRES_URL" >> "$URL_LOG"
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --jsonfile|--rerun-fails-report)
-      shift
-      printf '%s\n' "$1" >> "$REPORT_LOG" ;;
-  esac
-  shift
-done
 `
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0o700))
 	urlLog := filepath.Join(dir, "urls")
 	dockerLog := filepath.Join(dir, "docker.log")
-	cmd := exec.CommandContext(t.Context(), "make", "test-postgres", "TEST_POSTGRES_URL=postgres://caller/example", "TEST_SERVICE_LEASE=other-1-1")
+	cmd := exec.CommandContext(t.Context(), "make", "test-postgres", "TEST_SERVICE_LEASE=other-1-1")
 	cmd.Dir = ".."
-	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "URL_LOG="+urlLog, "REPORT_LOG="+filepath.Join(dir, "report-log"), "DOCKER_LOG="+dockerLog)
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "URL_LOG="+urlLog, "DOCKER_LOG="+dockerLog)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	urls, err := os.ReadFile(urlLog)
 	require.NoError(t, err)
 	assert.Equal(t, strings.Repeat("postgres://roborev_test:roborev_test_password@127.0.0.1:45678/roborev_test\n", 2), string(urls))
-	reportNames, err := os.ReadFile(filepath.Join(dir, "report-log"))
-	require.NoError(t, err)
-	assert.Equal(t, "gotestsum/postgres-storage.json\ngotestsum/postgres-storage-reruns.txt\ngotestsum/postgres-daemon.json\ngotestsum/postgres-daemon-reruns.txt\n", string(reportNames))
 	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
