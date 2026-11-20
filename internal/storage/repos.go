@@ -745,12 +745,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		}
 	}
 
-	// SQLite foreign-key enforcement is connection-local and may be disabled,
-	// so repository lifecycle operations must clean up local snooze state
-	// explicitly rather than relying on ON DELETE CASCADE.
-	if _, err := conn.ExecContext(ctx,
-		`DELETE FROM agent_hook_snoozes WHERE repo_id = ?`, repoID,
-	); err != nil {
+	if err := deleteRepoLocalState(ctx, conn, repoID); err != nil {
 		return err
 	}
 
@@ -769,6 +764,20 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	}
 	committed = true
 	return nil
+}
+
+// deleteRepoLocalState removes snooze and schedule state keyed to the repo.
+// SQLite foreign-key enforcement is connection-local and may be disabled, so
+// repository lifecycle operations must clean up explicitly rather than relying
+// on ON DELETE CASCADE.
+func deleteRepoLocalState(ctx context.Context, conn *sql.Conn, repoID int64) error {
+	if _, err := conn.ExecContext(ctx,
+		`DELETE FROM agent_hook_snoozes WHERE repo_id = ?`, repoID,
+	); err != nil {
+		return err
+	}
+	_, err := conn.ExecContext(ctx, `DELETE FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_last_run:%d", repoID))
+	return err
 }
 
 // MergeRepos moves all jobs and commits from sourceRepoID to targetRepoID, then deletes the source repo

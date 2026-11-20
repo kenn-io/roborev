@@ -297,6 +297,9 @@ max_chars = 50000
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` |
 | `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
 | `refine_reasoning` | string | Reasoning level for refine. See [Reasoning Levels](#reasoning-levels) |
+| `analyze_agent` | string | Default agent for analysis jobs |
+| `analyze_model` | string | Default model for analysis jobs |
+| `analyze_reasoning` | string | Default reasoning level for analysis jobs. See [Reasoning Levels](#reasoning-levels) |
 | `review_min_severity` | string | Lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported. Cascades: CLI flag > repo config > global config |
 | `fix_min_severity` | string | Minimum severity for `fix`: `critical`, `high`, `medium`, or `low` |
 | `refine_min_severity` | string | Minimum severity for `refine`: `critical`, `high`, `medium`, or `low` |
@@ -700,6 +703,8 @@ Each run selects up to `max_files` distinct committed files and queues jobs
 for each applicable type, one job containing its selected paths. Jobs read the
 recorded commit in an isolated checkout. Files with no successful analysis come first, followed by
 those with the oldest analysis. Queued and running jobs suppress their files.
+Scheduled checkouts skip submodule initialization and Git LFS downloads; LFS
+files appear as pointers.
 Only changed files are analyzed again. A foreground review can cancel a running
 scheduled job when all workers are busy. Only enough jobs are canceled to serve
 the waiting reviews. The canceled files remain due for a later run. The daemon
@@ -1303,6 +1308,9 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `default_backup_agent` | string | - | Fallback agent when the primary is unavailable or fails | Yes |
 | `default_backup_model` | string | - | Model paired with `default_backup_agent` | Yes |
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
+| `analyze_agent` | string | default agent | Default agent for analysis jobs | Yes |
+| `analyze_model` | string | agent default | Default model for analysis jobs | Yes |
+| `analyze_reasoning` | string | agent default | Default reasoning level for analysis jobs | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `auth_key` | string | empty | Shared Bearer key for native daemon APIs; see [Daemon authentication](#daemon-authentication) | No |
 | `daemon_tls.*` | table | empty | Mutual TLS files for the daemon's TCP listener; see [Transport security](#transport-security) | No |

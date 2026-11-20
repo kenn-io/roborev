@@ -703,6 +703,7 @@ func TestDeleteRepo(t *testing.T) {
 			repo.RootPath, repo.RootPath, "main", time.Now().Add(time.Hour),
 		)
 		require.NoError(t, err)
+		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), repo.ID, time.Now()))
 
 		err = db.DeleteRepo(repo.ID, false)
 		require.NoError(t, err, "DeleteRepo failed: %v")
@@ -715,6 +716,9 @@ func TestDeleteRepo(t *testing.T) {
 			`SELECT COUNT(*) FROM agent_hook_snoozes WHERE repo_id = ?`, repo.ID,
 		).Scan(&snoozeCount))
 		assert.Zero(t, snoozeCount)
+		last, err := db.AnalysisScheduleLastRun(t.Context(), repo.ID)
+		require.NoError(t, err)
+		assert.True(t, last.IsZero())
 	})
 
 	t.Run("delete repo with jobs without cascade returns error", func(t *testing.T) {

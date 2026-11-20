@@ -940,6 +940,25 @@ func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, 
 	return true, nil
 }
 
+// exactCheckoutOptions disables submodule initialization and LFS downloads and
+// filters for scheduled analysis; other reviews keep both.
+func exactCheckoutOptions(job *storage.ReviewJob, parentDir string, runner gitcmd.Runner) gitworktree.Options {
+	scheduled := job.Source == storage.JobSourceScheduled
+	if scheduled {
+		if runner.Env == nil {
+			runner = gitcmd.New()
+		}
+		runner = runner.WithConfig("filter.lfs.process", "").WithConfig("filter.lfs.smudge", "").WithConfig("filter.lfs.required", "false")
+	}
+	return gitworktree.Options{
+		ParentDir:      parentDir,
+		Prefix:         fmt.Sprintf("%s%d-", ciWorktreePrefix, job.ID),
+		InitSubmodules: !scheduled,
+		PullLFS:        !scheduled,
+		Runner:         runner,
+	}
+}
+
 // createExactCheckout shares the CI checkout lifecycle, including its on-disk
 // directory and marker format so startup cleanup handles all detached reviews.
 // A zero setupRunner uses kit's isolated gitcmd.New configuration.
@@ -963,13 +982,7 @@ func (wp *WorkerPool) createExactCheckout(
 		return "", nil, fmt.Errorf("create review worktree parent: %w", err)
 	}
 	unlock := lockGitMetadata(job.RepoPath)
-	wt, createErr := createWorkerWorktree(ctx, job.RepoPath, headRef, gitworktree.Options{
-		ParentDir:      parentDir,
-		Prefix:         fmt.Sprintf("%s%d-", ciWorktreePrefix, job.ID),
-		InitSubmodules: true,
-		PullLFS:        true,
-		Runner:         setupRunner,
-	})
+	wt, createErr := createWorkerWorktree(ctx, job.RepoPath, headRef, exactCheckoutOptions(job, parentDir, setupRunner))
 	if createErr == nil {
 		// Bare-backed repositories may be registered at a disposable checkout.
 		// Cleanup must still reach Git after that checkout has been removed.

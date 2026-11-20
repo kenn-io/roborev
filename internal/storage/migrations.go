@@ -53,6 +53,8 @@ var schemaMigrations = []schemaMigration{
 	{17, "supplied panel enqueue receipts", migratePanelEnqueueRequests},
 	{18, "session CLI provenance", migrateSessionCLI},
 	{19, "CI default-branch commit reviews", migrateCIBranchReviews},
+	// Scheduled jobs and analysis paths have local-only storage semantics.
+	{20, "local scheduled analysis", func(context.Context, *DB) error { return nil }},
 }
 
 func migrateSessionCLI(ctx context.Context, db *DB) error {

@@ -100,6 +100,15 @@ func TestRunSchemaMigrationsRefusesNewerDatabase(t *testing.T) {
 	require.ErrorIs(t, err, ErrSchemaTooNew)
 }
 
+func TestScheduledAnalysisMigrationRejectsOlderReaders(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	previous := schemaMigrations[:len(schemaMigrations)-1]
+	require.NoError(t, db.runSchemaMigrations(t.Context(), previous))
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	require.ErrorIs(t, db.runSchemaMigrations(t.Context(), previous), ErrSchemaTooNew)
+}
+
 func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "reviews.db")
