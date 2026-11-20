@@ -12,6 +12,7 @@
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import Undo2Icon from "@lucide/svelte/icons/undo-2";
   import { reportCoreAction } from "../../utils/app-opened";
+  import { getJob } from "../../stores/composition.svelte";
   import { getReviewStores } from "../../stores/context";
   import StatusBadge from "./StatusBadge.svelte";
   import VerdictBadge from "./VerdictBadge.svelte";
@@ -44,10 +45,7 @@
   // Fall back to the review store's fetched job for
   // off-page deep links where the job isn't in the table.
   const selectedJob = $derived(
-    stores.roborevJobs
-      ?.getVisibleJobs()
-      .find((j) => j.id === stores.roborevJobs?.getSelectedJobId()) ??
-      stores.roborevReview?.getSelectedJob(),
+    getJob(stores, stores.roborevJobs.getSelectedJobId()),
   );
 
   const isOpen = $derived(stores.roborevJobs?.getSelectedJobId() !== undefined);

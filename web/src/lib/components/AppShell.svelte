@@ -17,7 +17,7 @@
   import { createRouter } from "../router/router.svelte";
   import { setAppRuntime } from "../runtime/context";
   import { makeAppRuntime } from "../runtime/runtime";
-  import { createReviewStores } from "../stores/composition.svelte";
+  import { createReviewStores, getJob } from "../stores/composition.svelte";
   import { provideReviewStores } from "../stores/context";
   import {
     reportScreenViewed,
@@ -65,10 +65,7 @@
   $effect(() => {
     const job =
       route.page === "reviews" && route.jobId !== undefined
-        ? (stores.roborevJobs
-            ?.getVisibleJobs()
-            .find((j) => j.id === route.jobId) ??
-          stores.roborevReview?.getSelectedJob())
+        ? getJob(stores, route.jobId)
         : undefined;
     document.title = tabTitle(route, job);
   });

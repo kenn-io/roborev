@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App.svelte";
+import { tabTitle } from "./lib/utils/tab-title";
 
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
@@ -40,6 +41,21 @@ const status = {
   version: "test",
 };
 
+const job = {
+  id: 17,
+  commit_subject: "Fix login race",
+  agent: "test",
+  agentic: false,
+  enqueued_at: "2026-08-13T20:00:00Z",
+  git_ref: "abc123",
+  job_type: "review",
+  prompt_prebuilt: false,
+  repo_id: 1,
+  repo_name: "example/repo",
+  retry_count: 0,
+  status: "queued",
+};
+
 function applicationResponse(input: RequestInfo | URL): Response {
   const url = new URL(
     input instanceof Request ? input.url : input,
@@ -69,6 +85,23 @@ describe("App", () => {
     appOpened.setupAppOpenedReporting.mockClear();
     appOpened.reportScreenViewed.mockClear();
     appOpened.reportCoreAction.mockClear();
+  });
+
+  test("names workspaces and reviews", () => {
+    expect(tabTitle({ page: "reviews" }, null)).toBe("Reviews · Roborev");
+    expect(tabTitle({ page: "analytics" }, null)).toBe("Analytics · Roborev");
+    const route = { page: "reviews", jobId: 17 } as const;
+    expect(tabTitle(route, job)).toBe(
+      "Fix login race (#17) · example/repo · Roborev",
+    );
+    expect(tabTitle(route, { ...job, commit_subject: undefined })).toBe(
+      "Review (#17) · example/repo · Roborev",
+    );
+    expect(tabTitle(route, { ...job, repo_name: undefined })).toBe(
+      "Fix login race (#17) · Roborev",
+    );
+    expect(tabTitle(route, null)).toBe("Review (#17) · Roborev");
+    expect(tabTitle(route, { ...job, id: 8 })).toBe("Review (#17) · Roborev");
   });
 
   test("checks the ambient browser session on mount", () => {
@@ -336,20 +369,6 @@ describe("App", () => {
   });
 
   test("shows action failures in the application shell", async () => {
-    const job = {
-      id: 17,
-      commit_subject: "Fix login race",
-      agent: "test",
-      agentic: false,
-      enqueued_at: "2026-08-13T20:00:00Z",
-      git_ref: "abc123",
-      job_type: "review",
-      prompt_prebuilt: false,
-      repo_id: 1,
-      repo_name: "example/repo",
-      retry_count: 0,
-      status: "queued",
-    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
