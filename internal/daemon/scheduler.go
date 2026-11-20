@@ -240,11 +240,11 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 		if len(textFiles) == schedule.MaxFiles {
 			break
 		}
-		file, err := git.ReadRefFileCtx(ctx, repo.RootPath, head, candidate.path)
+		file, err := git.ReadBlob(ctx, repo.RootPath, candidate.objectID)
 		if err != nil {
 			return err
 		}
-		if bytes.IndexByte(file.Data, 0) >= 0 || !utf8.Valid(file.Data) {
+		if bytes.IndexByte(file, 0) >= 0 || !utf8.Valid(file) {
 			currentNonText[candidate.objectID] = struct{}{}
 			continue
 		}

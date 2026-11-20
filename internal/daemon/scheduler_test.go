@@ -513,3 +513,29 @@ func TestScheduledAnalysisHistoryTiming(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, jobs)
 }
+
+func TestScheduledAnalysisLiteralTrackedPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("colon is not a valid Windows filename")
+	}
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFiles(map[string]string{":(bad).go": "package special\n", "normal.go": "package normal\n"}, "add files")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval, budget := true, "1h", 10
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[schedule]\nenabled = true\n[analyze.refactor]\nagent = 'test'\n"), 0o644))
+
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	files := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		files = append(files, job.AnalysisFiles...)
+		assert.Equal(t, head, job.AnalysisCommitSHA)
+	}
+	assert.ElementsMatch(t, []string{":(bad).go", "normal.go"}, files)
+}
