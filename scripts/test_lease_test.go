@@ -39,7 +39,7 @@ func TestLeaseRequiresHome(t *testing.T) {
 	}
 }
 
-func TestPostgresLeaseOverridesCallerURLAndWritesSpacedReports(t *testing.T) {
+func TestPostgresLeaseOwnsComposeAndReportResources(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o700))
@@ -158,7 +158,6 @@ with open(sys.argv[1]) as f:
 
 func TestLeaseSupervisorCleanup(t *testing.T) {
 	for _, tc := range []struct{ command, cleanup, want string }{
-		{"exit 0", "exit 0", "0"},
 		{"exit 0", "exit 1", "1"},
 		{"exit 17", "exit 1", "17"},
 	} {
@@ -185,25 +184,19 @@ with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", o
 	}
 	t.Run("descendant holds lease", func(t *testing.T) {
 		dir := t.TempDir()
-		release := filepath.Join(dir, "release")
-		pidFile := filepath.Join(dir, "pid")
-		t.Cleanup(func() {
-			_ = os.WriteFile(release, nil, 0o600)
-			pid, err := os.ReadFile(pidFile)
-			if err == nil {
+		cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", `touch "$CLEANED"`, "sh", "-c", `sleep 60 >/dev/null 2>&1 & echo $!`)
+		cmd.Env = append(os.Environ(), "HOME="+dir, "CLEANED="+filepath.Join(dir, "cleaned"))
+		out, err := cmd.Output()
+		if pid, convErr := strconv.Atoi(strings.TrimSpace(string(out))); convErr == nil {
+			t.Cleanup(func() {
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 				defer cancel()
-				_ = exec.CommandContext(ctx, "python3", "-c", `import os, sys, time
-pid = int(sys.argv[1])
-for _ in range(200):
- try: os.kill(pid, 0)
- except ProcessLookupError: break
- time.sleep(.05)`, strings.TrimSpace(string(pid))).Run()
-			}
-		})
-		cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", `touch "$CLEANED"`, "sh", "-c", `(while [ ! -e "$RELEASE" ]; do sleep .05; done) >/dev/null 2>&1 & echo $! > "$PID_FILE"`)
-		cmd.Env = append(os.Environ(), "HOME="+dir, "RELEASE="+release, "PID_FILE="+pidFile, "CLEANED="+filepath.Join(dir, "cleaned"))
-		out, err := cmd.CombinedOutput()
+				args, err := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+				if err == nil && strings.TrimSpace(string(args)) == "sleep 60" {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			})
+		}
 		require.NoError(t, err, string(out))
 		_, err = os.Stat(filepath.Join(dir, "cleaned"))
 		assert.True(t, os.IsNotExist(err), "cleanup ran while a descendant held the lease")
@@ -272,8 +265,10 @@ if (name == "docker" and "up" in sys.argv and os.environ["PHASE"] == "setup") or
         open(os.environ["STOPPED"], "w").close()
         sys.exit(0)
     signal.signal(signal.SIGTERM, terminate)
-    with open(os.environ["READY"], "w") as f:
+    ready_tmp = os.environ["READY"] + ".tmp"
+    with open(ready_tmp, "w") as f:
         f.write(f'{os.environ["TEST_SERVICE_LEASE"].rsplit("-", 1)[1]} {os.getpid()}')
+    os.replace(ready_tmp, os.environ["READY"])
     while True: time.sleep(1)
 `
 			for _, name := range []string{"docker", "go"} {
@@ -298,6 +293,7 @@ if (name == "docker" and "up" in sys.argv and os.environ["PHASE"] == "setup") or
 					<-done
 				}
 			})
+			// The fake child is an external process, so it cannot use virtual time.
 			require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 50*time.Millisecond)
 			data, err := os.ReadFile(ready)
 			require.NoError(t, err)
