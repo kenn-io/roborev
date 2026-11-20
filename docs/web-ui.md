@@ -40,8 +40,7 @@ The application has two workspaces:
 - **Analytics** summarizes cost, latency, failures, outcomes, and agent attempts
     from the daemon's SQLite history.
 
-Browser tabs name the current workspace. An open review also shows its commit
-subject, job ID, and repository when available.
+Browser tabs name the current workspace. An open review also shows its job ID.
 
 The theme button in the application header switches between light, dark, and the
 operating system's setting. The browser remembers the choice.

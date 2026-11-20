@@ -111,20 +111,10 @@ describe("App", () => {
     appOpened.reportCoreAction.mockClear();
   });
 
-  test("names reviews with missing or stale job details", () => {
+  test("names reviews by ID", () => {
     const route = { page: "reviews", jobId: 17 } as const;
-    expect(tabTitle(route, { ...job, commit_subject: undefined }, false)).toBe(
-      "Review (#17) · example/repo · Roborev",
-    );
-    expect(tabTitle(route, { ...job, repo_name: undefined }, false)).toBe(
-      "Fix login race (#17) · Roborev",
-    );
-    expect(tabTitle(route, { ...job, id: 8 }, false)).toBe(
-      "Review (#17) · Roborev",
-    );
-    expect(tabTitle(route, null, true)).toBe(
-      "Review not found (#17) · Roborev",
-    );
+    expect(tabTitle(route, false)).toBe("Review (#17) · Roborev");
+    expect(tabTitle(route, true)).toBe("Review not found (#17) · Roborev");
   });
 
   test("names a missing review after its request resolves", async () => {
@@ -146,6 +136,8 @@ describe("App", () => {
   test("keeps an off-page queued job's title when its review is absent", async () => {
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/review") return response(404);
+      if (url.pathname === "/api/ui/review-projection")
+        return response(200, { responses: [] });
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
         return response(200, {
           jobs: [job],
@@ -153,11 +145,8 @@ describe("App", () => {
           stats: { done: 0, closed: 0, open: 1 },
         });
     });
-    await vi.waitFor(() =>
-      expect(document.title).toBe(
-        "Fix login race (#17) · example/repo · Roborev",
-      ),
-    );
+    await screen.findByText(/review in progress/i);
+    expect(document.title).toBe("Review (#17) · Roborev");
   });
 
   test("checks the ambient browser session on mount", () => {
@@ -457,9 +446,7 @@ describe("App", () => {
     const row = await screen.findByRole("button", { name: /17.*abc123/i });
     await fireEvent.click(row);
     expect(location.pathname).toBe("/reviews/17");
-    expect(document.title).toBe(
-      "Fix login race (#17) · example/repo · Roborev",
-    );
+    expect(document.title).toBe("Review (#17) · Roborev");
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -594,9 +581,7 @@ describe("App", () => {
         });
     });
     await vi.waitFor(() =>
-      expect(document.title).toBe(
-        "Fix login race (#17) · example/repo · Roborev",
-      ),
+      expect(document.title).toBe("Review (#17) · Roborev"),
     );
     window.dispatchEvent(new Event(sessionLostEvent));
     await vi.waitFor(() => expect(document.title).toBe("Checking · Roborev"));

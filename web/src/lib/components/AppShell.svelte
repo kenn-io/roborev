@@ -17,7 +17,7 @@
   import { createRouter } from "../router/router.svelte";
   import { setAppRuntime } from "../runtime/context";
   import { makeAppRuntime } from "../runtime/runtime";
-  import { createReviewStores, getJob } from "../stores/composition.svelte";
+  import { createReviewStores } from "../stores/composition.svelte";
   import { provideReviewStores } from "../stores/context";
   import {
     reportScreenViewed,
@@ -63,18 +63,15 @@
   onMount(setupAppOpenedReporting);
   $effect(() => reportScreenViewed(page));
   $effect(() => {
-    const job =
-      route.page === "reviews" && route.jobId !== undefined
-        ? getJob(stores, route.jobId)
-        : undefined;
     const review = stores.roborevReview;
     const notFound =
       route.page === "reviews" &&
       route.jobId !== undefined &&
       review.getSelectedJobId() === route.jobId &&
       !review.isLoading() &&
-      review.isReviewNotFound();
-    document.title = tabTitle(route, job, notFound);
+      review.isReviewNotFound() &&
+      !review.getSelectedJob();
+    document.title = tabTitle(route, notFound);
   });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
