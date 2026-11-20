@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -643,4 +645,31 @@ func TestScheduledAnalysisRestartRespectsInterval(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 3)
 	assert.Equal(t, []string{"c.go"}, jobs[0].AnalysisFiles)
+}
+
+func TestScheduledAnalysisBacksOffInvalidRepository(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	path := t.TempDir()
+	registered, err := db.GetOrCreateRepo(path)
+	require.NoError(t, err)
+	yes, interval, budget := true, "1h", 1
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+	server.configWatcher.Config().AnalyzeAgent = "test"
+
+	var output bytes.Buffer
+	original := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(original) })
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	now := time.Now()
+	watcher.poll(t.Context(), now)
+	watcher.poll(t.Context(), now.Add(30*time.Second))
+	require.Equal(t, 1, strings.Count(output.String(), "analysis scheduler "+path+":"))
+
+	testutil.InitTestGitRepo(t, path)
+	watcher.poll(t.Context(), now.Add(5*time.Minute))
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"test.txt"}, jobs[0].AnalysisFiles)
 }

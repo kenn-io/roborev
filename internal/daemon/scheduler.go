@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -16,8 +17,9 @@ import (
 )
 
 type analysisScheduler struct {
-	server  *Server
-	lastRun map[int64]time.Time
+	server   *Server
+	lastRun  map[int64]time.Time
+	failedAt map[int64]time.Time
 }
 
 func (s *Server) startAnalysisScheduler(ctx context.Context) {
@@ -81,18 +83,42 @@ func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 			var schedule config.Schedule
 			schedule, err = config.ResolveSchedule(global.Schedule, repoCfg.Schedule)
 			if err == nil && schedule.Enabled {
-				err = w.runDue(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
+				err = w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
 			} else if err == nil {
-				err = w.server.db.ClearAnalysisScheduleLastRun(ctx, repo.ID)
-				if err == nil {
-					delete(w.lastRun, repo.ID)
-				}
+				err = w.clearRepo(ctx, repo.ID)
 			}
 		}
 		if err != nil && ctx.Err() == nil {
 			log.Printf("analysis scheduler %s: %v", repo.RootPath, err)
 		}
 	}
+}
+
+var errScheduledRepoUnavailable = errors.New("scheduled repository unavailable")
+
+func (w *analysisScheduler) clearRepo(ctx context.Context, repoID int64) error {
+	delete(w.failedAt, repoID)
+	if err := w.server.db.ClearAnalysisScheduleLastRun(ctx, repoID); err != nil {
+		return err
+	}
+	delete(w.lastRun, repoID)
+	return nil
+}
+
+func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
+	if failed, ok := w.failedAt[repo.ID]; ok && now.Sub(failed) < min(5*time.Minute, schedule.Interval) {
+		return nil
+	}
+	err := w.runDue(ctx, repo, repoCfg, global, schedule, now)
+	if errors.Is(err, errScheduledRepoUnavailable) && ctx.Err() == nil {
+		if w.failedAt == nil {
+			w.failedAt = make(map[int64]time.Time)
+		}
+		w.failedAt[repo.ID] = now
+	} else if err == nil {
+		delete(w.failedAt, repo.ID)
+	}
+	return err
 }
 
 func (w *analysisScheduler) runDue(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
@@ -132,11 +158,11 @@ type analysisCandidate struct {
 func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) error {
 	head, err := git.ResolveCommitCtx(ctx, repo.RootPath, "HEAD")
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errScheduledRepoUnavailable, err)
 	}
 	paths, err := git.ListRefFiles(ctx, repo.RootPath, head)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errScheduledRepoUnavailable, err)
 	}
 	candidates := map[string]*analysisCandidate{}
 	for _, path := range paths {
