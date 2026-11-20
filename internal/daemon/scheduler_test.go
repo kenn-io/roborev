@@ -566,3 +566,39 @@ func TestScheduledAnalysisBundlesTypesAndLiteralStar(t *testing.T) {
 		assert.Equal(t, []string{"*", "normal.go"}, job.AnalysisFiles)
 	}
 }
+
+func TestScheduledWakeYieldsToLegacyCommitReview(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	sha := repo.CommitFile("a.go", "package a\n", "add file")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(registered.ID, sha, "author", "add file", time.Now())
+	require.NoError(t, err)
+
+	scheduled, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "test", Prompt: "analysis", Source: storage.JobSourceScheduled})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker-0")
+	require.NoError(t, err)
+	require.Equal(t, scheduled.ID, claimed.ID)
+	server.workerPool.SetMaxWorkers(1)
+	server.workerPool.runningJobsMu.Lock()
+	server.workerPool.workerJobs["worker-0"] = scheduled.ID
+	server.workerPool.runningJobsMu.Unlock()
+
+	_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "test", Prompt: "analysis", Source: storage.JobSourceScheduled})
+	require.NoError(t, err)
+	review, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", JobType: storage.JobTypeReview})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = '' WHERE id = ?`, review.ID)
+	require.NoError(t, err)
+
+	server.workerPool.wake()
+	current, err := db.GetJobByID(scheduled.ID)
+	require.NoError(t, err)
+	require.Equal(t, storage.JobStatusCanceled, current.Status)
+	claimed, err = db.ClaimJob("worker-0")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal(t, review.ID, claimed.ID)
+}

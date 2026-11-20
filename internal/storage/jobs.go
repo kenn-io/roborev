@@ -682,6 +682,14 @@ const claimCandidate = `candidate.status = 'queued'
  ))
  AND NOT EXISTS (SELECT 1 FROM daemon_state WHERE key IN (?, ?) AND value IN ('true', '1'))`
 
+// foregroundReviewCandidate mirrors ReviewJob.IsReviewJob for legacy rows.
+const foregroundReviewCandidate = `COALESCE(candidate.source, '') != ? AND (
+ candidate.job_type IN (?, ?, ?, ?, ?) OR
+ (COALESCE(candidate.job_type, '') = '' AND (
+   candidate.commit_id IS NOT NULL OR candidate.git_ref = 'dirty' OR instr(candidate.git_ref, '..') > 0 OR
+   EXISTS (SELECT 1 FROM job_content content WHERE content.job_id = candidate.id AND content.diff_content IS NOT NULL)
+ )))`
+
 func claimCandidateArgs(now time.Time) []any {
 	return []any{preciseTimestampAt(now), JobSourceRebuttal, JobSourceRebuttal, queuePausedStateKey, shutdownDrainingStateKey}
 }
@@ -691,7 +699,7 @@ func (db *DB) ClaimableForegroundReviews(ctx context.Context) (int, error) {
 	args := claimCandidateArgs(time.Now())
 	args = append(args, JobSourceScheduled, JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis)
 	var count int
-	err := db.QueryRowContext(ctx, `SELECT count(*) FROM review_jobs candidate WHERE `+claimCandidate+` AND COALESCE(candidate.source, '') != ? AND candidate.job_type IN (?, ?, ?, ?, ?)`, args...).Scan(&count)
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM review_jobs candidate WHERE `+claimCandidate+` AND `+foregroundReviewCandidate, args...).Scan(&count)
 	return count, err
 }
 
@@ -1605,7 +1613,7 @@ func (db *DB) CancelScheduledForReview(ctx context.Context, jobID int64, workerI
 	args = append(args, JobSourceScheduled, JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis)
 	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'canceled', finished_at = ?, updated_at = ?
  WHERE id = ? AND status = 'running' AND source = ? AND worker_id = ? AND started_at = ? AND EXISTS
- (SELECT 1 FROM review_jobs candidate WHERE `+claimCandidate+` AND COALESCE(candidate.source, '') != ? AND candidate.job_type IN (?, ?, ?, ?, ?))`, args...)
+ (SELECT 1 FROM review_jobs candidate WHERE `+claimCandidate+` AND `+foregroundReviewCandidate+`)`, args...)
 	if err != nil {
 		return false, err
 	}
