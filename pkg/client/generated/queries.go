@@ -250,7 +250,7 @@ type ListJobsQuery struct {
 	// Cursor Opaque next_cursor from a previous page with the same sort; resumes after its last job
 	Cursor *string `json:"cursor,omitempty"`
 
-	// Sort Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+	// Sort Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, findings, or enqueued_at (default); ties break by id
 	Sort *string `json:"sort,omitempty"`
 
 	// Direction Sort direction: asc or desc (default)

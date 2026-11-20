@@ -113,7 +113,7 @@ export type ListJobsParams = {
    */
   cursor?: string;
   /**
-   * Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+   * Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, findings, or enqueued_at (default); ties break by id
    */
   sort?: string;
   /**

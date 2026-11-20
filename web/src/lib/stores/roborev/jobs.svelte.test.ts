@@ -530,6 +530,14 @@ describe("createJobsStore sorting", () => {
         direction: "desc",
       }),
     );
+
+    store.setSortColumn("findings");
+    await vi.waitFor(() =>
+      expect(api.listJobs.mock.calls.at(-1)?.[0]).toMatchObject({
+        sort: "findings",
+        direction: "desc",
+      }),
+    );
   });
 
   it("appends the next page in the daemon's order with the current sort", async () => {

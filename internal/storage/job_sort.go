@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"modernc.org/sqlite"
+
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // JobSortColumn names a column the job listing can be ordered by. The columns
@@ -25,6 +27,7 @@ const (
 	JobSortClosed     JobSortColumn = "closed"
 	JobSortElapsed    JobSortColumn = "elapsed"
 	JobSortCost       JobSortColumn = "cost"
+	JobSortFindings   JobSortColumn = "findings"
 	JobSortEnqueuedAt JobSortColumn = "enqueued_at"
 )
 
@@ -39,7 +42,7 @@ func ParseJobSortColumn(name string) (JobSortColumn, error) {
 	case "":
 		return JobSortEnqueuedAt, nil
 	case JobSortID, JobSortRepo, JobSortAgent, JobSortReviewType, JobSortStatus,
-		JobSortVerdict, JobSortClosed, JobSortElapsed, JobSortCost, JobSortEnqueuedAt:
+		JobSortVerdict, JobSortClosed, JobSortElapsed, JobSortCost, JobSortFindings, JobSortEnqueuedAt:
 		return column, nil
 	default:
 		return "", fmt.Errorf("unknown sort column %q", name)
@@ -109,6 +112,8 @@ func jobSortKeys(sort JobSort, includeFindings bool) ([]string, []any) {
 		return []string{jobElapsedSortExpr}, slices.Repeat([]any{asOf}, strings.Count(jobElapsedSortExpr, "?"))
 	case JobSortCost:
 		return []string{jobCostSortExpr}, nil
+	case JobSortFindings:
+		return []string{jobFindingsSortExpr}, nil
 	default:
 		return []string{sqliteNormalizedTimestampExpr("j.enqueued_at")}, nil
 	}
@@ -192,6 +197,46 @@ var jobCostSortExpr = func() string {
 	return "CASE WHEN " + jobPanelParentCond +
 		" THEN COALESCE((" + own + ") + " + members + ", " + own + ", " + members + ", -1)" +
 		" ELSE COALESCE(" + own + ", -1) END"
+}()
+
+// Finding sort weights rank critical and high findings above any number of
+// medium ones, and medium above any number of low ones, as long as a review
+// has fewer than 10,000 findings of one group.
+const (
+	findingsSortWeightHigh   = 100_000_000
+	findingsSortWeightMedium = 10_000
+)
+
+// jobFindingsSortExpr ranks a job by the finding counts ListJobs reports with
+// WithFindingCounts: critical and high findings first, then medium, then low,
+// grouped as the TUI and web tables show them. A job without counts sorts as
+// -1, below a review with no findings. The conditions follow
+// HasFindingCountsOutput and ReviewFindingCounts.
+var jobFindingsSortExpr = func() string {
+	doc := "rv.structured_output"
+	readable := "CASE WHEN COALESCE(j.job_type, '') != '' THEN j.job_type IN ('" + strings.Join([]string{
+		JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis, JobTypeCompact,
+	}, "', '") + "')" +
+		" ELSE j.commit_id IS NOT NULL OR j.git_ref = 'dirty' OR jc.diff_content IS NOT NULL OR instr(j.git_ref, '..') > 0 END"
+	hasCounts := "j.status IN ('" + strings.Join([]string{
+		string(JobStatusDone), string(JobStatusApplied), string(JobStatusRebased),
+	}, "', '") + "')" +
+		" AND COALESCE(j.error, '') = '' AND (" + readable + ")" +
+		" AND json_valid(" + doc + ") AND json_type(" + doc + ", '$.legacy') IS NULL" +
+		" AND COALESCE(json_extract(" + doc + ", '$.verdict'), '') != '" + structuredreview.VerdictUnableToReview + "'"
+	// Decoding trims and lowercases a severity and rejects a finding without a
+	// known severity, a problem, or a fix, which leaves the review without
+	// counts.
+	trimmed := func(field string) string {
+		return "trim(f.value ->> '" + field + "', ' ' || char(9, 10, 11, 12, 13))"
+	}
+	weight := fmt.Sprintf("CASE lower(%[3]s) WHEN 'critical' THEN %[1]d WHEN 'high' THEN %[1]d"+
+		" WHEN 'medium' THEN %[2]d WHEN 'low' THEN 1 END",
+		findingsSortWeightHigh, findingsSortWeightMedium, trimmed("severity"))
+	invalid := "(" + weight + ") IS NULL OR COALESCE(" + trimmed("problem") + ", '') = '' OR COALESCE(" + trimmed("fix") + ", '') = ''"
+	total := "(SELECT CASE WHEN MAX(" + invalid + ") THEN -1 ELSE COALESCE(SUM(" + weight + "), 0) END" +
+		" FROM json_each(" + doc + ", '$.findings') f)"
+	return "CASE WHEN " + hasCounts + " THEN " + total + " ELSE -1 END"
 }()
 
 func sqlParseVerdict(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {

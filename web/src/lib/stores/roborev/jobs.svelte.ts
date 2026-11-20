@@ -65,6 +65,7 @@ export type SortColumn =
   | "review_type"
   | "elapsed"
   | "cost"
+  | "findings"
   | "enqueued_at";
 type SortDirection = "asc" | "desc";
 type StringFilterKey = "repo" | "branch" | "status" | "search" | "jobType";
@@ -79,6 +80,7 @@ const DESCENDING_FIRST = new Set<SortColumn>([
   "id",
   "elapsed",
   "cost",
+  "findings",
   "enqueued_at",
 ]);
 const MAX_LOADED_JOBS = 10_000;

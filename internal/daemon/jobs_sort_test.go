@@ -69,6 +69,41 @@ func TestHumaListJobsSortedCursorPaging(t *testing.T) {
 	assert.Equal(t, []int64{ids[3], ids[2], ids[0], ids[4], ids[1]}, got)
 }
 
+func TestHumaListJobsSortsByFindings(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	jobs := testutil.CreateTestJobs(t, db, repo, 4, "test-agent")
+	finding := func(severity string) string {
+		return `{"severity":"` + severity + `","problem":"p","fix":"f","location":null}`
+	}
+	// One medium, no review, two low, one high.
+	for i, findings := range []string{finding("medium"), "", finding("low") + "," + finding("low"), finding("high")} {
+		if findings == "" {
+			continue
+		}
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'review', status = 'done' WHERE id = ?`, jobs[i].ID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output) VALUES (?, 'test-agent', 'out', ?)`,
+			jobs[i].ID, `{"schema_version":2,"summary":"s","verdict":"fail","findings":[`+findings+`]}`)
+		require.NoError(t, err)
+	}
+
+	query := "sort=findings&direction=desc&include_findings=true&limit=1"
+	var got []int64
+	page := fetchSortedJobsPage(t, srv, query)
+	for {
+		for _, job := range page.Jobs {
+			got = append(got, job.ID)
+		}
+		if !page.HasMore {
+			break
+		}
+		require.NotNil(t, page.NextCursor)
+		page = fetchSortedJobsPage(t, srv, query+"&cursor="+url.QueryEscape(*page.NextCursor))
+	}
+	assert.Equal(t, []int64{jobs[3].ID, jobs[0].ID, jobs[2].ID, jobs[1].ID}, got)
+}
+
 func TestHumaListJobsPagesByRepoThroughNonUTF8Branch(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)

@@ -127,7 +127,7 @@ type ListJobsInput struct {
 	Offset              int       `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
 	Before              int64     `query:"before" default:"-1" doc:"Deprecated numeric job cursor retained for compatibility"`
 	Cursor              string    `query:"cursor" doc:"Opaque next_cursor from a previous page with the same sort; resumes after its last job"`
-	Sort                string    `query:"sort" doc:"Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id"`
+	Sort                string    `query:"sort" doc:"Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, findings, or enqueued_at (default); ties break by id"`
 	Direction           string    `query:"direction" doc:"Sort direction: asc or desc (default)"`
 }
 

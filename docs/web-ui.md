@@ -95,9 +95,10 @@ Each row fits on one line: the commit column shows the repository, branch, short
 ref, and commit subject, and the Agent column shows the model beside the agent.
 The Findings column counts a completed review's findings like the TUI does:
 critical and high, then medium, then low, as in `2/1/0`. It shows `--` when the
-review has no counts, such as a job that has not finished. The Findings column
-does not sort. Panel reviews appear as a synthesis row that can be expanded to
-show its individual reviewers.
+review has no counts, such as a job that has not finished. Sorting by findings
+ranks critical and high findings first, then medium, then low, and puts jobs
+without counts last. Panel reviews appear as a synthesis row that can be
+expanded to show its individual reviewers.
 
 The detail drawer shows the job's recorded reasoning level beside the agent and
 model. In an owner-local browser session, the drawer also shows the recorded
