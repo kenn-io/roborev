@@ -203,3 +203,47 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresRunCleansUp(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mode      string
+		wantError bool
+	}{
+		{"success", "success", false},
+		{"startup failure", "up-fails", true},
+		{"test failure", "test-fails", true},
+		{"interruption", "interrupt", true},
+		{"cleanup failure", "down-fails", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			docker := `#!/bin/sh
+printf '%s\n' "$*" >> "$DOCKER_LOG"
+case " $* " in
+  *' up '*)
+    case "$MODE" in up-fails) exit 1 ;; interrupt) kill -TERM "$PPID" ;; esac ;;
+  *' port '*) echo 127.0.0.1:45678 ;;
+  *' down '*) [ "$MODE" != down-fails ] || exit 1 ;;
+esac
+`
+			goTool := "#!/bin/sh\nif [ \"$1\" = env ]; then exit 0; fi\n[ \"$MODE\" != test-fails ]\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go"), []byte(goTool), 0o700))
+			log := filepath.Join(dir, "docker.log")
+			cmd := exec.CommandContext(t.Context(), "make", "test-postgres-run", "TEST_SERVICE_LEASE=roborev-1-1")
+			cmd.Dir = ".."
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "MODE="+tc.mode)
+			out, err := cmd.CombinedOutput()
+			if tc.wantError {
+				require.Error(t, err, string(out))
+			} else {
+				require.NoError(t, err, string(out))
+			}
+			calls, err := os.ReadFile(log)
+			require.NoError(t, err)
+			lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+			assert.Equal(t, "compose -p roborev-1-1 -f docker-compose.test.yml -f docker-compose.test-lease.yml down", lines[len(lines)-1])
+		})
+	}
+}

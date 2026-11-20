@@ -293,11 +293,17 @@ endif
 
 .PHONY: test-postgres-run
 test-postgres-run:
-	@TEST_PG_PUBLISH=127.0.0.1::5432 docker compose -p "$${TEST_SERVICE_LEASE:?use make test-postgres}" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres
 ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
+	@TEST_PG_PUBLISH=127.0.0.1::5432 docker compose -p "$${TEST_SERVICE_LEASE:?use make test-postgres}" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres
 	@TEST_POSTGRES_URL=postgres://roborev_test:roborev_test_password@127.0.0.1:PORT/roborev_test $(MAKE) test-postgres-ci
 else
-	@TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432)/roborev_test" $(MAKE) test-postgres-ci
+	@set -e; \
+		: "$${TEST_SERVICE_LEASE:?use make test-postgres}"; \
+		trap 'status=$$?; trap - 0; docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml down || status=1; exit "$$status"' 0; \
+		trap 'exit 130' INT; trap 'exit 143' TERM; \
+		TEST_PG_PUBLISH=127.0.0.1::5432 docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres; \
+		address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432); \
+		TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test" $(MAKE) test-postgres-ci
 endif
 
 .PHONY: test-postgres-growth
