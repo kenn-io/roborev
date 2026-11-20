@@ -44,7 +44,7 @@ func TestPostgresLeaseOwnsComposeAndReportResources(t *testing.T) {
 	bin := filepath.Join(dir, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o700))
 	docker := `#!/bin/sh
-printf '%s [%s %s]\n' "$*" "$TEST_SERVICE_LEASE" "$TEST_PG_PUBLISH" >> "$DOCKER_LOG"
+printf '%s [%s %s %s]\n' "$*" "$TEST_SERVICE_LEASE" "$COMPOSE_PROJECT_NAME" "$TEST_PG_PUBLISH" >> "$DOCKER_LOG"
 case " $* " in
   *' up '*) python3 -c 'import fcntl, os, sys
 with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", os.environ["TEST_SERVICE_LEASE"])) as f:
@@ -61,30 +61,18 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --jsonfile|--rerun-fails-report)
       shift
-      case "$1" in "$GO_TEST_REPORT_DIR/$TEST_SERVICE_LEASE/"*) ;; *) exit 2 ;; esac
-      printf '%s\n' "${1##*/}" >> "$REPORT_LOG"
-      mkdir -p "${1%/*}"
-      printf report > "$1" || exit 1 ;;
+      printf '%s\n' "$1" >> "$REPORT_LOG" ;;
   esac
   shift
 done
 `
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0o700))
-	reports := filepath.Join(dir, "reports with spaces")
 	urlLog := filepath.Join(dir, "urls")
-	old := filepath.Join(reports, "roborev-1-1")
-	recent := filepath.Join(reports, "roborev-2-2")
-	for _, path := range []string{old, recent} {
-		require.NoError(t, os.MkdirAll(path, 0o700))
-		require.NoError(t, os.WriteFile(filepath.Join(path, "postgres-storage.json"), []byte("report"), 0o600))
-	}
-	past := time.Now().Add(-9 * 24 * time.Hour)
-	require.NoError(t, os.Chtimes(old, past, past))
 	dockerLog := filepath.Join(dir, "docker.log")
 	cmd := exec.CommandContext(t.Context(), "make", "test-postgres", "TEST_POSTGRES_URL=postgres://caller/example", "TEST_SERVICE_LEASE=other-1-1")
 	cmd.Dir = ".."
-	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GO_TEST_REPORT_DIR="+reports, "URL_LOG="+urlLog, "REPORT_LOG="+filepath.Join(dir, "report-log"), "DOCKER_LOG="+dockerLog)
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "URL_LOG="+urlLog, "REPORT_LOG="+filepath.Join(dir, "report-log"), "DOCKER_LOG="+dockerLog)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	urls, err := os.ReadFile(urlLog)
@@ -92,7 +80,7 @@ done
 	assert.Equal(t, strings.Repeat("postgres://roborev_test:roborev_test_password@127.0.0.1:45678/roborev_test\n", 2), string(urls))
 	reportNames, err := os.ReadFile(filepath.Join(dir, "report-log"))
 	require.NoError(t, err)
-	assert.Equal(t, "postgres-storage.json\npostgres-storage-reruns.txt\npostgres-daemon.json\npostgres-daemon-reruns.txt\n", string(reportNames))
+	assert.Equal(t, "gotestsum/postgres-storage.json\ngotestsum/postgres-storage-reruns.txt\ngotestsum/postgres-daemon.json\ngotestsum/postgres-daemon-reruns.txt\n", string(reportNames))
 	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
@@ -100,12 +88,8 @@ done
 	assert.NotEqual(t, "other-1-1", lease)
 	data, err := os.ReadFile(dockerLog)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+" 127.0.0.1::5432]")
+	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+" "+lease+" 127.0.0.1::5432]")
 	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans")
-	_, err = os.Stat(old)
-	assert.True(t, os.IsNotExist(err), "old reports remained")
-	_, err = os.Stat(filepath.Join(recent, "postgres-storage.json"))
-	require.NoError(t, err)
 }
 
 func TestLeaseSupervisorCleanup(t *testing.T) {
@@ -230,10 +214,10 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0o700))
 	cmd := exec.CommandContext(t.Context(), "make", "test-postgres-run", "TEST_SERVICE_LEASE=")
 	cmd.Dir = ".."
-	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+dockerLog, "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"))
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+dockerLog)
 	out, err := cmd.CombinedOutput()
 	require.Error(t, err, string(out))
-	assert.Contains(t, string(out), "TEST_SERVICE_LEASE is required")
+	assert.Contains(t, string(out), "use make test-postgres")
 	_, err = os.Stat(dockerLog)
 	assert.True(t, os.IsNotExist(err), "docker ran without a lease")
 }

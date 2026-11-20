@@ -31,6 +31,7 @@ fd = os.open(os.path.join(directory, lease), os.O_CREAT | os.O_EXCL | os.O_RDWR,
 os.set_inheritable(fd, True)
 fcntl.flock(fd, fcntl.LOCK_EX)
 os.environ["TEST_SERVICE_LEASE"] = lease
+os.environ["COMPOSE_PROJECT_NAME"] = lease
 child = subprocess.Popen(command, pass_fds=(fd,), start_new_session=True)
 def forward(signum, frame):
     try:
