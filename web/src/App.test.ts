@@ -227,8 +227,14 @@ describe("App", () => {
     window.dispatchEvent(new PopStateEvent("popstate"));
     await vi.waitFor(() => expect(resolveJob18).toBeDefined());
     expect(document.title).toBe("Review (#18) · Roborev");
-    resolveJob18?.(response(200, { jobs: [{ ...job, id: 18, commit_subject: "Add tests" }] }));
-    await vi.waitFor(() => expect(document.title).toBe("Add tests (#18) · Roborev"));
+    resolveJob18?.(
+      response(200, {
+        jobs: [{ ...job, id: 18, commit_subject: "Add tests" }],
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Add tests (#18) · Roborev"),
+    );
     expect(token).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     expect(JSON.stringify(fetchMock.mock.calls)).toContain("one-time-secret");

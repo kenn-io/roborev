@@ -68,7 +68,10 @@
   $effect(() => {
     const jobId = route.page === "reviews" ? route.jobId : undefined;
     const job = getSelectedJob(stores, jobId);
-    document.title = tabTitle(route, job?.id === jobId ? job?.commit_subject : undefined);
+    document.title = tabTitle(
+      route,
+      job?.id === jobId ? job?.commit_subject : undefined,
+    );
   });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
