@@ -64,15 +64,29 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   let selectedJobId = $state<number | undefined>(undefined);
   let reviewNotFound = $state(false);
   let storeError = $state<string | null>(null);
+  let jobReadGeneration = 0;
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
     function* (jobId: number) {
+      const generation = ++jobReadGeneration;
       const jobRead = executeRoborevRequest(
         "GET Roborev review job",
         (signal) =>
           api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
             signal,
           }),
+      ).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            const job = result.jobs?.[0];
+            if (
+              selectedJobId === jobId &&
+              job?.id === jobId &&
+              generation === jobReadGeneration
+            )
+              selectedJob = job;
+          }),
+        ),
       );
       const result = yield* Effect.all(
         {
@@ -114,6 +128,16 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           job: Effect.result(jobRead),
         },
         { concurrency: "unbounded" },
+      ).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            opts.runtime.runCommand(jobRead, {
+              operation: "load Roborev review job after review failure",
+              safeContext: { jobId },
+              onFailure: () => {},
+            });
+          }),
+        ),
       );
 
       if (Option.isNone(result.review)) {
@@ -199,7 +223,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             reviewNotFound = false;
             storeError = null;
             review = null;
-            selectedJob = null;
             responses = [];
           });
           const authority = yield* fetchReviewAuthority(jobId);
@@ -403,8 +426,11 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function setSelectedJobId(jobId: number | undefined): void {
     if (jobId !== selectedJobId) {
+      jobReadGeneration++;
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
+      reviewNotFound = false;
+      selectedJob = null;
     }
     selectedJobId = jobId;
     if (jobId === undefined) {
