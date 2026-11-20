@@ -120,18 +120,19 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 			} else {
 				require.NoError(t, err, string(out))
 			}
-			if tc.mode == "port-fails" {
+			switch tc.mode {
+			case "port-fails":
 				assert.Contains(t, string(out), "port lookup failed")
-			}
-			if tc.mode == "port-empty" {
+			case "port-empty":
 				assert.Contains(t, string(out), "could not determine postgres port")
 			}
 			urls, err := os.ReadFile(filepath.Join(dir, "urls"))
-			if tc.mode == "port-fails" || tc.mode == "port-empty" {
+			switch tc.mode {
+			case "port-fails", "port-empty":
 				require.ErrorIs(t, err, os.ErrNotExist)
-			} else if tc.mode == "success" {
+			case "success":
 				require.NoError(t, err)
-				for _, line := range strings.Split(strings.TrimSpace(string(urls)), "\n") {
+				for line := range strings.SplitSeq(strings.TrimSpace(string(urls)), "\n") {
 					assert.Equal(t, "postgres://roborev_test:roborev_test_password@127.0.0.1:45678/roborev_test", line)
 				}
 			}
