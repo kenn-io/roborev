@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -83,9 +84,13 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$URL_LOG"
 	data, err := os.ReadFile(dockerLog)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+" "+lease+" 127.0.0.1::5432]")
+	if runtime.GOOS == "darwin" && exec.CommandContext(t.Context(), "docker", "compose", "version").Run() != nil {
+		t.Log("Docker Compose unavailable; skipping resolved label check")
+		return
+	}
 	config := exec.CommandContext(t.Context(), "docker", "compose", "-p", lease, "-f", "docker-compose.test.yml", "-f", "docker-compose.test-lease.yml", "config", "--format", "json")
 	config.Dir = ".."
-	config.Env = append(os.Environ(), "DOCKER_CONFIG="+dir, "TEST_SERVICE_LEASE="+lease, "COMPOSE_PROJECT_NAME="+lease, "TEST_PG_PUBLISH=127.0.0.1::5432")
+	config.Env = append(os.Environ(), "TEST_SERVICE_LEASE="+lease, "COMPOSE_PROJECT_NAME="+lease, "TEST_PG_PUBLISH=127.0.0.1::5432")
 	resolved, err := config.CombinedOutput()
 	require.NoError(t, err, string(resolved))
 	var compose struct {
