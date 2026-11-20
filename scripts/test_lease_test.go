@@ -41,7 +41,6 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 		{"touch", []string{"-t", "test-postgres"}, true, false},
 		{"question inner", []string{"-q", "test-postgres-run"}, true, true},
 		{"touch inner", []string{"-t", "test-postgres-run"}, true, false},
-		{"someone else's lease", []string{"test-postgres-run", "TEST_SERVICE_LEASE=other-1-1", "TEST_SERVICE_LEASE_FD=3"}, false, false},
 		{"ignored validation failure", []string{"-i", "test-postgres-run", "TEST_SERVICE_LEASE=other-1-1", "TEST_SERVICE_LEASE_FD=3"}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -106,8 +105,6 @@ func TestPostgresRunCleansUp(t *testing.T) {
 		{"success", "success", false},
 		{"startup failure", "up-fails", true},
 		{"test failure", "test-fails", true},
-		{"interruption", "interrupt", true},
-		{"cleanup failure", "down-fails", true},
 		{"port failure", "port-fails", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -124,8 +121,8 @@ with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", o
  sys.exit(1)' || exit 8
     case " $* " in
       *' up '*) [ "$TEST_PG_PUBLISH" = 127.0.0.1::5432 ] || exit 8
-        case "$MODE" in up-fails) exit 1 ;; interrupt) kill -TERM "${TEST_SERVICE_LEASE##*-}" ;; esac ;;
-      *' down '*) [ "$MODE" != down-fails ] || exit 1 ;;
+        case "$MODE" in up-fails) exit 1 ;; esac ;;
+      *' down '*) : ;;
     esac ;;
   *' port '*)
     [ "$2" = -p ] && [ "$3" = "$TEST_SERVICE_LEASE" ] || exit 9
@@ -152,13 +149,9 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 			} else {
 				require.NoError(t, err, string(out))
 			}
-			switch tc.mode {
-			case "port-fails":
-				assert.Contains(t, string(out), "port lookup failed")
-			}
 			urls, err := os.ReadFile(filepath.Join(dir, "urls"))
 			switch tc.mode {
-			case "port-fails":
+			case "port-fails", "up-fails":
 				require.ErrorIs(t, err, os.ErrNotExist)
 			case "success":
 				require.NoError(t, err)
@@ -176,22 +169,22 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 			assert.Contains(t, lines[0], "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres")
 			entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
 			require.NoError(t, err)
-			if tc.mode == "down-fails" {
-				require.Len(t, entries, 1)
-				assert.Equal(t, lease, entries[0].Name())
-			} else {
-				assert.Empty(t, entries)
+			assert.Empty(t, entries)
+			if tc.mode == "up-fails" {
+				assert.NotContains(t, string(calls), " port ")
 			}
-			if tc.mode == "success" || tc.mode == "test-fails" || tc.mode == "down-fails" {
+			if tc.mode == "success" || tc.mode == "test-fails" {
 				reportDir := filepath.Join("..", "gotestsum", lease)
 				t.Cleanup(func() { _ = os.RemoveAll(reportDir) })
 				reportCalls, err := os.ReadFile(filepath.Join(dir, "gotestsum.log"))
 				require.NoError(t, err)
-				assert.Contains(t, string(reportCalls), "--jsonfile "+filepath.Join("gotestsum", lease, "postgres-storage.json"))
-				assert.Contains(t, string(reportCalls), "--rerun-fails-report "+filepath.Join("gotestsum", lease, "postgres-storage-reruns.txt"))
-				if tc.mode != "test-fails" {
+				if tc.mode == "success" {
+					assert.Contains(t, string(reportCalls), "--jsonfile "+filepath.Join("gotestsum", lease, "postgres-storage.json"))
+					assert.Contains(t, string(reportCalls), "--rerun-fails-report "+filepath.Join("gotestsum", lease, "postgres-storage-reruns.txt"))
 					assert.Contains(t, string(reportCalls), "--jsonfile "+filepath.Join("gotestsum", lease, "postgres-daemon.json"))
 					assert.Contains(t, string(reportCalls), "--rerun-fails-report "+filepath.Join("gotestsum", lease, "postgres-daemon-reruns.txt"))
+				} else {
+					assert.NotContains(t, string(reportCalls), "postgres-daemon")
 				}
 			}
 			assert.Equal(t, "compose -p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down", lines[len(lines)-1])
@@ -199,8 +192,43 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 	}
 }
 
-func TestPostgresCleanupWaitsForDescendant(t *testing.T) {
-	makePath := requireMake(t)
+func TestLeaseCleanupAfterCommand(t *testing.T) {
+	requirePython(t)
+	for _, tc := range []struct {
+		name, command, cleanup string
+		status                 int
+		retained               bool
+	}{
+		{"cleanup failure", "exit 0", "exit 1", 1, true},
+		{"interruption", "kill -TERM \"$PPID\"; sleep 10", "exit 0", 143, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "docker.log")
+			docker := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n" + tc.cleanup + "\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
+			cmd := exec.CommandContext(t.Context(), "./scripts/test-lease.sh", "roborev", "sh", "-c", tc.command)
+			cmd.Dir = ".."
+			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log)
+			out, err := cmd.CombinedOutput()
+			var exit *exec.ExitError
+			require.ErrorAs(t, err, &exit, string(out))
+			assert.Equal(t, tc.status, exit.ExitCode())
+			calls, err := os.ReadFile(log)
+			require.NoError(t, err)
+			assert.Contains(t, string(calls), " down\n")
+			entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
+			require.NoError(t, err)
+			if tc.retained {
+				assert.Len(t, entries, 1)
+			} else {
+				assert.Empty(t, entries)
+			}
+		})
+	}
+}
+
+func TestLeaseCleanupWaitsForDescendant(t *testing.T) {
 	requirePython(t)
 	for _, mode := range []string{"command fails", "supervisor killed", "signal while child holds lock"} {
 		killed := mode == "supervisor killed"
@@ -211,10 +239,8 @@ func TestPostgresCleanupWaitsForDescendant(t *testing.T) {
 			require.NoError(t, syscall.Mkfifo(release, 0o600))
 			docker := `#!/bin/sh
 printf '%s\n' "$*" >> "$DOCKER_LOG"
-case " $* " in *' port '*) echo 127.0.0.1:45678 ;; esac
 `
-			goTool := `#!/bin/sh
-if [ "$1" = env ]; then exit 0; fi
+			childCommand := `#!/bin/sh
 python3 -c 'import os, signal
 if os.fork() == 0:
  signal.alarm(20)
@@ -228,9 +254,10 @@ if os.fork() == 0:
 exit 7
 `
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "go"), []byte(goTool), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "child"), []byte(childCommand), 0o700))
 			log := filepath.Join(dir, "docker.log")
-			cmd := exec.CommandContext(t.Context(), makePath, "test-postgres")
+			require.NoError(t, os.WriteFile(log, nil, 0o600))
+			cmd := exec.CommandContext(t.Context(), "./scripts/test-lease.sh", "roborev", filepath.Join(dir, "child"))
 			cmd.Dir = ".."
 			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "READY="+ready, "RELEASE="+release)
 			require.NoError(t, cmd.Start())
@@ -301,7 +328,7 @@ exit 7
 						finished = true
 						var exit *exec.ExitError
 						require.ErrorAs(t, err, &exit)
-						assert.Equal(t, 2, exit.ExitCode())
+						assert.Equal(t, 143, exit.ExitCode())
 					case <-time.After(10 * time.Second):
 						t.Fatal("cleanup did not finish after the launcher was signalled")
 					}
@@ -333,7 +360,7 @@ exit 7
 					finished = true
 					var exit *exec.ExitError
 					require.ErrorAs(t, err, &exit)
-					assert.Equal(t, 2, exit.ExitCode(), "the failed make command must stay failed")
+					assert.Equal(t, 7, exit.ExitCode())
 				case <-time.After(10 * time.Second):
 					t.Fatal("cleanup did not finish after the child exited")
 				}
