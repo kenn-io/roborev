@@ -54,16 +54,20 @@ status = process.wait()
 os.close(fd)
 fcntl.flock(wait_fd, fcntl.LOCK_EX)
 process_group = None
-cleanup = subprocess.run(
-    [
-        "docker", "compose", "-p", lease,
-        "-f", "docker-compose.test.yml",
-        "-f", "docker-compose.test-lease.yml", "down",
-    ],
-    start_new_session=True,
-).returncode
-if cleanup == 0:
-    os.unlink(os.path.join(directory, lease))
+try:
+    cleanup = subprocess.run(
+        [
+            "docker", "compose", "-p", lease,
+            "-f", "docker-compose.test.yml",
+            "-f", "docker-compose.test-lease.yml", "down",
+        ],
+        start_new_session=True,
+    ).returncode
+    if cleanup == 0:
+        os.unlink(os.path.join(directory, lease))
+except OSError as error:
+    print(f"test service cleanup failed: {error}", file=sys.stderr)
+    cleanup = 1
 if interrupted:
     status = 128 + interrupted
 elif status < 0:

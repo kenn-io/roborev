@@ -111,6 +111,7 @@ func TestPostgresRunCleansUp(t *testing.T) {
 			dir := t.TempDir()
 			docker := `#!/bin/sh
 printf '%s\n' "$*" >> "$DOCKER_LOG"
+[ "$TEST_PG_PUBLISH" = 127.0.0.1::5432 ] || exit 8
 case " $* " in
   *' up '*|*' down '*)
     [ "$2" = -p ] && [ "$3" = "$TEST_SERVICE_LEASE" ] || exit 8
@@ -142,7 +143,7 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 			log := filepath.Join(dir, "docker.log")
 			cmd := exec.CommandContext(t.Context(), makePath, "test-postgres", "TEST_SERVICE_LEASE=other-1-1", "TEST_POSTGRES_URL=postgres://wrong")
 			cmd.Dir = ".."
-			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "MODE="+tc.mode)
+			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "MODE="+tc.mode, "TEST_PG_PUBLISH=invalid")
 			out, err := cmd.CombinedOutput()
 			if tc.wantError {
 				require.Error(t, err, string(out))
@@ -190,6 +191,81 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 			assert.Equal(t, "compose -p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down", lines[len(lines)-1])
 		})
 	}
+}
+
+func TestLeaseCleanupLaunchErrorPreservesStatus(t *testing.T) {
+	requirePython(t)
+	python, err := exec.LookPath("python3")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		command string
+		status  int
+	}{{"exit 0", 1}, {"exit 7", 7}} {
+		t.Run(tc.command, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.Symlink(python, filepath.Join(dir, "python3")))
+			cmd := exec.CommandContext(t.Context(), "./scripts/test-lease.sh", "roborev", "/bin/sh", "-c", tc.command)
+			cmd.Dir = ".."
+			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir)
+			out, err := cmd.CombinedOutput()
+			var exit *exec.ExitError
+			require.ErrorAs(t, err, &exit, string(out))
+			assert.Equal(t, tc.status, exit.ExitCode())
+			assert.Contains(t, string(out), "test service cleanup failed")
+			entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
+			require.NoError(t, err)
+			assert.Len(t, entries, 1)
+		})
+	}
+}
+
+func TestPostgresMakeTerminationCleansUp(t *testing.T) {
+	makePath := requireMake(t)
+	requirePython(t)
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	down := filepath.Join(dir, "down")
+	docker := "#!/bin/sh\ncase \" $* \" in *' port '*) echo 127.0.0.1:45678 ;; *' down '*) touch \"$HOME/down\" ;; esac\n"
+	goTool := "#!/bin/sh\nif [ \"$1\" = env ]; then exit 0; fi\ntouch \"$HOME/ready\"\nexec sleep 30\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go"), []byte(goTool), 0o700))
+	cmd := exec.CommandContext(t.Context(), makePath, "test-postgres")
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	require.NoError(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	finished := false
+	t.Cleanup(func() {
+		if !finished {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+			}
+		}
+	})
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 10*time.Millisecond)
+	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	reportDir := filepath.Join("..", "gotestsum", entries[0].Name())
+	t.Cleanup(func() { _ = os.RemoveAll(reportDir) })
+	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
+	select {
+	case err := <-done:
+		finished = true
+		require.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("make did not finish after termination")
+	}
+	_, err = os.Stat(down)
+	require.NoError(t, err)
+	entries, err = os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
 
 func TestLeaseCleanupAfterCommand(t *testing.T) {
