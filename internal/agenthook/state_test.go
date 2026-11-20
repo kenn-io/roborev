@@ -2032,6 +2032,30 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	assert.Equal(0, commitsSincePrompt(store.sessions["session-1"]), "counters reset after prompting")
 }
 
+func TestNewCommitSHAsWaitsForRewrittenHistory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses an executable shell wrapper")
+	}
+	repo := gittest.NewRepoWithCommit(t)
+	oldHead := repo.CommitFile("feature.go", "package main\n", "feature")
+	repo.WriteFile("feature.go", "package main\nconst feature = true\n")
+	repo.Run("add", "feature.go")
+	repo.Run("commit", "--amend", "-m", "amended feature")
+	newHead := repo.Head()
+	gitPath, err := exec.LookPath("git")
+	require.NoError(t, err)
+	wrapperDir := t.TempDir()
+	// This real subprocess takes longer than the former two-second history
+	// cutoff. Keep the actual Git result so the test exercises rewrite detection.
+	wrapper := "#!/bin/sh\nif [ \"$1\" = rev-list ] && [ \"$2\" = --reverse ]; then sleep 3; fi\nexec '" + strings.ReplaceAll(gitPath, "'", "'\\''") + "' \"$@\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "git"), []byte(wrapper), 0o755))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	commits, continuous := newCommitSHAs(t.Context(), repo.Root, oldHead, newHead)
+	assert.Equal(t, []string{newHead}, commits)
+	assert.False(t, continuous)
+}
+
 func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	assert := assert.New(t)
 	repo := gittest.NewRepo(t, gittest.Options{InitArgs: []string{"init", "-b", "main"}, ConfigureUser: true, ResolvePath: true})

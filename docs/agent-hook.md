@@ -52,6 +52,10 @@ Agent Hook tracks three signals per session:
 
 Existing sessions start collecting newly observed commits after an upgrade.
 
+New commit discovery follows the hook caller's cancellation and deadline. Slow
+Git reads after an amend do not have a separate two-second cutoff that can
+prevent the amended commit's review from triggering a reminder.
+
 Roborev scopes commit and failed-review accounting to repository lineage, so
 activity in one worktree does not consume another worktree's reminder. Older
 failed reviews, compacted reviews, and reviews moved by a rebase remain
