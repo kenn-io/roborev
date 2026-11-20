@@ -18,8 +18,9 @@ import (
 )
 
 func TestLeaseRequiresHome(t *testing.T) {
+	path := t.TempDir()
 	cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "true")
-	cmd.Env = append(os.Environ(), "HOME=")
+	cmd.Env = append(os.Environ(), "HOME=", "PATH="+path)
 	out, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
 	require.ErrorAs(t, err, &exit)
@@ -28,6 +29,7 @@ func TestLeaseRequiresHome(t *testing.T) {
 }
 
 func TestPostgresRunRequiresLease(t *testing.T) {
+	requireMake(t)
 	for _, tc := range []struct {
 		name   string
 		args   []string
@@ -37,6 +39,9 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 		{"someone else's lease", []string{"test-postgres-run", "TEST_SERVICE_LEASE=other-1-1"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if !tc.dryRun {
+				requirePython(t)
+			}
 			dir := t.TempDir()
 			if !tc.dryRun {
 				leaseDir := filepath.Join(dir, ".local/state/test-service-leases")
@@ -67,6 +72,8 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 }
 
 func TestPostgresRunCleansUp(t *testing.T) {
+	requireMake(t)
+	requirePython(t)
 	for _, tc := range []struct {
 		name      string
 		mode      string
@@ -172,6 +179,8 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 }
 
 func TestPostgresCleanupWaitsForDescendant(t *testing.T) {
+	requireMake(t)
+	requirePython(t)
 	for _, mode := range []string{"command fails", "supervisor killed", "signal while child holds lock"} {
 		killed := mode == "supervisor killed"
 		t.Run(mode, func(t *testing.T) {
@@ -316,6 +325,7 @@ exit 7
 }
 
 func TestLeaseCleanupFinishesAfterTerminalSignal(t *testing.T) {
+	requirePython(t)
 	dir := t.TempDir()
 	started := filepath.Join(dir, "cleanup-started")
 	release := filepath.Join(dir, "cleanup-release")
@@ -391,4 +401,11 @@ esac
 	require.NoError(t, err)
 	_, err = os.Stat(leasePath)
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func requireMake(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Skip("make is not on PATH")
+	}
 }
