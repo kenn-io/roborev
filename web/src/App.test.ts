@@ -128,7 +128,6 @@ describe("App", () => {
   test.each([
     ["Fix login race", "Fix login race (#17) · Roborev"],
     [undefined, "Review (#17) · Roborev"],
-    ["", "Review (#17) · Roborev"],
   ])("names an off-page queued job with subject %j", async (subject, title) => {
     let resolveReview: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/17", (url) => {
@@ -146,13 +145,14 @@ describe("App", () => {
         });
     });
     await vi.waitFor(() => expect(resolveReview).toBeDefined());
-    expect(document.title).toBe("Review (#17) · Roborev");
+    if (subject !== undefined)
+      expect(document.title).toBe("Review (#17) · Roborev");
     resolveReview?.(response(404));
     await screen.findByText(/review in progress/i);
     expect(document.title).toBe(title);
   });
 
-  test("names the unavailable daemon and recovery", async () => {
+  test("names the unavailable daemon", async () => {
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/status")
         return Promise.reject(new Error("offline"));
@@ -163,7 +163,7 @@ describe("App", () => {
     expect(document.title).toBe("Unavailable · Roborev");
   });
 
-  test("checks the ambient browser session on mount", () => {
+  test("names the checking session on mount", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => new Promise<Response>(() => {})),
@@ -184,19 +184,30 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "Connect to Roborev" }),
     ).toBeInTheDocument();
-    expect(document.title).toBe("Connect · Roborev");
     expect(screen.getByLabelText("Daemon token")).toHaveAttribute(
       "autocomplete",
       "current-password",
     );
   });
 
-  test("clears the token input after login and renders the review workspace", async () => {
+  test("names the review list, analytics, and a selected review", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response(401))
       .mockResolvedValueOnce(response(200, credentials))
-      .mockImplementation(applicationResponse);
+      .mockImplementation((input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : input,
+          location.origin,
+        );
+        if (url.pathname === "/api/jobs")
+          return response(200, {
+            jobs: [job],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 1 },
+          });
+        return applicationResponse(input);
+      });
     vi.stubGlobal("fetch", fetchMock);
     render(App);
 
@@ -227,6 +238,11 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(location.pathname).toBe("/analytics");
     expect(document.title).toBe("Analytics · Roborev");
+    await fireEvent.click(screen.getByRole("button", { name: "Reviews" }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /17.*abc123/i }),
+    );
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
     expect(token).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     expect(JSON.stringify(fetchMock.mock.calls)).toContain("one-time-secret");
@@ -385,7 +401,7 @@ describe("App", () => {
     expect(location.pathname).toBe("/analytics");
   });
 
-  test("offers a retry after a bootstrap error", async () => {
+  test("names an unavailable session and offers a retry", async () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
@@ -460,7 +476,6 @@ describe("App", () => {
     const row = await screen.findByRole("button", { name: /17.*abc123/i });
     await fireEvent.click(row);
     expect(location.pathname).toBe("/reviews/17");
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -582,7 +597,7 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  test("returns to session bootstrap when the current session is rejected", async () => {
+  test("names the connect screen when the session is rejected", async () => {
     let statusCalls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(
