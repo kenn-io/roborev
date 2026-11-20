@@ -283,12 +283,39 @@ postgres-up:
 postgres-down:
 	docker compose -f docker-compose.test.yml down
 
-# Postgres tests (requires postgres running)
-test-postgres: postgres-up
-	@echo "Waiting for postgres to be ready..."
-	@sleep 2
-	TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test" \
-		$(MAKE) test-postgres-ci
+# Postgres tests use a separate database for each run.
+test-postgres:
+ifneq (,$(filter q t,$(foreach flag,q t,$(if $(findstring $(flag),$(filter-out --%,$(firstword $(MAKEFLAGS)))),$(flag)))))
+	@:
+else
+ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
+	@$(MAKE) test-postgres-run TEST_SERVICE_LEASE=preview
+else
+	@TEST_PG_PUBLISH=127.0.0.1::5432 exec scripts/test-lease.sh roborev sh -c 'exec "$$@" TEST_SERVICE_LEASE="$$TEST_SERVICE_LEASE"' sh $(MAKE) test-postgres-run
+endif
+endif
+
+.PHONY: test-postgres-run
+test-postgres-run:
+ifneq (,$(filter q t,$(foreach flag,q t,$(if $(findstring $(flag),$(filter-out --%,$(firstword $(MAKEFLAGS)))),$(flag)))))
+	@:
+else
+ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
+	@python3 scripts/check-test-lease.py
+	@docker compose -p "$${TEST_SERVICE_LEASE:?use make test-postgres}" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres
+	@$(MAKE) test-postgres-ci TEST_POSTGRES_URL=postgres://roborev_test:roborev_test_password@127.0.0.1:PORT/roborev_test
+else
+	@python3 scripts/check-test-lease.py && \
+		docker compose -p "$${TEST_SERVICE_LEASE:?use make test-postgres}" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres && \
+		{ \
+			address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432) || { echo 'could not determine postgres port' >&2; exit 1; }; \
+			[ -n "$$address" ] || { echo 'could not determine postgres port' >&2; exit 1; }; \
+			report_dir="gotestsum/$$TEST_SERVICE_LEASE"; \
+			mkdir -p "$$report_dir" && \
+			$(MAKE) test-postgres-ci TEST_POSTGRES_REPORT_DIR="$$report_dir" TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test"; \
+		}
+endif
+endif
 
 .PHONY: test-postgres-growth
 test-postgres-growth:
@@ -376,15 +403,16 @@ install-hooks:
 	prek install
 
 # CI target: run postgres tests without managing docker (assumes postgres is running)
+TEST_POSTGRES_REPORT_DIR ?= gotestsum
 test-postgres-ci:
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-		--jsonfile gotestsum/postgres-storage.json \
-		--rerun-fails=2 --rerun-fails-report gotestsum/postgres-storage-reruns.txt \
+		--jsonfile $(TEST_POSTGRES_REPORT_DIR)/postgres-storage.json \
+		--rerun-fails=2 --rerun-fails-report $(TEST_POSTGRES_REPORT_DIR)/postgres-storage-reruns.txt \
 		--packages "./internal/storage/..." \
 		-- -tags=postgres -v -run Integration
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
-		--jsonfile gotestsum/postgres-daemon.json \
-		--rerun-fails=2 --rerun-fails-report gotestsum/postgres-daemon-reruns.txt \
+		--jsonfile $(TEST_POSTGRES_REPORT_DIR)/postgres-daemon.json \
+		--rerun-fails=2 --rerun-fails-report $(TEST_POSTGRES_REPORT_DIR)/postgres-daemon-reruns.txt \
 		--packages "./internal/daemon/..." \
 		-- -tags=postgres -v -run '^TestIntegration'
 
