@@ -76,6 +76,29 @@ function applicationResponse(input: RequestInfo | URL): Response {
   return response(404);
 }
 
+function renderAuthenticatedApp(
+  path: string,
+  respond: (url: URL) => Response | Promise<Response> | undefined,
+): void {
+  history.replaceState(null, "", path);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(
+        input instanceof Request ? input.url : input,
+        location.origin,
+      );
+      return Promise.resolve(
+        respond(url) ??
+          (url.pathname === "/api/ui/session/bootstrap"
+            ? response(200, credentials)
+            : applicationResponse(input)),
+      );
+    }),
+  );
+  render(App);
+}
+
 describe("App", () => {
   beforeEach(() => {
     sessionStorage.clear();
@@ -124,25 +147,13 @@ describe("App", () => {
   });
 
   test("names a missing review only after its request resolves and clears it on navigation", async () => {
-    history.replaceState(null, "", "/reviews/999");
     let resolveReview: ((value: Response) => void) | undefined;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        const url = new URL(
-          input instanceof Request ? input.url : input,
-          location.origin,
-        );
-        if (url.pathname === "/api/ui/session/bootstrap")
-          return Promise.resolve(response(200, credentials));
-        if (url.pathname === "/api/review")
-          return new Promise<Response>((resolve) => {
-            resolveReview = resolve;
-          });
-        return Promise.resolve(applicationResponse(input));
-      }),
-    );
-    render(App);
+    renderAuthenticatedApp("/reviews/999", (url) => {
+      if (url.pathname === "/api/review")
+        return new Promise<Response>((resolve) => {
+          resolveReview = resolve;
+        });
+    });
     await vi.waitFor(() => expect(resolveReview).toBeDefined());
     expect(document.title).toBe("Review (#999) · Roborev");
     resolveReview?.(response(404));
@@ -166,26 +177,15 @@ describe("App", () => {
   });
 
   test("keeps an off-page queued job's title when its review is absent", async () => {
-    history.replaceState(null, "", "/reviews/17");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = new URL(
-          input instanceof Request ? input.url : input,
-          location.origin,
-        );
-        if (url.pathname === "/api/ui/session/bootstrap")
-          return response(200, credentials);
-        if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
-          return response(200, {
-            jobs: [job],
-            has_more: false,
-            stats: { done: 0, closed: 0, open: 1 },
-          });
-        return applicationResponse(input);
-      }),
-    );
-    render(App);
+    renderAuthenticatedApp("/reviews/17", (url) => {
+      if (url.pathname === "/api/review") return response(404);
+      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+        return response(200, {
+          jobs: [job],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 1 },
+        });
+    });
     await vi.waitFor(() =>
       expect(document.title).toBe(
         "Fix login race (#17) · example/repo · Roborev",
@@ -628,35 +628,20 @@ describe("App", () => {
   });
 
   test("updates the title when a session ends with a review open", async () => {
-    history.replaceState(null, "", "/reviews/17");
     let bootstrapCalls = 0;
     let resolveBootstrap: ((value: Response) => void) | undefined;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        const url = new URL(
-          input instanceof Request ? input.url : input,
-          location.origin,
-        );
-        if (url.pathname === "/api/ui/session/bootstrap") {
-          if (bootstrapCalls++ === 0)
-            return Promise.resolve(response(200, credentials));
-          return new Promise<Response>((resolve) => {
-            resolveBootstrap = resolve;
-          });
-        }
-        if (url.pathname === "/api/jobs")
-          return Promise.resolve(
-            response(200, {
-              jobs: [job],
-              has_more: false,
-              stats: { done: 0, closed: 0, open: 1 },
-            }),
-          );
-        return Promise.resolve(applicationResponse(input));
-      }),
-    );
-    render(App);
+    renderAuthenticatedApp("/reviews/17", (url) => {
+      if (url.pathname === "/api/ui/session/bootstrap" && bootstrapCalls++ > 0)
+        return new Promise<Response>((resolve) => {
+          resolveBootstrap = resolve;
+        });
+      if (url.pathname === "/api/jobs")
+        return response(200, {
+          jobs: [job],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 1 },
+        });
+    });
     await vi.waitFor(() =>
       expect(document.title).toBe(
         "Fix login race (#17) · example/repo · Roborev",
