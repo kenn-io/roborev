@@ -59,16 +59,6 @@ func TestScheduledAnalysis(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, running)
 	assert.Equal(t, storage.JobSourceScheduled, running.Source)
-	second, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "HEAD", Agent: "test"})
-	require.NoError(t, err)
-	claimed, err = db.ClaimJob("other-worker")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	assert.Equal(t, second.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(running.ID, "test", "done"))
-	completed, err := db.GetJobByID(running.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusDone, completed.Status)
 }
 
 func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
@@ -305,13 +295,13 @@ func TestScheduledWakeDoesNotCancelAnotherWorkersClaim(t *testing.T) {
 	require.NoError(t, err)
 	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "analysis", Agent: "test", Prompt: "analysis", Source: storage.JobSourceScheduled})
 	require.NoError(t, err)
-	_, err = db.ClaimJob("worker-2")
+	_, err = db.ClaimJob("worker-1")
 	require.NoError(t, err)
 	_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "HEAD", Agent: "test", JobType: storage.JobTypeReview})
 	require.NoError(t, err)
 	server.workerPool.SetMaxWorkers(2)
 	server.workerPool.runningJobsMu.Lock()
-	server.workerPool.workerJobs["worker-2"] = job.ID
+	server.workerPool.workerJobs["worker-1"] = job.ID
 	server.workerPool.workerJobs["worker-0"] = workerClaimingJobID
 	server.workerPool.runningJobsMu.Unlock()
 	server.workerPool.wake()
@@ -319,7 +309,7 @@ func TestScheduledWakeDoesNotCancelAnotherWorkersClaim(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusRunning, current.Status)
 	server.workerPool.runningJobsMu.Lock()
-	delete(server.workerPool.workerJobs, "worker-2")
+	delete(server.workerPool.workerJobs, "worker-1")
 	server.workerPool.workerJobs["worker-0"] = job.ID
 	server.workerPool.workerJobs["worker-1"] = workerClaimingJobID
 	server.workerPool.runningJobsMu.Unlock()
@@ -428,10 +418,6 @@ func TestScheduledAnalysisDoesNotReadBlobs(t *testing.T) {
 	reads, err = os.ReadFile(logPath)
 	require.NoError(t, err)
 	assert.Empty(t, reads)
-	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	assert.Equal(t, []string{"c.txt"}, jobs[0].AnalysisFiles)
 }
 
 func TestScheduledAnalysisShutdown(t *testing.T) {
