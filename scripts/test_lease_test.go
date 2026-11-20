@@ -4,7 +4,6 @@ package scripts
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +20,7 @@ import (
 func TestLeaseRequiresHome(t *testing.T) {
 	for _, home := range []string{"unset", "empty"} {
 		t.Run(home, func(t *testing.T) {
-			cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "true", "true")
+			cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "true")
 			for _, env := range os.Environ() {
 				if !strings.HasPrefix(env, "HOME=") {
 					cmd.Env = append(cmd.Env, env)
@@ -51,7 +50,8 @@ with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", o
  try: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
  except BlockingIOError: sys.exit(0)
  sys.exit(1)' || exit 8 ;;
-  *' port '*) echo 127.0.0.1:45678 ;;
+  *' port '*)
+    case " $* " in *" -p $TEST_SERVICE_LEASE "*) echo 127.0.0.1:45678 ;; *) exit 9 ;; esac ;;
 esac
 `
 	goTool := `#!/bin/sh
@@ -89,123 +89,86 @@ done
 	data, err := os.ReadFile(dockerLog)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+" "+lease+" 127.0.0.1::5432]")
-	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down -v --remove-orphans")
 }
 
-func TestLeaseSupervisorCleanup(t *testing.T) {
-	for _, tc := range []struct {
-		command string
-		want    int
-	}{{"exit 0", 1}, {"exit 17", 17}} {
-		t.Run(tc.command, func(t *testing.T) {
-			dir := t.TempDir()
-			cleanup := "exit 1"
-			cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", cleanup, "sh", "-c", tc.command)
-			cmd.Env = append(os.Environ(), "HOME="+dir)
-			out, err := cmd.CombinedOutput()
-			var exit *exec.ExitError
-			require.ErrorAs(t, err, &exit, string(out))
-			assert.Equal(t, tc.want, exit.ExitCode(), string(out))
-			assert.Contains(t, string(out), "cleanup failed; scheduled cleanup will retry")
-		})
-	}
-	t.Run("descendant holds lease", func(t *testing.T) {
-		dir := t.TempDir()
-		cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", `touch "$CLEANED"`, "sh", "-c", `sleep 60 >/dev/null 2>&1 & echo $!`)
-		cmd.Env = append(os.Environ(), "HOME="+dir, "CLEANED="+filepath.Join(dir, "cleaned"))
-		out, err := cmd.Output()
-		if pid, convErr := strconv.Atoi(strings.TrimSpace(string(out))); convErr == nil {
-			t.Cleanup(func() {
-				ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
-				defer cancel()
-				args, err := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
-				if err == nil && strings.TrimSpace(string(args)) == "sleep 60" {
-					_ = syscall.Kill(pid, syscall.SIGKILL)
-				}
-			})
+func TestLeaseHeldByDescendantUntilExit(t *testing.T) {
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	release := filepath.Join(dir, "release")
+	require.NoError(t, syscall.Mkfifo(release, 0o600))
+	cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "python3", "-c", `import os, signal
+if os.fork() == 0:
+ signal.alarm(20)
+ devnull = os.open("/dev/null", os.O_WRONLY)
+ os.dup2(devnull, 1)
+ os.dup2(devnull, 2)
+ with open(os.environ["READY"] + ".tmp", "w") as f: f.write(str(os.getpid()))
+ os.rename(os.environ["READY"] + ".tmp", os.environ["READY"])
+ with open(os.environ["RELEASE"]) as f: f.read()
+ os._exit(0)`, "lease-test-child")
+	cmd.Env = append(os.Environ(), "HOME="+dir, "READY="+ready, "RELEASE="+release)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	// The child is an external process and publishes its readiness through a file.
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 10*time.Millisecond)
+	child, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(string(child))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		args, err := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+		if err == nil && strings.Contains(string(args), "lease-test-child") {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
-		require.NoError(t, err, string(out))
-		_, err = os.Stat(filepath.Join(dir, "cleaned"))
-		assert.True(t, os.IsNotExist(err), "cleanup ran while a descendant held the lease")
 	})
+	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	lease := filepath.Join(dir, ".local/state/test-service-leases", entries[0].Name())
+	probe := func() error { return exec.CommandContext(t.Context(), "flock", "-n", lease, "true").Run() }
+	require.Error(t, probe(), "descendant must hold the lease after the command exits")
+	var fd int
+	// The FIFO reader opens in the external child after it publishes readiness.
+	require.Eventually(t, func() bool {
+		fd, err = syscall.Open(release, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond)
+	f := os.NewFile(uintptr(fd), release)
+	require.NoError(t, f.Close())
+	// The external child exits after the FIFO closes and releases its inherited lock.
+	require.Eventually(t, func() bool { return probe() == nil }, 10*time.Second, 10*time.Millisecond)
 }
 
-func TestLeaseSupervisorForwardsSignals(t *testing.T) {
-	for _, tc := range []struct {
-		sig  syscall.Signal
-		code int
-	}{{syscall.SIGHUP, 129}, {syscall.SIGINT, 130}, {syscall.SIGTERM, 143}} {
-		t.Run(tc.sig.String(), func(t *testing.T) {
-			dir := t.TempDir()
-			ready, cleaned, stopped := filepath.Join(dir, "ready"), filepath.Join(dir, "cleaned"), filepath.Join(dir, "stopped")
-			cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", `touch "$CLEANED"`, "python3", "-c", `import os, signal, time
-received = 0
-def stop(sig, frame):
- global received
- received = sig
-for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM): signal.signal(sig, stop)
-child = os.fork()
-if child == 0:
- def stop(sig, frame):
-  with open(os.environ["STOPPED"], "w") as f: f.write(str(sig))
-  os._exit(0)
- for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM): signal.signal(sig, stop)
- with open(os.environ["READY"], "w") as f: f.write(f"{os.getppid()} {os.getpid()}")
- while True: time.sleep(1)
-os.waitpid(child, 0)
-while not received: time.sleep(0.01)
-exit(128 + received)`)
-			cmd.Env = append(os.Environ(), "HOME="+dir, "READY="+ready, "CLEANED="+cleaned, "STOPPED="+stopped)
-			require.NoError(t, cmd.Start())
-			done := make(chan error, 1)
-			go func() { done <- cmd.Wait() }()
-			var childPID, grandchildPID int
-			waited := false
-			t.Cleanup(func() {
-				if waited {
-					return
-				}
-				for _, pid := range []int{childPID, grandchildPID} {
-					if pid == 0 {
-						continue
-					}
-					ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
-					args, err := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
-					cancel()
-					if err == nil && strings.Contains(string(args), "STOPPED") {
-						_ = syscall.Kill(pid, syscall.SIGKILL)
-					}
-				}
-				_ = cmd.Process.Kill()
-				<-done
-			})
-			// Wait for the grandchild to install its signal handlers.
-			require.Eventually(t, func() bool {
-				data, err := os.ReadFile(ready)
-				if err != nil {
-					return false
-				}
-				n, _ := fmt.Sscanf(string(data), "%d %d", &childPID, &grandchildPID)
-				return n == 2
-			}, 10*time.Second, 50*time.Millisecond)
-			require.NoError(t, cmd.Process.Signal(tc.sig))
-			var err error
-			select {
-			case err = <-done:
-				waited = true
-			case <-time.After(10 * time.Second):
-				t.Fatal("supervisor did not stop after signal")
-			}
-			var exit *exec.ExitError
-			require.ErrorAs(t, err, &exit)
-			assert.Equal(t, tc.code, exit.ExitCode())
-			data, err := os.ReadFile(stopped)
-			require.NoError(t, err)
-			assert.Equal(t, strconv.Itoa(int(tc.sig)), string(data))
-			_, err = os.Stat(cleaned)
-			require.NoError(t, err)
-		})
-	}
+func TestLeaseRejectsPublicDirectory(t *testing.T) {
+	dir := t.TempDir()
+	leaseDir := filepath.Join(dir, ".local/state/test-service-leases")
+	require.NoError(t, os.MkdirAll(leaseDir, 0o700))
+	require.NoError(t, os.Chmod(leaseDir, 0o755))
+	cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "touch", filepath.Join(dir, "started"))
+	cmd.Env = append(os.Environ(), "HOME="+dir)
+	out, err := cmd.CombinedOutput()
+	require.Error(t, err)
+	assert.Contains(t, string(out), "lease directory must be private")
+	_, err = os.Stat(filepath.Join(dir, "started"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestPostgresDryRunDoesNotStartDocker(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0o700))
+	cmd := exec.CommandContext(t.Context(), "make", "-n", "test-postgres")
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+filepath.Join(dir, "docker-called"))
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	assert.Contains(t, string(out), "docker compose")
+	assert.Contains(t, string(out), "gotestsum")
+	_, err = os.Stat(filepath.Join(dir, "docker-called"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(filepath.Join(dir, ".local/state/test-service-leases"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestPostgresRunRequiresLease(t *testing.T) {
