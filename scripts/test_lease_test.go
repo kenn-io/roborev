@@ -31,38 +31,52 @@ func TestLeaseRequiresHome(t *testing.T) {
 func TestPostgresRunRequiresLease(t *testing.T) {
 	requireMake(t)
 	for _, tc := range []struct {
-		name   string
-		args   []string
-		dryRun bool
+		name        string
+		args        []string
+		dryRun      bool
+		ignoreError bool
 	}{
-		{"dry run", []string{"-n", "test-postgres"}, true},
-		{"someone else's lease", []string{"test-postgres-run", "TEST_SERVICE_LEASE=other-1-1"}, false},
+		{"dry run", []string{"-n", "test-postgres"}, true, false},
+		{"someone else's lease", []string{"test-postgres-run", "TEST_SERVICE_LEASE=other-1-1", "TEST_SERVICE_LEASE_FD=3"}, false, false},
+		{"ignored validation failure", []string{"-i", "test-postgres-run", "TEST_SERVICE_LEASE=other-1-1", "TEST_SERVICE_LEASE_FD=3"}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if !tc.dryRun {
 				requirePython(t)
 			}
 			dir := t.TempDir()
+			var probe *os.File
 			if !tc.dryRun {
 				leaseDir := filepath.Join(dir, ".local/state/test-service-leases")
 				require.NoError(t, os.MkdirAll(leaseDir, 0o700))
-				lock, err := os.Create(filepath.Join(leaseDir, "other-1-1"))
+				leasePath := filepath.Join(leaseDir, "other-1-1")
+				lock, err := os.Create(leasePath)
 				require.NoError(t, err)
 				require.NoError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_EX))
 				t.Cleanup(func() { _ = lock.Close() })
+				probe, err = os.OpenFile(leasePath, os.O_RDWR, 0)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = probe.Close() })
 			}
 			dockerLog := filepath.Join(dir, "docker-called")
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0o700))
 			cmd := exec.CommandContext(t.Context(), "make", tc.args...)
 			cmd.Dir = ".."
+			if probe != nil {
+				cmd.ExtraFiles = []*os.File{probe}
+			}
 			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+dockerLog)
 			out, err := cmd.CombinedOutput()
 			if tc.dryRun {
 				require.NoError(t, err, string(out))
 				_, err = os.Stat(filepath.Join(dir, ".local/state/test-service-leases"))
 				require.ErrorIs(t, err, os.ErrNotExist)
+			} else if tc.ignoreError {
+				require.NoError(t, err, string(out))
 			} else {
 				require.Error(t, err, string(out))
+			}
+			if !tc.dryRun {
 				assert.Contains(t, string(out), "use make test-postgres")
 			}
 			_, err = os.Stat(dockerLog)

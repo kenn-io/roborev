@@ -296,15 +296,20 @@ endif
 
 .PHONY: test-postgres-run
 test-postgres-run:
+ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
 	@python3 scripts/check-test-lease.py
 	@TEST_PG_PUBLISH=127.0.0.1::5432 docker compose -p "$${TEST_SERVICE_LEASE:?use make test-postgres}" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres
-ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
 	@$(MAKE) test-postgres-ci TEST_POSTGRES_URL=postgres://roborev_test:roborev_test_password@127.0.0.1:PORT/roborev_test
 else
-	@address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432) && [ -n "$$address" ] || { echo 'could not determine postgres port' >&2; exit 1; }; \
-	report_dir="gotestsum/$$TEST_SERVICE_LEASE"; \
-	mkdir -p "$$report_dir"; \
-	$(MAKE) test-postgres-ci TEST_POSTGRES_REPORT_DIR="$$report_dir" TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test"
+	@python3 scripts/check-test-lease.py && \
+		TEST_PG_PUBLISH=127.0.0.1::5432 docker compose -p "$${TEST_SERVICE_LEASE:?use make test-postgres}" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres && \
+		{ \
+			address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432) || { echo 'could not determine postgres port' >&2; exit 1; }; \
+			[ -n "$$address" ] || { echo 'could not determine postgres port' >&2; exit 1; }; \
+			report_dir="gotestsum/$$TEST_SERVICE_LEASE"; \
+			mkdir -p "$$report_dir" && \
+			$(MAKE) test-postgres-ci TEST_POSTGRES_REPORT_DIR="$$report_dir" TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test"; \
+		}
 endif
 
 .PHONY: test-postgres-growth
