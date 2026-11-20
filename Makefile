@@ -183,6 +183,9 @@ api-breaking:
 test:
 	go test ./...
 
+test-service-lease:
+	go test ./scripts -run '^(TestLeaseRequiresHome|TestPostgres)' -count=1
+
 test-agent-setup:
 	go test ./cmd/roborev ./internal/agenthook ./internal/mcpconfig -run '^(TestAgentSetupMCPReruns|TestAgentSetupPreservesMCPSettings|TestAgentSetupKeepsResolvableHookExecutable|TestAgentReadinessRequiresMatchingHookAndSkillMode|TestAgentSetupReportsUnsupportedAgentUnknown|TestAgentSetupDoesNotInstallHooksWhenMCPFails|TestDoctorReportsDaemonStartedDuringMCPCheck|TestAgentReadinessShowsNextStepOnce|TestQuickstartCodexTrust|TestClaudeKitInstallOptionsKeepExecutableAndArguments|TestInstallMergesAndSwitchesTransports|TestInstallDryRunAndInvalidInputPreserveConfig|TestInstallWhitespaceOnlyConfig|TestInstallPreservesConfigSymlinkAndMode)$$'
 
@@ -288,16 +291,18 @@ test-postgres:
 ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
 	@$(MAKE) test-postgres-run TEST_SERVICE_LEASE=preview
 else
-	@scripts/test-lease.sh roborev --compose sh -c 'exec "$$@" TEST_SERVICE_LEASE="$$TEST_SERVICE_LEASE"' sh $(MAKE) test-postgres-run
+	@scripts/test-lease.sh roborev sh -c 'exec "$$@" TEST_SERVICE_LEASE="$$TEST_SERVICE_LEASE"' sh $(MAKE) test-postgres-run
 endif
 
 .PHONY: test-postgres-run
 test-postgres-run:
+	@python3 scripts/check-test-lease.py
 	@TEST_PG_PUBLISH=127.0.0.1::5432 docker compose -p "$${TEST_SERVICE_LEASE:?use make test-postgres}" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres
 ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
-	@TEST_POSTGRES_URL=postgres://roborev_test:roborev_test_password@127.0.0.1:PORT/roborev_test $(MAKE) test-postgres-ci
+	@$(MAKE) test-postgres-ci TEST_POSTGRES_URL=postgres://roborev_test:roborev_test_password@127.0.0.1:PORT/roborev_test
 else
-	@TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432)/roborev_test" $(MAKE) test-postgres-ci
+	@address=$$(docker compose -p "$$TEST_SERVICE_LEASE" -f docker-compose.test.yml -f docker-compose.test-lease.yml port postgres 5432) && [ -n "$$address" ] || { echo 'could not determine postgres port' >&2; exit 1; }; \
+	$(MAKE) test-postgres-ci TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test"
 endif
 
 .PHONY: test-postgres-growth

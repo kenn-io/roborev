@@ -23,22 +23,15 @@ import sys
 import time
 
 name, *command = sys.argv[1:]
-compose = command[0] == "--compose"
-if compose:
-    command = command[1:]
 lease = f"{name}-{int(time.time())}-{os.getpid()}"
 directory = os.path.join(os.environ["HOME"], ".local", "state", "test-service-leases")
 os.makedirs(directory, mode=0o700, exist_ok=True)
-info = os.stat(directory)
-if info.st_uid != os.getuid() or info.st_mode & 0o077:
-    sys.exit("test service lease directory must be private and owned by the current user")
 fd = os.open(os.path.join(directory, lease), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
 os.set_inheritable(fd, True)
 fcntl.flock(fd, fcntl.LOCK_EX)
 os.environ["TEST_SERVICE_LEASE"] = lease
 os.environ["COMPOSE_PROJECT_NAME"] = lease
-if not compose:
-    os.execvp(command[0], command)
+os.environ["TEST_SERVICE_LEASE_FD"] = str(fd)
 
 # A separate open file description can wait for every inherited lock holder.
 wait_fd = os.open(os.path.join(directory, lease), os.O_RDONLY)
@@ -54,31 +47,15 @@ def interrupt(signum, frame):
             pass
 signal.signal(signal.SIGINT, interrupt)
 signal.signal(signal.SIGTERM, interrupt)
-try:
-    process = subprocess.Popen(command, pass_fds=(fd,))
-    if interrupted:
-        interrupt(interrupted, None)
-    status = process.wait()
-except OSError as error:
-    print(error, file=sys.stderr)
-    status = 1
+process = subprocess.Popen(command, pass_fds=(fd,))
+if interrupted:
+    interrupt(interrupted, None)
+status = process.wait()
 os.close(fd)
 fcntl.flock(wait_fd, fcntl.LOCK_EX)
-try:
-    cleanup = subprocess.run(["docker", "compose", "-p", lease, "-f", "docker-compose.test.yml", "-f", "docker-compose.test-lease.yml", "down"]).returncode
-except OSError as error:
-    print(error, file=sys.stderr)
-    cleanup = 1
+cleanup = subprocess.run(["docker", "compose", "-p", lease, "-f", "docker-compose.test.yml", "-f", "docker-compose.test-lease.yml", "down"]).returncode
 if cleanup == 0:
-    path = os.path.join(directory, lease)
-    try:
-        if os.path.samestat(os.fstat(wait_fd), os.stat(path)):
-            os.unlink(path)
-    except FileNotFoundError:
-        pass
-    except OSError as error:
-        print(error, file=sys.stderr)
-        cleanup = 1
+    os.unlink(os.path.join(directory, lease))
 if interrupted:
     status = 128 + interrupted
 elif status < 0:
