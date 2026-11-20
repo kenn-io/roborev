@@ -2,7 +2,8 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App.svelte";
-import { tabTitle } from "./lib/utils/tab-title";
+import { sessionLostEvent } from "./lib/api/session";
+import { sessionTitle, tabTitle } from "./lib/utils/tab-title";
 
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
@@ -88,20 +89,108 @@ describe("App", () => {
   });
 
   test("names workspaces and reviews", () => {
-    expect(tabTitle({ page: "reviews" }, null)).toBe("Reviews · Roborev");
-    expect(tabTitle({ page: "analytics" }, null)).toBe("Analytics · Roborev");
+    expect(tabTitle({ page: "reviews" }, null, false)).toBe(
+      "Reviews · Roborev",
+    );
+    expect(tabTitle({ page: "analytics" }, null, false)).toBe(
+      "Analytics · Roborev",
+    );
     const route = { page: "reviews", jobId: 17 } as const;
-    expect(tabTitle(route, job)).toBe(
+    expect(tabTitle(route, job, false)).toBe(
       "Fix login race (#17) · example/repo · Roborev",
     );
-    expect(tabTitle(route, { ...job, commit_subject: undefined })).toBe(
+    expect(tabTitle(route, { ...job, commit_subject: undefined }, false)).toBe(
       "Review (#17) · example/repo · Roborev",
     );
-    expect(tabTitle(route, { ...job, repo_name: undefined })).toBe(
+    expect(tabTitle(route, { ...job, repo_name: undefined }, false)).toBe(
       "Fix login race (#17) · Roborev",
     );
-    expect(tabTitle(route, null)).toBe("Review (#17) · Roborev");
-    expect(tabTitle(route, { ...job, id: 8 })).toBe("Review (#17) · Roborev");
+    expect(tabTitle(route, null, false)).toBe("Review (#17) · Roborev");
+    expect(tabTitle(route, { ...job, id: 8 }, false)).toBe(
+      "Review (#17) · Roborev",
+    );
+    expect(tabTitle(route, null, true)).toBe(
+      "Review not found (#17) · Roborev",
+    );
+    expect(tabTitle(route, { ...job, id: 8 }, true)).toBe(
+      "Review not found (#17) · Roborev",
+    );
+    expect(tabTitle(route, job, true)).toBe(
+      "Fix login race (#17) · example/repo · Roborev",
+    );
+    expect(sessionTitle("checking")).toBe("Checking · Roborev");
+    expect(sessionTitle("login")).toBe("Connect · Roborev");
+    expect(sessionTitle("error")).toBe("Unavailable · Roborev");
+  });
+
+  test("names a missing review only after its request resolves and clears it on navigation", async () => {
+    history.replaceState(null, "", "/reviews/999");
+    let resolveReview: ((value: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : input,
+          location.origin,
+        );
+        if (url.pathname === "/api/ui/session/bootstrap")
+          return Promise.resolve(response(200, credentials));
+        if (url.pathname === "/api/review")
+          return new Promise<Response>((resolve) => {
+            resolveReview = resolve;
+          });
+        return Promise.resolve(applicationResponse(input));
+      }),
+    );
+    render(App);
+    await vi.waitFor(() => expect(resolveReview).toBeDefined());
+    expect(document.title).toBe("Review (#999) · Roborev");
+    resolveReview?.(response(404));
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Review not found (#999) · Roborev"),
+    );
+    const titles: string[] = [];
+    const observer = new MutationObserver(() => titles.push(document.title));
+    observer.observe(document.querySelector("title")!, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    history.pushState(null, "", "/reviews/1000");
+    await fireEvent.popState(window);
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Review (#1000) · Roborev"),
+    );
+    expect(titles).not.toContain("Review not found (#1000) · Roborev");
+    observer.disconnect();
+  });
+
+  test("keeps an off-page queued job's title when its review is absent", async () => {
+    history.replaceState(null, "", "/reviews/17");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : input,
+          location.origin,
+        );
+        if (url.pathname === "/api/ui/session/bootstrap")
+          return response(200, credentials);
+        if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+          return response(200, {
+            jobs: [job],
+            has_more: false,
+            stats: { done: 0, closed: 0, open: 1 },
+          });
+        return applicationResponse(input);
+      }),
+    );
+    render(App);
+    await vi.waitFor(() =>
+      expect(document.title).toBe(
+        "Fix login race (#17) · example/repo · Roborev",
+      ),
+    );
   });
 
   test("checks the ambient browser session on mount", () => {
@@ -410,6 +499,10 @@ describe("App", () => {
     expect(document.title).toBe(
       "Fix login race (#17) · example/repo · Roborev",
     );
+    await screen.findByText("Review in progress…");
+    expect(document.title).toBe(
+      "Fix login race (#17) · example/repo · Roborev",
+    );
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -532,6 +625,48 @@ describe("App", () => {
     expect(
       await screen.findByRole("button", { name: "Reopen" }),
     ).toBeInTheDocument();
+  });
+
+  test("updates the title when a session ends with a review open", async () => {
+    history.replaceState(null, "", "/reviews/17");
+    let bootstrapCalls = 0;
+    let resolveBootstrap: ((value: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : input,
+          location.origin,
+        );
+        if (url.pathname === "/api/ui/session/bootstrap") {
+          if (bootstrapCalls++ === 0)
+            return Promise.resolve(response(200, credentials));
+          return new Promise<Response>((resolve) => {
+            resolveBootstrap = resolve;
+          });
+        }
+        if (url.pathname === "/api/jobs")
+          return Promise.resolve(
+            response(200, {
+              jobs: [job],
+              has_more: false,
+              stats: { done: 0, closed: 0, open: 1 },
+            }),
+          );
+        return Promise.resolve(applicationResponse(input));
+      }),
+    );
+    render(App);
+    await vi.waitFor(() =>
+      expect(document.title).toBe(
+        "Fix login race (#17) · example/repo · Roborev",
+      ),
+    );
+    window.dispatchEvent(new Event(sessionLostEvent));
+    await vi.waitFor(() => expect(document.title).toBe("Checking · Roborev"));
+    resolveBootstrap?.(response(401));
+    await screen.findByRole("heading", { name: "Connect to Roborev" });
+    expect(document.title).toBe("Connect · Roborev");
   });
 
   test("returns to session bootstrap when the current session is rejected", async () => {

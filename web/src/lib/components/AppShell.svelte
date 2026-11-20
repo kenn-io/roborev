@@ -67,7 +67,14 @@
       route.page === "reviews" && route.jobId !== undefined
         ? getJob(stores, route.jobId)
         : undefined;
-    document.title = tabTitle(route, job);
+    const review = stores.roborevReview;
+    const notFound =
+      route.page === "reviews" &&
+      route.jobId !== undefined &&
+      review.getSelectedJobId() === route.jobId &&
+      !review.isLoading() &&
+      review.isReviewNotFound();
+    document.title = tabTitle(route, job, notFound);
   });
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {

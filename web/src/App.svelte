@@ -9,8 +9,9 @@
   } from "./lib/api/session";
   import AppShell from "./lib/components/AppShell.svelte";
   import BrandMark from "./lib/components/BrandMark.svelte";
+  import { sessionTitle, type SessionScreen } from "./lib/utils/tab-title";
 
-  type ViewState = "checking" | "login" | "authenticated" | "error";
+  type ViewState = SessionScreen | "authenticated";
 
   let view: ViewState = "checking";
   let token = "";
@@ -26,7 +27,7 @@
   };
 
   $: if (view !== "authenticated") {
-    document.title = `${{ checking: "Checking", login: "Connect", error: "Unavailable" }[view]} · Roborev`;
+    document.title = sessionTitle(view);
   }
 
   onMount(() => {

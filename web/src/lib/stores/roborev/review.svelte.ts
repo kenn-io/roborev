@@ -405,13 +405,13 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     if (jobId !== selectedJobId) {
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
+      reviewNotFound = false;
     }
     selectedJobId = jobId;
     if (jobId === undefined) {
       review = null;
       selectedJob = null;
       responses = [];
-      reviewNotFound = false;
       opts.runtime.runCommand(
         Effect.gen(function* () {
           const workflow = yield* RoborevWorkflow;
