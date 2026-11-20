@@ -163,6 +163,26 @@ describe("App", () => {
     expect(document.title).toBe("Unavailable · Roborev");
   });
 
+  test("names a legacy review when its job arrives after the error", async () => {
+    let resolveJob: ((value: Response) => void) | undefined;
+    renderAuthenticatedApp("/reviews/17", (url) => {
+      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+        return new Promise<Response>((resolve) => {
+          resolveJob = resolve;
+        });
+      if (url.pathname === "/api/review") return response(409);
+      if (url.pathname === "/api/ui/review-projection")
+        return new Promise<Response>(() => {});
+    });
+    await screen.findByText("Failed to load review");
+    expect(resolveJob).toBeDefined();
+    expect(document.title).toBe("Review (#17) · Roborev");
+    resolveJob?.(response(200, { jobs: [{ ...job, status: "done" }] }));
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Fix login race (#17) · Roborev"),
+    );
+  });
+
   test.each(["review", "projection"])(
     "keeps the off-page subject when %s fails",
     async (failed) => {
