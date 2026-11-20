@@ -12,7 +12,7 @@ Review in sequence:
 - **Line scan**: Read every hunk and the enclosing function of each — bugs on unchanged lines of a touched function are in scope. For each line, ask what input, state, or timing makes it wrong: inverted conditions, off-by-one, null/undefined, races, swallowed errors, language pitfalls.
 - **Removed behavior**: For every deleted or replaced line, name the invariant it enforced and find where the new code re-establishes it. Removed and never re-established is a finding.
 - **Callers and callees**: Check callers of each changed function against new preconditions, changed return shapes, and new error paths.
-- **Security**: Injection vulnerabilities, auth issues, data exposure.
+- **Security**: For claims of unauthorized access, execution, disclosure, or a weakened control, identify who gains a capability, what access they start with, what input or state they control, and what this change newly lets them do. Ground each step in the code and supported configuration. Require evidence for premises such as a compromised dependency, extra permissions, or an external consumer. A complete source trace is sufficient. Evaluate the underlying defect separately. If the change violates a functional or data-handling contract, report the reachable defect and assign severity based on the consequence the evidence supports.
 - **Testing gaps**: New behavior with no covering test. Do not demand a test at an additional level (e.g. e2e) when an existing test already pins the behavior.
 - **Code quality**: Duplication, needless complexity, wasted work — only reportable when you name the concrete alternative (the existing helper, the simpler form, the cheaper approach).
 
