@@ -113,7 +113,7 @@
       bind:value={searchValue}
       size="sm"
       block
-      placeholder="Search ref, branch, PR #..."
+      placeholder="Search ref, branch, PR"
       ariaLabel="Search by ref, branch, or pull request"
       oninput={onSearchInput}
       onkeydown={(event) => {
