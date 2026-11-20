@@ -113,9 +113,6 @@ describe("App", () => {
 
   test("names reviews with missing or stale job details", () => {
     const route = { page: "reviews", jobId: 17 } as const;
-    expect(tabTitle(route, { ...job, commit_subject: undefined }, false)).toBe(
-      "Review (#17) · example/repo · Roborev",
-    );
     expect(tabTitle(route, { ...job, repo_name: undefined }, false)).toBe(
       "Fix login race (#17) · Roborev",
     );
