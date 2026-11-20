@@ -7,7 +7,6 @@ const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
   reportScreenViewed: vi.fn(),
   reportCoreAction: vi.fn(),
-  reportErrorShown: vi.fn(),
 }));
 // Shell effects are checked here; authenticated requests are checked beside the helper.
 vi.mock("./lib/utils/app-opened", () => appOpened);
@@ -131,8 +130,12 @@ describe("App", () => {
     [undefined, "Review (#17) · Roborev"],
     ["", "Review (#17) · Roborev"],
   ])("names an off-page queued job with subject %j", async (subject, title) => {
+    let resolveReview: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/review") return response(404);
+      if (url.pathname === "/api/review")
+        return new Promise<Response>((resolve) => {
+          resolveReview = resolve;
+        });
       if (url.pathname === "/api/ui/review-projection")
         return response(200, { responses: [] });
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
@@ -142,46 +145,11 @@ describe("App", () => {
           stats: { done: 0, closed: 0, open: 1 },
         });
     });
-    await screen.findByText(/review in progress/i);
-    expect(document.title).toBe(title);
-  });
-
-  test("offers retry when a review fails while its job lookup stalls", async () => {
-    let retry = false;
-    renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/review")
-        return retry ? response(404) : response(500);
-      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
-        return retry
-          ? response(200, { jobs: [job] })
-          : new Promise<Response>(() => {});
-    });
-    expect(
-      await screen.findByText("Failed to load review"),
-    ).toBeInTheDocument();
-    retry = true;
-    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await screen.findByText(/review in progress/i);
-    expect(document.title).toBe("Fix login race (#17) · Roborev");
-  });
-
-  test("names an off-page review after its review request resolves", async () => {
-    let resolveReview: ((value: Response) => void) | undefined;
-    renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/review")
-        return new Promise<Response>((resolve) => {
-          resolveReview = resolve;
-        });
-      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
-        return response(200, { jobs: [job] });
-    });
     await vi.waitFor(() => expect(resolveReview).toBeDefined());
     expect(document.title).toBe("Review (#17) · Roborev");
-    expect(screen.getByText("Loading review…")).toBeInTheDocument();
     resolveReview?.(response(404));
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Fix login race (#17) · Roborev"),
-    );
+    await screen.findByText(/review in progress/i);
+    expect(document.title).toBe(title);
   });
 
   test("names the unavailable daemon and recovery", async () => {

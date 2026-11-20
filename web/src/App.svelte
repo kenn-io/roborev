@@ -11,7 +11,7 @@
   import BrandMark from "./lib/components/BrandMark.svelte";
   import { sessionTitles } from "./lib/utils/tab-title";
 
-  type ViewState = "checking" | "login" | "error" | "authenticated";
+  type ViewState = "checking" | "login" | "authenticated" | "error";
 
   let view: ViewState = "checking";
   let token = "";
