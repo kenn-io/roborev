@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { makeAppRuntime, type OwnedAppRuntime } from "../runtime/runtime";
-import { createReviewStores } from "./composition.svelte";
+import { createReviewStores, getSelectedJob } from "./composition.svelte";
 
 let runtime: OwnedAppRuntime | undefined;
 
@@ -14,6 +14,23 @@ afterEach(async () => {
 });
 
 describe("review store composition", () => {
+  test("does not scan visible jobs when no job is selected", () => {
+    runtime = makeAppRuntime();
+    const stores = createReviewStores({
+      runtime,
+      navigate: vi.fn(),
+      getCapabilities: () => ({
+        cancelAnyJob: true,
+        cancelReviewJob: true,
+        rerunJob: true,
+      }),
+    });
+    const getVisibleJobs = vi.spyOn(stores.roborevJobs, "getVisibleJobs");
+    expect(getSelectedJob(stores, undefined)).toBeUndefined();
+    expect(getVisibleJobs).not.toHaveBeenCalled();
+    stores.roborevJobs.dispose();
+  });
+
   test("passes provisional daemon availability through composition", () => {
     runtime = makeAppRuntime();
     const stores = createReviewStores({
