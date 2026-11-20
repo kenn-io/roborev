@@ -1950,9 +1950,9 @@ func configuredWorktree(parent context.Context, commonDir string) string {
 	return filepath.Clean(worktree)
 }
 
-func newCommitSHAs(parent context.Context, repoRoot, oldHead, newHead string) ([]string, bool) {
-	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
-	defer cancel()
+func newCommitSHAs(ctx context.Context, repoRoot, oldHead, newHead string) ([]string, bool) {
+	// Let the caller bound history reads. A shorter local deadline can lose
+	// ownership of an amended commit after its pending reminder was preserved.
 	continuous := oldHead == ""
 	if oldHead != "" {
 		_, err := agentHookGit.Output(ctx, repoRoot, "merge-base", "--is-ancestor", oldHead, newHead)
