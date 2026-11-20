@@ -200,7 +200,6 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 		trigger string
 		err     error
 	}{
-		{name: "result write", trigger: "BEFORE INSERT ON reviews WHEN NEW.job_id = %d"},
 		{name: "failed-status write", trigger: "BEFORE UPDATE OF status ON review_jobs WHEN NEW.id = %d AND NEW.status = 'failed'", err: errors.New("synthetic agent failure")},
 	} {
 		t.Run(test.name, func(t *testing.T) {

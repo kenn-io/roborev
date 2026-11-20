@@ -318,3 +318,32 @@ func TestPrebuiltPanelMemberStoresInstructionsOnce(t *testing.T) {
 		"prebuilt CI prompt\n\n## Additional reviewer instructions (panel: security-panel / member: auth-reviewer)\nFocus on auth boundaries.\n",
 		review.Prompt)
 }
+
+func TestReleaseWhenMemberResultCannotBeStored(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const agentName = "panel-store-failure"
+	registerPassingAgent(t, agentName)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "store-failure-panel", []memberSpec{
+		{name: "m0", agent: agentName},
+	})
+	_, err := tc.DB.ExecContext(t.Context(),
+		`UPDATE review_jobs SET retry_count = ? WHERE id = ?`, maxRetries, members[0].ID)
+	require.NoError(t, err)
+	_, err = tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
+		BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`)
+	require.NoError(t, err)
+
+	member := claimNext(t, tc)
+	tc.Pool.processJob(testWorkerID, member)
+
+	failed := tc.assertJobStatus(t, member.ID, storage.JobStatusFailed)
+	assert.Contains(failed.Error, "store review: ")
+	assert.Contains(failed.Error, "database or disk is full")
+	synth, err := tc.DB.GetSynthesisJob(runUUID)
+	require.NoError(t, err)
+	assert.False(synth.ClaimBlocked, "synthesis must release once the member fails")
+}
