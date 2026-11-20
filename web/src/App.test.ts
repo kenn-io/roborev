@@ -113,12 +113,7 @@ describe("App", () => {
     ["Fix login race", "Fix login race (#17) · Roborev"],
     [undefined, "Review (#17) · Roborev"],
   ])("names an off-page queued job with subject %j", async (subject, title) => {
-    let resolveReview: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/17", (url) => {
-      if (url.pathname === "/api/review")
-        return new Promise<Response>((resolve) => {
-          resolveReview = resolve;
-        });
       if (url.pathname === "/api/ui/review-projection")
         return response(200, { responses: [] });
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
@@ -128,8 +123,6 @@ describe("App", () => {
           stats: { done: 0, closed: 0, open: 1 },
         });
     });
-    await vi.waitFor(() => expect(resolveReview).toBeDefined());
-    resolveReview?.(response(404));
     await vi.waitFor(() => expect(document.title).toBe(title));
     await screen.findByText(/review in progress/i);
     expect(document.title).toBe(title);
@@ -161,7 +154,9 @@ describe("App", () => {
     );
   });
 
-  test("names the review list, analytics, and a selected review", async () => {
+  test("connects and names the review list, analytics, and selected reviews", async () => {
+    let resolveJob17: ((value: Response) => void) | undefined;
+    let resolveJob18: ((value: Response) => void) | undefined;
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response(401))
@@ -171,6 +166,16 @@ describe("App", () => {
           input instanceof Request ? input.url : input,
           location.origin,
         );
+        if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+          return new Promise<Response>((resolve) => {
+            resolveJob17 = resolve;
+          });
+        if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "18")
+          return new Promise<Response>((resolve) => {
+            resolveJob18 = resolve;
+          });
+        if (url.pathname === "/api/ui/review-projection")
+          return response(200, { responses: [] });
         if (url.pathname === "/api/jobs")
           return response(200, {
             jobs: [job],
@@ -214,6 +219,15 @@ describe("App", () => {
       await screen.findByRole("button", { name: /17.*abc123/i }),
     );
     expect(document.title).toBe("Fix login race (#17) · Roborev");
+    await vi.waitFor(() => expect(resolveJob17).toBeDefined());
+    resolveJob17?.(response(200, { jobs: [job] }));
+    await screen.findByText(/review in progress/i);
+    history.pushState(null, "", "/reviews/18");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await vi.waitFor(() => expect(resolveJob18).toBeDefined());
+    expect(document.title).toBe("Review (#18) · Roborev");
+    resolveJob18?.(response(200, { jobs: [{ ...job, id: 18, commit_subject: "Add tests" }] }));
+    await vi.waitFor(() => expect(document.title).toBe("Add tests (#18) · Roborev"));
     expect(token).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     expect(JSON.stringify(fetchMock.mock.calls)).toContain("one-time-secret");
