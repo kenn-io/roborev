@@ -8,7 +8,7 @@ try:
     path = os.path.join(os.environ["HOME"], ".local/state/test-service-leases", lease)
     if not os.path.samestat(os.fstat(fd), os.stat(path)):
         raise ValueError("lease does not match descriptor")
-    with open(path) as probe:
+    with open(path, "r+") as probe:
         try:
             fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

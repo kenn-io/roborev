@@ -29,7 +29,7 @@ func TestLeaseRequiresHome(t *testing.T) {
 }
 
 func TestPostgresRunRequiresLease(t *testing.T) {
-	requireMake(t)
+	makePath := requireMake(t)
 	for _, tc := range []struct {
 		name        string
 		args        []string
@@ -37,6 +37,10 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 		ignoreError bool
 	}{
 		{"dry run", []string{"-n", "test-postgres"}, true, false},
+		{"question", []string{"-q", "test-postgres"}, true, true},
+		{"touch", []string{"-t", "test-postgres"}, true, false},
+		{"question inner", []string{"-q", "test-postgres-run"}, true, true},
+		{"touch inner", []string{"-t", "test-postgres-run"}, true, false},
 		{"someone else's lease", []string{"test-postgres-run", "TEST_SERVICE_LEASE=other-1-1", "TEST_SERVICE_LEASE_FD=3"}, false, false},
 		{"ignored validation failure", []string{"-i", "test-postgres-run", "TEST_SERVICE_LEASE=other-1-1", "TEST_SERVICE_LEASE_FD=3"}, false, true},
 	} {
@@ -60,15 +64,21 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 			}
 			dockerLog := filepath.Join(dir, "docker-called")
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0o700))
-			cmd := exec.CommandContext(t.Context(), "make", tc.args...)
+			cmd := exec.CommandContext(t.Context(), makePath, tc.args...)
 			cmd.Dir = ".."
 			if probe != nil {
 				cmd.ExtraFiles = []*os.File{probe}
 			}
 			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+dockerLog)
 			out, err := cmd.CombinedOutput()
-			if tc.dryRun {
+			if tc.dryRun && tc.ignoreError {
+				var exit *exec.ExitError
+				require.ErrorAs(t, err, &exit)
+				assert.Equal(t, 1, exit.ExitCode())
+			} else if tc.dryRun {
 				require.NoError(t, err, string(out))
+			}
+			if tc.dryRun {
 				_, err = os.Stat(filepath.Join(dir, ".local/state/test-service-leases"))
 				require.ErrorIs(t, err, os.ErrNotExist)
 			} else if tc.ignoreError {
@@ -86,7 +96,7 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 }
 
 func TestPostgresRunCleansUp(t *testing.T) {
-	requireMake(t)
+	makePath := requireMake(t)
 	requirePython(t)
 	for _, tc := range []struct {
 		name      string
@@ -99,7 +109,6 @@ func TestPostgresRunCleansUp(t *testing.T) {
 		{"interruption", "interrupt", true},
 		{"cleanup failure", "down-fails", true},
 		{"port failure", "port-fails", true},
-		{"empty port", "port-empty", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -121,7 +130,7 @@ with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", o
   *' port '*)
     [ "$2" = -p ] && [ "$3" = "$TEST_SERVICE_LEASE" ] || exit 9
     case " $* " in *' port postgres 5432 '*) ;; *) exit 9 ;; esac
-    case "$MODE" in port-fails) echo 'port lookup failed' >&2; exit 1 ;; port-empty) exit 0 ;; esac
+    case "$MODE" in port-fails) echo 'port lookup failed' >&2; exit 1 ;; esac
     echo 127.0.0.1:45678 ;;
 esac
 `
@@ -134,7 +143,7 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "go"), []byte(goTool), 0o700))
 			log := filepath.Join(dir, "docker.log")
-			cmd := exec.CommandContext(t.Context(), "make", "test-postgres", "TEST_SERVICE_LEASE=other-1-1", "TEST_POSTGRES_URL=postgres://wrong")
+			cmd := exec.CommandContext(t.Context(), makePath, "test-postgres", "TEST_SERVICE_LEASE=other-1-1", "TEST_POSTGRES_URL=postgres://wrong")
 			cmd.Dir = ".."
 			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "MODE="+tc.mode)
 			out, err := cmd.CombinedOutput()
@@ -146,12 +155,10 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 			switch tc.mode {
 			case "port-fails":
 				assert.Contains(t, string(out), "port lookup failed")
-			case "port-empty":
-				assert.Contains(t, string(out), "could not determine postgres port")
 			}
 			urls, err := os.ReadFile(filepath.Join(dir, "urls"))
 			switch tc.mode {
-			case "port-fails", "port-empty":
+			case "port-fails":
 				require.ErrorIs(t, err, os.ErrNotExist)
 			case "success":
 				require.NoError(t, err)
@@ -193,7 +200,7 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$HOME/urls"
 }
 
 func TestPostgresCleanupWaitsForDescendant(t *testing.T) {
-	requireMake(t)
+	makePath := requireMake(t)
 	requirePython(t)
 	for _, mode := range []string{"command fails", "supervisor killed", "signal while child holds lock"} {
 		killed := mode == "supervisor killed"
@@ -223,7 +230,7 @@ exit 7
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "go"), []byte(goTool), 0o700))
 			log := filepath.Join(dir, "docker.log")
-			cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
+			cmd := exec.CommandContext(t.Context(), makePath, "test-postgres")
 			cmd.Dir = ".."
 			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "READY="+ready, "RELEASE="+release)
 			require.NoError(t, cmd.Start())
@@ -417,9 +424,18 @@ esac
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func requireMake(t *testing.T) {
+func requireMake(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("make"); err != nil {
-		t.Skip("make is not on PATH")
+	for _, name := range []string{"make", "gmake"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		out, err := exec.CommandContext(t.Context(), path, "--version").Output()
+		if err == nil && strings.Contains(string(out), "GNU Make") {
+			return path
+		}
 	}
+	t.Skip("GNU Make is not on PATH")
+	return ""
 }

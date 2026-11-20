@@ -288,14 +288,21 @@ postgres-down:
 
 # Postgres tests use a separate database for each run.
 test-postgres:
+ifneq (,$(filter q t,$(foreach flag,q t,$(if $(findstring $(flag),$(filter-out --%,$(firstword $(MAKEFLAGS)))),$(flag)))))
+	@:
+else
 ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
 	@$(MAKE) test-postgres-run TEST_SERVICE_LEASE=preview
 else
 	@scripts/test-lease.sh roborev sh -c 'exec "$$@" TEST_SERVICE_LEASE="$$TEST_SERVICE_LEASE"' sh $(MAKE) test-postgres-run
 endif
+endif
 
 .PHONY: test-postgres-run
 test-postgres-run:
+ifneq (,$(filter q t,$(foreach flag,q t,$(if $(findstring $(flag),$(filter-out --%,$(firstword $(MAKEFLAGS)))),$(flag)))))
+	@:
+else
 ifneq (,$(findstring n,$(filter-out --%,$(firstword $(MAKEFLAGS)))))
 	@python3 scripts/check-test-lease.py
 	@TEST_PG_PUBLISH=127.0.0.1::5432 docker compose -p "$${TEST_SERVICE_LEASE:?use make test-postgres}" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres
@@ -310,6 +317,7 @@ else
 			mkdir -p "$$report_dir" && \
 			$(MAKE) test-postgres-ci TEST_POSTGRES_REPORT_DIR="$$report_dir" TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@$$address/roborev_test"; \
 		}
+endif
 endif
 
 .PHONY: test-postgres-growth
