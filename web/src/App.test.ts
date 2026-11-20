@@ -110,9 +110,9 @@ describe("App", () => {
   });
 
   test.each([
-    ["Fix login race", "Fix login race (#17) · Roborev"],
-    [undefined, "Review (#17) · Roborev"],
-  ])("names an off-page queued job with subject %j", async (subject, title) => {
+    ["off-page job", "Fix login race", "Fix login race (#17) · Roborev"],
+    ["subjectless review URL", undefined, "Review (#17) · Roborev"],
+  ])("names the tab for %s", async (_label, subject, title) => {
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (subject === undefined) return;
       if (url.pathname === "/api/ui/review-projection")
