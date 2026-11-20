@@ -376,7 +376,7 @@ esac
 	default:
 	}
 	_, err = os.Stat(finished)
-	assert.ErrorIs(t, err, os.ErrNotExist)
+	require.ErrorIs(t, err, os.ErrNotExist)
 	require.NoError(t, os.WriteFile(release, nil, 0o600))
 	select {
 	case err := <-done:
@@ -390,5 +390,5 @@ esac
 	_, err = os.Stat(finished)
 	require.NoError(t, err)
 	_, err = os.Stat(leasePath)
-	assert.ErrorIs(t, err, os.ErrNotExist)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
