@@ -252,14 +252,14 @@ jobs:
             pattern: &daemon-n-s '^Test[N-S]'
           - os: windows-latest
             runner: windows-2025
-            shard: windows-cli-a-m-t-z
+            shard: windows-cli-other
             package: ./cmd/roborev
-            pattern: '^(Test([A-MT-Z]|[^A-Z]|$)|Example|Fuzz)'
+            skip: &cli-refine '^TestRefine'
           - os: windows-latest
             runner: windows-2025
-            shard: windows-cli-n-s
+            shard: windows-cli-refine
             package: ./cmd/roborev
-            pattern: '^Test[N-S]'
+            pattern: *cli-refine
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -340,6 +340,7 @@ jobs:
           }
           $testArgs = @()
           if ('${{ matrix.pattern }}') { $testArgs = @('-run', '${{ matrix.pattern }}') }
+          if ('${{ matrix.skip }}') { $testArgs += @('-skip', '${{ matrix.skip }}') }
           $jsonFile = "gotestsum/$env:SUITE.json"
           # go test on Windows can exit 1 due to temp .exe cleanup
           # ("go: remove ...\.exe: Access is denied") even when all
