@@ -41,6 +41,12 @@ const (
 	codexThreadSourceRoborev   = "roborev"
 	codexDisableSkillsConfig   = "skills.include_instructions=false"
 	codexReadOnlySandboxConfig = `sandbox_mode="read-only"`
+	// codexDisableHooksConfig turns off Codex lifecycle hooks from the user's
+	// ~/.codex/hooks.json and the reviewed repo's .codex/hooks.json. A Stop
+	// hook that blocks until the agent writes a file can never be satisfied in
+	// a read-only review: Codex starts another turn each time it is blocked, so
+	// the review repeats its result until the job times out.
+	codexDisableHooksConfig = "features.hooks=false"
 )
 
 var (
@@ -227,6 +233,9 @@ type codexArgOptions struct {
 }
 
 func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
+	// Hooks are for interactive and agentic sessions. Decide before the nono
+	// sandbox forces agentic mode, so sandboxed reviews also skip them.
+	disableHooks := !opts.agenticMode
 	if a.sandbox != nil {
 		opts.agenticMode, opts.autoApprove = true, false
 	}
@@ -286,6 +295,9 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 	}
 	if a.SuppressSkillInstructions {
 		args = append(args, "-c", codexDisableSkillsConfig)
+	}
+	if disableHooks {
+		args = append(args, "-c", codexDisableHooksConfig)
 	}
 	if effort := a.codexReasoningEffort(); effort != "" {
 		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort="%s"`, effort))

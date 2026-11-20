@@ -49,7 +49,7 @@ func TestCodex_buildArgs(t *testing.T) {
 			name:             "NonAgenticAutoApprove",
 			agentic:          false,
 			autoApprove:      true,
-			wantFlags:        []string{"--sandbox", "read-only", "--json", "--thread-source", "roborev"},
+			wantFlags:        []string{"--sandbox", "read-only", "--json", "--thread-source", "roborev", codexDisableHooksConfig},
 			wantMissingFlags: []string{codexDangerousFlag, codexAutoApproveFlag},
 		},
 		{
@@ -57,14 +57,14 @@ func TestCodex_buildArgs(t *testing.T) {
 			agentic:          true,
 			autoApprove:      false,
 			wantFlags:        []string{codexDangerousFlag, "--json", "--thread-source", "roborev"},
-			wantMissingFlags: []string{codexAutoApproveFlag},
+			wantMissingFlags: []string{codexAutoApproveFlag, codexDisableHooksConfig},
 		},
 		{
 			name:             "SandboxBrokenFallback",
 			agentic:          false,
 			autoApprove:      true,
 			sandboxBroken:    true,
-			wantFlags:        []string{codexDangerousFlag, "--json", "--thread-source", "roborev"},
+			wantFlags:        []string{codexDangerousFlag, "--json", "--thread-source", "roborev", codexDisableHooksConfig},
 			wantMissingFlags: []string{"--sandbox", codexAutoApproveFlag},
 		},
 	}
@@ -101,6 +101,7 @@ func TestCodexBuildArgsWithSessionResume(t *testing.T) {
 		"--thread-source", "roborev",
 		"-c", codexReadOnlySandboxConfig,
 		"-m", "o4-mini",
+		"-c", codexDisableHooksConfig,
 		"-c", `model_reasoning_effort="high"`,
 		"session-123",
 		"-",
@@ -233,6 +234,7 @@ func TestCodexCommandArgsWindowsSandboxOverride(t *testing.T) {
 			if sessionID != "" {
 				want = append(want, `sandbox_mode="read-only"`)
 			}
+			want = append(want, codexDisableHooksConfig)
 			assert.Equal(t, want, configs, "explicit sandbox implementation must follow the default")
 		})
 	}
@@ -261,6 +263,7 @@ func TestCodexCommandArgsUserAuthOverrides(t *testing.T) {
 			`cli_auth_credentials_store="keyring"`,
 			`forced_login_method="chatgpt"`,
 			`cli_auth_credentials_store="file"`,
+			codexDisableHooksConfig,
 		}, codexConfigArgs(args), "an explicit [agent.codex.config] value must come last so it wins")
 	})
 
@@ -272,6 +275,7 @@ func TestCodexCommandArgsUserAuthOverrides(t *testing.T) {
 		assert.Equal(t, []string{
 			`windows.sandbox="elevated"`,
 			`cli_auth_credentials_store="keyring"`,
+			codexDisableHooksConfig,
 		}, codexConfigArgs(args))
 	})
 }
@@ -332,7 +336,7 @@ func TestCodexSandboxCommandLine(t *testing.T) {
 	a := NewCodexAgent("codex").WithSandbox(&CodexSandbox{})
 	a.IgnoreUserConfig = true
 
-	assert.Equal(t, `codex exec --json -c web_search="disabled" -c model_provider="roborev-route" --dangerously-bypass-approvals-and-sandbox`, a.CommandLine())
+	assert.Equal(t, `codex exec --json -c web_search="disabled" -c model_provider="roborev-route" --dangerously-bypass-approvals-and-sandbox -c features.hooks=false`, a.CommandLine())
 }
 
 func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
@@ -556,7 +560,7 @@ command = "docs-mcp"
 			name:         "ignored user config",
 			ignoreConfig: true,
 			helpOutput:   "usage --sandbox " + codexIgnoreUserConfigFlag,
-			wantConfigs:  []string{`cli_auth_credentials_store="keyring"`, `forced_login_method="chatgpt"`},
+			wantConfigs:  []string{`cli_auth_credentials_store="keyring"`, `forced_login_method="chatgpt"`, codexDisableHooksConfig},
 		},
 		{
 			name:         "explicit override wins",
@@ -567,17 +571,20 @@ command = "docs-mcp"
 				`cli_auth_credentials_store="keyring"`,
 				`forced_login_method="chatgpt"`,
 				`cli_auth_credentials_store="file"`,
+				codexDisableHooksConfig,
 			},
 		},
 		{
 			name:         "user config loaded",
 			ignoreConfig: false,
 			helpOutput:   "usage --sandbox " + codexIgnoreUserConfigFlag,
+			wantConfigs:  []string{codexDisableHooksConfig},
 		},
 		{
 			name:         "ignore flag unsupported",
 			ignoreConfig: true,
 			helpOutput:   "usage --sandbox",
+			wantConfigs:  []string{codexDisableHooksConfig},
 		},
 	}
 	for _, tt := range tests {
@@ -626,7 +633,7 @@ func TestCodexReviewRunsWhenUserConfigIsInvalid(t *testing.T) {
 
 		args := readMockArgs(t, mock.ArgsFile)
 		assertContainsArg(t, args, codexIgnoreUserConfigFlag)
-		assert.Empty(t, codexConfigArgs(args))
+		assert.Equal(t, []string{codexDisableHooksConfig}, codexConfigArgs(args))
 	}
 	assert.Equal(t, 1, strings.Count(logs.String(), "cannot read sign-in settings"), "a broken config warns once, not on every review")
 }
