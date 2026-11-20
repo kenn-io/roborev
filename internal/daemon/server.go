@@ -118,6 +118,9 @@ type Server struct {
 	updateCoordinator       *updateDrainCoordinator
 	agentHookState          *agenthook.StateStore
 	agentHookStateErr       error
+	scheduleMu              sync.Mutex
+	scheduleCancel          context.CancelFunc
+	scheduleDone            chan struct{}
 	goalWatchMu             sync.Mutex
 	goalWatchCancel         context.CancelFunc
 	goalWatchDone           chan struct{}
@@ -509,6 +512,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.browserRuntime = browserRuntime
 	s.startPanelSweep(ctx)
 	s.startGoalWatcher(ctx)
+	s.startAnalysisScheduler(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
 	if err := WriteRuntime(ep, alternate, version.Version, browserRuntime); err != nil {
@@ -566,6 +570,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
+		s.stopAnalysisScheduler()
 		s.stopGoalWatcher()
 		s.postCommitScheduler.stop()
 		s.workerPool.BeginStop()
@@ -804,6 +809,7 @@ func (s *Server) stopOnce0() error {
 		s.ciPoller.BeginStop()
 	}
 
+	s.stopAnalysisScheduler()
 	s.stopGoalWatcher()
 	s.postCommitScheduler.stop()
 

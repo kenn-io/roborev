@@ -79,6 +79,9 @@ func resolveAnalyzeAgent(
 	if s := repoAnalyzeField(repoCfg, analysisType, true); s != "" {
 		return s
 	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.AnalyzeAgent) != "" {
+		return strings.TrimSpace(repoCfg.AnalyzeAgent)
+	}
 	if s := repoWorkflowField(repoCfg, fallbackWorkflow, level, true); s != "" {
 		return s
 	}
@@ -90,6 +93,9 @@ func resolveAnalyzeAgent(
 	}
 	if s := globalAnalyzeField(globalCfg, analysisType, true); s != "" {
 		return s
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.AnalyzeAgent) != "" {
+		return strings.TrimSpace(globalCfg.AnalyzeAgent)
 	}
 	if s := globalWorkflowField(globalCfg, fallbackWorkflow, level, true); s != "" {
 		return s
@@ -117,6 +123,9 @@ func resolveAnalyzeModel(
 	if s := repoAnalyzeField(repoCfg, analysisType, false); s != "" {
 		return s
 	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.AnalyzeModel) != "" {
+		return strings.TrimSpace(repoCfg.AnalyzeModel)
+	}
 	if s := repoWorkflowField(repoCfg, fallbackWorkflow, level, false); s != "" {
 		return s
 	}
@@ -128,6 +137,9 @@ func resolveAnalyzeModel(
 	}
 	if s := globalAnalyzeField(globalCfg, analysisType, false); s != "" {
 		return s
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.AnalyzeModel) != "" {
+		return strings.TrimSpace(globalCfg.AnalyzeModel)
 	}
 	if s := globalWorkflowField(globalCfg, fallbackWorkflow, level, false); s != "" {
 		return s
@@ -154,11 +166,17 @@ func resolveAnalyzeReasoning(
 	if s := repoAnalyzeReasoning(repoCfg, analysisType); s != "" {
 		return NormalizeReasoning(s)
 	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.AnalyzeReasoning) != "" {
+		return NormalizeReasoning(repoCfg.AnalyzeReasoning)
+	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(repoCfg.ReviewReasoning)
 	}
 	if s := globalAnalyzeReasoning(globalCfg, analysisType); s != "" {
 		return NormalizeReasoning(s)
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.AnalyzeReasoning) != "" {
+		return NormalizeReasoning(globalCfg.AnalyzeReasoning)
 	}
 	if globalCfg != nil && strings.TrimSpace(globalCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(globalCfg.ReviewReasoning)

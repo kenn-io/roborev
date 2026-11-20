@@ -268,7 +268,11 @@ type Config struct {
 	FixReasoning               string                          `toml:"fix_reasoning" comment:"Default reasoning for fix. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 
 	// Analysis-type-specific agent/model configuration
-	Analyze map[string]AnalyzeConfig `toml:"analyze"`
+	Analyze          map[string]AnalyzeConfig `toml:"analyze"`
+	AnalyzeAgent     string                   `toml:"analyze_agent"`
+	AnalyzeModel     string                   `toml:"analyze_model"`
+	AnalyzeReasoning string                   `toml:"analyze_reasoning"`
+	Schedule         ScheduleConfig           `toml:"schedule"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent"`
@@ -720,6 +724,9 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if err := c.Schedule.Validate(); err != nil {
+		return err
+	}
 	if err := validateAgentMemoryMaxMB(c.AgentMemoryMaxMB); err != nil {
 		return err
 	}
@@ -746,6 +753,7 @@ func (c *Config) Validate() (err error) {
 	}
 	reasoning := []namedConfigValue{
 		{key: "ci.check_reasoning", value: c.CI.CheckReasoning},
+		{key: "analyze_reasoning", value: c.AnalyzeReasoning},
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
 		{key: "fix_reasoning", value: c.FixReasoning},
@@ -817,7 +825,11 @@ type RepoConfig struct {
 	Review ReviewConfig `toml:"review"`
 
 	// Analysis-type-specific agent/model configuration
-	Analyze map[string]AnalyzeConfig `toml:"analyze"`
+	Analyze          map[string]AnalyzeConfig `toml:"analyze"`
+	AnalyzeAgent     string                   `toml:"analyze_agent"`
+	AnalyzeModel     string                   `toml:"analyze_model"`
+	AnalyzeReasoning string                   `toml:"analyze_reasoning"`
+	Schedule         ScheduleConfig           `toml:"schedule"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent" comment:"Agent override for standard review in this repo."`
@@ -970,6 +982,9 @@ func (c *RepoConfig) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if err := c.Schedule.Validate(); err != nil {
+		return err
+	}
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
@@ -983,6 +998,7 @@ func (c *RepoConfig) Validate() (err error) {
 		return fmt.Errorf("ci.comment_max_findings must be non-negative")
 	}
 	reasoning := []namedConfigValue{
+		{key: "analyze_reasoning", value: c.AnalyzeReasoning},
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
 		{key: "fix_reasoning", value: c.FixReasoning},

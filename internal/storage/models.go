@@ -65,6 +65,7 @@ const (
 
 // Job source values identify daemon-created automation rows.
 const (
+	JobSourceScheduled    = "scheduled"
 	JobSourceRebuttal     = "rebuttal"
 	JobSourceAutoDesign   = "auto_design"
 	JobSourceCI           = "ci"

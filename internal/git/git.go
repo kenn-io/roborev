@@ -1504,7 +1504,12 @@ type RefFile struct {
 
 // ReadRefFile reads a file and its tree mode at a specific commit.
 func ReadRefFile(repoPath, sha, filePath string) (RefFile, error) {
-	cmd := newGitCmd("ls-tree", "-z", sha, "--", filePath)
+	return ReadRefFileCtx(context.Background(), repoPath, sha, filePath)
+}
+
+// ReadRefFileCtx reads a file at a commit with caller-controlled cancellation.
+func ReadRefFileCtx(ctx context.Context, repoPath, sha, filePath string) (RefFile, error) {
+	cmd := newGitCmdContext(ctx, "ls-tree", "-z", sha, "--", filePath)
 	cmd.Dir = repoPath
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -1525,7 +1530,7 @@ func ReadRefFile(repoPath, sha, filePath string) (RefFile, error) {
 	}
 	symlink := string(fields[0]) == "120000"
 
-	cmd = newGitCmd("cat-file", "blob", string(fields[2]))
+	cmd = newGitCmdContext(ctx, "cat-file", "blob", string(fields[2]))
 	cmd.Dir = repoPath
 	stdout.Reset()
 	stderr.Reset()
@@ -3148,4 +3153,32 @@ func ShortSHA(sha string) string {
 // length and safely excludes short hex task labels like "dead" or "cafe".
 func LooksLikeSHA(s string) bool {
 	return len(s) >= 7 && len(s) <= 40 && isHex(s)
+}
+
+// RefTreeFile identifies a regular file in a commit tree.
+type RefTreeFile struct {
+	Path     string
+	ObjectID string
+}
+
+// ListRefFiles lists regular files in a commit's tree.
+func ListRefFiles(ctx context.Context, repoPath, sha string) ([]RefTreeFile, error) {
+	cmd := newGitCmdContext(ctx, "ls-tree", "-r", "-z", sha)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list files at %s: %w", sha, err)
+	}
+	var paths []RefTreeFile
+	for _, entry := range bytes.Split(out, []byte{0}) {
+		meta, path, ok := bytes.Cut(entry, []byte{'\t'})
+		if !ok {
+			continue
+		}
+		fields := bytes.Fields(meta)
+		if len(fields) == 3 && (string(fields[0]) == "100644" || string(fields[0]) == "100755") && string(fields[1]) == "blob" {
+			paths = append(paths, RefTreeFile{Path: string(path), ObjectID: string(fields[2])})
+		}
+	}
+	return paths, nil
 }

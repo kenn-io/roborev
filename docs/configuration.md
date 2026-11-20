@@ -666,6 +666,44 @@ Types that have them — `review`, `refine`, `fix`, `security`, `design` — ign
 Reasoning is unaffected by this block for reviews; it follows `review_reasoning`
 (the block's `reasoning` field applies only to `roborev analyze <type>` runs).
 
+### Scheduled analysis
+
+Enable scheduled analysis globally and in each repository that should use it:
+
+```toml
+# Global config.toml
+[schedule]
+enabled = true
+interval = "24h"
+types = ["refactor", "complexity"]
+paths = ["**/*.go"]
+max_files = 20
+```
+
+```toml
+# Repository .roborev.toml
+[schedule]
+enabled = true
+```
+
+Both `enabled` settings must be true. The repository can override `interval`,
+`types`, `paths`, and `max_files`. An enabled schedule needs a positive duration,
+a positive file budget, and at least one known analysis type. An empty `paths`
+list includes all tracked text files. Patterns use repository-relative paths;
+a trailing `/` includes the directory and its descendants.
+
+Each run selects up to `max_files` distinct committed files and queues jobs
+for each applicable type, one job per file. Jobs read the recorded commit in an
+isolated checkout. Files with no successful analysis come first, followed by
+those with the oldest analysis. Queued and running jobs suppress their files.
+Only changed files are analyzed again. A foreground review can cancel a running
+scheduled job when all workers are busy. The canceled files remain due for a
+later run. The daemon reloads settings on its next 30-second check. Analysis history is local to each machine, so two machines with the same
+repository schedule independently. Set `analyze_agent`, `analyze_model`, and
+`analyze_reasoning` globally or per repository to choose the analysis agent,
+model, and reasoning. Per-type `[analyze.<type>]` settings take precedence within
+each scope; repository settings take precedence over global settings.
+
 ### Binary Evidence
 
 Set `[review] binary_evidence = true` in global or repository configuration to

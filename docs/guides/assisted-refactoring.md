@@ -32,6 +32,12 @@ List available types with `roborev analyze --list`, or preview a prompt template
 with `roborev analyze --show-prompt <type>`. If you have shell completions
 enabled, `roborev analyze <TAB>` will suggest analysis types with descriptions.
 
+## Scheduled analysis
+
+The daemon can run analysis periodically on changed committed files. See
+[Scheduled analysis](../configuration.md#scheduled-analysis) for opt-in and
+configuration.
+
 ## Basic Usage
 
 Point `analyze` at an analysis type and one or more file paths, directories, or

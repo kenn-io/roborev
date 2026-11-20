@@ -653,10 +653,9 @@ func TestEnqueueAnalysisJobAppliesAnalyzeConfig(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("main.go", "package main", "initial")
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte(`
-[analyze.refactor]
-agent = "gemini"
-model = "configured-model"
-reasoning = "fast"
+analyze_agent = "gemini"
+analyze_model = "configured-model"
+analyze_reasoning = "fast"
 `), 0o644))
 
 	var got daemon.EnqueueRequest

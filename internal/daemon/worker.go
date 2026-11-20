@@ -92,6 +92,7 @@ type WorkerPool struct {
 	updateInterruptTargets map[int64]struct{}
 	failedUpdateRequeues   map[int64]string
 	runningJobsMu          sync.Mutex
+	scheduledYieldMu       sync.Mutex
 	// attemptTransitionsMu linearizes update-target registration with every
 	// attempt-scoped retry, failover, failure, or completion transition.
 	attemptTransitionsMu sync.RWMutex
@@ -188,6 +189,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 
 // wake prompts every idle worker to check for newly claimable jobs.
 func (wp *WorkerPool) wake() {
+	wp.balanceScheduledWork()
 	wp.wakeMu.Lock()
 	defer wp.wakeMu.Unlock()
 	close(wp.wakeCh)
@@ -334,6 +336,68 @@ func (wp *WorkerPool) SubscribeJobOutput(jobID int64) ([]OutputLine, <-chan Outp
 // HasJobOutput returns true if there's active output capture for a job.
 func (wp *WorkerPool) HasJobOutput(jobID int64) bool {
 	return wp.outputBuffers.IsActive(jobID)
+}
+
+// balanceScheduledWork releases only the capacity needed by waiting reviews.
+func (wp *WorkerPool) balanceScheduledWork() {
+	wp.scheduledYieldMu.Lock()
+	defer wp.scheduledYieldMu.Unlock()
+	wp.workersMu.Lock()
+	workers := wp.numWorkers
+	wp.workersMu.Unlock()
+	wp.runningJobsMu.Lock()
+	active := maps.Clone(wp.workerJobs)
+	wp.runningJobsMu.Unlock()
+	claimed := 0
+	for _, id := range active {
+		if id > 0 {
+			claimed++
+		}
+	}
+	if workers <= 0 || claimed < workers {
+		return
+	}
+	demand, err := wp.db.ClaimableForegroundReviews(wp.stopCtx)
+	if err != nil {
+		log.Printf("find claimable review: %v", err)
+		return
+	}
+	if demand == 0 {
+		return
+	}
+	var running []storage.ReviewJob
+	for workerID, id := range active {
+		if id <= 0 {
+			continue
+		}
+		job, err := wp.db.GetJobByID(id)
+		if err != nil {
+			log.Printf("find scheduled job %d: %v", id, err)
+			return
+		}
+		if job.Source != storage.JobSourceScheduled || job.WorkerID != workerID {
+			continue
+		}
+		if job.Status == storage.JobStatusRunning {
+			running = append(running, *job)
+		} else {
+			demand--
+		}
+	}
+	for _, job := range running {
+		if demand <= 0 {
+			return
+		}
+		canceled, err := wp.db.CancelScheduledForReview(wp.stopCtx, job.ID, job.WorkerID, job.StartedAtRaw)
+		if err != nil {
+			log.Printf("cancel scheduled job %d: %v", job.ID, err)
+			return
+		}
+		if canceled {
+			wp.CancelJob(job.ID)
+			demand--
+		}
+	}
 }
 
 // CancelJob cancels a running job by its ID, killing the subprocess.
@@ -754,17 +818,22 @@ func (wp *WorkerPool) prepareJobCheckout(
 		// IsDirtyJob only identifies the member jobs themselves.
 		committedReview := (job.IsReviewJob() || job.IsSynthesisJob()) &&
 			!job.IsDirtyJob() && job.GitRef != "dirty"
-		if !committedReview {
+		scheduledPaths := job.Source == storage.JobSourceScheduled
+		if !committedReview && !scheduledPaths {
 			return checkout, nil
 		}
-		exact, err := needsExactCheckout(job, repoPath, cfg)
-		if err != nil {
-			return preparedJobCheckout{}, err
+		if scheduledPaths {
+			checkout.isolatedLocalReview = true
+		} else {
+			exact, err := needsExactCheckout(job, repoPath, cfg)
+			if err != nil {
+				return preparedJobCheckout{}, err
+			}
+			if !exact {
+				return checkout, nil
+			}
+			checkout.isolatedLocalReview = true
 		}
-		if !exact {
-			return checkout, nil
-		}
-		checkout.isolatedLocalReview = true
 	}
 	// A CI checkout can be a fork's pull request head, so it keeps kit's
 	// isolated git config. A local review checks out the user's own commits
@@ -879,6 +948,9 @@ func (wp *WorkerPool) createExactCheckout(
 	setupRunner gitcmd.Runner,
 ) (string, func(), error) {
 	headRef := strings.TrimSpace(headOf(job.GitRef))
+	if job.Source == storage.JobSourceScheduled {
+		headRef = job.AnalysisCommitSHA
+	}
 	if headRef == "" {
 		return "", nil, fmt.Errorf("job %d has empty checkout ref", job.ID)
 	}
@@ -972,6 +1044,7 @@ func (wp *WorkerPool) worker(id int) {
 				delete(wp.workerJobs, workerID)
 			}
 			wp.runningJobsMu.Unlock()
+			wp.balanceScheduledWork()
 			if err != nil && claimCtx.Err() == nil {
 				wp.noteClaimError(workerID, err)
 			}
@@ -1006,6 +1079,7 @@ func (wp *WorkerPool) worker(id int) {
 		delete(wp.workerJobs, workerID)
 		wp.runningJobsMu.Unlock()
 		wp.activeWorkers.Add(-1)
+		wp.balanceScheduledWork()
 	}
 }
 

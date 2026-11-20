@@ -670,6 +670,31 @@ func (db *DB) hasClaimableJob(ctx context.Context) (bool, error) {
 	return claimable, nil
 }
 
+// claimCandidate is shared by claims and foreground demand checks.
+const claimCandidate = `candidate.status = 'queued'
+ AND candidate.claim_blocked = 0
+ AND (candidate.retry_not_before IS NULL OR candidate.retry_not_before <= ?)
+ AND (COALESCE(candidate.session_id, '') = '' OR NOT EXISTS (
+   SELECT 1 FROM review_jobs busy
+   WHERE (busy.status = 'running' OR (busy.status = 'canceled' AND COALESCE(busy.worker_id, '') <> ''))
+     AND busy.session_id = candidate.session_id
+     AND (candidate.source = ? OR busy.source = ?)
+ ))
+ AND NOT EXISTS (SELECT 1 FROM daemon_state WHERE key IN (?, ?) AND value IN ('true', '1'))`
+
+func claimCandidateArgs(now time.Time) []any {
+	return []any{preciseTimestampAt(now), JobSourceRebuttal, JobSourceRebuttal, queuePausedStateKey, shutdownDrainingStateKey}
+}
+
+// ClaimableForegroundReviews counts reviews that can start now.
+func (db *DB) ClaimableForegroundReviews(ctx context.Context) (int, error) {
+	args := claimCandidateArgs(time.Now())
+	args = append(args, JobSourceScheduled, JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis)
+	var count int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM review_jobs candidate WHERE `+claimCandidate+` AND COALESCE(candidate.source, '') != ? AND candidate.job_type IN (?, ?, ?, ?, ?)`, args...).Scan(&count)
+	return count, err
+}
+
 func (db *DB) claimJobAttempt(
 	ctx context.Context, commitCtx context.Context, workerID string,
 ) (*ReviewJob, error) {
@@ -695,36 +720,14 @@ func (db *DB) claimJobAttempt(
 	// retry_not_before is stored UTC + fixed-width nano (see
 	// preciseTimestampLayout) so the SQL comparison stays monotonic with
 	// time. Format the comparison value the same way.
-	nowNano := preciseTimestampAt(now)
-
-	// Atomically claim a job by updating it in a single statement
-	// This prevents race conditions where two workers select the same job
+	args := []any{workerID, nowStr, nowStr}
+	args = append(args, claimCandidateArgs(now)...)
 	var claimedID int64
-	err = conn.QueryRowContext(ctx, `
-		UPDATE review_jobs
-		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?,
-		    session_isolated = 0
-		WHERE id = (
-			SELECT candidate.id FROM review_jobs candidate
-			WHERE candidate.status = 'queued'
-			  AND (COALESCE(candidate.session_id, '') = '' OR NOT EXISTS (
-			    SELECT 1 FROM review_jobs busy
-			    WHERE (busy.status = 'running'
-			           OR (busy.status = 'canceled' AND COALESCE(busy.worker_id, '') <> ''))
-			      AND busy.session_id = candidate.session_id
-			      AND (candidate.source = ? OR busy.source = ?)
-			  ))
-			  AND claim_blocked = 0
-			  AND (retry_not_before IS NULL OR retry_not_before <= ?)
-			ORDER BY `+sqliteNormalizedTimestampExpr("enqueued_at")+`, id
-			LIMIT 1
-		)
-		AND NOT EXISTS (
-			SELECT 1 FROM daemon_state
-			WHERE key IN (?, ?) AND value IN ('true', '1')
-		)
-		RETURNING id
-	`, workerID, nowStr, nowStr, JobSourceRebuttal, JobSourceRebuttal, nowNano, queuePausedStateKey, shutdownDrainingStateKey).Scan(&claimedID)
+	err = conn.QueryRowContext(ctx, `UPDATE review_jobs
+	 SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?, session_isolated = 0
+	 WHERE id = (SELECT candidate.id FROM review_jobs candidate WHERE `+claimCandidate+`
+	 ORDER BY CASE WHEN candidate.source = 'scheduled' THEN 1 ELSE 0 END, `+sqliteNormalizedTimestampExpr("enqueued_at")+`, id LIMIT 1)
+	 RETURNING id`, args...).Scan(&claimedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // No jobs available
 	}
@@ -1592,6 +1595,22 @@ func (db *DB) SkipJob(ctx context.Context, jobID int64, workerID, reason string)
 		return false, err
 	}
 	return rows > 0, nil
+}
+
+// CancelScheduledForReview cancels only the specified running attempt while review demand remains.
+func (db *DB) CancelScheduledForReview(ctx context.Context, jobID int64, workerID, startedAt string) (bool, error) {
+	now := time.Now()
+	args := []any{preciseTimestampAt(now), now.Format(time.RFC3339), jobID, JobSourceScheduled, workerID, startedAt}
+	args = append(args, claimCandidateArgs(now)...)
+	args = append(args, JobSourceScheduled, JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis)
+	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'canceled', finished_at = ?, updated_at = ?
+ WHERE id = ? AND status = 'running' AND source = ? AND worker_id = ? AND started_at = ? AND EXISTS
+ (SELECT 1 FROM review_jobs candidate WHERE `+claimCandidate+` AND COALESCE(candidate.source, '') != ? AND candidate.job_type IN (?, ?, ?, ?, ?))`, args...)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count > 0, err
 }
 
 // CancelJob marks a running or queued job as canceled
@@ -2513,6 +2532,7 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 
 // ListJobs returns jobs with optional status, repo, branch, and closed filters.
 func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
+
 	options := collectListJobsOptions(opts...)
 	query, args, sortKeyCount, err := listJobsQuery(statusFilter, repoFilter, limit, offset, options)
 	if err != nil {

@@ -158,7 +158,7 @@ func (t AnalysisType) BuildPromptWithPaths(repoRoot string, filePaths []string) 
 
 	// List file paths for the agent to read
 	sb.WriteString("## Files to Analyze\n\n")
-	sb.WriteString("The following files are too large to embed. Please read them directly:\n\n")
+	sb.WriteString("Please read the following files directly:\n\n")
 	for _, path := range filePaths {
 		fmt.Fprintf(&sb, "- `%s`\n", path)
 	}
@@ -169,4 +169,33 @@ func (t AnalysisType) BuildPromptWithPaths(repoRoot string, filePaths []string) 
 	sb.WriteString(template)
 
 	return sb.String(), nil
+}
+
+// BuildOutputPrefix identifies the analyzed files in the output.
+func BuildOutputPrefix(analysisType string, filePaths []string) string {
+	sort.Strings(filePaths)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "## %s Analysis\n\n", analysisType)
+	sb.WriteString("**Files:**\n")
+	for _, path := range filePaths {
+		fmt.Fprintf(&sb, "- %s\n", path)
+	}
+	sb.WriteString("\n---\n\n")
+	return sb.String()
+}
+
+// ReviewType selects the review type for an analysis.
+func ReviewType(label string) string {
+	if label == "security" {
+		return "security"
+	}
+	return ""
+}
+
+// Workflow selects the config workflow for an analysis.
+func Workflow(label string) string {
+	if label == "security" {
+		return "security"
+	}
+	return "review"
 }

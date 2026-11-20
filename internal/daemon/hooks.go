@@ -287,7 +287,7 @@ func matchBranch(patterns []string, branch string) bool {
 // left out: their events never reach hooks.
 var HookSources = []string{
 	storage.JobSourceCI, storage.JobSourceCIBranch, storage.JobSourcePostCommit,
-	storage.JobSourceAutoDesign, storage.JobSourceReviewPrompt,
+	storage.JobSourceAutoDesign, storage.JobSourceReviewPrompt, storage.JobSourceScheduled,
 }
 
 // matchSource reports whether an event's job source satisfies a hook's sources
