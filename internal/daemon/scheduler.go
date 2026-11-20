@@ -80,21 +80,42 @@ func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 		if err == nil {
 			var schedule config.Schedule
 			schedule, err = config.ResolveSchedule(global.Schedule, repoCfg.Schedule)
-			last := w.lastRun[repo.ID]
-			if err == nil && schedule.Enabled && (last.IsZero() || now.Sub(last) >= schedule.Interval) {
-				err = w.scheduleRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule)
+			if err == nil && schedule.Enabled {
+				err = w.runDue(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
+			} else if err == nil {
+				err = w.server.db.ClearAnalysisScheduleLastRun(ctx, repo.ID)
 				if err == nil {
-					w.lastRun[repo.ID] = now
+					delete(w.lastRun, repo.ID)
 				}
-			}
-			if err == nil && !schedule.Enabled {
-				delete(w.lastRun, repo.ID)
 			}
 		}
 		if err != nil && ctx.Err() == nil {
 			log.Printf("analysis scheduler %s: %v", repo.RootPath, err)
 		}
 	}
+}
+
+func (w *analysisScheduler) runDue(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
+	last, loaded := w.lastRun[repo.ID]
+	if !loaded {
+		var err error
+		last, err = w.server.db.AnalysisScheduleLastRun(ctx, repo.ID)
+		if err != nil {
+			return err
+		}
+		w.lastRun[repo.ID] = last
+	}
+	if !last.IsZero() && now.Sub(last) < schedule.Interval {
+		return nil
+	}
+	if err := w.scheduleRepo(ctx, repo, repoCfg, global, schedule); err != nil {
+		return err
+	}
+	if err := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); err != nil {
+		return err
+	}
+	w.lastRun[repo.ID] = now
+	return nil
 }
 
 type changeSet struct {

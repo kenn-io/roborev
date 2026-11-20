@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 const (
@@ -77,6 +78,42 @@ func (db *DB) setDaemonBoolState(key string, enabled bool, label string) error {
 	`, key, value)
 	if err != nil {
 		return fmt.Errorf("set %s state: %w", label, err)
+	}
+	return nil
+}
+
+// AnalysisScheduleLastRun returns the last successful schedule pass for a repo.
+func (db *DB) AnalysisScheduleLastRun(ctx context.Context, repoID int64) (time.Time, error) {
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_last_run:%d", repoID)).Scan(&value)
+	if err == sql.ErrNoRows {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get analysis schedule last run: %w", err)
+	}
+	last, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse analysis schedule last run: %w", err)
+	}
+	return last, nil
+}
+
+// SetAnalysisScheduleLastRun records a successful schedule pass.
+func (db *DB) SetAnalysisScheduleLastRun(ctx context.Context, repoID int64, last time.Time) error {
+	_, err := db.ExecContext(ctx, `INSERT INTO daemon_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, fmt.Sprintf("analysis_schedule_last_run:%d", repoID), last.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("set analysis schedule last run: %w", err)
+	}
+	return nil
+}
+
+// ClearAnalysisScheduleLastRun removes a disabled repo's schedule state.
+func (db *DB) ClearAnalysisScheduleLastRun(ctx context.Context, repoID int64) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_last_run:%d", repoID))
+	if err != nil {
+		return fmt.Errorf("clear analysis schedule last run: %w", err)
 	}
 	return nil
 }

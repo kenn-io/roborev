@@ -602,3 +602,45 @@ func TestScheduledWakeYieldsToLegacyCommitReview(t *testing.T) {
 	require.NotNil(t, claimed)
 	assert.Equal(t, review.ID, claimed.ID)
 }
+
+func TestScheduledAnalysisRestartRespectsInterval(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFiles(map[string]string{"a.go": "package a\n", "b.go": "package b\n"}, "add files")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval, budget := true, "1h", 1
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}, Paths: []string{"*.go"}}
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[analyze.refactor]\nagent = 'test'\n"), 0o644))
+
+	now := time.Now().Add(time.Second)
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), now)
+	jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
+
+	restarted := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	restarted.poll(t.Context(), now.Add(5*time.Minute))
+	jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	restarted.poll(t.Context(), now.Add(time.Hour))
+	jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	assert.Equal(t, []string{"b.go"}, jobs[0].AnalysisFiles)
+
+	repo.CommitFile("c.go", "package c\n", "add file")
+	no := false
+	server.configWatcher.Config().Schedule.Enabled = &no
+	restarted.poll(t.Context(), now.Add(time.Hour+5*time.Minute))
+	server.configWatcher.Config().Schedule.Enabled = &yes
+	restarted = &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	restarted.poll(t.Context(), now.Add(time.Hour+5*time.Minute))
+	jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 3)
+	assert.Equal(t, []string{"c.go"}, jobs[0].AnalysisFiles)
+}
