@@ -14,14 +14,29 @@ func TestResolveSchedule(t *testing.T) {
 	interval := "1h"
 	maxFiles := 3
 	global := ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &maxFiles, Types: []string{"refactor"}, Paths: []string{"**/*.go"}}
-	for _, repo := range []ScheduleConfig{{}, {Enabled: &no}} {
-		got, err := ResolveSchedule(global, repo)
-		require.NoError(t, err)
-		assert.False(t, got.Enabled)
-	}
-	got, err := ResolveSchedule(global, ScheduleConfig{Enabled: &yes, Types: []string{"security"}})
+	got, err := ResolveSchedule(ScheduleConfig{}, ScheduleConfig{})
+	require.NoError(t, err)
+	assert.False(t, got.Enabled)
+	got, err = ResolveSchedule(global, ScheduleConfig{})
+	require.NoError(t, err)
+	assert.True(t, got.Enabled)
+	got, err = ResolveSchedule(global, ScheduleConfig{Enabled: &no})
+	require.NoError(t, err)
+	assert.False(t, got.Enabled)
+	got, err = ResolveSchedule(ScheduleConfig{Enabled: &no}, ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &maxFiles, Types: []string{"refactor"}})
+	require.NoError(t, err)
+	assert.True(t, got.Enabled)
+	got, err = ResolveSchedule(global, ScheduleConfig{Enabled: &yes, Types: []string{"security"}})
 	require.NoError(t, err)
 	assert.Equal(t, Schedule{Enabled: true, Interval: time.Hour, MaxFiles: 3, Types: []string{"security"}, Paths: []string{"**/*.go"}}, got)
+	for _, repo := range []ScheduleConfig{
+		{Enabled: &yes},
+		{Enabled: &yes, Interval: &interval},
+		{Enabled: &yes, Interval: &interval, MaxFiles: &maxFiles},
+	} {
+		_, err := ResolveSchedule(ScheduleConfig{}, repo)
+		assert.Error(t, err)
+	}
 	for _, repo := range []ScheduleConfig{
 		{Enabled: &yes, Interval: new("0s")},
 		{Enabled: &yes, MaxFiles: new(0)},

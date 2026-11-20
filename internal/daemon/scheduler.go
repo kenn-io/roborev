@@ -1,14 +1,12 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
@@ -20,7 +18,6 @@ import (
 type analysisScheduler struct {
 	server  *Server
 	lastRun map[int64]time.Time
-	nonText map[int64]map[string]struct{}
 }
 
 func (s *Server) startAnalysisScheduler(ctx context.Context) {
@@ -72,9 +69,7 @@ func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 		return
 	}
 	global := w.server.configWatcher.Config()
-	seen := make(map[int64]bool, len(repos))
 	for _, repo := range repos {
-		seen[repo.ID] = true
 		if ctx.Err() != nil {
 			return
 		}
@@ -94,25 +89,23 @@ func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 			}
 			if err == nil && !schedule.Enabled {
 				delete(w.lastRun, repo.ID)
-				delete(w.nonText, repo.ID)
 			}
 		}
 		if err != nil && ctx.Err() == nil {
 			log.Printf("analysis scheduler %s: %v", repo.RootPath, err)
 		}
 	}
-	for id := range w.nonText {
-		if !seen[id] {
-			delete(w.nonText, id)
-		}
-	}
+}
+
+type changeSet struct {
+	all   bool
+	paths map[string]struct{}
 }
 
 type analysisCandidate struct {
-	path     string
-	objectID string
-	due      map[string]bool
-	oldest   time.Time
+	path   string
+	due    map[string]bool
+	oldest time.Time
 }
 
 func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) error {
@@ -124,23 +117,8 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	if err != nil {
 		return err
 	}
-	if w.nonText == nil {
-		w.nonText = map[int64]map[string]struct{}{}
-	}
-	oldNonText := w.nonText[repo.ID]
-	currentNonText := map[string]struct{}{}
-	for _, entry := range paths {
-		if _, ok := oldNonText[entry.ObjectID]; ok {
-			currentNonText[entry.ObjectID] = struct{}{}
-		}
-	}
-	w.nonText[repo.ID] = currentNonText
 	candidates := map[string]*analysisCandidate{}
-	for _, entry := range paths {
-		path := entry.Path
-		if _, ok := currentNonText[entry.ObjectID]; ok {
-			continue
-		}
+	for _, path := range paths {
 		if len(schedule.Paths) > 0 {
 			matched := false
 			for _, pattern := range schedule.Paths {
@@ -160,7 +138,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				continue
 			}
 		}
-		candidates[path] = &analysisCandidate{path: path, objectID: entry.ObjectID, due: map[string]bool{}}
+		candidates[path] = &analysisCandidate{path: path, due: map[string]bool{}}
 	}
 	for _, typ := range schedule.Types {
 		jobs, err := w.server.db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{repo.ID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
@@ -181,7 +159,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				}
 			}
 		}
-		changes := map[string]map[string]bool{}
+		changes := map[string]changeSet{}
 		for path, candidate := range candidates {
 			if pending[path] {
 				continue
@@ -191,24 +169,25 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			if ok {
 				changed, cached := changes[job.AnalysisCommitSHA]
 				if !cached {
-					changed = map[string]bool{}
+					changed.paths = map[string]struct{}{}
 					if _, err := git.ResolveCommitCtx(ctx, repo.RootPath, job.AnalysisCommitSHA); err != nil {
 						if ctx.Err() != nil {
 							return ctx.Err()
 						}
-						changed["*"] = true
+						changed.all = true
 					} else {
 						paths, err := git.DiffPathsCtx(ctx, repo.RootPath, job.AnalysisCommitSHA+".."+head, nil)
 						if err != nil {
 							return err
 						}
 						for _, p := range paths {
-							changed[p] = true
+							changed.paths[p] = struct{}{}
 						}
 					}
 					changes[job.AnalysisCommitSHA] = changed
 				}
-				due = changed["*"] || changed[path]
+				_, modified := changed.paths[path]
+				due = changed.all || modified
 			}
 			if due {
 				candidate.due[typ] = true
@@ -232,46 +211,33 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 		}
 		return selected[i].oldest.Before(selected[j].oldest)
 	})
-	textFiles := selected[:0]
-	for _, candidate := range selected {
-		if _, ok := currentNonText[candidate.objectID]; ok {
-			continue
-		}
-		if len(textFiles) == schedule.MaxFiles {
-			break
-		}
-		file, err := git.ReadBlob(ctx, repo.RootPath, candidate.objectID)
-		if err != nil {
-			return err
-		}
-		if bytes.IndexByte(file, 0) >= 0 || !utf8.Valid(file) {
-			currentNonText[candidate.objectID] = struct{}{}
-			continue
-		}
-		textFiles = append(textFiles, candidate)
+	if len(selected) > schedule.MaxFiles {
+		selected = selected[:schedule.MaxFiles]
 	}
-	selected = textFiles
 	for _, typ := range schedule.Types {
+		var names []string
+		for _, c := range selected {
+			if c.due[typ] {
+				names = append(names, c.path)
+			}
+		}
+		if len(names) == 0 {
+			continue
+		}
 		resolved, err := config.ResolveAnalyzeConfigFromConfig("", "", "", repoCfg, global, typ, analyze.Workflow(typ), "")
 		if err != nil {
 			return err
 		}
-		for _, c := range selected {
-			if !c.due[typ] {
-				continue
-			}
-			names := []string{c.path}
-			prompt, err := analyze.GetType(typ).BuildPromptWithPaths(".", names)
-			if err != nil {
-				return err
-			}
-			result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
-			if err != nil {
-				return err
-			}
-			if result.Status != 201 {
-				return fmt.Errorf("enqueue analysis: %v", result.Body)
-			}
+		prompt, err := analyze.GetType(typ).BuildPromptWithPaths(".", names)
+		if err != nil {
+			return err
+		}
+		result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
+		if err != nil {
+			return err
+		}
+		if result.Status != 201 {
+			return fmt.Errorf("enqueue analysis: %v", result.Body)
 		}
 	}
 	return nil

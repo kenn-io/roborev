@@ -34,7 +34,8 @@ enabled, `roborev analyze <TAB>` will suggest analysis types with descriptions.
 
 ## Scheduled analysis
 
-The daemon can run analysis periodically on changed committed files. See
+The daemon can run bundled analysis periodically on changed committed files,
+including binary files. Enable it globally or for a repository. See
 [Scheduled analysis](../configuration.md#scheduled-analysis) for opt-in and
 configuration.
 

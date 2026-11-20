@@ -50,7 +50,11 @@ func (s ScheduleConfig) Validate() error {
 }
 
 func ResolveSchedule(global ScheduleConfig, repo ScheduleConfig) (Schedule, error) {
-	if global.Enabled == nil || !*global.Enabled || repo.Enabled == nil || !*repo.Enabled {
+	enabled := repo.Enabled
+	if enabled == nil {
+		enabled = global.Enabled
+	}
+	if enabled == nil || !*enabled {
 		return Schedule{}, nil
 	}
 	merged := global
