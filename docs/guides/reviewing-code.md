@@ -203,6 +203,11 @@ roborev review --branch --type security  # Security review of branch
 Review types work with all review modes (`--branch`, `--dirty`, `--since`,
 single commits, ranges).
 
+The default review checks who gains access or capability because of the change
+and traces how they gain it in a supported configuration. If the code breaks a
+functional or data-handling contract, the reviewer can still report that defect
+at the severity supported by the evidence.
+
 `exhaustive` uses the same agent and model settings as the default review.
 
 `test-value` is opt-in. It recommends removing tests that protect no behavior
