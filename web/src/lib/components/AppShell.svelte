@@ -68,7 +68,6 @@
       route.page === "reviews" &&
       route.jobId !== undefined &&
       review.getSelectedJobId() === route.jobId &&
-      !review.isLoading() &&
       review.isReviewNotFound() &&
       !review.getSelectedJob();
     document.title = tabTitle(route, notFound);

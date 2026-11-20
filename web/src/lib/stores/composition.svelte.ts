@@ -1,4 +1,3 @@
-import type { ReviewJob } from "../api/generated/models";
 import { appPath } from "../base-path";
 import type { SessionCapabilities } from "../api/session";
 import type { OwnedAppRuntime } from "../runtime/runtime";
@@ -77,14 +76,4 @@ export function createReviewStores(options: ReviewStoreOptions): ReviewStores {
     roborevLog,
     getCapabilities: options.getCapabilities,
   };
-}
-
-export function getJob(
-  stores: ReviewStores,
-  jobId: number | undefined,
-): ReviewJob | null | undefined {
-  return (
-    stores.roborevJobs.getVisibleJobs().find((job) => job.id === jobId) ??
-    stores.roborevReview.getSelectedJob()
-  );
 }

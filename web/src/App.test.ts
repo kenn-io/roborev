@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App.svelte";
 import { sessionLostEvent } from "./lib/api/session";
-import { tabTitle } from "./lib/utils/tab-title";
 
 const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
@@ -111,12 +110,6 @@ describe("App", () => {
     appOpened.reportCoreAction.mockClear();
   });
 
-  test("names reviews by ID", () => {
-    const route = { page: "reviews", jobId: 17 } as const;
-    expect(tabTitle(route, false)).toBe("Review (#17) · Roborev");
-    expect(tabTitle(route, true)).toBe("Review not found (#17) · Roborev");
-  });
-
   test("names a missing review after its request resolves", async () => {
     let resolveReview: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/999", (url) => {
@@ -146,6 +139,29 @@ describe("App", () => {
         });
     });
     await screen.findByText(/review in progress/i);
+    expect(document.title).toBe("Review (#17) · Roborev");
+  });
+
+  test("clears the missing title when opening another review", async () => {
+    renderAuthenticatedApp("/reviews/999", (url) => {
+      if (
+        url.pathname === "/api/review" &&
+        url.searchParams.get("job_id") === "17"
+      )
+        return new Promise<Response>(() => {});
+      if (url.pathname === "/api/jobs" && !url.searchParams.has("id"))
+        return response(200, {
+          jobs: [job],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 1 },
+        });
+    });
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Review not found (#999) · Roborev"),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /17.*abc123/i }),
+    );
     expect(document.title).toBe("Review (#17) · Roborev");
   });
 
