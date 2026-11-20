@@ -448,6 +448,12 @@ func TestListJobsWithSearch(t *testing.T) {
 		commit := createCommit(t, db, repo.ID, ref)
 		ids[ref] = enqueueJob(t, db, repo.ID, commit.ID, ref).ID
 	}
+	branchCommit := createCommit(t, db, repo.ID, "9999999")
+	branchJob, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: branchCommit.ID, GitRef: "9999999",
+		Branch: "feature/Parser-fix", Agent: "codex",
+	})
+	require.NoError(t, err)
 
 	// A panel run for PR 42 and a pre-panel CI review for PR 7.
 	members := []EnqueueOpts{{RepoID: repo.ID, GitRef: "base..cafe000", Agent: "test", PanelMemberIndex: 0}}
@@ -481,6 +487,8 @@ func TestListJobsWithSearch(t *testing.T) {
 		{name: "panel PR spelled out", query: "PR 42", want: []int64{synth.ID}},
 		{name: "number matches PR and ref prefix", query: "42", want: []int64{synth.ID, ids["4200aaa"]}},
 		{name: "legacy CI review PR", query: "#7", want: []int64{ids["abd5678"]}},
+		{name: "branch substring ignores case", query: "parser", want: []int64{branchJob.ID}},
+		{name: "full branch name", query: "feature/Parser-fix", want: []int64{branchJob.ID}},
 		{name: "no match", query: "zzz", want: []int64{}},
 	}
 	for _, tc := range tests {

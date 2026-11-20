@@ -61,7 +61,7 @@ made with `make build`.
 ## Reviews Workspace
 
 The Reviews workspace follows the daemon's queue in real time. Use the
-repository and branch picker, status filter, ref search, and closed-review
+repository and branch picker, status filter, search box, and closed-review
 toggle to narrow the list. Hiding closed reviews also hides failed and canceled
 jobs, because they have no review to resolve; select **Failed** or **Canceled**
 in the status filter to list them anyway. The Closed column shows `yes` for a
@@ -71,10 +71,11 @@ panel's closed state.
 
 If loading branches or a review fails, use **Retry** in the affected view.
 
-Ref search matches jobs whose ref, or the end of a range ref, starts with the
-text you type. A number such as `123`, `#123`, or `PR 123` also matches CI
-reviews of that pull request. Search previews results as you type. Press Enter
-to submit the current text immediately, without waiting for the preview delay.
+Search matches jobs whose ref, or the end of a range ref, starts with the text
+you type, and jobs whose branch contains it. A number such as `123`, `#123`, or
+`PR 123` also matches CI reviews of that pull request. Search previews results
+as you type. Press Enter to submit the current text immediately, without waiting
+for the preview delay.
 
 The table loads the most recent jobs first. Scroll to the end of the table to
 load the next page; loading continues until the table fills its scroll area or
@@ -144,7 +145,7 @@ The most common keyboard controls are:
 | `j` / `k` | Move down or up through the queue |
 | `Enter` | Open the selected review |
 | `Left` / `Right` | Collapse or expand a review panel |
-| `/` | Focus ref search |
+| `/` | Focus search |
 | `a` | Close or reopen the open review |
 | `c` | Focus its comment field |
 | `l` / `p` | Show its log or prompt |

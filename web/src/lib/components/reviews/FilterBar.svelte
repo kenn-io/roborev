@@ -113,8 +113,8 @@
       bind:value={searchValue}
       size="sm"
       block
-      placeholder="Search ref or PR #..."
-      ariaLabel="Search by ref or pull request"
+      placeholder="Search ref, branch, PR #..."
+      ariaLabel="Search by ref, branch, or pull request"
       oninput={onSearchInput}
       onkeydown={(event) => {
         if (event.key !== "Enter" || event.isComposing || event.repeat) return;

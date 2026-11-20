@@ -2095,8 +2095,8 @@ func WithGitRef(ref string) ListJobsOption {
 }
 
 // WithSearch matches jobs whose git ref, or the head of a range ref, starts
-// with query. A number, optionally written as "#123" or "PR 123", also matches
-// CI reviews of that pull request.
+// with query, or whose branch contains it. A number, optionally written as
+// "#123" or "PR 123", also matches CI reviews of that pull request.
 func WithSearch(query string) ListJobsOption {
 	return func(o *listJobsOptions) { o.search = strings.TrimSpace(query) }
 }
@@ -2340,8 +2340,9 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 	}
 	if o.search != "" {
 		escaped := escapeLike(o.search)
-		clause := `(j.git_ref LIKE ? ESCAPE '!' OR j.git_ref LIKE ? ESCAPE '!'`
-		args = append(args, escaped+"%", "%.."+escaped+"%")
+		clause := `(j.git_ref LIKE ? ESCAPE '!' OR j.git_ref LIKE ? ESCAPE '!'
+			OR j.branch LIKE ? ESCAPE '!'`
+		args = append(args, escaped+"%", "%.."+escaped+"%", "%"+escaped+"%")
 		if pr := searchPRNumber(o.search); pr > 0 {
 			clause += `
 			OR EXISTS (
