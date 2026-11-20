@@ -231,9 +231,9 @@ esac
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "go"), []byte(goTool), 0o700))
 			log := filepath.Join(dir, "docker.log")
-			cmd := exec.CommandContext(t.Context(), "make", "test-postgres-run", "TEST_SERVICE_LEASE=roborev-1-1")
+			cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
 			cmd.Dir = ".."
-			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "MODE="+tc.mode)
+			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "MODE="+tc.mode)
 			out, err := cmd.CombinedOutput()
 			if tc.wantError {
 				require.Error(t, err, string(out))
@@ -243,7 +243,120 @@ esac
 			calls, err := os.ReadFile(log)
 			require.NoError(t, err)
 			lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
-			assert.Equal(t, "compose -p roborev-1-1 -f docker-compose.test.yml -f docker-compose.test-lease.yml down", lines[len(lines)-1])
+			entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			assert.Equal(t, "compose -p "+entries[0].Name()+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down", lines[len(lines)-1])
 		})
 	}
+}
+
+func TestPostgresCleanupWaitsForDescendant(t *testing.T) {
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	release := filepath.Join(dir, "release")
+	require.NoError(t, syscall.Mkfifo(release, 0o600))
+	docker := `#!/bin/sh
+printf '%s\n' "$*" >> "$DOCKER_LOG"
+case " $* " in *' port '*) echo 127.0.0.1:45678 ;; esac
+`
+	goTool := `#!/bin/sh
+if [ "$1" = env ]; then exit 0; fi
+python3 -c 'import os, signal
+if os.fork() == 0:
+ signal.alarm(20)
+ devnull = os.open("/dev/null", os.O_WRONLY)
+ os.dup2(devnull, 1)
+ os.dup2(devnull, 2)
+ with open(os.environ["READY"] + ".tmp", "w") as f: f.write(str(os.getpid()))
+ os.rename(os.environ["READY"] + ".tmp", os.environ["READY"])
+ with open(os.environ["RELEASE"]) as f: f.read()
+ os._exit(0)' lease-cleanup-test-child
+exit 7
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go"), []byte(goTool), 0o700))
+	log := filepath.Join(dir, "docker.log")
+	cmd := exec.CommandContext(t.Context(), "make", "test-postgres")
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "READY="+ready, "RELEASE="+release)
+	require.NoError(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	finished := false
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 10*time.Millisecond)
+	child, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(string(child))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		args, err := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+		if err == nil && strings.Contains(string(args), "lease-cleanup-test-child") {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+		if !finished {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+			}
+		}
+	})
+	// The test command has failed, but its child still owns the lease.
+	time.Sleep(200 * time.Millisecond)
+	calls, err := os.ReadFile(log)
+	require.NoError(t, err)
+	assert.NotContains(t, string(calls), " down")
+	select {
+	case err := <-done:
+		finished = true
+		t.Fatalf("run exited before its child: %v", err)
+	default:
+	}
+	var fd int
+	require.Eventually(t, func() bool {
+		fd, err = syscall.Open(release, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, os.NewFile(uintptr(fd), release).Close())
+	select {
+	case err := <-done:
+		finished = true
+		var exit *exec.ExitError
+		require.ErrorAs(t, err, &exit)
+		assert.Equal(t, 2, exit.ExitCode(), "the failed make command must stay failed")
+	case <-time.After(10 * time.Second):
+		t.Fatal("cleanup did not finish after the child exited")
+	}
+	calls, err = os.ReadFile(log)
+	require.NoError(t, err)
+	assert.Contains(t, string(calls), " down\n")
+}
+
+func TestComposeLeaseHandlesTermination(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "docker.log")
+	ready := filepath.Join(dir, "ready")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"), 0o700))
+	cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "--compose", "sh", "-c", `touch "$READY"; exec sleep 30`)
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+log, "READY="+ready)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
+	err := cmd.Wait()
+	var exit *exec.ExitError
+	require.ErrorAs(t, err, &exit)
+	assert.Equal(t, 143, exit.ExitCode())
+	calls, err := os.ReadFile(log)
+	require.NoError(t, err)
+	assert.Contains(t, string(calls), " down\n")
 }

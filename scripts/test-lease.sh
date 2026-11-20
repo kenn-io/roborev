@@ -17,10 +17,15 @@ fi
 exec python3 -c '
 import fcntl
 import os
+import signal
+import subprocess
 import sys
 import time
 
 name, *command = sys.argv[1:]
+compose = command[0] == "--compose"
+if compose:
+    command = command[1:]
 lease = f"{name}-{int(time.time())}-{os.getpid()}"
 directory = os.path.join(os.environ["HOME"], ".local", "state", "test-service-leases")
 os.makedirs(directory, mode=0o700, exist_ok=True)
@@ -32,5 +37,41 @@ os.set_inheritable(fd, True)
 fcntl.flock(fd, fcntl.LOCK_EX)
 os.environ["TEST_SERVICE_LEASE"] = lease
 os.environ["COMPOSE_PROJECT_NAME"] = lease
-os.execvp(command[0], command)
+if not compose:
+    os.execvp(command[0], command)
+
+# A separate open file description can wait for every inherited lock holder.
+wait_fd = os.open(os.path.join(directory, lease), os.O_RDONLY)
+process = None
+interrupted = 0
+def interrupt(signum, frame):
+    global interrupted
+    interrupted = signum
+    if process is not None and process.poll() is None:
+        try:
+            process.send_signal(signum)
+        except ProcessLookupError:
+            pass
+signal.signal(signal.SIGINT, interrupt)
+signal.signal(signal.SIGTERM, interrupt)
+try:
+    process = subprocess.Popen(command, pass_fds=(fd,))
+    if interrupted:
+        interrupt(interrupted, None)
+    status = process.wait()
+except OSError as error:
+    print(error, file=sys.stderr)
+    status = 1
+os.close(fd)
+fcntl.flock(wait_fd, fcntl.LOCK_EX)
+try:
+    cleanup = subprocess.run(["docker", "compose", "-p", lease, "-f", "docker-compose.test.yml", "-f", "docker-compose.test-lease.yml", "down"]).returncode
+except OSError as error:
+    print(error, file=sys.stderr)
+    cleanup = 1
+if interrupted:
+    status = 128 + interrupted
+elif status < 0:
+    status = 128 - status
+sys.exit(status or (1 if cleanup else 0))
 ' "$@"
