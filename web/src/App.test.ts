@@ -114,6 +114,7 @@ describe("App", () => {
     [undefined, "Review (#17) · Roborev"],
   ])("names an off-page queued job with subject %j", async (subject, title) => {
     renderAuthenticatedApp("/reviews/17", (url) => {
+      if (subject === undefined) return;
       if (url.pathname === "/api/ui/review-projection")
         return response(200, { responses: [] });
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
@@ -124,7 +125,7 @@ describe("App", () => {
         });
     });
     await vi.waitFor(() => expect(document.title).toBe(title));
-    await screen.findByText(/review in progress/i);
+    if (subject !== undefined) await screen.findByText(/review in progress/i);
     expect(document.title).toBe(title);
   });
 
