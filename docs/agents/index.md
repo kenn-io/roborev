@@ -349,7 +349,7 @@ and commands):
 
 | Agent | Agentic Support |
 |-------|-----------------|
-| Codex | Full (uses `--dangerously-bypass-approvals-and-sandbox`) |
+| Codex | Full (uses `--dangerously-bypass-approvals-and-sandbox`; reviews and other non-agentic runs turn off Codex hooks) |
 | Claude Code | Full (uses `--dangerously-skip-permissions`; reviews, synthesis, and planning load only `Read`, `Glob`, and `Grep`) |
 | Gemini (Antigravity) | Full (uses `--dangerously-skip-permissions`) |
 | Gemini (legacy) | Full (uses `--yolo` and `--allowed-tools`) |
