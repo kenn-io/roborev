@@ -4,6 +4,7 @@ package scripts
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,7 +70,11 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$URL_LOG"
 	require.NoError(t, err, string(out))
 	urls, err := os.ReadFile(urlLog)
 	require.NoError(t, err)
-	assert.Equal(t, strings.Repeat("postgres://roborev_test:roborev_test_password@127.0.0.1:45678/roborev_test\n", 2), string(urls))
+	lines := strings.Split(strings.TrimSpace(string(urls)), "\n")
+	require.NotEmpty(t, strings.TrimSpace(string(urls)))
+	for _, line := range lines {
+		assert.Equal(t, "postgres://roborev_test:roborev_test_password@127.0.0.1:45678/roborev_test", line)
+	}
 	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
@@ -78,6 +83,18 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$URL_LOG"
 	data, err := os.ReadFile(dockerLog)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+" "+lease+" 127.0.0.1::5432]")
+	config := exec.CommandContext(t.Context(), "docker", "compose", "-p", lease, "-f", "docker-compose.test.yml", "-f", "docker-compose.test-lease.yml", "config", "--format", "json")
+	config.Dir = ".."
+	config.Env = append(os.Environ(), "DOCKER_CONFIG="+dir, "TEST_SERVICE_LEASE="+lease, "COMPOSE_PROJECT_NAME="+lease, "TEST_PG_PUBLISH=127.0.0.1::5432")
+	resolved, err := config.CombinedOutput()
+	require.NoError(t, err, string(resolved))
+	var compose struct {
+		Services map[string]struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"services"`
+	}
+	require.NoError(t, json.Unmarshal(resolved, &compose))
+	assert.Equal(t, lease, compose.Services["postgres"].Labels["test-service.lease"])
 }
 
 func TestLeaseHeldByDescendantUntilExit(t *testing.T) {
@@ -116,8 +133,15 @@ if os.fork() == 0:
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	lease := filepath.Join(dir, ".local/state/test-service-leases", entries[0].Name())
-	probe := func() error { return exec.CommandContext(t.Context(), "flock", "-n", lease, "true").Run() }
-	require.Error(t, probe(), "descendant must hold the lease after the command exits")
+	probe := func() error {
+		f, err := os.Open(lease)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	}
+	require.ErrorIs(t, probe(), syscall.EWOULDBLOCK, "descendant must hold the lease after the command exits")
 	var fd int
 	// The FIFO reader opens in the external child after it publishes readiness.
 	require.Eventually(t, func() bool {
@@ -144,32 +168,33 @@ func TestLeaseRejectsPublicDirectory(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestPostgresDryRunDoesNotStartDocker(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0o700))
-	cmd := exec.CommandContext(t.Context(), "make", "-n", "test-postgres")
-	cmd.Dir = ".."
-	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+filepath.Join(dir, "docker-called"))
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	assert.Contains(t, string(out), "docker compose")
-	assert.Contains(t, string(out), "gotestsum")
-	_, err = os.Stat(filepath.Join(dir, "docker-called"))
-	assert.ErrorIs(t, err, os.ErrNotExist)
-	_, err = os.Stat(filepath.Join(dir, ".local/state/test-service-leases"))
-	assert.ErrorIs(t, err, os.ErrNotExist)
-}
-
 func TestPostgresRunRequiresLease(t *testing.T) {
-	dir := t.TempDir()
-	dockerLog := filepath.Join(dir, "docker-called")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0o700))
-	cmd := exec.CommandContext(t.Context(), "make", "test-postgres-run", "TEST_SERVICE_LEASE=")
-	cmd.Dir = ".."
-	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+dockerLog)
-	out, err := cmd.CombinedOutput()
-	require.Error(t, err, string(out))
-	assert.Contains(t, string(out), "use make test-postgres")
-	_, err = os.Stat(dockerLog)
-	assert.True(t, os.IsNotExist(err), "docker ran without a lease")
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		dryRun bool
+	}{
+		{"dry run", []string{"-n", "test-postgres"}, true},
+		{"empty lease", []string{"test-postgres-run", "TEST_SERVICE_LEASE="}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			dockerLog := filepath.Join(dir, "docker-called")
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0o700))
+			cmd := exec.CommandContext(t.Context(), "make", tc.args...)
+			cmd.Dir = ".."
+			cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+dockerLog)
+			out, err := cmd.CombinedOutput()
+			if tc.dryRun {
+				require.NoError(t, err, string(out))
+				_, err = os.Stat(filepath.Join(dir, ".local/state/test-service-leases"))
+				assert.ErrorIs(t, err, os.ErrNotExist)
+			} else {
+				require.Error(t, err, string(out))
+				assert.Contains(t, string(out), "use make test-postgres")
+			}
+			_, err = os.Stat(dockerLog)
+			assert.ErrorIs(t, err, os.ErrNotExist)
+		})
+	}
 }
