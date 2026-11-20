@@ -27,7 +27,7 @@ func TestInterruptShutdownRequeuesRunningJobs(t *testing.T) {
 			require.NotNil(t, job)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			server.workerPool.registerRunningJob(job.ID, cancel, time.Time{})
+			server.workerPool.registerRunningJob(job.ID, cancel, time.Time{}, nil)
 			if tc.alreadyDraining {
 				require.NoError(t, server.beginShutdownDrain())
 			}

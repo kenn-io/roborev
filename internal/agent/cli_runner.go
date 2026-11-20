@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 // Give os/exec a short output-drain window, then close descriptors inherited
@@ -119,14 +121,19 @@ func runStreamingCLI(ctx context.Context, spec streamingCLISpec) (streamingCLIRe
 	stopClosingPipe := closeOnContextDone(ctx, stdout, tracker)
 	defer stopClosingPipe()
 
-	if err := cmd.Start(); err != nil {
+	var startOpts []proctrack.StartOption
+	if spec.Cancel != nil {
+		startOpts = append(startOpts, proctrack.WithStop(func() { _ = spec.Cancel() }))
+	}
+	proc, err := proctrack.Start(ctx, cmd, startOpts...)
+	if err != nil {
 		return result, fmt.Errorf("start %s: %w", spec.Name, err)
 	}
 
 	var waitErr error
 	waitDone := make(chan struct{})
 	go func() {
-		waitErr = cmd.Wait()
+		waitErr = proc.Wait()
 		_ = stdout.Close()
 		close(waitDone)
 	}()

@@ -307,7 +307,7 @@ func TestWorkerPoolPendingCancellation(t *testing.T) {
 	tc.assertJobPendingCancel(t, job.ID, true)
 
 	canceled := false
-	tc.Pool.registerRunningJob(job.ID, func() { canceled = true }, time.Time{})
+	tc.Pool.registerRunningJob(job.ID, func() { canceled = true }, time.Time{}, nil)
 
 	if !canceled {
 		assert.Condition(t, func() bool {
@@ -345,7 +345,7 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	tc.assertJobPendingCancel(t, job.ID, true)
 
 	canceled := false
-	tc.Pool.registerRunningJob(job.ID, func() { canceled = true }, time.Time{})
+	tc.Pool.registerRunningJob(job.ID, func() { canceled = true }, time.Time{}, nil)
 
 	if !canceled {
 		assert.Condition(t, func() bool {
@@ -605,7 +605,7 @@ func TestWorkerPoolCancelJobRegisteredDuringCheck(t *testing.T) {
 	job := tc.createAndClaimJob(t, "register-during", testWorkerID)
 
 	canceled := false
-	tc.Pool.registerRunningJob(job.ID, func() { canceled = true }, time.Time{})
+	tc.Pool.registerRunningJob(job.ID, func() { canceled = true }, time.Time{}, nil)
 
 	if !tc.Pool.CancelJob(job.ID) {
 		assert.Condition(t, func() bool {
@@ -630,7 +630,7 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	cancelFunc := func() { canceled.Add(1) }
 
 	tc.Pool.testHookAfterSecondCheck = func() {
-		tc.Pool.registerRunningJob(job.ID, cancelFunc, time.Time{})
+		tc.Pool.registerRunningJob(job.ID, cancelFunc, time.Time{}, nil)
 	}
 
 	result := tc.Pool.CancelJob(job.ID)
@@ -2621,7 +2621,7 @@ func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	}
 
 	tc.Pool.testHookAfterSecondCheck = func() {
-		tc.Pool.registerRunningJob(job.ID, cancelFunc, time.Time{})
+		tc.Pool.registerRunningJob(job.ID, cancelFunc, time.Time{}, nil)
 	}
 
 	done := make(chan bool)

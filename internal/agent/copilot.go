@@ -11,6 +11,8 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+
+	"go.kenn.io/roborev/internal/proctrack"
 )
 
 var (
@@ -281,7 +283,7 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 		cmd.Stderr = &stderr
 	}
 
-	runErr := cmd.Run()
+	runErr := proctrack.Run(ctx, cmd)
 	result := stdout.String()
 	if supportsJSONOutput {
 		// Failed and canceled runs can still emit a session and partial response.

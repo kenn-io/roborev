@@ -625,6 +625,12 @@ func (wp *WorkerPool) runSynthesisAgent(
 			if wp.handleUpdateInterruption(ctx, workerID, job) {
 				return reviewpkg.SynthesisDocument{}, agentName, sessionTokenUsage{}, errSynthesisCanceled
 			}
+			if b := wp.attemptMemoryBreach(job.ID); b != nil {
+				wp.runAttemptTransition(workerID, job, func() {
+					wp.failNonRetryableJobLocked(workerID, job, agentName, b.Error())
+				})
+				return reviewpkg.SynthesisDocument{}, agentName, collected, b
+			}
 			// A user cancellation is already terminal. Don't fail it.
 			log.Printf("[%s] Synthesis job %d canceled during agent run", workerID, job.ID)
 			return reviewpkg.SynthesisDocument{}, agentName, sessionTokenUsage{}, errSynthesisCanceled

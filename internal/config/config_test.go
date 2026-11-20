@@ -3158,6 +3158,34 @@ func TestConfigValidateRejectsInvalidReasoningAndSeverity(t *testing.T) {
 	}
 }
 
+// The daemon loads and reloads its configuration through LoadGlobalFrom; a
+// negative limit there used to load and silently disable enforcement.
+func TestLoadGlobalFromAgentMemoryLimit(t *testing.T) {
+	for _, tc := range []struct {
+		value   string
+		want    int
+		wantErr bool
+	}{{"-1", 0, true}, {"0", 0, false}, {"16384", 16384, false}} {
+		t.Run(tc.value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte("agent_memory_max_mb = "+tc.value+"\n"), 0o600))
+			cfg, err := LoadGlobalFrom(path)
+			if tc.wantErr {
+				require.ErrorContains(t, err, "agent_memory_max_mb must be 0 or more, got -1")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.AgentMemoryMaxMB)
+		})
+	}
+}
+
+func TestConfigValidateAgentMemoryLimit(t *testing.T) {
+	require.ErrorContains(t, (&Config{AgentMemoryMaxMB: -1}).Validate(), "agent_memory_max_mb")
+	require.NoError(t, (&Config{AgentMemoryMaxMB: 0}).Validate())
+	require.NoError(t, (&Config{AgentMemoryMaxMB: 16384}).Validate())
+}
+
 func TestRepoConfigValidateRejectsInvalidReasoning(t *testing.T) {
 	tests := []struct {
 		name string

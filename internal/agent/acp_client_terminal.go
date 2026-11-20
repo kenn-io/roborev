@@ -11,11 +11,13 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
 	"go.kenn.io/kit/pathresolve"
 
+	"go.kenn.io/roborev/internal/proctrack"
 	"go.kenn.io/roborev/internal/procutil"
 )
 
@@ -87,6 +89,7 @@ type acpClient struct {
 	terminalsMutex      sync.Mutex              // Mutex for concurrent access to terminals map
 	nextTerminalID      int                     // Counter for generating terminal IDs
 	nextTerminalIDMutex sync.Mutex              // Mutex for concurrent access to terminal ID counter
+	procScope           *proctrack.Scope        // Attempt process scope; terminal commands are its roots
 }
 
 // validateSessionID validates that the session ID in the request matches the agent's session ID
@@ -346,6 +349,9 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	cmd := exec.CommandContext(terminalCtx, params.Command, params.Args...)
 	procutil.HideConsole(cmd)
 	cmd.Dir = cwd
+	// A detached process can hold the output pipe open after the command
+	// exits; stop copying from it a second later.
+	cmd.WaitDelay = time.Second
 
 	// The agent chooses this command line, so it is the most direct
 	// exfiltration channel there is: never hand it forge credentials
@@ -395,7 +401,10 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	doneChan := make(chan struct{})
 
 	// Start the command
-	if err := cmd.Start(); err != nil {
+	// The terminal context deliberately outlives the RPC, so the attempt's
+	// process scope is carried over explicitly.
+	proc, err := proctrack.Start(proctrack.ContextWith(terminalCtx, c.procScope), cmd)
+	if err != nil {
 		// Clean up the context if command fails to start
 		cancelFunc()
 		close(doneChan)
@@ -418,7 +427,7 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	// Start a goroutine to wait for the command to finish.
 	// Terminal entries stay available until explicit ReleaseTerminal.
 	go func() {
-		_ = cmd.Wait()
+		_ = proc.Wait()
 		terminal.setExitStatus(getTerminalExitStatus(cmd.ProcessState))
 		// Signal that the command has completed.
 		close(doneChan)

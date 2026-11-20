@@ -250,7 +250,7 @@ func TestHealthReportsAbandonedAndOverdueJobs(t *testing.T) {
 				time.Now().Add(-45*time.Minute).UTC().Format(time.RFC3339), job.ID)
 			require.NoError(t, err)
 			if tracked {
-				server.workerPool.registerRunningJob(job.ID, func() {}, time.Now().Add(-time.Minute))
+				server.workerPool.registerRunningJob(job.ID, func() {}, time.Now().Add(-time.Minute), nil)
 			}
 
 			response := executeHealthCheck(t.Context(), server, http.MethodGet)
