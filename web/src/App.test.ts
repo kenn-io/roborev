@@ -146,8 +146,7 @@ describe("App", () => {
         });
     });
     await vi.waitFor(() => expect(resolveReview).toBeDefined());
-    if (subject !== undefined)
-      expect(document.title).toBe("Review (#17) · Roborev");
+    await vi.waitFor(() => expect(document.title).toBe(title));
     resolveReview?.(response(404));
     await screen.findByText(/review in progress/i);
     expect(document.title).toBe(title);
@@ -175,7 +174,7 @@ describe("App", () => {
           url.searchParams.get("id") === "17"
         ) {
           jobRead = true;
-          return response(200, { jobs: [job] });
+          return response(200, { jobs: [{ ...job, status: "done" }] });
         }
         if (url.pathname === "/api/review") {
           if (failed === "review")
@@ -194,7 +193,7 @@ describe("App", () => {
             return new Promise<Response>((resolve) => {
               resolveFailure = resolve;
             });
-          return response(200, { responses: [] });
+          return new Promise<Response>(() => {});
         }
       });
       await vi.waitFor(() => expect(jobRead && resolveFailure).toBeTruthy());
@@ -210,12 +209,30 @@ describe("App", () => {
   test("keeps the off-page subject after a failed refresh", async () => {
     let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
     let failed = false;
+    let resolveJob: ((value: Response) => void) | undefined;
+    let resolveProjection: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
-        return response(200, { jobs: [job] });
-      if (url.pathname === "/api/review") return response(failed ? 409 : 404);
+        return failed
+          ? new Promise<Response>((resolve) => {
+              resolveJob = resolve;
+            })
+          : response(200, { jobs: [job] });
+      if (url.pathname === "/api/review")
+        return failed
+          ? response(200, {
+              id: 7,
+              job_id: 17,
+              output: "review",
+              closed: false,
+            })
+          : response(404);
       if (url.pathname === "/api/ui/review-projection")
-        return response(200, { responses: [] });
+        return failed
+          ? new Promise<Response>((resolve) => {
+              resolveProjection = resolve;
+            })
+          : response(200, { responses: [] });
       if (url.pathname === "/api/stream/events")
         return new Response(
           new ReadableStream<Uint8Array>({
@@ -235,9 +252,46 @@ describe("App", () => {
         `${JSON.stringify({ type: "review.completed", ts: "2026-08-13T20:01:00Z", job_id: 17, repo: "/workspace/repo", repo_name: "repo", sha: "abc123" })}\n`,
       ),
     );
+    await vi.waitFor(() => expect(resolveJob).toBeDefined());
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
+    resolveJob?.(response(200, { jobs: [{ ...job, status: "done" }] }));
+    await vi.waitFor(() => expect(resolveProjection).toBeDefined());
+    resolveProjection?.(response(500));
     expect(
       await screen.findByText("Failed to load review"),
     ).toBeInTheDocument();
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
+  });
+
+  test("hides Cancel when the refreshed job lookup fails", async () => {
+    let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let refresh = false;
+    renderAuthenticatedApp("/reviews/17", (url) => {
+      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+        return refresh ? response(500) : response(200, { jobs: [job] });
+      if (url.pathname === "/api/review") return response(404);
+      if (url.pathname === "/api/ui/review-projection")
+        return response(200, { responses: [] });
+      if (url.pathname === "/api/stream/events")
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              stream = controller;
+            },
+          }),
+          { status: 200 },
+        );
+    });
+    await screen.findByRole("button", { name: "Cancel" });
+    await vi.waitFor(() => expect(stream).toBeDefined());
+    refresh = true;
+    stream?.enqueue(
+      new TextEncoder().encode(
+        `${JSON.stringify({ type: "review.completed", ts: "2026-08-13T20:01:00Z", job_id: 17, repo: "/workspace/repo", repo_name: "repo", sha: "abc123" })}\n`,
+      ),
+    );
+    await screen.findByText("Failed to load review");
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
     expect(document.title).toBe("Fix login race (#17) · Roborev");
   });
 

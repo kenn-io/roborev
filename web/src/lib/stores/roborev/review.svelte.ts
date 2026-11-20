@@ -1,7 +1,6 @@
 import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
-import { untrack } from "svelte";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
 import { retryIdempotentRead } from "../../api/retry-policy";
@@ -60,6 +59,9 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   // State
   let review = $state.raw<Review | null>(null);
   let selectedJob = $state.raw<ReviewJob | null>(null);
+  let knownSubject = $state.raw<{ jobId: number; subject: string } | null>(
+    null,
+  );
   let responses = $state.raw<ReviewResponse[]>([]);
   let loading = $state(false);
   let selectedJobId = $state<number | undefined>(undefined);
@@ -180,6 +182,11 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       loadFailureReportedJobId = undefined;
       review = authority.review;
       selectedJob = authority.selectedJob;
+      if (
+        authority.selectedJob?.id === jobId &&
+        authority.selectedJob.commit_subject
+      )
+        knownSubject = { jobId, subject: authority.selectedJob.commit_subject };
       responses = [...authority.responses];
       reviewNotFound = authority.reviewNotFound;
       storeError = null;
@@ -193,7 +200,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   const loadReviewEffect = (jobId: number) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
-      let listedJob: ReviewJob | undefined;
       return yield* workflow.review(
         opts.owner,
         jobId,
@@ -203,18 +209,20 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             reviewNotFound = false;
             storeError = null;
             review = null;
-            if (untrack(() => selectedJob?.id) !== jobId) selectedJob = null;
+            selectedJob = null;
             responses = [];
           });
           const authority = yield* fetchReviewAuthority(jobId, (job) => {
-            listedJob = job;
+            if (selectedJobId !== jobId || job?.id !== jobId) return;
+            selectedJob = job;
+            if (job.commit_subject)
+              knownSubject = { jobId, subject: job.commit_subject };
           });
           yield* publishReviewAuthority(jobId, authority);
         }).pipe(
           Effect.catch(() =>
             Effect.sync(() => {
               if (selectedJobId !== jobId) return;
-              if (listedJob?.id === jobId) selectedJob = listedJob;
               storeError = "Failed to load review";
               if (loadFailureReportedJobId !== jobId) {
                 loadFailureReportedJobId = jobId;
@@ -410,6 +418,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function setSelectedJobId(jobId: number | undefined): void {
     if (jobId !== selectedJobId) {
+      knownSubject = null;
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
       reviewNotFound = false;
@@ -464,10 +473,16 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   function getSelectedJob(): ReviewJob | null {
     return selectedJob;
   }
+  function getKnownSubject(jobId: number | undefined): string | undefined {
+    return knownSubject && knownSubject.jobId === jobId
+      ? knownSubject.subject
+      : undefined;
+  }
 
   return {
     getReview,
     getSelectedJob,
+    getKnownSubject,
     getResponses,
     isLoading,
     getSelectedJobId,
