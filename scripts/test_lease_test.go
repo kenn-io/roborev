@@ -138,6 +138,65 @@ func TestPostgresPortLookupFailureStopsTests(t *testing.T) {
 	}
 }
 
+func TestPostgresKilledSupervisorRetainsLease(t *testing.T) {
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	release := filepath.Join(dir, "release")
+	require.NoError(t, syscall.Mkfifo(release, 0o600))
+	docker := "#!/bin/sh\ntouch \"$HOME/docker-called\"\nexit 1\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
+	child := `import os, signal
+signal.alarm(20)
+with open(os.environ["READY"] + ".tmp", "w") as f: f.write(str(os.getpid()))
+os.rename(os.environ["READY"] + ".tmp", os.environ["READY"])
+with open(os.environ["RELEASE"]) as f: f.read()`
+	cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "python3", "-c", child, "lease-killed-test-child")
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "READY="+ready, "RELEASE="+release)
+	require.NoError(t, cmd.Start())
+	defer func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 10*time.Millisecond)
+	childPID, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(string(childPID))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer cancel()
+		args, err := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+		if err == nil && strings.Contains(string(args), "lease-killed-test-child") {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	require.NoError(t, cmd.Process.Kill())
+	var exit *exec.ExitError
+	require.ErrorAs(t, cmd.Wait(), &exit)
+	require.Equal(t, syscall.SIGKILL, exit.Sys().(syscall.WaitStatus).Signal())
+	leaseDir := filepath.Join(dir, ".local/state/test-service-leases")
+	entries, err := os.ReadDir(leaseDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	lease, err := os.Open(filepath.Join(leaseDir, entries[0].Name()))
+	require.NoError(t, err)
+	defer lease.Close()
+	require.ErrorIs(t, syscall.Flock(int(lease.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), syscall.EWOULDBLOCK)
+	var releaseFD int
+	require.Eventually(t, func() bool {
+		releaseFD, err = syscall.Open(release, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, os.NewFile(uintptr(releaseFD), release).Close())
+	require.Eventually(t, func() bool { return syscall.Flock(int(lease.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil }, 10*time.Second, 10*time.Millisecond)
+	_, err = os.Stat(filepath.Join(leaseDir, entries[0].Name()))
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(dir, "docker-called"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestPostgresRunCleansUp(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
