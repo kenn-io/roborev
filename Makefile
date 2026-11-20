@@ -184,7 +184,7 @@ test:
 	go test ./...
 
 test-service-lease:
-	go test ./scripts -run '^(TestLeaseRequiresHome|TestPostgres)' -count=1
+	go test ./scripts -run '^(TestLease|TestPostgres)' -count=1
 
 test-agent-setup:
 	go test ./cmd/roborev ./internal/agenthook ./internal/mcpconfig -run '^(TestAgentSetupMCPReruns|TestAgentSetupPreservesMCPSettings|TestAgentSetupKeepsResolvableHookExecutable|TestAgentReadinessRequiresMatchingHookAndSkillMode|TestAgentSetupReportsUnsupportedAgentUnknown|TestAgentSetupDoesNotInstallHooksWhenMCPFails|TestDoctorReportsDaemonStartedDuringMCPCheck|TestAgentReadinessShowsNextStepOnce|TestQuickstartCodexTrust|TestClaudeKitInstallOptionsKeepExecutableAndArguments|TestInstallMergesAndSwitchesTransports|TestInstallDryRunAndInvalidInputPreserveConfig|TestInstallWhitespaceOnlyConfig|TestInstallPreservesConfigSymlinkAndMode)$$'

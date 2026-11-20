@@ -366,7 +366,7 @@ esac
 	require.NoError(t, lock.Close())
 	args, err := exec.CommandContext(t.Context(), "ps", "-p", strconv.Itoa(cmd.Process.Pid), "-o", "args=").Output()
 	require.NoError(t, err)
-	require.Contains(t, string(args), "test-lease.sh")
+	require.Contains(t, strings.Fields(string(args)), "-c")
 	require.NoError(t, syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM))
 	time.Sleep(100 * time.Millisecond)
 	select {
