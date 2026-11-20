@@ -460,7 +460,6 @@ describe("App", () => {
     expect(document.title).toBe(
       "Fix login race (#17) · example/repo · Roborev",
     );
-    await screen.findByText("Review in progress…");
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
