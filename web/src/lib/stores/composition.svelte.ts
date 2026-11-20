@@ -27,7 +27,7 @@ export function getSelectedJob(
   const job =
     stores.roborevJobs?.getVisibleJobs().find((job) => job.id === jobId) ??
     stores.roborevReview?.getSelectedJob();
-  return job?.id === jobId ? job : undefined;
+  return job;
 }
 
 export interface ReviewStores {

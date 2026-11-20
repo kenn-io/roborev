@@ -1,6 +1,7 @@
 import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
+import { untrack } from "svelte";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
 import { retryIdempotentRead } from "../../api/retry-policy";
@@ -66,13 +67,15 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   let storeError = $state<string | null>(null);
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
-    function* (jobId: number) {
+    function* (jobId: number, onJob?: (job: ReviewJob | undefined) => void) {
       const jobRead = executeRoborevRequest(
         "GET Roborev review job",
         (signal) =>
           api.listJobs({ id: jobId, limit: 1 } satisfies ListJobsQuery, {
             signal,
           }),
+      ).pipe(
+        Effect.tap((listed) => Effect.sync(() => onJob?.(listed.jobs?.[0]))),
       );
       const result = yield* Effect.all(
         {
@@ -190,6 +193,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   const loadReviewEffect = (jobId: number) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
+      let listedJob: ReviewJob | undefined;
       return yield* workflow.review(
         opts.owner,
         jobId,
@@ -199,15 +203,18 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             reviewNotFound = false;
             storeError = null;
             review = null;
-            selectedJob = null;
+            if (untrack(() => selectedJob?.id) !== jobId) selectedJob = null;
             responses = [];
           });
-          const authority = yield* fetchReviewAuthority(jobId);
+          const authority = yield* fetchReviewAuthority(jobId, (job) => {
+            listedJob = job;
+          });
           yield* publishReviewAuthority(jobId, authority);
         }).pipe(
           Effect.catch(() =>
             Effect.sync(() => {
               if (selectedJobId !== jobId) return;
+              if (listedJob?.id === jobId) selectedJob = listedJob;
               storeError = "Failed to load review";
               if (loadFailureReportedJobId !== jobId) {
                 loadFailureReportedJobId = jobId;
@@ -406,7 +413,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
       reviewNotFound = false;
-      selectedJob = null;
     }
     selectedJobId = jobId;
     if (jobId === undefined) {

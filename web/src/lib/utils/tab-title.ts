@@ -3,7 +3,7 @@ import type { AppRoute } from "../router/router.svelte";
 export const sessionTitles = {
   checking: "Checking · Roborev",
   login: "Connect · Roborev",
-  error: "Unavailable · Roborev",
+  error: "Connect failed · Roborev",
 };
 
 export function tabTitle(

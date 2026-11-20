@@ -26,7 +26,7 @@
     reportScreenViewed,
     setupAppOpenedReporting,
   } from "../utils/app-opened";
-  import { sessionTitles, tabTitle } from "../utils/tab-title";
+  import { tabTitle } from "../utils/tab-title";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
   import BrandMark from "./BrandMark.svelte";
@@ -72,13 +72,13 @@
     const job = getSelectedJob(stores, jobId);
     document.title =
       route.page === "reviews" && daemon.isInitiallyUnavailable()
-        ? sessionTitles.error
+        ? "Unavailable · Roborev"
         : tabTitle(
             route,
             review.getSelectedJobId() === jobId &&
               review.isReviewNotFound() &&
-              !job,
-            job?.commit_subject,
+              job?.id !== jobId,
+            job?.id === jobId ? job?.commit_subject : undefined,
           );
   });
 

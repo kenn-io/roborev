@@ -7,6 +7,7 @@ const appOpened = vi.hoisted(() => ({
   setupAppOpenedReporting: vi.fn(() => () => undefined),
   reportScreenViewed: vi.fn(),
   reportCoreAction: vi.fn(),
+  reportErrorShown: vi.fn(),
 }));
 // Shell effects are checked here; authenticated requests are checked beside the helper.
 vi.mock("./lib/utils/app-opened", () => appOpened);
@@ -161,6 +162,83 @@ describe("App", () => {
     });
     await screen.findByText("Roborev daemon not reachable");
     expect(document.title).toBe("Unavailable · Roborev");
+  });
+
+  test.each(["review", "projection"])(
+    "keeps the off-page subject when %s fails",
+    async (failed) => {
+      let resolveFailure: ((value: Response) => void) | undefined;
+      let jobRead = false;
+      renderAuthenticatedApp("/reviews/17", (url) => {
+        if (
+          url.pathname === "/api/jobs" &&
+          url.searchParams.get("id") === "17"
+        ) {
+          jobRead = true;
+          return response(200, { jobs: [job] });
+        }
+        if (url.pathname === "/api/review") {
+          if (failed === "review")
+            return new Promise<Response>((resolve) => {
+              resolveFailure = resolve;
+            });
+          return response(200, {
+            id: 7,
+            job_id: 17,
+            output: "review",
+            closed: false,
+          });
+        }
+        if (url.pathname === "/api/ui/review-projection") {
+          if (failed === "projection")
+            return new Promise<Response>((resolve) => {
+              resolveFailure = resolve;
+            });
+          return response(200, { responses: [] });
+        }
+      });
+      await vi.waitFor(() => expect(jobRead && resolveFailure).toBeTruthy());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      resolveFailure?.(response(failed === "review" ? 409 : 500));
+      expect(
+        await screen.findByText("Failed to load review"),
+      ).toBeInTheDocument();
+      expect(document.title).toBe("Fix login race (#17) · Roborev");
+    },
+  );
+
+  test("keeps the off-page subject after a failed refresh", async () => {
+    let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let failed = false;
+    renderAuthenticatedApp("/reviews/17", (url) => {
+      if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
+        return response(200, { jobs: [job] });
+      if (url.pathname === "/api/review") return response(failed ? 409 : 404);
+      if (url.pathname === "/api/ui/review-projection")
+        return response(200, { responses: [] });
+      if (url.pathname === "/api/stream/events")
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              stream = controller;
+            },
+          }),
+          { status: 200 },
+        );
+    });
+    await screen.findByText(/review in progress/i);
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
+    await vi.waitFor(() => expect(stream).toBeDefined());
+    failed = true;
+    stream?.enqueue(
+      new TextEncoder().encode(
+        `${JSON.stringify({ type: "review.completed", ts: "2026-08-13T20:01:00Z", job_id: 17, repo: "/workspace/repo", repo_name: "repo", sha: "abc123" })}\n`,
+      ),
+    );
+    expect(
+      await screen.findByText("Failed to load review"),
+    ).toBeInTheDocument();
+    expect(document.title).toBe("Fix login race (#17) · Roborev");
   });
 
   test("names the checking session on mount", () => {
@@ -411,7 +489,7 @@ describe("App", () => {
     render(App);
 
     expect(await screen.findByText("offline")).toBeInTheDocument();
-    expect(document.title).toBe("Unavailable · Roborev");
+    expect(document.title).toBe("Connect failed · Roborev");
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(
       await screen.findByRole("region", { name: "Review jobs" }),
