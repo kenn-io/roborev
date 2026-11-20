@@ -157,28 +157,24 @@ with open(sys.argv[1]) as f:
 }
 
 func TestLeaseSupervisorCleanup(t *testing.T) {
-	for _, tc := range []struct{ command, cleanup, want string }{
-		{"exit 0", "exit 1", "1"},
-		{"exit 17", "exit 1", "17"},
-	} {
-		t.Run(tc.command+"/"+tc.cleanup, func(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		want    int
+	}{{"exit 0", 1}, {"exit 17", 17}} {
+		t.Run(tc.command, func(t *testing.T) {
 			dir := t.TempDir()
 			cleanup := `python3 -c 'import fcntl, os, sys
 with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", os.environ["TEST_SERVICE_LEASE"])) as f:
  try: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
  except BlockingIOError: sys.exit(0)
  sys.exit(99)' || exit 99
-` + tc.cleanup
+exit 1`
 			cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", cleanup, "sh", "-c", tc.command)
 			cmd.Env = append(os.Environ(), "HOME="+dir)
 			out, err := cmd.CombinedOutput()
-			if tc.want == "0" {
-				require.NoError(t, err, string(out))
-				return
-			}
 			var exit *exec.ExitError
 			require.ErrorAs(t, err, &exit, string(out))
-			assert.Equal(t, tc.want, strconv.Itoa(exit.ExitCode()), string(out))
+			assert.Equal(t, tc.want, exit.ExitCode(), string(out))
 			assert.Contains(t, string(out), "cleanup failed; scheduled cleanup will retry")
 		})
 	}
