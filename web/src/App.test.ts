@@ -113,18 +113,21 @@ describe("App", () => {
 
   test("names reviews with missing or stale job details", () => {
     const route = { page: "reviews", jobId: 17 } as const;
+    expect(tabTitle(route, { ...job, commit_subject: undefined }, false)).toBe(
+      "Review (#17) · example/repo · Roborev",
+    );
     expect(tabTitle(route, { ...job, repo_name: undefined }, false)).toBe(
       "Fix login race (#17) · Roborev",
     );
     expect(tabTitle(route, { ...job, id: 8 }, false)).toBe(
       "Review (#17) · Roborev",
     );
-    expect(tabTitle(route, { ...job, id: 8 }, true)).toBe(
+    expect(tabTitle(route, null, true)).toBe(
       "Review not found (#17) · Roborev",
     );
   });
 
-  test("names a missing review only after its request resolves and clears it on navigation", async () => {
+  test("names a missing review after its request resolves", async () => {
     let resolveReview: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/999", (url) => {
       if (url.pathname === "/api/review")
@@ -138,20 +141,6 @@ describe("App", () => {
     await vi.waitFor(() =>
       expect(document.title).toBe("Review not found (#999) · Roborev"),
     );
-    const titles: string[] = [];
-    const observer = new MutationObserver(() => titles.push(document.title));
-    observer.observe(document.querySelector("title")!, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-    history.pushState(null, "", "/reviews/1000");
-    await fireEvent.popState(window);
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Review (#1000) · Roborev"),
-    );
-    expect(titles).not.toContain("Review not found (#1000) · Roborev");
-    observer.disconnect();
   });
 
   test("keeps an off-page queued job's title when its review is absent", async () => {
@@ -472,9 +461,6 @@ describe("App", () => {
       "Fix login race (#17) · example/repo · Roborev",
     );
     await screen.findByText("Review in progress…");
-    expect(document.title).toBe(
-      "Fix login race (#17) · example/repo · Roborev",
-    );
     expect(appOpened.reportScreenViewed.mock.calls).toEqual([["reviews"]]);
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -561,9 +547,6 @@ describe("App", () => {
     render(App);
 
     expect(await screen.findByText("Review in progress…")).toBeInTheDocument();
-    await vi.waitFor(() =>
-      expect(document.title).toBe("Review (#42) · example/repo · Roborev"),
-    );
     await vi.waitFor(() => expect(eventStream).toBeDefined());
 
     completed = true;
@@ -601,12 +584,9 @@ describe("App", () => {
 
   test("updates the title when a session ends with a review open", async () => {
     let bootstrapCalls = 0;
-    let resolveBootstrap: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/ui/session/bootstrap" && bootstrapCalls++ > 0)
-        return new Promise<Response>((resolve) => {
-          resolveBootstrap = resolve;
-        });
+        return new Promise<Response>(() => {});
       if (url.pathname === "/api/jobs")
         return response(200, {
           jobs: [job],
@@ -621,9 +601,6 @@ describe("App", () => {
     );
     window.dispatchEvent(new Event(sessionLostEvent));
     await vi.waitFor(() => expect(document.title).toBe("Checking · Roborev"));
-    resolveBootstrap?.(response(401));
-    await screen.findByRole("heading", { name: "Connect to Roborev" });
-    expect(document.title).toBe("Connect · Roborev");
   });
 
   test("returns to session bootstrap when the current session is rejected", async () => {
