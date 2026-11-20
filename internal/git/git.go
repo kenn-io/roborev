@@ -3159,7 +3159,7 @@ func ListRefFiles(ctx context.Context, repoPath, sha string) ([]string, error) {
 		return nil, fmt.Errorf("list files at %s: %w", sha, err)
 	}
 	var paths []string
-	for _, entry := range bytes.Split(out, []byte{0}) {
+	for entry := range bytes.SplitSeq(out, []byte{0}) {
 		meta, path, ok := bytes.Cut(entry, []byte{'\t'})
 		if !ok {
 			continue

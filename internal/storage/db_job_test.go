@@ -2742,6 +2742,7 @@ func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
 }
 
 func TestClaimableForegroundReviews(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, t.TempDir())

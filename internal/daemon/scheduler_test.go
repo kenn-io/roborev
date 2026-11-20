@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
@@ -325,14 +326,12 @@ func TestScheduledCancellationMatchesReviewDemand(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	registered, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
-	var jobs []*storage.ReviewJob
 	for i := range 3 {
 		job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "analysis", Agent: "test", Prompt: "analysis", Source: storage.JobSourceScheduled})
 		require.NoError(t, err)
 		claimed, err := db.ClaimJob(fmt.Sprintf("worker-%d", i))
 		require.NoError(t, err)
 		require.Equal(t, job.ID, claimed.ID)
-		jobs = append(jobs, job)
 		server.workerPool.workerJobs[fmt.Sprintf("worker-%d", i)] = job.ID
 	}
 	server.workerPool.SetMaxWorkers(3)

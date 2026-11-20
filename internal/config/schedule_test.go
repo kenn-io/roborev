@@ -35,7 +35,7 @@ func TestResolveSchedule(t *testing.T) {
 		{Enabled: &yes, Interval: &interval, MaxFiles: &maxFiles},
 	} {
 		_, err := ResolveSchedule(ScheduleConfig{}, repo)
-		assert.Error(t, err)
+		require.Error(t, err)
 	}
 	for _, repo := range []ScheduleConfig{
 		{Enabled: &yes, Interval: new("0s")},
@@ -43,7 +43,6 @@ func TestResolveSchedule(t *testing.T) {
 		{Enabled: &yes, Types: []string{"unknown"}},
 		{Enabled: &yes, Paths: []string{"["}},
 	} {
-		err := repo.Validate()
-		assert.Error(t, err)
+		require.Error(t, repo.Validate())
 	}
 }
