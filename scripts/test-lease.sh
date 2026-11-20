@@ -34,7 +34,7 @@ os.environ["COMPOSE_PROJECT_NAME"] = lease
 os.environ["TEST_SERVICE_LEASE_FD"] = str(fd)
 
 # A separate open file description can wait for every inherited lock holder.
-wait_fd = os.open(os.path.join(directory, lease), os.O_RDONLY)
+wait_fd = os.open(os.path.join(directory, lease), os.O_RDWR)
 process_group = None
 interrupted = 0
 def interrupt(signum, frame):
@@ -55,7 +55,14 @@ status = process.wait()
 os.close(fd)
 fcntl.flock(wait_fd, fcntl.LOCK_EX)
 process_group = None
-cleanup = subprocess.run(["docker", "compose", "-p", lease, "-f", "docker-compose.test.yml", "-f", "docker-compose.test-lease.yml", "down"]).returncode
+cleanup = subprocess.run(
+    [
+        "docker", "compose", "-p", lease,
+        "-f", "docker-compose.test.yml",
+        "-f", "docker-compose.test-lease.yml", "down",
+    ],
+    start_new_session=True,
+).returncode
 if cleanup == 0:
     os.unlink(os.path.join(directory, lease))
 if interrupted:

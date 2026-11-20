@@ -314,3 +314,81 @@ exit 7
 		})
 	}
 }
+
+func TestLeaseCleanupFinishesAfterTerminalSignal(t *testing.T) {
+	dir := t.TempDir()
+	started := filepath.Join(dir, "cleanup-started")
+	release := filepath.Join(dir, "cleanup-release")
+	finished := filepath.Join(dir, "cleanup-finished")
+	docker := `#!/bin/sh
+case " $* " in
+  *' down '*)
+    python3 -c 'import fcntl, os, sys
+with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", os.environ["TEST_SERVICE_LEASE"]), "r+") as f:
+ try: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+ except BlockingIOError: sys.exit(0)
+ sys.exit(1)' || exit 9
+    touch "$HOME/cleanup-started"
+    while [ ! -e "$HOME/cleanup-release" ]; do sleep 0.01; done
+    touch "$HOME/cleanup-finished" ;;
+esac
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
+	cmd := exec.CommandContext(t.Context(), "./scripts/test-lease.sh", "roborev", "true")
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	finishedProcess := false
+	t.Cleanup(func() {
+		_ = os.WriteFile(release, nil, 0o600)
+		if !finishedProcess {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+			}
+		}
+	})
+	require.Eventually(t, func() bool { _, err := os.Stat(started); return err == nil }, 10*time.Second, 10*time.Millisecond)
+	leaseDir := filepath.Join(dir, ".local/state/test-service-leases")
+	entries, err := os.ReadDir(leaseDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	lease := entries[0].Name()
+	leasePath := filepath.Join(leaseDir, lease)
+	lock, err := os.OpenFile(leasePath, os.O_RDWR, 0)
+	require.NoError(t, err)
+	require.ErrorIs(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), syscall.EWOULDBLOCK)
+	require.NoError(t, lock.Close())
+	args, err := exec.CommandContext(t.Context(), "ps", "-p", strconv.Itoa(cmd.Process.Pid), "-o", "args=").Output()
+	require.NoError(t, err)
+	require.Contains(t, string(args), "test-lease.sh")
+	require.NoError(t, syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM))
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case err := <-done:
+		finishedProcess = true
+		t.Fatalf("cleanup exited before it was released: %v", err)
+	default:
+	}
+	_, err = os.Stat(finished)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	require.NoError(t, os.WriteFile(release, nil, 0o600))
+	select {
+	case err := <-done:
+		finishedProcess = true
+		var exit *exec.ExitError
+		require.ErrorAs(t, err, &exit)
+		assert.Equal(t, 143, exit.ExitCode())
+	case <-time.After(10 * time.Second):
+		t.Fatal("cleanup did not finish after release")
+	}
+	_, err = os.Stat(finished)
+	require.NoError(t, err)
+	_, err = os.Stat(leasePath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
