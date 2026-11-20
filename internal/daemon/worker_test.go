@@ -4683,3 +4683,32 @@ func TestProcessJob_PromptSaveFailureRetriesBeforeAgentRuns(t *testing.T) {
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	assert.Equal(t, 1, updated.RetryCount)
 }
+
+func TestProcessJob_ReviewStoreFailureRetriesThenFails(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	_, err := tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
+		BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`)
+	require.NoError(t, err)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJob(t, sha, testWorkerID)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	retried := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, 1, retried.RetryCount)
+
+	_, err = tc.DB.ExecContext(t.Context(),
+		`UPDATE review_jobs SET retry_count = ?, retry_not_before = NULL WHERE id = ?`, maxRetries, job.ID)
+	require.NoError(t, err)
+	reclaimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, reclaimed)
+	require.Equal(t, job.ID, reclaimed.ID)
+
+	tc.Pool.processJob(testWorkerID, reclaimed)
+
+	failed := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Contains(t, failed.Error, "store review: ")
+	assert.Contains(t, failed.Error, "database or disk is full")
+}
