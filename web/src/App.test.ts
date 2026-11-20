@@ -147,17 +147,25 @@ describe("App", () => {
 
   test("offers retry when a review fails while its job lookup stalls", async () => {
     let retry = false;
+    let resolveJob: ((value: Response) => void) | undefined;
     renderAuthenticatedApp("/reviews/17", (url) => {
       if (url.pathname === "/api/review")
         return retry ? response(404) : response(500);
       if (url.pathname === "/api/jobs" && url.searchParams.get("id") === "17")
         return retry
           ? response(200, { jobs: [job] })
-          : new Promise<Response>(() => {});
+          : new Promise<Response>((resolve) => {
+              resolveJob = resolve;
+            });
     });
     expect(
       await screen.findByText("Failed to load review"),
     ).toBeInTheDocument();
+    await vi.waitFor(() => expect(resolveJob).toBeDefined());
+    resolveJob?.(response(200, { jobs: [job] }));
+    await vi.waitFor(() =>
+      expect(document.title).toBe("Fix login race (#17) · Roborev"),
+    );
     retry = true;
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByText(/review in progress/i);

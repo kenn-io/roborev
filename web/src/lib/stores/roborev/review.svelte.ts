@@ -1,6 +1,6 @@
 import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
-import { Effect, Option } from "effect";
+import { Effect, Exit, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
 import { executeRoborevRequest } from "../../api/client";
 import { retryIdempotentRead } from "../../api/retry-policy";
@@ -64,9 +64,13 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   let selectedJobId = $state<number | undefined>(undefined);
   let reviewNotFound = $state(false);
   let storeError = $state<string | null>(null);
+  let jobReadGeneration = 0;
+  let interruptJobRead: (() => void) | undefined;
 
   const fetchReviewAuthority = Effect.fn("RoborevReview.fetchAuthority")(
     function* (jobId: number) {
+      const generation = ++jobReadGeneration;
+      interruptJobRead?.();
       const jobRead = executeRoborevRequest(
         "GET Roborev review job",
         (signal) =>
@@ -77,10 +81,21 @@ export function createReviewStore(opts: ReviewStoreOptions) {
         Effect.tap((result) =>
           Effect.sync(() => {
             const job = result.jobs?.[0];
-            if (selectedJobId === jobId && job?.id === jobId) selectedJob = job;
+            if (
+              selectedJobId === jobId &&
+              job?.id === jobId &&
+              generation === jobReadGeneration
+            )
+              selectedJob = job;
           }),
         ),
       );
+      const jobExecution = opts.runtime.runCommand(Effect.result(jobRead), {
+        operation: "load Roborev review job",
+        safeContext: { jobId },
+        onFailure: () => {},
+      });
+      interruptJobRead = jobExecution.interrupt;
       const result = yield* Effect.all(
         {
           review: executeRoborevRequest("GET Roborev review", (signal) =>
@@ -118,7 +133,13 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                   ),
             ),
           ),
-          job: Effect.result(jobRead),
+          job: jobExecution.await.pipe(
+            Effect.flatMap((exit) =>
+              Exit.isSuccess(exit)
+                ? Effect.succeed(exit.value)
+                : Effect.failCause(exit.cause),
+            ),
+          ),
         },
         { concurrency: "unbounded" },
       );
@@ -409,6 +430,9 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function setSelectedJobId(jobId: number | undefined): void {
     if (jobId !== selectedJobId) {
+      jobReadGeneration++;
+      interruptJobRead?.();
+      interruptJobRead = undefined;
       loadFailureReportedJobId = undefined;
       rendererFailureReported = false;
       reviewNotFound = false;
