@@ -6,7 +6,7 @@
 # `O_EXCL` in a `0700` directory as a `0600` file before any Docker resource starts.
 # The producer holds `flock(LOCK_EX)` until all descendants exit. The descriptor is
 # inheritable and stays open in every descendant.
-# Producers never delete lease files.
+# A Compose producer deletes its lease after successful cleanup while holding its lock.
 # Missing or invalid labels/files and held locks preserve resources. A scheduled
 # cleaner uses the lease to reclaim run containers and project networks after unlock.
 set -eu
@@ -69,6 +69,16 @@ try:
 except OSError as error:
     print(error, file=sys.stderr)
     cleanup = 1
+if cleanup == 0:
+    path = os.path.join(directory, lease)
+    try:
+        if os.path.samestat(os.fstat(wait_fd), os.stat(path)):
+            os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        print(error, file=sys.stderr)
+        cleanup = 1
 if interrupted:
     status = 128 + interrupted
 elif status < 0:

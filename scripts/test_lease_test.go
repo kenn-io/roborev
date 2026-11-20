@@ -76,13 +76,12 @@ printf '%s\n' "$TEST_POSTGRES_URL" >> "$URL_LOG"
 	for _, line := range lines {
 		assert.Equal(t, "postgres://roborev_test:roborev_test_password@127.0.0.1:45678/roborev_test", line)
 	}
-	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	lease := entries[0].Name()
-	assert.NotEqual(t, "other-1-1", lease)
 	data, err := os.ReadFile(dockerLog)
 	require.NoError(t, err)
+	fields := strings.Fields(string(data))
+	require.GreaterOrEqual(t, len(fields), 3)
+	lease := fields[2]
+	assert.NotEqual(t, "other-1-1", lease)
 	assert.Contains(t, string(data), "-p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml up -d --wait postgres ["+lease+" "+lease+" 127.0.0.1::5432]")
 	if runtime.GOOS == "darwin" && exec.CommandContext(t.Context(), "docker", "compose", "version").Run() != nil {
 		t.Log("Docker Compose unavailable; skipping resolved label check")
@@ -243,12 +242,55 @@ esac
 			calls, err := os.ReadFile(log)
 			require.NoError(t, err)
 			lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+			fields := strings.Fields(lines[0])
+			require.GreaterOrEqual(t, len(fields), 3)
+			lease := fields[2]
 			entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
 			require.NoError(t, err)
-			require.Len(t, entries, 1)
-			assert.Equal(t, "compose -p "+entries[0].Name()+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down", lines[len(lines)-1])
+			if tc.mode == "down-fails" {
+				require.Len(t, entries, 1)
+				assert.Equal(t, lease, entries[0].Name())
+			} else {
+				assert.Empty(t, entries)
+			}
+			assert.Equal(t, "compose -p "+lease+" -f docker-compose.test.yml -f docker-compose.test-lease.yml down", lines[len(lines)-1])
 		})
 	}
+}
+
+func TestComposeLeaseRemovesFile(t *testing.T) {
+	dir := t.TempDir()
+	docker := `#!/bin/sh
+python3 -c 'import fcntl, os, sys
+path = os.path.join(os.environ["HOME"], ".local/state/test-service-leases", os.environ["TEST_SERVICE_LEASE"])
+with open(path) as f:
+ try: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+ except BlockingIOError: sys.exit(0)
+ sys.exit(1)'
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
+	cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "--compose", "true")
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+func TestComposeLeaseSurvivesKilledSupervisor(t *testing.T) {
+	dir := t.TempDir()
+	docker := "#!/bin/sh\ncase \"$(ps -p \"$PPID\" -o args=)\" in *test-service-leases*) kill -KILL \"$PPID\" ;; *) exit 1 ;; esac\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o700))
+	cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", "--compose", "true")
+	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	err := cmd.Run()
+	var exit *exec.ExitError
+	require.ErrorAs(t, err, &exit)
+	assert.Equal(t, syscall.SIGKILL, exit.Sys().(syscall.WaitStatus).Signal())
+	entries, err := os.ReadDir(filepath.Join(dir, ".local/state/test-service-leases"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
 }
 
 func TestPostgresCleanupWaitsForDescendant(t *testing.T) {
