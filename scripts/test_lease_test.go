@@ -193,7 +193,7 @@ func TestPostgresRunRequiresLease(t *testing.T) {
 			if tc.dryRun {
 				require.NoError(t, err, string(out))
 				_, err = os.Stat(filepath.Join(dir, ".local/state/test-service-leases"))
-				assert.ErrorIs(t, err, os.ErrNotExist)
+				require.ErrorIs(t, err, os.ErrNotExist)
 			} else {
 				require.Error(t, err, string(out))
 				assert.Contains(t, string(out), "use make test-postgres")
