@@ -167,6 +167,7 @@ describe("App", () => {
     "keeps the off-page subject when %s fails",
     async (failed) => {
       let resolveFailure: ((value: Response) => void) | undefined;
+      let resolveLegacyProjection: ((value: Response) => void) | undefined;
       let jobRead = false;
       renderAuthenticatedApp("/reviews/17", (url) => {
         if (
@@ -193,12 +194,15 @@ describe("App", () => {
             return new Promise<Response>((resolve) => {
               resolveFailure = resolve;
             });
-          return new Promise<Response>(() => {});
+          return new Promise<Response>((resolve) => {
+            resolveLegacyProjection = resolve;
+          });
         }
       });
       await vi.waitFor(() => expect(jobRead && resolveFailure).toBeTruthy());
       await new Promise((resolve) => setTimeout(resolve, 0));
       resolveFailure?.(response(failed === "review" ? 409 : 500));
+      resolveLegacyProjection?.(response(500));
       expect(
         await screen.findByText("Failed to load review"),
       ).toBeInTheDocument();
