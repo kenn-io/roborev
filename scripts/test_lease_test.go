@@ -3,6 +3,7 @@
 package scripts
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,7 +41,7 @@ func TestLeaseRequiresHome(t *testing.T) {
 func TestPostgresLeaseOverridesCallerURLAndWritesSpacedReports(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
-	require.NoError(t, os.Mkdir(bin, 0700))
+	require.NoError(t, os.Mkdir(bin, 0o700))
 	docker := `#!/bin/sh
 printf '%s [%s %s]\n' "$*" "$TEST_SERVICE_LEASE" "$TEST_PG_PUBLISH" >> "$DOCKER_LOG"
 case " $* " in
@@ -67,15 +68,15 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 `
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(goTool), 0o700))
 	reports := filepath.Join(dir, "reports with spaces")
 	urlLog := filepath.Join(dir, "urls")
 	old := filepath.Join(reports, "roborev-1-1")
 	recent := filepath.Join(reports, "roborev-2-2")
 	for _, path := range []string{old, recent} {
-		require.NoError(t, os.MkdirAll(path, 0700))
-		require.NoError(t, os.WriteFile(filepath.Join(path, "postgres-storage.json"), []byte("report"), 0600))
+		require.NoError(t, os.MkdirAll(path, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(path, "postgres-storage.json"), []byte("report"), 0o600))
 	}
 	past := time.Now().Add(-9 * 24 * time.Hour)
 	require.NoError(t, os.Chtimes(old, past, past))
@@ -111,20 +112,20 @@ func TestLeaseSurvivesGoTestLauncher(t *testing.T) {
 	require.NoError(t, err)
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")
-	require.NoError(t, os.Mkdir(home, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lease\n\ngo 1.24\n"), 0600))
+	require.NoError(t, os.Mkdir(home, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/lease\n\ngo 1.24\n"), 0o600))
 	source := `package lease
 import ("os"; "testing"; "time")
 func TestWait(t *testing.T) {
     os.WriteFile(os.Getenv("READY"), nil, 0600)
     for { if _, err := os.Stat(os.Getenv("DONE")); err == nil { return }; time.Sleep(20*time.Millisecond) }
 }`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "lease_test.go"), []byte(source), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "lease_test.go"), []byte(source), 0o600))
 	cache, err := exec.CommandContext(t.Context(), "go", "env", "GOCACHE").Output()
 	require.NoError(t, err)
 	ready, done := filepath.Join(dir, "ready"), filepath.Join(dir, "done")
-	t.Cleanup(func() { _ = os.WriteFile(done, nil, 0600) })
-	cmd := exec.Command(filepath.Join(root, "scripts/test-lease.sh"), "roborev", "true", "go", "test")
+	t.Cleanup(func() { _ = os.WriteFile(done, nil, 0o600) })
+	cmd := exec.CommandContext(t.Context(), filepath.Join(root, "scripts/test-lease.sh"), "roborev", "true", "go", "test")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "HOME="+home, "GOCACHE="+strings.TrimSpace(string(cache)), "READY="+ready, "DONE="+done)
 	require.NoError(t, cmd.Start())
@@ -149,7 +150,7 @@ with open(sys.argv[1]) as f:
 `
 	check := func() error { return exec.CommandContext(t.Context(), "python3", "-c", probe, lease).Run() }
 	require.Error(t, check())
-	require.NoError(t, os.WriteFile(done, nil, 0600))
+	require.NoError(t, os.WriteFile(done, nil, 0o600))
 	// The external test binary must exit before it releases the lock.
 	require.Eventually(t, func() bool { return check() == nil }, 10*time.Second, 50*time.Millisecond)
 }
@@ -186,10 +187,12 @@ with open(os.path.join(os.environ["HOME"], ".local/state/test-service-leases", o
 		release := filepath.Join(dir, "release")
 		pidFile := filepath.Join(dir, "pid")
 		t.Cleanup(func() {
-			_ = os.WriteFile(release, nil, 0600)
+			_ = os.WriteFile(release, nil, 0o600)
 			pid, err := os.ReadFile(pidFile)
 			if err == nil {
-				_ = exec.Command("python3", "-c", `import os, sys, time
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+				defer cancel()
+				_ = exec.CommandContext(ctx, "python3", "-c", `import os, sys, time
 pid = int(sys.argv[1])
 for _ in range(200):
  try: os.kill(pid, 0)
@@ -214,7 +217,7 @@ func TestLeaseSupervisorForwardsSignals(t *testing.T) {
 		t.Run(tc.sig.String(), func(t *testing.T) {
 			dir := t.TempDir()
 			ready, cleaned := filepath.Join(dir, "ready"), filepath.Join(dir, "cleaned")
-			cmd := exec.Command("./test-lease.sh", "roborev", `touch "$CLEANED"`, "python3", "-c", `import os, signal, time
+			cmd := exec.CommandContext(t.Context(), "./test-lease.sh", "roborev", `touch "$CLEANED"`, "python3", "-c", `import os, signal, time
 for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
  signal.signal(sig, lambda s, f: exit(128+s))
 open(os.environ["READY"], "w").close()
@@ -254,7 +257,7 @@ while True: time.sleep(1)`)
 func TestPostgresRunRequiresLease(t *testing.T) {
 	dir := t.TempDir()
 	dockerLog := filepath.Join(dir, "docker-called")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\ntouch \"$DOCKER_LOG\"\nexit 1\n"), 0o700))
 	cmd := exec.CommandContext(t.Context(), "make", "test-postgres-run", "TEST_SERVICE_LEASE=")
 	cmd.Dir = ".."
 	cmd.Env = append(os.Environ(), "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DOCKER_LOG="+dockerLog, "GO_TEST_REPORT_DIR="+filepath.Join(dir, "reports"))
