@@ -78,7 +78,7 @@
             review.getSelectedJobId() === jobId &&
               review.isReviewNotFound() &&
               job?.id !== jobId,
-            (job?.id === jobId ? job.commit_subject : undefined) ??
+            (job?.id === jobId ? job?.commit_subject : undefined) ??
               review.getSubject(jobId),
           );
   });
