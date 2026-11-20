@@ -4756,3 +4756,37 @@ func TestProcessJob_TaskStoreFailureRetriesOnlyWithoutEdits(t *testing.T) {
 		})
 	}
 }
+
+// Not parallel: allow_unsafe_agents is process-wide state.
+func TestProcessJob_StoreFailureWithUnsafeAgentsFailsWithoutRerun(t *testing.T) {
+	assert := assert.New(t)
+	prev := agent.AllowUnsafeAgents()
+	t.Cleanup(func() { agent.SetAllowUnsafeAgents(prev) })
+	agent.SetAllowUnsafeAgents(true)
+
+	const agentName = "unsafe-store-failure"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return "Task completed.", nil
+		},
+	})
+	tc := newWorkerTestContext(t, 1)
+	_, err := tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
+		BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`)
+	require.NoError(t, err)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: tc.Repo.ID, GitRef: "run:unsafe-store-failure", Agent: agentName,
+		Prompt: "Do the task", JobType: storage.JobTypeTask,
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	stored := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Zero(stored.RetryCount)
+	assert.Contains(stored.Error, "database or disk is full")
+}

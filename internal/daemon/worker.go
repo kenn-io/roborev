@@ -1863,11 +1863,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
 		// canceled between agent finish and now. A store error goes through
 		// retry/fail: a job left running would only be failed later by the
-		// orphan sweep, with an error that hides the real cause. An agentic
-		// task already edited the checkout, so a rerun would repeat its edits;
-		// it fails without retry.
+		// orphan sweep, with an error that hides the real cause. An agent
+		// allowed to write may already have edited the checkout, so a rerun
+		// would repeat its edits; such a job fails without retry. Fix jobs
+		// write only to their own worktree and still retry.
 		storeFailed := func(errorMsg string) {
-			if job.Agentic && job.IsTaskJob() {
+			if !job.IsFixJob() && (agentic || agent.AllowUnsafeAgents()) {
 				wp.failNonRetryableJobLocked(workerID, job, agentName, errorMsg)
 				return
 			}
