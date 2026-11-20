@@ -72,9 +72,7 @@
       !review.getSelectedJob();
     const daemon = stores.roborevDaemon;
     document.title =
-      route.page === "reviews" &&
-      !daemon.isAvailable() &&
-      !daemon.getWasEverAvailable()
+      route.page === "reviews" && daemon.isInitiallyUnavailable()
         ? sessionTitle("error")
         : tabTitle(route, notFound);
   });
