@@ -601,6 +601,10 @@ func (m model) fetchBranchesForRepo(
 // Backfill runs once per TUI session (branchBackfillDone), so the
 // repeated lookup cost for skipped rows is bounded.
 func backfillBranchValue(ctx context.Context, job storage.ReviewJob, machineID *uuid.UUID) (string, bool) {
+	// An empty insights branch means the analysis covers all branches.
+	if job.JobType == storage.JobTypeInsights {
+		return "", false
+	}
 	// These jobs have no commit from which to derive a branch.
 	if job.IsTaskJob() || job.IsDirtyJob() || job.IsGoalReviewJob() {
 		return branchNone, true
