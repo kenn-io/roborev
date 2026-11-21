@@ -1197,28 +1197,12 @@ func resolveRerunOpts(
 	}
 
 	workflow := workflowForJob(job.JobType, job.ReviewType)
-	if job.AnalysisType != "" {
-		rerunAgent := job.Agent
-		if selectedAgent = strings.TrimSpace(selectedAgent); selectedAgent != "" {
-			repoCfg, err := config.LoadRepoConfig(resolutionPath)
-			if err != nil {
-				return storage.ReenqueueOpts{}, err
-			}
-			if _, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, selectedAgent, cfg); err != nil {
-				return storage.ReenqueueOpts{}, fmt.Errorf("resolve selected agent %q: %w", selectedAgent, err)
-			}
-			rerunAgent = agent.StorageNameFromConfig(agent.CanonicalName(selectedAgent), repoCfg, cfg)
-			if rerunAgent != job.Agent {
-				resolution, err := agent.ResolveWorkflowConfigFromConfig("", repoCfg, cfg, workflow, job.Reasoning)
-				if err != nil {
-					return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
-				}
-				return storage.ReenqueueOpts{Agent: rerunAgent, Model: resolution.ModelForSelectedAgent(rerunAgent, "")}, nil
-			}
-		} else if err := validateRerunAgent(resolutionPath, rerunAgent, job.BackupAgent, cfg); err != nil {
+	selectedAgent = strings.TrimSpace(selectedAgent)
+	if job.AnalysisType != "" && selectedAgent == "" {
+		if err := validateRerunAgent(resolutionPath, job.Agent, job.BackupAgent, cfg); err != nil {
 			return storage.ReenqueueOpts{}, err
 		}
-		return storage.ReenqueueOpts{Agent: rerunAgent, Model: job.Model, Provider: job.Provider}, nil
+		return storage.ReenqueueOpts{Agent: job.Agent, Model: job.Model, Provider: job.Provider}, nil
 	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", resolutionPath, cfg, workflow, job.Reasoning,
@@ -1226,7 +1210,6 @@ func resolveRerunOpts(
 	if err != nil {
 		return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
 	}
-	selectedAgent = strings.TrimSpace(selectedAgent)
 	if selectedAgent != "" {
 		selected, err := agent.GetAvailableExactWithConfigFromConfig(
 			resolution.RepoConfig, selectedAgent, cfg,
@@ -1252,6 +1235,9 @@ func resolveRerunOpts(
 		storageName := agent.StorageNameFromConfig(
 			agent.CanonicalName(selectedAgent), resolution.RepoConfig, cfg,
 		)
+		if job.AnalysisType != "" && storageName == job.Agent {
+			return storage.ReenqueueOpts{Agent: storageName, Model: job.Model, Provider: job.Provider}, nil
+		}
 		// Keep the original request as provenance, but do not carry its
 		// model or provider override into a different agent's execution.
 		model := resolution.ModelForSelectedAgent(storageName, "")
