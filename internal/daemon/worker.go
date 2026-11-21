@@ -1861,18 +1861,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
-		// canceled between agent finish and now. A store error goes through
-		// retry/fail: a job left running would only be failed later by the
-		// orphan sweep, with an error that hides the real cause. An agent
-		// allowed to write may already have edited the checkout, so a rerun
-		// would repeat its edits; such a job fails without retry. Fix jobs
-		// write only to their own worktree and still retry.
+		// canceled between agent finish and now. A store error ends the
+		// attempt here: a job left running would only be failed later by the
+		// orphan sweep, with an error that hides the real cause. Only fix
+		// jobs rerun, because they write to their own worktree. Any other
+		// agent may have edited the checkout, and the worker cannot tell from
+		// agent flags and settings whether it could, so a rerun could repeat
+		// those edits.
 		storeFailed := func(errorMsg string) {
-			if !job.IsFixJob() && (agentic || agent.AllowUnsafeAgents()) {
-				wp.failNonRetryableJobLocked(workerID, job, agentName, errorMsg)
+			if job.IsFixJob() {
+				wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, false, nil)
 				return
 			}
-			wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, false, nil)
+			wp.failNonRetryableJobLocked(workerID, job, agentName, errorMsg)
 		}
 		if job.IsFixJob() {
 			if err := wp.db.CompleteFixJob(job.ID, agentName, output, fixPatch); err != nil {

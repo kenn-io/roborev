@@ -205,7 +205,8 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	wp.runAttemptTransition(workerID, job, func() {
 		if err := wp.db.CompleteJobResult(job.ID, a.Name(), storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)}); err != nil {
 			log.Printf("[%s] store goal review: %v", workerID, err)
-			wp.failOrRetryInnerLocked(workerID, job, a.Name(), fmt.Sprintf("store goal review: %v", err), false, nil)
+			// Same rule as other non-fix jobs: no rerun after the agent finished.
+			wp.failNonRetryableJobLocked(workerID, job, a.Name(), fmt.Sprintf("store goal review: %v", err))
 			return
 		}
 		current, err := wp.db.GetJobByID(job.ID)

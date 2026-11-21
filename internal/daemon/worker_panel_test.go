@@ -327,13 +327,10 @@ func TestReleaseWhenMemberResultCannotBeStored(t *testing.T) {
 	const agentName = "panel-store-failure"
 	registerPassingAgent(t, agentName)
 
-	runUUID, members, _ := enqueuePanelRun(t, tc, "store-failure-panel", []memberSpec{
+	runUUID, _, _ := enqueuePanelRun(t, tc, "store-failure-panel", []memberSpec{
 		{name: "m0", agent: agentName},
 	})
-	_, err := tc.DB.ExecContext(t.Context(),
-		`UPDATE review_jobs SET retry_count = ? WHERE id = ?`, maxRetries, members[0].ID)
-	require.NoError(t, err)
-	_, err = tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
+	_, err := tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
 		BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`)
 	require.NoError(t, err)
 

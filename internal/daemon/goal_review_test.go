@@ -373,7 +373,7 @@ func TestGoalWorkerRecordsUsageAndFindings(t *testing.T) {
 	assert.Contains(t, string(log), "Checking goal evidence")
 }
 
-func TestGoalWorkerRetriesWhenResultCannotBeStored(t *testing.T) {
+func TestGoalWorkerFailsWithoutRerunWhenResultCannotBeStored(t *testing.T) {
 	c := newWorkerTestContext(t, 1)
 	registerGoalReviewPi(t, c.Pool.cfgGetter.Config())
 	c.Pool.goalReviewRunner = goalReviewTestRunner(func(context.Context, goalreview.Snapshot, prompt.SnapshotResult) ([]goalreview.Finding, error) {
@@ -394,6 +394,8 @@ func TestGoalWorkerRetriesWhenResultCannotBeStored(t *testing.T) {
 
 	c.Pool.processJob(testWorkerID, claimed)
 
-	stored := c.assertJobStatus(t, job.ID, storage.JobStatusQueued)
-	assert.Equal(t, 1, stored.RetryCount)
+	stored := c.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Zero(t, stored.RetryCount)
+	assert.Contains(t, stored.Error, "store goal review: ")
+	assert.Contains(t, stored.Error, "database or disk is full")
 }
