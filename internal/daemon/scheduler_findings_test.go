@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -101,46 +102,54 @@ func TestScheduledAnalysisTypeFailureDoesNotBlockOrRetryImmediately(t *testing.T
 }
 
 func TestScheduledYieldAfterReviewRetryDelay(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("a.go", "package a\n", "add file")
-	registered, err := db.GetOrCreateRepo(repo.Path())
-	require.NoError(t, err)
-	started := make(chan struct{})
-	interrupted := make(chan struct{})
-	reviewStarted := make(chan struct{})
-	releaseReview := make(chan struct{})
-	t.Cleanup(func() { close(releaseReview) })
-	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "delayed-review-start", ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
-		close(reviewStarted)
-		select {
-		case <-ctx.Done():
+	synctest.Test(t, func(t *testing.T) {
+		server, db, _ := newTestServer(t)
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile("a.go", "package a\n", "add file")
+		registered, err := db.GetOrCreateRepo(repo.Path())
+		require.NoError(t, err)
+		started := make(chan struct{})
+		interrupted := make(chan struct{})
+		reviewStarted := make(chan struct{})
+		releaseReview := make(chan struct{})
+		t.Cleanup(func() { close(releaseReview) })
+		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "delayed-review-start", ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			close(reviewStarted)
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-releaseReview:
+				return "done", nil
+			}
+		}})
+		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "scheduled-retry-yield", ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			close(started)
+			<-ctx.Done()
+			close(interrupted)
 			return "", ctx.Err()
-		case <-releaseReview:
-			return "done", nil
+		}})
+		_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "scheduled-retry-yield", Prompt: "analysis", Source: storage.JobSourceScheduled})
+		require.NoError(t, err)
+		server.workerPool.SetMaxWorkers(1)
+		server.workerPool.Start()
+		testutil.ReceiveWithTimeout(t, started, workerStartTimeout)
+		review, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: repo.HeadSHA(), Agent: "delayed-review-start", JobType: storage.JobTypeReview})
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, time.Now().Add(500*time.Millisecond).UTC().Format("2006-01-02T15:04:05.000000000Z"), review.ID)
+		require.NoError(t, err)
+		server.workerPool.wake()
+		time.Sleep(499 * time.Millisecond)
+		select {
+		case <-interrupted:
+			t.Fatal("scheduled analysis yielded before the review became eligible")
+		default:
 		}
-	}})
-	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "scheduled-retry-yield", ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
-		close(started)
-		<-ctx.Done()
-		close(interrupted)
-		return "", ctx.Err()
-	}})
-	_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "scheduled-retry-yield", Prompt: "analysis", Source: storage.JobSourceScheduled})
-	require.NoError(t, err)
-	server.workerPool.SetMaxWorkers(1)
-	server.workerPool.Start()
-	testutil.ReceiveWithTimeout(t, started, workerStartTimeout)
-	review, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: repo.HeadSHA(), Agent: "delayed-review-start", JobType: storage.JobTypeReview})
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, time.Now().Add(500*time.Millisecond).UTC().Format("2006-01-02T15:04:05.000000000Z"), review.ID)
-	require.NoError(t, err)
-	server.workerPool.wake()
-	testutil.ReceiveWithTimeout(t, interrupted, workerStartTimeout)
-	testutil.ReceiveWithTimeout(t, reviewStarted, workerStartTimeout)
-	current, err := db.GetJobByID(review.ID)
-	require.NoError(t, err)
-	assert.Equal(t, storage.JobStatusRunning, current.Status)
+		testutil.ReceiveWithTimeout(t, interrupted, workerStartTimeout)
+		testutil.ReceiveWithTimeout(t, reviewStarted, workerStartTimeout)
+		current, err := db.GetJobByID(review.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusRunning, current.Status)
+	})
 }
 
 func TestScheduledYieldIgnoresRetiringWorker(t *testing.T) {
