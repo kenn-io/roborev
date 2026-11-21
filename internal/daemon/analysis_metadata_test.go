@@ -87,6 +87,21 @@ func TestEnqueueAnalysisMetadataThroughPrompt(t *testing.T) {
 	assert.Equal(t, []string{"pkg/a.go"}, stored.AnalysisFiles)
 	assert.Equal(t, "head-sha", stored.AnalysisCommitSHA)
 
+	cfg := server.configWatcher.Config()
+	cfg.AnalyzeAgent, cfg.AnalyzeModel, cfg.AnalyzeReasoning = "test", "analysis-model", "high"
+	cfg.ReviewModel = "review-model"
+	configured := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor"})
+	stored, err = db.GetJobByID(configured.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "test", stored.Agent)
+	assert.Equal(t, "analysis-model", stored.Model)
+	assert.Equal(t, "high", stored.Reasoning)
+	explicit := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test", Model: "explicit-model", Reasoning: "low"})
+	stored, err = db.GetJobByID(explicit.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit-model", stored.Model)
+	assert.Equal(t, "low", stored.Reasoning)
+
 	reviewJob := enqueueViaHTTP(t, server, EnqueueRequest{
 		RepoPath:          repo.Path(),
 		GitRef:            repo.HeadSHA(),
@@ -109,40 +124,4 @@ func daemonJobIDs(jobs []storage.ReviewJob) []int64 {
 		ids = append(ids, job.ID)
 	}
 	return ids
-}
-
-func TestAnalysisEnqueueAndRerunUseAnalyzeConfig(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("a.go", "package a\n", "add a")
-	cfg := server.configWatcher.Config()
-	cfg.AnalyzeAgent = "test"
-	cfg.AnalyzeModel = "analysis-model"
-	cfg.AnalyzeReasoning = "high"
-	cfg.ReviewModel = "review-model"
-	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor"})
-	stored, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "test", stored.Agent)
-	assert.Equal(t, "analysis-model", stored.Model)
-	assert.Equal(t, "high", stored.Reasoning)
-	cfg.AnalyzeModel = "new-analysis-model"
-	cfg.AnalyzeAgent = "no-such-agent"
-	cfg.AnalyzeReasoning = "low"
-	opts, err := resolveRerunOpts(stored, cfg, nil, "")
-	require.NoError(t, err)
-	assert.Equal(t, "test", opts.Agent)
-	assert.Equal(t, "analysis-model", opts.Model)
-	setJobStatus(t, db, stored.ID, storage.JobStatusDone)
-	require.NoError(t, db.ReenqueueJob(stored.ID, opts))
-	rerun, err := db.GetJobByID(stored.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "test", rerun.Agent)
-	assert.Equal(t, "analysis-model", rerun.Model)
-	assert.Equal(t, "high", rerun.Reasoning)
-	explicit := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test", Model: "explicit-model", Reasoning: "low"})
-	stored, err = db.GetJobByID(explicit.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "explicit-model", stored.Model)
-	assert.Equal(t, "low", stored.Reasoning)
 }

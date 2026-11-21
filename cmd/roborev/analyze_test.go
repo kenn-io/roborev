@@ -657,6 +657,10 @@ func TestEnqueueAnalysisJobAppliesAnalyzeConfig(t *testing.T) {
 analyze_agent = "gemini"
 analyze_model = "configured-model"
 analyze_reasoning = "fast"
+[analyze.refactor]
+agent = "codex"
+model = "type-model"
+reasoning = "high"
 `), 0o644))
 
 	var got daemon.EnqueueRequest
@@ -676,13 +680,19 @@ analyze_reasoning = "fast"
 		},
 	})
 
-	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", nil, analyzeOptions{})
-	require.NoError(t, err, "enqueueAnalysisJob")
-
-	assert.Equal(t, "gemini", got.Agent)
-	assert.Equal(t, "configured-model", got.Model)
-	assert.Equal(t, "fast", got.Reasoning)
-	assert.Empty(t, got.ReviewType)
+	for _, tc := range []struct{ kind, agent, model, reasoning string }{
+		{"refactor", "codex", "type-model", "high"},
+		{"complexity", "gemini", "configured-model", "fast"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", tc.kind, nil, analyzeOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, tc.agent, got.Agent)
+			assert.Equal(t, tc.model, got.Model)
+			assert.Equal(t, tc.reasoning, got.Reasoning)
+			assert.Empty(t, got.ReviewType)
+		})
+	}
 }
 
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {

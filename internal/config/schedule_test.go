@@ -34,8 +34,8 @@ func TestResolveSchedule(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Schedule{Enabled: true, Interval: time.Hour, MaxFiles: 3, Types: []string{"security"}, Paths: []string{"**/*.go"}}, got)
 	for _, repo := range []ScheduleConfig{
-		{Enabled: &yes},
-		{Enabled: &yes, Interval: &interval},
+		{Enabled: &yes, MaxFiles: &maxFiles, Types: []string{"refactor"}},
+		{Enabled: &yes, Interval: &interval, Types: []string{"refactor"}},
 		{Enabled: &yes, Interval: &interval, MaxFiles: &maxFiles},
 	} {
 		_, err := ResolveSchedule(ScheduleConfig{}, repo)

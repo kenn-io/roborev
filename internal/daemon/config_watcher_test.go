@@ -495,22 +495,14 @@ func TestConfigWatcherRejectsNegativeCICommentCap(t *testing.T) {
 	assert.Same(t, old, watcher.Config(), "invalid cap must preserve active configuration")
 	assert.Equal(t, 2, watcher.Config().CI.CommentMaxFindings)
 	assert.Zero(t, watcher.ReloadCounter())
+	for _, invalid := range []string{"max_files = -1", "interval = '0s'", "types = ['unknown']"} {
+		writeTestFile(t, path, "[schedule]\n"+invalid+"\n")
+		watcher.reloadConfig()
+		assert.Same(t, old, watcher.Config())
+		assert.Zero(t, watcher.ReloadCounter())
+	}
 	require.NoError(t, os.WriteFile(path, []byte("[ci]\ncomment_max_findings = 0\n"), 0o600))
 	watcher.reloadConfig()
 	assert.Equal(t, 0, watcher.Config().CI.CommentMaxFindings)
 	assert.Equal(t, uint64(1), watcher.ReloadCounter(), "an explicit unlimited cap remains a valid reload")
-}
-
-func TestConfigWatcherRejectsInvalidSchedule(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	writeTestFile(t, path, "[schedule]\nenabled = true\ninterval = '1h'\ntypes = ['refactor']\nmax_files = 2\n")
-	cfg, err := config.LoadGlobalFrom(path)
-	require.NoError(t, err)
-	watcher := NewConfigWatcher(path, cfg, NewBroadcaster(), nil)
-	for _, invalid := range []string{"max_files = -1", "interval = '0s'", "types = ['unknown']"} {
-		writeTestFile(t, path, "[schedule]\n"+invalid+"\n")
-		watcher.reloadConfig()
-		assert.Same(t, cfg, watcher.Config())
-		assert.Zero(t, watcher.ReloadCounter())
-	}
 }
