@@ -137,3 +137,17 @@ func TestAnalysisEnqueueBackupPreservesExplicitModel(t *testing.T) {
 	assert.Equal(t, "explicit-model", stored.Model)
 	assert.Equal(t, "explicit-model", stored.RequestedModel)
 }
+
+func TestAnalysisEnqueueUsesModelPairedWithAnalyzer(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	cfg := server.configWatcher.Config()
+	cfg.ReviewAgent, cfg.ReviewModel = "codex", "codex-model"
+	cfg.AnalyzeAgent = "test"
+	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor"})
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "test", stored.Agent)
+	assert.Empty(t, stored.Model)
+}

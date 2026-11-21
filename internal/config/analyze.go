@@ -52,15 +52,13 @@ func ResolveAnalyzeConfigFromConfig(
 		return AnalyzeConfig{}, err
 	}
 
+	model, _ := resolveAnalyzeModel(cliModel, repoCfg, globalCfg, analysisType, fallbackWorkflow, reasoning)
 	return AnalyzeConfig{
 		Agent: resolveAnalyzeAgent(
 			cliAgent, repoCfg, globalCfg, analysisType,
 			fallbackWorkflow, reasoning,
 		),
-		Model: resolveAnalyzeModel(
-			cliModel, repoCfg, globalCfg, analysisType,
-			fallbackWorkflow, reasoning,
-		),
+		Model:     model,
 		Reasoning: reasoning,
 	}, nil
 }
@@ -116,39 +114,49 @@ func resolveAnalyzeModel(
 	analysisType string,
 	fallbackWorkflow string,
 	level string,
-) string {
+) (string, bool) {
 	if s := strings.TrimSpace(cli); s != "" {
-		return s
+		return s, false
 	}
 	if s := repoAnalyzeField(repoCfg, analysisType, false); s != "" {
-		return s
+		return s, true
 	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.AnalyzeModel) != "" {
-		return strings.TrimSpace(repoCfg.AnalyzeModel)
+		return strings.TrimSpace(repoCfg.AnalyzeModel), true
 	}
 	if s := repoWorkflowField(repoCfg, fallbackWorkflow, level, false); s != "" {
-		return s
+		return s, false
 	}
 	if s := repoWorkflowField(repoCfg, fallbackWorkflow, "", false); s != "" {
-		return s
+		return s, false
 	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.Model) != "" {
-		return strings.TrimSpace(repoCfg.Model)
+		return strings.TrimSpace(repoCfg.Model), false
 	}
 	if s := globalAnalyzeField(globalCfg, analysisType, false); s != "" {
-		return s
+		return s, true
 	}
 	if globalCfg != nil && strings.TrimSpace(globalCfg.AnalyzeModel) != "" {
-		return strings.TrimSpace(globalCfg.AnalyzeModel)
+		return strings.TrimSpace(globalCfg.AnalyzeModel), true
 	}
 	if s := globalWorkflowField(globalCfg, fallbackWorkflow, level, false); s != "" {
-		return s
+		return s, false
 	}
 	if s := globalWorkflowField(globalCfg, fallbackWorkflow, "", false); s != "" {
-		return s
+		return s, false
 	}
 	if globalCfg != nil && strings.TrimSpace(globalCfg.DefaultModel) != "" {
-		return strings.TrimSpace(globalCfg.DefaultModel)
+		return strings.TrimSpace(globalCfg.DefaultModel), false
+	}
+	return "", false
+}
+
+// ResolveAnalyzeModelOverrideFromConfig returns the applicable analysis-specific
+// model. Workflow and generic models are resolved for the selected agent.
+func ResolveAnalyzeModelOverrideFromConfig(repoCfg *RepoConfig, globalCfg *Config, analysisType, workflow, level string) string {
+	model, analysisSpecific := resolveAnalyzeModel("", repoCfg, globalCfg, analysisType, workflow, level)
+	if analysisSpecific {
+		return model
 	}
 	return ""
 }

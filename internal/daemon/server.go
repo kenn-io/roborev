@@ -1199,25 +1199,12 @@ func resolveRerunOpts(
 	workflow := workflowForJob(job.JobType, job.ReviewType)
 	selectedAgent = strings.TrimSpace(selectedAgent)
 	if job.AnalysisType != "" && rerunAgent != "" && (selectedAgent == "" || agent.CanonicalName(selectedAgent) == agent.CanonicalName(job.Agent)) {
-		repoCfg, err := config.LoadRepoConfig(resolutionPath)
-		if err != nil {
-			return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
-		}
-		workflow = analyze.Workflow(job.AnalysisType)
-		analysis, err := config.ResolveAnalyzeConfigFromConfig("", job.RequestedModel, job.Reasoning, repoCfg, cfg, job.AnalysisType, workflow, "")
-		if err != nil {
-			return storage.ReenqueueOpts{}, fmt.Errorf("resolve analysis config: %w", err)
-		}
-		resolution, err := agent.ResolveWorkflowConfigFromConfig(analysis.Agent, repoCfg, cfg, workflow, job.Reasoning)
-		if err != nil {
-			return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
-		}
 		if err := validateRerunAgent(resolutionPath, job.Agent, job.BackupAgent, cfg); err != nil {
 			return storage.ReenqueueOpts{}, err
 		}
-		model := resolution.ModelForSelectedAgent(job.Agent, job.RequestedModel)
-		if resolution.AgentMatches(job.Agent, resolution.PreferredAgent) && analysis.Model != "" {
-			model = analysis.Model
+		model, err := resolveAnalysisRerunModel(job, cfg, resolutionPath, job.Agent, job.RequestedModel)
+		if err != nil {
+			return storage.ReenqueueOpts{}, err
 		}
 		return storage.ReenqueueOpts{Agent: job.Agent, Model: model, Provider: job.RequestedProvider}, nil
 	}
@@ -1264,6 +1251,12 @@ func resolveRerunOpts(
 		// Keep the original request as provenance, but do not carry its
 		// model or provider override into a different agent's execution.
 		model := resolution.ModelForSelectedAgent(storageName, "")
+		if job.AnalysisType != "" {
+			model, err = resolveAnalysisRerunModel(job, cfg, resolutionPath, storageName, "")
+			if err != nil {
+				return storage.ReenqueueOpts{}, err
+			}
+		}
 		if job.JobType == storage.JobTypeClassify {
 			model = config.ResolveClassifyModel("", resolutionPath, cfg)
 		}
@@ -1288,6 +1281,29 @@ func resolveRerunOpts(
 
 	model := resolution.ModelForSelectedAgent(job.Agent, "")
 	return storage.ReenqueueOpts{Agent: rerunAgent, Model: model, Provider: provider}, nil
+}
+
+func resolveAnalysisRerunModel(job *storage.ReviewJob, cfg *config.Config, path, selectedAgent, requestedModel string) (string, error) {
+	repoCfg, err := config.LoadRepoConfig(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve workflow config: %w", err)
+	}
+	workflow := analyze.Workflow(job.AnalysisType)
+	analysis, err := config.ResolveAnalyzeConfigFromConfig("", requestedModel, job.Reasoning, repoCfg, cfg, job.AnalysisType, workflow, "")
+	if err != nil {
+		return "", fmt.Errorf("resolve analysis config: %w", err)
+	}
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(analysis.Agent, repoCfg, cfg, workflow, job.Reasoning)
+	if err != nil {
+		return "", fmt.Errorf("resolve workflow config: %w", err)
+	}
+	model := resolution.ModelForSelectedAgent(selectedAgent, requestedModel)
+	if resolution.AgentMatches(selectedAgent, resolution.PreferredAgent) && requestedModel == "" {
+		if override := config.ResolveAnalyzeModelOverrideFromConfig(repoCfg, cfg, job.AnalysisType, workflow, job.Reasoning); override != "" {
+			model = override
+		}
+	}
+	return model, nil
 }
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
@@ -3303,7 +3319,8 @@ func (s *Server) humaEnqueue(
 		if resolveErr != nil {
 			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: resolveErr.Error()})
 		}
-		req.Agent, analysisModel, reasoning = resolved.Agent, resolved.Model, resolved.Reasoning
+		req.Agent, reasoning = resolved.Agent, resolved.Reasoning
+		analysisModel = config.ResolveAnalyzeModelOverrideFromConfig(repoCfg, cfg, req.AnalysisType, workflow, reasoning)
 	} else if workflow == "fix" {
 		reasoning, err = config.ResolveFixReasoningFromConfig(req.Reasoning, repoCfg, cfg)
 	} else {
@@ -3477,7 +3494,7 @@ func (s *Server) resolveSingleAgent(
 		resolution, agentName, in.repoCfg, in.cfg,
 	)
 	model := resolution.ModelForSelectedAgent(agentName, in.requestedModel)
-	if in.descriptor.analysisType != "" && resolution.AgentMatches(agentName, resolution.PreferredAgent) && in.analysisModel != "" {
+	if in.descriptor.analysisType != "" && resolution.AgentMatches(agentName, resolution.PreferredAgent) && in.analysisModel != "" && in.requestedModel == "" {
 		model = in.analysisModel
 	}
 	return resolvedSingleAgent{

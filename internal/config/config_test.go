@@ -2504,6 +2504,10 @@ func TestResolveAnalyzeConfig(t *testing.T) {
 		got, err = ResolveAnalyzeConfigFromConfig("cli-agent", "cli-model", "medium", repo, global, "refactor", "review", "")
 		require.NoError(t, err)
 		assert.Equal(t, AnalyzeConfig{Agent: "cli-agent", Model: "cli-model", Reasoning: "medium"}, got)
+		repo.Analyze, repo.AnalyzeModel, repo.ReviewModel = nil, "", "repo-review-model"
+		assert.Empty(t, ResolveAnalyzeModelOverrideFromConfig(repo, global, "refactor", "review", "high"))
+		repo.AnalyzeModel = "repo-analysis-model"
+		assert.Equal(t, "repo-analysis-model", ResolveAnalyzeModelOverrideFromConfig(repo, global, "refactor", "review", "high"))
 	})
 }
 
