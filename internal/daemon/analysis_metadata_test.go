@@ -96,11 +96,6 @@ func TestEnqueueAnalysisMetadataThroughPrompt(t *testing.T) {
 	assert.Equal(t, "test", stored.Agent)
 	assert.Equal(t, "analysis-model", stored.Model)
 	assert.Equal(t, "high", stored.Reasoning)
-	explicit := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test", Model: "explicit-model", Reasoning: "low"})
-	stored, err = db.GetJobByID(explicit.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "explicit-model", stored.Model)
-	assert.Equal(t, "low", stored.Reasoning)
 
 	reviewJob := enqueueViaHTTP(t, server, EnqueueRequest{
 		RepoPath:          repo.Path(),

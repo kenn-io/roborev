@@ -2773,4 +2773,9 @@ func TestClaimableForegroundReviews(t *testing.T) {
 	eligible, err = db.ClaimableForegroundReviews(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, 1, eligible)
+	_, err = db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "second", Agent: "test", JobType: JobTypeReview})
+	require.NoError(t, err)
+	eligible, err = db.ClaimableForegroundReviews(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 2, eligible)
 }

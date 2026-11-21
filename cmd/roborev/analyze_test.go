@@ -679,19 +679,12 @@ reasoning = "high"
 		},
 	})
 
-	for _, tc := range []struct{ kind, agent, model, reasoning string }{
-		{"refactor", "codex", "type-model", "high"},
-		{"complexity", "gemini", "configured-model", "fast"},
-	} {
-		t.Run(tc.kind, func(t *testing.T) {
-			_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", tc.kind, nil, analyzeOptions{})
-			require.NoError(t, err)
-			assert.Equal(t, tc.agent, got.Agent)
-			assert.Equal(t, tc.model, got.Model)
-			assert.Equal(t, tc.reasoning, got.Reasoning)
-			assert.Empty(t, got.ReviewType)
-		})
-	}
+	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "complexity", nil, analyzeOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "gemini", got.Agent)
+	assert.Equal(t, "configured-model", got.Model)
+	assert.Equal(t, "fast", got.Reasoning)
+	assert.Empty(t, got.ReviewType)
 }
 
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {

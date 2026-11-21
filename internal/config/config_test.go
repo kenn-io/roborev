@@ -2487,14 +2487,20 @@ func TestResolveAnalyzeConfig(t *testing.T) {
 		})
 	}
 	t.Run("analysis defaults precedence", func(t *testing.T) {
-		global := &Config{DefaultAgent: "default", AnalyzeAgent: "global-analysis", AnalyzeModel: "global-model", AnalyzeReasoning: "low", Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "global-type"}}}
-		repo := &RepoConfig{AnalyzeAgent: "repo-analysis", AnalyzeModel: "repo-model", AnalyzeReasoning: "high", Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "repo-type"}}}
+		global := &Config{DefaultAgent: "default", AnalyzeAgent: "global-analysis", AnalyzeModel: "global-model", AnalyzeReasoning: "low", Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "global-type", Model: "global-type-model", Reasoning: "medium"}}}
+		repo := &RepoConfig{AnalyzeAgent: "repo-analysis", AnalyzeModel: "repo-model", AnalyzeReasoning: "high", Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "repo-type", Model: "repo-type-model", Reasoning: "max"}}}
 		got, err := ResolveAnalyzeConfigFromConfig("", "", "", repo, global, "refactor", "review", "")
 		require.NoError(t, err)
-		assert.Equal(t, AnalyzeConfig{Agent: "repo-type", Model: "repo-model", Reasoning: "high"}, got)
+		assert.Equal(t, AnalyzeConfig{Agent: "repo-type", Model: "repo-type-model", Reasoning: "max"}, got)
 		got, err = ResolveAnalyzeConfigFromConfig("", "", "", nil, global, "refactor", "review", "")
 		require.NoError(t, err)
-		assert.Equal(t, AnalyzeConfig{Agent: "global-type", Model: "global-model", Reasoning: "low"}, got)
+		assert.Equal(t, AnalyzeConfig{Agent: "global-type", Model: "global-type-model", Reasoning: "medium"}, got)
+		got, err = ResolveAnalyzeConfigFromConfig("", "", "", repo, global, "complexity", "review", "")
+		require.NoError(t, err)
+		assert.Equal(t, AnalyzeConfig{Agent: "repo-analysis", Model: "repo-model", Reasoning: "high"}, got)
+		got, err = ResolveAnalyzeConfigFromConfig("", "", "", nil, global, "complexity", "review", "")
+		require.NoError(t, err)
+		assert.Equal(t, AnalyzeConfig{Agent: "global-analysis", Model: "global-model", Reasoning: "low"}, got)
 		got, err = ResolveAnalyzeConfigFromConfig("cli-agent", "cli-model", "medium", repo, global, "refactor", "review", "")
 		require.NoError(t, err)
 		assert.Equal(t, AnalyzeConfig{Agent: "cli-agent", Model: "cli-model", Reasoning: "medium"}, got)

@@ -428,24 +428,23 @@ func TestHandleRerunJob(t *testing.T) {
 		}, "GetOrCreateRepo failed: %v", err)
 	}
 
-	t.Run("analysis retains effective configuration", func(t *testing.T) {
+	t.Run("analysis selected settings reach rerun", func(t *testing.T) {
 		server, db, _ := newTestServer(t)
 		repo := testutil.NewGitRepo(t)
 		repo.CommitFile("a.go", "package a\n", "add a")
-		cfg := server.configWatcher.Config()
-		cfg.AnalyzeAgent, cfg.AnalyzeModel, cfg.AnalyzeReasoning = "test", "analysis-model", "high"
-		job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor"})
+		const selected = "rerun-analysis-selected"
+		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
+		job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test", Model: "old-model", Reasoning: "high"})
 		setJobStatus(t, db, job.ID, storage.JobStatusDone)
-		cfg.AnalyzeAgent, cfg.AnalyzeModel, cfg.AnalyzeReasoning = "no-such-agent", "new-model", "low"
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID, Agent: selected})
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
 		rerun, err := db.GetJobByID(job.ID)
 		require.NoError(t, err)
 		assert.Equal(t, storage.JobStatusQueued, rerun.Status)
-		assert.Equal(t, "test", rerun.Agent)
-		assert.Equal(t, "analysis-model", rerun.Model)
+		assert.Equal(t, selected, rerun.Agent)
+		assert.Empty(t, rerun.Model)
 		assert.Equal(t, "high", rerun.Reasoning)
 	})
 
@@ -1626,7 +1625,14 @@ func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: original})
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
 	job := &storage.ReviewJob{Agent: original, Model: "old-model", Provider: "old-provider", AnalysisType: "refactor", RepoPath: repoPath}
-	opts, err := resolveRerunOpts(job, config.DefaultConfig(), nil, original)
+	cfg := config.DefaultConfig()
+	cfg.AnalyzeAgent, cfg.AnalyzeModel, cfg.AnalyzeReasoning = "no-such-agent", "new-model", "low"
+	opts, err := resolveRerunOpts(job, cfg, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, original, opts.Agent)
+	assert.Equal(t, "old-model", opts.Model)
+	assert.Equal(t, "old-provider", opts.Provider)
+	opts, err = resolveRerunOpts(job, cfg, nil, original)
 	require.NoError(t, err)
 	assert.Equal(t, "old-model", opts.Model)
 	assert.Equal(t, "old-provider", opts.Provider)

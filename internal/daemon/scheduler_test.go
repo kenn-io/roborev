@@ -500,52 +500,6 @@ func TestScheduledCancellationMatchesReviewDemand(t *testing.T) {
 }
 
 func TestScheduledAnalysisYieldsWorkerToReview(t *testing.T) {
-	t.Run("review interrupts analysis", func(t *testing.T) {
-		server, db, _ := newTestServer(t)
-		repo := testutil.NewGitRepo(t)
-		repo.CommitFile("a.go", "package a\n", "add file")
-		registered, err := db.GetOrCreateRepo(repo.Path())
-		require.NoError(t, err)
-		started := make(chan struct{})
-		interrupted := make(chan struct{})
-		release := make(chan struct{})
-		t.Cleanup(func() { close(release) })
-		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "scheduled-blocking", ReviewFn: func(ctx context.Context, _, _, prompt string, _ io.Writer) (string, error) {
-			if !strings.Contains(prompt, "## Analysis Request") {
-				return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
-			}
-			close(started)
-			select {
-			case <-ctx.Done():
-				close(interrupted)
-				return "", ctx.Err()
-			case <-release:
-				return "done", nil
-			}
-		}})
-		server.workerPool.SetMaxWorkers(1)
-		_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "scheduled-blocking", Prompt: "## Analysis Request", AnalysisType: "refactor", Source: storage.JobSourceScheduled})
-		require.NoError(t, err)
-		server.workerPool.Start()
-		testutil.ReceiveWithTimeout(t, started, workerStartTimeout)
-		scheduled, err := db.ListJobs("running", "", 0, 0, storage.WithAnalysisType("refactor"))
-		require.NoError(t, err)
-		require.Len(t, scheduled, 1)
-		server.workerPool.wake()
-		current, err := db.GetJobByID(scheduled[0].ID)
-		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusRunning, current.Status)
-		review := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: repo.HeadSHA(), Agent: "test", Source: storage.JobSourceCI})
-		testutil.ReceiveWithTimeout(t, interrupted, workerStartTimeout)
-		require.Eventually(t, func() bool {
-			job, err := db.GetJobByID(review.ID)
-			return err == nil && (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusDone)
-		}, workerStartTimeout, 20*time.Millisecond)
-		jobs, err := db.ListJobs("canceled", "", 0, 0, storage.WithAnalysisType("refactor"))
-		require.NoError(t, err)
-		require.Len(t, jobs, 1)
-		assert.Equal(t, storage.JobSourceScheduled, jobs[0].Source)
-	})
 	t.Run("PreemptionStartsReviewBeforeOlderTask", func(t *testing.T) {
 		server, db, _ := newTestServer(t)
 		repo := testutil.NewGitRepo(t)
@@ -554,12 +508,14 @@ func TestScheduledAnalysisYieldsWorkerToReview(t *testing.T) {
 		require.NoError(t, err)
 		started := make(chan struct{})
 		foreground := make(chan struct{}, 1)
+		interrupted := make(chan struct{})
 		release := make(chan struct{})
 		t.Cleanup(func() { close(release) })
 		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "scheduled-order-check", ReviewFn: func(ctx context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			if strings.Contains(prompt, "## Analysis Request") {
 				close(started)
 				<-ctx.Done()
+				close(interrupted)
 				return "", ctx.Err()
 			}
 			foreground <- struct{}{}
@@ -571,7 +527,7 @@ func TestScheduledAnalysisYieldsWorkerToReview(t *testing.T) {
 			}
 		}})
 		server.workerPool.SetMaxWorkers(1)
-		_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "scheduled-order-check", Prompt: "## Analysis Request", Source: storage.JobSourceScheduled})
+		scheduled, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "scheduled-order-check", Prompt: "## Analysis Request", Source: storage.JobSourceScheduled})
 		require.NoError(t, err)
 		server.workerPool.Start()
 		testutil.ReceiveWithTimeout(t, started, workerStartTimeout)
@@ -580,7 +536,11 @@ func TestScheduledAnalysisYieldsWorkerToReview(t *testing.T) {
 		review, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: repo.HeadSHA(), Agent: "scheduled-order-check", JobType: storage.JobTypeReview})
 		require.NoError(t, err)
 		server.workerPool.wake()
+		testutil.ReceiveWithTimeout(t, interrupted, workerStartTimeout)
 		testutil.ReceiveWithTimeout(t, foreground, workerStartTimeout)
+		currentAnalysis, err := db.GetJobByID(scheduled.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusCanceled, currentAnalysis.Status)
 		currentReview, err := db.GetJobByID(review.ID)
 		require.NoError(t, err)
 		currentTask, err := db.GetJobByID(task.ID)
