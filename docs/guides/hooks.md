@@ -164,7 +164,6 @@ type = "kata"
 | `post_commit` | Reviews queued by the post-commit git hook |
 | `auto_design` | Design reviews that roborev added automatically |
 | `review_prompt` | Reviews that automation queued with a [supplied review prompt](/docs/automation/supplied-review-prompts/) |
-| `scheduled` | Jobs queued by scheduled analysis |
 
 Reviews you start yourself, such as `roborev review`, have no source. A hook
 with a non-empty `sources` list never runs for them.

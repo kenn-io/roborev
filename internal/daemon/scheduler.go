@@ -11,7 +11,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/prompt/analyze"
@@ -20,17 +22,12 @@ import (
 )
 
 type analysisScheduler struct {
-	server   *Server
-	lastRun  map[int64]time.Time
-	failedAt map[int64]time.Time
-	cleared  map[int64]struct{} // repos whose persisted last-run state is known absent
+	server  *Server
+	lastRun map[int64]time.Time
 }
 
 func (s *Server) startAnalysisScheduler(ctx context.Context) {
-	s.startScheduler(ctx, &analysisScheduler{server: s, lastRun: map[int64]time.Time{}})
-}
-
-func (s *Server) startScheduler(ctx context.Context, scheduler *analysisScheduler) {
+	scheduler := &analysisScheduler{server: s, lastRun: map[int64]time.Time{}}
 	s.scheduleMu.Lock()
 	defer s.scheduleMu.Unlock()
 	if s.scheduleCancel != nil {
@@ -66,12 +63,6 @@ func (w *analysisScheduler) run(ctx context.Context) {
 	}
 }
 
-// persistentError marks a failure that retrying cannot fix until config,
-// repository state, or the daemon changes.
-type persistentError struct{ error }
-
-func (e persistentError) Unwrap() error { return e.error }
-
 func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 	repos, err := w.server.db.ListRepos()
 	if err != nil {
@@ -101,7 +92,8 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 		return err
 	}
 	if !schedule.Enabled {
-		return w.clearRepo(ctx, repo.ID)
+		delete(w.lastRun, repo.ID)
+		return nil
 	}
 	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
 }
@@ -128,71 +120,12 @@ func hasRepoMarker(root string) bool {
 	return false
 }
 
-func (w *analysisScheduler) clearRepo(ctx context.Context, repoID int64) error {
-	delete(w.failedAt, repoID)
-	return w.clearLastRun(ctx, repoID)
-}
-
-// clearLastRun clears persisted last-run state once until the repo is enabled again.
-func (w *analysisScheduler) clearLastRun(ctx context.Context, repoID int64) error {
-	if _, ok := w.cleared[repoID]; ok {
-		return nil
-	}
-	if err := w.server.db.ClearAnalysisScheduleLastRun(ctx, repoID); err != nil {
-		return err
-	}
-	delete(w.lastRun, repoID)
-	if w.cleared == nil {
-		w.cleared = make(map[int64]struct{})
-	}
-	w.cleared[repoID] = struct{}{}
-	return nil
-}
-
-// runRepo backs off persistent failures so they neither log nor retry on every
-// poll; transient failures retry on the next one.
 func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
-	delete(w.cleared, repo.ID)
-	if failed, ok := w.failedAt[repo.ID]; ok && now.Sub(failed) < min(5*time.Minute, schedule.Interval) {
+	if last := w.lastRun[repo.ID]; !last.IsZero() && now.Sub(last) < schedule.Interval {
 		return nil
-	}
-	err := w.runDue(ctx, repo, repoCfg, global, schedule, now)
-	w.recordRun(ctx, repo.ID, err, now)
-	return err
-}
-
-func (w *analysisScheduler) recordRun(ctx context.Context, repoID int64, err error, now time.Time) {
-	if err == nil {
-		delete(w.failedAt, repoID)
-	} else if ctx.Err() == nil && errors.As(err, new(persistentError)) {
-		if w.failedAt == nil {
-			w.failedAt = make(map[int64]time.Time)
-		}
-		w.failedAt[repoID] = now
-	}
-}
-
-func (w *analysisScheduler) runDue(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
-	last, loaded := w.lastRun[repo.ID]
-	if !loaded {
-		var err error
-		last, err = w.server.db.AnalysisScheduleLastRun(ctx, repo.ID)
-		if err != nil {
-			return err
-		}
-		w.lastRun[repo.ID] = last
-	}
-	if !last.IsZero() && now.Sub(last) < schedule.Interval {
-		return nil
-	}
-	if err := w.scheduleRepo(ctx, repo, repoCfg, global, schedule); err != nil {
-		return err
-	}
-	if err := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); err != nil {
-		return err
 	}
 	w.lastRun[repo.ID] = now
-	return nil
+	return w.scheduleRepo(ctx, repo, repoCfg, global, schedule)
 }
 
 type changeSet struct {
@@ -209,24 +142,38 @@ type analysisCandidate struct {
 func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) error {
 	head, err := git.ResolveCommitCtx(ctx, repo.RootPath, "HEAD")
 	if err != nil {
-		return persistentError{fmt.Errorf("scheduled repository unavailable: %w", err)}
+		return fmt.Errorf("scheduled repository unavailable: %w", err)
 	}
 	paths, err := git.ListRefFiles(ctx, repo.RootPath, head)
 	if err != nil {
-		return persistentError{fmt.Errorf("scheduled repository unavailable: %w", err)}
+		return fmt.Errorf("scheduled repository unavailable: %w", err)
 	}
 	candidates, err := scheduleCandidates(paths, schedule.Paths)
 	if err != nil {
 		return err
 	}
+	var usable []string
+	var errs []error
 	for _, typ := range schedule.Types {
+		resolved, err := config.ResolveAnalyzeConfigFromConfig("", "", "", repoCfg, global, typ, analyze.Workflow(typ), "")
+		if err == nil {
+			var workflow agent.WorkflowConfig
+			workflow, err = agent.ResolveWorkflowConfigFromConfig(resolved.Agent, repoCfg, global, analyze.Workflow(typ), resolved.Reasoning)
+			if err == nil {
+				_, err = agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, workflow.PreferredAgent, global, workflow.BackupAgent)
+			}
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
+			continue
+		}
+		usable = append(usable, typ)
 		if err := w.markDue(ctx, repo, head, typ, candidates); err != nil {
 			return err
 		}
 	}
 	selected := selectCandidates(candidates, schedule.MaxFiles)
-	var errs []error
-	for _, typ := range schedule.Types {
+	for _, typ := range usable {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -242,6 +189,9 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 func scheduleCandidates(paths, patterns []string) (map[string]*analysisCandidate, error) {
 	candidates := map[string]*analysisCandidate{}
 	for _, path := range paths {
+		if !utf8.ValidString(path) {
+			continue
+		}
 		matched, err := matchesSchedulePaths(patterns, path)
 		if err != nil {
 			return nil, err
@@ -369,11 +319,11 @@ func dueNames(selected []*analysisCandidate, typ string) []string {
 func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, typ string, names []string, head string) error {
 	resolved, err := config.ResolveAnalyzeConfigFromConfig("", "", "", repoCfg, global, typ, analyze.Workflow(typ), "")
 	if err != nil {
-		return persistentError{err}
+		return err
 	}
 	prompt, err := analyze.GetType(typ).BuildPromptWithPaths(".", names)
 	if err != nil {
-		return persistentError{err}
+		return err
 	}
 	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
 	if err != nil {
@@ -381,9 +331,6 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 	}
 	if result.Status != 201 {
 		err := fmt.Errorf("enqueue analysis: %v", result.Body)
-		if result.Status < 500 {
-			return persistentError{err}
-		}
 		return err
 	}
 	return nil

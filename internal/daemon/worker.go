@@ -217,6 +217,18 @@ func (wp *WorkerPool) Start() {
 		wp.started = true
 		wp.wg.Add(1)
 		go wp.runTokenCostReconciler()
+		wp.wg.Go(func() {
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-wp.stopCh:
+					return
+				case <-ticker.C:
+					wp.balanceScheduledWork()
+				}
+			}
+		})
 		wp.spawnWorkersLocked()
 		close(wp.readyCh)
 	})
@@ -343,10 +355,16 @@ func (wp *WorkerPool) balanceScheduledWork() {
 	wp.scheduledYieldMu.Lock()
 	defer wp.scheduledYieldMu.Unlock()
 	wp.workersMu.Lock()
+	defer wp.workersMu.Unlock()
 	workers := wp.numWorkers
-	wp.workersMu.Unlock()
 	wp.runningJobsMu.Lock()
-	active := maps.Clone(wp.workerJobs)
+	active := make(map[string]int64, workers)
+	for id := range workers {
+		workerID := fmt.Sprintf("worker-%d", id)
+		if jobID, ok := wp.workerJobs[workerID]; ok {
+			active[workerID] = jobID
+		}
+	}
 	wp.runningJobsMu.Unlock()
 	claimed := 0
 	for _, id := range active {
@@ -818,22 +836,17 @@ func (wp *WorkerPool) prepareJobCheckout(
 		// IsDirtyJob only identifies the member jobs themselves.
 		committedReview := (job.IsReviewJob() || job.IsSynthesisJob()) &&
 			!job.IsDirtyJob() && job.GitRef != "dirty"
-		scheduledPaths := job.Source == storage.JobSourceScheduled
-		if !committedReview && !scheduledPaths {
+		if !committedReview {
 			return checkout, nil
 		}
-		if scheduledPaths {
-			checkout.isolatedLocalReview = true
-		} else {
-			exact, err := needsExactCheckout(job, repoPath, cfg)
-			if err != nil {
-				return preparedJobCheckout{}, err
-			}
-			if !exact {
-				return checkout, nil
-			}
-			checkout.isolatedLocalReview = true
+		exact, err := needsExactCheckout(job, repoPath, cfg)
+		if err != nil {
+			return preparedJobCheckout{}, err
 		}
+		if !exact {
+			return checkout, nil
+		}
+		checkout.isolatedLocalReview = true
 	}
 	// A CI checkout can be a fork's pull request head, so it keeps kit's
 	// isolated git config. A local review checks out the user's own commits
@@ -940,25 +953,6 @@ func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, 
 	return true, nil
 }
 
-// exactCheckoutOptions disables submodule initialization and LFS downloads and
-// filters for scheduled analysis; other reviews keep both.
-func exactCheckoutOptions(job *storage.ReviewJob, parentDir string, runner gitcmd.Runner) gitworktree.Options {
-	scheduled := job.Source == storage.JobSourceScheduled
-	if scheduled {
-		if runner.Env == nil {
-			runner = gitcmd.New()
-		}
-		runner = runner.WithConfig("filter.lfs.process", "").WithConfig("filter.lfs.smudge", "").WithConfig("filter.lfs.required", "false")
-	}
-	return gitworktree.Options{
-		ParentDir:      parentDir,
-		Prefix:         fmt.Sprintf("%s%d-", ciWorktreePrefix, job.ID),
-		InitSubmodules: !scheduled,
-		PullLFS:        !scheduled,
-		Runner:         runner,
-	}
-}
-
 // createExactCheckout shares the CI checkout lifecycle, including its on-disk
 // directory and marker format so startup cleanup handles all detached reviews.
 // A zero setupRunner uses kit's isolated gitcmd.New configuration.
@@ -967,9 +961,6 @@ func (wp *WorkerPool) createExactCheckout(
 	setupRunner gitcmd.Runner,
 ) (string, func(), error) {
 	headRef := strings.TrimSpace(headOf(job.GitRef))
-	if job.Source == storage.JobSourceScheduled {
-		headRef = job.AnalysisCommitSHA
-	}
 	if headRef == "" {
 		return "", nil, fmt.Errorf("job %d has empty checkout ref", job.ID)
 	}
@@ -982,7 +973,13 @@ func (wp *WorkerPool) createExactCheckout(
 		return "", nil, fmt.Errorf("create review worktree parent: %w", err)
 	}
 	unlock := lockGitMetadata(job.RepoPath)
-	wt, createErr := createWorkerWorktree(ctx, job.RepoPath, headRef, exactCheckoutOptions(job, parentDir, setupRunner))
+	wt, createErr := createWorkerWorktree(ctx, job.RepoPath, headRef, gitworktree.Options{
+		ParentDir:      parentDir,
+		Prefix:         fmt.Sprintf("%s%d-", ciWorktreePrefix, job.ID),
+		InitSubmodules: true,
+		PullLFS:        true,
+		Runner:         setupRunner,
+	})
 	if createErr == nil {
 		// Bare-backed repositories may be registered at a disposable checkout.
 		// Cleanup must still reach Git after that checkout has been removed.

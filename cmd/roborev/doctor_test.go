@@ -179,14 +179,14 @@ func TestDoctorHooksReportSourceThatMatchesNoReview(t *testing.T) {
 	env := &doctorEnv{
 		ctx: t.Context(),
 		global: &config.Config{Hooks: []config.HookConfig{
-			{Event: "review.completed", Sources: []string{"ci_branch", "scheduled", "ci-branch"}, Command: "true"},
+			{Event: "review.completed", Sources: []string{"ci_branch", "ci-branch"}, Command: "true"},
 		}},
 		ping: &daemon.PingInfo{OK: true},
 	}
 	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.hooks")
 	assert.Equal(t, doctorWarn, got.Status)
 	assert.Equal(t, []string{
-		`hook 1 (event "review.completed"): source "ci-branch" matches no review; use one of ci, ci_branch, post_commit, auto_design, review_prompt, scheduled`,
+		`hook 1 (event "review.completed"): source "ci-branch" matches no review; use one of ci, ci_branch, post_commit, auto_design, review_prompt`,
 	}, got.Details)
 }
 

@@ -701,16 +701,13 @@ repository-relative paths; a trailing `/` includes the directory and its
 descendants.
 
 Each run selects up to `max_files` distinct committed files and queues jobs for
-each applicable type, one job containing its selected paths. Jobs read the
-recorded commit in an isolated checkout. Files with no successful analysis come
-first, followed by those with the oldest analysis. Queued and running jobs
-suppress their files. Scheduled checkouts skip submodule initialization and Git
-LFS downloads; LFS files appear as pointers. Only changed files are analyzed
+each applicable type, one job containing its selected paths. Files with no
+successful analysis come first, followed by those with the oldest analysis.
+Queued and running jobs suppress their files. Only changed files are analyzed
 again. A foreground review can cancel a running scheduled job when all workers
 are busy. Only enough jobs are canceled to serve the waiting reviews. The
 canceled files remain due for a later run. The daemon reloads settings on its
-next 30-second check. Analysis history is local to each machine, so two machines
-with the same repository schedule independently. Set `analyze_agent`,
+next 30-second check. Set `analyze_agent`,
 `analyze_model`, and `analyze_reasoning` globally or per repository to choose
 the analysis agent, model, and reasoning. Per-type `[analyze.<type>]` settings
 take precedence within each scope; repository settings take precedence over

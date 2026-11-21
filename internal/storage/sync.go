@@ -567,7 +567,7 @@ type SyncableJob struct {
 	FinishedAtRaw         string
 }
 
-// idx_review_jobs_sync_pending covers the candidates; scheduled jobs stay local.
+// idx_review_jobs_sync_pending holds exactly the rows this WHERE selects.
 var jobsToSyncQuery = `
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
@@ -586,7 +586,6 @@ var jobsToSyncQuery = `
 		AND j.source_machine_id = ?
 		AND j.id > ?
 		AND j.uuid IS NOT NULL
-		AND COALESCE(j.source, '') != '` + JobSourceScheduled + `'
 		AND (j.synced_at IS NULL OR ` + sqliteNormalizedTimestampExpr("j.updated_at") + ` > ` + sqliteNormalizedTimestampExpr("j.synced_at") + `)
 		ORDER BY j.id
 		LIMIT ?

@@ -926,21 +926,3 @@ func TestSyncQueriesPageHistory(t *testing.T) {
 		assert.Equal(jobs[5].ID, cur.reviewJob, "short pages must skip trailing reviewless jobs")
 	})
 }
-
-func TestGetJobsToSyncExcludesScheduledAnalysis(t *testing.T) {
-	t.Parallel()
-	h := newSyncTestHelper(t)
-	scheduled, err := h.db.EnqueueJob(EnqueueOpts{RepoID: h.repo.ID, GitRef: "refactor", Agent: "test", Prompt: "analysis", Source: JobSourceScheduled, AnalysisType: "refactor", AnalysisFiles: []string{"main.go"}, AnalysisCommitSHA: "abc123"})
-	require.NoError(t, err)
-	claimed, err := h.db.ClaimJob("worker")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, scheduled.ID, claimed.ID)
-	require.NoError(t, h.db.CompleteJob(scheduled.ID, "test", "analysis output"))
-	ordinary := h.createCompletedJob("def456")
-
-	ids, err := jobSyncIDs(h)
-	require.NoError(t, err)
-	assert.Contains(t, ids, ordinary.ID)
-	assert.NotContains(t, ids, scheduled.ID)
-}
