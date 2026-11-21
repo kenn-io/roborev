@@ -5,6 +5,8 @@ import (
 	"context"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -300,4 +302,24 @@ func TestScheduledAnalysisDetectsDirtyEditAfterCommittedCoverage(t *testing.T) {
 	require.Len(t, jobs, 1)
 	assert.Contains(t, jobs[0].Prompt, "package dirty")
 	assert.Empty(t, jobs[0].AnalysisCommitSHA)
+}
+
+func TestScheduledAnalysisIncludesDeletedTrackedFile(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFiles(map[string]string{"a.go": "package committedA\n", "b.go": "package committedB\n"}, "add sources")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(repo.Path(), "a.go")))
+	yes, interval, budget := true, "1h", 2
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+	server.configWatcher.Config().AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"a.go", "b.go"}, jobs[0].AnalysisFiles)
+	assert.Contains(t, jobs[0].Prompt, "package committedA")
+	assert.Contains(t, jobs[0].Prompt, "package committedB")
 }
