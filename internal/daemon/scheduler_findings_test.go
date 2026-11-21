@@ -177,3 +177,62 @@ func TestScheduledYieldIgnoresRetiringWorker(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusRunning, job.Status)
 }
+
+func TestScheduledAnalysisPreservesDirtyContentsAndKeepsFileDue(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package committed\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval, budget := true, "1h", 1
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+	server.configWatcher.Config().AnalyzeAgent = "test"
+	repo.WriteFile("a.go", "package dirty\n")
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	now := time.Now()
+	watcher.poll(t.Context(), now)
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Contains(t, jobs[0].Prompt, "package dirty")
+	assert.Empty(t, jobs[0].AnalysisCommitSHA)
+	repo.WriteFile("a.go", "package committed\n")
+	setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
+	watcher.poll(t.Context(), now.Add(time.Hour))
+	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1, "discarded edits must not count as analysis of the commit")
+	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
+}
+
+func TestScheduledAnalysisFailedTypeDoesNotStarveOtherFiles(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFiles(map[string]string{"a.go": "package a\n", "b.go": "package b\n"}, "add sources")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval, budget := true, "1h", 1
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor", "complexity"}}
+	server.configWatcher.Config().AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	now := time.Now()
+	watcher.poll(t.Context(), now)
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	for _, job := range jobs {
+		require.Equal(t, []string{"a.go"}, job.AnalysisFiles)
+		status := storage.JobStatusDone
+		if job.AnalysisType == "refactor" {
+			status = storage.JobStatusFailed
+		}
+		setJobStatus(t, db, job.ID, status)
+	}
+	watcher.poll(t.Context(), now.Add(time.Hour))
+	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	for _, job := range jobs {
+		assert.Equal(t, []string{"b.go"}, job.AnalysisFiles, "failed analysis of a.go must not block b.go")
+	}
+}
