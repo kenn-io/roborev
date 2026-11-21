@@ -14,6 +14,12 @@ type CostAggregate struct {
 	Complete     bool    `json:"complete"` // JobsTotal > 0 && JobsWithCost == JobsTotal
 }
 
+// HasUsableSpend reports whether a recorded amount can be shown. A fully priced
+// zero-dollar job is usable, as is nonzero spend from partly priced jobs.
+func (c CostAggregate) HasUsableSpend() bool {
+	return c.JobsWithCost > 0 || c.TotalUSD != 0
+}
+
 // CostOptions scopes a cost aggregate. The zero value selects all repos, all
 // branches, and all time.
 type CostOptions struct {
