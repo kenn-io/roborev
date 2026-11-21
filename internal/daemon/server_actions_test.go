@@ -1660,3 +1660,19 @@ func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
 	assert.Equal(t, "selected-analysis-model", opts.Model)
 	assert.Empty(t, opts.Provider)
 }
+
+func TestAnalysisRerunUsesProjectModel(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.AddRemote("origin", "https://example.com/team/project.git")
+	const original, selected = "project-original", "project-selected"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: original})
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
+	cfg := config.DefaultConfig()
+	cfg.AnalyzeAgent = selected
+	cfg.ReviewAgent = selected
+	cfg.Projects = map[string]config.ProjectConfig{"example.com/team/project": {ReviewModel: "project-model"}}
+	job := &storage.ReviewJob{Agent: original, AnalysisType: "refactor", RepoPath: repo.Path()}
+	opts, err := resolveRerunOpts(job, cfg, nil, selected)
+	require.NoError(t, err)
+	assert.Equal(t, "project-model", opts.Model)
+}

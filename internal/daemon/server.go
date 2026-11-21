@@ -120,6 +120,7 @@ type Server struct {
 	agentHookState          *agenthook.StateStore
 	agentHookStateErr       error
 	scheduleMu              sync.Mutex
+	scheduledRepoMu         sync.Mutex
 	scheduleCancel          context.CancelFunc
 	scheduleDone            chan struct{}
 	goalWatchMu             sync.Mutex
@@ -1284,6 +1285,7 @@ func resolveRerunOpts(
 }
 
 func resolveAnalysisRerunModel(job *storage.ReviewJob, cfg *config.Config, path, selectedAgent, requestedModel string) (string, error) {
+	cfg = cfg.ForRepo(path)
 	repoCfg, err := config.LoadRepoConfig(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve workflow config: %w", err)
@@ -1298,10 +1300,8 @@ func resolveAnalysisRerunModel(job *storage.ReviewJob, cfg *config.Config, path,
 		return "", fmt.Errorf("resolve workflow config: %w", err)
 	}
 	model := resolution.ModelForSelectedAgent(selectedAgent, requestedModel)
-	if resolution.AgentMatches(selectedAgent, resolution.PreferredAgent) && requestedModel == "" {
-		if override := config.ResolveAnalyzeModelOverrideFromConfig(repoCfg, cfg, job.AnalysisType, workflow, job.Reasoning); override != "" {
-			model = override
-		}
+	if override := config.ResolveAnalyzeModelOverrideFromConfig(repoCfg, cfg, job.AnalysisType, workflow, job.Reasoning); override != "" && requestedModel == "" && resolution.AgentMatches(selectedAgent, resolution.PreferredAgent) {
+		model = override
 	}
 	return model, nil
 }

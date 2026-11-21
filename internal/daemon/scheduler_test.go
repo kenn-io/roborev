@@ -52,6 +52,37 @@ func TestScheduledAnalysis(t *testing.T) {
 	assert.Equal(t, storage.JobSourceScheduled, jobs[0].Source)
 }
 
+func TestScheduledAnalysisCancelledRead(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	watcher := &analysisScheduler{server: server}
+	err = watcher.enqueueType(ctx, *registered, "refactor", []string{"a.go"}, repo.HeadSHA())
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestScheduledAnalysisDeletedRepo(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	require.NoError(t, db.DeleteRepo(registered.ID, true))
+	watcher := &analysisScheduler{server: server}
+	err = watcher.enqueueType(t.Context(), *registered, "refactor", []string{"a.go"}, repo.HeadSHA())
+	require.Error(t, err)
+	jobs, err := db.ListJobs("", "", 0, 0)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	repos, err := db.ListRepos()
+	require.NoError(t, err)
+	assert.Empty(t, repos)
+}
+
 func TestScheduledAnalysisInvalidRepoDoesNotBlockOtherRepos(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	bad, good := testutil.NewGitRepo(t), testutil.NewGitRepo(t)

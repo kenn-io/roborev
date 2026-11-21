@@ -311,19 +311,40 @@ func dueNames(selected []*analysisCandidate, typ string) []string {
 	return names
 }
 
-func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string) error {
+// buildTypePrompt reads names at head, honoring ctx cancellation, and builds typ's prompt.
+func buildTypePrompt(ctx context.Context, root, typ, head string, names []string) (string, error) {
 	files := make(map[string]string, len(names))
 	for _, name := range names {
-		content, err := git.ReadFile(repo.RootPath, head, name)
+		content, err := git.ReadFileCtx(ctx, root, head, name)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", name, err)
+			return "", fmt.Errorf("read %s: %w", name, err)
 		}
 		files[name] = string(content)
 	}
-	prompt, err := analyze.GetType(typ).BuildPrompt(files)
+	return analyze.GetType(typ).BuildPrompt(files)
+}
+
+// lockRegistered holds scheduledRepoMu, which repo deletion also takes, so
+// enqueue cannot recreate a repository deleted after it was selected.
+func (w *analysisScheduler) lockRegistered(repo storage.Repo) (func(), error) {
+	w.server.scheduledRepoMu.Lock()
+	if registered, err := w.server.db.GetRepoByID(repo.ID); err != nil || registered.RootPath != repo.RootPath {
+		w.server.scheduledRepoMu.Unlock()
+		return nil, fmt.Errorf("scheduled repository no longer registered")
+	}
+	return w.server.scheduledRepoMu.Unlock, nil
+}
+
+func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string) error {
+	prompt, err := buildTypePrompt(ctx, repo.RootPath, typ, head, names)
 	if err != nil {
 		return err
 	}
+	unlock, err := w.lockRegistered(repo)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
 	if err != nil {
 		return err

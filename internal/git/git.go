@@ -1477,7 +1477,12 @@ func GetMainRepoRoot(path string) (string, error) {
 
 // ReadFile reads a file at a specific commit
 func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
-	cmd := newGitCmd("show", fmt.Sprintf("%s:%s", sha, filePath))
+	return ReadFileCtx(context.Background(), repoPath, sha, filePath)
+}
+
+// ReadFileCtx reads a file at a specific commit with cancellation.
+func ReadFileCtx(ctx context.Context, repoPath, sha, filePath string) ([]byte, error) {
+	cmd := newGitCmdContext(ctx, "show", fmt.Sprintf("%s:%s", sha, filePath))
 	cmd.Dir = repoPath
 
 	var stdout, stderr bytes.Buffer
@@ -1485,7 +1490,10 @@ func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git show %s:%s: %s", sha, filePath, stderr.String())
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("git show %s:%s: %s: %w", sha, filePath, stderr.String(), err)
 	}
 
 	return stdout.Bytes(), nil
