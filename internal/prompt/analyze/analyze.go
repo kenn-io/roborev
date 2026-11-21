@@ -127,13 +127,9 @@ func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 
 	// Write file contents in sorted order
 	sb.WriteString("## Files to Analyze\n\n")
-	for _, name := range fileNames {
+	for i, name := range fileNames {
 		content := files[name]
-		display := name
-		if !utf8.ValidString(display) {
-			display = strconv.QuoteToASCII(name)
-		}
-		fmt.Fprintf(&sb, "### %s\n\n", display)
+		fmt.Fprintf(&sb, "### %s\n\n", displayNames[i])
 		if !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
 			sb.WriteString("Binary content (base64):\n\n```\n")
 			sb.WriteString(base64.StdEncoding.EncodeToString([]byte(content)))

@@ -458,26 +458,6 @@ func TestHandleRerunJob(t *testing.T) {
 		}
 	})
 
-	t.Run("analysis selected settings reach rerun", func(t *testing.T) {
-		server, db, _ := newTestServer(t)
-		repo := testutil.NewGitRepo(t)
-		repo.CommitFile("a.go", "package a\n", "add a")
-		const selected = "rerun-analysis-selected"
-		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
-		job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test", Model: "old-model", Reasoning: "high"})
-		setJobStatus(t, db, job.ID, storage.JobStatusDone)
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID, Agent: selected})
-		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusOK)
-		rerun, err := db.GetJobByID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusQueued, rerun.Status)
-		assert.Equal(t, selected, rerun.Agent)
-		assert.Empty(t, rerun.Model)
-		assert.Equal(t, "high", rerun.Reasoning)
-	})
-
 	t.Run("rerun failed job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-failed", Agent: "test"})

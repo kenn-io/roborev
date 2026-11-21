@@ -359,19 +359,17 @@ func (wp *WorkerPool) balanceScheduledWork() {
 	workers := wp.numWorkers
 	wp.runningJobsMu.Lock()
 	active := make(map[string]int64, workers)
+	claimed := 0
 	for id := range workers {
 		workerID := fmt.Sprintf("worker-%d", id)
 		if jobID, ok := wp.workerJobs[workerID]; ok {
 			active[workerID] = jobID
+			if jobID > 0 {
+				claimed++
+			}
 		}
 	}
 	wp.runningJobsMu.Unlock()
-	claimed := 0
-	for _, id := range active {
-		if id > 0 {
-			claimed++
-		}
-	}
 	if workers <= 0 || claimed < workers {
 		return
 	}

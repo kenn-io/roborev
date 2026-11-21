@@ -627,18 +627,6 @@ func TestScheduledAnalysisRestartRespectsInterval(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 2)
 	assert.Equal(t, []string{"b.go"}, jobs[0].AnalysisFiles)
-
-	repo.CommitFile("c.go", "package c\n", "add file")
-	no := false
-	server.configWatcher.Config().Schedule.Enabled = &no
-	restarted.poll(t.Context(), now.Add(time.Hour+5*time.Minute))
-	server.configWatcher.Config().Schedule.Enabled = &yes
-	restarted = &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-	restarted.poll(t.Context(), now.Add(time.Hour+5*time.Minute))
-	jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
-	require.NoError(t, err)
-	require.Len(t, jobs, 3)
-	assert.Equal(t, []string{"c.go"}, jobs[0].AnalysisFiles)
 }
 
 func TestScheduledAnalysisUsesBackupAgentModel(t *testing.T) {

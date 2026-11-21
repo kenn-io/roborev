@@ -109,12 +109,3 @@ func (db *DB) SetAnalysisScheduleLastRun(ctx context.Context, repoID int64, last
 	}
 	return nil
 }
-
-// ClearAnalysisScheduleLastRun removes a disabled repo's schedule state.
-func (db *DB) ClearAnalysisScheduleLastRun(ctx context.Context, repoID int64) error {
-	_, err := db.ExecContext(ctx, `DELETE FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_last_run:%d", repoID))
-	if err != nil {
-		return fmt.Errorf("clear analysis schedule last run: %w", err)
-	}
-	return nil
-}

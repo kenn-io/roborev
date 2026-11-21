@@ -91,8 +91,7 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 		return err
 	}
 	if !schedule.Enabled {
-		delete(w.lastRun, repo.ID)
-		return w.server.db.ClearAnalysisScheduleLastRun(ctx, repo.ID)
+		return nil
 	}
 	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
 }
@@ -164,8 +163,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	}
 	selected := selectCandidates(candidates, schedule.MaxFiles)
 	for _, typ := range schedule.Types {
-		_, ok := usable[typ]
-		if !ok {
+		if !usable[typ] {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -331,8 +329,7 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 		return err
 	}
 	if result.Status != 201 {
-		err := fmt.Errorf("enqueue analysis: %v", result.Body)
-		return err
+		return fmt.Errorf("enqueue analysis: %v", result.Body)
 	}
 	return nil
 }

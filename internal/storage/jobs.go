@@ -1622,7 +1622,7 @@ func (db *DB) CancelScheduledForReview(ctx context.Context, jobID int64, workerI
 	now := time.Now()
 	args := []any{preciseTimestampAt(now), now.Format(time.RFC3339), jobID, JobSourceScheduled, workerID, startedAt}
 	args = append(args, claimCandidateArgs(now)...)
-	args = append(args, JobSourceScheduled, JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis)
+	args = append(args, foregroundReviewArgs()...)
 	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'canceled', finished_at = ?, updated_at = ?
  WHERE id = ? AND status = 'running' AND source = ? AND worker_id = ? AND started_at = ? AND EXISTS
  (SELECT 1 FROM review_jobs candidate WHERE `+claimCandidate+` AND `+foregroundReviewCandidate+`)`, args...)
