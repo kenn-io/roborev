@@ -110,7 +110,7 @@ func TestBuildPrompt(t *testing.T) {
 	assert.Less(t, aIdx, bIdx, "files should be in sorted order (a.go before b.go)")
 }
 
-func TestBuildPromptPreservesNULContentForProcessArguments(t *testing.T) {
+func TestBuildPromptPreservesContentForProcessArguments(t *testing.T) {
 	for _, tc := range []struct{ name, filename, content, want string }{
 		{"NUL content", "data.bin", "hello\x00world", "aGVsbG8Ad29ybGQ="},
 		{"invalid UTF-8 content", "data.bin", "binary\xffbytes", "YmluYXJ5/2J5dGVz"},

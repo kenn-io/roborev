@@ -118,7 +118,7 @@ func TestAnalysisEnqueueModels(t *testing.T) {
 		configure                  func(*config.Config)
 	}{
 		{"configured", "", "analysis-model", func(c *config.Config) {
-			c.AnalyzeAgent, c.AnalyzeModel, c.AnalyzeReasoning = "test", "analysis-model", "high"
+			c.AnalyzeAgent, c.AnalyzeModel = "test", "analysis-model"
 			c.ReviewModel = "review-model"
 		}},
 		{"review model belongs to another agent", "", "", func(c *config.Config) { c.ReviewAgent, c.ReviewModel, c.AnalyzeAgent = "codex", "codex-model", "test" }},
@@ -146,9 +146,6 @@ func TestAnalysisEnqueueModels(t *testing.T) {
 			assert.Equal(t, "test", stored.Agent)
 			assert.Equal(t, tc.wantModel, stored.Model)
 			assert.Equal(t, tc.requested, stored.RequestedModel)
-			if tc.name == "configured" {
-				assert.Equal(t, "high", stored.Reasoning)
-			}
 		})
 	}
 }

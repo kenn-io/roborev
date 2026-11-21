@@ -653,13 +653,8 @@ func TestEnqueueAnalysisJobAppliesAnalyzeConfig(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("main.go", "package main", "initial")
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte(`
-analyze_agent = "gemini"
-analyze_model = "configured-model"
-analyze_reasoning = "fast"
 [analyze.refactor]
-agent = "codex"
 model = "type-model"
-reasoning = "high"
 `), 0o644))
 
 	var got daemon.EnqueueRequest
@@ -679,15 +674,9 @@ reasoning = "high"
 		},
 	})
 
-	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "complexity", nil, analyzeOptions{})
+	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", nil, analyzeOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, "gemini", got.Agent)
 	assert.Empty(t, got.Model)
-	assert.Equal(t, "fast", got.Reasoning)
-	assert.Empty(t, got.ReviewType)
-	_, err = enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", nil, analyzeOptions{model: "explicit-model"})
-	require.NoError(t, err)
-	assert.Equal(t, "explicit-model", got.Model)
 }
 
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {

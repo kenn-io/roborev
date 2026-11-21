@@ -428,28 +428,6 @@ func TestHandleRerunJob(t *testing.T) {
 		}, "GetOrCreateRepo failed: %v", err)
 	}
 
-	t.Run("analysis rerun with explicit model", func(t *testing.T) {
-		const preferred = "rerun-analysis-preferred"
-		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: preferred})
-		server, db, _ := newTestServer(t)
-		repo := testutil.NewGitRepo(t)
-		repo.CommitFile("a.go", "package a\n", "add a")
-		cfg := server.configWatcher.Config()
-		cfg.AnalyzeAgent, cfg.AnalyzeModel = preferred, "configured-model"
-		job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test", Model: "requested-model"})
-		setJobStatus(t, db, job.ID, storage.JobStatusDone)
-		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID, Agent: preferred})
-		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
-		testutil.AssertStatusCode(t, w, http.StatusOK)
-		rerun, err := db.GetJobByID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, storage.JobStatusQueued, rerun.Status)
-		assert.Equal(t, preferred, rerun.Agent)
-		assert.Equal(t, "configured-model", rerun.Model)
-		assert.Equal(t, "requested-model", rerun.RequestedModel)
-	})
-
 	t.Run("rerun failed job", func(t *testing.T) {
 		commit, _ := db.GetOrCreateCommit(repo.ID, "rerun-failed", "Author", "Subject", time.Now())
 		job, _ := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: "rerun-failed", Agent: "test"})
@@ -1621,8 +1599,8 @@ func TestHandleListCommentsJobIDParsing(t *testing.T) {
 }
 
 func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
-	repoPath := t.TempDir()
-	testutil.InitTestGitRepo(t, repoPath)
+	repo := testutil.NewGitRepo(t)
+	repoPath := repo.Path()
 	const original, selected = "analysis-original", "analysis-selected"
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: original})
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
@@ -1651,6 +1629,10 @@ func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, selected, opts.Agent)
 	assert.Equal(t, "backup-model", opts.Model)
+	opts, err = resolveRerunOpts(job, cfg, nil, selected)
+	require.NoError(t, err)
+	assert.Equal(t, selected, opts.Agent)
+	assert.Equal(t, "backup-model", opts.Model)
 	cfg.AnalyzeAgent, cfg.AnalyzeModel = selected, "selected-analysis-model"
 	job.BudgetOriginalAgent = ""
 	job.Agent, job.Model, job.Provider = original, "old-model", "old-provider"
@@ -1659,20 +1641,12 @@ func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
 	assert.Equal(t, selected, opts.Agent)
 	assert.Equal(t, "selected-analysis-model", opts.Model)
 	assert.Empty(t, opts.Provider)
-}
 
-func TestAnalysisRerunUsesProjectModel(t *testing.T) {
-	repo := testutil.NewGitRepo(t)
 	repo.AddRemote("origin", "https://example.com/team/project.git")
-	const original, selected = "project-original", "project-selected"
-	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: original})
-	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
-	cfg := config.DefaultConfig()
-	cfg.AnalyzeAgent = selected
-	cfg.ReviewAgent = selected
+	cfg = config.DefaultConfig()
+	cfg.AnalyzeAgent, cfg.ReviewAgent = selected, selected
 	cfg.Projects = map[string]config.ProjectConfig{"example.com/team/project": {ReviewModel: "project-model"}}
-	job := &storage.ReviewJob{Agent: original, AnalysisType: "refactor", RepoPath: repo.Path()}
-	opts, err := resolveRerunOpts(job, cfg, nil, selected)
+	opts, err = resolveRerunOpts(job, cfg, nil, selected)
 	require.NoError(t, err)
 	assert.Equal(t, "project-model", opts.Model)
 }

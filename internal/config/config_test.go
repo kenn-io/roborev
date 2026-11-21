@@ -2501,9 +2501,9 @@ func TestResolveAnalyzeConfig(t *testing.T) {
 		got, err = ResolveAnalyzeConfigFromConfig("", "", "", nil, global, "complexity", "review", "")
 		require.NoError(t, err)
 		assert.Equal(t, AnalyzeConfig{Agent: "global-analysis", Model: "global-model", Reasoning: "low"}, got)
-		got, err = ResolveAnalyzeConfigFromConfig("cli-agent", "cli-model", "medium", repo, global, "refactor", "review", "")
+		got, err = ResolveAnalyzeConfigFromConfig("", "", "medium", repo, global, "refactor", "review", "")
 		require.NoError(t, err)
-		assert.Equal(t, AnalyzeConfig{Agent: "cli-agent", Model: "cli-model", Reasoning: "medium"}, got)
+		assert.Equal(t, AnalyzeConfig{Agent: "repo-type", Model: "repo-type-model", Reasoning: "medium"}, got)
 		repo.Analyze, repo.AnalyzeModel, repo.ReviewModel = nil, "", "repo-review-model"
 		assert.Empty(t, ResolveAnalyzeModelOverrideFromConfig(repo, global, "refactor", "review", "high"))
 		repo.AnalyzeModel = "repo-analysis-model"
