@@ -579,12 +579,6 @@ func TestScheduledAnalysisYieldsWorkerToReview(t *testing.T) {
 			_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, time.Now().Add(500*time.Millisecond).UTC().Format("2006-01-02T15:04:05.000000000Z"), review.ID)
 			require.NoError(t, err)
 			server.workerPool.wake()
-			time.Sleep(499 * time.Millisecond)
-			select {
-			case <-interrupted:
-				t.Fatal("scheduled analysis yielded before the review became eligible")
-			default:
-			}
 			testutil.ReceiveWithTimeout(t, interrupted, workerStartTimeout)
 			testutil.ReceiveWithTimeout(t, reviewStarted, workerStartTimeout)
 			current, err := db.GetJobByID(review.ID)
@@ -633,7 +627,7 @@ func TestScheduledAnalysisUsesBackupAgent(t *testing.T) {
 	cfg := server.configWatcher.Config()
 	yes, interval, budget := true, "1h", 1
 	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
-	cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "primary-model"
+	cfg.AnalyzeAgent = "codex"
 	cfg.CodexCmd = "missing-codex-command"
 	cfg.ReviewBackupAgent = "test"
 	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}

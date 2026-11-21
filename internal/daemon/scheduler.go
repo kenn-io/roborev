@@ -18,8 +18,9 @@ import (
 )
 
 type analysisScheduler struct {
-	server  *Server
-	lastRun map[int64]time.Time
+	server                *Server
+	lastRun               map[int64]time.Time
+	testHookBeforeEnqueue func()
 }
 
 func (s *Server) startAnalysisScheduler(ctx context.Context) {
@@ -122,10 +123,9 @@ type changeSet struct {
 }
 
 type analysisCandidate struct {
-	path     string
-	due      map[string]bool
-	oldest   time.Time
-	oldestID int64
+	path   string
+	due    map[string]bool
+	oldest time.Time
 }
 
 func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) error {
@@ -253,8 +253,8 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 		if due {
 			candidate.due[typ] = true
 			attempt := attempts[path]
-			if len(candidate.due) == 1 || attempt.EnqueuedAt.Before(candidate.oldest) || (attempt.EnqueuedAt.Equal(candidate.oldest) && attempt.ID < candidate.oldestID) {
-				candidate.oldest, candidate.oldestID = attempt.EnqueuedAt, attempt.ID
+			if len(candidate.due) == 1 || attempt.EnqueuedAt.Before(candidate.oldest) {
+				candidate.oldest = attempt.EnqueuedAt
 			}
 		}
 	}
@@ -288,9 +288,6 @@ func selectCandidates(candidates map[string]*analysisCandidate, limit int) []*an
 	}
 	sort.Slice(selected, func(i, j int) bool {
 		if selected[i].oldest.Equal(selected[j].oldest) {
-			if selected[i].oldestID != selected[j].oldestID {
-				return selected[i].oldestID < selected[j].oldestID
-			}
 			return selected[i].path < selected[j].path
 		}
 		return selected[i].oldest.Before(selected[j].oldest)
@@ -324,8 +321,8 @@ func buildTypePrompt(ctx context.Context, root, typ, head string, names []string
 	return analyze.GetType(typ).BuildPrompt(files)
 }
 
-// lockRegistered holds scheduledRepoMu, which repo deletion also takes, so
-// enqueue cannot recreate a repository deleted after it was selected.
+// lockRegistered coordinates enqueue with repo deletion and merge so it cannot
+// recreate a repository removed after it was selected.
 func (w *analysisScheduler) lockRegistered(repo storage.Repo) (func(), error) {
 	w.server.scheduledRepoMu.Lock()
 	if registered, err := w.server.db.GetRepoByID(repo.ID); err != nil || registered.RootPath != repo.RootPath {
@@ -345,6 +342,9 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 		return err
 	}
 	defer unlock()
+	if w.testHookBeforeEnqueue != nil {
+		w.testHookBeforeEnqueue()
+	}
 	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
 	if err != nil {
 		return err

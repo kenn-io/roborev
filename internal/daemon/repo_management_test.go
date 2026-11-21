@@ -18,45 +18,79 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestMergeRepoWaitsForScheduledEnqueue(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("a.go", "package a\n", "add file")
-	source, err := db.GetOrCreateRepo(repo.Path())
-	require.NoError(t, err)
-	target, err := db.GetOrCreateRepo(t.TempDir())
-	require.NoError(t, err)
-	watcher := &analysisScheduler{server: server}
-	unlock, err := watcher.lockRegistered(*source)
-	require.NoError(t, err)
-	input := &MergeReposInput{}
-	input.Body.SourceID, input.Body.TargetID = source.ID, target.ID
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		close(started)
-		_, err := server.humaMergeRepos(t.Context(), input)
-		done <- err
-	}()
-	<-started
-	var early bool
-	select {
-	case err = <-done:
-		early = true
-	case <-time.After(200 * time.Millisecond):
+func TestRepoRemovalWaitsForScheduledEnqueue(t *testing.T) {
+	for _, action := range []string{"merge", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			head := repo.CommitFile("a.go", "package a\n", "add file")
+			source, err := db.GetOrCreateRepo(repo.Path())
+			require.NoError(t, err)
+			target, err := db.GetOrCreateRepo(t.TempDir())
+			require.NoError(t, err)
+			server.configWatcher.Config().AnalyzeAgent = "test"
+			ready, release := make(chan struct{}), make(chan struct{})
+			released := false
+			t.Cleanup(func() {
+				if !released {
+					close(release)
+				}
+			})
+			watcher := &analysisScheduler{server: server, testHookBeforeEnqueue: func() {
+				close(ready)
+				<-release
+			}}
+			enqueued := make(chan error, 1)
+			go func() {
+				enqueued <- watcher.enqueueType(t.Context(), *source, "refactor", []string{"a.go"}, head)
+			}()
+			testutil.ReceiveWithTimeout(t, ready, workerStartTimeout)
+			done := make(chan error, 1)
+			started := make(chan struct{})
+			go func() {
+				close(started)
+				if action == "merge" {
+					input := &MergeReposInput{}
+					input.Body.SourceID, input.Body.TargetID = source.ID, target.ID
+					_, err := server.humaMergeRepos(t.Context(), input)
+					done <- err
+				} else {
+					input := &DeleteRepoInput{}
+					input.Body.RepoID = source.ID
+					input.Body.Cascade = true
+					_, err := server.humaDeleteRepo(t.Context(), input)
+					done <- err
+				}
+			}()
+			<-started
+			var early bool
+			select {
+			case err = <-done:
+				early = true
+			case <-time.After(2 * time.Second):
+			}
+			close(release)
+			released = true
+			require.NoError(t, testutil.ReceiveWithTimeout(t, enqueued, workerStartTimeout))
+			if !early {
+				err = testutil.ReceiveWithTimeout(t, done, workerStartTimeout)
+			}
+			require.NoError(t, err)
+			assert.False(t, early, "%s completed while scheduling held the registration lock", action)
+			repos, err := db.ListRepos()
+			require.NoError(t, err)
+			require.Len(t, repos, 1)
+			assert.Equal(t, target.ID, repos[0].ID)
+			jobs, err := db.ListJobs("", "", 0, 0)
+			require.NoError(t, err)
+			if action == "merge" {
+				require.Len(t, jobs, 1)
+				assert.Equal(t, target.ID, jobs[0].RepoID)
+			} else {
+				assert.Empty(t, jobs)
+			}
+		})
 	}
-	unlock()
-	if !early {
-		err = testutil.ReceiveWithTimeout(t, done, workerStartTimeout)
-	}
-	require.NoError(t, err)
-	assert.False(t, early, "merge completed during scheduled enqueue")
-	err = watcher.enqueueType(t.Context(), *source, "refactor", []string{"a.go"}, repo.HeadSHA())
-	require.Error(t, err)
-	repos, err := db.ListRepos()
-	require.NoError(t, err)
-	require.Len(t, repos, 1)
-	assert.Equal(t, target.ID, repos[0].ID)
 }
 
 func postRepoManagement(t *testing.T, server *Server, action string, body any) *httptest.ResponseRecorder {

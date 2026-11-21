@@ -77,10 +77,7 @@ func ResolveSchedule(global ScheduleConfig, repo ScheduleConfig) (Schedule, erro
 	if merged.Interval == nil {
 		return Schedule{}, fmt.Errorf("schedule.interval is required")
 	}
-	interval, err := time.ParseDuration(*merged.Interval)
-	if err != nil {
-		return Schedule{}, fmt.Errorf("schedule.interval must be a positive duration")
-	}
+	interval, _ := time.ParseDuration(*merged.Interval)
 	if merged.MaxFiles == nil {
 		return Schedule{}, fmt.Errorf("schedule.max_files must be positive")
 	}

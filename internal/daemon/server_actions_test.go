@@ -1624,15 +1624,15 @@ func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
 	job.RequestedModel = ""
 	cfg.AnalyzeAgent, cfg.AnalyzeModel = original, "preferred-model"
 	cfg.ReviewBackupAgent, cfg.ReviewBackupModel = selected, "backup-model"
-	job.Agent, job.Model, job.BudgetOriginalAgent = original, "routed-model", selected
+	job.Agent, job.Model, job.BudgetOriginalAgent = selected, "backup-model", original
 	opts, err = resolveRerunOpts(job, cfg, nil, "")
 	require.NoError(t, err)
-	assert.Equal(t, selected, opts.Agent)
-	assert.Equal(t, "backup-model", opts.Model)
-	opts, err = resolveRerunOpts(job, cfg, nil, selected)
+	assert.Equal(t, original, opts.Agent)
+	assert.Equal(t, "preferred-model", opts.Model)
+	opts, err = resolveRerunOpts(job, cfg, nil, original)
 	require.NoError(t, err)
-	assert.Equal(t, selected, opts.Agent)
-	assert.Equal(t, "backup-model", opts.Model)
+	assert.Equal(t, original, opts.Agent)
+	assert.Equal(t, "preferred-model", opts.Model)
 	cfg.AnalyzeAgent, cfg.AnalyzeModel = selected, "selected-analysis-model"
 	job.BudgetOriginalAgent = ""
 	job.Agent, job.Model, job.Provider = original, "old-model", "old-provider"

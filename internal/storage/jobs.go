@@ -684,7 +684,7 @@ const claimCandidate = `candidate.status = 'queued'
  AND NOT EXISTS (SELECT 1 FROM daemon_state WHERE key IN (?, ?) AND value IN ('true', '1'))`
 
 // foregroundReviewCandidate mirrors ReviewJob.IsReviewJob for legacy rows.
-const foregroundReviewCandidate = `COALESCE(candidate.source, '') != ? AND (
+const foregroundReviewCandidate = `(
  candidate.job_type IN (?, ?, ?, ?, ?) OR
  (COALESCE(candidate.job_type, '') = '' AND (
    candidate.commit_id IS NOT NULL OR candidate.git_ref = 'dirty' OR instr(candidate.git_ref, '..') > 0 OR
@@ -696,7 +696,7 @@ func claimCandidateArgs(now time.Time) []any {
 }
 
 func foregroundReviewArgs() []any {
-	return []any{JobSourceScheduled, JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis}
+	return []any{JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis}
 }
 
 func claimUpdateArgs(workerID, nowStr string, now time.Time) []any {
