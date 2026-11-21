@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"database/sql"
@@ -3312,15 +3313,14 @@ func (s *Server) humaEnqueue(
 		}
 	}
 
-	var reasoning, analysisModel string
+	var reasoning, analysisAgent string
 	if descriptor.analysisType != "" {
 		workflow = analyze.Workflow(req.AnalysisType)
-		resolved, resolveErr := config.ResolveAnalyzeConfigFromConfig(req.Agent, req.Model, req.Reasoning, repoCfg, cfg, req.AnalysisType, workflow, "")
+		resolved, resolveErr := config.ResolveAnalyzeConfigFromConfig("", req.Model, req.Reasoning, repoCfg, cfg, req.AnalysisType, workflow, "")
 		if resolveErr != nil {
 			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: resolveErr.Error()})
 		}
-		req.Agent, reasoning = resolved.Agent, resolved.Reasoning
-		analysisModel = config.ResolveAnalyzeModelOverrideFromConfig(repoCfg, cfg, req.AnalysisType, workflow, reasoning)
+		req.Agent, reasoning, analysisAgent = cmp.Or(strings.TrimSpace(req.Agent), resolved.Agent), resolved.Reasoning, resolved.Agent
 	} else if workflow == "fix" {
 		reasoning, err = config.ResolveFixReasoningFromConfig(req.Reasoning, repoCfg, cfg)
 	} else {
@@ -3369,7 +3369,7 @@ func (s *Server) humaEnqueue(
 		workflow:       workflow,
 		reasoning:      reasoning,
 		requestedModel: requestedModel,
-		analysisModel:  analysisModel,
+		analysisAgent:  analysisAgent,
 	})
 }
 
@@ -3404,7 +3404,7 @@ type singleAgentInputs struct {
 	workflow       string
 	reasoning      string
 	requestedModel string
-	analysisModel  string
+	analysisAgent  string
 }
 
 type resolvedSingleAgent struct {
@@ -3494,8 +3494,8 @@ func (s *Server) resolveSingleAgent(
 		resolution, agentName, in.repoCfg, in.cfg,
 	)
 	model := resolution.ModelForSelectedAgent(agentName, in.requestedModel)
-	if in.descriptor.analysisType != "" && resolution.AgentMatches(agentName, resolution.PreferredAgent) && in.analysisModel != "" && in.requestedModel == "" {
-		model = in.analysisModel
+	if override := config.ResolveAnalyzeModelOverrideFromConfig(in.repoCfg, in.cfg, in.descriptor.analysisType, in.workflow, in.reasoning); in.analysisAgent != "" && resolution.AgentMatches(agentName, in.analysisAgent) && override != "" && in.requestedModel == "" {
+		model = override
 	}
 	return resolvedSingleAgent{
 		Agent:       agentName,

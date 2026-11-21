@@ -149,3 +149,17 @@ func TestAnalysisEnqueueModels(t *testing.T) {
 		})
 	}
 }
+
+func TestAnalysisEnqueueExplicitAgentDoesNotInheritOtherAgentModel(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	cfg := server.configWatcher.Config()
+	cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "codex-analysis-model"
+	cfg.ReviewAgent, cfg.ReviewModel = "test", "test-review-model"
+	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test"})
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "test", stored.Agent)
+	assert.Equal(t, "test-review-model", stored.Model)
+}
