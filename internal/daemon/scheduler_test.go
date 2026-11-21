@@ -262,7 +262,6 @@ func TestScheduledAnalysisTrackedFilesAndDirectories(t *testing.T) {
 		assert.Contains(t, jobs[0].Prompt, "package committedA")
 		assert.Contains(t, jobs[0].Prompt, "package committedB")
 	})
-
 }
 
 func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -86,7 +87,7 @@ func (db *DB) setDaemonBoolState(key string, enabled bool, label string) error {
 func (db *DB) AnalysisScheduleLastRun(ctx context.Context, repoID int64) (time.Time, error) {
 	var value string
 	err := db.QueryRowContext(ctx, `SELECT value FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_last_run:%d", repoID)).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, nil
 	}
 	if err != nil {
