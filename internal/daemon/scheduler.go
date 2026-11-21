@@ -315,7 +315,7 @@ func dueNames(selected []*analysisCandidate, typ string) []string {
 func buildTypePrompt(ctx context.Context, root, typ, head string, names []string) (string, error) {
 	files := make(map[string]string, len(names))
 	for _, name := range names {
-		content, err := git.ReadFileCtx(ctx, root, head, name)
+		content, err := git.ReadFile(ctx, root, head, name)
 		if err != nil {
 			return "", fmt.Errorf("read %s: %w", name, err)
 		}

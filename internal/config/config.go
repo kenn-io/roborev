@@ -1763,7 +1763,7 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 // settings in the file fail validation. It returns nil when the file or the
 // key is absent, or when the file is not valid TOML.
 func RepoCIReviewDefaultBranchAtRef(repoPath, ref string) *bool {
-	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
+	data, err := git.ReadFile(context.Background(), repoPath, ref, ".roborev.toml")
 	if err != nil {
 		return nil
 	}
@@ -1782,7 +1782,7 @@ func RepoCIReviewDefaultBranchAtRef(repoPath, ref string) *bool {
 // from a git ref. The raw map preserves whether zero values were explicitly
 // configured, which experiment overlays need for recursive merging.
 func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string]any, error) {
-	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
+	data, err := git.ReadFile(context.Background(), repoPath, ref, ".roborev.toml")
 	if err != nil {
 		if git.IsMissingPathError(err) {
 			return nil, nil, nil

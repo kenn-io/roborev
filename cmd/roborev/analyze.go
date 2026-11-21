@@ -437,7 +437,7 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 				commitContext = analysisCommitContextForFiles(ctx, repoRoot)
 				commitContextReady = true
 			}
-			jobOpts.analysisCommitSHA = commitContext.shaForFiles(repoRoot, singleFile)
+			jobOpts.analysisCommitSHA = commitContext.shaForFiles(ctx, repoRoot, singleFile)
 		}
 		if pathOnly {
 			jobOpts.analysisCommitSHA = ""
@@ -1059,7 +1059,7 @@ func analysisCommitContextForFiles(ctx context.Context, repoRoot string) analysi
 	return analysisCommitContext{head: head, dirty: dirty}
 }
 
-func (c analysisCommitContext) shaForFiles(repoRoot string, files map[string]string) string {
+func (c analysisCommitContext) shaForFiles(ctx context.Context, repoRoot string, files map[string]string) string {
 	if c.head == "" || len(files) == 0 {
 		return ""
 	}
@@ -1068,7 +1068,7 @@ func (c analysisCommitContext) shaForFiles(repoRoot string, files map[string]str
 		if _, ok := c.dirty[path]; ok {
 			return ""
 		}
-		headContent, err := git.ReadFile(repoRoot, c.head, path)
+		headContent, err := git.ReadFile(ctx, repoRoot, c.head, path)
 		if err != nil || string(headContent) != content {
 			return ""
 		}
@@ -1077,7 +1077,7 @@ func (c analysisCommitContext) shaForFiles(repoRoot string, files map[string]str
 }
 
 func analysisCommitSHAForFiles(ctx context.Context, repoRoot string, files map[string]string) string {
-	return analysisCommitContextForFiles(ctx, repoRoot).shaForFiles(repoRoot, files)
+	return analysisCommitContextForFiles(ctx, repoRoot).shaForFiles(ctx, repoRoot, files)
 }
 
 // getBranchFiles discovers files changed on a branch and reads their contents.
@@ -1181,7 +1181,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 	// Read file contents from git (not working tree) for consistency with the commit range
 	files := make(map[string]string, len(codeFiles))
 	for _, f := range codeFiles {
-		content, readErr := git.ReadFile(repoRoot, targetSHA, f)
+		content, readErr := git.ReadFile(ctx, repoRoot, targetSHA, f)
 		if readErr != nil {
 			// Files deleted in the target ref will fail to read — skip them
 			if strings.Contains(readErr.Error(), "does not exist") || strings.Contains(readErr.Error(), "bad object") {

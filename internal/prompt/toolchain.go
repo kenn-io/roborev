@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -45,7 +46,7 @@ func buildToolchainSection(repoPath, ref string, changedFiles []string) string {
 					data, err = os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(manifest)))
 					module.found = !errors.Is(err, os.ErrNotExist)
 				} else {
-					data, err = git.ReadFile(repoPath, ref, manifest)
+					data, err = git.ReadFile(context.Background(), repoPath, ref, manifest)
 					module.found = err == nil
 				}
 				if err == nil {
