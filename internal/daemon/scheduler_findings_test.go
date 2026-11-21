@@ -89,7 +89,7 @@ func TestScheduledAnalysisTypeFailureDoesNotBlockOrRetryImmediately(t *testing.T
 	if assert.Len(t, jobs, 1) {
 		assert.Equal(t, "complexity", jobs[0].AnalysisType)
 	}
-	assert.Equal(t, 1, strings.Count(output.String(), "analysis scheduler "+repo.Path()+":"), "logs: %s", output.String())
+	assert.Equal(t, 1, strings.Count(output.String(), "analysis scheduler "+registered.RootPath+":"), "logs: %s", output.String())
 	require.Len(t, jobs, 1)
 	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
 	setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
