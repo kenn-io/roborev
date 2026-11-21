@@ -110,6 +110,21 @@ func TestBuildPrompt(t *testing.T) {
 	assert.Less(t, aIdx, bIdx, "files should be in sorted order (a.go before b.go)")
 }
 
+func TestBuildPromptPreservesContentForProcessArguments(t *testing.T) {
+	for _, tc := range []struct{ name, filename, content, want string }{
+		{"NUL content", "data.bin", "hello\x00world", "aGVsbG8Ad29ybGQ="},
+		{"invalid UTF-8 content", "data.bin", "binary\xffbytes", "YmluYXJ5/2J5dGVz"},
+		{"invalid UTF-8 filename", "invalid-\xff.go", "package example", `invalid-\xff.go`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prompt, err := TestFixtures.BuildPrompt(map[string]string{tc.filename: tc.content})
+			require.NoError(t, err)
+			assert.Contains(t, prompt, tc.want)
+			assert.NotContains(t, prompt, "\x00")
+		})
+	}
+}
+
 func TestBuildPromptAddsMissingNewline(t *testing.T) {
 	files := map[string]string{
 		"test.go": "package test", // No trailing newline

@@ -1476,8 +1476,8 @@ func GetMainRepoRoot(path string) (string, error) {
 }
 
 // ReadFile reads a file at a specific commit
-func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
-	cmd := newGitCmd("show", fmt.Sprintf("%s:%s", sha, filePath))
+func ReadFile(ctx context.Context, repoPath, sha, filePath string) ([]byte, error) {
+	cmd := newGitCmdContext(ctx, "show", fmt.Sprintf("%s:%s", sha, filePath))
 	cmd.Dir = repoPath
 
 	var stdout, stderr bytes.Buffer
@@ -1485,6 +1485,9 @@ func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("git show %s:%s: %s", sha, filePath, stderr.String())
 	}
 
@@ -3148,4 +3151,26 @@ func ShortSHA(sha string) string {
 // length and safely excludes short hex task labels like "dead" or "cafe".
 func LooksLikeSHA(s string) bool {
 	return len(s) >= 7 && len(s) <= 40 && isHex(s)
+}
+
+// ListRefFiles lists regular files in a commit's tree.
+func ListRefFiles(ctx context.Context, repoPath, sha string) ([]string, error) {
+	cmd := newGitCmdContext(ctx, "ls-tree", "-r", "-z", sha)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list files at %s: %w", sha, err)
+	}
+	var paths []string
+	for entry := range bytes.SplitSeq(out, []byte{0}) {
+		meta, path, ok := bytes.Cut(entry, []byte{'\t'})
+		if !ok {
+			continue
+		}
+		fields := bytes.Fields(meta)
+		if len(fields) == 3 && (string(fields[0]) == "100644" || string(fields[0]) == "100755") && string(fields[1]) == "blob" {
+			paths = append(paths, string(path))
+		}
+	}
+	return paths, nil
 }

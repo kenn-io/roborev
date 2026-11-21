@@ -500,3 +500,13 @@ func TestConfigWatcherRejectsNegativeCICommentCap(t *testing.T) {
 	assert.Equal(t, 0, watcher.Config().CI.CommentMaxFindings)
 	assert.Equal(t, uint64(1), watcher.ReloadCounter(), "an explicit unlimited cap remains a valid reload")
 }
+
+func TestConfigWatcherRejectsInvalidSchedule(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	old := config.DefaultConfig()
+	watcher := NewConfigWatcher(path, old, NewBroadcaster(), nil)
+	writeTestFile(t, path, "[schedule]\nmax_files = -1\n")
+	watcher.reloadConfig()
+	assert.Same(t, old, watcher.Config())
+	assert.Zero(t, watcher.ReloadCounter())
+}

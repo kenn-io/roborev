@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
@@ -1720,7 +1721,7 @@ func TestFilterFixCandidateJobsRequiresFailedActionableReviews(t *testing.T) {
 		{ID: 13, JobType: storage.JobTypeCompact, Verdict: &failed},
 		{ID: 14, JobType: storage.JobTypeSynthesis, Verdict: &failed},
 		{ID: 15, JobType: "", CommitID: &commitID, Verdict: &failedSpaced},
-		{ID: 16, JobType: storage.JobTypeTask, GitRef: "refactor", OutputPrefix: buildOutputPrefix("refactor", []string{"main.go"})},
+		{ID: 16, JobType: storage.JobTypeTask, GitRef: "refactor", OutputPrefix: analyze.BuildOutputPrefix("refactor", []string{"main.go"})},
 		{ID: 20, JobType: storage.JobTypeReview, Verdict: &passed},
 		{ID: 21, JobType: storage.JobTypeReview, Verdict: nil},
 		{ID: 22, JobType: storage.JobTypeReview, Verdict: &empty},

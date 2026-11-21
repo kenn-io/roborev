@@ -334,7 +334,7 @@ func runSingleAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemon
 	for name := range files {
 		relPaths = append(relPaths, name)
 	}
-	outputPrefix := buildOutputPrefix(analysisType.Name, relPaths)
+	outputPrefix := analyze.BuildOutputPrefix(analysisType.Name, relPaths)
 
 	// If prompt is too large, fall back to file paths only
 	if len(fullPrompt) > maxPromptSize {
@@ -415,7 +415,7 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 		}
 
 		// Build output prefix for this file
-		outputPrefix := buildOutputPrefix(analysisType.Name, []string{fileName})
+		outputPrefix := analyze.BuildOutputPrefix(analysisType.Name, []string{fileName})
 
 		// If single file is too large, fall back to file path only
 		pathOnly := false
@@ -437,7 +437,7 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 				commitContext = analysisCommitContextForFiles(ctx, repoRoot)
 				commitContextReady = true
 			}
-			jobOpts.analysisCommitSHA = commitContext.shaForFiles(repoRoot, singleFile)
+			jobOpts.analysisCommitSHA = commitContext.shaForFiles(ctx, repoRoot, singleFile)
 		}
 		if pathOnly {
 			jobOpts.analysisCommitSHA = ""
@@ -513,20 +513,6 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 	return nil
 }
 
-// buildOutputPrefix creates a prefix showing which files were analyzed.
-// This is prepended to the agent's output for reliable file identification.
-func buildOutputPrefix(analysisType string, filePaths []string) string {
-	sort.Strings(filePaths)
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "## %s Analysis\n\n", analysisType)
-	sb.WriteString("**Files:**\n")
-	for _, path := range filePaths {
-		fmt.Fprintf(&sb, "- %s\n", path)
-	}
-	sb.WriteString("\n---\n\n")
-	return sb.String()
-}
-
 // enqueueAnalysisJob sends a job to the daemon
 func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot, prompt, outputPrefix, label string, files []string, opts analyzeOptions) (*storage.ReviewJob, error) {
 	branch := gitrepo.CurrentBranch(ctx, repoRoot)
@@ -534,14 +520,14 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		branch = opts.branch
 	}
 
-	reviewType := analysisReviewType(label)
+	reviewType := analyze.ReviewType(label)
 	cfg, err := loadClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 	resolved, err := config.ResolveAnalyzeConfig(
 		opts.agentName, opts.model, opts.reasoning, repoRoot, cfg,
-		label, analysisWorkflow(label), "",
+		label, analyze.Workflow(label), "",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve analyze config: %w", err)
@@ -552,7 +538,7 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		GitRef:            label, // Use analysis type name as the TUI label
 		Branch:            branch,
 		Agent:             resolved.Agent,
-		Model:             resolved.Model,
+		Model:             opts.model,
 		Reasoning:         resolved.Reasoning,
 		ReviewType:        reviewType,
 		CustomPrompt:      prompt,
@@ -583,20 +569,6 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 	}
 
 	return &job, nil
-}
-
-func analysisReviewType(label string) string {
-	if label == config.ReviewTypeSecurity {
-		return config.ReviewTypeSecurity
-	}
-	return ""
-}
-
-func analysisWorkflow(label string) string {
-	if label == config.ReviewTypeSecurity {
-		return config.ReviewTypeSecurity
-	}
-	return "review"
 }
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed
@@ -1087,7 +1059,7 @@ func analysisCommitContextForFiles(ctx context.Context, repoRoot string) analysi
 	return analysisCommitContext{head: head, dirty: dirty}
 }
 
-func (c analysisCommitContext) shaForFiles(repoRoot string, files map[string]string) string {
+func (c analysisCommitContext) shaForFiles(ctx context.Context, repoRoot string, files map[string]string) string {
 	if c.head == "" || len(files) == 0 {
 		return ""
 	}
@@ -1096,7 +1068,7 @@ func (c analysisCommitContext) shaForFiles(repoRoot string, files map[string]str
 		if _, ok := c.dirty[path]; ok {
 			return ""
 		}
-		headContent, err := git.ReadFile(repoRoot, c.head, path)
+		headContent, err := git.ReadFile(ctx, repoRoot, c.head, path)
 		if err != nil || string(headContent) != content {
 			return ""
 		}
@@ -1105,7 +1077,7 @@ func (c analysisCommitContext) shaForFiles(repoRoot string, files map[string]str
 }
 
 func analysisCommitSHAForFiles(ctx context.Context, repoRoot string, files map[string]string) string {
-	return analysisCommitContextForFiles(ctx, repoRoot).shaForFiles(repoRoot, files)
+	return analysisCommitContextForFiles(ctx, repoRoot).shaForFiles(ctx, repoRoot, files)
 }
 
 // getBranchFiles discovers files changed on a branch and reads their contents.
@@ -1209,7 +1181,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 	// Read file contents from git (not working tree) for consistency with the commit range
 	files := make(map[string]string, len(codeFiles))
 	for _, f := range codeFiles {
-		content, readErr := git.ReadFile(repoRoot, targetSHA, f)
+		content, readErr := git.ReadFile(ctx, repoRoot, targetSHA, f)
 		if readErr != nil {
 			// Files deleted in the target ref will fail to read — skip them
 			if strings.Contains(readErr.Error(), "does not exist") || strings.Contains(readErr.Error(), "bad object") {

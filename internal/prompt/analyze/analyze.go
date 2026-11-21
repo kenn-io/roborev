@@ -3,9 +3,12 @@ package analyze
 
 import (
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 //go:embed *.txt
@@ -113,13 +116,26 @@ func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 	sb.WriteString("## Analysis Request\n\n")
 	fmt.Fprintf(&sb, "**Type:** %s\n", t.Name)
 	fmt.Fprintf(&sb, "**Description:** %s\n", t.Description)
-	fmt.Fprintf(&sb, "**Files:** %s\n\n", strings.Join(fileNames, ", "))
+	displayNames := make([]string, len(fileNames))
+	for i, name := range fileNames {
+		displayNames[i] = name
+		if !utf8.ValidString(name) {
+			displayNames[i] = strconv.QuoteToASCII(name)
+		}
+	}
+	fmt.Fprintf(&sb, "**Files:** %s\n\n", strings.Join(displayNames, ", "))
 
 	// Write file contents in sorted order
 	sb.WriteString("## Files to Analyze\n\n")
-	for _, name := range fileNames {
+	for i, name := range fileNames {
 		content := files[name]
-		fmt.Fprintf(&sb, "### %s\n\n", name)
+		fmt.Fprintf(&sb, "### %s\n\n", displayNames[i])
+		if !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
+			sb.WriteString("Binary content (base64):\n\n```\n")
+			sb.WriteString(base64.StdEncoding.EncodeToString([]byte(content)))
+			sb.WriteString("\n```\n\n")
+			continue
+		}
 		sb.WriteString("```\n")
 		sb.WriteString(content)
 		if !strings.HasSuffix(content, "\n") {
@@ -169,4 +185,36 @@ func (t AnalysisType) BuildPromptWithPaths(repoRoot string, filePaths []string) 
 	sb.WriteString(template)
 
 	return sb.String(), nil
+}
+
+// BuildOutputPrefix identifies the analyzed files in the output.
+func BuildOutputPrefix(analysisType string, filePaths []string) string {
+	sort.Strings(filePaths)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "## %s Analysis\n\n", analysisType)
+	sb.WriteString("**Files:**\n")
+	for _, path := range filePaths {
+		if !utf8.ValidString(path) {
+			path = strconv.QuoteToASCII(path)
+		}
+		fmt.Fprintf(&sb, "- %s\n", path)
+	}
+	sb.WriteString("\n---\n\n")
+	return sb.String()
+}
+
+// ReviewType selects the review type for an analysis.
+func ReviewType(label string) string {
+	if label == "security" {
+		return "security"
+	}
+	return ""
+}
+
+// Workflow selects the config workflow for an analysis.
+func Workflow(label string) string {
+	if label == "security" {
+		return "security"
+	}
+	return "review"
 }

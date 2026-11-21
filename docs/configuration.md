@@ -297,6 +297,9 @@ max_chars = 50000
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` |
 | `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
 | `refine_reasoning` | string | Reasoning level for refine. See [Reasoning Levels](#reasoning-levels) |
+| `analyze_agent` | string | Default agent for analysis jobs |
+| `analyze_model` | string | Default model for analysis jobs |
+| `analyze_reasoning` | string | Default reasoning level for analysis jobs. See [Reasoning Levels](#reasoning-levels) |
 | `review_min_severity` | string | Lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported. Cascades: CLI flag > repo config > global config |
 | `fix_min_severity` | string | Minimum severity for `fix`: `critical`, `high`, `medium`, or `low` |
 | `refine_min_severity` | string | Minimum severity for `refine`: `critical`, `high`, `medium`, or `low` |
@@ -665,6 +668,51 @@ Types that have them — `review`, `refine`, `fix`, `security`, `design` — ign
 `roborev analyze security` never changes `roborev review --type security`.
 Reasoning is unaffected by this block for reviews; it follows `review_reasoning`
 (the block's `reasoning` field applies only to `roborev analyze <type>` runs).
+
+### Scheduled analysis
+
+Enable scheduled analysis in global configuration or in a repository:
+
+```toml
+# Global config.toml
+[schedule]
+enabled = true
+interval = "24h"
+types = ["refactor", "complexity"]
+paths = ["**/*.go"]
+max_files = 20
+```
+
+```toml
+# Repository .roborev.toml (can also inherit these settings globally)
+[schedule]
+enabled = true
+interval = "24h"
+types = ["refactor", "complexity"]
+max_files = 20
+```
+
+Scheduling is off by default. Global `enabled = true` enables it for every
+repository; repository settings override global values, including `enabled`. An
+enabled schedule needs an interval, a positive `max_files`, and at least one
+known analysis type, supplied globally or by the repository. An empty `paths`
+list includes all tracked regular files, including binary files. Patterns use
+repository-relative paths; a trailing `/` includes the directory and its
+descendants.
+
+Each run selects up to `max_files` distinct tracked files and queues jobs for
+each applicable type. Each job includes a snapshot of its selected files from
+the selected commit. Binary contents that are not UTF-8 are encoded as base64.
+Files with no previous attempt come first, followed by those with the oldest
+attempt. Queued and running jobs suppress their files. A successful analysis
+counts as coverage of the selected commit. A foreground review can cancel a
+running scheduled job when all workers are busy. Only enough jobs are canceled
+to serve the waiting reviews. The canceled files remain due for a later run. The
+daemon reloads settings on its next 30-second check. Set `analyze_agent`,
+`analyze_model`, and `analyze_reasoning` globally or per repository to choose
+the analysis agent, model, and reasoning. Per-type `[analyze.<type>]` settings
+take precedence within each scope; repository settings take precedence over
+global settings.
 
 ### Binary Evidence
 
@@ -1260,6 +1308,9 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `default_backup_agent` | string | - | Fallback agent when the primary is unavailable or fails | Yes |
 | `default_backup_model` | string | - | Model paired with `default_backup_agent` | Yes |
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
+| `analyze_agent` | string | default agent | Default agent for analysis jobs | Yes |
+| `analyze_model` | string | agent default | Default model for analysis jobs | Yes |
+| `analyze_reasoning` | string | agent default | Default reasoning level for analysis jobs | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `auth_key` | string | empty | Shared Bearer key for native daemon APIs; see [Daemon authentication](#daemon-authentication) | No |
 | `daemon_tls.*` | table | empty | Mutual TLS files for the daemon's TCP listener; see [Transport security](#transport-security) | No |

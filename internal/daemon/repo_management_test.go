@@ -9,12 +9,104 @@ import (
 	"net/url"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestRepoManagementWaitsForScheduledEnqueue(t *testing.T) {
+	for _, action := range []string{"merge", "delete", "move"} {
+		t.Run(action, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			head := repo.CommitFile("a.go", "package a\n", "add file")
+			source, err := db.GetOrCreateRepo(repo.Path())
+			require.NoError(t, err)
+			target, err := db.GetOrCreateRepo(t.TempDir())
+			require.NoError(t, err)
+			movedPath := filepath.Join(t.TempDir(), "moved")
+			server.configWatcher.Config().AnalyzeAgent = "test"
+			ready, release := make(chan struct{}), make(chan struct{})
+			released := false
+			t.Cleanup(func() {
+				if !released {
+					close(release)
+				}
+			})
+			watcher := &analysisScheduler{server: server, testHookBeforeEnqueue: func() {
+				close(ready)
+				<-release
+			}}
+			enqueued := make(chan error, 1)
+			go func() {
+				enqueued <- watcher.enqueueType(t.Context(), *source, "refactor", []string{"a.go"}, head)
+			}()
+			testutil.ReceiveWithTimeout(t, ready, workerStartTimeout)
+			done := make(chan error, 1)
+			go func() {
+				switch action {
+				case "merge":
+					input := &MergeReposInput{}
+					input.Body.SourceID, input.Body.TargetID = source.ID, target.ID
+					_, err := server.humaMergeRepos(t.Context(), input)
+					done <- err
+				case "delete":
+					input := &DeleteRepoInput{}
+					input.Body.RepoID = source.ID
+					input.Body.Cascade = true
+					_, err := server.humaDeleteRepo(t.Context(), input)
+					done <- err
+				default:
+					input := &MoveRepoInput{}
+					input.Body.RepoID, input.Body.Path = source.ID, movedPath
+					_, err := server.humaMoveRepo(t.Context(), input)
+					done <- err
+				}
+			}()
+			var early bool
+			select {
+			case err = <-done:
+				early = true
+			case <-time.After(2 * time.Second):
+			}
+			close(release)
+			released = true
+			require.NoError(t, testutil.ReceiveWithTimeout(t, enqueued, workerStartTimeout))
+			if !early {
+				err = testutil.ReceiveWithTimeout(t, done, workerStartTimeout)
+			}
+			require.NoError(t, err)
+			assert.False(t, early, "%s completed while scheduling held the registration lock", action)
+			repos, err := db.ListRepos()
+			require.NoError(t, err)
+			if action == "move" {
+				require.Len(t, repos, 2)
+				moved, err := db.GetRepoByID(source.ID)
+				require.NoError(t, err)
+				assert.Equal(t, filepath.ToSlash(movedPath), moved.RootPath)
+			} else {
+				require.Len(t, repos, 1)
+				assert.Equal(t, target.ID, repos[0].ID)
+			}
+			jobs, err := db.ListJobs("", "", 0, 0)
+			require.NoError(t, err)
+			switch action {
+			case "merge":
+				require.Len(t, jobs, 1)
+				assert.Equal(t, target.ID, jobs[0].RepoID)
+			case "move":
+				require.Len(t, jobs, 1)
+				assert.Equal(t, source.ID, jobs[0].RepoID)
+			default:
+				assert.Empty(t, jobs)
+			}
+		})
+	}
+}
 
 func postRepoManagement(t *testing.T, server *Server, action string, body any) *httptest.ResponseRecorder {
 	t.Helper()

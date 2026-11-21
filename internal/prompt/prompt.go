@@ -1234,7 +1234,7 @@ func withReviewMD(g loadedGuidelines, read func() string) loadedGuidelines {
 // absence is not an error; anything else means a committed policy file was
 // dropped, which is worth a log line rather than a silent empty prompt.
 func reviewMDFromRef(repoPath, ref string) string {
-	data, err := git.ReadFile(repoPath, ref, reviewMDFile)
+	data, err := git.ReadFile(context.Background(), repoPath, ref, reviewMDFile)
 	if err != nil {
 		if !git.IsMissingPathError(err) {
 			log.Printf("prompt: failed to read %s from %s: %v", reviewMDFile, ref, err)

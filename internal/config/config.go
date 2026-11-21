@@ -268,7 +268,11 @@ type Config struct {
 	FixReasoning               string                          `toml:"fix_reasoning" comment:"Default reasoning for fix. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 
 	// Analysis-type-specific agent/model configuration
-	Analyze map[string]AnalyzeConfig `toml:"analyze"`
+	Analyze          map[string]AnalyzeConfig `toml:"analyze"`
+	AnalyzeAgent     string                   `toml:"analyze_agent"`
+	AnalyzeModel     string                   `toml:"analyze_model"`
+	AnalyzeReasoning string                   `toml:"analyze_reasoning"`
+	Schedule         ScheduleConfig           `toml:"schedule"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent"`
@@ -720,6 +724,9 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if err := c.Schedule.Validate(); err != nil {
+		return err
+	}
 	if err := validateAgentMemoryMaxMB(c.AgentMemoryMaxMB); err != nil {
 		return err
 	}
@@ -746,6 +753,7 @@ func (c *Config) Validate() (err error) {
 	}
 	reasoning := []namedConfigValue{
 		{key: "ci.check_reasoning", value: c.CI.CheckReasoning},
+		{key: "analyze_reasoning", value: c.AnalyzeReasoning},
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
 		{key: "fix_reasoning", value: c.FixReasoning},
@@ -817,7 +825,11 @@ type RepoConfig struct {
 	Review ReviewConfig `toml:"review"`
 
 	// Analysis-type-specific agent/model configuration
-	Analyze map[string]AnalyzeConfig `toml:"analyze"`
+	Analyze          map[string]AnalyzeConfig `toml:"analyze"`
+	AnalyzeAgent     string                   `toml:"analyze_agent"`
+	AnalyzeModel     string                   `toml:"analyze_model"`
+	AnalyzeReasoning string                   `toml:"analyze_reasoning"`
+	Schedule         ScheduleConfig           `toml:"schedule"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent" comment:"Agent override for standard review in this repo."`
@@ -970,6 +982,9 @@ func (c *RepoConfig) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if err := c.Schedule.Validate(); err != nil {
+		return err
+	}
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
@@ -983,6 +998,7 @@ func (c *RepoConfig) Validate() (err error) {
 		return fmt.Errorf("ci.comment_max_findings must be non-negative")
 	}
 	reasoning := []namedConfigValue{
+		{key: "analyze_reasoning", value: c.AnalyzeReasoning},
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
 		{key: "fix_reasoning", value: c.FixReasoning},
@@ -1196,6 +1212,7 @@ func applyDaemonSections(c *Config) []error {
 				validateCIPRFilters(c.CI),
 			)
 		}},
+		{"schedule", c.Schedule.Validate},
 		{"search", func() error { return validateSearchConfig(c.Search) }},
 		{"remote", func() error { return validateRemoteConfig(c.Remote) }},
 		{"web", func() error { return normalizeWebConfig(&c.Web, c.AuthKey) }},
@@ -1746,7 +1763,7 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 // settings in the file fail validation. It returns nil when the file or the
 // key is absent, or when the file is not valid TOML.
 func RepoCIReviewDefaultBranchAtRef(repoPath, ref string) *bool {
-	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
+	data, err := git.ReadFile(context.Background(), repoPath, ref, ".roborev.toml")
 	if err != nil {
 		return nil
 	}
@@ -1765,7 +1782,7 @@ func RepoCIReviewDefaultBranchAtRef(repoPath, ref string) *bool {
 // from a git ref. The raw map preserves whether zero values were explicitly
 // configured, which experiment overlays need for recursive merging.
 func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string]any, error) {
-	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
+	data, err := git.ReadFile(context.Background(), repoPath, ref, ".roborev.toml")
 	if err != nil {
 		if git.IsMissingPathError(err) {
 			return nil, nil, nil

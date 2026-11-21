@@ -92,6 +92,7 @@ type WorkerPool struct {
 	updateInterruptTargets map[int64]struct{}
 	failedUpdateRequeues   map[int64]string
 	runningJobsMu          sync.Mutex
+	scheduledYieldMu       sync.Mutex
 	// attemptTransitionsMu linearizes update-target registration with every
 	// attempt-scoped retry, failover, failure, or completion transition.
 	attemptTransitionsMu sync.RWMutex
@@ -188,6 +189,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 
 // wake prompts every idle worker to check for newly claimable jobs.
 func (wp *WorkerPool) wake() {
+	wp.balanceScheduledWork()
 	wp.wakeMu.Lock()
 	defer wp.wakeMu.Unlock()
 	close(wp.wakeCh)
@@ -215,6 +217,18 @@ func (wp *WorkerPool) Start() {
 		wp.started = true
 		wp.wg.Add(1)
 		go wp.runTokenCostReconciler()
+		wp.wg.Go(func() {
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-wp.stopCh:
+					return
+				case <-ticker.C:
+					wp.balanceScheduledWork()
+				}
+			}
+		})
 		wp.spawnWorkersLocked()
 		close(wp.readyCh)
 	})
@@ -334,6 +348,72 @@ func (wp *WorkerPool) SubscribeJobOutput(jobID int64) ([]OutputLine, <-chan Outp
 // HasJobOutput returns true if there's active output capture for a job.
 func (wp *WorkerPool) HasJobOutput(jobID int64) bool {
 	return wp.outputBuffers.IsActive(jobID)
+}
+
+// balanceScheduledWork releases only the capacity needed by waiting reviews.
+func (wp *WorkerPool) balanceScheduledWork() {
+	wp.scheduledYieldMu.Lock()
+	defer wp.scheduledYieldMu.Unlock()
+	wp.workersMu.Lock()
+	defer wp.workersMu.Unlock()
+	workers := wp.numWorkers
+	wp.runningJobsMu.Lock()
+	active := make(map[string]int64, workers)
+	claimed := 0
+	for id := range workers {
+		workerID := fmt.Sprintf("worker-%d", id)
+		if jobID, ok := wp.workerJobs[workerID]; ok {
+			active[workerID] = jobID
+			if jobID > 0 {
+				claimed++
+			}
+		}
+	}
+	wp.runningJobsMu.Unlock()
+	if workers <= 0 || claimed < workers {
+		return
+	}
+	demand, err := wp.db.ClaimableForegroundReviews(wp.stopCtx)
+	if err != nil {
+		log.Printf("find claimable review: %v", err)
+		return
+	}
+	if demand == 0 {
+		return
+	}
+	var running []storage.ReviewJob
+	for workerID, id := range active {
+		if id <= 0 {
+			continue
+		}
+		job, err := wp.db.GetJobByID(id)
+		if err != nil {
+			log.Printf("find scheduled job %d: %v", id, err)
+			return
+		}
+		if job.Source != storage.JobSourceScheduled || job.WorkerID != workerID {
+			continue
+		}
+		if job.Status == storage.JobStatusRunning {
+			running = append(running, *job)
+		} else {
+			demand--
+		}
+	}
+	for _, job := range running {
+		if demand <= 0 {
+			return
+		}
+		canceled, err := wp.db.CancelScheduledForReview(wp.stopCtx, job.ID, job.WorkerID, job.StartedAtRaw)
+		if err != nil {
+			log.Printf("cancel scheduled job %d: %v", job.ID, err)
+			return
+		}
+		if canceled {
+			wp.CancelJob(job.ID)
+			demand--
+		}
+	}
 }
 
 // CancelJob cancels a running job by its ID, killing the subprocess.
@@ -972,6 +1052,7 @@ func (wp *WorkerPool) worker(id int) {
 				delete(wp.workerJobs, workerID)
 			}
 			wp.runningJobsMu.Unlock()
+			wp.balanceScheduledWork()
 			if err != nil && claimCtx.Err() == nil {
 				wp.noteClaimError(workerID, err)
 			}
@@ -1006,6 +1087,7 @@ func (wp *WorkerPool) worker(id int) {
 		delete(wp.workerJobs, workerID)
 		wp.runningJobsMu.Unlock()
 		wp.activeWorkers.Add(-1)
+		wp.balanceScheduledWork()
 	}
 }
 

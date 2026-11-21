@@ -1597,3 +1597,56 @@ func TestHandleListCommentsJobIDParsing(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repoPath := repo.Path()
+	const original, selected = "analysis-original", "analysis-selected"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: original})
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
+	job := &storage.ReviewJob{Agent: original, Model: "old-model", Provider: "old-provider", RequestedModel: "old-model", AnalysisType: "refactor", RepoPath: repoPath}
+	cfg := config.DefaultConfig()
+	cfg.AnalyzeAgent, cfg.AnalyzeModel, cfg.AnalyzeReasoning = "no-such-agent", "new-model", "low"
+	opts, err := resolveRerunOpts(job, cfg, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, original, opts.Agent)
+	assert.Equal(t, "old-model", opts.Model)
+	assert.Equal(t, "old-provider", opts.Provider)
+	opts, err = resolveRerunOpts(job, cfg, nil, original)
+	require.NoError(t, err)
+	assert.Equal(t, "old-model", opts.Model)
+	assert.Equal(t, "old-provider", opts.Provider)
+	opts, err = resolveRerunOpts(job, config.DefaultConfig(), nil, selected)
+	require.NoError(t, err)
+	assert.Equal(t, selected, opts.Agent)
+	assert.Empty(t, opts.Model)
+	assert.Empty(t, opts.Provider)
+	job.RequestedModel = ""
+	cfg.AnalyzeAgent, cfg.AnalyzeModel = original, "preferred-model"
+	cfg.ReviewBackupAgent, cfg.ReviewBackupModel = selected, "backup-model"
+	job.Agent, job.Model, job.BudgetOriginalAgent = selected, "backup-model", original
+	opts, err = resolveRerunOpts(job, cfg, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, original, opts.Agent)
+	assert.Equal(t, "preferred-model", opts.Model)
+	opts, err = resolveRerunOpts(job, cfg, nil, original)
+	require.NoError(t, err)
+	assert.Equal(t, original, opts.Agent)
+	assert.Equal(t, "preferred-model", opts.Model)
+	cfg.AnalyzeAgent, cfg.AnalyzeModel = selected, "selected-analysis-model"
+	job.BudgetOriginalAgent = ""
+	job.Agent, job.Model, job.Provider = original, "old-model", "old-provider"
+	opts, err = resolveRerunOpts(job, cfg, nil, selected)
+	require.NoError(t, err)
+	assert.Equal(t, selected, opts.Agent)
+	assert.Equal(t, "selected-analysis-model", opts.Model)
+	assert.Empty(t, opts.Provider)
+
+	repo.AddRemote("origin", "https://example.com/team/project.git")
+	cfg = config.DefaultConfig()
+	cfg.AnalyzeAgent, cfg.ReviewAgent = selected, selected
+	cfg.Projects = map[string]config.ProjectConfig{"example.com/team/project": {ReviewModel: "project-model"}}
+	opts, err = resolveRerunOpts(job, cfg, nil, selected)
+	require.NoError(t, err)
+	assert.Equal(t, "project-model", opts.Model)
+}

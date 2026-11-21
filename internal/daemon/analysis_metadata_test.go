@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -109,4 +110,56 @@ func daemonJobIDs(jobs []storage.ReviewJob) []int64 {
 		ids = append(ids, job.ID)
 	}
 	return ids
+}
+
+func TestAnalysisEnqueueModels(t *testing.T) {
+	for _, tc := range []struct {
+		name, requested, wantModel string
+		configure                  func(*config.Config)
+	}{
+		{"configured", "", "analysis-model", func(c *config.Config) {
+			c.AnalyzeAgent, c.AnalyzeModel = "test", "analysis-model"
+			c.ReviewModel = "review-model"
+		}},
+		{"review model belongs to another agent", "", "", func(c *config.Config) { c.ReviewAgent, c.ReviewModel, c.AnalyzeAgent = "codex", "codex-model", "test" }},
+		{"backup model", "", "backup-model", func(c *config.Config) {
+			c.AnalyzeAgent, c.AnalyzeModel, c.CodexCmd = "codex", "analysis-model", "missing-codex-command"
+			c.ReviewBackupAgent, c.ReviewBackupModel = "test", "backup-model"
+		}},
+		{"backup default model", "", "", func(c *config.Config) {
+			c.AnalyzeAgent, c.AnalyzeModel, c.CodexCmd = "codex", "analysis-model", "missing-codex-command"
+			c.ReviewBackupAgent = "test"
+		}},
+		{"explicit model with backup", "explicit-model", "explicit-model", func(c *config.Config) {
+			c.AnalyzeAgent, c.AnalyzeModel, c.CodexCmd = "codex", "analysis-model", "missing-codex-command"
+			c.ReviewBackupAgent, c.ReviewBackupModel = "test", "backup-model"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			repo.CommitFile("a.go", "package a\n", "add source")
+			tc.configure(server.configWatcher.Config())
+			job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Model: tc.requested})
+			stored, err := db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "test", stored.Agent)
+			assert.Equal(t, tc.wantModel, stored.Model)
+			assert.Equal(t, tc.requested, stored.RequestedModel)
+		})
+	}
+}
+
+func TestAnalysisEnqueueExplicitAgentDoesNotInheritOtherAgentModel(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	cfg := server.configWatcher.Config()
+	cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "codex-analysis-model"
+	cfg.ReviewAgent, cfg.ReviewModel = "test", "test-review-model"
+	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test"})
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "test", stored.Agent)
+	assert.Equal(t, "test-review-model", stored.Model)
 }

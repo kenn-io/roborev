@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	stdjson "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 	"uuid"
 
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -298,7 +299,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 	if err != nil {
 		return nil, err
 	}
-	analysisFilesJSON, err := encodeFileList(opts.AnalysisFiles)
+	analysisFilesJSON, err := encodeAnalysisFiles(opts.AnalysisFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -671,6 +672,51 @@ func (db *DB) hasClaimableJob(ctx context.Context) (bool, error) {
 	return claimable, nil
 }
 
+// claimCandidate is shared by claims and foreground demand checks.
+const claimCandidate = `candidate.status = 'queued'
+ AND candidate.claim_blocked = 0
+ AND (candidate.retry_not_before IS NULL OR candidate.retry_not_before <= ?)
+ AND (COALESCE(candidate.session_id, '') = '' OR NOT EXISTS (
+   SELECT 1 FROM review_jobs busy
+   WHERE (busy.status = 'running' OR (busy.status = 'canceled' AND COALESCE(busy.worker_id, '') <> ''))
+     AND busy.session_id = candidate.session_id
+     AND (candidate.source = ? OR busy.source = ?)
+ ))
+ AND NOT EXISTS (SELECT 1 FROM daemon_state WHERE key IN (?, ?) AND value IN ('true', '1'))`
+
+// foregroundReviewCandidate mirrors ReviewJob.IsReviewJob for legacy rows.
+const foregroundReviewCandidate = `(
+ candidate.job_type IN (?, ?, ?, ?, ?) OR
+ (COALESCE(candidate.job_type, '') = '' AND (
+   candidate.commit_id IS NOT NULL OR candidate.git_ref = 'dirty' OR instr(candidate.git_ref, '..') > 0 OR
+   EXISTS (SELECT 1 FROM job_content content WHERE content.job_id = candidate.id AND content.diff_content IS NOT NULL)
+ )))`
+
+func claimCandidateArgs(now time.Time) []any {
+	return []any{preciseTimestampAt(now), JobSourceRebuttal, JobSourceRebuttal, queuePausedStateKey, shutdownDrainingStateKey}
+}
+
+func foregroundReviewArgs() []any {
+	return []any{JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeGoalReview, JobTypeSynthesis}
+}
+
+func claimUpdateArgs(workerID, nowStr string, now time.Time) []any {
+	args := append([]any{workerID, nowStr, nowStr}, claimCandidateArgs(now)...)
+	return append(args, foregroundReviewArgs()...)
+}
+
+// claimPriority orders foreground reviews, then ordinary tasks, then scheduled work.
+const claimPriority = `CASE WHEN ` + foregroundReviewCandidate + ` THEN 0 WHEN candidate.source = 'scheduled' THEN 2 ELSE 1 END`
+
+// ClaimableForegroundReviews counts reviews that can start now.
+func (db *DB) ClaimableForegroundReviews(ctx context.Context) (int, error) {
+	args := claimCandidateArgs(time.Now())
+	args = append(args, foregroundReviewArgs()...)
+	var count int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM review_jobs candidate WHERE `+claimCandidate+` AND `+foregroundReviewCandidate, args...).Scan(&count)
+	return count, err
+}
+
 func (db *DB) claimJobAttempt(
 	ctx context.Context, commitCtx context.Context, workerID string,
 ) (*ReviewJob, error) {
@@ -696,36 +742,13 @@ func (db *DB) claimJobAttempt(
 	// retry_not_before is stored UTC + fixed-width nano (see
 	// preciseTimestampLayout) so the SQL comparison stays monotonic with
 	// time. Format the comparison value the same way.
-	nowNano := preciseTimestampAt(now)
-
-	// Atomically claim a job by updating it in a single statement
-	// This prevents race conditions where two workers select the same job
+	args := claimUpdateArgs(workerID, nowStr, now)
 	var claimedID int64
-	err = conn.QueryRowContext(ctx, `
-		UPDATE review_jobs
-		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?,
-		    session_isolated = 0
-		WHERE id = (
-			SELECT candidate.id FROM review_jobs candidate
-			WHERE candidate.status = 'queued'
-			  AND (COALESCE(candidate.session_id, '') = '' OR NOT EXISTS (
-			    SELECT 1 FROM review_jobs busy
-			    WHERE (busy.status = 'running'
-			           OR (busy.status = 'canceled' AND COALESCE(busy.worker_id, '') <> ''))
-			      AND busy.session_id = candidate.session_id
-			      AND (candidate.source = ? OR busy.source = ?)
-			  ))
-			  AND claim_blocked = 0
-			  AND (retry_not_before IS NULL OR retry_not_before <= ?)
-			ORDER BY `+sqliteNormalizedTimestampExpr("enqueued_at")+`, id
-			LIMIT 1
-		)
-		AND NOT EXISTS (
-			SELECT 1 FROM daemon_state
-			WHERE key IN (?, ?) AND value IN ('true', '1')
-		)
-		RETURNING id
-	`, workerID, nowStr, nowStr, JobSourceRebuttal, JobSourceRebuttal, nowNano, queuePausedStateKey, shutdownDrainingStateKey).Scan(&claimedID)
+	err = conn.QueryRowContext(ctx, `UPDATE review_jobs
+	 SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?, session_isolated = 0
+	 WHERE id = (SELECT candidate.id FROM review_jobs candidate WHERE `+claimCandidate+`
+	 ORDER BY `+claimPriority+`, `+sqliteNormalizedTimestampExpr("enqueued_at")+`, id LIMIT 1)
+	 RETURNING id`, args...).Scan(&claimedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // No jobs available
 	}
@@ -1595,6 +1618,22 @@ func (db *DB) SkipJob(ctx context.Context, jobID int64, workerID, reason string)
 	return rows > 0, nil
 }
 
+// CancelScheduledForReview cancels only the specified running attempt while review demand remains.
+func (db *DB) CancelScheduledForReview(ctx context.Context, jobID int64, workerID, startedAt string) (bool, error) {
+	now := time.Now()
+	args := []any{preciseTimestampAt(now), now.Format(time.RFC3339), jobID, JobSourceScheduled, workerID, startedAt}
+	args = append(args, claimCandidateArgs(now)...)
+	args = append(args, foregroundReviewArgs()...)
+	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'canceled', finished_at = ?, updated_at = ?
+ WHERE id = ? AND status = 'running' AND source = ? AND worker_id = ? AND started_at = ? AND EXISTS
+ (SELECT 1 FROM review_jobs candidate WHERE `+claimCandidate+` AND `+foregroundReviewCandidate+`)`, args...)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count > 0, err
+}
+
 // CancelJob marks a running or queued job as canceled
 func (db *DB) CancelJob(jobID int64) error {
 	finished := time.Now()
@@ -2121,6 +2160,22 @@ func WithAnalysisType(analysisType string) ListJobsOption {
 	return func(o *listJobsOptions) { o.analysisType = analysisType }
 }
 
+// analysisFileCondition matches exact membership in a well-formed file list.
+// Entries are plain strings or rawFileEntry objects for non-UTF-8 paths.
+const analysisFileCondition = `
+	CASE WHEN json_valid(j.analysis_files) THEN json_type(j.analysis_files) ELSE '' END = 'array'
+	AND NOT EXISTS (
+		SELECT 1
+		FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
+		WHERE analysis_file.type NOT IN ('text', 'object')
+	)
+	AND EXISTS (
+		SELECT 1
+		FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
+		WHERE (analysis_file.type = 'text' AND analysis_file.value = ?)
+		   OR (analysis_file.type = 'object' AND json_extract(analysis_file.value, '$.bytes') = ?)
+	)`
+
 // WithAnalysisFile filters jobs by exact membership in the recorded file list.
 func WithAnalysisFile(file string) ListJobsOption {
 	return func(o *listJobsOptions) {
@@ -2361,19 +2416,8 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 		args = append(args, o.analysisType)
 	}
 	for _, analysisFile := range o.analysisFiles {
-		conditions = append(conditions, `
-			CASE WHEN json_valid(j.analysis_files) THEN json_type(j.analysis_files) ELSE '' END = 'array'
-			AND NOT EXISTS (
-				SELECT 1
-			FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
-				WHERE analysis_file.type <> 'text'
-			)
-			AND EXISTS (
-				SELECT 1
-				FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
-				WHERE analysis_file.type = 'text' AND analysis_file.value = ?
-			)`)
-		args = append(args, analysisFile)
+		conditions = append(conditions, analysisFileCondition)
+		args = append(args, analysisFile, base64.StdEncoding.EncodeToString([]byte(analysisFile)))
 	}
 	if o.branchEmpty {
 		conditions = append(conditions, emptyBranchCondition)
@@ -3462,6 +3506,46 @@ func decodeDirtyFiles(data string) []string {
 	return decodeFileList(data)
 }
 
+// rawFileEntry stores a path that is not valid UTF-8, which JSON strings
+// cannot carry. Valid paths stay plain strings so older rows keep their format.
+type rawFileEntry struct {
+	Bytes string `json:"bytes"`
+}
+
+func encodeAnalysisFiles(files []string) (string, error) {
+	entries := make([]any, len(files))
+	for i, file := range files {
+		entries[i] = file
+		if !utf8.ValidString(file) {
+			entries[i] = rawFileEntry{Bytes: base64.StdEncoding.EncodeToString([]byte(file))}
+		}
+	}
+	if len(entries) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return "", fmt.Errorf("encode analysis files: %w", err)
+	}
+	return string(data), nil
+}
+
+// decodeFileEntry rejects null, which would otherwise decode as an empty path.
+func decodeFileEntry(value stdjson.RawMessage, out *string) bool {
+	var file *string
+	if stdjson.Unmarshal(value, &file) == nil && file != nil {
+		*out = *file
+		return true
+	}
+	var raw rawFileEntry
+	if stdjson.Unmarshal(value, &raw) != nil || raw.Bytes == "" {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw.Bytes)
+	*out = string(decoded)
+	return err == nil
+}
+
 func decodeFileList(data string) []string {
 	if data == "" {
 		return nil
@@ -3472,7 +3556,7 @@ func decodeFileList(data string) []string {
 	}
 	files := make([]string, len(values))
 	for i, value := range values {
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || stdjson.Unmarshal(value, &files[i]) != nil {
+		if !decodeFileEntry(value, &files[i]) {
 			return nil
 		}
 	}

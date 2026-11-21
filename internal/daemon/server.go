@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"database/sql"
@@ -39,6 +40,7 @@ import (
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/telemetry"
@@ -118,6 +120,10 @@ type Server struct {
 	updateCoordinator       *updateDrainCoordinator
 	agentHookState          *agenthook.StateStore
 	agentHookStateErr       error
+	scheduleMu              sync.Mutex
+	scheduledRepoMu         sync.Mutex
+	scheduleCancel          context.CancelFunc
+	scheduleDone            chan struct{}
 	goalWatchMu             sync.Mutex
 	goalWatchCancel         context.CancelFunc
 	goalWatchDone           chan struct{}
@@ -509,6 +515,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.browserRuntime = browserRuntime
 	s.startPanelSweep(ctx)
 	s.startGoalWatcher(ctx)
+	s.startAnalysisScheduler(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
 	if err := WriteRuntime(ep, alternate, version.Version, browserRuntime); err != nil {
@@ -566,6 +573,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
+		s.stopAnalysisScheduler()
 		s.stopGoalWatcher()
 		s.postCommitScheduler.stop()
 		s.workerPool.BeginStop()
@@ -804,6 +812,7 @@ func (s *Server) stopOnce0() error {
 		s.ciPoller.BeginStop()
 	}
 
+	s.stopAnalysisScheduler()
 	s.stopGoalWatcher()
 	s.postCommitScheduler.stop()
 
@@ -1190,13 +1199,29 @@ func resolveRerunOpts(
 	}
 
 	workflow := workflowForJob(job.JobType, job.ReviewType)
+	selectedAgent = strings.TrimSpace(selectedAgent)
+	if job.AnalysisType != "" && rerunAgent != "" && (selectedAgent == "" || agent.CanonicalName(selectedAgent) == agent.CanonicalName(job.Agent)) {
+		if err := validateRerunAgent(resolutionPath, job.Agent, job.BackupAgent, cfg); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		model, err := resolveAnalysisRerunModel(job, cfg, resolutionPath, job.Agent, job.RequestedModel)
+		if err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		return storage.ReenqueueOpts{Agent: job.Agent, Model: model, Provider: job.RequestedProvider}, nil
+	}
+	if job.AnalysisType != "" && selectedAgent == "" {
+		if err := validateRerunAgent(resolutionPath, job.Agent, job.BackupAgent, cfg); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		return storage.ReenqueueOpts{Agent: job.Agent, Model: job.Model, Provider: job.Provider}, nil
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", resolutionPath, cfg, workflow, job.Reasoning,
 	)
 	if err != nil {
 		return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
 	}
-	selectedAgent = strings.TrimSpace(selectedAgent)
 	if selectedAgent != "" {
 		selected, err := agent.GetAvailableExactWithConfigFromConfig(
 			resolution.RepoConfig, selectedAgent, cfg,
@@ -1222,9 +1247,18 @@ func resolveRerunOpts(
 		storageName := agent.StorageNameFromConfig(
 			agent.CanonicalName(selectedAgent), resolution.RepoConfig, cfg,
 		)
+		if job.AnalysisType != "" && storageName == job.Agent {
+			return storage.ReenqueueOpts{Agent: storageName, Model: job.Model, Provider: job.Provider}, nil
+		}
 		// Keep the original request as provenance, but do not carry its
 		// model or provider override into a different agent's execution.
 		model := resolution.ModelForSelectedAgent(storageName, "")
+		if job.AnalysisType != "" {
+			model, err = resolveAnalysisRerunModel(job, cfg, resolutionPath, storageName, "")
+			if err != nil {
+				return storage.ReenqueueOpts{}, err
+			}
+		}
 		if job.JobType == storage.JobTypeClassify {
 			model = config.ResolveClassifyModel("", resolutionPath, cfg)
 		}
@@ -1249,6 +1283,28 @@ func resolveRerunOpts(
 
 	model := resolution.ModelForSelectedAgent(job.Agent, "")
 	return storage.ReenqueueOpts{Agent: rerunAgent, Model: model, Provider: provider}, nil
+}
+
+func resolveAnalysisRerunModel(job *storage.ReviewJob, cfg *config.Config, path, selectedAgent, requestedModel string) (string, error) {
+	cfg = cfg.ForRepo(path)
+	repoCfg, err := config.LoadRepoConfig(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve workflow config: %w", err)
+	}
+	workflow := analyze.Workflow(job.AnalysisType)
+	analysis, err := config.ResolveAnalyzeConfigFromConfig("", requestedModel, job.Reasoning, repoCfg, cfg, job.AnalysisType, workflow, "")
+	if err != nil {
+		return "", fmt.Errorf("resolve analysis config: %w", err)
+	}
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(analysis.Agent, repoCfg, cfg, workflow, job.Reasoning)
+	if err != nil {
+		return "", fmt.Errorf("resolve workflow config: %w", err)
+	}
+	model := resolution.ModelForSelectedAgent(selectedAgent, requestedModel)
+	if override := config.ResolveAnalyzeModelOverrideFromConfig(repoCfg, cfg, job.AnalysisType, workflow, job.Reasoning); override != "" && requestedModel == "" && resolution.AgentMatches(selectedAgent, resolution.PreferredAgent) {
+		model = override
+	}
+	return model, nil
 }
 
 func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
@@ -3263,8 +3319,15 @@ func (s *Server) humaEnqueue(
 		}
 	}
 
-	var reasoning string
-	if workflow == "fix" {
+	var reasoning, analysisAgent string
+	if descriptor.analysisType != "" {
+		workflow = analyze.Workflow(req.AnalysisType)
+		resolved, resolveErr := config.ResolveAnalyzeConfigFromConfig("", req.Model, req.Reasoning, repoCfg, cfg, req.AnalysisType, workflow, "")
+		if resolveErr != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: resolveErr.Error()})
+		}
+		req.Agent, reasoning, analysisAgent = cmp.Or(strings.TrimSpace(req.Agent), resolved.Agent), resolved.Reasoning, resolved.Agent
+	} else if workflow == "fix" {
 		reasoning, err = config.ResolveFixReasoningFromConfig(req.Reasoning, repoCfg, cfg)
 	} else {
 		reasoning, err = config.ResolveReviewReasoningForTypeFromConfig(
@@ -3312,6 +3375,7 @@ func (s *Server) humaEnqueue(
 		workflow:       workflow,
 		reasoning:      reasoning,
 		requestedModel: requestedModel,
+		analysisAgent:  analysisAgent,
 	})
 }
 
@@ -3346,6 +3410,7 @@ type singleAgentInputs struct {
 	workflow       string
 	reasoning      string
 	requestedModel string
+	analysisAgent  string
 }
 
 type resolvedSingleAgent struct {
@@ -3434,9 +3499,13 @@ func (s *Server) resolveSingleAgent(
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, agentName, in.repoCfg, in.cfg,
 	)
+	model := resolution.ModelForSelectedAgent(agentName, in.requestedModel)
+	if override := config.ResolveAnalyzeModelOverrideFromConfig(in.repoCfg, in.cfg, in.descriptor.analysisType, in.workflow, in.reasoning); in.analysisAgent != "" && resolution.AgentMatches(agentName, in.analysisAgent) && override != "" && in.requestedModel == "" {
+		model = override
+	}
 	return resolvedSingleAgent{
 		Agent:       agentName,
-		Model:       resolution.ModelForSelectedAgent(agentName, in.requestedModel),
+		Model:       model,
 		BackupAgent: backupAgent,
 		BackupModel: backupModel,
 		Settings:    settings,

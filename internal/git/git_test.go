@@ -32,6 +32,14 @@ func TestMain(m *testing.M) {
 	os.Exit(testenv.RunIsolatedMain(m))
 }
 
+func TestReadFileCancelledContext(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := ReadFile(ctx, repo.Dir, "HEAD", "initial.txt")
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func runGitHookPWDHelper() int {
 	cwd, err := os.Getwd()
 	if err != nil {
