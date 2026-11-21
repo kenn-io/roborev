@@ -77,6 +77,27 @@ func TestScheduledAnalysisDeletedRepo(t *testing.T) {
 	assert.Empty(t, repos)
 }
 
+func TestScheduledAnalysisMovedRepo(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	moved := filepath.Join(t.TempDir(), "moved")
+	require.NoError(t, db.MoveRepo(registered.ID, moved, ""))
+	watcher := &analysisScheduler{server: server}
+	err = watcher.enqueueType(t.Context(), *registered, "refactor", []string{"a.go"}, repo.HeadSHA())
+	require.Error(t, err)
+	jobs, err := db.ListJobs("", "", 0, 0)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	repos, err := db.ListRepos()
+	require.NoError(t, err)
+	require.Len(t, repos, 1)
+	assert.Equal(t, registered.ID, repos[0].ID)
+	assert.Equal(t, moved, repos[0].RootPath)
+}
+
 func TestScheduledAnalysisInvalidRepoDoesNotBlockOtherRepos(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	bad, good := testutil.NewGitRepo(t), testutil.NewGitRepo(t)
