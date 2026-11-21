@@ -315,6 +315,9 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 	files := make(map[string]string, len(names))
 	for _, name := range names {
 		content, err := os.ReadFile(filepath.Join(repo.RootPath, name))
+		if errors.Is(err, os.ErrNotExist) {
+			content, err = git.ReadFile(repo.RootPath, head, name)
+		}
 		if err != nil {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
