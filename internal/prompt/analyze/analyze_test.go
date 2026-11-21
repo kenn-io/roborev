@@ -1,6 +1,8 @@
 package analyze
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,6 +110,16 @@ func TestBuildPrompt(t *testing.T) {
 	aIdx := strings.Index(prompt, "### a.go")
 	bIdx := strings.Index(prompt, "### b.go")
 	assert.Less(t, aIdx, bIdx, "files should be in sorted order (a.go before b.go)")
+}
+
+func TestBuildPromptPreservesNULContentForProcessArguments(t *testing.T) {
+	prompt, err := TestFixtures.BuildPrompt(map[string]string{"data.bin": "hello\x00world"})
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "Binary content (base64):\n\n```\naGVsbG8Ad29ybGQ=\n```")
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.CommandContext(t.Context(), executable, "-test.run=^$", prompt)
+	require.NoError(t, cmd.Run())
 }
 
 func TestBuildPromptAddsMissingNewline(t *testing.T) {
