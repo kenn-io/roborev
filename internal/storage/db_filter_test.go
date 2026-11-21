@@ -437,6 +437,73 @@ func TestListJobsWithGitRefFilter(t *testing.T) {
 	})
 }
 
+func TestListJobsWithSearch(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/repo-search")
+	ids := map[string]int64{}
+	for _, ref := range []string{"abc1234", "abd5678", "4200aaa", "1111111..def9999", "a_c%"} {
+		commit := createCommit(t, db, repo.ID, ref)
+		ids[ref] = enqueueJob(t, db, repo.ID, commit.ID, ref).ID
+	}
+	branchCommit := createCommit(t, db, repo.ID, "9999999")
+	branchJob, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: branchCommit.ID, GitRef: "9999999",
+		Branch: "feature/Parser-fix", Agent: "codex",
+	})
+	require.NoError(t, err)
+
+	// A panel run for PR 42 and a pre-panel CI review for PR 7.
+	members := []EnqueueOpts{{RepoID: repo.ID, GitRef: "base..cafe000", Agent: "test", PanelMemberIndex: 0}}
+	synthesis := EnqueueOpts{RepoID: repo.ID, GitRef: "base..cafe000", Agent: "test"}
+	created, _, synth, err := db.CreateCIPanelRun("o/r", 42, "cafe000", members, synthesis)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.RecordCIReview("o/r", 7, "abd5678", ids["abd5678"]))
+
+	search := func(t *testing.T, query string) []int64 {
+		t.Helper()
+		jobs, err := db.ListJobs("", "", 50, 0, WithSearch(query), WithExcludePanelRole(PanelRoleMember))
+		require.NoError(t, err)
+		got := make([]int64, 0, len(jobs))
+		for _, job := range jobs {
+			got = append(got, job.ID)
+		}
+		return got
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		want  []int64
+	}{
+		{name: "ref prefix", query: "abc", want: []int64{ids["abc1234"]}},
+		{name: "shared prefix", query: "ab", want: []int64{ids["abd5678"], ids["abc1234"]}},
+		{name: "range head prefix", query: "def99", want: []int64{ids["1111111..def9999"]}},
+		{name: "like wildcards are literal", query: "a_c", want: []int64{ids["a_c%"]}},
+		{name: "panel PR with hash", query: "#42", want: []int64{synth.ID}},
+		{name: "panel PR spelled out", query: "PR 42", want: []int64{synth.ID}},
+		{name: "number matches PR and ref prefix", query: "42", want: []int64{synth.ID, ids["4200aaa"]}},
+		{name: "legacy CI review PR", query: "#7", want: []int64{ids["abd5678"]}},
+		{name: "branch substring ignores case", query: "parser", want: []int64{branchJob.ID}},
+		{name: "full branch name", query: "feature/Parser-fix", want: []int64{branchJob.ID}},
+		{name: "no match", query: "zzz", want: []int64{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, search(t, tc.query))
+		})
+	}
+
+	t.Run("stats use the same search", func(t *testing.T) {
+		stats, err := db.CountJobStats("", "", WithSearch("#42"), WithExcludePanelRole(PanelRoleMember))
+		require.NoError(t, err)
+		assert.Equal(t, 1, stats.Queued)
+	})
+}
+
 func TestListJobsWithBranchAndClosedFilters(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

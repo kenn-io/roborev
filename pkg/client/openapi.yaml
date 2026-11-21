@@ -6407,6 +6407,13 @@ paths:
           schema:
             description: Filter by git ref
             type: string
+        - description: "Match jobs whose git ref or range head starts with this text or whose branch contains it, or CI reviews of a pull request number (123, #123, or PR 123)"
+          explode: false
+          in: query
+          name: search
+          schema:
+            description: "Match jobs whose git ref or range head starts with this text or whose branch contains it, or CI reviews of a pull request number (123, #123, or PR 123)"
+            type: string
         - description: Filter by recorded analysis type
           explode: false
           in: query
@@ -6592,12 +6599,12 @@ paths:
           schema:
             description: Opaque next_cursor from a previous page with the same sort; resumes after its last job
             type: string
-        - description: Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+        - description: Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, findings, or enqueued_at (default); ties break by id
           explode: false
           in: query
           name: sort
           schema:
-            description: Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+            description: Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, findings, or enqueued_at (default); ties break by id
             type: string
         - description: "Sort direction: asc or desc (default)"
           explode: false

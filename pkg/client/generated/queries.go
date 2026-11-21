@@ -187,6 +187,9 @@ type ListJobsQuery struct {
 	// GitRef Filter by git ref
 	GitRef *string `json:"git_ref,omitempty"`
 
+	// Search Match jobs whose git ref or range head starts with this text or whose branch contains it, or CI reviews of a pull request number (123, #123, or PR 123)
+	Search *string `json:"search,omitempty"`
+
 	// AnalysisType Filter by recorded analysis type
 	AnalysisType *string `json:"analysis_type,omitempty"`
 
@@ -247,7 +250,7 @@ type ListJobsQuery struct {
 	// Cursor Opaque next_cursor from a previous page with the same sort; resumes after its last job
 	Cursor *string `json:"cursor,omitempty"`
 
-	// Sort Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+	// Sort Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, findings, or enqueued_at (default); ties break by id
 	Sort *string `json:"sort,omitempty"`
 
 	// Direction Sort direction: asc or desc (default)

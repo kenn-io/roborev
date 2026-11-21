@@ -39,6 +39,21 @@ func TestProjectBrowserReviewJobDisplaysFixPlanPrompt(t *testing.T) {
 	)
 }
 
+func TestProjectBrowserReviewJobKeepsFindingCounts(t *testing.T) {
+	t.Parallel()
+	counts := &storage.FindingCounts{Critical: 1, High: 2, Medium: 3, Low: 4}
+	job := storage.ReviewJob{JobType: storage.JobTypeReview, FindingCounts: counts}
+
+	body, err := json.Marshal(projectBrowserReviewJob(job, BrowserPrincipal{}))
+	require.NoError(t, err)
+
+	var decoded struct {
+		FindingCounts *storage.FindingCounts `json:"finding_counts"`
+	}
+	require.NoError(t, json.Unmarshal(body, &decoded))
+	assert.Equal(t, counts, decoded.FindingCounts)
+}
+
 func newBrowserHandlerFixture(t *testing.T, authToken string) (http.Handler, *BrowserSessionManager) {
 	t.Helper()
 	core := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {

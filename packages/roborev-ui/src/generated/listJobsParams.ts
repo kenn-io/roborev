@@ -29,6 +29,10 @@ export type ListJobsParams = {
    */
   git_ref?: string;
   /**
+   * Match jobs whose git ref or range head starts with this text or whose branch contains it, or CI reviews of a pull request number (123, #123, or PR 123)
+   */
+  search?: string;
+  /**
    * Filter by recorded analysis type
    */
   analysis_type?: string;
@@ -109,7 +113,7 @@ export type ListJobsParams = {
    */
   cursor?: string;
   /**
-   * Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+   * Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, findings, or enqueued_at (default); ties break by id
    */
   sort?: string;
   /**

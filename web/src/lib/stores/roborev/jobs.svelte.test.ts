@@ -197,6 +197,23 @@ describe("submitted search telemetry", () => {
   });
 });
 
+describe("createJobsStore search", () => {
+  it("sends the search box text as the daemon search filter", async () => {
+    const api = { listJobs: vi.fn().mockResolvedValue({ jobs: [] }) };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    const execution = store.submitSearch("#42");
+    await Effect.runPromise(execution.await);
+
+    const query = api.listJobs.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(query).toMatchObject({ search: "#42", include_findings: "true" });
+    expect(query).not.toHaveProperty("git_ref");
+    expect(query).not.toHaveProperty("omit_stats");
+  });
+});
+
 describe("createJobsStore filter preferences", () => {
   it("retries a lost list request and shows the recovered jobs", async () => {
     const api = {
@@ -286,6 +303,7 @@ describe("createJobsStore filter preferences", () => {
         closed: "false",
         limit: 50,
         omit_prompt: "true",
+        include_findings: "true",
         sort: "enqueued_at",
         direction: "desc",
       },
@@ -328,6 +346,7 @@ describe("createJobsStore filter preferences", () => {
           closed: "false",
           limit: 50,
           omit_prompt: "true",
+          include_findings: "true",
           sort: "enqueued_at",
           direction: "desc",
         },
@@ -385,6 +404,7 @@ describe("createJobsStore filter preferences", () => {
           closed: "false",
           limit: 50,
           omit_prompt: "true",
+          include_findings: "true",
           sort: "enqueued_at",
           direction: "desc",
         },
@@ -507,6 +527,14 @@ describe("createJobsStore sorting", () => {
     await vi.waitFor(() =>
       expect(api.listJobs.mock.calls.at(-1)?.[0]).toMatchObject({
         sort: "cost",
+        direction: "desc",
+      }),
+    );
+
+    store.setSortColumn("findings");
+    await vi.waitFor(() =>
+      expect(api.listJobs.mock.calls.at(-1)?.[0]).toMatchObject({
+        sort: "findings",
         direction: "desc",
       }),
     );
@@ -1970,6 +1998,7 @@ describe("createJobsStore panel expansion", () => {
         limit: 0,
         omit_prompt: "true",
         omit_stats: "true",
+        include_findings: "true",
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );

@@ -2145,6 +2145,7 @@ func (c *Client) ListJobs(ctx context.Context, options *ListJobsRequestOptions, 
 		"omit_stats":            {Style: "form", Explode: &[]bool{false}[0]},
 		"panel_run":             {Style: "form", Explode: &[]bool{false}[0]},
 		"repo_prefix":           {Style: "form", Explode: &[]bool{false}[0]},
+		"search":                {Style: "form", Explode: &[]bool{false}[0]},
 		"sort":                  {Style: "form", Explode: &[]bool{false}[0]},
 		"status":                {Style: "form", Explode: &[]bool{false}[0]},
 	}

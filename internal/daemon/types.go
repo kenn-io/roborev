@@ -106,6 +106,7 @@ type ListJobsInput struct {
 	Status              string    `query:"status" doc:"Filter by job status"`
 	Repo                []string  `query:"repo,explode" doc:"Filter by repo root path (repeatable)"`
 	GitRef              string    `query:"git_ref" doc:"Filter by git ref"`
+	Search              string    `query:"search" doc:"Match jobs whose git ref or range head starts with this text or whose branch contains it, or CI reviews of a pull request number (123, #123, or PR 123)"`
 	AnalysisType        string    `query:"analysis_type" doc:"Filter by recorded analysis type"`
 	AnalysisFile        []string  `query:"analysis_file,explode" doc:"Filter by recorded analysis file (repeatable)"`
 	Branch              string    `query:"branch" doc:"Filter by branch name"`
@@ -126,7 +127,7 @@ type ListJobsInput struct {
 	Offset              int       `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
 	Before              int64     `query:"before" default:"-1" doc:"Deprecated numeric job cursor retained for compatibility"`
 	Cursor              string    `query:"cursor" doc:"Opaque next_cursor from a previous page with the same sort; resumes after its last job"`
-	Sort                string    `query:"sort" doc:"Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id"`
+	Sort                string    `query:"sort" doc:"Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, findings, or enqueued_at (default); ties break by id"`
 	Direction           string    `query:"direction" doc:"Sort direction: asc or desc (default)"`
 }
 

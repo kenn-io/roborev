@@ -65,6 +65,7 @@ export type SortColumn =
   | "review_type"
   | "elapsed"
   | "cost"
+  | "findings"
   | "enqueued_at";
 type SortDirection = "asc" | "desc";
 type StringFilterKey = "repo" | "branch" | "status" | "search" | "jobType";
@@ -79,6 +80,7 @@ const DESCENDING_FIRST = new Set<SortColumn>([
   "id",
   "elapsed",
   "cost",
+  "findings",
   "enqueued_at",
 ]);
 const MAX_LOADED_JOBS = 10_000;
@@ -220,6 +222,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     const q: ListJobsQuery = {
       limit: loadedLimit,
       omit_prompt: "true",
+      include_findings: "true",
       sort: sortColumn,
       direction: sortDirection,
     };
@@ -227,7 +230,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     if (filterBranch === "(none)") q.branch_empty = "true";
     else if (filterBranch) q.branch = filterBranch;
     if (filterStatus) q.status = filterStatus;
-    if (filterSearch) q.git_ref = filterSearch;
+    if (filterSearch) q.search = filterSearch;
     if (booleanFilterPreferences.hideClosed) q.closed = "false";
     if (filterJobType) q.job_type = filterJobType;
     if (!booleanFilterPreferences.showAutoDesign) q.hide_classify_jobs = "true";
@@ -246,7 +249,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       query.branch ||
       query.branch_empty ||
       query.status ||
-      query.git_ref ||
+      query.search ||
       query.closed ||
       query.job_type ||
       query.hide_classify_jobs,
@@ -826,6 +829,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
               limit: 0,
               omit_prompt: "true",
               omit_stats: "true",
+              include_findings: "true",
             },
             { signal },
           ),

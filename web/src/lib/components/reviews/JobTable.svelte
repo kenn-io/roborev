@@ -21,6 +21,7 @@
     { key: "review_type", label: "Type" },
     { key: "status", label: "Status" },
     { key: "verdict", label: "Verdict" },
+    { key: "findings", label: "Findings", numeric: true },
     { key: "closed", label: "Closed" },
     { key: "elapsed", label: "Elapsed", numeric: true },
     { key: "cost", label: "Cost", numeric: true },

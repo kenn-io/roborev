@@ -93,7 +93,9 @@ describe("FilterBar", () => {
     const rendered = render(FilterBarTestHarness, { props: { runtime } });
 
     await fireEvent.input(
-      screen.getByRole("searchbox", { name: "Search by ref" }),
+      screen.getByRole("searchbox", {
+        name: "Search by ref, branch, or pull request",
+      }),
       {
         target: { value: "feature/refactor" },
       },
@@ -110,7 +112,9 @@ describe("FilterBar", () => {
   it("submits Enter with the current value and cancels the preview", async () => {
     vi.useFakeTimers();
     render(FilterBarTestHarness, { props: { runtime } });
-    const input = screen.getByRole("searchbox", { name: "Search by ref" });
+    const input = screen.getByRole("searchbox", {
+      name: "Search by ref, branch, or pull request",
+    });
     await fireEvent.input(input, { target: { value: "feature/search" } });
     await fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     expect(state.jobs?.submitSearch).not.toHaveBeenCalled();
@@ -140,7 +144,9 @@ describe("FilterBar", () => {
       ),
     );
     render(FilterBarTestHarness, { props: { runtime } });
-    const input = screen.getByRole("searchbox", { name: "Search by ref" });
+    const input = screen.getByRole("searchbox", {
+      name: "Search by ref, branch, or pull request",
+    });
     await fireEvent.input(input, { target: { value: "search-a" } });
     await fireEvent.keyDown(input, { key: "Enter" });
     await fireEvent.input(input, { target: { value: "search-b" } });

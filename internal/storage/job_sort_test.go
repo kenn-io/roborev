@@ -2,12 +2,22 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// sortDoc is a stored review document with findings of the given severities.
+func sortDoc(severities ...string) string {
+	findings := make([]string, len(severities))
+	for i, severity := range severities {
+		findings[i] = fmt.Sprintf(`{"severity":%q,"problem":"p","fix":"f","location":null}`, severity)
+	}
+	return `{"schema_version":2,"summary":"review","verdict":"fail","findings":[` + strings.Join(findings, ",") + `]}`
+}
 
 // seedSortJobs creates six listed jobs whose column values give every sort
 // column a distinct order with ties, plus two panel members of the last job.
@@ -20,9 +30,10 @@ func seedSortJobs(t *testing.T, db *DB, base time.Time) []int64 {
 	run := testUUID("sort-panel")
 
 	type review struct {
-		closed  int
-		verdict any
-		output  string
+		closed     int
+		verdict    any
+		output     string
+		structured any
 	}
 	jobs := []struct {
 		repo                *Repo
@@ -37,22 +48,22 @@ func seedSortJobs(t *testing.T, db *DB, base time.Time) []int64 {
 	}{
 		{
 			beta, "main", "codex", JobTypeReview, "", "", "done", at(3 * time.Hour),
-			at(0), at(100 * time.Second), `{"has_cost":true,"cost_usd":0.5}`, &review{1, 1, "No issues found."},
+			at(0), at(100 * time.Second), `{"has_cost":true,"cost_usd":0.5}`, &review{1, 1, "No issues found.", sortDoc()},
 		},
 		{
 			alpha, "main", "claude-code", JobTypeReview, "security", "", "done", at(time.Hour),
-			at(0), at(300 * time.Second), `{"has_cost":true,"cost_usd":0.1}`, &review{0, 0, "High: broken"},
+			at(0), at(300 * time.Second), `{"has_cost":true,"cost_usd":0.1}`, &review{0, 0, "High: broken", sortDoc("high", "medium")},
 		},
 		// Legacy timestamp text without a zone, and a free-form job whose
 		// verdict comes from its review text.
 		{
 			alpha, "dev", "codex", JobTypeFix, "", "", "done", base.Add(2 * time.Hour).Format(time.DateTime),
-			at(0), at(100 * time.Second), nil, &review{0, nil, "No issues found."},
+			at(0), at(100 * time.Second), nil, &review{0, nil, "No issues found.", sortDoc("critical")},
 		},
 		// A review document without a stored verdict has none.
 		{
 			beta, "", "codex", JobTypeReview, "", "", "running", at(4 * time.Hour),
-			at(10*time.Hour - 50*time.Second), nil, `{"has_cost":false,"cost_usd":9}`, &review{0, nil, "No issues found."},
+			at(10*time.Hour - 50*time.Second), nil, `{"has_cost":false,"cost_usd":9}`, &review{0, nil, "No issues found.", sortDoc("high")},
 		},
 		{
 			alpha, "main", "gemini", JobTypeReview, "", "", "queued", at(4 * time.Hour),
@@ -61,7 +72,7 @@ func seedSortJobs(t *testing.T, db *DB, base time.Time) []int64 {
 		// A panel synthesis row: its own run took 200s and cost 0.05.
 		{
 			beta, "main", "codex", JobTypeSynthesis, "", PanelRoleSynthesis, "done", at(6 * time.Hour),
-			at(200 * time.Second), at(400 * time.Second), `{"has_cost":true,"cost_usd":0.05}`, &review{1, 0, "High: broken"},
+			at(200 * time.Second), at(400 * time.Second), `{"has_cost":true,"cost_usd":0.05}`, &review{1, 0, "High: broken", sortDoc("low", "medium", "low")},
 		},
 	}
 	ids := make([]int64, 0, len(jobs))
@@ -75,8 +86,8 @@ func seedSortJobs(t *testing.T, db *DB, base time.Time) []int64 {
 			spec.status, spec.enqueued, spec.started, spec.finished, spec.usage, job.ID)
 		require.NoError(t, err)
 		if spec.review != nil {
-			_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, closed, verdict_bool) VALUES (?, ?, ?, ?, ?)`,
-				job.ID, spec.agent, spec.review.output, spec.review.closed, spec.review.verdict)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, closed, verdict_bool, structured_output) VALUES (?, ?, ?, ?, ?, ?)`,
+				job.ID, spec.agent, spec.review.output, spec.review.closed, spec.review.verdict, spec.review.structured)
 			require.NoError(t, err)
 		}
 		ids = append(ids, job.ID)
@@ -123,6 +134,9 @@ func TestListJobsSortOrderAndPaging(t *testing.T) {
 		{JobSortElapsed, []int{4, 3, 0, 2, 1, 5}, []int{5, 1, 2, 0, 3, 4}},
 		// -1 x3, 0.10, 0.25 (panel with member), 0.50
 		{JobSortCost, []int{2, 3, 4, 1, 5, 0}, []int{0, 5, 1, 4, 3, 2}},
+		// -1 x3 (a fix job, a running and a queued review), no findings,
+		// one medium and two low, one high and one medium
+		{JobSortFindings, []int{2, 3, 4, 0, 5, 1}, []int{1, 5, 0, 4, 3, 2}},
 		{JobSortEnqueuedAt, []int{1, 2, 0, 3, 4, 5}, []int{5, 4, 3, 0, 2, 1}},
 	}
 	for _, tt := range tests {
@@ -181,6 +195,57 @@ func TestListJobsVerdictSortKeyMatchesListedVerdict(t *testing.T) {
 			listed = *job.Verdict
 		}
 		assert.Equal(t, []any{listed}, job.SortKey, "job %d", job.ID)
+	}
+}
+
+func TestListJobsFindingsSortKeyMatchesListedCounts(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/sort/findings")
+
+	tests := []struct {
+		name       string
+		jobType    string
+		jobError   string
+		structured any
+	}{
+		{name: "counted review", jobType: JobTypeReview, structured: sortDoc("HIGH", "critical", "medium", "low", "low")},
+		{name: "no findings", jobType: JobTypeReview, structured: sortDoc()},
+		{name: "unknown severity", jobType: JobTypeReview, structured: sortDoc("info")},
+		{name: "padded severity", jobType: JobTypeReview, structured: sortDoc(" Medium\t")},
+		{name: "finding without fix", jobType: JobTypeReview, structured: `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"high","problem":"p","fix":" ","location":null}]}`},
+		{name: "unable to review", jobType: JobTypeReview, structured: `{"schema_version":2,"summary":"s","verdict":"unable_to_review","findings":[]}`},
+		{name: "legacy document", jobType: JobTypeReview, structured: `{"schema_version":0,"legacy":{"markdown":"m","recorded_verdict":null}}`},
+		{name: "invalid json", jobType: JobTypeReview, structured: "not json"},
+		{name: "no document", jobType: JobTypeReview},
+		{name: "job error", jobType: JobTypeReview, jobError: "agent failed", structured: sortDoc("high")},
+		{name: "task job", jobType: JobTypeTask, structured: sortDoc("high")},
+		{name: "compact job", jobType: JobTypeCompact, structured: sortDoc("medium")},
+	}
+	names := map[int64]string{}
+	for i, tt := range tests {
+		sha := fmt.Sprintf("findings-sha%d", i)
+		job := enqueueJob(t, db, repo.ID, createCommit(t, db, repo.ID, sha).ID, sha)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = ?, status = 'done', error = ? WHERE id = ?`,
+			tt.jobType, tt.jobError, job.ID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output) VALUES (?, 'codex', 'out', ?)`,
+			job.ID, tt.structured)
+		require.NoError(t, err)
+		names[job.ID] = tt.name
+	}
+
+	jobs, err := db.ListJobs("", "", 0, 0, WithFindingCounts(), WithSort(JobSort{Column: JobSortFindings}))
+	require.NoError(t, err)
+	require.Len(t, jobs, len(tests))
+	for _, job := range jobs {
+		want := int64(-1)
+		if counts := job.FindingCounts; counts != nil {
+			want = int64(counts.Critical+counts.High)*findingsSortWeightHigh +
+				int64(counts.Medium)*findingsSortWeightMedium + int64(counts.Low)
+		}
+		assert.Equal(t, []any{want}, job.SortKey, names[job.ID])
 	}
 }
 
