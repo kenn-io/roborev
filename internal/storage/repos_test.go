@@ -703,8 +703,10 @@ func TestDeleteRepo(t *testing.T) {
 			repo.RootPath, repo.RootPath, "main", time.Now().Add(time.Hour),
 		)
 		require.NoError(t, err)
+		other := createRepo(t, db, filepath.Join(t.TempDir(), "other"))
 		last := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), repo.ID, last))
+		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), other.ID, last))
 
 		err = db.DeleteRepo(repo.ID, false)
 		require.NoError(t, err, "DeleteRepo failed: %v")
@@ -720,12 +722,17 @@ func TestDeleteRepo(t *testing.T) {
 		deletedLast, err := db.AnalysisScheduleLastRun(t.Context(), repo.ID)
 		require.NoError(t, err)
 		assert.True(t, deletedLast.IsZero())
+		otherLast, err := db.AnalysisScheduleLastRun(t.Context(), other.ID)
+		require.NoError(t, err)
+		assert.Equal(t, last, otherLast)
 	})
 
 	t.Run("delete repo with jobs without cascade returns error", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "delete-with-jobs")
 		commit := createCommit(t, db, repo.ID, "delete-sha")
 		enqueueJob(t, db, repo.ID, commit.ID, "delete-sha")
+		last := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), repo.ID, last))
 
 		// Without cascade, delete should return ErrRepoHasJobs
 		err := db.DeleteRepo(repo.ID, false)
@@ -735,6 +742,9 @@ func TestDeleteRepo(t *testing.T) {
 		// Verify repo still exists
 		_, err = db.GetRepoByID(repo.ID)
 		require.NoError(t, err)
+		storedLast, err := db.AnalysisScheduleLastRun(t.Context(), repo.ID)
+		require.NoError(t, err)
+		assert.Equal(t, last, storedLast)
 	})
 
 	t.Run("delete repo with cascade", func(t *testing.T) {
