@@ -169,6 +169,8 @@ func (s *Server) humaDeleteRepo(_ context.Context, input *DeleteRepoInput) (*str
 }
 
 func (s *Server) humaMergeRepos(_ context.Context, input *MergeReposInput) (*MergeReposOutput, error) {
+	s.scheduledRepoMu.Lock()
+	defer s.scheduledRepoMu.Unlock()
 	if input.Body.SourceID == input.Body.TargetID {
 		return nil, huma.Error400BadRequest("source and target are the same repository")
 	}

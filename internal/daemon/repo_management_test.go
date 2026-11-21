@@ -9,12 +9,55 @@ import (
 	"net/url"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestMergeRepoWaitsForScheduledEnqueue(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add file")
+	source, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	target, err := db.GetOrCreateRepo(t.TempDir())
+	require.NoError(t, err)
+	watcher := &analysisScheduler{server: server}
+	unlock, err := watcher.lockRegistered(*source)
+	require.NoError(t, err)
+	input := &MergeReposInput{}
+	input.Body.SourceID, input.Body.TargetID = source.ID, target.ID
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := server.humaMergeRepos(t.Context(), input)
+		done <- err
+	}()
+	<-started
+	var early bool
+	select {
+	case err = <-done:
+		early = true
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	if !early {
+		err = testutil.ReceiveWithTimeout(t, done, workerStartTimeout)
+	}
+	require.NoError(t, err)
+	assert.False(t, early, "merge completed during scheduled enqueue")
+	err = watcher.enqueueType(t.Context(), *source, "refactor", []string{"a.go"}, repo.HeadSHA())
+	require.Error(t, err)
+	repos, err := db.ListRepos()
+	require.NoError(t, err)
+	require.Len(t, repos, 1)
+	assert.Equal(t, target.ID, repos[0].ID)
+}
 
 func postRepoManagement(t *testing.T, server *Server, action string, body any) *httptest.ResponseRecorder {
 	t.Helper()
