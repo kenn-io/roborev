@@ -19,7 +19,7 @@ func TestReadFileCancelsRunningGit(t *testing.T) {
 	object := filepath.Join(repo.Dir, ".git", "objects", oid[:2], oid[2:])
 	// Keep Git blocked while it reads the object from a pipe.
 	require.NoError(t, os.Remove(object))
-	require.NoError(t, unix.Mkfifo(object, 0600))
+	require.NoError(t, unix.Mkfifo(object, 0o600))
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
