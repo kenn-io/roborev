@@ -27,6 +27,9 @@ import (
 func TestMain(m *testing.M) {
 	switch os.Getenv("PROCTRACK_HELPER") {
 	case "":
+		// Set the test cadence before any sampler starts. A sampler can outlive
+		// the test that registered it, so later tests must not change it.
+		sampleInterval = 50 * time.Millisecond
 		os.Exit(m.Run())
 	case "setsid":
 		if _, err := syscall.Setsid(); err != nil {
@@ -234,14 +237,7 @@ func TestUntrackedStartWaits(t *testing.T) {
 	assert.Nil(t, cmd.SysProcAttr, "untracked launch must not change the process group")
 }
 
-func fastSampling(t *testing.T) {
-	orig := sampleInterval
-	sampleInterval = 50 * time.Millisecond
-	t.Cleanup(func() { sampleInterval = orig })
-}
-
 func TestBreachStopsAndCancelsAttempt(t *testing.T) {
-	fastSampling(t)
 	ctx, s := New(t.Context(), 64<<20)
 	defer s.Close()
 	run, pidFile := helper(t, "alloc", 256)
@@ -267,7 +263,6 @@ func TestBreachStopsAndCancelsAttempt(t *testing.T) {
 }
 
 func TestBreachInPhaseCancelsOnlyThePhase(t *testing.T) {
-	fastSampling(t)
 	ctx, attempt := New(t.Context(), 64<<20)
 	defer attempt.Close()
 	phaseCtx, phase := OpenScope(ctx)
@@ -292,7 +287,6 @@ func TestBreachInPhaseCancelsOnlyThePhase(t *testing.T) {
 }
 
 func TestCloseStopsProcessThatLeftItsGroupAfterSampling(t *testing.T) {
-	fastSampling(t)
 	ctx, s := New(t.Context(), 1<<40) // sample, never breach
 	run, pidFile := helper(t, "setsid-later", 0)
 	p, err := Start(ctx, exec.CommandContext(ctx, "/bin/sh", "-c", run+" & wait"))
