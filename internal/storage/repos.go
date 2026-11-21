@@ -754,6 +754,10 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		return err
 	}
 
+	if _, err := conn.ExecContext(ctx, `DELETE FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_last_run:%d", repoID)); err != nil {
+		return err
+	}
+
 	// Delete the repo itself
 	result, err := conn.ExecContext(ctx, `DELETE FROM repos WHERE id = ?`, repoID)
 	if err != nil {
