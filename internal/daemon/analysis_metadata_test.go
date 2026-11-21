@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -87,17 +88,6 @@ func TestEnqueueAnalysisMetadataThroughPrompt(t *testing.T) {
 	assert.Equal(t, []string{"pkg/a.go"}, stored.AnalysisFiles)
 	assert.Equal(t, "head-sha", stored.AnalysisCommitSHA)
 
-	cfg := server.configWatcher.Config()
-	cfg.AnalyzeAgent, cfg.AnalyzeModel, cfg.AnalyzeReasoning = "test", "analysis-model", "high"
-	cfg.ReviewModel = "review-model"
-	configured := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor"})
-	stored, err = db.GetJobByID(configured.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "test", stored.Agent)
-	assert.Equal(t, "analysis-model", stored.Model)
-	assert.Empty(t, stored.RequestedModel)
-	assert.Equal(t, "high", stored.Reasoning)
-
 	reviewJob := enqueueViaHTTP(t, server, EnqueueRequest{
 		RepoPath:          repo.Path(),
 		GitRef:            repo.HeadSHA(),
@@ -122,32 +112,43 @@ func daemonJobIDs(jobs []storage.ReviewJob) []int64 {
 	return ids
 }
 
-func TestAnalysisEnqueueBackupPreservesExplicitModel(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("a.go", "package a\n", "add source")
-	cfg := server.configWatcher.Config()
-	cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "analysis-model"
-	cfg.CodexCmd = "missing-codex-command"
-	cfg.ReviewBackupAgent, cfg.ReviewBackupModel = "test", "backup-model"
-	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Model: "explicit-model"})
-	stored, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "test", stored.Agent)
-	assert.Equal(t, "explicit-model", stored.Model)
-	assert.Equal(t, "explicit-model", stored.RequestedModel)
-}
-
-func TestAnalysisEnqueueUsesModelPairedWithAnalyzer(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("a.go", "package a\n", "add source")
-	cfg := server.configWatcher.Config()
-	cfg.ReviewAgent, cfg.ReviewModel = "codex", "codex-model"
-	cfg.AnalyzeAgent = "test"
-	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor"})
-	stored, err := db.GetJobByID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "test", stored.Agent)
-	assert.Empty(t, stored.Model)
+func TestAnalysisEnqueueModels(t *testing.T) {
+	for _, tc := range []struct {
+		name, requested, wantModel string
+		configure                  func(*config.Config)
+	}{
+		{"configured", "", "analysis-model", func(c *config.Config) {
+			c.AnalyzeAgent, c.AnalyzeModel, c.AnalyzeReasoning = "test", "analysis-model", "high"
+			c.ReviewModel = "review-model"
+		}},
+		{"review model belongs to another agent", "", "", func(c *config.Config) { c.ReviewAgent, c.ReviewModel, c.AnalyzeAgent = "codex", "codex-model", "test" }},
+		{"backup model", "", "backup-model", func(c *config.Config) {
+			c.AnalyzeAgent, c.AnalyzeModel, c.CodexCmd = "codex", "analysis-model", "missing-codex-command"
+			c.ReviewBackupAgent, c.ReviewBackupModel = "test", "backup-model"
+		}},
+		{"backup default model", "", "", func(c *config.Config) {
+			c.AnalyzeAgent, c.AnalyzeModel, c.CodexCmd = "codex", "analysis-model", "missing-codex-command"
+			c.ReviewBackupAgent = "test"
+		}},
+		{"explicit model with backup", "explicit-model", "explicit-model", func(c *config.Config) {
+			c.AnalyzeAgent, c.AnalyzeModel, c.CodexCmd = "codex", "analysis-model", "missing-codex-command"
+			c.ReviewBackupAgent, c.ReviewBackupModel = "test", "backup-model"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			repo.CommitFile("a.go", "package a\n", "add source")
+			tc.configure(server.configWatcher.Config())
+			job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Model: tc.requested})
+			stored, err := db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "test", stored.Agent)
+			assert.Equal(t, tc.wantModel, stored.Model)
+			assert.Equal(t, tc.requested, stored.RequestedModel)
+			if tc.name == "configured" {
+				assert.Equal(t, "high", stored.Reasoning)
+			}
+		})
+	}
 }

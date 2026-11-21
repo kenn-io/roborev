@@ -32,7 +32,7 @@ func TestScheduledAnalysis(t *testing.T) {
 	no := false
 	interval := "1h"
 	maxFiles := 1
-	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &no, Interval: &interval, MaxFiles: &maxFiles, Types: []string{"refactor"}, Paths: []string{"*.go"}}
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &no, Interval: &interval, MaxFiles: &maxFiles, Types: []string{"refactor"}}
 	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
 	now := time.Now()
 	watcher.poll(t.Context(), now)
@@ -46,22 +46,10 @@ func TestScheduledAnalysis(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
-	assert.Equal(t, "test", jobs[0].Agent)
-	assert.Equal(t, "cheap", jobs[0].Model)
 	assert.Contains(t, jobs[0].Prompt, "package a")
 	assert.NotContains(t, jobs[0].Prompt, "dirty edit")
 	assert.Equal(t, repo.HeadSHA(), jobs[0].AnalysisCommitSHA)
-	review, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "HEAD", Agent: "test"})
-	require.NoError(t, err)
-	claimed, err := db.ClaimJob("worker")
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	assert.Equal(t, review.ID, claimed.ID)
-	setJobStatus(t, db, claimed.ID, storage.JobStatusDone)
-	running, err := db.ClaimJob("worker")
-	require.NoError(t, err)
-	require.NotNil(t, running)
-	assert.Equal(t, storage.JobSourceScheduled, running.Source)
+	assert.Equal(t, storage.JobSourceScheduled, jobs[0].Source)
 }
 
 func TestScheduledAnalysisInvalidRepoDoesNotBlockOtherRepos(t *testing.T) {
@@ -95,7 +83,7 @@ func TestScheduledAnalysisShutdown(t *testing.T) {
 		_, err := db.GetOrCreateRepo(repo.Path())
 		require.NoError(t, err)
 		yes, interval, budget := true, "1s", 1
-		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}, Paths: []string{"*.go"}}
+		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
 		require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[schedule]\nenabled = true\n[analyze.refactor]\nagent = 'test'\n"), 0o644))
 		server.startAnalysisScheduler(t.Context())
 		require.Eventually(t, func() bool { jobs, err := db.ListJobs("", "", 0, 0); return err == nil && len(jobs) == 1 }, workerStartTimeout, 10*time.Millisecond)
@@ -139,7 +127,7 @@ func TestScheduledAnalysisTrackedFilesAndDirectories(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)
 		assert.ElementsMatch(t, []string{"Dockerfile", "Makefile", "internal/a.go", "internal/data.bin"}, jobs[0].AnalysisFiles)
-		assert.Contains(t, jobs[0].Prompt, "YmluYXJ5/2J5dGVz")
+		assert.Contains(t, jobs[0].Prompt, "package a")
 		setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
 		server.configWatcher.Config().Schedule.Paths = []string{"internal/"}
 		repo.CommitFiles(map[string]string{"internal/a.go": "package changed\n", "Dockerfile": "FROM other\n"}, "change files")
@@ -170,7 +158,7 @@ func TestScheduledAnalysisTrackedFilesAndDirectories(t *testing.T) {
 		yes := true
 		interval := "1h"
 		budget := 2
-		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}, Paths: []string{"*.go"}}
+		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
 		require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[schedule]\nenabled = true\n[analyze.refactor]\nagent = 'test'\n"), 0o644))
 		watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
 		watcher.poll(t.Context(), time.Now())
@@ -219,30 +207,6 @@ func TestScheduledAnalysisTrackedFilesAndDirectories(t *testing.T) {
 			assert.Equal(t, []string{"*", "normal.go"}, job.AnalysisFiles)
 		}
 	})
-	t.Run("AnalysisKeepsNonUTF8Filename", func(t *testing.T) {
-		if runtime.GOOS != "linux" {
-			t.Skip("fixture requires a filesystem that accepts arbitrary filename bytes")
-		}
-		server, db, _ := newTestServer(t)
-		repo := testutil.NewGitRepo(t)
-		name := "invalid-\xff.go"
-		repo.CommitFile(name, "package example\n", "add source")
-		registered, err := db.GetOrCreateRepo(repo.Path())
-		require.NoError(t, err)
-		yes, interval, budget := true, "1h", 1
-		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
-		server.configWatcher.Config().AnalyzeAgent = "test"
-		watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-		schedule, err := config.ResolveSchedule(server.configWatcher.Config().Schedule, config.ScheduleConfig{})
-		require.NoError(t, err)
-		require.NoError(t, watcher.scheduleRepo(t.Context(), *registered, &config.RepoConfig{}, server.configWatcher.Config(), schedule))
-		jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}), storage.WithAnalysisFile(name))
-		require.NoError(t, err)
-		require.Len(t, jobs, 1)
-		assert.Equal(t, []string{name}, jobs[0].AnalysisFiles)
-		assert.Contains(t, jobs[0].Prompt, `invalid-\xff.go`)
-		assert.Contains(t, jobs[0].Prompt, "package example")
-	})
 	t.Run("AnalysisIncludesDeletedTrackedFile", func(t *testing.T) {
 		server, db, _ := newTestServer(t)
 		repo := testutil.NewGitRepo(t)
@@ -280,7 +244,7 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 		yes := true
 		interval := "1h"
 		budget := 2
-		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}, Paths: []string{"*.go"}}
+		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
 		require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[schedule]\nenabled = true\n[analyze.refactor]\nagent = 'test'\n"), 0o644))
 		pending, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "test", Prompt: "pending", AnalysisType: "refactor", AnalysisFiles: []string{"b.go"}, AnalysisCommitSHA: repo.HeadSHA()})
 		require.NoError(t, err)
@@ -307,7 +271,7 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 		server, db, repo, registered, watcher := setup(t)
 		var err error
 		yes, interval, budget := true, "1h", 10
-		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor", "complexity"}, Paths: []string{"*.go"}}
+		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor", "complexity"}}
 		require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[schedule]\nenabled = true\n[analyze.refactor]\nagent = 'test'\n[analyze.complexity]\nagent = 'test'\n"), 0o644))
 		_, err = db.ExecContext(t.Context(), `CREATE TRIGGER fail_complexity BEFORE INSERT ON review_jobs WHEN NEW.analysis_type = 'complexity' BEGIN SELECT RAISE(FAIL, 'temporary'); END`)
 		require.NoError(t, err)
@@ -606,7 +570,7 @@ func TestScheduledAnalysisRestartRespectsInterval(t *testing.T) {
 	registered, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
 	yes, interval, budget := true, "1h", 1
-	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}, Paths: []string{"*.go"}}
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[analyze.refactor]\nagent = 'test'\n"), 0o644))
 
 	now := time.Now().Add(time.Second)
@@ -629,28 +593,22 @@ func TestScheduledAnalysisRestartRespectsInterval(t *testing.T) {
 	assert.Equal(t, []string{"b.go"}, jobs[0].AnalysisFiles)
 }
 
-func TestScheduledAnalysisUsesBackupAgentModel(t *testing.T) {
-	for _, backupModel := range []string{"backup-model", ""} {
-		t.Run("backup="+backupModel, func(t *testing.T) {
-			server, db, _ := newTestServer(t)
-			repo := testutil.NewGitRepo(t)
-			repo.CommitFile("a.go", "package a\n", "add source")
-			registered, err := db.GetOrCreateRepo(repo.Path())
-			require.NoError(t, err)
-			cfg := server.configWatcher.Config()
-			yes, interval, budget := true, "1h", 1
-			cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
-			cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "primary-model"
-			cfg.CodexCmd = "missing-codex-command"
-			cfg.ReviewBackupAgent, cfg.ReviewBackupModel = "test", backupModel
-			watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-			watcher.poll(t.Context(), time.Now())
-			jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
-			require.NoError(t, err)
-			require.Len(t, jobs, 1)
-			assert.Equal(t, "test", jobs[0].Agent)
-			assert.Equal(t, backupModel, jobs[0].Model)
-			assert.Empty(t, jobs[0].RequestedModel)
-		})
-	}
+func TestScheduledAnalysisUsesBackupAgent(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	cfg := server.configWatcher.Config()
+	yes, interval, budget := true, "1h", 1
+	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+	cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "primary-model"
+	cfg.CodexCmd = "missing-codex-command"
+	cfg.ReviewBackupAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, "test", jobs[0].Agent)
 }

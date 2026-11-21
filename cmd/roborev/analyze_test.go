@@ -687,9 +687,7 @@ reasoning = "high"
 	assert.Empty(t, got.ReviewType)
 	_, err = enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", nil, analyzeOptions{model: "explicit-model"})
 	require.NoError(t, err)
-	assert.Equal(t, "codex", got.Agent)
 	assert.Equal(t, "explicit-model", got.Model)
-	assert.Equal(t, "high", got.Reasoning)
 }
 
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {

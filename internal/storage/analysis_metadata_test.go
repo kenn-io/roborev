@@ -62,6 +62,15 @@ func TestAnalysisMetadata(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, stats.Queued)
 
+	invalidName := "invalid-\xff.go"
+	invalidJob, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "refactor", Prompt: "analyze", Agent: "test", AnalysisType: "refactor", AnalysisFiles: []string{invalidName}})
+	require.NoError(t, err)
+	invalidResults, err := db.ListJobs("", "", 0, 0, WithAnalysisFile(invalidName))
+	require.NoError(t, err)
+	require.Len(t, invalidResults, 1)
+	assert.Equal(t, invalidJob.ID, invalidResults[0].ID)
+	assert.Equal(t, []string{invalidName}, invalidResults[0].AnalysisFiles)
+
 	for _, value := range []string{
 		"not-json",
 		`"pkg/a.go"`,

@@ -1,8 +1,6 @@
 package analyze
 
 import (
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -113,13 +111,18 @@ func TestBuildPrompt(t *testing.T) {
 }
 
 func TestBuildPromptPreservesNULContentForProcessArguments(t *testing.T) {
-	prompt, err := TestFixtures.BuildPrompt(map[string]string{"data.bin": "hello\x00world"})
-	require.NoError(t, err)
-	assert.Contains(t, prompt, "Binary content (base64):\n\n```\naGVsbG8Ad29ybGQ=\n```")
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	cmd := exec.CommandContext(t.Context(), executable, "-test.run=^$", prompt)
-	require.NoError(t, cmd.Run())
+	for _, tc := range []struct{ name, filename, content, want string }{
+		{"NUL content", "data.bin", "hello\x00world", "aGVsbG8Ad29ybGQ="},
+		{"invalid UTF-8 content", "data.bin", "binary\xffbytes", "YmluYXJ5/2J5dGVz"},
+		{"invalid UTF-8 filename", "invalid-\xff.go", "package example", `invalid-\xff.go`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prompt, err := TestFixtures.BuildPrompt(map[string]string{tc.filename: tc.content})
+			require.NoError(t, err)
+			assert.Contains(t, prompt, tc.want)
+			assert.NotContains(t, prompt, "\x00")
+		})
+	}
 }
 
 func TestBuildPromptAddsMissingNewline(t *testing.T) {

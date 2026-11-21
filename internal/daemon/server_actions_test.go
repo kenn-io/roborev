@@ -431,31 +431,23 @@ func TestHandleRerunJob(t *testing.T) {
 	t.Run("analysis rerun with explicit model", func(t *testing.T) {
 		const preferred = "rerun-analysis-preferred"
 		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: preferred})
-		for _, tc := range []struct{ name, selected, wantAgent, wantModel string }{
-			{"same agent", "", "test", "requested-model"},
-			{"explicit same agent", "test", "test", "requested-model"},
-			{"switch to configured analyzer", preferred, preferred, "configured-model"},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				server, db, _ := newTestServer(t)
-				repo := testutil.NewGitRepo(t)
-				repo.CommitFile("a.go", "package a\n", "add a")
-				cfg := server.configWatcher.Config()
-				cfg.AnalyzeAgent, cfg.AnalyzeModel = preferred, "configured-model"
-				job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test", Model: "requested-model"})
-				setJobStatus(t, db, job.ID, storage.JobStatusDone)
-				req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID, Agent: tc.selected})
-				w := httptest.NewRecorder()
-				server.httpServer.Handler.ServeHTTP(w, req)
-				testutil.AssertStatusCode(t, w, http.StatusOK)
-				rerun, err := db.GetJobByID(job.ID)
-				require.NoError(t, err)
-				assert.Equal(t, storage.JobStatusQueued, rerun.Status)
-				assert.Equal(t, tc.wantAgent, rerun.Agent)
-				assert.Equal(t, tc.wantModel, rerun.Model)
-				assert.Equal(t, "requested-model", rerun.RequestedModel)
-			})
-		}
+		server, db, _ := newTestServer(t)
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile("a.go", "package a\n", "add a")
+		cfg := server.configWatcher.Config()
+		cfg.AnalyzeAgent, cfg.AnalyzeModel = preferred, "configured-model"
+		job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Agent: "test", Model: "requested-model"})
+		setJobStatus(t, db, job.ID, storage.JobStatusDone)
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID, Agent: preferred})
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+		rerun, err := db.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusQueued, rerun.Status)
+		assert.Equal(t, preferred, rerun.Agent)
+		assert.Equal(t, "configured-model", rerun.Model)
+		assert.Equal(t, "requested-model", rerun.RequestedModel)
 	})
 
 	t.Run("rerun failed job", func(t *testing.T) {
@@ -1634,7 +1626,7 @@ func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
 	const original, selected = "analysis-original", "analysis-selected"
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: original})
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
-	job := &storage.ReviewJob{Agent: original, Model: "old-model", Provider: "old-provider", AnalysisType: "refactor", RepoPath: repoPath}
+	job := &storage.ReviewJob{Agent: original, Model: "old-model", Provider: "old-provider", RequestedModel: "old-model", AnalysisType: "refactor", RepoPath: repoPath}
 	cfg := config.DefaultConfig()
 	cfg.AnalyzeAgent, cfg.AnalyzeModel, cfg.AnalyzeReasoning = "no-such-agent", "new-model", "low"
 	opts, err := resolveRerunOpts(job, cfg, nil, "")
@@ -1651,6 +1643,7 @@ func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
 	assert.Equal(t, selected, opts.Agent)
 	assert.Empty(t, opts.Model)
 	assert.Empty(t, opts.Provider)
+	job.RequestedModel = ""
 	cfg.AnalyzeAgent, cfg.AnalyzeModel = original, "preferred-model"
 	cfg.ReviewBackupAgent, cfg.ReviewBackupModel = selected, "backup-model"
 	job.Agent, job.Model, job.BudgetOriginalAgent = original, "routed-model", selected

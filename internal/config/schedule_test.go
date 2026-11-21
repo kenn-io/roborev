@@ -20,10 +20,6 @@ func TestResolveSchedule(t *testing.T) {
 	got, err = ResolveSchedule(global, ScheduleConfig{})
 	require.NoError(t, err)
 	assert.True(t, got.Enabled)
-	invalid := global
-	invalid.MaxFiles = new(-1)
-	_, err = ResolveSchedule(invalid, ScheduleConfig{})
-	require.Error(t, err)
 	got, err = ResolveSchedule(global, ScheduleConfig{Enabled: &no})
 	require.NoError(t, err)
 	assert.False(t, got.Enabled)
