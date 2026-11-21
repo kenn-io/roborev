@@ -48,18 +48,19 @@ func TestRepoManagementWaitsForScheduledEnqueue(t *testing.T) {
 			testutil.ReceiveWithTimeout(t, ready, workerStartTimeout)
 			done := make(chan error, 1)
 			go func() {
-				if action == "merge" {
+				switch action {
+				case "merge":
 					input := &MergeReposInput{}
 					input.Body.SourceID, input.Body.TargetID = source.ID, target.ID
 					_, err := server.humaMergeRepos(t.Context(), input)
 					done <- err
-				} else if action == "delete" {
+				case "delete":
 					input := &DeleteRepoInput{}
 					input.Body.RepoID = source.ID
 					input.Body.Cascade = true
 					_, err := server.humaDeleteRepo(t.Context(), input)
 					done <- err
-				} else {
+				default:
 					input := &MoveRepoInput{}
 					input.Body.RepoID, input.Body.Path = source.ID, movedPath
 					_, err := server.humaMoveRepo(t.Context(), input)
@@ -93,13 +94,14 @@ func TestRepoManagementWaitsForScheduledEnqueue(t *testing.T) {
 			}
 			jobs, err := db.ListJobs("", "", 0, 0)
 			require.NoError(t, err)
-			if action == "merge" {
+			switch action {
+			case "merge":
 				require.Len(t, jobs, 1)
 				assert.Equal(t, target.ID, jobs[0].RepoID)
-			} else if action == "move" {
+			case "move":
 				require.Len(t, jobs, 1)
 				assert.Equal(t, source.ID, jobs[0].RepoID)
-			} else {
+			default:
 				assert.Empty(t, jobs)
 			}
 		})
