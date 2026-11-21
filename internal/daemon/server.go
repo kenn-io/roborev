@@ -1198,6 +1198,29 @@ func resolveRerunOpts(
 
 	workflow := workflowForJob(job.JobType, job.ReviewType)
 	selectedAgent = strings.TrimSpace(selectedAgent)
+	if job.AnalysisType != "" && rerunAgent != "" && (selectedAgent == "" || agent.CanonicalName(selectedAgent) == agent.CanonicalName(job.Agent)) {
+		repoCfg, err := config.LoadRepoConfig(resolutionPath)
+		if err != nil {
+			return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
+		}
+		workflow = analyze.Workflow(job.AnalysisType)
+		analysis, err := config.ResolveAnalyzeConfigFromConfig("", job.RequestedModel, job.Reasoning, repoCfg, cfg, job.AnalysisType, workflow, "")
+		if err != nil {
+			return storage.ReenqueueOpts{}, fmt.Errorf("resolve analysis config: %w", err)
+		}
+		resolution, err := agent.ResolveWorkflowConfigFromConfig(analysis.Agent, repoCfg, cfg, workflow, job.Reasoning)
+		if err != nil {
+			return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
+		}
+		if err := validateRerunAgent(resolutionPath, job.Agent, job.BackupAgent, cfg); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		model := resolution.ModelForSelectedAgent(job.Agent, job.RequestedModel)
+		if resolution.AgentMatches(job.Agent, resolution.PreferredAgent) && analysis.Model != "" {
+			model = analysis.Model
+		}
+		return storage.ReenqueueOpts{Agent: job.Agent, Model: model, Provider: job.RequestedProvider}, nil
+	}
 	if job.AnalysisType != "" && selectedAgent == "" {
 		if err := validateRerunAgent(resolutionPath, job.Agent, job.BackupAgent, cfg); err != nil {
 			return storage.ReenqueueOpts{}, err
@@ -3273,14 +3296,14 @@ func (s *Server) humaEnqueue(
 		}
 	}
 
-	var reasoning string
+	var reasoning, analysisModel string
 	if descriptor.analysisType != "" {
 		workflow = analyze.Workflow(req.AnalysisType)
 		resolved, resolveErr := config.ResolveAnalyzeConfigFromConfig(req.Agent, req.Model, req.Reasoning, repoCfg, cfg, req.AnalysisType, workflow, "")
 		if resolveErr != nil {
 			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: resolveErr.Error()})
 		}
-		req.Agent, requestedModel, reasoning = resolved.Agent, resolved.Model, resolved.Reasoning
+		req.Agent, analysisModel, reasoning = resolved.Agent, resolved.Model, resolved.Reasoning
 	} else if workflow == "fix" {
 		reasoning, err = config.ResolveFixReasoningFromConfig(req.Reasoning, repoCfg, cfg)
 	} else {
@@ -3329,6 +3352,7 @@ func (s *Server) humaEnqueue(
 		workflow:       workflow,
 		reasoning:      reasoning,
 		requestedModel: requestedModel,
+		analysisModel:  analysisModel,
 	})
 }
 
@@ -3363,6 +3387,7 @@ type singleAgentInputs struct {
 	workflow       string
 	reasoning      string
 	requestedModel string
+	analysisModel  string
 }
 
 type resolvedSingleAgent struct {
@@ -3451,9 +3476,13 @@ func (s *Server) resolveSingleAgent(
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, agentName, in.repoCfg, in.cfg,
 	)
+	model := resolution.ModelForSelectedAgent(agentName, in.requestedModel)
+	if in.descriptor.analysisType != "" && resolution.AgentMatches(agentName, resolution.PreferredAgent) && in.analysisModel != "" {
+		model = in.analysisModel
+	}
 	return resolvedSingleAgent{
 		Agent:       agentName,
-		Model:       resolution.ModelForSelectedAgent(agentName, in.requestedModel),
+		Model:       model,
 		BackupAgent: backupAgent,
 		BackupModel: backupModel,
 		Settings:    settings,

@@ -743,3 +743,36 @@ esac
 		})
 	}
 }
+
+func TestBudgetRoutingAnalysisRerunRestoresModel(t *testing.T) {
+	for _, selected := range []string{"", "codex"} {
+		t.Run("selected="+selected, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			cfg, now := configureUnpricedBudgetRouting(t, tc)
+			cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "analysis-model"
+			cfg.ReviewModel = "review-model"
+			cfg.DefaultBackupAgent, cfg.DefaultBackupModel = "gemini", "backup-model"
+			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: "refactor", Agent: "codex", Model: "analysis-model", Prompt: "analyze", AnalysisType: "refactor", JobType: storage.JobTypeTask})
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.Equal(t, job.ID, claimed.ID)
+			tc.Pool.processJob(testWorkerID, claimed)
+			done := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+			require.Equal(t, "gemini", done.Agent)
+			require.Equal(t, "backup-model", done.Model)
+			cfg.Budget.ReserveFloorCents = 20
+			tc.Pool.budgetRouter.now = func() time.Time { return now.AddDate(0, 0, 1) }
+			server := NewServer(tc.DB, cfg, "")
+			t.Cleanup(func() { require.NoError(t, server.Close()) })
+			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID, Agent: selected})
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			rerun, err := tc.DB.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "codex", rerun.Agent)
+			assert.Equal(t, "analysis-model", rerun.Model)
+		})
+	}
+}

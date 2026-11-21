@@ -1641,4 +1641,11 @@ func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
 	assert.Equal(t, selected, opts.Agent)
 	assert.Empty(t, opts.Model)
 	assert.Empty(t, opts.Provider)
+	cfg.AnalyzeAgent, cfg.AnalyzeModel = original, "preferred-model"
+	cfg.ReviewBackupAgent, cfg.ReviewBackupModel = selected, "backup-model"
+	job.Agent, job.Model, job.BudgetOriginalAgent = original, "routed-model", selected
+	opts, err = resolveRerunOpts(job, cfg, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, selected, opts.Agent)
+	assert.Equal(t, "backup-model", opts.Model)
 }

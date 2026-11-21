@@ -95,6 +95,7 @@ func TestEnqueueAnalysisMetadataThroughPrompt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test", stored.Agent)
 	assert.Equal(t, "analysis-model", stored.Model)
+	assert.Empty(t, stored.RequestedModel)
 	assert.Equal(t, "high", stored.Reasoning)
 
 	reviewJob := enqueueViaHTTP(t, server, EnqueueRequest{
@@ -119,4 +120,20 @@ func daemonJobIDs(jobs []storage.ReviewJob) []int64 {
 		ids = append(ids, job.ID)
 	}
 	return ids
+}
+
+func TestAnalysisEnqueueBackupPreservesExplicitModel(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	cfg := server.configWatcher.Config()
+	cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "analysis-model"
+	cfg.CodexCmd = "missing-codex-command"
+	cfg.ReviewBackupAgent, cfg.ReviewBackupModel = "test", "backup-model"
+	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "refactor", CustomPrompt: "analyze", AnalysisType: "refactor", Model: "explicit-model"})
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "test", stored.Agent)
+	assert.Equal(t, "explicit-model", stored.Model)
+	assert.Equal(t, "explicit-model", stored.RequestedModel)
 }

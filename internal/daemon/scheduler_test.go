@@ -640,3 +640,29 @@ func TestScheduledAnalysisRestartRespectsInterval(t *testing.T) {
 	require.Len(t, jobs, 3)
 	assert.Equal(t, []string{"c.go"}, jobs[0].AnalysisFiles)
 }
+
+func TestScheduledAnalysisUsesBackupAgentModel(t *testing.T) {
+	for _, backupModel := range []string{"backup-model", ""} {
+		t.Run("backup="+backupModel, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			repo.CommitFile("a.go", "package a\n", "add source")
+			registered, err := db.GetOrCreateRepo(repo.Path())
+			require.NoError(t, err)
+			cfg := server.configWatcher.Config()
+			yes, interval, budget := true, "1h", 1
+			cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+			cfg.AnalyzeAgent, cfg.AnalyzeModel = "codex", "primary-model"
+			cfg.CodexCmd = "missing-codex-command"
+			cfg.ReviewBackupAgent, cfg.ReviewBackupModel = "test", backupModel
+			watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+			watcher.poll(t.Context(), time.Now())
+			jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+			require.NoError(t, err)
+			require.Len(t, jobs, 1)
+			assert.Equal(t, "test", jobs[0].Agent)
+			assert.Equal(t, backupModel, jobs[0].Model)
+			assert.Empty(t, jobs[0].RequestedModel)
+		})
+	}
+}

@@ -142,7 +142,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	if err != nil {
 		return err
 	}
-	usable := make(map[string]config.AnalyzeConfig)
+	usable := make(map[string]bool)
 	var errs []error
 	for _, typ := range schedule.Types {
 		resolved, err := config.ResolveAnalyzeConfigFromConfig("", "", "", repoCfg, global, typ, analyze.Workflow(typ), "")
@@ -157,14 +157,14 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			continue
 		}
-		usable[typ] = resolved
+		usable[typ] = true
 		if err := w.markDue(ctx, repo, head, typ, candidates); err != nil {
 			return err
 		}
 	}
 	selected := selectCandidates(candidates, schedule.MaxFiles)
 	for _, typ := range schedule.Types {
-		resolved, ok := usable[typ]
+		_, ok := usable[typ]
 		if !ok {
 			continue
 		}
@@ -172,7 +172,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			return ctx.Err()
 		}
 		if names := dueNames(selected, typ); len(names) > 0 {
-			if err := w.enqueueType(ctx, repo, resolved, typ, names, head); err != nil {
+			if err := w.enqueueType(ctx, repo, typ, names, head); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
@@ -313,7 +313,7 @@ func dueNames(selected []*analysisCandidate, typ string) []string {
 	return names
 }
 
-func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, resolved config.AnalyzeConfig, typ string, names []string, head string) error {
+func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string) error {
 	files := make(map[string]string, len(names))
 	for _, name := range names {
 		content, err := git.ReadFile(repo.RootPath, head, name)
@@ -326,7 +326,7 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 	if err != nil {
 		return err
 	}
-	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
+	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
 	if err != nil {
 		return err
 	}

@@ -538,7 +538,7 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		GitRef:            label, // Use analysis type name as the TUI label
 		Branch:            branch,
 		Agent:             resolved.Agent,
-		Model:             resolved.Model,
+		Model:             opts.model,
 		Reasoning:         resolved.Reasoning,
 		ReviewType:        reviewType,
 		CustomPrompt:      prompt,
