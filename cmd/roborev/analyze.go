@@ -351,7 +351,7 @@ func runSingleAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemon
 		}
 		opts.analysisCommitSHA = ""
 	} else if opts.branch == "" {
-		opts.analysisCommitSHA = git.AnalysisCommitSHAForFiles(ctx, repoRoot, files)
+		opts.analysisCommitSHA = analysisCommitSHAForFiles(ctx, repoRoot, files)
 	}
 
 	// Enqueue the job
@@ -403,7 +403,7 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 	}
 
 	var jobInfos []AnalyzeJobInfo
-	var commitContext git.AnalysisCommitContext
+	var commitContext analysisCommitContext
 	commitContextReady := false
 
 	for i, fileName := range fileNames {
@@ -434,10 +434,10 @@ func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.Daemo
 		jobOpts := opts
 		if opts.branch == "" && !pathOnly {
 			if !commitContextReady {
-				commitContext = git.NewAnalysisCommitContext(ctx, repoRoot)
+				commitContext = analysisCommitContextForFiles(ctx, repoRoot)
 				commitContextReady = true
 			}
-			jobOpts.analysisCommitSHA = commitContext.SHAForFiles(repoRoot, singleFile)
+			jobOpts.analysisCommitSHA = commitContext.shaForFiles(repoRoot, singleFile)
 		}
 		if pathOnly {
 			jobOpts.analysisCommitSHA = ""
@@ -1036,6 +1036,48 @@ func normalizeAnalysisFileList(paths []string) []string {
 
 func normalizeAnalysisPath(path string) string {
 	return filepath.ToSlash(path)
+}
+
+type analysisCommitContext struct {
+	head  string
+	dirty map[string]struct{}
+}
+
+func analysisCommitContextForFiles(ctx context.Context, repoRoot string) analysisCommitContext {
+	head, err := gitrepo.Resolve(ctx, repoRoot, "HEAD")
+	if err != nil {
+		return analysisCommitContext{}
+	}
+	dirtyFiles, err := git.GetDirtyFilesChanged(repoRoot)
+	if err != nil {
+		return analysisCommitContext{}
+	}
+	dirty := make(map[string]struct{}, len(dirtyFiles))
+	for _, name := range dirtyFiles {
+		dirty[normalizeAnalysisPath(name)] = struct{}{}
+	}
+	return analysisCommitContext{head: head, dirty: dirty}
+}
+
+func (c analysisCommitContext) shaForFiles(repoRoot string, files map[string]string) string {
+	if c.head == "" || len(files) == 0 {
+		return ""
+	}
+	for name, content := range files {
+		path := normalizeAnalysisPath(name)
+		if _, ok := c.dirty[path]; ok {
+			return ""
+		}
+		headContent, err := git.ReadFile(repoRoot, c.head, path)
+		if err != nil || string(headContent) != content {
+			return ""
+		}
+	}
+	return c.head
+}
+
+func analysisCommitSHAForFiles(ctx context.Context, repoRoot string, files map[string]string) string {
+	return analysisCommitContextForFiles(ctx, repoRoot).shaForFiles(repoRoot, files)
 }
 
 // getBranchFiles discovers files changed on a branch and reads their contents.

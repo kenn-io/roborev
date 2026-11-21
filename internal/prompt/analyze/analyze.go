@@ -178,7 +178,7 @@ func (t AnalysisType) BuildPromptWithPaths(repoRoot string, filePaths []string) 
 
 	// List file paths for the agent to read
 	sb.WriteString("## Files to Analyze\n\n")
-	sb.WriteString("Please read the following files directly:\n\n")
+	sb.WriteString("The following files are too large to embed. Please read them directly:\n\n")
 	for _, path := range filePaths {
 		fmt.Fprintf(&sb, "- `%s`\n", path)
 	}

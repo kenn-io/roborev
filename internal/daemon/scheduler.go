@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -94,14 +92,26 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 	}
 	if !schedule.Enabled {
 		delete(w.lastRun, repo.ID)
-		return nil
+		return w.server.db.ClearAnalysisScheduleLastRun(ctx, repo.ID)
 	}
 	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
 }
 
 func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
-	if last := w.lastRun[repo.ID]; !last.IsZero() && now.Sub(last) < schedule.Interval {
+	last, loaded := w.lastRun[repo.ID]
+	if !loaded {
+		var err error
+		last, err = w.server.db.AnalysisScheduleLastRun(ctx, repo.ID)
+		if err != nil {
+			return err
+		}
+		w.lastRun[repo.ID] = last
+	}
+	if !last.IsZero() && now.Sub(last) < schedule.Interval {
 		return nil
+	}
+	if err := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); err != nil {
+		return err
 	}
 	w.lastRun[repo.ID] = now
 	return w.scheduleRepo(ctx, repo, repoCfg, global, schedule)
@@ -132,14 +142,6 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	if err != nil {
 		return err
 	}
-	dirtyPaths, err := git.GetDirtyFilesChanged(repo.RootPath)
-	if err != nil {
-		return err
-	}
-	dirty := make(map[string]bool, len(dirtyPaths))
-	for _, path := range dirtyPaths {
-		dirty[filepath.ToSlash(path)] = true
-	}
 	usable := make(map[string]config.AnalyzeConfig)
 	var errs []error
 	for _, typ := range schedule.Types {
@@ -156,7 +158,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			continue
 		}
 		usable[typ] = resolved
-		if err := w.markDue(ctx, repo, head, typ, candidates, dirty); err != nil {
+		if err := w.markDue(ctx, repo, head, typ, candidates); err != nil {
 			return err
 		}
 	}
@@ -209,7 +211,7 @@ func matchesSchedulePaths(patterns []string, path string) (bool, error) {
 }
 
 // markDue records which candidates need an analysis of the given type.
-func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate, dirty map[string]bool) error {
+func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) error {
 	jobs, err := w.server.db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{repo.ID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
 	if err != nil {
 		return err
@@ -248,7 +250,7 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 				changes[job.AnalysisCommitSHA] = changed
 			}
 			_, modified := changed.paths[path]
-			due = dirty[path] || changed.all || modified
+			due = changed.all || modified
 		}
 		if due {
 			candidate.due[typ] = true
@@ -314,25 +316,17 @@ func dueNames(selected []*analysisCandidate, typ string) []string {
 func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, resolved config.AnalyzeConfig, typ string, names []string, head string) error {
 	files := make(map[string]string, len(names))
 	for _, name := range names {
-		content, err := os.ReadFile(filepath.Join(repo.RootPath, name))
-		if errors.Is(err, os.ErrNotExist) {
-			content, err = git.ReadFile(repo.RootPath, head, name)
-		}
+		content, err := git.ReadFile(repo.RootPath, head, name)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
 		files[name] = string(content)
 	}
-	commit := git.NewAnalysisCommitContext(ctx, repo.RootPath)
-	sha := commit.SHAForFiles(repo.RootPath, files)
-	if sha != head {
-		sha = ""
-	}
 	prompt, err := analyze.GetType(typ).BuildPrompt(files)
 	if err != nil {
 		return err
 	}
-	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: sha, Source: storage.JobSourceScheduled}})
+	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
 	if err != nil {
 		return err
 	}

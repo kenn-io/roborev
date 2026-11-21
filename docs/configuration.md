@@ -702,12 +702,11 @@ descendants.
 
 Each run selects up to `max_files` distinct tracked files and queues jobs for
 each applicable type. Each job includes a snapshot of its selected files from
-the working tree. Binary contents that are not UTF-8 are encoded as base64.
+the selected commit. Binary contents that are not UTF-8 are encoded as base64.
 Files with no previous attempt come first, followed by those with the oldest
 attempt. Queued and running jobs suppress their files. A successful analysis
-counts as coverage of the commit only when its contents match that commit;
-otherwise the files remain due. A foreground review can cancel a running
-scheduled job when all workers are busy. Only enough jobs are canceled to serve
+counts as coverage of the selected commit. A foreground review can cancel a
+running scheduled job when all workers are busy. Only enough jobs are canceled to serve
 the waiting reviews. The canceled files remain due for a later run. The daemon
 reloads settings on its next 30-second check. Set `analyze_agent`,
 `analyze_model`, and `analyze_reasoning` globally or per repository to choose

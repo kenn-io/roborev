@@ -1208,6 +1208,13 @@ func resolveRerunOpts(
 				return storage.ReenqueueOpts{}, fmt.Errorf("resolve selected agent %q: %w", selectedAgent, err)
 			}
 			rerunAgent = agent.StorageNameFromConfig(agent.CanonicalName(selectedAgent), repoCfg, cfg)
+			if rerunAgent != job.Agent {
+				resolution, err := agent.ResolveWorkflowConfigFromConfig("", repoCfg, cfg, workflow, job.Reasoning)
+				if err != nil {
+					return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
+				}
+				return storage.ReenqueueOpts{Agent: rerunAgent, Model: resolution.ModelForSelectedAgent(rerunAgent, "")}, nil
+			}
 		} else if err := validateRerunAgent(resolutionPath, rerunAgent, job.BackupAgent, cfg); err != nil {
 			return storage.ReenqueueOpts{}, err
 		}

@@ -1618,3 +1618,21 @@ func TestHandleListCommentsJobIDParsing(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveAnalysisRerunAgentSettings(t *testing.T) {
+	repoPath := t.TempDir()
+	testutil.InitTestGitRepo(t, repoPath)
+	const original, selected = "analysis-original", "analysis-selected"
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: original})
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: selected})
+	job := &storage.ReviewJob{Agent: original, Model: "old-model", Provider: "old-provider", AnalysisType: "refactor", RepoPath: repoPath}
+	opts, err := resolveRerunOpts(job, config.DefaultConfig(), nil, original)
+	require.NoError(t, err)
+	assert.Equal(t, "old-model", opts.Model)
+	assert.Equal(t, "old-provider", opts.Provider)
+	opts, err = resolveRerunOpts(job, config.DefaultConfig(), nil, selected)
+	require.NoError(t, err)
+	assert.Equal(t, selected, opts.Agent)
+	assert.Empty(t, opts.Model)
+	assert.Empty(t, opts.Provider)
+}
