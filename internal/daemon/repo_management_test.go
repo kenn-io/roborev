@@ -47,9 +47,7 @@ func TestRepoManagementWaitsForScheduledEnqueue(t *testing.T) {
 			}()
 			testutil.ReceiveWithTimeout(t, ready, workerStartTimeout)
 			done := make(chan error, 1)
-			started := make(chan struct{})
 			go func() {
-				close(started)
 				if action == "merge" {
 					input := &MergeReposInput{}
 					input.Body.SourceID, input.Body.TargetID = source.ID, target.ID
@@ -68,7 +66,6 @@ func TestRepoManagementWaitsForScheduledEnqueue(t *testing.T) {
 					done <- err
 				}
 			}()
-			<-started
 			var early bool
 			select {
 			case err = <-done:

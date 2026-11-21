@@ -321,8 +321,8 @@ func buildTypePrompt(ctx context.Context, root, typ, head string, names []string
 	return analyze.GetType(typ).BuildPrompt(files)
 }
 
-// lockRegistered coordinates enqueue with repo deletion and merge so it cannot
-// recreate a repository removed after it was selected.
+// lockRegistered coordinates enqueue with repo deletion, merge, and move so it
+// cannot recreate a repository removed or moved after it was selected.
 func (w *analysisScheduler) lockRegistered(repo storage.Repo) (func(), error) {
 	w.server.scheduledRepoMu.Lock()
 	if registered, err := w.server.db.GetRepoByID(repo.ID); err != nil || registered.RootPath != repo.RootPath {

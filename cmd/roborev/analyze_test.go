@@ -654,7 +654,9 @@ func TestEnqueueAnalysisJobAppliesAnalyzeConfig(t *testing.T) {
 	repo.CommitFile("main.go", "package main", "initial")
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte(`
 [analyze.refactor]
+agent = "gemini"
 model = "type-model"
+reasoning = "low"
 `), 0o644))
 
 	var got daemon.EnqueueRequest
@@ -676,6 +678,8 @@ model = "type-model"
 
 	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", nil, analyzeOptions{})
 	require.NoError(t, err)
+	assert.Equal(t, "gemini", got.Agent)
+	assert.Equal(t, "low", got.Reasoning)
 	assert.Empty(t, got.Model)
 }
 
