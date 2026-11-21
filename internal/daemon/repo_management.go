@@ -144,6 +144,8 @@ func (s *Server) humaRenameRepo(_ context.Context, input *RenameRepoInput) (*Ren
 }
 
 func (s *Server) humaMoveRepo(_ context.Context, input *MoveRepoInput) (*struct{}, error) {
+	s.scheduledRepoMu.Lock()
+	defer s.scheduledRepoMu.Unlock()
 	if _, err := s.db.GetRepoByID(input.Body.RepoID); err != nil {
 		return nil, repoManagementError(err)
 	}

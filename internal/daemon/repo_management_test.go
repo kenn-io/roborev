@@ -18,8 +18,8 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestRepoRemovalWaitsForScheduledEnqueue(t *testing.T) {
-	for _, action := range []string{"merge", "delete"} {
+func TestRepoManagementWaitsForScheduledEnqueue(t *testing.T) {
+	for _, action := range []string{"merge", "delete", "move"} {
 		t.Run(action, func(t *testing.T) {
 			server, db, _ := newTestServer(t)
 			repo := testutil.NewGitRepo(t)
@@ -28,6 +28,7 @@ func TestRepoRemovalWaitsForScheduledEnqueue(t *testing.T) {
 			require.NoError(t, err)
 			target, err := db.GetOrCreateRepo(t.TempDir())
 			require.NoError(t, err)
+			movedPath := filepath.Join(t.TempDir(), "moved")
 			server.configWatcher.Config().AnalyzeAgent = "test"
 			ready, release := make(chan struct{}), make(chan struct{})
 			released := false
@@ -54,11 +55,16 @@ func TestRepoRemovalWaitsForScheduledEnqueue(t *testing.T) {
 					input.Body.SourceID, input.Body.TargetID = source.ID, target.ID
 					_, err := server.humaMergeRepos(t.Context(), input)
 					done <- err
-				} else {
+				} else if action == "delete" {
 					input := &DeleteRepoInput{}
 					input.Body.RepoID = source.ID
 					input.Body.Cascade = true
 					_, err := server.humaDeleteRepo(t.Context(), input)
+					done <- err
+				} else {
+					input := &MoveRepoInput{}
+					input.Body.RepoID, input.Body.Path = source.ID, movedPath
+					_, err := server.humaMoveRepo(t.Context(), input)
 					done <- err
 				}
 			}()
@@ -79,13 +85,23 @@ func TestRepoRemovalWaitsForScheduledEnqueue(t *testing.T) {
 			assert.False(t, early, "%s completed while scheduling held the registration lock", action)
 			repos, err := db.ListRepos()
 			require.NoError(t, err)
-			require.Len(t, repos, 1)
-			assert.Equal(t, target.ID, repos[0].ID)
+			if action == "move" {
+				require.Len(t, repos, 2)
+				moved, err := db.GetRepoByID(source.ID)
+				require.NoError(t, err)
+				assert.Equal(t, movedPath, moved.RootPath)
+			} else {
+				require.Len(t, repos, 1)
+				assert.Equal(t, target.ID, repos[0].ID)
+			}
 			jobs, err := db.ListJobs("", "", 0, 0)
 			require.NoError(t, err)
 			if action == "merge" {
 				require.Len(t, jobs, 1)
 				assert.Equal(t, target.ID, jobs[0].RepoID)
+			} else if action == "move" {
+				require.Len(t, jobs, 1)
+				assert.Equal(t, source.ID, jobs[0].RepoID)
 			} else {
 				assert.Empty(t, jobs)
 			}
