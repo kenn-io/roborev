@@ -39,6 +39,7 @@ import (
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/telemetry"
@@ -1196,6 +1197,22 @@ func resolveRerunOpts(
 	}
 
 	workflow := workflowForJob(job.JobType, job.ReviewType)
+	if job.AnalysisType != "" {
+		rerunAgent := job.Agent
+		if selectedAgent = strings.TrimSpace(selectedAgent); selectedAgent != "" {
+			repoCfg, err := config.LoadRepoConfig(resolutionPath)
+			if err != nil {
+				return storage.ReenqueueOpts{}, err
+			}
+			if _, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, selectedAgent, cfg); err != nil {
+				return storage.ReenqueueOpts{}, fmt.Errorf("resolve selected agent %q: %w", selectedAgent, err)
+			}
+			rerunAgent = agent.StorageNameFromConfig(agent.CanonicalName(selectedAgent), repoCfg, cfg)
+		} else if err := validateRerunAgent(resolutionPath, rerunAgent, job.BackupAgent, cfg); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		return storage.ReenqueueOpts{Agent: rerunAgent, Model: job.Model, Provider: job.Provider}, nil
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", resolutionPath, cfg, workflow, job.Reasoning,
 	)
@@ -3264,7 +3281,14 @@ func (s *Server) humaEnqueue(
 	}
 
 	var reasoning string
-	if workflow == "fix" {
+	if descriptor.analysisType != "" {
+		workflow = analyze.Workflow(req.AnalysisType)
+		resolved, resolveErr := config.ResolveAnalyzeConfigFromConfig(req.Agent, req.Model, req.Reasoning, repoCfg, cfg, req.AnalysisType, workflow, "")
+		if resolveErr != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: resolveErr.Error()})
+		}
+		req.Agent, requestedModel, reasoning = resolved.Agent, resolved.Model, resolved.Reasoning
+	} else if workflow == "fix" {
 		reasoning, err = config.ResolveFixReasoningFromConfig(req.Reasoning, repoCfg, cfg)
 	} else {
 		reasoning, err = config.ResolveReviewReasoningForTypeFromConfig(

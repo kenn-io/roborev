@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -197,7 +198,21 @@ func TestScheduledAnalysisPreservesDirtyContentsAndKeepsFileDue(t *testing.T) {
 	assert.Contains(t, jobs[0].Prompt, "package dirty")
 	assert.Empty(t, jobs[0].AnalysisCommitSHA)
 	repo.WriteFile("a.go", "package committed\n")
-	setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
+	captured := make(chan string, 1)
+	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "capture-scheduled-content", ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
+		captured <- prompt
+		return "done", nil
+	}})
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET agent = ? WHERE id = ?`, "capture-scheduled-content", jobs[0].ID)
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	server.workerPool.processJob(testWorkerID, claimed)
+	assert.Contains(t, testutil.ReceiveWithTimeout(t, captured, workerStartTimeout), "package dirty")
+	completed, err := db.GetJobByID(claimed.ID)
+	require.NoError(t, err)
+	require.Equal(t, storage.JobStatusDone, completed.Status)
 	watcher.poll(t.Context(), now.Add(time.Hour))
 	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
 	require.NoError(t, err)
@@ -235,4 +250,54 @@ func TestScheduledAnalysisFailedTypeDoesNotStarveOtherFiles(t *testing.T) {
 	for _, job := range jobs {
 		assert.Equal(t, []string{"b.go"}, job.AnalysisFiles, "failed analysis of a.go must not block b.go")
 	}
+}
+
+func TestScheduledAnalysisKeepsNonUTF8Filename(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fixture requires a filesystem that accepts arbitrary filename bytes")
+	}
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	name := "invalid-\xff.go"
+	repo.CommitFile(name, "package example\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval, budget := true, "1h", 1
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+	server.configWatcher.Config().AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	schedule, err := config.ResolveSchedule(server.configWatcher.Config().Schedule, config.ScheduleConfig{})
+	require.NoError(t, err)
+	require.NoError(t, watcher.scheduleRepo(t.Context(), *registered, &config.RepoConfig{}, server.configWatcher.Config(), schedule))
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}), storage.WithAnalysisFile(name))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{name}, jobs[0].AnalysisFiles)
+	assert.Contains(t, jobs[0].Prompt, `invalid-\xff.go`)
+	assert.Contains(t, jobs[0].Prompt, "package example")
+}
+
+func TestScheduledAnalysisDetectsDirtyEditAfterCommittedCoverage(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package committed\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval, budget := true, "1h", 1
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+	server.configWatcher.Config().AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	now := time.Now()
+	watcher.poll(t.Context(), now)
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
+	repo.WriteFile("a.go", "package dirty\n")
+	watcher.poll(t.Context(), now.Add(time.Hour))
+	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Contains(t, jobs[0].Prompt, "package dirty")
+	assert.Empty(t, jobs[0].AnalysisCommitSHA)
 }

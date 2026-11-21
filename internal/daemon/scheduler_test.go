@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -151,7 +150,7 @@ func TestScheduledAnalysisOldestBaselineFirst(t *testing.T) {
 func TestScheduledAnalysisTrackedFilesAndDirectories(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
-	repo.CommitFiles(map[string]string{"Dockerfile": "FROM scratch\n", "Makefile": "all:\n", "internal/a.go": "package a\n", "internal/data.bin": "binary\x00bytes"}, "add files")
+	repo.CommitFiles(map[string]string{"Dockerfile": "FROM scratch\n", "Makefile": "all:\n", "internal/a.go": "package a\n", "internal/data.bin": "binary\xffbytes"}, "add files")
 	registered, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
 	yes, interval, budget := true, "1h", 10
@@ -163,6 +162,7 @@ func TestScheduledAnalysisTrackedFilesAndDirectories(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.ElementsMatch(t, []string{"Dockerfile", "Makefile", "internal/a.go", "internal/data.bin"}, jobs[0].AnalysisFiles)
+	assert.Contains(t, jobs[0].Prompt, "YmluYXJ5/2J5dGVz")
 	setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
 	server.configWatcher.Config().Schedule.Paths = []string{"internal/"}
 	repo.CommitFiles(map[string]string{"internal/a.go": "package changed\n", "Dockerfile": "FROM other\n"}, "change files")
@@ -330,45 +330,6 @@ func TestScheduledAnalysisRetriesPartialEnqueue(t *testing.T) {
 	assert.Equal(t, "refactor", jobs[1].AnalysisType)
 	assert.Equal(t, []string{"a.go", "b.go"}, jobs[0].AnalysisFiles)
 	assert.Equal(t, []string{"a.go", "b.go"}, jobs[1].AnalysisFiles)
-}
-
-func TestScheduledAnalysisDoesNotReadBlobs(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell wrapper")
-	}
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFiles(map[string]string{"a.txt": "unchanged", "b.bin": "\x00binary", "c.txt": "old"}, "add files")
-	registered, err := db.GetOrCreateRepo(repo.Path())
-	require.NoError(t, err)
-	yes, interval, budget := true, "1h", 10
-	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
-	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("[schedule]\nenabled = true\n[analyze.refactor]\nagent = 'test'\n"), 0o644))
-	realGit, err := exec.LookPath("git")
-	require.NoError(t, err)
-	dir, logPath := t.TempDir(), filepath.Join(t.TempDir(), "reads")
-	wrapper := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in cat-file|show|hash-object) echo \"$*\" >> %q;; esac\nexec %q \"$@\"\n", logPath, realGit)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "git"), []byte(wrapper), 0o755))
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	require.NoError(t, os.WriteFile(logPath, nil, 0o644))
-	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-	now := time.Now()
-	watcher.poll(t.Context(), now)
-	reads, err := os.ReadFile(logPath)
-	require.NoError(t, err)
-	assert.Empty(t, reads)
-	jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	for _, job := range jobs {
-		setJobStatus(t, db, job.ID, storage.JobStatusDone)
-	}
-	repo.CommitFile("c.txt", "new", "change text")
-	require.NoError(t, os.WriteFile(logPath, nil, 0o644))
-	watcher.poll(t.Context(), now.Add(time.Hour))
-	reads, err = os.ReadFile(logPath)
-	require.NoError(t, err)
-	assert.Empty(t, reads)
 }
 
 func TestScheduledAnalysisShutdown(t *testing.T) {

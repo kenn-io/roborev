@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -83,9 +81,12 @@ func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 }
 
 func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, global *config.Config, now time.Time) error {
-	repoCfg, err := loadScheduledRepoConfig(repo.RootPath)
+	repoCfg, err := config.LoadRepoConfig(repo.RootPath)
 	if err != nil {
 		return err
+	}
+	if repoCfg == nil {
+		repoCfg = &config.RepoConfig{}
 	}
 	schedule, err := config.ResolveSchedule(global.Schedule, repoCfg.Schedule)
 	if err != nil {
@@ -96,28 +97,6 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 		return nil
 	}
 	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
-}
-
-// loadScheduledRepoConfig skips config lookup, including Git-root discovery,
-// for paths that have neither a local config nor a .git entry.
-func loadScheduledRepoConfig(root string) (*config.RepoConfig, error) {
-	if !hasRepoMarker(root) {
-		return &config.RepoConfig{}, nil
-	}
-	cfg, err := config.LoadRepoConfig(root)
-	if err == nil && cfg == nil {
-		cfg = &config.RepoConfig{}
-	}
-	return cfg, err
-}
-
-func hasRepoMarker(root string) bool {
-	for _, name := range []string{".roborev.toml", ".git"} {
-		if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, fs.ErrNotExist) {
-			return true
-		}
-	}
-	return false
 }
 
 func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
@@ -134,9 +113,10 @@ type changeSet struct {
 }
 
 type analysisCandidate struct {
-	path   string
-	due    map[string]bool
-	oldest time.Time
+	path     string
+	due      map[string]bool
+	oldest   time.Time
+	oldestID int64
 }
 
 func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) error {
@@ -152,7 +132,15 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	if err != nil {
 		return err
 	}
-	var usable []string
+	dirtyPaths, err := git.GetDirtyFilesChanged(repo.RootPath)
+	if err != nil {
+		return err
+	}
+	dirty := make(map[string]bool, len(dirtyPaths))
+	for _, path := range dirtyPaths {
+		dirty[filepath.ToSlash(path)] = true
+	}
+	usable := make(map[string]config.AnalyzeConfig)
 	var errs []error
 	for _, typ := range schedule.Types {
 		resolved, err := config.ResolveAnalyzeConfigFromConfig("", "", "", repoCfg, global, typ, analyze.Workflow(typ), "")
@@ -167,18 +155,22 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			continue
 		}
-		usable = append(usable, typ)
-		if err := w.markDue(ctx, repo, head, typ, candidates); err != nil {
+		usable[typ] = resolved
+		if err := w.markDue(ctx, repo, head, typ, candidates, dirty); err != nil {
 			return err
 		}
 	}
 	selected := selectCandidates(candidates, schedule.MaxFiles)
-	for _, typ := range usable {
+	for _, typ := range schedule.Types {
+		resolved, ok := usable[typ]
+		if !ok {
+			continue
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if names := dueNames(selected, typ); len(names) > 0 {
-			if err := w.enqueueType(ctx, repo, repoCfg, global, typ, names, head); err != nil {
+			if err := w.enqueueType(ctx, repo, resolved, typ, names, head); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
@@ -189,9 +181,6 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 func scheduleCandidates(paths, patterns []string) (map[string]*analysisCandidate, error) {
 	candidates := map[string]*analysisCandidate{}
 	for _, path := range paths {
-		if !utf8.ValidString(path) {
-			continue
-		}
 		matched, err := matchesSchedulePaths(patterns, path)
 		if err != nil {
 			return nil, err
@@ -220,15 +209,19 @@ func matchesSchedulePaths(patterns []string, path string) (bool, error) {
 }
 
 // markDue records which candidates need an analysis of the given type.
-func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) error {
+func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate, dirty map[string]bool) error {
 	jobs, err := w.server.db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{repo.ID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
 	if err != nil {
 		return err
 	}
 	pending := map[string]bool{}
 	baseline := map[string]storage.ReviewJob{}
+	attempts := map[string]storage.ReviewJob{}
 	for _, job := range jobs {
 		for _, path := range job.AnalysisFiles {
+			if _, ok := attempts[path]; !ok {
+				attempts[path] = job
+			}
 			if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
 				pending[path] = true
 			}
@@ -255,14 +248,13 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 				changes[job.AnalysisCommitSHA] = changed
 			}
 			_, modified := changed.paths[path]
-			due = changed.all || modified
+			due = dirty[path] || changed.all || modified
 		}
 		if due {
 			candidate.due[typ] = true
-			if !ok {
-				candidate.oldest = time.Time{}
-			} else if len(candidate.due) == 1 || (!candidate.oldest.IsZero() && job.EnqueuedAt.Before(candidate.oldest)) {
-				candidate.oldest = job.EnqueuedAt
+			attempt := attempts[path]
+			if len(candidate.due) == 1 || attempt.EnqueuedAt.Before(candidate.oldest) || (attempt.EnqueuedAt.Equal(candidate.oldest) && attempt.ID < candidate.oldestID) {
+				candidate.oldest, candidate.oldestID = attempt.EnqueuedAt, attempt.ID
 			}
 		}
 	}
@@ -296,6 +288,9 @@ func selectCandidates(candidates map[string]*analysisCandidate, limit int) []*an
 	}
 	sort.Slice(selected, func(i, j int) bool {
 		if selected[i].oldest.Equal(selected[j].oldest) {
+			if selected[i].oldestID != selected[j].oldestID {
+				return selected[i].oldestID < selected[j].oldestID
+			}
 			return selected[i].path < selected[j].path
 		}
 		return selected[i].oldest.Before(selected[j].oldest)
@@ -316,16 +311,25 @@ func dueNames(selected []*analysisCandidate, typ string) []string {
 	return names
 }
 
-func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, typ string, names []string, head string) error {
-	resolved, err := config.ResolveAnalyzeConfigFromConfig("", "", "", repoCfg, global, typ, analyze.Workflow(typ), "")
+func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, resolved config.AnalyzeConfig, typ string, names []string, head string) error {
+	files := make(map[string]string, len(names))
+	for _, name := range names {
+		content, err := os.ReadFile(filepath.Join(repo.RootPath, name))
+		if err != nil {
+			return fmt.Errorf("read %s: %w", name, err)
+		}
+		files[name] = string(content)
+	}
+	commit := git.NewAnalysisCommitContext(ctx, repo.RootPath)
+	sha := commit.SHAForFiles(repo.RootPath, files)
+	if sha != head {
+		sha = ""
+	}
+	prompt, err := analyze.GetType(typ).BuildPrompt(files)
 	if err != nil {
 		return err
 	}
-	prompt, err := analyze.GetType(typ).BuildPromptWithPaths(".", names)
-	if err != nil {
-		return err
-	}
-	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
+	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, Agent: resolved.Agent, Model: resolved.Model, Reasoning: resolved.Reasoning, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: sha, Source: storage.JobSourceScheduled}})
 	if err != nil {
 		return err
 	}

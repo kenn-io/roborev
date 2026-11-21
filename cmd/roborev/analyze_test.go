@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/prompt/analyze"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -523,14 +524,14 @@ func TestEnqueueAnalysisJobRecordsMetadata(t *testing.T) {
 
 	repo := newTestGitRepo(t)
 	sha := repo.CommitFile("a.go", "package a\n", "add a")
-	assert.Equal(t, sha, analysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
+	assert.Equal(t, sha, git.AnalysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
 		"a.go": "package a\n",
 	}))
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, "a.go"), []byte("dirty\n"), 0o644))
-	assert.Empty(t, analysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
+	assert.Empty(t, git.AnalysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
 		"a.go": "dirty\n",
 	}))
-	assert.Empty(t, analysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
+	assert.Empty(t, git.AnalysisCommitSHAForFiles(t.Context(), repo.Dir, map[string]string{
 		"untracked.go": "package untracked\n",
 	}))
 }

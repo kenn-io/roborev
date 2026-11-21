@@ -3,9 +3,12 @@ package analyze
 
 import (
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 //go:embed *.txt
@@ -113,13 +116,30 @@ func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 	sb.WriteString("## Analysis Request\n\n")
 	fmt.Fprintf(&sb, "**Type:** %s\n", t.Name)
 	fmt.Fprintf(&sb, "**Description:** %s\n", t.Description)
-	fmt.Fprintf(&sb, "**Files:** %s\n\n", strings.Join(fileNames, ", "))
+	displayNames := make([]string, len(fileNames))
+	for i, name := range fileNames {
+		displayNames[i] = name
+		if !utf8.ValidString(name) {
+			displayNames[i] = strconv.QuoteToASCII(name)
+		}
+	}
+	fmt.Fprintf(&sb, "**Files:** %s\n\n", strings.Join(displayNames, ", "))
 
 	// Write file contents in sorted order
 	sb.WriteString("## Files to Analyze\n\n")
 	for _, name := range fileNames {
 		content := files[name]
-		fmt.Fprintf(&sb, "### %s\n\n", name)
+		display := name
+		if !utf8.ValidString(display) {
+			display = strconv.QuoteToASCII(name)
+		}
+		fmt.Fprintf(&sb, "### %s\n\n", display)
+		if !utf8.ValidString(content) {
+			sb.WriteString("Binary content (base64):\n\n```\n")
+			sb.WriteString(base64.StdEncoding.EncodeToString([]byte(content)))
+			sb.WriteString("\n```\n\n")
+			continue
+		}
 		sb.WriteString("```\n")
 		sb.WriteString(content)
 		if !strings.HasSuffix(content, "\n") {
@@ -178,6 +198,9 @@ func BuildOutputPrefix(analysisType string, filePaths []string) string {
 	fmt.Fprintf(&sb, "## %s Analysis\n\n", analysisType)
 	sb.WriteString("**Files:**\n")
 	for _, path := range filePaths {
+		if !utf8.ValidString(path) {
+			path = strconv.QuoteToASCII(path)
+		}
 		fmt.Fprintf(&sb, "- %s\n", path)
 	}
 	sb.WriteString("\n---\n\n")

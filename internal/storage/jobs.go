@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	stdjson "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 	"uuid"
 
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -297,7 +298,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 	if err != nil {
 		return nil, err
 	}
-	analysisFilesJSON, err := encodeFileList(opts.AnalysisFiles)
+	analysisFilesJSON, err := encodeAnalysisFiles(opts.AnalysisFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -2135,6 +2136,22 @@ func WithAnalysisType(analysisType string) ListJobsOption {
 	return func(o *listJobsOptions) { o.analysisType = analysisType }
 }
 
+// analysisFileCondition matches exact membership in a well-formed file list.
+// Entries are plain strings or rawFileEntry objects for non-UTF-8 paths.
+const analysisFileCondition = `
+	CASE WHEN json_valid(j.analysis_files) THEN json_type(j.analysis_files) ELSE '' END = 'array'
+	AND NOT EXISTS (
+		SELECT 1
+		FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
+		WHERE analysis_file.type NOT IN ('text', 'object')
+	)
+	AND EXISTS (
+		SELECT 1
+		FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
+		WHERE (analysis_file.type = 'text' AND analysis_file.value = ?)
+		   OR (analysis_file.type = 'object' AND json_extract(analysis_file.value, '$.bytes') = ?)
+	)`
+
 // WithAnalysisFile filters jobs by exact membership in the recorded file list.
 func WithAnalysisFile(file string) ListJobsOption {
 	return func(o *listJobsOptions) {
@@ -2357,19 +2374,8 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 		args = append(args, o.analysisType)
 	}
 	for _, analysisFile := range o.analysisFiles {
-		conditions = append(conditions, `
-			CASE WHEN json_valid(j.analysis_files) THEN json_type(j.analysis_files) ELSE '' END = 'array'
-			AND NOT EXISTS (
-				SELECT 1
-			FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
-				WHERE analysis_file.type <> 'text'
-			)
-			AND EXISTS (
-				SELECT 1
-				FROM json_each(CASE WHEN json_valid(j.analysis_files) THEN j.analysis_files ELSE '[]' END) AS analysis_file
-				WHERE analysis_file.type = 'text' AND analysis_file.value = ?
-			)`)
-		args = append(args, analysisFile)
+		conditions = append(conditions, analysisFileCondition)
+		args = append(args, analysisFile, base64.StdEncoding.EncodeToString([]byte(analysisFile)))
 	}
 	if o.branchEmpty {
 		conditions = append(conditions, emptyBranchCondition)
@@ -3458,6 +3464,46 @@ func decodeDirtyFiles(data string) []string {
 	return decodeFileList(data)
 }
 
+// rawFileEntry stores a path that is not valid UTF-8, which JSON strings
+// cannot carry. Valid paths stay plain strings so older rows keep their format.
+type rawFileEntry struct {
+	Bytes string `json:"bytes"`
+}
+
+func encodeAnalysisFiles(files []string) (string, error) {
+	entries := make([]any, len(files))
+	for i, file := range files {
+		entries[i] = file
+		if !utf8.ValidString(file) {
+			entries[i] = rawFileEntry{Bytes: base64.StdEncoding.EncodeToString([]byte(file))}
+		}
+	}
+	if len(entries) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return "", fmt.Errorf("encode analysis files: %w", err)
+	}
+	return string(data), nil
+}
+
+// decodeFileEntry rejects null, which would otherwise decode as an empty path.
+func decodeFileEntry(value stdjson.RawMessage, out *string) bool {
+	var file *string
+	if stdjson.Unmarshal(value, &file) == nil && file != nil {
+		*out = *file
+		return true
+	}
+	var raw rawFileEntry
+	if stdjson.Unmarshal(value, &raw) != nil || raw.Bytes == "" {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw.Bytes)
+	*out = string(decoded)
+	return err == nil
+}
+
 func decodeFileList(data string) []string {
 	if data == "" {
 		return nil
@@ -3468,7 +3514,7 @@ func decodeFileList(data string) []string {
 	}
 	files := make([]string, len(values))
 	for i, value := range values {
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || stdjson.Unmarshal(value, &files[i]) != nil {
+		if !decodeFileEntry(value, &files[i]) {
 			return nil
 		}
 	}

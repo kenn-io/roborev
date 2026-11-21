@@ -700,17 +700,20 @@ list includes all tracked regular files, including binary files. Patterns use
 repository-relative paths; a trailing `/` includes the directory and its
 descendants.
 
-Each run selects up to `max_files` distinct committed files and queues jobs for
-each applicable type, one job containing its selected paths. Files with no
-successful analysis come first, followed by those with the oldest analysis.
-Queued and running jobs suppress their files. Only changed files are analyzed
-again. A foreground review can cancel a running scheduled job when all workers
-are busy. Only enough jobs are canceled to serve the waiting reviews. The
-canceled files remain due for a later run. The daemon reloads settings on its
-next 30-second check. Set `analyze_agent`, `analyze_model`, and
-`analyze_reasoning` globally or per repository to choose the analysis agent,
-model, and reasoning. Per-type `[analyze.<type>]` settings take precedence
-within each scope; repository settings take precedence over global settings.
+Each run selects up to `max_files` distinct tracked files and queues jobs for
+each applicable type. Each job includes a snapshot of its selected files from
+the working tree. Binary contents that are not UTF-8 are encoded as base64.
+Files with no previous attempt come first, followed by those with the oldest
+attempt. Queued and running jobs suppress their files. A successful analysis
+counts as coverage of the commit only when its contents match that commit;
+otherwise the files remain due. A foreground review can cancel a running
+scheduled job when all workers are busy. Only enough jobs are canceled to serve
+the waiting reviews. The canceled files remain due for a later run. The daemon
+reloads settings on its next 30-second check. Set `analyze_agent`,
+`analyze_model`, and `analyze_reasoning` globally or per repository to choose
+the analysis agent, model, and reasoning. Per-type `[analyze.<type>]` settings
+take precedence within each scope; repository settings take precedence over
+global settings.
 
 ### Binary Evidence
 
