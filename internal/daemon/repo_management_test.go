@@ -87,7 +87,7 @@ func TestRepoManagementWaitsForScheduledEnqueue(t *testing.T) {
 				require.Len(t, repos, 2)
 				moved, err := db.GetRepoByID(source.ID)
 				require.NoError(t, err)
-				assert.Equal(t, movedPath, moved.RootPath)
+				assert.Equal(t, filepath.ToSlash(movedPath), moved.RootPath)
 			} else {
 				require.Len(t, repos, 1)
 				assert.Equal(t, target.ID, repos[0].ID)

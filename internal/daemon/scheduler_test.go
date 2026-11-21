@@ -95,7 +95,7 @@ func TestScheduledAnalysisMovedRepo(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, repos, 1)
 	assert.Equal(t, registered.ID, repos[0].ID)
-	assert.Equal(t, moved, repos[0].RootPath)
+	assert.Equal(t, filepath.ToSlash(moved), repos[0].RootPath)
 }
 
 func TestScheduledAnalysisInvalidRepoDoesNotBlockOtherRepos(t *testing.T) {
