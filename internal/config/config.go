@@ -1212,6 +1212,7 @@ func applyDaemonSections(c *Config) []error {
 				validateCIPRFilters(c.CI),
 			)
 		}},
+		{"schedule", c.Schedule.Validate},
 		{"search", func() error { return validateSearchConfig(c.Search) }},
 		{"remote", func() error { return validateRemoteConfig(c.Remote) }},
 		{"web", func() error { return normalizeWebConfig(&c.Web, c.AuthKey) }},
