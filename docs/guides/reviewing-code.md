@@ -18,6 +18,10 @@ including known legitimate behavior to preserve. For example, a cross-tenant
 invoice read should be rejected while the caller can still read their own
 invoices.
 
+The default reviewer ties the problem to the change or to a specific requirement
+in the PR description or commit messages. The fix describes the smallest
+complete correction that preserves the surrounding behavior.
+
 When known, a finding can suggest an observation or regression check that
 distinguishes incorrect from correct behavior. These suggestions are optional; a
 proposed test is not a claim that it ran. Findings should state uncertainty and
