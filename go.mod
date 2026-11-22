@@ -43,7 +43,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/yuin/goldmark/v2 v2.1.15
 	gitlab.com/gitlab-org/api/client-go/v3 v3.40.0
-	go.kenn.io/kit v0.55.0
+	go.kenn.io/kit v0.58.1
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.63.0
 	golang.org/x/sync v0.25.0
