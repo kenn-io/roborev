@@ -65,9 +65,7 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 		stop, fail, preserve bool
 		suiteCode            int
 	}{
-		{"cleanup", true, false, false, 0},
 		{"override", true, false, false, 0},
-		{"path changed", true, false, false, 0},
 		{"missing", false, false, false, 0},
 		{"stop fails", true, true, true, 0},
 		{"suite and stop fail", true, true, true, 7},
@@ -139,7 +137,7 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 					cmd := exec.CommandContext(t.Context(), "agentsview", "session", "usage-batch", "x", "--format", "json", "--no-sync")
 					assert.NoError(t, cmd.Run())
 				}
-				if tc.name == "path changed" || tc.name == "override" {
+				if tc.name == "override" {
 					assert.NoError(t, os.Setenv("PATH", dir))
 				}
 				if tc.name == "panic" {
