@@ -98,7 +98,11 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	cleanup := func() { _ = os.RemoveAll(home) }
 	if s.LogDir != "" {
 		job.WritePaths = append(append([]string{}, job.WritePaths...), home)
-		cleanup = func() {}
+		cleanup = func() {
+			if _, err := os.Stat(filepath.Join(home, "sessions")); os.IsNotExist(err) {
+				_ = os.RemoveAll(home)
+			}
+		}
 	}
 	const provider = `[model_providers.roborev-route]
 name = "roborev-route"

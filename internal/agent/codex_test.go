@@ -1345,15 +1345,24 @@ func TestCodexSandboxLogDir(t *testing.T) {
 		})
 	}
 	var homes []string
-	for range 2 {
+	for i := range 2 {
 		job, cleanup, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}, LogDir: logs, Label: "nested/job"}).prepare(work)
 		require.NoError(t, err)
 		require.Len(t, job.WritePaths, 1)
 		home := job.WritePaths[0]
 		assert.Equal(t, filepath.Join(logs, "nested", "job"), filepath.Dir(home))
 		assert.Contains(t, job.Env, "CODEX_HOME="+home)
+		if i == 0 {
+			sessions := filepath.Join(home, "sessions")
+			require.NoError(t, os.Mkdir(sessions, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(sessions, "rollout.jsonl"), []byte("session"), 0o600))
+		}
 		cleanup()
-		assert.DirExists(t, home)
+		if i == 0 {
+			assert.FileExists(t, filepath.Join(home, "sessions", "rollout.jsonl"))
+		} else {
+			assert.NoDirExists(t, home)
+		}
 		homes = append(homes, home)
 	}
 	assert.NotEqual(t, homes[0], homes[1])
