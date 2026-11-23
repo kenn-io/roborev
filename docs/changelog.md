@@ -7,13 +7,34 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+## 0.76.0
+
+<small>2026-11-22</small>
+
+Exported reviews now include their source and exporting machine. You can review
+commits on the default branch, set up agent hooks with one command, and run
+review panels through the daemon API. The CI poller can check findings before
+posting them.
+
 **Upgrade notes**
 
 - Back up the database before you upgrade. This release adds five SQLite
-    migrations (schema versions 15 through 19), and an older release refuses to
-    open the upgraded database. To roll back, you need a copy made before the
-    upgrade: stop the daemon with `roborev daemon stop`, then back up its data
-    directory (`~/.roborev` or `$ROBOREV_DATA_DIR`).
+    migrations (schema versions 15 through 19). Releases 0.72.0 through 0.75.x
+    refuse to open the upgraded database, and releases before 0.72.0 do not
+    check the schema version and may try to use it. Before the upgrade, stop the
+    daemon with `roborev daemon stop` and back up its data directory
+    (`~/.roborev` or `$ROBOREV_DATA_DIR`). To roll back, restore that backup
+    before running an older version.
+- Upgrade every machine that shares a PostgreSQL mirror before restarting any of
+    them. This release advances the mirror schema from version 24 to 25, which
+    older releases refuse. If a CI host on the mirror runs the findings checker,
+    older releases also stop pulling reviews and comments at the first checked
+    review. To roll back, stop every daemon that uses the mirror, restore the
+    local and mirror backups made before the upgrade, then start the older
+    release. Restoring the mirror backup discards writes made to the mirror
+    after that backup. See
+    [Upgrading to 0.76.0](/docs/installation/#upgrading-to-0760) for the stop,
+    update, start, and rollback steps.
 - Merge gates and scripts that read review verdicts must handle `skipped`. A
     review with nothing to review, such as an empty commit or a commit whose
     changed files are all excluded, now ends as `skipped` with no verdict
@@ -30,12 +51,26 @@ All notable changes to roborev, grouped by minor release.
     limit of 60 unauthenticated requests per hour.
 - Source builds need Go 1.27.4 or newer, which fixes
     [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859).
-- If a CI host runs the findings checker and shares a PostgreSQL mirror, upgrade
-    the other machines on that mirror before or with it. Older releases stop
-    pulling at the first checked review; see the CI checker entry below.
 
 **New features**
 
+- Keep analysis findings current with scheduled analysis. With
+    `[schedule] enabled = true`, an interval, analysis types, and `max_files` in
+    global or repository config, the daemon analyzes up to `max_files` tracked
+    files per run, starting with files that have no previous attempt. A waiting
+    review can cancel a running scheduled job when all workers are busy. See
+    [Scheduled analysis](/docs/configuration/#scheduled-analysis).
+- The browser review list shows each completed review's finding counts, as in
+    `2/1/0` for critical and high, medium, and low, and can sort by them. Its
+    search box matches the start of a ref, any part of a branch name, and CI
+    reviews of a pull request number such as `123`, `#123`, or `PR 123`. See
+    [Reviews Workspace](/docs/web-ui/#reviews-workspace).
+- Limit the memory of a review's agent processes with `agent_memory_max_mb`.
+    When their resident memory, added together, exceeds the limit, the daemon
+    stops them and fails the job without retry. The limit is off by default,
+    works on Linux and macOS, and is checked every 2 seconds, so a job can
+    overshoot between checks. See
+    [Global Options](/docs/configuration/#global-options).
 - Browser tabs distinguish the review list, open reviews, and Analytics.
 - Review commits that land on the default branch. With global
     `[ci] review_default_branch = true`, the CI poller reviews each new
@@ -98,8 +133,8 @@ All notable changes to roborev, grouped by minor release.
     reject these documents: a machine on an older release that shares a
     PostgreSQL mirror with a checking CI host stops pulling reviews and comments
     at the first checked review, and Go programs that decode documents with an
-    older `pkg/structuredreview` fail on them. Upgrade those machines and
-    programs before or with the CI host.
+    older `pkg/structuredreview` fail on them. Upgrade those programs before or
+    with the CI host; see the upgrade notes for shared mirrors.
 
 **Improvements**
 
@@ -145,6 +180,7 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
+- TUI text wrapping no longer splits emoji across lines.
 - Usage telemetry is off unless you have opted in or set `TELEMETRY_ENABLED=1`.
 - Stop CI reviews from running hooks, MCP servers, and plugins that a pull
     request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
@@ -194,6 +230,46 @@ All notable changes to roborev, grouped by minor release.
     macOS; raise `hook_timeout_seconds` if hooks time out.
 - The generated Go client's `Validate` accepts review findings whose `location`
     is `null`, as the API documents.
+
+**Acknowledgements**
+
+Thanks to everyone who contributed to this release:
+
+- [Marius van Niekerk](https://github.com/mariusvniekerk) added search by
+    branch, ref, and pull request, and improved read-only Codex reviews and CI
+    handling in [roborev#1835](https://github.com/kenn-io/roborev/pull/1835),
+    [roborev#1838](https://github.com/kenn-io/roborev/pull/1838),
+    [roborev#1804](https://github.com/kenn-io/roborev/pull/1804), and
+    [roborev#1805](https://github.com/kenn-io/roborev/pull/1805).
+- [Wes McKinney](https://github.com/wesm) added default-branch reviews, issue
+    filing for landed commits, supplied review panels, and process limits in
+    [roborev#1779](https://github.com/kenn-io/roborev/pull/1779),
+    [roborev#1780](https://github.com/kenn-io/roborev/pull/1780),
+    [roborev#1750](https://github.com/kenn-io/roborev/pull/1750), and
+    [roborev#1823](https://github.com/kenn-io/roborev/pull/1823).
+- [Rusty Shackleford](https://github.com/salmonumbrella) added command
+    discovery, committed binary evidence, confidence filtering for CI comments,
+    and bundled guide access in
+    [roborev#1649](https://github.com/kenn-io/roborev/pull/1649),
+    [roborev#1756](https://github.com/kenn-io/roborev/pull/1756),
+    [roborev#1752](https://github.com/kenn-io/roborev/pull/1752), and
+    [roborev#1701](https://github.com/kenn-io/roborev/pull/1701).
+- [Kevin Ushey](https://github.com/kevinushey) fixed private submodule checkouts
+    and agent model selection in
+    [roborev#1819](https://github.com/kenn-io/roborev/pull/1819) and
+    [roborev#1817](https://github.com/kenn-io/roborev/pull/1817).
+- [Phillip Cloud](https://github.com/cpcloud) added the seven-day package
+    release wait in
+    [roborev#1820](https://github.com/kenn-io/roborev/pull/1820).
+- [Alex Zylman](https://github.com/azylman) added session reuse for Gemini and
+    Antigravity in [roborev#1758](https://github.com/kenn-io/roborev/pull/1758).
+- [Christophe Dervieux](https://github.com/cderv) improved the refine skill in
+    [roborev#1785](https://github.com/kenn-io/roborev/pull/1785).
+- [akinolur](https://github.com/akinolur) fixed Zed ACP links and added link
+    checks in [roborev#1797](https://github.com/kenn-io/roborev/pull/1797) and
+    [roborev#1798](https://github.com/kenn-io/roborev/pull/1798).
+- [Andy Yu](https://github.com/yu2971512385-ui) fixed TUI glyph wrapping in
+    [roborev#1725](https://github.com/kenn-io/roborev/pull/1725).
 
 ## 0.75.0
 

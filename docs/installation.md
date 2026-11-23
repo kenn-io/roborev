@@ -133,6 +133,44 @@ This downloads and replaces the current binary with the latest release. Read the
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
 
+### Upgrading to 0.76.0
+
+Check these items before updating from 0.75.x or earlier. If you skip releases,
+read their upgrade notes and complete their preparations before updating. Do not
+run their update or daemon-start steps. Follow the 0.76.0 update and restart
+steps below once.
+
+If you're upgrading from 0.71.x or earlier, check the free disk space required
+for the [0.72.0 database conversion](#upgrading-to-0720) before updating. The
+conversion runs when the new daemon starts.
+
+| If you use... | Upgrade action |
+| --- | --- |
+| A local database | Stop the daemon and back up its data directory before updating. Version 0.76 adds five SQLite migrations (schema versions 15 through 19). Releases 0.72.0 through 0.75.x refuse to open the upgraded database. Releases before 0.72.0 do not check the schema version and may try to use it. To roll back, restore the pre-upgrade backup before running an older version. |
+| A shared PostgreSQL mirror | Upgrade every roborev machine that uses the mirror before restarting any of them, as described below. Version 0.76 advances the mirror schema to 25, which older releases refuse. To roll back, follow the rollback steps below. |
+
+To upgrade machines that share a PostgreSQL mirror:
+
+1. On each machine, stop the daemon with `roborev daemon stop`. If a service
+    manager runs the daemon, stop it through that manager so it stays stopped.
+    Back up each data directory and the mirror; see the PostgreSQL guide to
+    [backup and restore](https://www.postgresql.org/docs/current/backup-dump.html).
+    Until step 3, do not commit in repositories with roborev hooks or run
+    other roborev commands, because they start the daemon automatically.
+1. On each machine, upgrade through your usual installation method. If you use
+    `roborev update`, add `--no-restart`. Without it, the update may restart a
+    daemon that is already running. When no daemon is running, the update also
+    repairs the hooks of registered repositories, and that repair starts a
+    daemon on the new version, which upgrades the database and the mirror
+    early.
+1. After every machine is upgraded, start each daemon with
+    `roborev daemon start`, or through its service manager.
+
+To roll back after upgrading machines that share a PostgreSQL mirror, stop every
+daemon that uses the mirror. Restore each machine's local backup and the mirror
+backup made before the upgrade, then start the older release. Restoring the
+mirror backup discards every write made to the mirror after that backup.
+
 ### Upgrading to 0.74.0
 
 Check this item before updating from 0.73.x or earlier:
@@ -173,10 +211,12 @@ for that conversion before updating from 0.71.x or earlier:
     twice the database file's size in free space. See
     [conversion and disk requirements](/docs/configuration/#stored-prompts-and-retention).
 1. Upgrade through your usual installation method. If you use `roborev update`,
-    add `--no-restart`; without it, the update starts the new daemon to repair
-    git hooks. Upgrade every machine sharing a PostgreSQL mirror before
-    restarting those daemons; the mirror moves to schema 24, which older
-    clients refuse.
+    add `--no-restart`. Without it, the update may restart a daemon that is
+    already running. When no daemon is running, the update also repairs the
+    hooks of registered repositories, and that repair starts a daemon on the
+    new version, which begins the conversion early. Upgrade every machine
+    sharing a PostgreSQL mirror before restarting those daemons; the mirror
+    moves to schema 24, which older clients refuse.
 1. Start the daemon with `roborev daemon start` and allow the conversion to
     finish, or start it through your service manager. Large histories can take
     several minutes. Run `roborev doctor` afterward to check the installation.
