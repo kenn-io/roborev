@@ -94,7 +94,15 @@ func stopAgentsview(ctx context.Context, binary, dir string) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "serve", "stop")
 	cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dir)
-	return cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return output, err
+	}
+	records, err = agentsviewRecords(dir)
+	if err == nil && slices.ContainsFunc(records, daemon.RuntimeProcessAlive) {
+		err = fmt.Errorf("agentsview still running after serve stop")
+	}
+	return output, err
 }
 
 func agentsviewRecords(dir string) ([]daemon.RuntimeRecord, error) {

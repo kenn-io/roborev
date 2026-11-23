@@ -48,6 +48,17 @@ func fakeAgentsview() int {
 	if err != nil || closeErr != nil || strings.HasPrefix(mode, "stop fails") {
 		return 1
 	}
+	if strings.HasPrefix(mode, "stop skips") {
+		return 0
+	}
+	runtimeDir := dir
+	if mode == "runtime subdir" {
+		runtimeDir = filepath.Join(dir, "run")
+	}
+	path, err := (daemon.RuntimeStore{Dir: runtimeDir}).Path(os.Getppid())
+	if err != nil || os.Remove(path) != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -70,6 +81,8 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 		{"runtime subdir", 0, 0},
 		{"stop fails", 0, 1},
 		{"stop fails in failing suite", 7, 7},
+		{"stop skips", 0, 1},
+		{"stop skips in failing suite", 7, 7},
 		{"panic", 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,10 +132,13 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, code)
 			assert.Equal(t, other, os.Getenv("AGENTSVIEW_DATA_DIR"))
-			if strings.HasPrefix(tc.name, "stop fails") {
+			if strings.HasPrefix(tc.name, "stop fails") || strings.HasPrefix(tc.name, "stop skips") {
 				t.Cleanup(func() { _ = os.RemoveAll(home) })
 				assert.Contains(t, string(output), "failed to stop agentsview")
 				assert.Contains(t, string(output), home)
+				if strings.HasPrefix(tc.name, "stop skips") {
+					assert.Contains(t, string(output), "still running")
+				}
 				assert.FileExists(t, filepath.Join(home, ".agentsview", "record"))
 			} else {
 				assert.NoDirExists(t, home)
