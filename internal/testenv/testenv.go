@@ -55,6 +55,7 @@ func RunIsolatedMain(m *testing.M) int {
 		output, stopErr := cmd.CombinedOutput()
 		cancel()
 		if stopErr != nil {
+			// Keep the runtime record so the leaked server can be found, and fail the suite to report it.
 			fmt.Fprintf(os.Stderr, "failed to stop agentsview: %v: %s; preserved home: %s\n", stopErr, output, tmpDir)
 			if code == 0 {
 				code = 1

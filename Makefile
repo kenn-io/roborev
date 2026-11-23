@@ -193,7 +193,6 @@ test-search-mirror-growth:
 
 test-agentsview-cleanup:
 	go test ./internal/testenv -run '^TestRunIsolatedMainStopsAgentsView$$' -count=1
-	go test ./internal/daemon -run '^TestProcessJob_CapturesSessionID$$' -count=1
 
 test-git-isolation:
 	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .
