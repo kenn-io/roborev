@@ -407,8 +407,8 @@ unenforceable policy stops the run before Codex starts.
 
 Codex runs in agentic mode with a private `CODEX_HOME`. By default, it is inside
 the job directory. When log retention is enabled, it is inside the configured
-log directory. Its provider uses nono's credential route. The nono supervisor reads the host
-login on demand and injects the access token into model requests. The job sees
+log directory. Its provider uses nono's credential route. The nono supervisor
+reads the host login on demand and injects the access token into model requests. The job sees
 only a placeholder key and a loopback URL. Only `POST /responses` to the Codex
 upstream goes out. The configuration file contains provider settings. Web search
 is disabled. The host login and user D-Bus stay outside the sandbox. Planning
