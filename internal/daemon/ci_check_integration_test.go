@@ -288,7 +288,7 @@ echo 'OK rewrite read-only'
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}}, doc, &ciCheckConfig{Model: "test-model", Reasoning: "high", Rewrite: true, PullRequest: prompt.PullRequestBlock(prompt.PullRequest{Title: "Export files"})})
-	rollouts, err := filepath.Glob(filepath.Join(logDir, "experiment", "run", "run-*", "sessions", "*", "*", "*", "rollout-*.jsonl"))
+	rollouts, err := filepath.Glob(filepath.Join(logDir, "experiment", "run", ".codex-run-v1-*", "sessions", "*", "*", "*", "rollout-*.jsonl"))
 	require.NoError(t, err)
 	assert.Len(t, rollouts, 3)
 	log, err := os.ReadFile(JobLogPath(job.ID))
