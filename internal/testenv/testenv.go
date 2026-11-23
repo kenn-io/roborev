@@ -54,7 +54,8 @@ func runIsolatedMain(run func() int) int {
 	if _, err := os.Stat(agentsviewDir); agentsview != "" && !os.IsNotExist(err) {
 		// Cleanup must finish even after the tests have completed.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		cmd := exec.CommandContext(ctx, agentsview, "daemon", "stop")
+		// Both older and current AgentsView versions support serve stop.
+		cmd := exec.CommandContext(ctx, agentsview, "serve", "stop")
 		cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+agentsviewDir)
 		output, stopErr := cmd.CombinedOutput()
 		cancel()

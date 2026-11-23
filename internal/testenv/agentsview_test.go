@@ -21,7 +21,7 @@ func fakeAgentsview() int {
 		}
 		return 0
 	}
-	if len(os.Args) != 3 || os.Args[1] != "daemon" || os.Args[2] != "stop" {
+	if len(os.Args) != 3 || os.Args[1] != "serve" || os.Args[2] != "stop" {
 		return 1
 	}
 	_, dirErr := os.Stat(dir)
