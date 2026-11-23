@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.kenn.io/kit/daemon"
 )
 
 // RunIsolatedMain provides a standardized TestMain execution wrapper that
@@ -23,7 +25,7 @@ func RunIsolatedMain(m *testing.M) int {
 	return runIsolatedMain(m.Run)
 }
 
-func runIsolatedMain(run func() int) int {
+func runIsolatedMain(run func() int) (code int) {
 	// Snapshot prod log state BEFORE overriding ROBOREV_DATA_DIR.
 	// Best-effort: if the home directory can't be resolved (e.g. CI
 	// containers with no HOME), skip the barrier rather than aborting.
@@ -37,6 +39,12 @@ func runIsolatedMain(run func() int) int {
 		fmt.Fprintf(os.Stderr, "failed to create temp dir: %v\n", err)
 		return 1
 	}
+	preserveHome := false
+	defer func() {
+		if !preserveHome {
+			cleanupTempDir()
+		}
+	}()
 	agentsview, _ := exec.LookPath("agentsview")
 
 	configureGitForTests(tmpDir)
@@ -50,27 +58,34 @@ func runIsolatedMain(run func() int) int {
 	restoreAgentConfigEnv := unsetAgentConfigDirEnv()
 	defer restoreAgentConfigEnv()
 
-	code := run()
-	if _, err := os.Stat(agentsviewDir); agentsview != "" && !os.IsNotExist(err) {
+	defer func() {
+		if agentsview == "" {
+			return
+		}
+		live, err := liveAgentsviewRecords(agentsviewDir)
+		if err == nil && !live {
+			return
+		}
 		// Cleanup must finish even after the tests have completed.
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		// Both older and current AgentsView versions support serve stop.
-		cmd := exec.CommandContext(ctx, agentsview, "serve", "stop")
-		cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+agentsviewDir)
-		output, stopErr := cmd.CombinedOutput()
-		cancel()
-		if stopErr != nil {
+		var output []byte
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			// Both older and current AgentsView versions support serve stop.
+			cmd := exec.CommandContext(ctx, agentsview, "serve", "stop")
+			cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+agentsviewDir)
+			output, err = cmd.CombinedOutput()
+			cancel()
+		}
+		if err != nil {
 			// Keep the runtime record so the leaked server can be found, and fail the suite to report it.
-			fmt.Fprintf(os.Stderr, "failed to stop agentsview: %v: %s; preserved home: %s\n", stopErr, output, tmpDir)
+			preserveHome = true
+			fmt.Fprintf(os.Stderr, "failed to stop agentsview: %v: %s; preserved home: %s\n", err, output, tmpDir)
 			if code == 0 {
 				code = 1
 			}
-		} else {
-			cleanupTempDir()
 		}
-	} else {
-		cleanupTempDir()
-	}
+	}()
+	code = run()
 
 	// Hard barrier: fail if tests polluted production logs.
 	if barrier != nil {
@@ -82,6 +97,26 @@ func runIsolatedMain(run func() int) int {
 		}
 	}
 	return code
+}
+
+func liveAgentsviewRecords(dir string) (bool, error) {
+	for _, path := range []string{dir, filepath.Join(dir, "run")} {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return false, err
+		}
+		records, err := (daemon.RuntimeStore{Dir: path}).List()
+		if err != nil {
+			return false, err
+		}
+		for _, rec := range records {
+			if daemon.RuntimeProcessAlive(rec) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // SetDataDir sets ROBOREV_DATA_DIR to a temp directory to isolate tests

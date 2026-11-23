@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 )
 
 func fakeAgentsview() int {
@@ -21,6 +22,17 @@ func fakeAgentsview() int {
 	if len(os.Args) > 1 && os.Args[1] == "session" {
 		if os.MkdirAll(dir, 0o755) != nil || os.WriteFile(filepath.Join(dir, "record"), []byte("running"), 0o600) != nil {
 			return 1
+		}
+		if os.Getenv("TEST_DATABASE_ONLY") == "" {
+			runtimeDir := dir
+			if os.Getenv("TEST_RUNTIME_SUBDIR") != "" {
+				runtimeDir = filepath.Join(dir, "run")
+			}
+			store := daemon.RuntimeStore{Dir: runtimeDir}
+			_, err := store.Write(daemon.RuntimeRecord{PID: os.Getppid(), Address: "127.0.0.1:1"})
+			if err != nil {
+				return 1
+			}
 		}
 		return 0
 	}
@@ -61,6 +73,9 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 		{"stop fails", true, true, true, 0},
 		{"suite and stop fail", true, true, true, 7},
 		{"no lookup", false, false, false, 0},
+		{"database only", false, false, false, 0},
+		{"runtime subdir", true, false, false, 0},
+		{"panic", true, false, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// The runner changes the process environment as a real TestMain does.
@@ -93,6 +108,14 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 			t.Setenv("PATH", bin)
 			t.Setenv("TEST_EVENTS", events)
 			t.Setenv("TEST_STOP_FAIL", "")
+			t.Setenv("TEST_DATABASE_ONLY", "")
+			t.Setenv("TEST_RUNTIME_SUBDIR", "")
+			if tc.name == "database only" {
+				t.Setenv("TEST_DATABASE_ONLY", "1")
+			}
+			if tc.name == "runtime subdir" {
+				t.Setenv("TEST_RUNTIME_SUBDIR", "1")
+			}
 			inheritedDir := ""
 			if tc.name == "override" {
 				inheritedDir = other
@@ -111,17 +134,26 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 			os.Stderr = stderr
 			t.Cleanup(func() { os.Stderr = oldStderr; _ = stderr.Close() })
 			var home string
-			code := runIsolatedMain(func() int {
+			run := func() int {
 				home = os.Getenv("HOME")
 				if tc.name != "missing" && tc.name != "no lookup" {
 					cmd := exec.CommandContext(t.Context(), "agentsview", "session", "usage-batch", "x", "--format", "json", "--no-sync")
 					assert.NoError(t, cmd.Run())
 				}
-				if tc.name == "path changed" {
+				if tc.name == "path changed" || tc.name == "override" {
 					assert.NoError(t, os.Setenv("PATH", dir))
 				}
+				if tc.name == "panic" {
+					panic("test panic")
+				}
 				return tc.suiteCode
-			})
+			}
+			code := 0
+			if tc.name == "panic" {
+				assert.Panics(t, func() { runIsolatedMain(run) })
+			} else {
+				code = runIsolatedMain(run)
+			}
 			os.Stderr = oldStderr
 			require.NoError(t, stderr.Close())
 			output, err := os.ReadFile(filepath.Join(dir, "stderr"))
@@ -159,6 +191,13 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 		if err != nil {
 			t.Skip("agentsview is not installed")
 		}
+		for _, args := range [][]string{{"session", "usage-batch", "--help"}, {"serve", "stop", "--help"}} {
+			cmd := exec.CommandContext(t.Context(), binary, args...)
+			output, err := cmd.Output()
+			if err != nil || (args[0] == "session" && (!strings.Contains(string(output), "--no-sync") || !strings.Contains(string(output), "--format"))) {
+				t.Skip("agentsview does not support batch lookup and serve stop")
+			}
+		}
 		for _, key := range []string{"HOME", "USERPROFILE", "GOENV", "GOPATH", "GOCACHE", "MISE_CONFIG_DIR", "MISE_DATA_DIR", "MISE_STATE_DIR", "MISE_CACHE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "XDG_CONFIG_HOME", "GIT_TERMINAL_PROMPT"} {
 			t.Setenv(key, os.Getenv(key))
 		}
@@ -166,77 +205,60 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 		t.Cleanup(func() { userEnv, userAgentEnv = oldUserEnv, oldAgentEnv })
 		other := filepath.Join(t.TempDir(), "other")
 		t.Setenv("AGENTSVIEW_DATA_DIR", other)
-
-		start := func(dataDir string) (*exec.Cmd, <-chan error, error) {
-			cmd := exec.Command(binary, "serve", "--no-sync", "--no-browser", "--port", "0")
-			cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dataDir)
-			if err := cmd.Start(); err != nil {
-				return nil, nil, err
-			}
-			done := make(chan error, 1)
-			go func() { done <- cmd.Wait(); close(done) }()
-			t.Cleanup(func() {
-				select {
-				case <-done:
-				default:
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					stop := exec.CommandContext(ctx, binary, "serve", "stop")
-					stop.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dataDir)
-					_ = stop.Run()
-					cancel()
-					select {
-					case <-done:
-					default:
-						_ = cmd.Process.Kill()
-						<-done
-					}
+		lookup := func(dir string) error {
+			cmd := exec.CommandContext(t.Context(), binary, "session", "usage-batch", "missing-session", "--format", "json", "--no-sync")
+			cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dir)
+			return cmd.Run()
+		}
+		records := func(dir string) []daemon.RuntimeRecord {
+			var all []daemon.RuntimeRecord
+			for _, path := range []string{dir, filepath.Join(dir, "run")} {
+				if _, err := os.Stat(path); err != nil {
+					continue
 				}
-			})
-			return cmd, done, nil
+				found, err := (daemon.RuntimeStore{Dir: path}).List()
+				assert.NoError(t, err)
+				all = append(all, found...)
+			}
+			return all
 		}
-		ready := func(cmd *exec.Cmd, dataDir string) bool {
-			// A real server must publish its runtime record and answer health checks.
-			return assert.Eventually(t, func() bool {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// The lookup starts a detached server, so stop it even when an assertion fails.
+		cleanup := func(dir string) {
+			t.Cleanup(func() {
+				live, err := liveAgentsviewRecords(dir)
+				if !assert.NoError(t, err) || !live {
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				status := exec.CommandContext(ctx, binary, "serve", "status")
-				status.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dataDir)
-				output, err := status.Output()
-				return err == nil && strings.Contains(string(output), fmt.Sprintf("%d", cmd.Process.Pid)) && strings.Contains(string(output), "http")
-			}, 20*time.Second, 100*time.Millisecond)
+				cmd := exec.CommandContext(ctx, binary, "serve", "stop")
+				cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dir)
+				assert.NoError(t, cmd.Run())
+			})
 		}
-		otherCmd, otherDone, err := start(other)
-		require.NoError(t, err)
-		require.True(t, ready(otherCmd, other))
-		var isolatedDone <-chan error
+		cleanup(other)
+		require.NoError(t, lookup(other))
+		otherRecords := records(other)
+		require.NotEmpty(t, otherRecords)
+		require.True(t, daemon.RuntimeProcessAlive(otherRecords[0]))
+		var isolatedRecords []daemon.RuntimeRecord
 		code := runIsolatedMain(func() int {
-			dataDir := os.Getenv("AGENTSVIEW_DATA_DIR")
-			cmd, done, err := start(dataDir)
-			if !assert.NoError(t, err) {
+			dir := os.Getenv("AGENTSVIEW_DATA_DIR")
+			cleanup(dir)
+			if !assert.NoError(t, lookup(dir)) {
 				return 1
 			}
-			isolatedDone = done
-			if !ready(cmd, dataDir) {
+			isolatedRecords = records(dir)
+			if !assert.NotEmpty(t, isolatedRecords) {
 				return 1
 			}
+			assert.True(t, daemon.RuntimeProcessAlive(isolatedRecords[0]))
 			return 0
 		})
 		assert.Zero(t, code)
-		if isolatedDone != nil {
-			exited := false
-			select {
-			case <-isolatedDone:
-				exited = true
-			case <-time.After(5 * time.Second):
-			}
-			assert.True(t, exited, "isolated server did not exit")
+		if len(isolatedRecords) > 0 {
+			assert.False(t, daemon.RuntimeProcessAlive(isolatedRecords[0]))
 		}
-		otherExited := false
-		select {
-		case <-otherDone:
-			otherExited = true
-		default:
-		}
-		assert.False(t, otherExited, "other server exited")
+		assert.True(t, daemon.RuntimeProcessAlive(otherRecords[0]))
 	})
 }
