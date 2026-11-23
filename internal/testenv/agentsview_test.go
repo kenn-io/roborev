@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -229,11 +228,8 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 				if !assert.NoError(t, err) || !live {
 					return
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				cmd := exec.CommandContext(ctx, binary, "serve", "stop")
-				cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dir)
-				assert.NoError(t, cmd.Run())
+				output, err := stopAgentsview(context.WithoutCancel(t.Context()), binary, dir)
+				assert.NoError(t, err, "%s", output)
 			})
 		}
 		cleanup(other)

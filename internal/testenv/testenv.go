@@ -69,11 +69,7 @@ func runIsolatedMain(run func() int) (code int) {
 		// Cleanup must finish even after the tests have completed.
 		var output []byte
 		if err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			cmd := exec.CommandContext(ctx, agentsview, "serve", "stop")
-			cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+agentsviewDir)
-			output, err = cmd.CombinedOutput()
-			cancel()
+			output, err = stopAgentsview(context.Background(), agentsview, agentsviewDir)
 		}
 		if err != nil {
 			// Keep the runtime record so the leaked server can be found, and fail the suite to report it.
@@ -96,6 +92,14 @@ func runIsolatedMain(run func() int) (code int) {
 		}
 	}
 	return code
+}
+
+func stopAgentsview(ctx context.Context, binary, dir string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "serve", "stop")
+	cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dir)
+	return cmd.CombinedOutput()
 }
 
 func liveAgentsviewRecords(dir string) (bool, error) {
