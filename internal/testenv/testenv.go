@@ -4,6 +4,7 @@
 package testenv
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // RunIsolatedMain provides a standardized TestMain execution wrapper that
@@ -31,17 +33,38 @@ func RunIsolatedMain(m *testing.M) int {
 		fmt.Fprintf(os.Stderr, "failed to create temp dir: %v\n", err)
 		return 1
 	}
-	defer cleanupTempDir()
+	agentsview, _ := exec.LookPath("agentsview")
 
 	configureGitForTests(tmpDir)
 
-	restoreDataDir := setDataDirEnv(tmpDir)
+	restoreDataDir := setDataDirEnv("ROBOREV_DATA_DIR", tmpDir)
 	defer restoreDataDir()
+	agentsviewDir := filepath.Join(tmpDir, ".agentsview")
+	restoreAgentsviewDir := setDataDirEnv("AGENTSVIEW_DATA_DIR", agentsviewDir)
+	defer restoreAgentsviewDir()
 
 	restoreAgentConfigEnv := unsetAgentConfigDirEnv()
 	defer restoreAgentConfigEnv()
 
 	code := m.Run()
+	if _, err := os.Stat(agentsviewDir); agentsview != "" && !os.IsNotExist(err) {
+		// Cleanup must finish even after the tests have completed.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cmd := exec.CommandContext(ctx, agentsview, "daemon", "stop")
+		cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+agentsviewDir)
+		output, stopErr := cmd.CombinedOutput()
+		cancel()
+		if stopErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to stop agentsview: %v: %s; preserved home: %s\n", stopErr, output, tmpDir)
+			if code == 0 {
+				code = 1
+			}
+		} else {
+			cleanupTempDir()
+		}
+	} else {
+		cleanupTempDir()
+	}
 
 	// Hard barrier: fail if tests polluted production logs.
 	if barrier != nil {
@@ -81,15 +104,15 @@ func createIsolatedDataDir() (string, func(), error) {
 	}, nil
 }
 
-func setDataDirEnv(dir string) func() {
-	origEnv, hasEnv := os.LookupEnv("ROBOREV_DATA_DIR")
-	_ = os.Setenv("ROBOREV_DATA_DIR", dir)
+func setDataDirEnv(key, dir string) func() {
+	origEnv, hasEnv := os.LookupEnv(key)
+	_ = os.Setenv(key, dir)
 	return func() {
 		if hasEnv {
-			_ = os.Setenv("ROBOREV_DATA_DIR", origEnv)
+			_ = os.Setenv(key, origEnv)
 			return
 		}
-		_ = os.Unsetenv("ROBOREV_DATA_DIR")
+		_ = os.Unsetenv(key)
 	}
 }
 
