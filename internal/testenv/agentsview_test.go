@@ -190,8 +190,8 @@ func TestStopAgentsview(t *testing.T) {
 				if mode == "startup canceled" {
 					defer release()
 					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond)
-					defer cancel()
+					ctx, cancel = context.WithCancel(ctx)
+					cancel()
 				} else {
 					done := make(chan error, 1)
 					go func() {
@@ -208,7 +208,7 @@ func TestStopAgentsview(t *testing.T) {
 			}
 			_, err := stopAgentsview(ctx, binary, dir)
 			if mode == "startup canceled" {
-				require.ErrorIs(t, err, context.DeadlineExceeded)
+				require.ErrorIs(t, err, context.Canceled)
 			} else {
 				require.NoError(t, err)
 			}
