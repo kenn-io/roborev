@@ -87,7 +87,7 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		if !filepath.IsAbs(s.LogDir) || !filepath.IsLocal(s.Label) {
 			return job, nil, fmt.Errorf("sandbox log directory must be absolute and label must be local")
 		}
-		for _, component := range strings.Split(filepath.Clean(s.Label), string(filepath.Separator)) {
+		for component := range strings.SplitSeq(filepath.Clean(s.Label), string(filepath.Separator)) {
 			if strings.HasPrefix(component, ".codex-run-v1-") {
 				return job, nil, fmt.Errorf("sandbox log label uses reserved prefix .codex-run-v1-")
 			}

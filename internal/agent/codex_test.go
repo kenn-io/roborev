@@ -1337,8 +1337,12 @@ func TestCodexSandboxLogDir(t *testing.T) {
 	work, logs := t.TempDir(), t.TempDir()
 	t.Setenv("CODEX_HOME", t.TempDir())
 	for _, tc := range []struct{ name, dir, label string }{
-		{"empty label", logs, ""}, {"absolute label", logs, work}, {"parent label", logs, "../outside"}, {"relative directory", "logs", "job"},
-		{"reserved label", logs, ".codex-run-v1-abc"}, {"reserved nested label", logs, "experiment/.codex-run-v1-abc/case"},
+		{"empty label", logs, ""},
+		{"absolute label", logs, work},
+		{"parent label", logs, "../outside"},
+		{"relative directory", "logs", "job"},
+		{"reserved label", logs, ".codex-run-v1-abc"},
+		{"reserved nested label", logs, "experiment/.codex-run-v1-abc/case"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}, LogDir: tc.dir, Label: tc.label}).prepare(work)
