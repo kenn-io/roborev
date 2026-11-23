@@ -86,7 +86,7 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		if !filepath.IsAbs(s.LogDir) || !filepath.IsLocal(s.Label) {
 			return job, nil, fmt.Errorf("sandbox log directory must be absolute and label must be local")
 		}
-		homeDir, prefix = filepath.Join(s.LogDir, s.Label), "run-"
+		homeDir, prefix = filepath.Join(s.LogDir, s.Label), ".codex-run-v1-"
 		if err := os.MkdirAll(homeDir, 0o700); err != nil {
 			return job, nil, fmt.Errorf("create sandbox log directory: %w", err)
 		}

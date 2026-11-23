@@ -1351,6 +1351,7 @@ func TestCodexSandboxLogDir(t *testing.T) {
 		require.Len(t, job.WritePaths, 1)
 		home := job.WritePaths[0]
 		assert.Equal(t, filepath.Join(logs, "nested", "job"), filepath.Dir(home))
+		assert.True(t, strings.HasPrefix(filepath.Base(home), ".codex-run-v1-"))
 		assert.Contains(t, job.Env, "CODEX_HOME="+home)
 		if i == 0 {
 			sessions := filepath.Join(home, "sessions")

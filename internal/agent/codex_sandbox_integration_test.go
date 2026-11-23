@@ -38,7 +38,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-test-token"}}`), 0o600))
 
 	logs := t.TempDir()
-	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/job/run-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", logs)
+	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/job/.codex-run-v1-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", logs)
 	tmp := filepath.Join(repo, "tmp")
 
 	var key atomic.Value
@@ -129,7 +129,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	assert.Contains(t, string(result), "OK codex-home")
 	rollouts := func() []string {
 		t.Helper()
-		files, err := filepath.Glob(filepath.Join(logs, "job", "run-*", "sessions", "*", "*", "*", "rollout-*.jsonl"))
+		files, err := filepath.Glob(filepath.Join(logs, "job", ".codex-run-v1-*", "sessions", "*", "*", "*", "rollout-*.jsonl"))
 		require.NoError(t, err)
 		for _, file := range files {
 			data, err := os.ReadFile(file)
