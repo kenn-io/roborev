@@ -40,37 +40,29 @@ func runIsolatedMain(run func() int) (code int) {
 		fmt.Fprintf(os.Stderr, "failed to create temp dir: %v\n", err)
 		return 1
 	}
-	preserveHome := false
-	defer func() {
-		if !preserveHome {
-			cleanupTempDir()
-		}
-	}()
 	agentsview, _ := exec.LookPath("agentsview")
-
-	configureGitForTests(tmpDir)
-
-	restoreDataDir := setDataDirEnv("ROBOREV_DATA_DIR", tmpDir)
-	defer restoreDataDir()
 	agentsviewDir := filepath.Join(tmpDir, ".agentsview")
-	restoreAgentsviewDir := setDataDirEnv("AGENTSVIEW_DATA_DIR", agentsviewDir)
-	defer restoreAgentsviewDir()
-
-	restoreAgentConfigEnv := unsetAgentConfigDirEnv()
-	defer restoreAgentConfigEnv()
-
+	_ = os.Setenv("AGENTSVIEW_DATA_DIR", agentsviewDir)
 	defer func() {
-		// Cleanup must finish even after the tests have completed.
-		output, err := stopAgentsview(context.Background(), agentsview, agentsviewDir)
-		if err != nil {
-			// Keep the runtime record so the leaked server can be found, and fail the suite to report it.
-			preserveHome = true
+		// Stop the server before removing its home; keep the home if it may still run.
+		if output, err := stopAgentsview(context.Background(), agentsview, agentsviewDir); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to stop agentsview: %v: %s; preserved home: %s\n", err, output, tmpDir)
 			if code == 0 {
 				code = 1
 			}
+			return
 		}
+		cleanupTempDir()
 	}()
+
+	configureGitForTests(tmpDir)
+
+	restoreDataDir := setDataDirEnv(tmpDir)
+	defer restoreDataDir()
+
+	restoreAgentConfigEnv := unsetAgentConfigDirEnv()
+	defer restoreAgentConfigEnv()
+
 	code = run()
 
 	// Hard barrier: fail if tests polluted production logs.
@@ -88,55 +80,36 @@ func runIsolatedMain(run func() int) (code int) {
 func stopAgentsview(ctx context.Context, binary, dir string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	records, err := listAgentsviewRecords(dir, waitForStartup(ctx))
+	records, err := agentsviewRecords(ctx, dir)
 	if err != nil || !slices.ContainsFunc(records, daemon.RuntimeProcessAlive) {
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, binary, "serve", "stop")
 	cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dir)
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return output, err
+	if err == nil {
+		records, err = agentsviewRecords(ctx, dir)
 	}
-	records, err = agentsviewRecords(dir)
 	if err == nil && slices.ContainsFunc(records, daemon.RuntimeProcessAlive) {
 		err = fmt.Errorf("agentsview still running after serve stop")
 	}
 	return output, err
 }
 
-// waitForStartup returns a settle func that waits for any in-progress
-// AgentsView startup to publish its runtime record or give up.
-func waitForStartup(ctx context.Context) func(daemon.RuntimeStore) error {
-	return func(store daemon.RuntimeStore) error {
-		release, err := store.AcquireStartLock(ctx)
-		if err == nil {
-			release()
-		}
-		return err
-	}
-}
-
-func agentsviewRecords(dir string) ([]daemon.RuntimeRecord, error) {
-	return listAgentsviewRecords(dir, nil)
-}
-
-// listAgentsviewRecords lists runtime records in the legacy and run
-// directories that exist, calling settle (if non-nil) on each store first.
-func listAgentsviewRecords(dir string, settle func(daemon.RuntimeStore) error) ([]daemon.RuntimeRecord, error) {
+// agentsviewRecords waits for any AgentsView startup in progress, then lists
+// runtime records in the legacy and run directories that exist.
+func agentsviewRecords(ctx context.Context, dir string) ([]daemon.RuntimeRecord, error) {
 	var all []daemon.RuntimeRecord
 	for _, path := range []string{dir, filepath.Join(dir, "run")} {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			continue
-		} else if err != nil {
-			return nil, err
 		}
 		store := daemon.RuntimeStore{Dir: path}
-		if settle != nil {
-			if err := settle(store); err != nil {
-				return nil, err
-			}
+		release, err := store.AcquireStartLock(ctx)
+		if err != nil {
+			return nil, err
 		}
+		release()
 		records, err := store.List()
 		if err != nil {
 			return nil, err
@@ -172,15 +145,15 @@ func createIsolatedDataDir() (string, func(), error) {
 	}, nil
 }
 
-func setDataDirEnv(key, dir string) func() {
-	origEnv, hasEnv := os.LookupEnv(key)
-	_ = os.Setenv(key, dir)
+func setDataDirEnv(dir string) func() {
+	origEnv, hasEnv := os.LookupEnv("ROBOREV_DATA_DIR")
+	_ = os.Setenv("ROBOREV_DATA_DIR", dir)
 	return func() {
 		if hasEnv {
-			_ = os.Setenv(key, origEnv)
+			_ = os.Setenv("ROBOREV_DATA_DIR", origEnv)
 			return
 		}
-		_ = os.Unsetenv(key)
+		_ = os.Unsetenv("ROBOREV_DATA_DIR")
 	}
 }
 
