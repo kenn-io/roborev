@@ -133,6 +133,20 @@ This downloads and replaces the current binary with the latest release. Read the
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
 
+### Upgrading to 0.76.0
+
+Check these items before updating from 0.75.x or earlier:
+
+| If you use... | Upgrade action |
+| --- | --- |
+| A shared PostgreSQL mirror | Upgrade every roborev machine that uses the mirror before restarting any of them. Version 0.76 advances the schema to 25, which older releases cannot use. |
+| A local database | Stop the daemon and back up its data directory before updating. Version 0.76 adds five SQLite migrations, and older releases cannot open the upgraded database. |
+| Source builds | Use Go 1.27.4 or later. |
+
+If you're upgrading from 0.71.x or earlier, also follow the
+[0.72.0 database conversion steps](#upgrading-to-0720) before starting the new
+daemon.
+
 ### Upgrading to 0.74.0
 
 Check this item before updating from 0.73.x or earlier:

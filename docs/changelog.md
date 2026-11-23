@@ -7,6 +7,15 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+## 0.76.0
+
+<small>2026-11-22</small>
+
+Exported reviews now include their source and exporting machine. You can review
+commits on the default branch, set up agent hooks with one command, and run
+review panels through the daemon API. The CI poller can check findings before
+posting them.
+
 **Upgrade notes**
 
 - Back up the database before you upgrade. This release adds five SQLite
@@ -14,6 +23,9 @@ All notable changes to roborev, grouped by minor release.
     open the upgraded database. To roll back, you need a copy made before the
     upgrade: stop the daemon with `roborev daemon stop`, then back up its data
     directory (`~/.roborev` or `$ROBOREV_DATA_DIR`).
+- Upgrade every machine that shares a PostgreSQL mirror together. This release
+    advances the schema from version 24 to 25, and older releases cannot use
+    that mirror.
 - Merge gates and scripts that read review verdicts must handle `skipped`. A
     review with nothing to review, such as an empty commit or a commit whose
     changed files are all excluded, now ends as `skipped` with no verdict
@@ -194,6 +206,41 @@ All notable changes to roborev, grouped by minor release.
     macOS; raise `hook_timeout_seconds` if hooks time out.
 - The generated Go client's `Validate` accepts review findings whose `location`
     is `null`, as the API documents.
+
+**Acknowledgements**
+
+Thanks to everyone who contributed to this release:
+
+- [Marius van Niekerk](https://github.com/mariusvniekerk) added search by
+    branch, ref, and pull request, and improved read-only Codex reviews and CI
+    handling in [roborev#1835](https://github.com/kenn-io/roborev/pull/1835),
+    [roborev#1838](https://github.com/kenn-io/roborev/pull/1838),
+    [roborev#1804](https://github.com/kenn-io/roborev/pull/1804), and
+    [roborev#1805](https://github.com/kenn-io/roborev/pull/1805).
+- [Wes McKinney](https://github.com/wesm) added default-branch reviews, issue
+    filing for landed commits, supplied review panels, and process limits in
+    [roborev#1779](https://github.com/kenn-io/roborev/pull/1779),
+    [roborev#1780](https://github.com/kenn-io/roborev/pull/1780),
+    [roborev#1750](https://github.com/kenn-io/roborev/pull/1750), and
+    [roborev#1823](https://github.com/kenn-io/roborev/pull/1823).
+- [Rusty Shackleford](https://github.com/salmonumbrella) added command
+    discovery, committed binary evidence, confidence filtering for CI comments,
+    and bundled guide access in
+    [roborev#1649](https://github.com/kenn-io/roborev/pull/1649),
+    [roborev#1756](https://github.com/kenn-io/roborev/pull/1756),
+    [roborev#1752](https://github.com/kenn-io/roborev/pull/1752), and
+    [roborev#1701](https://github.com/kenn-io/roborev/pull/1701).
+- [Kevin Ushey](https://github.com/kevinushey) fixed private submodule checkouts
+    and agent model selection in
+    [roborev#1819](https://github.com/kenn-io/roborev/pull/1819) and
+    [roborev#1817](https://github.com/kenn-io/roborev/pull/1817).
+- [Phillip Cloud](https://github.com/cpcloud) added the seven-day package
+    release wait in
+    [roborev#1820](https://github.com/kenn-io/roborev/pull/1820).
+- [Alex Zylman](https://github.com/azylman) added session reuse for Gemini and
+    Antigravity in [roborev#1758](https://github.com/kenn-io/roborev/pull/1758).
+- [Christophe Dervieux](https://github.com/cderv) improved the refine skill in
+    [roborev#1785](https://github.com/kenn-io/roborev/pull/1785).
 
 ## 0.75.0
 
