@@ -88,19 +88,7 @@ func runIsolatedMain(run func() int) (code int) {
 func stopAgentsview(ctx context.Context, binary, dir string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	for _, path := range []string{dir, filepath.Join(dir, "run")} {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return nil, err
-		}
-		release, err := (daemon.RuntimeStore{Dir: path}).AcquireStartLock(ctx)
-		if err != nil {
-			return nil, err
-		}
-		release()
-	}
-	records, err := agentsviewRecords(dir)
+	records, err := listAgentsviewRecords(dir, waitForStartup(ctx))
 	if err != nil || !slices.ContainsFunc(records, daemon.RuntimeProcessAlive) {
 		return nil, err
 	}
@@ -117,7 +105,25 @@ func stopAgentsview(ctx context.Context, binary, dir string) ([]byte, error) {
 	return output, err
 }
 
+// waitForStartup returns a settle func that waits for any in-progress
+// AgentsView startup to publish its runtime record or give up.
+func waitForStartup(ctx context.Context) func(daemon.RuntimeStore) error {
+	return func(store daemon.RuntimeStore) error {
+		release, err := store.AcquireStartLock(ctx)
+		if err == nil {
+			release()
+		}
+		return err
+	}
+}
+
 func agentsviewRecords(dir string) ([]daemon.RuntimeRecord, error) {
+	return listAgentsviewRecords(dir, nil)
+}
+
+// listAgentsviewRecords lists runtime records in the legacy and run
+// directories that exist, calling settle (if non-nil) on each store first.
+func listAgentsviewRecords(dir string, settle func(daemon.RuntimeStore) error) ([]daemon.RuntimeRecord, error) {
 	var all []daemon.RuntimeRecord
 	for _, path := range []string{dir, filepath.Join(dir, "run")} {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -125,7 +131,13 @@ func agentsviewRecords(dir string) ([]daemon.RuntimeRecord, error) {
 		} else if err != nil {
 			return nil, err
 		}
-		records, err := (daemon.RuntimeStore{Dir: path}).List()
+		store := daemon.RuntimeStore{Dir: path}
+		if settle != nil {
+			if err := settle(store); err != nil {
+				return nil, err
+			}
+		}
+		records, err := store.List()
 		if err != nil {
 			return nil, err
 		}
