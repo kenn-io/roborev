@@ -137,8 +137,7 @@ release-notes viewer in its header.
 
 Check these items before updating from 0.75.x or earlier. If you skip releases,
 also follow the upgrade notes for each release you skip, starting with the
-oldest. The [0.76.0 changelog](/docs/changelog/#0760) lists the other upgrade
-notes for this release.
+oldest.
 
 | If you use... | Upgrade action |
 | --- | --- |
@@ -155,18 +154,17 @@ To upgrade machines that share a PostgreSQL mirror:
     other roborev commands, because they start the daemon automatically.
 1. On each machine, upgrade through your usual installation method. If you use
     `roborev update`, add `--no-restart`. Without it, the update may restart a
-    daemon that is already running, such as one that a commit started after you
-    stopped it. When no daemon is running, the update also repairs the hooks of
-    registered repositories, and that repair starts a daemon on the new
-    version, which upgrades the database and the mirror early.
+    daemon that is already running. When no daemon is running, the update also
+    repairs the hooks of registered repositories, and that repair starts a
+    daemon on the new version, which upgrades the database and the mirror
+    early.
 1. After every machine is upgraded, start each daemon with
     `roborev daemon start`, or through its service manager.
 
 To roll back after upgrading machines that share a PostgreSQL mirror, stop every
 daemon that uses the mirror. Restore each machine's local backup and the mirror
 backup made before the upgrade, then start the older release. Restoring the
-mirror backup discards every write made to the mirror after that backup,
-including reviews and comments synced from upgraded machines.
+mirror backup discards every write made to the mirror after that backup.
 
 If you're upgrading from 0.71.x or earlier, also follow the
 [0.72.0 database conversion steps](#upgrading-to-0720) before starting the new
@@ -202,12 +200,11 @@ for that conversion before updating from 0.71.x or earlier:
 
 1. Stop the daemon with `roborev daemon stop` and back up its data directory. If
     you use PostgreSQL sync, stop every daemon sharing the mirror and back up
-    the mirror too; see the PostgreSQL guide to
-    [backup and restore](https://www.postgresql.org/docs/current/backup-dump.html).
-    If a service manager runs the daemon, stop it through that manager so it
-    stays stopped. Until step 4, do not commit in repositories with roborev
-    hooks or run roborev commands other than these steps. They start the daemon
-    automatically, and after step 3 that starts the conversion early.
+    the mirror too. If a service manager runs the daemon, stop it through that
+    manager so it stays stopped. Until step 4, do not commit in repositories
+    with roborev hooks or run roborev commands other than these steps. They
+    start the daemon automatically, and after step 3 that starts the conversion
+    early.
 1. Check free disk space. Conversion keeps the original data while writing
     compressed copies and a write-ahead log. Its final `VACUUM` can need up to
     twice the database file's size in free space. See
