@@ -121,6 +121,9 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 				assert.Contains(t, string(output), "failed to stop agentsview")
 				assert.Contains(t, string(output), home)
 				assert.DirExists(t, home)
+				record, err := (daemon.RuntimeStore{Dir: filepath.Join(home, ".agentsview")}).Path(os.Getpid())
+				require.NoError(t, err)
+				assert.FileExists(t, record)
 			} else {
 				assert.NoDirExists(t, home)
 			}
