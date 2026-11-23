@@ -268,8 +268,8 @@ Thanks to everyone who contributed to this release:
 - [akinolur](https://github.com/akinolur) fixed Zed ACP links and added link
     checks in [roborev#1797](https://github.com/kenn-io/roborev/pull/1797) and
     [roborev#1798](https://github.com/kenn-io/roborev/pull/1798).
-- [Andy Yu](https://github.com/yu2971512385-ui) fixed TUI glyph
-    wrapping in [roborev#1725](https://github.com/kenn-io/roborev/pull/1725).
+- [Andy Yu](https://github.com/yu2971512385-ui) fixed TUI glyph wrapping in
+    [roborev#1725](https://github.com/kenn-io/roborev/pull/1725).
 
 ## 0.75.0
 

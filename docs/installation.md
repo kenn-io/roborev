@@ -136,8 +136,8 @@ release-notes viewer in its header.
 ### Upgrading to 0.76.0
 
 Check these items before updating from 0.75.x or earlier. If you skip releases,
-read their upgrade notes and complete their preparations before updating. Do
-not run their update or daemon-start steps. Follow the 0.76.0 update and restart
+read their upgrade notes and complete their preparations before updating. Do not
+run their update or daemon-start steps. Follow the 0.76.0 update and restart
 steps below once.
 
 If you're upgrading from 0.71.x or earlier, check the free disk space required
