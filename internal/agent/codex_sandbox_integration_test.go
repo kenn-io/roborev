@@ -30,9 +30,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, err)
 	codex, err = filepath.EvalSymlinks(codex)
 	require.NoError(t, err)
-	node, err := exec.CommandContext(t.Context(), "node", "-p", "process.execPath").Output()
-	require.NoError(t, err)
-	nodeDir := filepath.Dir(strings.TrimSpace(string(node)))
 
 	work, secrets := t.TempDir(), t.TempDir()
 	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
@@ -121,9 +118,14 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, os.Mkdir(tmp, 0o700))
 
 	job := sandbox.Job{
-		WorkDir: repo, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex)), nodeDir},
+		WorkDir: repo, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
 		MemoryMax: 8 << 30,
-		Env:       []string{"PATH=" + nodeDir + ":/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + tmp},
+		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + tmp},
+	}
+	if node, err := exec.CommandContext(t.Context(), "node", "-p", "process.execPath").Output(); err == nil {
+		nodeDir := filepath.Dir(strings.TrimSpace(string(node)))
+		job.ReadPaths = append(job.ReadPaths, nodeDir)
+		job.Env[0] = "PATH=" + nodeDir + ":/usr/bin:/bin"
 	}
 	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, Upstream: server.URL, LogDir: logs, Label: "job"})
 	a.IgnoreUserConfig = true
