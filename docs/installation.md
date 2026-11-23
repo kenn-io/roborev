@@ -139,9 +139,23 @@ Check these items before updating from 0.75.x or earlier:
 
 | If you use... | Upgrade action |
 | --- | --- |
-| A shared PostgreSQL mirror | Upgrade every roborev machine that uses the mirror before restarting any of them. Version 0.76 advances the schema to 25, which older releases cannot use. |
-| A local database | Stop the daemon and back up its data directory before updating. Version 0.76 adds five SQLite migrations, and older releases cannot open the upgraded database. |
-| Source builds | Use Go 1.27.4 or later. |
+| A local database | Stop the daemon and back up its data directory before updating. Version 0.76 adds five SQLite migrations (schema versions 15 through 19). Releases 0.72.0 through 0.75.x refuse to open the upgraded database. Releases before 0.72.0 do not check the schema version and may try to use it. To roll back, restore the pre-upgrade backup before running an older version. |
+| A shared PostgreSQL mirror | Upgrade every roborev machine that uses the mirror before restarting any of them, as described below. Version 0.76 advances the mirror schema to 25, which older releases refuse. |
+
+To upgrade machines that share a PostgreSQL mirror:
+
+1. On each machine, stop the daemon with `roborev daemon stop`. If a service
+    manager runs the daemon, stop it through that manager so it stays stopped.
+    Back up each data directory and the mirror. Until step 3, do not commit in
+    repositories with roborev hooks or run other roborev commands, because they
+    start the daemon automatically.
+1. On each machine, upgrade through your usual installation method. If you use
+    `roborev update`, add `--no-restart`; without it, the update starts the new
+    daemon to repair git hooks.
+1. After every machine is upgraded, start each daemon with
+    `roborev daemon start`, or through its service manager. On machines updated
+    with `--no-restart`, then run `roborev install-hook repair --registered`
+    and `roborev agent skills update`, which the update skipped.
 
 If you're upgrading from 0.71.x or earlier, also follow the
 [0.72.0 database conversion steps](#upgrading-to-0720) before starting the new

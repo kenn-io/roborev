@@ -19,13 +19,18 @@ posting them.
 **Upgrade notes**
 
 - Back up the database before you upgrade. This release adds five SQLite
-    migrations (schema versions 15 through 19), and an older release refuses to
-    open the upgraded database. To roll back, you need a copy made before the
-    upgrade: stop the daemon with `roborev daemon stop`, then back up its data
-    directory (`~/.roborev` or `$ROBOREV_DATA_DIR`).
-- Upgrade every machine that shares a PostgreSQL mirror together. This release
-    advances the schema from version 24 to 25, and older releases cannot use
-    that mirror.
+    migrations (schema versions 15 through 19). Releases 0.72.0 through 0.75.x
+    refuse to open the upgraded database, and releases before 0.72.0 do not
+    check the schema version and may try to use it. Before the upgrade, stop the
+    daemon with `roborev daemon stop` and back up its data directory
+    (`~/.roborev` or `$ROBOREV_DATA_DIR`). To roll back, restore that backup
+    before running an older version.
+- Upgrade every machine that shares a PostgreSQL mirror before restarting any of
+    them. This release advances the mirror schema from version 24 to 25, which
+    older releases refuse. If a CI host on the mirror runs the findings checker,
+    older releases also stop pulling reviews and comments at the first checked
+    review. See [Upgrading to 0.76.0](/docs/installation/#upgrading-to-0760) for
+    the stop, update, and start steps.
 - Merge gates and scripts that read review verdicts must handle `skipped`. A
     review with nothing to review, such as an empty commit or a commit whose
     changed files are all excluded, now ends as `skipped` with no verdict
@@ -42,12 +47,26 @@ posting them.
     limit of 60 unauthenticated requests per hour.
 - Source builds need Go 1.27.4 or newer, which fixes
     [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859).
-- If a CI host runs the findings checker and shares a PostgreSQL mirror, upgrade
-    the other machines on that mirror before or with it. Older releases stop
-    pulling at the first checked review; see the CI checker entry below.
 
 **New features**
 
+- Keep analysis findings current with scheduled analysis. With
+    `[schedule] enabled = true`, an interval, analysis types, and `max_files` in
+    global or repository config, the daemon analyzes up to `max_files` tracked
+    files per run, starting with files that have no previous attempt. A waiting
+    review can cancel a running scheduled job when all workers are busy. See
+    [Scheduled analysis](/docs/configuration/#scheduled-analysis).
+- The browser review list shows each completed review's finding counts, as in
+    `2/1/0` for critical and high, medium, and low, and can sort by them. Its
+    search box matches the start of a ref, any part of a branch name, and CI
+    reviews of a pull request number such as `123`, `#123`, or `PR 123`. See
+    [Reviews Workspace](/docs/web-ui/#reviews-workspace).
+- Limit the memory of a review's agent processes with `agent_memory_max_mb`.
+    When their resident memory, added together, exceeds the limit, the daemon
+    stops them and fails the job without retry. The limit is off by default,
+    works on Linux and macOS, and is checked every 2 seconds, so a job can
+    overshoot between checks. See
+    [Global Options](/docs/configuration/#global-options).
 - Browser tabs distinguish the review list, open reviews, and Analytics.
 - Review commits that land on the default branch. With global
     `[ci] review_default_branch = true`, the CI poller reviews each new
@@ -110,8 +129,8 @@ posting them.
     reject these documents: a machine on an older release that shares a
     PostgreSQL mirror with a checking CI host stops pulling reviews and comments
     at the first checked review, and Go programs that decode documents with an
-    older `pkg/structuredreview` fail on them. Upgrade those machines and
-    programs before or with the CI host.
+    older `pkg/structuredreview` fail on them. Upgrade those programs before or
+    with the CI host; see the upgrade notes for shared mirrors.
 
 **Improvements**
 
