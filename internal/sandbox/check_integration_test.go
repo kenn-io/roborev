@@ -133,9 +133,10 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	base := t.TempDir()
 	work, read := filepath.Join(base, "job*"), filepath.Join(base, "read*")
+	write := filepath.Join(base, "write*")
 	sibling := filepath.Join(base, "job-private")
 	secret := filepath.Join(base, "read-secret")
-	for _, dir := range []string{work, read, sibling} {
+	for _, dir := range []string{work, read, sibling, write} {
 		require.NoError(t, os.Mkdir(dir, 0o700))
 	}
 	require.NoError(t, os.WriteFile(secret, []byte("secret"), 0o600))
@@ -154,10 +155,11 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	authFile := filepath.Join(home, "auth.json")
 	require.NoError(t, os.WriteFile(authFile, []byte("fixture-token"), 0o600))
 	job := Job{
-		WorkDir: work, ReadPaths: []string{read, readFile}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
+		WorkDir: work, ReadPaths: []string{read, readFile}, WritePaths: []string{write}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30,
 	}
 	script := shellChecks + `
+check write-grant allow touch "$8/created"
 check read-grant allow cat "$2/allowed"
 check file-read allow cat "$7"
 check sibling-write deny touch "$3/overwritten"
@@ -174,7 +176,8 @@ curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o 
 [ "$?" = 22 ] || failed=1
 exit "$failed"
 `
-	runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, authFile, readFile)
+	runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, authFile, readFile, write)
+	assert.FileExists(t, filepath.Join(write, "created"))
 	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
 	denial, err := os.ReadFile(filepath.Join(work, "direct-upstream-response"))
 	require.NoError(t, err)

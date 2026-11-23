@@ -86,3 +86,8 @@ func TestSandboxSelfCheckRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+func TestSandboxCommandRejectsMissingWritePath(t *testing.T) {
+	_, _, _, err := (Job{WorkDir: t.TempDir(), WritePaths: []string{filepath.Join(t.TempDir(), "missing")}}).Command(t.Context(), []string{"true"})
+	require.ErrorContains(t, err, "resolve sandbox write path")
+}

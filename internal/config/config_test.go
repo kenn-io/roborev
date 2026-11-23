@@ -364,6 +364,7 @@ func TestLoadGlobalConfigWithFixGuidelines(t *testing.T) {
 func TestRepoConfigLoadersRejectGlobalOnlyFixGuidelines(t *testing.T) {
 	for key, contents := range map[string]string{
 		"fix_guidelines":     `fix_guidelines = "Repo policy"`,
+		"ci.check_log_dir":   "[ci]\ncheck_log_dir = \"/logs\"\n",
 		"ci.check_model":     "[ci]\ncheck_model = \"high\"\n",
 		"ci.check_reasoning": "[ci]\ncheck_reasoning = \"high\"\n",
 	} {

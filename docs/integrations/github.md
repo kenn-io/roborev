@@ -1242,6 +1242,7 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
 | `check` | bool | `false` | Try synthesized findings before posting |
 | `rewrite` | bool | `false` | Rewrite checked findings in plain words; requires `check` |
+| `check_log_dir` | string | | Absolute directory for sandboxed Codex session logs. Global only |
 | `check_model` | string | | Model override for the checker. Global only |
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `comment_min_confidence` | float | unset | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Unset disables filtering. |
@@ -1251,6 +1252,9 @@ set, it takes priority over the matrix fields for that repo.
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |
 | `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |
 | `batch_timeout` | string | `"15m"` | Maximum time to wait for panel members before posting available results. Set `"0"` to disable. |
+
+Each run keeps its Codex home under `check_log_dir/job-<id>/run-*/`. Session
+logs are in the `sessions/` directory there. Roborev does not prune these files.
 
 When `agents` is empty, the poller auto-detects the first available agent from:
 codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi,

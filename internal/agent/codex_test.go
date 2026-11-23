@@ -1332,3 +1332,36 @@ func TestCodexSandboxCleansHomeWhenJobCommandFails(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, homes)
 }
+
+func TestCodexSandboxLogDir(t *testing.T) {
+	work, logs := t.TempDir(), t.TempDir()
+	t.Setenv("CODEX_HOME", t.TempDir())
+	for _, tc := range []struct{ name, dir, label string }{
+		{"empty label", logs, ""}, {"absolute label", logs, work}, {"parent label", logs, "../outside"}, {"relative directory", "logs", "job"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}, LogDir: tc.dir, Label: tc.label}).prepare(work)
+			require.Error(t, err)
+		})
+	}
+	var homes []string
+	for range 2 {
+		job, cleanup, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}, LogDir: logs, Label: "nested/job"}).prepare(work)
+		require.NoError(t, err)
+		require.Len(t, job.WritePaths, 1)
+		home := job.WritePaths[0]
+		assert.Equal(t, filepath.Join(logs, "nested", "job"), filepath.Dir(home))
+		assert.Contains(t, job.Env, "CODEX_HOME="+home)
+		cleanup()
+		assert.DirExists(t, home)
+		homes = append(homes, home)
+	}
+	assert.NotEqual(t, homes[0], homes[1])
+	job, cleanup, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}}).prepare(work)
+	require.NoError(t, err)
+	assert.Empty(t, job.WritePaths)
+	home := strings.TrimPrefix(job.Env[len(job.Env)-1], "CODEX_HOME=")
+	assert.Equal(t, work, filepath.Dir(home))
+	cleanup()
+	assert.NoDirExists(t, home)
+}

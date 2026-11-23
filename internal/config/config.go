@@ -1557,7 +1557,7 @@ func validateRepoConfigScope(md toml.MetaData) error {
 			"goal_review.kata_gate",
 		)
 	}
-	for _, key := range []string{"check_model", "check_reasoning"} {
+	for _, key := range []string{"check_model", "check_reasoning", "check_log_dir"} {
 		if md.IsDefined("ci", key) {
 			return fmt.Errorf(
 				"repository config key %q is global-only; move it to ~/.roborev/config.toml",

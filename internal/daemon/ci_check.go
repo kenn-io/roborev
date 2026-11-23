@@ -127,6 +127,10 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 	return res, false
 }
 
+func (wp *WorkerPool) ciCheckSandbox(job *storage.ReviewJob, sandboxJob sandbox.Job) *agent.CodexSandbox {
+	return &agent.CodexSandbox{Job: sandboxJob, Upstream: wp.ciCheckUpstream, LogDir: wp.cfgGetter.Config().CI.CheckLogDir, Label: fmt.Sprintf("job-%d", job.ID)}
+}
+
 // runCICheck owns the disposable checkout and every process used by the checker.
 func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, gitEnv []string, out io.Writer) (structuredreview.Document, error) {
 	baseAgent, err := agent.GetAvailableExactWithConfigFromConfig(nil, "codex", wp.cfgGetter.Config())
@@ -145,7 +149,7 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 	if err := os.WriteFile(filepath.Join(run.Job.WorkDir, "findings.md"), []byte(doc.Markdown(job.MinSeverity)), 0o600); err != nil {
 		return structuredreview.Document{}, err
 	}
-	a := codex.WithSandbox(&agent.CodexSandbox{Job: run.Job, Upstream: wp.ciCheckUpstream})
+	a := codex.WithSandbox(wp.ciCheckSandbox(job, run.Job))
 	a.Command = run.Command
 	a.Model = cfg.Model
 	a.Reasoning = agent.ParseReasoningLevel(cfg.Reasoning)
@@ -189,7 +193,7 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 					return nil, err
 				}
 				rewriteJob.ReadPaths = append(slices.Clone(run.Job.ReadPaths), repo)
-				rewriteAgent = a.WithSandbox(&agent.CodexSandbox{Job: rewriteJob, Upstream: wp.ciCheckUpstream})
+				rewriteAgent = a.WithSandbox(wp.ciCheckSandbox(job, rewriteJob))
 			}
 			phase++
 			fmt.Fprintf(out, "CI rewrite phase %d\n", phase)

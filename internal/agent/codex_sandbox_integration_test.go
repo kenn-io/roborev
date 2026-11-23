@@ -37,7 +37,11 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	t.Setenv("CODEX_HOME", secrets)
 	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-test-token"}}`), 0o600))
 
-	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", repo)
+	logs := t.TempDir()
+	sibling := filepath.Join(logs, "sibling")
+	require.NoError(t, os.Mkdir(sibling, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(sibling, "secret"), []byte("secret"), 0o600))
+	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/job/run-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\nif ! cat %q; then echo OK sibling-denied; fi\n", logs, filepath.Join(sibling, "secret"))
 	tmp := filepath.Join(repo, "tmp")
 
 	var key atomic.Value
@@ -118,7 +122,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 		MemoryMax: 8 << 30,
 		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + tmp},
 	}
-	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, Upstream: server.URL})
+	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, Upstream: server.URL, LogDir: logs, Label: "job"})
 	a.IgnoreUserConfig = true
 	a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`, `model_providers.roborev-route.base_url="http://127.0.0.1:1"`}
 	a.Model = "test-model"
@@ -126,11 +130,25 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	result, err := a.ReviewWithSchema(t.Context(), repo, "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
 	require.NoError(t, err, "%s", stream.String())
 	assert.Contains(t, string(result), "OK codex-home")
+	assert.Contains(t, string(result), "OK sibling-denied")
+	rollouts := func() []string {
+		t.Helper()
+		files, err := filepath.Glob(filepath.Join(logs, "job", "run-*", "sessions", "*", "*", "*", "rollout-*.jsonl"))
+		require.NoError(t, err)
+		for _, file := range files {
+			data, err := os.ReadFile(file)
+			require.NoError(t, err)
+			assert.NotEmpty(t, data)
+		}
+		return files
+	}
+	assert.Len(t, rollouts(), 1)
 	assert.Zero(t, unauthorized.Load())
 	t.Run("cancellation", func(t *testing.T) {
 		cancelling.Store(true)
 		_, err := a.Review(ctx, repo, "HEAD", "review", nil)
 		require.ErrorIs(t, err, context.Canceled)
+		assert.Len(t, rollouts(), 2)
 		files, err := filepath.Glob(filepath.Join(tmp, ".nono-*"))
 		require.NoError(t, err)
 		assert.Empty(t, files, "nono left temporary files after cancellation")
