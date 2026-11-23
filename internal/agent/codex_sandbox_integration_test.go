@@ -114,10 +114,19 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "probe.sh"), []byte(probe), 0o700))
 	require.NoError(t, os.Mkdir(tmp, 0o700))
 
+	readPaths := []string{gitDir, filepath.Dir(filepath.Dir(codex))}
+	path := "/usr/bin:/bin"
+	if _, err := exec.LookPath("node"); err == nil {
+		runtime, err := exec.CommandContext(t.Context(), "node", "-p", "process.execPath").Output()
+		require.NoError(t, err)
+		nodeDir := filepath.Dir(strings.TrimSpace(string(runtime)))
+		readPaths = append(readPaths, nodeDir)
+		path = nodeDir + ":" + path
+	}
 	job := sandbox.Job{
-		WorkDir: repo, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
+		WorkDir: repo, ReadPaths: readPaths,
 		MemoryMax: 8 << 30,
-		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + tmp},
+		Env:       []string{"PATH=" + path, "HOME=" + t.TempDir(), "TMPDIR=" + tmp},
 	}
 	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, Upstream: server.URL, LogDir: logs, Label: "job"})
 	a.IgnoreUserConfig = true

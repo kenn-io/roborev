@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/sandbox"
@@ -85,6 +86,11 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	if s.LogDir != "" {
 		if !filepath.IsAbs(s.LogDir) || !filepath.IsLocal(s.Label) {
 			return job, nil, fmt.Errorf("sandbox log directory must be absolute and label must be local")
+		}
+		for _, component := range strings.Split(filepath.Clean(s.Label), string(filepath.Separator)) {
+			if strings.HasPrefix(component, ".codex-run-v1-") {
+				return job, nil, fmt.Errorf("sandbox log label uses reserved prefix .codex-run-v1-")
+			}
 		}
 		homeDir, prefix = filepath.Join(s.LogDir, s.Label), ".codex-run-v1-"
 		if err := os.MkdirAll(homeDir, 0o700); err != nil {

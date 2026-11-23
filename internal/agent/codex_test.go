@@ -1338,6 +1338,7 @@ func TestCodexSandboxLogDir(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	for _, tc := range []struct{ name, dir, label string }{
 		{"empty label", logs, ""}, {"absolute label", logs, work}, {"parent label", logs, "../outside"}, {"relative directory", "logs", "job"},
+		{"reserved label", logs, ".codex-run-v1-abc"}, {"reserved nested label", logs, "experiment/.codex-run-v1-abc/case"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}, LogDir: tc.dir, Label: tc.label}).prepare(work)
@@ -1372,8 +1373,8 @@ func TestCodexSandboxLogDir(t *testing.T) {
 	assert.Empty(t, job.WritePaths)
 	var home string
 	for _, entry := range job.Env {
-		if strings.HasPrefix(entry, "CODEX_HOME=") {
-			home = strings.TrimPrefix(entry, "CODEX_HOME=")
+		if value, ok := strings.CutPrefix(entry, "CODEX_HOME="); ok {
+			home = value
 		}
 	}
 	require.NotEmpty(t, home)
