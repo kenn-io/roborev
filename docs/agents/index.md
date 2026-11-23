@@ -405,8 +405,9 @@ same policy. The probe checks work-directory writes, secret reads, network
 access, environment filtering, and access to the user D-Bus. Any mismatch or
 unenforceable policy stops the run before Codex starts.
 
-Codex runs in agentic mode with a private `CODEX_HOME` inside the job directory.
-Its provider uses nono's credential route. The nono supervisor reads the host
+Codex runs in agentic mode with a private `CODEX_HOME`. By default, it is inside
+the job directory. When log retention is enabled, it is inside the configured
+log directory. Its provider uses nono's credential route. The nono supervisor reads the host
 login on demand and injects the access token into model requests. The job sees
 only a placeholder key and a loopback URL. Only `POST /responses` to the Codex
 upstream goes out. The configuration file contains provider settings. Web search
