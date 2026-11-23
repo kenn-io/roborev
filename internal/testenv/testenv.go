@@ -70,7 +70,6 @@ func runIsolatedMain(run func() int) (code int) {
 		var output []byte
 		if err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			// Both older and current AgentsView versions support serve stop.
 			cmd := exec.CommandContext(ctx, agentsview, "serve", "stop")
 			cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+agentsviewDir)
 			output, err = cmd.CombinedOutput()
