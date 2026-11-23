@@ -7,6 +7,7 @@ import type { SuppliedPanelSynthesis } from "./suppliedPanelSynthesis";
 export interface EnqueueSuppliedPanelInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  check_log_label?: string;
   /**
    * Commit or range resolved once for every reviewer and synthesis
    * @minLength 1

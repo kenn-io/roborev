@@ -128,7 +128,11 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 }
 
 func (wp *WorkerPool) ciCheckSandbox(job *storage.ReviewJob, sandboxJob sandbox.Job) *agent.CodexSandbox {
-	return &agent.CodexSandbox{Job: sandboxJob, Upstream: wp.ciCheckUpstream, LogDir: wp.cfgGetter.Config().CI.CheckLogDir, Label: fmt.Sprintf("job-%d", job.ID)}
+	label := job.CheckLogLabel
+	if label == "" {
+		label = fmt.Sprintf("job-%d", job.ID)
+	}
+	return &agent.CodexSandbox{Job: sandboxJob, Upstream: wp.ciCheckUpstream, LogDir: wp.cfgGetter.Config().CI.CheckLogDir, Label: label}
 }
 
 // runCICheck owns the disposable checkout and every process used by the checker.

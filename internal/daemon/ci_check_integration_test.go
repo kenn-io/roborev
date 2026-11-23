@@ -268,12 +268,21 @@ echo 'OK rewrite read-only'
 	run, members, _ := enqueuePanelRun(t, tc, "checker-integration", []memberSpec{{name: "one", agent: "test"}})
 	completeMember(t, tc, members[0].ID, "test", "findings")
 	job := releaseAndClaimSynthesis(t, tc, run)
+	_, err := tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET check_log_label = ? WHERE id = ?`, "experiment/run", job.ID)
+	require.NoError(t, err)
+	job, err = tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	logDir := t.TempDir()
+	tc.Pool.cfgGetter.Config().CI.CheckLogDir = logDir
 	job.GitRef = sha + ".." + sha
 	job.MinSeverity = "medium"
 	tc.Pool.ciCheckUpstream = server.URL
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}}, doc, &ciCheckConfig{Model: "test-model", Reasoning: "high", Rewrite: true, PullRequest: prompt.PullRequestBlock(prompt.PullRequest{Title: "Export files"})})
+	rollouts, err := filepath.Glob(filepath.Join(logDir, "experiment", "run", "run-*", "sessions", "*", "*", "*", "rollout-*.jsonl"))
+	require.NoError(t, err)
+	assert.Len(t, rollouts, 3)
 	log, err := os.ReadFile(JobLogPath(job.ID))
 	require.NoError(t, err)
 	require.NotEmpty(t, checkouts, string(log))

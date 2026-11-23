@@ -514,5 +514,7 @@ func TestCICheckSandbox(t *testing.T) {
 	assert.Equal(t, job, got.Job)
 	assert.Equal(t, cfg.CI.CheckLogDir, got.LogDir)
 	assert.Equal(t, "job-42", got.Label)
+	got = wp.ciCheckSandbox(&storage.ReviewJob{ID: 42, CheckLogLabel: "experiment/run"}, job)
+	assert.Equal(t, "experiment/run", got.Label)
 	assert.Equal(t, wp.ciCheckUpstream, got.Upstream)
 }

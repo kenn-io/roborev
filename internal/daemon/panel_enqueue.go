@@ -25,6 +25,7 @@ import (
 // (Task 4) every panel member review identical input. Keep this exhaustive — a
 // missing field silently regresses one of the four enqueue paths.
 type targetDescriptor struct {
+	checkLogLabel     string
 	repoID            int64
 	commitID          int64
 	gitRef            string // frozen SHA / <sha>..<sha> / "dirty"; "" for prompt
@@ -55,7 +56,7 @@ type targetDescriptor struct {
 // Agent/Model/Provider/Reasoning/ReviewType (+ panel fields in Task 4).
 func (d targetDescriptor) baseOpts() storage.EnqueueOpts {
 	return storage.EnqueueOpts{
-		RepoID: d.repoID, CommitID: d.commitID, GitRef: d.gitRef, Branch: d.branch,
+		CheckLogLabel: d.checkLogLabel, RepoID: d.repoID, CommitID: d.commitID, GitRef: d.gitRef, Branch: d.branch,
 		PatchID: d.patchID, DiffContent: d.diffContent, DirtyFiles: d.dirtyFiles, MinSeverity: d.minSeverity,
 		WorktreePath: d.worktreePath, JobType: d.jobType, Prompt: d.prompt,
 		Source: d.source, PromptPrebuilt: d.promptPrebuilt, OutputPrefix: d.outputPrefix, Label: d.label,
@@ -141,6 +142,7 @@ func (s *Server) buildTargetDescriptor(
 	if early != nil {
 		return targetDescriptor{}, early
 	}
+	desc.checkLogLabel = in.req.CheckLogLabel
 	desc.source = in.req.Source
 	if in.req.ReviewPrompt != "" {
 		// Choose the code-review type before adding a stored prompt, which

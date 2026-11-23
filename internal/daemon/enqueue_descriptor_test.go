@@ -406,3 +406,22 @@ func TestEnqueuePostCommitConcurrentRequestsCreateOneJob(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, jobs, 1)
 }
+
+func TestEnqueueCheckLogLabel(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	sha := repo.CommitFile("a.txt", "a", "add a")
+	for _, label := range []string{"../outside", "/absolute"} {
+		response := enqueueRaw(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: sha, Agent: "test", CheckLogLabel: label})
+		assert.Equal(t, http.StatusBadRequest, response.Code)
+	}
+	job := enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: sha, Agent: "test", CheckLogLabel: "experiment/run"})
+	assert.Equal(t, "experiment/run", job.CheckLogLabel)
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "experiment/run", stored.CheckLogLabel)
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal(t, "experiment/run", claimed.CheckLogLabel)
+}

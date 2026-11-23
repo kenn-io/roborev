@@ -16,6 +16,7 @@ export interface ReviewJob {
   backup_agent?: string;
   backup_model?: string;
   branch?: string;
+  check_log_label?: string;
   claim_blocked?: boolean;
   closed?: boolean;
   command_line?: string;

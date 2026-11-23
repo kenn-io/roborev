@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
@@ -452,4 +453,31 @@ func TestSuppliedPanelRecordsStrictClaudeSynthesisUsage(t *testing.T) {
 			assert.InDelta(t, 0.25, spend.TotalUSD, 1e-9)
 		})
 	}
+}
+
+func TestSuppliedPanelCheckLogLabel(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("file.txt", "content", "target")
+	body := map[string]any{
+		"repo_path": repo.Path(), "git_ref": head,
+		"members":   []any{map[string]any{"name": "reviewer", "agent": "test", "review_prompt": "Review.", "review_settings": map[string]any{}}},
+		"synthesis": map[string]any{"agent": "test"},
+	}
+	for _, label := range []string{"../outside", "/absolute"} {
+		body["check_log_label"] = label
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/panel/enqueue", body))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	}
+	body["check_log_label"] = "experiment/run"
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(t, http.MethodPost, "/api/panel/enqueue", body))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var panel PanelEnqueueResponse
+	testutil.DecodeJSON(t, w, &panel)
+	stored, err := db.GetJobByID(panel.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "experiment/run", stored.CheckLogLabel)
+	assert.Equal(t, "experiment/run", server.workerPool.ciCheckSandbox(stored, sandbox.Job{}).Label)
 }

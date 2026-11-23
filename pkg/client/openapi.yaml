@@ -1356,6 +1356,8 @@ components:
           type: string
         branch:
           type: string
+        check_log_label:
+          type: string
         claim_blocked:
           type: boolean
         closed:
@@ -1525,6 +1527,8 @@ components:
           type: string
         branch:
           type: string
+        check_log_label:
+          type: string
         commit_sha:
           type: string
         custom_prompt:
@@ -1592,6 +1596,8 @@ components:
             - https://example.com/EnqueueSuppliedPanelInputBody.json
           format: uri
           readOnly: true
+          type: string
+        check_log_label:
           type: string
         git_ref:
           description: Commit or range resolved once for every reviewer and synthesis
@@ -3000,6 +3006,8 @@ components:
           type: string
         branch:
           type: string
+        check_log_label:
+          type: string
         claim_blocked:
           type: boolean
         closed:
@@ -3989,6 +3997,8 @@ components:
         backup_model:
           type: string
         branch:
+          type: string
+        check_log_label:
           type: string
         claim_blocked:
           type: boolean

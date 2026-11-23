@@ -12,6 +12,7 @@ export interface EnqueueRequest {
   analysis_files?: string[];
   analysis_type?: string;
   branch?: string;
+  check_log_label?: string;
   commit_sha?: string;
   custom_prompt?: string;
   diff_content?: string;

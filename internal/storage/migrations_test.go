@@ -331,3 +331,15 @@ func TestPanelEnqueueRequestMigrationPreservesQueuedReviews(t *testing.T) {
 	require.NotNil(t, claimed)
 	assert.Equal(existing[0].ID, claimed.ID, "the upgrade must preserve queued work")
 }
+
+func TestCheckLogLabelMigration(t *testing.T) {
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:19]))
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 20`)
+	require.NoError(t, err)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	exists, err := hasColumn(t.Context(), db, "review_jobs", "check_log_label")
+	require.NoError(t, err)
+	assert.True(t, exists)
+}

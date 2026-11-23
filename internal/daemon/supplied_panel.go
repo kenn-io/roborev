@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"uuid"
 
@@ -46,6 +47,7 @@ type SuppliedPanelSynthesis struct {
 type EnqueueSuppliedPanelInput struct {
 	RawBody []byte
 	Body    struct {
+		CheckLogLabel string                 `json:"check_log_label,omitempty"`
 		RequestID     *uuid.UUID             `json:"request_id,omitempty" doc:"Retry an identical submission with this ID to recover its original panel"`
 		RepoPath      string                 `json:"repo_path" minLength:"1"`
 		GitRef        string                 `json:"git_ref" minLength:"1" doc:"Commit or range resolved once for every reviewer and synthesis"`
@@ -57,6 +59,9 @@ type EnqueueSuppliedPanelInput struct {
 
 func (s *Server) humaEnqueueSuppliedPanel(ctx context.Context, input *EnqueueSuppliedPanelInput) (*RawJSONOutput, error) {
 	req := input.Body
+	if req.CheckLogLabel != "" && !filepath.IsLocal(req.CheckLogLabel) {
+		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "check_log_label must be a local relative path"})
+	}
 	var request storage.PanelEnqueueRequest
 	if req.RequestID != nil {
 		if *req.RequestID == uuid.Nil() {
@@ -95,7 +100,7 @@ func (s *Server) humaEnqueueSuppliedPanel(ctx context.Context, input *EnqueueSup
 	// An explicit empty policy prevents branch/commit exclusions from the checkout.
 	descriptor, early := s.buildTargetDescriptor(ctx, freezeInputs{
 		repo: repo, gitRef: req.GitRef, checkoutRoot: checkoutRoot, repoRoot: repoRoot, metadata: metadata,
-		req: EnqueueRequest{Source: storage.JobSourceReviewPrompt, ReviewSettings: &SuppliedReviewSettings{}},
+		req: EnqueueRequest{CheckLogLabel: req.CheckLogLabel, Source: storage.JobSourceReviewPrompt, ReviewSettings: &SuppliedReviewSettings{}},
 	})
 	if early != nil {
 		return early, nil
