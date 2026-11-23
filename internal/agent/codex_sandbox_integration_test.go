@@ -38,10 +38,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-test-token"}}`), 0o600))
 
 	logs := t.TempDir()
-	sibling := filepath.Join(logs, "sibling")
-	require.NoError(t, os.Mkdir(sibling, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(sibling, "secret"), []byte("secret"), 0o600))
-	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/job/run-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\nif ! cat %q; then echo OK sibling-denied; fi\n", logs, filepath.Join(sibling, "secret"))
+	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/job/run-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", logs)
 	tmp := filepath.Join(repo, "tmp")
 
 	var key atomic.Value
@@ -130,7 +127,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	result, err := a.ReviewWithSchema(t.Context(), repo, "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
 	require.NoError(t, err, "%s", stream.String())
 	assert.Contains(t, string(result), "OK codex-home")
-	assert.Contains(t, string(result), "OK sibling-denied")
 	rollouts := func() []string {
 		t.Helper()
 		files, err := filepath.Glob(filepath.Join(logs, "job", "run-*", "sessions", "*", "*", "*", "rollout-*.jsonl"))

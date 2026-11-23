@@ -47,19 +47,27 @@ func TestSandboxCommandRejectsReadPaths(t *testing.T) {
 	t.Chdir(filepath.Dir(link))
 	for _, tc := range []struct {
 		name, path, want string
+		write            bool
 	}{
-		{"file", file, "inside sandbox WorkDir"},
-		{"workdir", work, "inside sandbox WorkDir"},
-		{"symlink", link, "inside sandbox WorkDir"},
-		{"symlink-parent", dirLink + "/../read-only", "inside sandbox WorkDir"},
-		{"relative-symlink-parent", "dir-link/../read-only", "inside sandbox WorkDir"},
-		{"missing", filepath.Join(t.TempDir(), "missing"), "resolve sandbox read path"},
+		{"file", file, "inside sandbox WorkDir", false},
+		{"workdir", work, "inside sandbox WorkDir", false},
+		{"symlink", link, "inside sandbox WorkDir", false},
+		{"symlink-parent", dirLink + "/../read-only", "inside sandbox WorkDir", false},
+		{"relative-symlink-parent", "dir-link/../read-only", "inside sandbox WorkDir", false},
+		{"missing", filepath.Join(t.TempDir(), "missing"), "resolve sandbox read path", false},
+		{"missing write", filepath.Join(t.TempDir(), "missing"), "resolve sandbox write path", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if runtime.GOOS == "windows" && (tc.name == "symlink-parent" || tc.name == "relative-symlink-parent") {
 				t.Skip("Windows resolves parent components before symlinks")
 			}
-			_, _, _, err := (Job{WorkDir: work, ReadPaths: []string{tc.path}, MemoryMax: 1 << 30}).Command(t.Context(), []string{"true"})
+			job := Job{WorkDir: work, MemoryMax: 1 << 30}
+			if tc.write {
+				job.WritePaths = []string{tc.path}
+			} else {
+				job.ReadPaths = []string{tc.path}
+			}
+			_, _, _, err := job.Command(t.Context(), []string{"true"})
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
@@ -85,9 +93,4 @@ func TestSandboxSelfCheckRejectsInvalidInput(t *testing.T) {
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
-}
-
-func TestSandboxCommandRejectsMissingWritePath(t *testing.T) {
-	_, _, _, err := (Job{WorkDir: t.TempDir(), WritePaths: []string{filepath.Join(t.TempDir(), "missing")}}).Command(t.Context(), []string{"true"})
-	require.ErrorContains(t, err, "resolve sandbox write path")
 }

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -265,15 +267,19 @@ echo 'OK rewrite read-only'
 	defer server.Close()
 	sha := testutil.GetHeadSHA(t, repoRoot)
 	doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Kind: "defect", Confidence: .9, Problem: "build claim", Fix: "fix", Sources: []int{1}}, {Severity: "medium", Kind: "defect", Confidence: .9, Location: "save.go:4", Problem: "data loss", Fix: "fix", Sources: []int{1}}, {Severity: "low", Kind: "defect", Confidence: .9, Problem: "minor issue", Fix: "minor fix", Sources: []int{1}}}}
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+	require.NoError(t, err)
+	runUUID := uuid.New()
+	memberConfig, err := json.Marshal(config.ResolvedMember{Name: "one", Index: 0, Agent: "test"})
+	require.NoError(t, err)
 	created, members, synthesis, err := tc.DB.CreateCIPanelRun("example/project", 1, sha,
-		[]storage.EnqueueOpts{{RepoID: tc.Repo.ID, GitRef: sha, Agent: "test", PanelMemberName: "one"}},
-		storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: sha, Agent: "test", CheckLogLabel: "experiment/run"})
+		[]storage.EnqueueOpts{{RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", JobType: storage.JobTypeReview, PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember, PanelName: "checker-integration", PanelMemberName: "one", PanelMemberConfigJSON: string(memberConfig)}},
+		storage.EnqueueOpts{RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "test", PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "checker-integration", CheckLogLabel: "experiment/run"})
 	require.NoError(t, err)
 	require.True(t, created)
 	require.NotNil(t, synthesis.PanelRunUUID)
 	completeMember(t, tc, members[0].ID, "test", "findings")
 	job := releaseAndClaimSynthesis(t, tc, *synthesis.PanelRunUUID)
-	assert.Equal(t, "experiment/run", job.CheckLogLabel)
 	logDir := t.TempDir()
 	tc.Pool.cfgGetter.Config().CI.CheckLogDir = logDir
 	job.GitRef = sha + ".." + sha

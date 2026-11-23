@@ -1369,7 +1369,13 @@ func TestCodexSandboxLogDir(t *testing.T) {
 	job, cleanup, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}}).prepare(work)
 	require.NoError(t, err)
 	assert.Empty(t, job.WritePaths)
-	home := strings.TrimPrefix(job.Env[len(job.Env)-1], "CODEX_HOME=")
+	var home string
+	for _, entry := range job.Env {
+		if strings.HasPrefix(entry, "CODEX_HOME=") {
+			home = strings.TrimPrefix(entry, "CODEX_HOME=")
+		}
+	}
+	require.NotEmpty(t, home)
 	assert.Equal(t, work, filepath.Dir(home))
 	cleanup()
 	assert.NoDirExists(t, home)
