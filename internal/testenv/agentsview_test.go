@@ -95,6 +95,10 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 				inheritedDir = other
 			}
 			t.Setenv("AGENTSVIEW_DATA_DIR", inheritedDir)
+			if tc.name == "override" {
+				cmd := exec.CommandContext(t.Context(), "agentsview", "session", "usage-batch", "x", "--format", "json", "--no-sync")
+				require.NoError(t, cmd.Run())
+			}
 			if tc.fail {
 				t.Setenv("TEST_STOP_FAIL", "1")
 			}
@@ -140,7 +144,11 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 			} else {
 				assert.NoFileExists(t, events)
 			}
-			assert.NoDirExists(t, other)
+			if tc.name == "override" {
+				assert.FileExists(t, filepath.Join(other, "record"))
+			} else {
+				assert.NoDirExists(t, other)
+			}
 		})
 	}
 }
