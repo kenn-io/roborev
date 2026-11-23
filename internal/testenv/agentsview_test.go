@@ -1,13 +1,16 @@
 package testenv
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -151,4 +154,89 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 			}
 		})
 	}
+	t.Run("real agentsview", func(t *testing.T) {
+		binary, err := exec.LookPath("agentsview")
+		if err != nil {
+			t.Skip("agentsview is not installed")
+		}
+		for _, key := range []string{"HOME", "USERPROFILE", "GOENV", "GOPATH", "GOCACHE", "MISE_CONFIG_DIR", "MISE_DATA_DIR", "MISE_STATE_DIR", "MISE_CACHE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "XDG_CONFIG_HOME", "GIT_TERMINAL_PROMPT"} {
+			t.Setenv(key, os.Getenv(key))
+		}
+		oldUserEnv, oldAgentEnv := userEnv, userAgentEnv
+		t.Cleanup(func() { userEnv, userAgentEnv = oldUserEnv, oldAgentEnv })
+		other := filepath.Join(t.TempDir(), "other")
+		t.Setenv("AGENTSVIEW_DATA_DIR", other)
+
+		start := func(dataDir string) (*exec.Cmd, <-chan error, error) {
+			cmd := exec.Command(binary, "serve", "--no-sync", "--no-browser", "--port", "0")
+			cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dataDir)
+			if err := cmd.Start(); err != nil {
+				return nil, nil, err
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait(); close(done) }()
+			t.Cleanup(func() {
+				select {
+				case <-done:
+				default:
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					stop := exec.CommandContext(ctx, binary, "serve", "stop")
+					stop.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dataDir)
+					_ = stop.Run()
+					cancel()
+					select {
+					case <-done:
+					default:
+						_ = cmd.Process.Kill()
+						<-done
+					}
+				}
+			})
+			return cmd, done, nil
+		}
+		ready := func(cmd *exec.Cmd, dataDir string) bool {
+			// A real server must publish its runtime record and answer health checks.
+			return assert.Eventually(t, func() bool {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				status := exec.CommandContext(ctx, binary, "serve", "status")
+				status.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dataDir)
+				output, err := status.Output()
+				return err == nil && strings.Contains(string(output), fmt.Sprintf("%d", cmd.Process.Pid)) && strings.Contains(string(output), "http")
+			}, 20*time.Second, 100*time.Millisecond)
+		}
+		otherCmd, otherDone, err := start(other)
+		require.NoError(t, err)
+		require.True(t, ready(otherCmd, other))
+		var isolatedDone <-chan error
+		code := runIsolatedMain(func() int {
+			dataDir := os.Getenv("AGENTSVIEW_DATA_DIR")
+			cmd, done, err := start(dataDir)
+			if !assert.NoError(t, err) {
+				return 1
+			}
+			isolatedDone = done
+			if !ready(cmd, dataDir) {
+				return 1
+			}
+			return 0
+		})
+		assert.Zero(t, code)
+		if isolatedDone != nil {
+			exited := false
+			select {
+			case <-isolatedDone:
+				exited = true
+			case <-time.After(5 * time.Second):
+			}
+			assert.True(t, exited, "isolated server did not exit")
+		}
+		otherExited := false
+		select {
+		case <-otherDone:
+			otherExited = true
+		default:
+		}
+		assert.False(t, otherExited, "other server exited")
+	})
 }
