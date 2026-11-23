@@ -227,8 +227,9 @@ func (cw *ConfigWatcher) reloadConfig() {
 	oldCfg := cw.cfg
 	requestedWeb := newCfg.Web
 	newCfg.Web = oldCfg.Web
-	requestedMCP := newCfg.MCP
-	newCfg.MCP = oldCfg.MCP
+	// Only the /mcp mount needs a restart; reviewer tools are read per job.
+	requestedMCPEnabled := newCfg.MCP.Enabled
+	newCfg.MCP.Enabled = oldCfg.MCP.Enabled
 	requestedSearch := newCfg.Search
 	newCfg.Search = oldCfg.Search
 	requestedMaxWorkers := newCfg.MaxWorkers
@@ -251,8 +252,8 @@ func (cw *ConfigWatcher) reloadConfig() {
 	if requestedWeb != oldCfg.Web {
 		log.Printf("Config change: [web] settings changed (requires daemon restart to take effect)")
 	}
-	if requestedMCP != oldCfg.MCP {
-		log.Printf("Config change: [mcp] settings changed (requires daemon restart to take effect)")
+	if requestedMCPEnabled != oldCfg.MCP.Enabled {
+		log.Printf("Config change: [mcp] enabled changed (requires daemon restart to take effect)")
 	}
 	if !reflect.DeepEqual(requestedSearch, oldCfg.Search) {
 		log.Printf("Config change: [search] settings changed (requires daemon restart to take effect)")
