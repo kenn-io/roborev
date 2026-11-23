@@ -20,6 +20,10 @@ import (
 // isolates tests from the production ~/.roborev directory. It safely manages
 // environment variables and preserves the original test exit code.
 func RunIsolatedMain(m *testing.M) int {
+	return runIsolatedMain(m.Run)
+}
+
+func runIsolatedMain(run func() int) int {
 	// Snapshot prod log state BEFORE overriding ROBOREV_DATA_DIR.
 	// Best-effort: if the home directory can't be resolved (e.g. CI
 	// containers with no HOME), skip the barrier rather than aborting.
@@ -46,7 +50,7 @@ func RunIsolatedMain(m *testing.M) int {
 	restoreAgentConfigEnv := unsetAgentConfigDirEnv()
 	defer restoreAgentConfigEnv()
 
-	code := m.Run()
+	code := run()
 	if _, err := os.Stat(agentsviewDir); agentsview != "" && !os.IsNotExist(err) {
 		// Cleanup must finish even after the tests have completed.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

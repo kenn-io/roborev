@@ -45,41 +45,27 @@ func fakeAgentsview() int {
 	return 0
 }
 
-func TestAgentsviewChild(t *testing.T) {
-	if os.Getenv("TEST_ISOLATED_CHILD") == "" {
-		return
-	}
-	require.NoError(t, os.WriteFile(os.Getenv("TEST_HOME_FILE"), []byte(os.Getenv("HOME")), 0o600))
-	if os.Getenv("TEST_NO_LOOKUP") == "" && os.Getenv("TEST_MISSING") == "" {
-		cmd := exec.CommandContext(t.Context(), "agentsview", "session", "usage-batch", "x", "--format", "json", "--no-sync")
-		require.NoError(t, cmd.Run())
-	}
-	if os.Getenv("TEST_CHANGE_PATH") != "" {
-		require.NoError(t, os.Setenv("PATH", os.Getenv("TEST_EMPTY_PATH")))
-	}
-	if os.Getenv("TEST_SUITE_FAIL") != "" {
-		assert.Equal(t, "passing", "failing")
-	}
-}
-
 func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
-	if os.Getenv("TEST_ISOLATED_CHILD") != "" {
-		return
-	}
 	for _, tc := range []struct {
 		name                 string
-		env                  []string
 		stop, fail, preserve bool
+		suiteCode            int
 	}{
-		{"cleanup", nil, true, false, false},
-		{"override", nil, true, false, false},
-		{"path changed", []string{"TEST_CHANGE_PATH=1"}, true, false, false},
-		{"missing", []string{"TEST_MISSING=1"}, false, false, false},
-		{"stop fails", []string{"TEST_STOP_FAIL=1"}, true, true, true},
-		{"suite and stop fail", []string{"TEST_STOP_FAIL=1", "TEST_SUITE_FAIL=1"}, true, true, true},
-		{"no lookup", []string{"TEST_NO_LOOKUP=1"}, false, false, false},
+		{"cleanup", true, false, false, 0},
+		{"override", true, false, false, 0},
+		{"path changed", true, false, false, 0},
+		{"missing", false, false, false, 0},
+		{"stop fails", true, true, true, 0},
+		{"suite and stop fail", true, true, true, 7},
+		{"no lookup", false, false, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The runner changes the process environment as a real TestMain does.
+			for _, key := range []string{"HOME", "USERPROFILE", "GOENV", "GOPATH", "GOCACHE", "MISE_CONFIG_DIR", "MISE_DATA_DIR", "MISE_STATE_DIR", "MISE_CACHE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "XDG_CONFIG_HOME", "GIT_TERMINAL_PROMPT"} {
+				t.Setenv(key, os.Getenv(key))
+			}
+			oldUserEnv, oldAgentEnv := userEnv, userAgentEnv
+			t.Cleanup(func() { userEnv, userAgentEnv = oldUserEnv, oldAgentEnv })
 			dir := t.TempDir()
 			bin := filepath.Join(dir, "bin")
 			require.NoError(t, os.Mkdir(bin, 0o755))
@@ -99,23 +85,46 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 				require.NoError(t, dst.Close())
 				require.NoError(t, src.Close())
 			}
-			events, homeFile := filepath.Join(dir, "events"), filepath.Join(dir, "home")
+			events := filepath.Join(dir, "events")
 			other := filepath.Join(dir, "other")
-			cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestAgentsviewChild$")
-			cmd.Env = append(os.Environ(), "PATH="+bin, "TEST_ISOLATED_CHILD=1", "TEST_EVENTS="+events, "TEST_HOME_FILE="+homeFile, "TEST_EMPTY_PATH="+dir, "AGENTSVIEW_DATA_DIR=")
+			t.Setenv("PATH", bin)
+			t.Setenv("TEST_EVENTS", events)
+			t.Setenv("TEST_STOP_FAIL", "")
+			inheritedDir := ""
 			if tc.name == "override" {
-				cmd.Env = append(cmd.Env, "AGENTSVIEW_DATA_DIR="+other)
+				inheritedDir = other
 			}
-			cmd.Env = append(cmd.Env, tc.env...)
-			output, err := cmd.CombinedOutput()
+			t.Setenv("AGENTSVIEW_DATA_DIR", inheritedDir)
 			if tc.fail {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err, "%s", output)
+				t.Setenv("TEST_STOP_FAIL", "1")
 			}
-			homeBytes, err := os.ReadFile(homeFile)
+			stderr, err := os.Create(filepath.Join(dir, "stderr"))
 			require.NoError(t, err)
-			home := string(homeBytes)
+			oldStderr := os.Stderr
+			os.Stderr = stderr
+			t.Cleanup(func() { os.Stderr = oldStderr; _ = stderr.Close() })
+			var home string
+			code := runIsolatedMain(func() int {
+				home = os.Getenv("HOME")
+				if tc.name != "missing" && tc.name != "no lookup" {
+					cmd := exec.CommandContext(t.Context(), "agentsview", "session", "usage-batch", "x", "--format", "json", "--no-sync")
+					assert.NoError(t, cmd.Run())
+				}
+				if tc.name == "path changed" {
+					assert.NoError(t, os.Setenv("PATH", dir))
+				}
+				return tc.suiteCode
+			})
+			os.Stderr = oldStderr
+			require.NoError(t, stderr.Close())
+			output, err := os.ReadFile(filepath.Join(dir, "stderr"))
+			require.NoError(t, err)
+			expectedCode := tc.suiteCode
+			if tc.fail && expectedCode == 0 {
+				expectedCode = 1
+			}
+			assert.Equal(t, expectedCode, code)
+			assert.Equal(t, inheritedDir, os.Getenv("AGENTSVIEW_DATA_DIR"))
 			if tc.preserve {
 				t.Cleanup(func() { _ = os.RemoveAll(home) })
 				assert.Contains(t, string(output), "failed to stop agentsview")
