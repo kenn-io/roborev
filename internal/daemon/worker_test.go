@@ -4683,3 +4683,61 @@ func TestProcessJob_PromptSaveFailureRetriesBeforeAgentRuns(t *testing.T) {
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	assert.Equal(t, 1, updated.RetryCount)
 }
+
+func TestProcessJob_ReviewStoreFailureFailsWithoutRerun(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	calls := 0
+	const agentName = "review-store-failure"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			calls++
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	})
+	tc := newWorkerTestContext(t, 1)
+	_, err := tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
+		BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`)
+	require.NoError(t, err)
+	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, agentName)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	failed := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Zero(failed.RetryCount)
+	assert.Contains(failed.Error, "store review: ")
+	assert.Contains(failed.Error, "database or disk is full")
+	assert.Equal(1, calls)
+}
+
+func TestProcessJob_FixStoreFailureRetries(t *testing.T) {
+	t.Parallel()
+	const agentName = "fix-store-failure"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(_ context.Context, path, _, _ string, _ io.Writer) (string, error) {
+			require.NoError(t, os.WriteFile(filepath.Join(path, "fixed.txt"), []byte("fixed"), 0o600))
+			return "Fixed it", nil
+		},
+	})
+	tc := newWorkerTestContext(t, 1)
+	parent := tc.createAndClaimJob(t, testutil.GetHeadSHA(t, tc.TmpDir), "parent-worker")
+	require.NoError(t, testutil.CompleteReviewFixture(tc.DB, parent.ID, "test", "review prompt", "High: missing check"))
+	_, err := tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_review_insert BEFORE INSERT ON reviews
+		BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`)
+	require.NoError(t, err)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: tc.Repo.ID, GitRef: parent.GitRef, Agent: agentName, Prompt: "Fix the finding",
+		Agentic: true, JobType: storage.JobTypeFix, ParentJobID: parent.ID,
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	retried := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, 1, retried.RetryCount)
+}

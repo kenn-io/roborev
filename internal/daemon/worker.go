@@ -1943,10 +1943,24 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
-		// canceled between agent finish and now.
+		// canceled between agent finish and now. A store error ends the
+		// attempt here: a job left running would only be failed later by the
+		// orphan sweep, with an error that hides the real cause. Only fix
+		// jobs rerun, because they write to their own worktree. Any other
+		// agent may have edited the checkout, and the worker cannot tell from
+		// agent flags and settings whether it could, so a rerun could repeat
+		// those edits.
+		storeFailed := func(errorMsg string) {
+			if job.IsFixJob() {
+				wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, false, nil)
+				return
+			}
+			wp.failNonRetryableJobLocked(workerID, job, agentName, errorMsg)
+		}
 		if job.IsFixJob() {
 			if err := wp.db.CompleteFixJob(job.ID, agentName, output, fixPatch); err != nil {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
+				storeFailed(fmt.Sprintf("store fix review: %v", err))
 				return
 			}
 		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
@@ -1961,6 +1975,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				},
 			); err != nil {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
+				storeFailed(fmt.Sprintf("store review: %v", err))
 				return
 			}
 		} else if err := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
@@ -1968,6 +1983,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			FileCoverage: fileCoverage,
 		}); err != nil {
 			log.Printf("[%s] Error storing review: %v", workerID, err)
+			storeFailed(fmt.Sprintf("store review: %v", err))
 			return
 		}
 
