@@ -34,7 +34,7 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 	}
 }
 
-func TestSandboxCommandRejectsReadPaths(t *testing.T) {
+func TestSandboxCommandRejectsInvalidPaths(t *testing.T) {
 	work := t.TempDir()
 	file := filepath.Join(work, "read-only")
 	require.NoError(t, os.WriteFile(file, []byte("fixture"), 0o600))

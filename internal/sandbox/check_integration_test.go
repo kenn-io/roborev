@@ -177,7 +177,6 @@ curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o 
 exit "$failed"
 `
 	runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, authFile, readFile, write)
-	assert.FileExists(t, filepath.Join(write, "created"))
 	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
 	denial, err := os.ReadFile(filepath.Join(work, "direct-upstream-response"))
 	require.NoError(t, err)

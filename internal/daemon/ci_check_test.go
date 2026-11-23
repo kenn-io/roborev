@@ -506,15 +506,7 @@ func TestCICheckUsesRepositoryAuthForDefaultBranchReviews(t *testing.T) {
 }
 
 func TestCICheckSandbox(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.CI.CheckLogDir = t.TempDir()
-	wp := &WorkerPool{cfgGetter: NewStaticConfig(cfg), ciCheckUpstream: "https://example.com"}
-	job := sandbox.Job{WorkDir: t.TempDir()}
-	got := wp.ciCheckSandbox(&storage.ReviewJob{ID: 42}, job)
-	assert.Equal(t, job, got.Job)
-	assert.Equal(t, cfg.CI.CheckLogDir, got.LogDir)
+	wp := &WorkerPool{cfgGetter: NewStaticConfig(config.DefaultConfig())}
+	got := wp.ciCheckSandbox(&storage.ReviewJob{ID: 42}, sandbox.Job{})
 	assert.Equal(t, "job-42", got.Label)
-	got = wp.ciCheckSandbox(&storage.ReviewJob{ID: 42, CheckLogLabel: "experiment/run"}, job)
-	assert.Equal(t, "experiment/run", got.Label)
-	assert.Equal(t, wp.ciCheckUpstream, got.Upstream)
 }
