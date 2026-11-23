@@ -46,7 +46,7 @@ override GOFLAGS += -trimpath
 endif
 export GOFLAGS
 
-.PHONY: build homebrew web-deps web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-agent-setup test-git-isolation test-codex-skill-eval test-integration test-sandbox-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy check-links check-links-live
+.PHONY: build homebrew web-deps web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-agent-setup test-git-isolation test-agentsview-cleanup test-codex-skill-eval test-integration test-sandbox-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy check-links check-links-live
 
 build: web-embed
 	@set -e; trap '$(MAKE) web-restore' EXIT; \
@@ -190,6 +190,9 @@ test-agent-setup:
 # The growth tag keeps full builds and feed paging out of ordinary/race tests.
 test-search-mirror-growth:
 	CGO_ENABLED=0 go test -p 1 -tags=growth ./internal/searchindex ./internal/storage -run '^Test(ReconcilerInitialMirrorGrowth|SearchFeedPagingGrowth)$$' -timeout=10m -count=1 -v
+
+test-agentsview-cleanup:
+	go test ./internal/testenv -run '^Test(RunIsolatedMainStopsAgentsView|StopAgentsview)$$' -count=1
 
 test-git-isolation:
 	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .
