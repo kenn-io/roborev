@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,7 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 		{"stop fails in failing suite", 7, 7},
 		{"stop skips", 0, 1},
 		{"stop skips in failing suite", 7, 7},
+		{"startup", 0, 0},
 		{"panic", 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,6 +116,17 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 			var home string
 			run := func() int {
 				home = os.Getenv("HOME")
+				if tc.name == "startup" {
+					store := daemon.RuntimeStore{Dir: os.Getenv("AGENTSVIEW_DATA_DIR")}
+					releaseLock, err := store.AcquireStartLock(t.Context())
+					require.NoError(t, err)
+					go func() {
+						time.Sleep(100 * time.Millisecond)
+						_, _ = store.Write(daemon.RuntimeRecord{PID: os.Getpid(), Address: "127.0.0.1:1"})
+						releaseLock()
+					}()
+					return tc.suiteCode
+				}
 				cmd := exec.CommandContext(t.Context(), "agentsview", "session", "usage-batch", "x", "--format", "json", "--no-sync")
 				assert.NoError(t, cmd.Run())
 				assert.NoError(t, os.Setenv("PATH", dir))
@@ -189,4 +202,16 @@ func TestRunIsolatedMainStopsAgentsView(t *testing.T) {
 		assert.False(t, daemon.RuntimeProcessAlive(isolated))
 		assert.True(t, daemon.RuntimeProcessAlive(other))
 	})
+}
+
+func TestStopAgentsviewStartupTimeout(t *testing.T) {
+	dir := t.TempDir()
+	release, err := (daemon.RuntimeStore{Dir: dir}).AcquireStartLock(t.Context())
+	require.NoError(t, err)
+	defer release()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	_, err = stopAgentsview(ctx, "", dir)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.DirExists(t, dir)
 }

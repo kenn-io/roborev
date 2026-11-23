@@ -192,7 +192,7 @@ test-search-mirror-growth:
 	CGO_ENABLED=0 go test -p 1 -tags=growth ./internal/searchindex ./internal/storage -run '^Test(ReconcilerInitialMirrorGrowth|SearchFeedPagingGrowth)$$' -timeout=10m -count=1 -v
 
 test-agentsview-cleanup:
-	go test ./internal/testenv -run '^TestRunIsolatedMainStopsAgentsView$$' -count=1
+	go test ./internal/testenv -run '^Test(RunIsolatedMainStopsAgentsView|StopAgentsviewStartupTimeout)$$' -count=1
 
 test-git-isolation:
 	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .

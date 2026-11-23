@@ -86,12 +86,24 @@ func runIsolatedMain(run func() int) (code int) {
 }
 
 func stopAgentsview(ctx context.Context, binary, dir string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for _, path := range []string{dir, filepath.Join(dir, "run")} {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		release, err := (daemon.RuntimeStore{Dir: path}).AcquireStartLock(ctx)
+		if err != nil {
+			return nil, err
+		}
+		release()
+	}
 	records, err := agentsviewRecords(dir)
 	if err != nil || !slices.ContainsFunc(records, daemon.RuntimeProcessAlive) {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "serve", "stop")
 	cmd.Env = append(os.Environ(), "AGENTSVIEW_DATA_DIR="+dir)
 	output, err := cmd.CombinedOutput()
