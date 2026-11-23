@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -59,18 +60,8 @@ func runIsolatedMain(run func() int) (code int) {
 	defer restoreAgentConfigEnv()
 
 	defer func() {
-		if agentsview == "" {
-			return
-		}
-		live, err := liveAgentsviewRecords(agentsviewDir)
-		if err == nil && !live {
-			return
-		}
 		// Cleanup must finish even after the tests have completed.
-		var output []byte
-		if err == nil {
-			output, err = stopAgentsview(context.Background(), agentsview, agentsviewDir)
-		}
+		output, err := stopAgentsview(context.Background(), agentsview, agentsviewDir)
 		if err != nil {
 			// Keep the runtime record so the leaked server can be found, and fail the suite to report it.
 			preserveHome = true
@@ -95,6 +86,10 @@ func runIsolatedMain(run func() int) (code int) {
 }
 
 func stopAgentsview(ctx context.Context, binary, dir string) ([]byte, error) {
+	records, err := agentsviewRecords(dir)
+	if err != nil || !slices.ContainsFunc(records, daemon.RuntimeProcessAlive) {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "serve", "stop")
@@ -102,24 +97,21 @@ func stopAgentsview(ctx context.Context, binary, dir string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-func liveAgentsviewRecords(dir string) (bool, error) {
+func agentsviewRecords(dir string) ([]daemon.RuntimeRecord, error) {
+	var all []daemon.RuntimeRecord
 	for _, path := range []string{dir, filepath.Join(dir, "run")} {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			continue
 		} else if err != nil {
-			return false, err
+			return nil, err
 		}
 		records, err := (daemon.RuntimeStore{Dir: path}).List()
 		if err != nil {
-			return false, err
+			return nil, err
 		}
-		for _, rec := range records {
-			if daemon.RuntimeProcessAlive(rec) {
-				return true, nil
-			}
-		}
+		all = append(all, records...)
 	}
-	return false, nil
+	return all, nil
 }
 
 // SetDataDir sets ROBOREV_DATA_DIR to a temp directory to isolate tests
