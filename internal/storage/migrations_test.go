@@ -333,6 +333,7 @@ func TestPanelEnqueueRequestMigrationPreservesQueuedReviews(t *testing.T) {
 }
 
 func TestCheckLogLabelMigration(t *testing.T) {
+	t.Parallel()
 	db := openUnmigratedDB(t)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:19]))
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
