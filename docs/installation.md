@@ -136,8 +136,12 @@ release-notes viewer in its header.
 ### Upgrading to 0.76.0
 
 Check these items before updating from 0.75.x or earlier. If you skip releases,
-also follow the upgrade notes for each release you skip, starting with the
-oldest.
+read their upgrade notes and complete their preparations before updating. Use
+the 0.76.0 steps below for the update and restart.
+
+If you're upgrading from 0.71.x or earlier, check the free disk space required
+for the [0.72.0 database conversion](#upgrading-to-0720) before updating. The
+conversion runs when the new daemon starts.
 
 | If you use... | Upgrade action |
 | --- | --- |
@@ -165,10 +169,6 @@ To roll back after upgrading machines that share a PostgreSQL mirror, stop every
 daemon that uses the mirror. Restore each machine's local backup and the mirror
 backup made before the upgrade, then start the older release. Restoring the
 mirror backup discards every write made to the mirror after that backup.
-
-If you're upgrading from 0.71.x or earlier, also follow the
-[0.72.0 database conversion steps](#upgrading-to-0720) before starting the new
-daemon.
 
 ### Upgrading to 0.74.0
 

@@ -180,6 +180,8 @@ posting them.
 
 **Bug fixes**
 
+- TUI text wrapping keeps multi-code-point glyphs together, so emoji no longer
+    split across lines.
 - Usage telemetry is off unless you have opted in or set `TELEMETRY_ENABLED=1`.
 - Stop CI reviews from running hooks, MCP servers, and plugins that a pull
     request adds to the reviewed checkout. Claude Code, Codex, Gemini, Pi,
@@ -264,6 +266,11 @@ Thanks to everyone who contributed to this release:
     Antigravity in [roborev#1758](https://github.com/kenn-io/roborev/pull/1758).
 - [Christophe Dervieux](https://github.com/cderv) improved the refine skill in
     [roborev#1785](https://github.com/kenn-io/roborev/pull/1785).
+- [akinolur](https://github.com/akinolur) fixed Zed ACP links and added link
+    checks in [roborev#1797](https://github.com/kenn-io/roborev/pull/1797) and
+    [roborev#1798](https://github.com/kenn-io/roborev/pull/1798).
+- [yu2971512385-ui](https://github.com/yu2971512385-ui) fixed TUI glyph
+    wrapping in [roborev#1725](https://github.com/kenn-io/roborev/pull/1725).
 
 ## 0.75.0
 
