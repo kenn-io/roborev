@@ -3082,9 +3082,6 @@ func (s *Server) humaEnqueue(
 	ctx context.Context, input *EnqueueInput,
 ) (*RawJSONOutput, error) {
 	req := input.Body
-	if req.CheckLogLabel != "" && !filepath.IsLocal(req.CheckLogLabel) {
-		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "check_log_label must be a local relative path"})
-	}
 	if req.HoldSynthesis && (req.Panel == "" || req.Panel == "none" || req.Source != "" ||
 		req.CustomPrompt != "" || req.ReviewPrompt != "" || req.ReviewType == config.ReviewTypeGoal) {
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: "hold_synthesis requires an explicitly named foreground review panel"})

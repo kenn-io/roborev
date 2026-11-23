@@ -265,13 +265,15 @@ echo 'OK rewrite read-only'
 	defer server.Close()
 	sha := testutil.GetHeadSHA(t, repoRoot)
 	doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Kind: "defect", Confidence: .9, Problem: "build claim", Fix: "fix", Sources: []int{1}}, {Severity: "medium", Kind: "defect", Confidence: .9, Location: "save.go:4", Problem: "data loss", Fix: "fix", Sources: []int{1}}, {Severity: "low", Kind: "defect", Confidence: .9, Problem: "minor issue", Fix: "minor fix", Sources: []int{1}}}}
-	run, members, _ := enqueuePanelRun(t, tc, "checker-integration", []memberSpec{{name: "one", agent: "test"}})
+	created, members, synthesis, err := tc.DB.CreateCIPanelRun("example/project", 1, sha,
+		[]storage.EnqueueOpts{{RepoID: tc.Repo.ID, GitRef: sha, Agent: "test", PanelMemberName: "one"}},
+		storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: sha, Agent: "test", CheckLogLabel: "experiment/run"})
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NotNil(t, synthesis.PanelRunUUID)
 	completeMember(t, tc, members[0].ID, "test", "findings")
-	job := releaseAndClaimSynthesis(t, tc, run)
-	_, err := tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET check_log_label = ? WHERE id = ?`, "experiment/run", job.ID)
-	require.NoError(t, err)
-	job, err = tc.DB.GetJobByID(job.ID)
-	require.NoError(t, err)
+	job := releaseAndClaimSynthesis(t, tc, *synthesis.PanelRunUUID)
+	assert.Equal(t, "experiment/run", job.CheckLogLabel)
 	logDir := t.TempDir()
 	tc.Pool.cfgGetter.Config().CI.CheckLogDir = logDir
 	job.GitRef = sha + ".." + sha

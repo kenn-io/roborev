@@ -1253,10 +1253,8 @@ set, it takes priority over the matrix fields for that repo.
 | `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |
 | `batch_timeout` | string | `"15m"` | Maximum time to wait for panel members before posting available results. Set `"0"` to disable. |
 
-Each run keeps its Codex home under `check_log_dir/<label>/run-*/`. The label
-defaults to `job-<id>`. API callers can set `check_log_label` when enqueuing a
-job or supplied panel; it must be a local relative path. Session logs are in
-the `sessions/` directory there. Roborev does not prune these files.
+Each run keeps its Codex home under `check_log_dir/job-<id>/run-*/`. Session
+logs are in the `sessions/` directory there. Roborev does not prune these files.
 
 When `agents` is empty, the poller auto-detects the first available agent from:
 codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi,

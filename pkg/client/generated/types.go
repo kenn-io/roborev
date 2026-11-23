@@ -1180,7 +1180,6 @@ type EnqueueCreatedResponse struct {
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`
-	CheckLogLabel         *string                `json:"check_log_label,omitempty"`
 	ClaimBlocked          *bool                  `json:"claim_blocked,omitempty"`
 	Closed                *bool                  `json:"closed,omitempty"`
 	CommandLine           *string                `json:"command_line,omitempty"`
@@ -1325,7 +1324,6 @@ type EnqueueRequest struct {
 	AnalysisFiles     []string                `json:"analysis_files,omitempty"`
 	AnalysisType      *string                 `json:"analysis_type,omitempty"`
 	Branch            *string                 `json:"branch,omitempty"`
-	CheckLogLabel     *string                 `json:"check_log_label,omitempty"`
 	CommitSha         *string                 `json:"commit_sha,omitempty"`
 	CustomPrompt      *string                 `json:"custom_prompt,omitempty"`
 	DiffContent       *string                 `json:"diff_content,omitempty"`
@@ -1378,8 +1376,7 @@ func (e EnqueueSkippedResponse) Validate() error {
 
 type EnqueueSuppliedPanelInputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema        *string `json:"$schema,omitempty"`
-	CheckLogLabel *string `json:"check_log_label,omitempty"`
+	Schema *string `json:"$schema,omitempty"`
 
 	// GitRef Commit or range resolved once for every reviewer and synthesis
 	GitRef        string                `json:"git_ref" validate:"required,min=1"`
@@ -2952,7 +2949,6 @@ type PanelEnqueueResponse struct {
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`
-	CheckLogLabel         *string                `json:"check_log_label,omitempty"`
 	ClaimBlocked          *bool                  `json:"claim_blocked,omitempty"`
 	Closed                *bool                  `json:"closed,omitempty"`
 	CommandLine           *string                `json:"command_line,omitempty"`
@@ -3763,7 +3759,6 @@ type ReviewJob struct {
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`
-	CheckLogLabel         *string                `json:"check_log_label,omitempty"`
 	ClaimBlocked          *bool                  `json:"claim_blocked,omitempty"`
 	Closed                *bool                  `json:"closed,omitempty"`
 	CommandLine           *string                `json:"command_line,omitempty"`

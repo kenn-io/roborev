@@ -79,13 +79,13 @@ type ReviewJob struct {
 	OriginalReviewUUID  *uuid.UUID `json:"original_review_uuid,omitempty"` // Response-only rebuttal version token.
 	ID                  int64      `json:"id"`
 	RepoID              int64      `json:"repo_id"`
-	CommitID            *int64     `json:"commit_id,omitempty"`       // nil for ranges
-	GitRef              string     `json:"git_ref"`                   // SHA or "start..end" for ranges
-	Branch              string     `json:"branch,omitempty"`          // Branch name at time of job creation
-	CheckLogLabel       string     `json:"check_log_label,omitempty"` // Local checker log grouping
-	CIBaseBranch        string     `json:"-"`                         // PR base branch for CI jobs; daemon-internal, used only for event/hook branch matching
-	SessionID           string     `json:"session_id,omitempty"`      // Reused prior session or captured current session ID
-	SessionCLI          string     `json:"-"`                         // CLI that created the Gemini-compatible session ID
+	CommitID            *int64     `json:"commit_id,omitempty"`  // nil for ranges
+	GitRef              string     `json:"git_ref"`              // SHA or "start..end" for ranges
+	Branch              string     `json:"branch,omitempty"`     // Branch name at time of job creation
+	CheckLogLabel       string     `json:"-"`                    // Local checker log grouping
+	CIBaseBranch        string     `json:"-"`                    // PR base branch for CI jobs; daemon-internal, used only for event/hook branch matching
+	SessionID           string     `json:"session_id,omitempty"` // Reused prior session or captured current session ID
+	SessionCLI          string     `json:"-"`                    // CLI that created the Gemini-compatible session ID
 	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid,omitempty"`
 	Agent               string     `json:"agent"`
 	Model               string     `json:"model,omitempty"`              // Effective model for this run (for opencode: provider/model format)
