@@ -122,11 +122,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 		MemoryMax: 8 << 30,
 		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + tmp},
 	}
-	if node, err := exec.CommandContext(t.Context(), "node", "-p", "process.execPath").Output(); err == nil {
-		nodeDir := filepath.Dir(strings.TrimSpace(string(node)))
-		job.ReadPaths = append(job.ReadPaths, nodeDir)
-		job.Env[0] = "PATH=" + nodeDir + ":/usr/bin:/bin"
-	}
 	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, Upstream: server.URL, LogDir: logs, Label: "job"})
 	a.IgnoreUserConfig = true
 	a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`, `model_providers.roborev-route.base_url="http://127.0.0.1:1"`}
