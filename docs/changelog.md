@@ -29,8 +29,12 @@ posting them.
     them. This release advances the mirror schema from version 24 to 25, which
     older releases refuse. If a CI host on the mirror runs the findings checker,
     older releases also stop pulling reviews and comments at the first checked
-    review. See [Upgrading to 0.76.0](/docs/installation/#upgrading-to-0760) for
-    the stop, update, and start steps.
+    review. To roll back, stop every daemon that uses the mirror, restore the
+    local and mirror backups made before the upgrade, then start the older
+    release. Restoring the mirror backup discards writes made to the mirror
+    after that backup. See
+    [Upgrading to 0.76.0](/docs/installation/#upgrading-to-0760) for the stop,
+    update, start, and rollback steps.
 - Merge gates and scripts that read review verdicts must handle `skipped`. A
     review with nothing to review, such as an empty commit or a commit whose
     changed files are all excluded, now ends as `skipped` with no verdict

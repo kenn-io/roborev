@@ -140,7 +140,7 @@ Check these items before updating from 0.75.x or earlier:
 | If you use... | Upgrade action |
 | --- | --- |
 | A local database | Stop the daemon and back up its data directory before updating. Version 0.76 adds five SQLite migrations (schema versions 15 through 19). Releases 0.72.0 through 0.75.x refuse to open the upgraded database. Releases before 0.72.0 do not check the schema version and may try to use it. To roll back, restore the pre-upgrade backup before running an older version. |
-| A shared PostgreSQL mirror | Upgrade every roborev machine that uses the mirror before restarting any of them, as described below. Version 0.76 advances the mirror schema to 25, which older releases refuse. |
+| A shared PostgreSQL mirror | Upgrade every roborev machine that uses the mirror before restarting any of them, as described below. Version 0.76 advances the mirror schema to 25, which older releases refuse. To roll back, follow the rollback steps below. |
 
 To upgrade machines that share a PostgreSQL mirror:
 
@@ -150,12 +150,24 @@ To upgrade machines that share a PostgreSQL mirror:
     repositories with roborev hooks or run other roborev commands, because they
     start the daemon automatically.
 1. On each machine, upgrade through your usual installation method. If you use
-    `roborev update`, add `--no-restart`; without it, the update starts the new
-    daemon to repair git hooks.
+    `roborev update`, add `--no-restart`; without it, the update may restart a
+    daemon that is already running, such as one that a commit started after you
+    stopped it.
 1. After every machine is upgraded, start each daemon with
     `roborev daemon start`, or through its service manager. On machines updated
-    with `--no-restart`, then run `roborev install-hook repair --registered`
-    and `roborev agent skills update`, which the update skipped.
+    with `--no-restart`, then run
+    `roborev install-hook repair --registered --git-dir-only` and
+    `roborev agent skills update`, which the update skipped. `--git-dir-only`
+    matches the repair `roborev update` runs: it rewrites only hooks inside
+    each repository's Git metadata directory and leaves hooks elsewhere, such
+    as a `core.hooksPath` directory in the working tree or a shared hooks
+    directory, unchanged.
+
+To roll back after upgrading machines that share a PostgreSQL mirror, stop every
+daemon that uses the mirror. Restore each machine's local backup and the mirror
+backup made before the upgrade, then start the older release. Restoring the
+mirror backup discards every write made to the mirror after that backup,
+including reviews and comments synced from upgraded machines.
 
 If you're upgrading from 0.71.x or earlier, also follow the
 [0.72.0 database conversion steps](#upgrading-to-0720) before starting the new
@@ -201,8 +213,8 @@ for that conversion before updating from 0.71.x or earlier:
     twice the database file's size in free space. See
     [conversion and disk requirements](/docs/configuration/#stored-prompts-and-retention).
 1. Upgrade through your usual installation method. If you use `roborev update`,
-    add `--no-restart`; without it, the update starts the new daemon to repair
-    git hooks. Upgrade every machine sharing a PostgreSQL mirror before
+    add `--no-restart`; without it, the update may restart a daemon that is
+    already running. Upgrade every machine sharing a PostgreSQL mirror before
     restarting those daemons; the mirror moves to schema 24, which older
     clients refuse.
 1. Start the daemon with `roborev daemon start` and allow the conversion to
