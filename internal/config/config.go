@@ -724,6 +724,9 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if err := validateCICheckLogDir(c.CI.CheckLogDir); err != nil {
+		return err
+	}
 	if err := c.Schedule.Validate(); err != nil {
 		return err
 	}

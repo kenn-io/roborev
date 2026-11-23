@@ -5853,11 +5853,16 @@ func TestLoadGlobalCheckLogDir(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte("[ci]\ncheck_log_dir = "+strconv.Quote(tc.dir)+"\n"), 0o600))
 			cfg, err := LoadGlobalFrom(path)
+			validationConfig := DefaultConfig()
+			validationConfig.CI.CheckLogDir = tc.dir
+			validationErr := validationConfig.Validate()
 			if tc.valid {
 				require.NoError(t, err)
+				assert.NoError(t, validationErr)
 				assert.Equal(t, tc.dir, cfg.CI.CheckLogDir)
 			} else {
 				require.ErrorContains(t, err, "check_log_dir must be an absolute path")
+				assert.ErrorContains(t, validationErr, "check_log_dir must be an absolute path")
 			}
 		})
 	}
