@@ -538,9 +538,8 @@ func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Review Passed")
-	assert.Contains(t, comment, "No findings need fixes before merge.")
-	assert.Contains(t, comment, "1 nit hidden")
-	assert.Contains(t, comment, "Name is vague")
+	assert.Contains(t, comment, "No findings at or above high severity.")
+	assert.NotContains(t, comment, "Name is vague")
 }
 
 func TestSynthesizePreservesCompleteOutput(t *testing.T) {
@@ -572,7 +571,7 @@ func TestSynthesizeCommentsInheritReviewThreshold(t *testing.T) {
 					Agent: "nonexistent-synthesis-agent", MinSeverity: ciSeverity,
 				})
 				require.NoError(t, err)
-				if ciSeverity == "" && !structured {
+				if ciSeverity == "" {
 					assert.NotContains(t, synthesis.GitHubComment, "Minor naming issue.", "empty CI threshold inherits medium")
 				} else {
 					assert.Contains(t, synthesis.GitHubComment, "Minor naming issue.", "explicit low overrides medium")
@@ -621,8 +620,7 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			assert.Contains(comment, "### High\n\n- `worker.go:10`: State is lost.\n\n  **Fix:** Persist it.")
 			assert.Contains(comment, "### Medium\n\n- `worker.go:20`: Missing cleanup.\n\n  **Fix:** Close the resource.")
 			assert.Contains(comment, "- Errors are ignored.\n\n  **Fix:** Return the error.")
-			assert.Contains(comment, "1 nit hidden")
-			assert.Contains(comment, "Minor naming issue.")
+			assert.NotContains(comment, "Minor naming issue.")
 			assert.Contains(synthesis.Output, "Minor naming issue.", "complete output retains low findings in every path")
 			assert.NotContains(comment, "Agent assessment")
 			assert.Len(doc.Findings, 4, "presentation must preserve the stored findings")
@@ -733,8 +731,12 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 			result, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: a.Name(), MinSeverity: policy.ci})
 			require.NoError(t, err)
 			assert.Contains(t, result.Output, "Minor naming issue.")
-			assert.Contains(t, result.GitHubComment, "Minor naming issue.")
-			assert.Contains(t, result.GitHubComment, "1 nit hidden")
+			if policy.visible {
+				assert.Contains(t, result.GitHubComment, "1 nit hidden")
+				assert.Contains(t, result.GitHubComment, "Minor naming issue.")
+			} else {
+				assert.NotContains(t, result.GitHubComment, "Minor naming issue.")
+			}
 		})
 	}
 }

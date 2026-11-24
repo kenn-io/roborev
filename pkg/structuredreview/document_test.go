@@ -359,14 +359,3 @@ func TestSchemaUnlikely(t *testing.T) {
 		})
 	}
 }
-
-func TestDecodeCheckVerdictUnlikelyVersions(t *testing.T) {
-	for _, value := range []string{"true", "false", "null"} {
-		raw := `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f"},"verdicts":[{"keep":true,"unlikely":` + value + `}]}]}}`
-		_, err := Decode(jsontext.Value(raw))
-		require.ErrorContains(t, err, "unlikely, which needs schema_version 4")
-	}
-	raw := `{"schema_version":4,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f"},"verdicts":[{"keep":true,"unlikely":"invalid"}]}]}}`
-	_, err := Decode(jsontext.Value(raw))
-	require.ErrorContains(t, err, "invalid unlikely")
-}

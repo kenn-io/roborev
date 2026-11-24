@@ -162,7 +162,7 @@ func TestCommentFold(t *testing.T) {
 		{Severity: "high", Problem: "rare", Unlikely: true},
 		{Severity: "medium", Problem: "another"},
 	}}
-	prepared := PrepareComment(CommentConfig{Fold: true, MinSeverity: "medium", MaxFindings: 1}, ReviewResult{Structured: &doc})
+	prepared := PrepareComment(CommentConfig{Fold: true, MinSeverity: "low", MaxFindings: 1}, ReviewResult{Structured: &doc})
 	body := FormatComment(prepared)
 	assert.Contains(t, body, "Changes require fixes for 1 finding")
 	assert.Contains(t, body, "1 nit and 1 unlikely finding hidden")
@@ -170,6 +170,10 @@ func TestCommentFold(t *testing.T) {
 	assert.Contains(t, body, "rare")
 	assert.Contains(t, body, "1 more finding in the full review")
 	assert.Len(t, doc.Findings, 4)
+	filteredSeverity := FormatComment(PrepareComment(CommentConfig{Fold: true, MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
+	assert.NotContains(t, filteredSeverity, "nit")
+	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
+
 	all := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	assert.NotContains(t, all, "<details>")
 	assert.Contains(t, all, "4 findings")
@@ -188,7 +192,7 @@ func TestCommentFoldConfidence(t *testing.T) {
 		{Severity: "medium", Kind: "defect", Confidence: .9, Problem: "capped"},
 	}}
 	original := slices.Clone(doc.Findings)
-	comment := PrepareComment(CommentConfig{Fold: true, MinSeverity: "medium", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &doc})
+	comment := PrepareComment(CommentConfig{Fold: true, MinSeverity: "low", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &doc})
 	output := FormatComment(comment)
 	assert.NotContains(t, output, "filtered nit")
 	assert.NotContains(t, output, "filtered rare")

@@ -4719,9 +4719,6 @@ components:
         reason:
           description: The checker's one-sentence explanation.
           type: string
-        unlikely:
-          description: The checker's classification, omitted when inconclusive.
-          type: boolean
       type: object
     StructuredReviewCheckedFinding:
       description: One finding the CI checker tried and what became of it.

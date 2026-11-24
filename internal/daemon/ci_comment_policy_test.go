@@ -65,7 +65,7 @@ func TestCIPanelCommentPolicy(t *testing.T) {
 					patches++
 					var body struct{ Body string }
 					assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-					assert.Contains(t, body.Body, "No findings need fixes before merge.")
+					assert.Contains(t, body.Body, "No findings at or above high severity.")
 					w.WriteHeader(tc.patchStatus)
 					if tc.patchStatus == 403 {
 						_, _ = fmt.Fprint(w, `{"message":"Resource not accessible by integration"}`)
@@ -383,7 +383,8 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	require.NoError(t, err)
 	body, err := h.Poller.panelCommentBody(panel, members)
 	require.NoError(t, err)
-	assert.Contains(t, body, "1 nit and 1 unlikely finding hidden")
+	assert.Contains(t, body, "1 unlikely finding hidden")
+	assert.NotContains(t, body, "nit")
 	assert.Contains(t, body, "defect")
 	h.Cfg.CI.CommentShowAll = true
 	body, err = h.Poller.panelCommentBody(panel, members)

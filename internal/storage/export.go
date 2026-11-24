@@ -177,7 +177,6 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Description: "One verdict as the CI checker returned it. A member the checker left blank is omitted.",
 		Properties: map[string]*huma.Schema{
 			"keep":     {Type: huma.TypeBoolean, Description: "The checker's decision to keep the finding."},
-			"unlikely": {Type: huma.TypeBoolean, Description: "The checker's classification, omitted when inconclusive."},
 			"evidence": {Type: huma.TypeString, Description: "The command the checker ran and its output, or what refutes the finding."},
 			"reason":   {Type: huma.TypeString, Description: "The checker's one-sentence explanation."},
 		},

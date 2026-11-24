@@ -581,7 +581,7 @@ Each entry in `check.findings` has these members:
 |--------|------|---------|
 | `outcome` | string | `kept` when the finding stayed in the review. `dropped` when the checker refuted it and roborev removed it from `findings` |
 | `finding` | object | The finding as the checker received it, in the same form as a member of `findings` |
-| `verdicts` | array | Every verdict the checker returned for this finding. Each has `keep` (boolean), `unlikely` (boolean when the checker could classify the trigger), `evidence` (the command it ran and its output, or what refutes the finding), and `reason` (one sentence). A member the checker left blank is omitted |
+| `verdicts` | array | Every verdict the checker returned for this finding. Each has `keep` (boolean), `evidence` (the command it ran and its output, or what refutes the finding), and `reason` (one sentence). A member the checker left blank is omitted |
 
 A finding drops only when exactly one verdict has `keep` set to `false` and both
 `evidence` and `reason` set. Every other finding is kept, including one with no

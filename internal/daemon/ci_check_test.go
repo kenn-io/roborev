@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -518,70 +517,21 @@ func TestCICheckUnlikely(t *testing.T) {
 		{Severity: "high", Problem: "two", Fix: "fix", Unlikely: true},
 		{Severity: "high", Problem: "three", Fix: "fix"},
 		{Severity: "high", Problem: "four", Fix: "fix"},
-		{Severity: "high", Problem: "five", Fix: "fix", Unlikely: true},
 	}}
-	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"},{"finding":2,"keep":true,"unlikely":false,"evidence":"e","reason":"r"},{"finding":3,"keep":true,"unlikely":true},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"evidence","reason":"reason"},{"finding":5,"keep":true,"unlikely":null}]}`)
+	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"},{"finding":2,"keep":true,"unlikely":false,"evidence":"e","reason":"r"},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"e","reason":"r"}]}`)
 	got, err := applyCICheck(doc, raw, io.Discard)
 	require.NoError(t, err)
-	require.Len(t, got.Findings, 4)
+	require.Len(t, got.Findings, 3)
 	assert.True(t, got.Findings[0].Unlikely)
-	assert.False(t, got.Findings[1].Unlikely)
+	assert.True(t, got.Findings[1].Unlikely)
 	assert.False(t, got.Findings[2].Unlikely)
-	assert.True(t, got.Findings[3].Unlikely)
+	assert.False(t, got.Check.Findings[0].Finding.Unlikely)
 	assert.True(t, got.Check.Findings[1].Finding.Unlikely)
-	require.NotNil(t, got.Check.Findings[1].Verdicts[0].Unlikely)
-	assert.False(t, *got.Check.Findings[1].Verdicts[0].Unlikely)
-	assert.Nil(t, got.Check.Findings[4].Verdicts[0].Unlikely)
+	assert.Equal(t, structuredreview.CheckDropped, got.Check.Findings[3].Outcome)
 	encoded, err := json.Marshal(got)
 	require.NoError(t, err)
 	stored, err := structuredreview.Decode(encoded)
 	require.NoError(t, err)
-	assert.True(t, stored.Check.Findings[1].Finding.Unlikely)
-	require.NotNil(t, stored.Check.Findings[1].Verdicts[0].Unlikely)
-	assert.False(t, *stored.Check.Findings[1].Verdicts[0].Unlikely)
-	assert.True(t, stored.Findings[3].Unlikely)
-}
-
-func TestCICheckFindingsIncludeOriginalClassifications(t *testing.T) {
-	doc := structuredreview.Document{Summary: "Review", Findings: []structuredreview.Finding{
-		{Severity: "high", Kind: "defect", Topic: "security", Confidence: 0.9, Problem: "rare", Fix: "fix", Unlikely: true, Sources: []int{1}},
-		{Severity: "medium", Problem: "ordinary", Fix: "fix"},
-	}}
-	input, err := ciCheckFindings(doc, "medium")
-	require.NoError(t, err)
-	_, payload, ok := strings.Cut(input, "## Structured findings\n\n```json\n")
-	require.True(t, ok)
-	raw, _, ok := strings.Cut(payload, "\n```\n")
-	require.True(t, ok)
-	var findings []structuredreview.Finding
-	require.NoError(t, json.Unmarshal([]byte(raw), &findings))
-	assert.Equal(t, doc.Findings, findings)
-}
-
-func TestCICheckSchemaAllowsInconclusiveClassification(t *testing.T) {
-	var schema jsonschema.Schema
-	require.NoError(t, json.Unmarshal(ciCheckSchema, &schema))
-	validator, err := schema.Resolve(nil)
-	require.NoError(t, err)
-	verdict := map[string]any{"finding": float64(1), "keep": true, "unlikely": nil, "evidence": "unavailable", "reason": "could not run"}
-	require.NoError(t, validator.Validate(map[string]any{"verdicts": []any{verdict}}))
-	verdict["unlikely"] = false
-	require.NoError(t, validator.Validate(map[string]any{"verdicts": []any{verdict}}))
-}
-
-func TestCICheckKeepsClassificationWithoutEvidenceAndReason(t *testing.T) {
-	doc := structuredreview.Document{Findings: []structuredreview.Finding{
-		{Severity: "high", Problem: "one", Fix: "fix", Unlikely: true},
-		{Severity: "high", Problem: "two", Fix: "fix", Unlikely: true},
-		{Severity: "high", Problem: "three", Fix: "fix", Unlikely: true},
-		{Severity: "high", Problem: "four", Fix: "fix", Unlikely: true},
-	}}
-	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":false},{"finding":2,"keep":true,"unlikely":false,"reason":"reason"},{"finding":3,"keep":true,"unlikely":false,"evidence":"evidence"},{"finding":4,"keep":true,"unlikely":false,"evidence":"evidence","reason":"reason"}]}`)
-	got, err := applyCICheck(doc, raw, io.Discard)
-	require.NoError(t, err)
-	require.Len(t, got.Findings, 4)
-	assert.True(t, got.Findings[0].Unlikely)
-	assert.True(t, got.Findings[1].Unlikely)
-	assert.True(t, got.Findings[2].Unlikely)
-	assert.False(t, got.Findings[3].Unlikely)
+	assert.False(t, stored.Check.Findings[0].Finding.Unlikely)
+	assert.True(t, stored.Findings[0].Unlikely)
 }

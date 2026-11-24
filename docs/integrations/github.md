@@ -890,9 +890,9 @@ saving, or reloading configuration. If confidence removes a finding that passed
 the severity filter and no findings remain, the comment says "No findings match
 the comment filters." Confidence does not filter prose.
 
-By default, structured CI comments apply the confidence floor, then fold Low and
-unlikely findings into a collapsible section. The finding cap applies to the
-main list. Set `comment_show_all = true` globally or per repository to show
+By default, structured CI comments apply the severity and confidence floors,
+then fold Low and unlikely findings into a collapsible section. The finding cap
+applies to the main list. Set `comment_show_all = true` globally or per repository to show
 every finding inline, ignoring the comment severity and confidence floors and
 finding cap. The setting also applies to raw fallback comments and to GitHub
 comments from `roborev ci review`. Stored reviews retain every finding.
@@ -1051,9 +1051,9 @@ original review unchanged.
 
 The stored review document records the check in its `check` member: whether the
 checker completed or failed, and for every finding it received, whether the
-finding was kept or dropped, with the checker's classification, evidence, and
-reason. Sync, `roborev export reviews`, and the API carry this record; the
-posted PR comment does not. See the
+finding was kept or dropped, with the checker's evidence and reason. Sync,
+`roborev export reviews`, and the API carry this record; the posted PR comment
+does not. See the
 [review document format](/docs/commands/#exporting-reviews). The job log also
 records each verdict.
 
