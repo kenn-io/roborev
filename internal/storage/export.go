@@ -41,17 +41,18 @@ const exportReviewHasVerdictExpr = "(rv.verdict_bool IS NOT NULL OR json_extract
 const exportReviewStoredUpdatedAtExpr = "COALESCE(NULLIF(TRIM(rv.updated_at), ''), rv.created_at)"
 
 var (
-	// exportUnknownOriginRefreshedExpr is true when migration 21, joined as
-	// m21, stopped exporting the local machine as this review's origin after
-	// the review last changed. That migration leaves reviews.updated_at alone
+	// exportOriginRefreshedExpr is true when the review's recorded origin
+	// differs from this machine, joined as ms, and migration 21, joined as
+	// m21, ran after the review last changed. Export output for those origins
+	// changes at that migration, which leaves reviews.updated_at alone
 	// because sync orders review edits by it.
-	exportUnknownOriginRefreshedExpr = "COALESCE(NULLIF(j.source_machine_id, ''), '00000000-0000-0000-0000-000000000000') = '00000000-0000-0000-0000-000000000000'" +
+	exportOriginRefreshedExpr = "j.source_machine_id IS NOT ms.value" +
 		" AND " + sqlitePreciseJulianExpr("m21.applied_at") + " > COALESCE(" + sqlitePreciseJulianExpr(exportReviewStoredUpdatedAtExpr) + ", 0)"
 
 	// exportReviewUpdatedAtExpr is the review's effective export update time:
 	// the stored update time, or migration 21's time when that migration
 	// changed the exported origin later.
-	exportReviewUpdatedAtExpr = "CASE WHEN " + exportUnknownOriginRefreshedExpr + " THEN m21.applied_at ELSE " + exportReviewStoredUpdatedAtExpr + " END"
+	exportReviewUpdatedAtExpr = "CASE WHEN " + exportOriginRefreshedExpr + " THEN m21.applied_at ELSE " + exportReviewStoredUpdatedAtExpr + " END"
 )
 
 var (
@@ -455,7 +456,7 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 
 	query := `
 		SELECT rv.uuid, NULLIF(j.source_machine_id, ''), j.uuid, rv.verdict_bool, rv.created_at,
-		       COALESCE(rv.closed, 0), CASE WHEN ` + exportUnknownOriginRefreshedExpr + ` THEN m21.applied_at ELSE rv.updated_at END, ` + outputExpr + `,
+		       COALESCE(rv.closed, 0), CASE WHEN ` + exportOriginRefreshedExpr + ` THEN m21.applied_at ELSE rv.updated_at END, ` + outputExpr + `,
 		       j.status, j.enqueued_at, j.started_at, j.finished_at, j.agent, j.model,
 		       j.git_ref, COALESCE(j.job_type, 'review'), j.branch, j.ci_base_branch,
 		       j.panel_run_uuid, j.panel_role, j.token_usage,
@@ -467,6 +468,7 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN ci_pr_panels cp ON cp.panel_run_uuid = j.panel_run_uuid
 		LEFT JOIN schema_migrations m21 ON m21.version = 21
+		LEFT JOIN sync_state ms ON ms.key = '` + SyncStateMachineID + `'
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY ` + completedExpr + ` ASC, rv.uuid ASC` + limitClause
 	return query, args

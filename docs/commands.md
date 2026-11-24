@@ -675,11 +675,12 @@ by more than your sync delay so those changes are not missed.
 Older releases exported the local machine as `source_machine_id` for synced
 reviews whose origin was unknown. The upgrade that fixes this keeps each
 review's stored `updated_at`, which sync uses to order edits. Instead, the
-export reports the upgrade time as `updated_at` for those reviews, so the next
-`--updated-since` pull returns them once. Consumers holding an older snapshot
-should replace `source_machine_id` from that pull. Reviews an older release
-already stamped with the local machine stay indistinguishable from local
-reviews.
+export reports the upgrade time as `updated_at` for every review whose
+recorded origin is not the exporting machine, including unknown and other
+machines' origins. The next `--updated-since` pull returns those reviews once.
+Consumers holding an older snapshot should replace `source_machine_id` from
+that pull. Reviews an older release already stamped with the local machine
+stay indistinguishable from local reviews.
 
 !!! warning "Review content may be sensitive"
 
