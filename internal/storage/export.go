@@ -41,12 +41,9 @@ const exportReviewHasVerdictExpr = "(rv.verdict_bool IS NOT NULL OR json_extract
 const exportReviewStoredUpdatedAtExpr = "COALESCE(NULLIF(TRIM(rv.updated_at), ''), rv.created_at)"
 
 var (
-	// exportOriginRefreshedExpr is true when the review's recorded origin
-	// differs from this machine, joined as ms, and migration 21, joined as
-	// m21, ran after the review last changed. Export output for those origins
-	// changes at that migration, which leaves reviews.updated_at alone
-	// because sync orders review edits by it.
-	exportOriginRefreshedExpr = "j.source_machine_id IS NOT ms.value" +
+	// Migration 21 changes exports with unknown origins. Keep the stored
+	// review timestamp intact because sync uses it to order edits.
+	exportOriginRefreshedExpr = "COALESCE(NULLIF(j.source_machine_id, ''), '00000000-0000-0000-0000-000000000000') = '00000000-0000-0000-0000-000000000000'" +
 		" AND " + sqlitePreciseJulianExpr("m21.applied_at") + " > COALESCE(" + sqlitePreciseJulianExpr(exportReviewStoredUpdatedAtExpr) + ", 0)"
 
 	// exportReviewUpdatedAtExpr is the review's effective export update time:
@@ -468,7 +465,6 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN ci_pr_panels cp ON cp.panel_run_uuid = j.panel_run_uuid
 		LEFT JOIN schema_migrations m21 ON m21.version = 21
-		LEFT JOIN sync_state ms ON ms.key = '` + SyncStateMachineID + `'
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY ` + completedExpr + ` ASC, rv.uuid ASC` + limitClause
 	return query, args

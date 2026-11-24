@@ -464,13 +464,10 @@ func TestOriginMigrationMakesReviewEligibleForUpdatedSince(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT applied_at FROM schema_migrations WHERE version = 21`).Scan(&appliedAt))
 	page, err = db.ExportReviews(opts)
 	require.NoError(t, err)
-	require.Len(t, page.Reviews, 2)
-	sources := make(map[uuid.UUID]uuid.UUID)
-	for _, review := range page.Reviews {
-		sources[review.ReviewID] = review.SourceMachineID
-		assert.Equal(appliedAt, review.UpdatedAt)
-	}
-	assert.Equal(map[uuid.UUID]uuid.UUID{*unknown.UUID: uuid.Nil(), *remote.UUID: remoteID}, sources)
+	require.Len(t, page.Reviews, 1)
+	assert.Equal(*unknown.UUID, page.Reviews[0].ReviewID)
+	assert.Equal(uuid.Nil(), page.Reviews[0].SourceMachineID)
+	assert.Equal(appliedAt, page.Reviews[0].UpdatedAt)
 
 	// The migration must not reorder sync edits or rewrite known origins.
 	for _, review := range []*Review{unknown, known, remote} {
