@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -3183,120 +3182,86 @@ func ListRefFiles(ctx context.Context, repoPath, sha string) ([]TreeBlob, error)
 	return paths, nil
 }
 
-// MissingTreeBlobs reports objects unavailable locally without fetching them.
-func MissingTreeBlobs(ctx context.Context, repoPath string, blobs []TreeBlob) (map[string]bool, error) {
-	var input strings.Builder
-	for _, blob := range blobs {
-		input.WriteString(blob.OID + "\n")
-	}
-	cmd := newGitCmdContext(ctx, "rev-list", "--objects", "--no-walk", "--missing=print", "--stdin")
+// CheckBlobs reports which blobs are missing locally and which are at least
+// limit bytes, without fetching missing blobs.
+func CheckBlobs(ctx context.Context, repoPath string, oids []string, limit int) (missing, large map[string]bool, err error) {
+	cmd := newGitCmdContext(ctx, "rev-list", "--objects", "--no-walk", "--missing=print", "--filter=blob:limit="+strconv.Itoa(limit), "--filter-provided-objects", "--filter-print-omitted", "--stdin")
 	cmd.Dir = repoPath
-	cmd.Stdin = strings.NewReader(input.String())
+	cmd.Stdin = strings.NewReader(strings.Join(oids, "\n") + "\n")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("check available blobs: %w", err)
+		return nil, nil, fmt.Errorf("check blobs: %w", err)
 	}
-	missing := map[string]bool{}
+	missing, large = map[string]bool{}, map[string]bool{}
 	for line := range strings.SplitSeq(string(out), "\n") {
-		if strings.HasPrefix(line, "?") {
-			missing[strings.TrimPrefix(line, "?")] = true
+		if oid, ok := strings.CutPrefix(line, "?"); ok {
+			missing[oid] = true
+		} else if oid, ok := strings.CutPrefix(line, "~"); ok {
+			large[oid] = true
 		}
 	}
-	return missing, nil
+	return missing, large, nil
 }
 
-// TreeBlobReader reads blob metadata and contents through Git batch processes.
-type TreeBlobReader struct {
-	checkCmd, readCmd *exec.Cmd
-	checkIn, readIn   io.WriteCloser
-	checkOut, readOut *bufio.Reader
+// BlobReader reads blobs through one git cat-file --batch process.
+type BlobReader struct {
+	cmd *exec.Cmd
+	in  io.WriteCloser
+	out *bufio.Reader
 }
 
-// NewTreeBlobReader starts Git processes for reading tree blobs.
-func NewTreeBlobReader(ctx context.Context, repoPath string) (*TreeBlobReader, error) {
-	start := func(mode string) (*exec.Cmd, io.WriteCloser, *bufio.Reader, error) {
-		cmd := newGitCmdContext(ctx, "cat-file", mode)
-		cmd.Dir = repoPath
-		cmd.Env = append(cmd.Environ(), "GIT_NO_LAZY_FETCH=1")
-		in, err := cmd.StdinPipe()
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		out, err := cmd.StdoutPipe()
-		if err != nil {
-			in.Close()
-			return nil, nil, nil, err
-		}
-		if err := cmd.Start(); err != nil {
-			in.Close()
-			return nil, nil, nil, err
-		}
-		return cmd, in, bufio.NewReader(out), nil
-	}
-	checkCmd, checkIn, checkOut, err := start("--batch-check")
+// NewBlobReader starts the batch process; Close stops it.
+func NewBlobReader(ctx context.Context, repoPath string) (*BlobReader, error) {
+	cmd := newGitCmdContext(ctx, "cat-file", "--batch")
+	cmd.Dir = repoPath
+	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
-	readCmd, readIn, readOut, err := start("--batch")
+	out, err := cmd.StdoutPipe()
 	if err != nil {
-		checkIn.Close()
-		checkCmd.Wait()
 		return nil, err
 	}
-	return &TreeBlobReader{checkCmd, readCmd, checkIn, readIn, checkOut, readOut}, nil
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &BlobReader{cmd, in, bufio.NewReader(out)}, nil
 }
 
-func readBlobHeader(in io.Writer, out *bufio.Reader, oid string) (int64, error) {
-	if _, err := fmt.Fprintln(in, oid); err != nil {
-		return 0, err
+// Read returns a blob's contents.
+func (r *BlobReader) Read(oid string) ([]byte, error) {
+	if _, err := fmt.Fprintln(r.in, oid); err != nil {
+		return nil, err
 	}
-	header, err := out.ReadString('\n')
+	header, err := r.out.ReadString('\n')
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	fields := strings.Fields(header)
 	if len(fields) != 3 || fields[0] != oid || fields[1] != "blob" {
-		return 0, fmt.Errorf("invalid blob response: %s", header)
+		return nil, fmt.Errorf("read blob %s: %s", oid, strings.TrimSpace(header))
 	}
-	return strconv.ParseInt(fields[2], 10, 64)
-}
-
-// Size returns the blob size in bytes.
-func (r *TreeBlobReader) Size(oid string) (int64, error) {
-	return readBlobHeader(r.checkIn, r.checkOut, oid)
-}
-
-// Read returns the blob contents.
-func (r *TreeBlobReader) Read(oid string) ([]byte, error) {
-	size, err := readBlobHeader(r.readIn, r.readOut, oid)
+	size, err := strconv.Atoi(fields[2])
 	if err != nil {
 		return nil, err
 	}
 	data := make([]byte, size+1)
-	if _, err := io.ReadFull(r.readOut, data); err != nil {
+	if _, err := io.ReadFull(r.out, data); err != nil {
 		return nil, err
-	}
-	if data[size] != '\n' {
-		return nil, fmt.Errorf("invalid blob terminator")
 	}
 	return data[:size], nil
 }
 
-// Close stops the Git processes.
-func (r *TreeBlobReader) Close() error {
-	return errors.Join(r.checkIn.Close(), r.readIn.Close(), r.checkCmd.Wait(), r.readCmd.Wait())
+// Close stops the batch process.
+func (r *BlobReader) Close() error {
+	return errors.Join(r.in.Close(), r.cmd.Wait())
 }
 
 // BinaryAttributes finds paths marked -diff in the selected commit's attributes.
-// Paths governed by a committed .gitattributes that is unavailable locally are
-// reported as unknown rather than classified.
-func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string) (binary, unknown map[string]bool, err error) {
-	if unknown, err = unavailableAttributes(ctx, repoPath, sha, paths); err != nil {
-		return nil, nil, err
-	}
+func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string) (map[string]bool, error) {
 	dir, err := os.MkdirTemp("", "roborev-attributes-")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer os.RemoveAll(dir)
 	index := filepath.Join(dir, "index")
@@ -3304,7 +3269,7 @@ func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string)
 	readTree.Dir = repoPath
 	readTree.Env = append(readTree.Environ(), "GIT_INDEX_FILE="+index, "GIT_NO_LAZY_FETCH=1")
 	if out, err := readTree.CombinedOutput(); err != nil {
-		return nil, nil, fmt.Errorf("read attributes tree: %s: %w", out, err)
+		return nil, fmt.Errorf("read attributes tree: %s: %w", out, err)
 	}
 	cmd := newGitCmdContext(ctx, "check-attr", "--cached", "-z", "--stdin", "diff")
 	cmd.Dir = repoPath
@@ -3312,48 +3277,14 @@ func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string)
 	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, nil, fmt.Errorf("check binary attributes: %w", err)
+		return nil, fmt.Errorf("check binary attributes: %w", err)
 	}
-	return unsetPaths(out), unknown, nil
-}
-
-// unsetPaths parses check-attr -z output into the paths whose attribute is unset.
-func unsetPaths(out []byte) map[string]bool {
 	fields := bytes.Split(out, []byte{0})
-	unset := make(map[string]bool)
+	binary := make(map[string]bool)
 	for i := 0; i+2 < len(fields); i += 3 {
 		if string(fields[i+2]) == "unset" {
-			unset[string(fields[i])] = true
+			binary[string(fields[i])] = true
 		}
 	}
-	return unset
-}
-
-// unavailableAttributes finds paths governed by a committed .gitattributes
-// blob that is missing locally, without fetching it.
-func unavailableAttributes(ctx context.Context, repoPath, sha string, paths []string) (map[string]bool, error) {
-	files, err := ListRefFiles(ctx, repoPath, sha)
-	if err != nil {
-		return nil, err
-	}
-	var attributes []TreeBlob
-	for _, file := range files {
-		if path.Base(file.Path) == ".gitattributes" {
-			attributes = append(attributes, file)
-		}
-	}
-	missing, err := MissingTreeBlobs(ctx, repoPath, attributes)
-	if err != nil {
-		return nil, err
-	}
-	unknown := map[string]bool{}
-	for _, file := range attributes {
-		dir := path.Dir(file.Path)
-		for _, p := range paths {
-			if missing[file.OID] && (dir == "." || strings.HasPrefix(p, dir+"/")) {
-				unknown[p] = true
-			}
-		}
-	}
-	return unknown, nil
+	return binary, nil
 }

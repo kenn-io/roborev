@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -22,7 +23,6 @@ import (
 type analysisScheduler struct {
 	server                *Server
 	lastRun               map[int64]time.Time
-	failedTypes           map[int64]map[string]bool
 	testHookBeforeEnqueue func()
 }
 
@@ -94,110 +94,70 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 	if err != nil {
 		return err
 	}
-	if !schedule.Enabled {
-		return w.pruneRetry(ctx, repo.ID, nil)
+	retry, err := w.pruneRetry(ctx, repo.ID, schedule.Types)
+	if err != nil || !schedule.Enabled {
+		return err
 	}
-	return errors.Join(w.pruneRetry(ctx, repo.ID, schedule.Types), w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now))
+	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, retry, now)
 }
 
-func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
+func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, retry []string, now time.Time) error {
 	last, loaded := w.lastRun[repo.ID]
 	if !loaded {
 		var err error
-		if last, err = w.loadState(ctx, repo.ID); err != nil {
+		last, err = w.server.db.AnalysisScheduleLastRun(ctx, repo.ID)
+		if err != nil {
 			return err
 		}
+		w.lastRun[repo.ID] = last
 	}
 	retrying := !last.IsZero() && now.Sub(last) < schedule.Interval
 	if retrying {
 		var err error
-		if schedule.Types, err = w.retryTypes(ctx, repo.ID, last, schedule.Types); err != nil || len(schedule.Types) == 0 {
+		if schedule.Types, err = w.retryTypes(ctx, repo.ID, last, schedule.Types, retry); err != nil || len(schedule.Types) == 0 {
 			return err
 		}
 	}
-	failed, scheduleErr := w.scheduleRepoTypes(ctx, repo, repoCfg, global, schedule)
-	scheduleErr = errors.Join(scheduleErr, w.saveRetry(ctx, repo.ID, failed))
-	if retrying {
-		return scheduleErr
+	failed, err := w.scheduleRepo(ctx, repo, repoCfg, global, schedule)
+	if failed == nil {
+		failed = schedule.Types
 	}
-	if err := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); err != nil {
-		return errors.Join(scheduleErr, err)
+	err = errors.Join(err, w.server.db.SetAnalysisScheduleRetry(ctx, repo.ID, failed))
+	if retrying {
+		return err
+	}
+	if setErr := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); setErr != nil {
+		return errors.Join(err, setErr)
 	}
 	w.lastRun[repo.ID] = now
-	return scheduleErr
+	return err
 }
 
-// loadState restores a repo's last pass and persisted retries after a restart.
-func (w *analysisScheduler) loadState(ctx context.Context, repoID int64) (time.Time, error) {
-	last, err := w.server.db.AnalysisScheduleLastRun(ctx, repoID)
-	if err != nil {
-		return last, err
-	}
+// pruneRetry drops saved retries for types outside the schedule and returns
+// the rest. A disabled schedule has no types, so its retries are all dropped.
+func (w *analysisScheduler) pruneRetry(ctx context.Context, repoID int64, types []string) ([]string, error) {
 	saved, err := w.server.db.AnalysisScheduleRetry(ctx, repoID)
 	if err != nil {
-		return last, err
-	}
-	retry := map[string]bool{}
-	for _, typ := range saved {
-		retry[typ] = true
-	}
-	w.remember(repoID, retry)
-	w.lastRun[repoID] = last
-	return last, nil
-}
-
-// remember keeps the types to retry. A true value marks an enqueue failure,
-// which is also persisted; other failures are retried only while the daemon runs.
-func (w *analysisScheduler) remember(repoID int64, failed map[string]bool) {
-	if w.failedTypes == nil {
-		w.failedTypes = map[int64]map[string]bool{}
-	}
-	w.failedTypes[repoID] = failed
-}
-
-func (w *analysisScheduler) saveRetry(ctx context.Context, repoID int64, failed map[string]bool) error {
-	w.remember(repoID, failed)
-	var persist []string
-	for typ, enqueue := range failed {
-		if enqueue {
-			persist = append(persist, typ)
-		}
-	}
-	sort.Strings(persist)
-	return w.server.db.SetAnalysisScheduleRetry(ctx, repoID, persist)
-}
-
-// pruneRetry drops retries for types outside the schedule, in memory and in
-// the database. An empty schedule drops them all.
-func (w *analysisScheduler) pruneRetry(ctx context.Context, repoID int64, types []string) error {
-	for typ := range w.failedTypes[repoID] {
-		if !slices.Contains(types, typ) {
-			delete(w.failedTypes[repoID], typ)
-		}
-	}
-	saved, err := w.server.db.AnalysisScheduleRetry(ctx, repoID)
-	if err != nil {
-		return err
+		return nil, err
 	}
 	kept := slices.DeleteFunc(slices.Clone(saved), func(typ string) bool { return !slices.Contains(types, typ) })
 	if len(kept) == len(saved) {
-		return nil
+		return kept, nil
 	}
-	return w.server.db.SetAnalysisScheduleRetry(ctx, repoID, kept)
+	return kept, w.server.db.SetAnalysisScheduleRetry(ctx, repoID, kept)
 }
 
-// retryTypes returns the configured types that failed, or whose latest job
-// from the current pass failed.
-func (w *analysisScheduler) retryTypes(ctx context.Context, repoID int64, last time.Time, types []string) ([]string, error) {
+// retryTypes returns the configured types that failed to enqueue, or whose
+// latest job from the current pass failed.
+func (w *analysisScheduler) retryTypes(ctx context.Context, repoID int64, last time.Time, types, saved []string) ([]string, error) {
 	var retry []string
 	for _, typ := range types {
 		jobs, err := w.server.db.ListJobs("", "", 1, 0, storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
 		if err != nil {
 			return nil, err
 		}
-		_, failed := w.failedTypes[repoID][typ]
 		failedJob := len(jobs) > 0 && jobs[0].Status == storage.JobStatusFailed && jobs[0].Source == storage.JobSourceScheduled && jobs[0].EnqueuedAt.Add(time.Second).After(last)
-		if failedJob || failed {
+		if failedJob || slices.Contains(saved, typ) {
 			retry = append(retry, typ)
 		}
 	}
@@ -216,34 +176,22 @@ type analysisCandidate struct {
 	oldest time.Time
 }
 
-func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) error {
-	_, err := w.scheduleRepoTypes(ctx, repo, repoCfg, global, schedule)
-	return err
-}
-
-func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) (failed map[string]bool, result error) {
-	failed = map[string]bool{}
-	setupFailed := true
-	defer func() {
-		if setupFailed && result != nil {
-			for _, typ := range schedule.Types {
-				failed[typ] = false
-			}
-		}
-	}()
+// scheduleRepo queues due files and returns the types that failed. It returns
+// nil types when it fails before queueing, so every type is retried.
+func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) ([]string, error) {
 	head, err := git.ResolveCommitCtx(ctx, repo.RootPath, "HEAD")
 	if err != nil {
-		return failed, fmt.Errorf("scheduled repository unavailable: %w", err)
+		return nil, fmt.Errorf("scheduled repository unavailable: %w", err)
 	}
-	paths, err := git.ListRefFiles(ctx, repo.RootPath, head)
+	tree, err := git.ListRefFiles(ctx, repo.RootPath, head)
 	if err != nil {
-		return failed, fmt.Errorf("scheduled repository unavailable: %w", err)
+		return nil, fmt.Errorf("scheduled repository unavailable: %w", err)
 	}
-	candidates, err := scheduleCandidates(paths, schedule.Paths)
+	candidates, err := scheduleCandidates(tree, schedule.Paths)
 	if err != nil {
-		return failed, err
+		return nil, err
 	}
-	budget := config.ResolveMaxPromptSize(repo.RootPath, global)
+	failed := []string{}
 	usable := make(map[string]bool)
 	var errs []error
 	for _, typ := range schedule.Types {
@@ -256,45 +204,43 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 			}
 		}
 		if err != nil {
-			failed[typ] = false
+			failed = append(failed, typ)
 			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			continue
 		}
 		usable[typ] = true
 		if err := w.markDue(ctx, repo, head, typ, candidates); err != nil {
-			return failed, err
+			return nil, err
 		}
 	}
 	ordered := selectCandidates(candidates)
 	if len(ordered) == 0 {
-		setupFailed = false
 		return failed, errors.Join(errs...)
 	}
-	blobs := make([]git.TreeBlob, 0, len(ordered))
-	for _, candidate := range ordered {
-		blobs = append(blobs, git.TreeBlob{Path: candidate.path, OID: candidate.oid})
-	}
-	missing, err := git.MissingTreeBlobs(ctx, repo.RootPath, blobs)
-	if err != nil {
-		return failed, err
-	}
-	pathsForAttributes := make([]string, len(ordered))
-	for i, candidate := range ordered {
-		pathsForAttributes[i] = candidate.path
-	}
-	binary, unknown, err := git.BinaryAttributes(ctx, repo.RootPath, head, pathsForAttributes)
-	if err != nil {
-		return failed, err
-	}
-	reader, err := git.NewTreeBlobReader(ctx, repo.RootPath)
-	if err != nil {
-		return failed, err
-	}
-	defer func() {
-		if reader != nil {
-			_ = reader.Close()
+	var attributes []git.TreeBlob
+	var oids, names []string
+	for _, blob := range tree {
+		if path.Base(blob.Path) == ".gitattributes" {
+			attributes = append(attributes, blob)
+			oids = append(oids, blob.OID)
 		}
-	}()
+	}
+	for _, candidate := range ordered {
+		oids, names = append(oids, candidate.oid), append(names, candidate.path)
+	}
+	missing, large, err := git.CheckBlobs(ctx, repo.RootPath, oids, config.ResolveMaxPromptSize(repo.RootPath, global)+1)
+	if err != nil {
+		return nil, err
+	}
+	binary, err := git.BinaryAttributes(ctx, repo.RootPath, head, names)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := git.NewBlobReader(ctx, repo.RootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
 	var selected []*analysisCandidate
 	files := map[string]string{}
 	var skipped []string
@@ -302,47 +248,19 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 		if len(selected) == schedule.MaxFiles {
 			break
 		}
-		if missing[candidate.oid] || unknown[candidate.path] {
+		if missing[candidate.oid] || attributesMissing(attributes, missing, candidate.path) {
 			continue
 		}
-		if binary[candidate.path] {
-			skipped = append(skipped, candidate.path)
-			continue
-		}
-		size, err := reader.Size(candidate.oid)
-		if err != nil {
-			if ctx.Err() != nil {
-				return failed, ctx.Err()
-			}
-			for typ := range candidate.due {
-				failed[typ] = false
-			}
-			errs = append(errs, fmt.Errorf("size %s: %w", candidate.path, err))
-			_ = reader.Close()
-			reader, err = git.NewTreeBlobReader(ctx, repo.RootPath)
-			if err != nil {
-				return failed, errors.Join(errors.Join(errs...), err)
-			}
-			continue
-		}
-		if size > int64(budget) {
+		if binary[candidate.path] || large[candidate.oid] {
 			skipped = append(skipped, candidate.path)
 			continue
 		}
 		content, err := reader.Read(candidate.oid)
 		if err != nil {
 			if ctx.Err() != nil {
-				return failed, ctx.Err()
+				return nil, ctx.Err()
 			}
-			for typ := range candidate.due {
-				failed[typ] = false
-			}
-			errs = append(errs, fmt.Errorf("read %s: %w", candidate.path, err))
-			_ = reader.Close()
-			reader, err = git.NewTreeBlobReader(ctx, repo.RootPath)
-			if err != nil {
-				return failed, errors.Join(errors.Join(errs...), err)
-			}
+			errs = append(errs, err)
 			continue
 		}
 		if !isSourceContent(content) {
@@ -350,23 +268,21 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 			continue
 		}
 		files[candidate.path] = string(content)
-
 		selected = append(selected, candidate)
 	}
 	if len(skipped) > 0 {
 		log.Printf("analysis scheduler %s: skipped %d binary or oversized files: %s", repo.RootPath, len(skipped), strings.Join(skipped[:min(len(skipped), 3)], ", "))
 	}
-	setupFailed = false
 	for _, typ := range schedule.Types {
 		if !usable[typ] {
 			continue
 		}
 		if ctx.Err() != nil {
-			return failed, ctx.Err()
+			return nil, ctx.Err()
 		}
 		if names := dueNames(selected, typ); len(names) > 0 {
 			if err := w.enqueueType(ctx, repo, typ, names, head, files); err != nil {
-				failed[typ] = true
+				failed = append(failed, typ)
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
@@ -374,9 +290,20 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 	return failed, errors.Join(errs...)
 }
 
-func scheduleCandidates(paths []git.TreeBlob, patterns []string) (map[string]*analysisCandidate, error) {
+// attributesMissing reports whether a committed .gitattributes file that can
+// apply to p is unavailable locally, leaving p's classification unknown.
+func attributesMissing(attributes []git.TreeBlob, missing map[string]bool, p string) bool {
+	for _, file := range attributes {
+		if dir := path.Dir(file.Path); missing[file.OID] && (dir == "." || strings.HasPrefix(p, dir+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
+func scheduleCandidates(tree []git.TreeBlob, patterns []string) (map[string]*analysisCandidate, error) {
 	candidates := map[string]*analysisCandidate{}
-	for _, blob := range paths {
+	for _, blob := range tree {
 		matched, err := matchesSchedulePaths(patterns, blob.Path)
 		if err != nil {
 			return nil, err

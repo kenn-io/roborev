@@ -701,29 +701,30 @@ the directory and its descendants.
 
 Each run selects up to `max_files` distinct tracked files and queues jobs for
 each applicable type. Each job includes a snapshot of its selected files from
-the selected commit. Files with no previous attempt come first, followed by
-those with the oldest attempt. Queued and running jobs suppress their files.
-Each run considers the same code files as branch analysis. It skips binary
-files and files larger than the repository's
-[`max_prompt_size`](#prompt-size-budget), logs the count and first few paths,
-and continues looking for eligible files. Skipped files stay due and do not
-count toward `max_files`. Unavailable partial-clone blobs stay due without
-being fetched. A complete prompt can exceed `max_prompt_size` and uses the
-usual file handoff in that case.
+the selected commit.
+Files with no previous attempt come first, followed by those with the oldest
+attempt. Queued and running jobs suppress their files. A successful analysis
+counts as coverage of the selected commit. A foreground review can cancel a
+running scheduled job when all workers are busy. Only enough jobs are canceled
+to serve the waiting reviews. The canceled files remain due for a later run. The
+daemon reloads settings on its next 30-second check. Set `analyze_agent`,
+`analyze_model`, and `analyze_reasoning` globally or per repository to choose
+the analysis agent, model, and reasoning. Per-type `[analyze.<type>]` settings
+take precedence within each scope; repository settings take precedence over
+global settings.
 
-A successful analysis counts as coverage of the selected commit. A foreground
-review can cancel a running scheduled job when all workers are busy. Only enough
-jobs are canceled to serve the waiting reviews. The canceled files remain due
-for a later run. The daemon checks schedules and reloads settings every 30
-seconds. A failed analysis type, for example when its agent is unavailable, retries at
-the next check. Successfully queued types keep their normal interval. Types
-that failed to enqueue are saved and retried after a daemon restart. Retries for
-failed jobs are kept in memory only. Disabling a schedule or removing a type from
-it clears that type's pending retries. Set
-`analyze_agent`, `analyze_model`, and `analyze_reasoning` globally or per
-repository to choose the analysis agent, model, and reasoning. Per-type
-`[analyze.<type>]` settings take precedence within each scope; repository
-settings take precedence over global settings.
+Scheduled runs consider the same code files as branch analysis. They skip
+binary files and files larger than the repository's
+[`max_prompt_size`](#prompt-size-budget), log the count and first few paths,
+and keep looking for eligible files. Skipped files stay due and do not count
+toward `max_files`. Unavailable partial-clone blobs stay due without being
+fetched. A complete prompt can exceed `max_prompt_size` and uses the usual
+file handoff in that case.
+
+A type that fails to queue, for example when its agent is unavailable, or whose
+job fails, retries at the next check, including after a daemon restart.
+Successfully queued types keep their normal interval. Disabling a schedule or
+removing a type clears its pending retries.
 
 ### Binary Evidence
 
