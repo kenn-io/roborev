@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -94,10 +95,9 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 		return err
 	}
 	if !schedule.Enabled {
-		delete(w.failedTypes, repo.ID)
-		return nil
+		return w.pruneRetry(ctx, repo.ID, nil)
 	}
-	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
+	return errors.Join(w.pruneRetry(ctx, repo.ID, schedule.Types), w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now))
 }
 
 func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
@@ -165,6 +165,25 @@ func (w *analysisScheduler) saveRetry(ctx context.Context, repoID int64, failed 
 	}
 	sort.Strings(persist)
 	return w.server.db.SetAnalysisScheduleRetry(ctx, repoID, persist)
+}
+
+// pruneRetry drops retries for types outside the schedule, in memory and in
+// the database. An empty schedule drops them all.
+func (w *analysisScheduler) pruneRetry(ctx context.Context, repoID int64, types []string) error {
+	for typ := range w.failedTypes[repoID] {
+		if !slices.Contains(types, typ) {
+			delete(w.failedTypes[repoID], typ)
+		}
+	}
+	saved, err := w.server.db.AnalysisScheduleRetry(ctx, repoID)
+	if err != nil {
+		return err
+	}
+	kept := slices.DeleteFunc(slices.Clone(saved), func(typ string) bool { return !slices.Contains(types, typ) })
+	if len(kept) == len(saved) {
+		return nil
+	}
+	return w.server.db.SetAnalysisScheduleRetry(ctx, repoID, kept)
 }
 
 // retryTypes returns the configured types that failed, or whose latest job

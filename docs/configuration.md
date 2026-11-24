@@ -716,8 +716,10 @@ review can cancel a running scheduled job when all workers are busy. Only enough
 jobs are canceled to serve the waiting reviews. The canceled files remain due
 for a later run. The daemon checks schedules and reloads settings every 30
 seconds. A failed analysis type, for example when its agent is unavailable, retries at
-the next check. Successfully queued types keep their normal interval. Retries
-are kept in memory and do not survive a daemon restart. Set
+the next check. Successfully queued types keep their normal interval. Types
+that failed to enqueue are saved and retried after a daemon restart. Retries for
+failed jobs are kept in memory only. Disabling a schedule or removing a type from
+it clears that type's pending retries. Set
 `analyze_agent`, `analyze_model`, and `analyze_reasoning` globally or per
 repository to choose the analysis agent, model, and reasoning. Per-type
 `[analyze.<type>]` settings take precedence within each scope; repository
