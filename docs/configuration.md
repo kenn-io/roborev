@@ -35,16 +35,19 @@ section invalid and keeps the file unchanged.
 
 The GitHub daemon poller accepts `[ci] comment_max_findings` (integer, default
 `0` for unlimited), `comment_when_clean` (boolean, default `true`),
-`comment_show_all` (boolean, default `false`), and `comment_min_confidence` (optional finite number from `0` to `1`, unset globally
-disables filtering). An unset repo floor inherits the global floor. Set it to
-`0` to disable filtering for that repo. The floor uses confidence recorded by
+`comment_show_all` (boolean, default `false`), and `comment_min_confidence`
+(optional finite number from `0` to `1`, unset globally disables filtering).
+An unset repo floor inherits the global floor. Set it to `0` to disable filtering
+for that repo. The floor uses confidence recorded by
 synthesis. Findings with no stored score remain visible. Synthesis is instructed
 to use `0.5` when no source scored a finding, so a floor above `0.5` can hide
 it. With `comment_when_clean = false`, an empty comment can be suppressed even
 when the stored review has findings. Negative caps and invalid confidence floors
-are rejected during loading, saving, and reloading. These settings affect
-GitHub comments and preserve stored reviews and verdicts. The show-all setting
-also applies to `roborev ci review` comments. Prose is uncapped. See
+are rejected during loading, saving, and reloading. The daemon applies these
+settings to synthesized GitHub comments; its raw fallback keeps the severity
+policy. `comment_show_all` also applies to `roborev ci review` GitHub
+comments, including its raw fallback. Stored reviews and verdicts stay unchanged.
+Prose is uncapped. See
 [Comment display policy](/docs/integrations/github/#comment-display-policy) for
 filtering, complete review retrieval, silent upsert, and status permissions.
 

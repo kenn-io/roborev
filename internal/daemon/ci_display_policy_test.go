@@ -83,6 +83,14 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						assert.NotContains(body, "Missing cleanup.")
 					}
 					assert.Contains(body, "State is lost.")
+					if mode == "fallback" {
+						cfg := config.DefaultConfig()
+						cfg.CI.CommentShowAll = true
+						poller.cfgGetter = NewStaticConfig(cfg)
+						showAllBody, err := poller.panelCommentBody(&storage.CIPanel{PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project"}, rows)
+						require.NoError(t, err)
+						assert.Equal(body, showAllBody, "show-all leaves the daemon fallback policy unchanged")
+					}
 
 					member, err := tc.DB.GetReviewByJobID(members[1].ID)
 					require.NoError(t, err)
