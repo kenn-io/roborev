@@ -1075,11 +1075,11 @@ func (c *Client) ExportReviewsWithResponse(ctx context.Context, options *ExportR
 			}
 		}
 		return out, nil
-	case 409:
-		out.ApplicationProblemPlusJSON409 = new(ExportReviewsErrorResponse)
+	case 400:
+		out.ApplicationProblemPlusJSON400 = new(ExportReviewsErrorResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.ApplicationProblemPlusJSON409); err != nil {
+			if err := json.Unmarshal(bodyBytes, out.ApplicationProblemPlusJSON400); err != nil {
 				return out, &runtime.ResponseDecodeError{
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
@@ -1091,8 +1091,24 @@ func (c *Client) ExportReviewsWithResponse(ctx context.Context, options *ExportR
 			}
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 409:
+		out.ApplicationProblemPlusJSON409 = new(ExportReviewsErrorResponseApplicationProblemPlusJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.ApplicationProblemPlusJSON409); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "ExportReviewsErrorResponseApplicationProblemPlusJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	default:
-		out.ApplicationProblemPlusJSONDefault = new(ExportReviewsErrorResponseApplicationProblemPlusJSON)
+		out.ApplicationProblemPlusJSONDefault = new(ExportReviewsErrorResponseApplicationProblemPlusJSONDefault)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.ApplicationProblemPlusJSONDefault); err != nil {
@@ -1100,7 +1116,7 @@ func (c *Client) ExportReviewsWithResponse(ctx context.Context, options *ExportR
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "ExportReviewsErrorResponseApplicationProblemPlusJSON",
+					TargetType:    "ExportReviewsErrorResponseApplicationProblemPlusJSONDefault",
 					Body:          bodyBytes,
 					Err:           err,
 				}

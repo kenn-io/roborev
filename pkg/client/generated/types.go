@@ -4423,7 +4423,7 @@ type StructuredReviewDocument struct {
 	Check    *StructuredReviewCheck    `json:"check,omitempty"`
 	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
 
-	// SchemaVersion Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3.
+	// SchemaVersion Version of the document format, separate from the export schema_version. Export schema_version 2 writes structured documents in version 3.
 	SchemaVersion int64 `json:"schema_version" validate:"gte=1,lte=3"`
 
 	// SourceLabels Names of the input reviews that findings cite in sources, indexed by review number minus one.

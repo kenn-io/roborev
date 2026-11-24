@@ -174,8 +174,17 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "export-reviews"
 			o.Summary = "Export completed reviews"
 			o.Tags = []string{"reviews"}
+			// Validate query parameters in the handler so invalid or
+			// unsupported schema_version values consistently return HTTP 400.
+			o.SkipValidateParams = true
 			if o.Responses == nil {
 				o.Responses = map[string]*huma.Response{}
+			}
+			o.Responses["400"] = &huma.Response{
+				Description: "Invalid or unsupported export parameter (including schema_version, format, profile, time bounds, or cursor)",
+				Content: map[string]*huma.MediaType{
+					"application/problem+json": {Schema: jsonSchema(api, huma.ErrorModel{})},
+				},
 			}
 			o.Responses["409"] = &huma.Response{
 				Description: "Cursor database_id does not match this local database",
@@ -190,6 +199,21 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 				},
 			}
 		})
+	// Review export response schemas evolve additively within a schema_version:
+	// consumers must ignore unknown fields, so allow additional properties on
+	// these published response objects instead of forbidding future fields.
+	for _, name := range []string{
+		"ExportReviewsDocument",
+		"ExportReviewsWindow",
+		"ExportReview",
+		"ExportReviewCost",
+		"ExportSubagent",
+		"ExperimentAssignment",
+	} {
+		if schema := api.OpenAPI().Components.Schemas.Map()[name]; schema != nil {
+			schema.AdditionalProperties = nil
+		}
+	}
 
 	huma.Get(api, "/api/export/ci-metrics", s.humaExportCIMetrics,
 		func(o *huma.Operation) {

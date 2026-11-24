@@ -113,8 +113,8 @@ type ExportReviewsQuery struct {
 	// Profile Export profile: content or metadata
 	Profile *string `json:"profile,omitempty"`
 
-	// SchemaVersion Requested export schema version; defaults to the current version (2)
-	SchemaVersion *int64 `json:"schema_version,omitempty"`
+	// SchemaVersion Requested export schema version (supported: 2); omit to use the daemon's current default (2)
+	SchemaVersion *ExportReviewsQuerySchemaVersion `json:"schema_version,omitempty"`
 
 	// Since Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
 	Since *string `json:"since,omitempty"`
@@ -139,6 +139,21 @@ type ExportReviewsQuery struct {
 
 	// Cursor Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since.
 	Cursor *string `json:"cursor,omitempty"`
+}
+
+func (e ExportReviewsQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if e.SchemaVersion != nil {
+		if v, ok := any(e.SchemaVersion).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SchemaVersion", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type GetJobInvocationsQuery struct {

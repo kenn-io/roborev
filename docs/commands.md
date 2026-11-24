@@ -498,7 +498,7 @@ roborev export reviews --updated-since 2026-07-01T00:00:00Z
 |------|-------------|
 | `--format json` | Output format. JSON is the only supported format and the default |
 | `--profile content\|metadata` | Export profile. `content` is the default |
-| `--schema-version <n>` | Export schema version to request. Defaults to the current version (`2`) |
+| `--schema-version <n>` | Export schema version to request (supported: `2`). Omit to use the connected daemon's current default (`2`); consumers requiring stability across upgrades should pass `--schema-version 2` explicitly |
 | `--since <time>` | Inclusive `completed_at` lower bound. Accepts RFC3339 or `YYYY-MM-DD` |
 | `--until <time>` | Exclusive `completed_at` upper bound. Accepts RFC3339 or `YYYY-MM-DD` |
 | `--cursor <opaque>` | Resume strictly after a previous `next_cursor`. Mutually exclusive with `--since` |
@@ -539,7 +539,7 @@ A `document` has these members:
 
 | Member | Type | Meaning |
 |--------|------|---------|
-| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Export writes every document as version `3`, including reviews stored in older versions |
+| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Export `schema_version: 2` writes structured reviews as document version `3` (including reviews stored in older structured versions) and historical unstructured Markdown reviews as version `0` |
 | `summary` | string | The reviewer's summary |
 | `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. Omitted when the review stated none, as in some converted historical reviews. The exported top-level `verdict` comes from the findings, not from this value |
 | `findings` | array | Zero or more findings |
@@ -591,12 +591,15 @@ in `findings`; `check.findings` keeps the text the checker tried. The Markdown
 in `content` does not include the check.
 
 Other Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to read a
-`document`. `structuredreview.Decode` validates it, and `Document.Markdown("")`
-produces the same Markdown as `content`.
+`document`. `structuredreview.Decode` validates strictly against the imported
+package version (rejecting unknown members and newer document versions), and
+`Document.Markdown("")` produces the same Markdown as `content`. External
+consumers that need forward compatibility across roborev upgrades should decode
+`document` with unknown-field tolerance rather than strict schema validation.
 
 Each top-level review has an `experiments` field. It is an array of assignments
-when an experiment applies and `null` otherwise. Every assignment contains the
-experiment `id`, `arm`, `subject_hash`, `definition_hash`, and
+when an experiment applies and an empty array (`[]`) otherwise. Every assignment
+contains the experiment `id`, `arm`, `subject_hash`, `definition_hash`, and
 `effective_config_hash`.
 
 Each top-level review reports its closed state in both profiles:
@@ -629,13 +632,26 @@ and subagent. No version 1 field changed meaning. Documents also include a
 stable `database_id` for the local review database. `database_id` did not bump
 `schema_version` because it is an additive header field.
 
-Within a major `schema_version`, export evolution is strictly additive: existing
+Within a `schema_version`, export evolution is strictly additive: existing
 fields are never removed, renamed, or changed in type or nullability, and
 existing CLI flag semantics and exit code `3` (cursor database reset) stay
 stable. Consumers must ignore unknown fields on the document header, reviews,
-subagents, and nested objects. Any breaking wire change introduces a new
-`schema_version` while prior supported versions remain selectable via
-`--schema-version` (CLI) or `schema_version` (HTTP `GET /api/export/reviews`).
+subagents, and nested objects (including `document` and its findings). Export
+`schema_version: 2` emits structured `document` objects in document version `3`
+(and version `0` for historical unstructured Markdown reviews); any breaking
+wire change to the envelope, reviews, subagents, or nested `document` introduces
+a new export `schema_version` while prior supported versions remain selectable
+via `--schema-version` (CLI) or `schema_version` (HTTP
+`GET /api/export/reviews`).
+
+Omitting `--schema-version` or `schema_version` uses the connected daemon's
+current default version (`2`). Consumers that require wire stability across
+roborev upgrades must pass `--schema-version 2` (CLI) or `schema_version=2`
+(HTTP) explicitly. Invalid or unsupported schema versions return HTTP `400` on
+`GET /api/export/reviews` and exit code `4` on `roborev export reviews`,
+including when an explicitly pinned `--schema-version` does not match the
+version returned by the daemon. Cursor tokens are versioned independently of
+`schema_version` and remain valid across export schema versions.
 
 Review exports preserve complete content and metadata strings. Pagination limits
 control the number of rows returned; they do not truncate individual fields.

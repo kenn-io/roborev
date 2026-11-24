@@ -150,9 +150,8 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 	const refPrefix = "#/components/schemas/"
 	schemas := r.Map()
 	schemas[exportFindingSchemaName] = &huma.Schema{
-		Type:                 huma.TypeObject,
-		Description:          "One finding in a structured review document.",
-		AdditionalProperties: false,
+		Type:        huma.TypeObject,
+		Description: "One finding in a structured review document.",
 		Properties: map[string]*huma.Schema{
 			"severity":   {Type: huma.TypeString, Description: "One of critical, high, medium, or low."},
 			"kind":       {Type: huma.TypeString, Nullable: true, Description: "defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents."},
@@ -173,9 +172,8 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Required: []string{"severity", "problem", "fix", "location"},
 	}
 	schemas[exportCheckVerdictSchemaName] = &huma.Schema{
-		Type:                 huma.TypeObject,
-		Description:          "One verdict as the CI checker returned it. A member the checker left blank is omitted.",
-		AdditionalProperties: false,
+		Type:        huma.TypeObject,
+		Description: "One verdict as the CI checker returned it. A member the checker left blank is omitted.",
 		Properties: map[string]*huma.Schema{
 			"keep":     {Type: huma.TypeBoolean, Description: "The checker's decision to keep the finding."},
 			"evidence": {Type: huma.TypeString, Description: "The command the checker ran and its output, or what refutes the finding."},
@@ -183,9 +181,8 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		},
 	}
 	schemas[exportCheckedFindingSchemaName] = &huma.Schema{
-		Type:                 huma.TypeObject,
-		Description:          "One finding the CI checker tried and what became of it.",
-		AdditionalProperties: false,
+		Type:        huma.TypeObject,
+		Description: "One finding the CI checker tried and what became of it.",
 		Properties: map[string]*huma.Schema{
 			"outcome": {Type: huma.TypeString, Description: "kept when the finding stayed in the review, or dropped when the checker refuted it and roborev removed it."},
 			"finding": {Ref: refPrefix + exportFindingSchemaName, Description: "The finding as the checker received it, before any rewrite."},
@@ -198,9 +195,8 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Required: []string{"outcome", "finding", "verdicts"},
 	}
 	schemas[exportCheckSchemaName] = &huma.Schema{
-		Type:                 huma.TypeObject,
-		Description:          "How the CI checker judged the review's findings before roborev stored and posted it.",
-		AdditionalProperties: false,
+		Type:        huma.TypeObject,
+		Description: "How the CI checker judged the review's findings before roborev stored and posted it.",
 		Properties: map[string]*huma.Schema{
 			"status": {Type: huma.TypeString, Description: "completed when the checker returned verdicts, or failed when it ran but the review was stored unchecked."},
 			"findings": {
@@ -212,11 +208,10 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Required: []string{"status", "findings"},
 	}
 	schemas[exportDocumentSchemaName] = &huma.Schema{
-		Type:                 huma.TypeObject,
-		Description:          "The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.",
-		AdditionalProperties: false,
+		Type:        huma.TypeObject,
+		Description: "The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.",
 		Properties: map[string]*huma.Schema{
-			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(3)), Description: "Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3."},
+			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(3)), Description: "Version of the document format, separate from the export schema_version. Export schema_version 2 writes structured documents in version 3."},
 			"summary":        {Type: huma.TypeString},
 			"verdict": {
 				Type:        huma.TypeString,
@@ -239,14 +234,13 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Required: []string{"schema_version", "summary", "findings"},
 	}
 	schemas["LegacyReviewDocument"] = &huma.Schema{
-		Type:                 huma.TypeObject,
-		Description:          "Historical Markdown without extracted findings.",
-		AdditionalProperties: false,
+		Type:        huma.TypeObject,
+		Description: "Historical Markdown without extracted findings.",
 		Properties: map[string]*huma.Schema{
 			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(0)), Maximum: new(float64(0))},
 			"summary":        {Type: huma.TypeString, MaxLength: new(0)},
 			"findings":       {Type: huma.TypeArray, Nullable: true, MaxItems: new(0), Items: &huma.Schema{Ref: refPrefix + exportFindingSchemaName}},
-			"legacy": {Type: huma.TypeObject, AdditionalProperties: false, Description: "Historical Markdown without extracted findings. Only present in storage-only schema version 0.", Properties: map[string]*huma.Schema{
+			"legacy": {Type: huma.TypeObject, Description: "Historical Markdown without extracted findings. Only present in storage-only schema version 0.", Properties: map[string]*huma.Schema{
 				"markdown":         {Type: huma.TypeString},
 				"recorded_verdict": {Type: huma.TypeBoolean, Nullable: true},
 			}, Required: []string{"markdown", "recorded_verdict"}},

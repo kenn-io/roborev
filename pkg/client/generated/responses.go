@@ -166,6 +166,8 @@ type ExportReviewsErrorResponse = ErrorModel
 
 type ExportReviewsErrorResponseApplicationProblemPlusJSON = ErrorModel
 
+type ExportReviewsErrorResponseApplicationProblemPlusJSONDefault = ErrorModel
+
 type GoalReviewResponse = GoalGateResponse
 
 type GoalReviewErrorResponse = GoalGateResponse
@@ -587,8 +589,9 @@ type ExportReviewsResp struct {
 	Body                              []byte
 	StatusCode                        int
 	JSON200                           *ExportReviewsResponse
-	ApplicationProblemPlusJSON409     *ExportReviewsErrorResponse
-	ApplicationProblemPlusJSONDefault *ExportReviewsErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON400     *ExportReviewsErrorResponse
+	ApplicationProblemPlusJSON409     *ExportReviewsErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSONDefault *ExportReviewsErrorResponseApplicationProblemPlusJSONDefault
 }
 
 type GoalReviewResp struct {

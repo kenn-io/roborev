@@ -157,19 +157,49 @@ type GetReviewOutput struct {
 
 // -- GET /api/export/reviews --
 
+// exportReviewsSchemaVersion preserves handler-owned HTTP 400 errors for
+// malformed and unsupported schema_version values while publishing the integer
+// contract consumed by generated clients.
+type exportReviewsSchemaVersion string
+
+func (exportReviewsSchemaVersion) Schema(huma.Registry) *huma.Schema {
+	return &huma.Schema{
+		Type:    huma.TypeInteger,
+		Default: ExportReviewsSchemaVersion,
+		Enum:    supportedExportReviewsSchemaVersionAny(),
+	}
+}
+
 // ExportReviewsInput holds query parameters for exporting completed reviews.
 type ExportReviewsInput struct {
-	Format        string `query:"format" default:"json" doc:"Output format; only json is supported"`
-	Profile       string `query:"profile" default:"content" doc:"Export profile: content or metadata"`
-	SchemaVersion int    `query:"schema_version" default:"2" doc:"Requested export schema version; defaults to the current version (2)"`
-	Since         string `query:"since" doc:"Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)"`
-	Until         string `query:"until" doc:"Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
-	ClosedOnly    bool   `query:"closed_only" doc:"Only include reviews marked closed"`
-	UpdatedSince  string `query:"updated_since" doc:"Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at."`
-	Repo          string `query:"repo" doc:"Exact exported repo identifier filter"`
-	Project       string `query:"project" doc:"Exact project display-name filter"`
-	Limit         int    `query:"limit" default:"500" doc:"Maximum top-level reviews in this page"`
-	Cursor        string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since."`
+	Format        string                     `query:"format" default:"json" doc:"Output format; only json is supported"`
+	Profile       string                     `query:"profile" default:"content" doc:"Export profile: content or metadata"`
+	SchemaVersion exportReviewsSchemaVersion `query:"schema_version" doc:"Requested export schema version (supported: 2); omit to use the daemon's current default (2)"`
+	Since         string                     `query:"since" doc:"Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)"`
+	Until         string                     `query:"until" doc:"Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
+	ClosedOnly    bool                       `query:"closed_only" doc:"Only include reviews marked closed"`
+	UpdatedSince  string                     `query:"updated_since" doc:"Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at."`
+	Repo          string                     `query:"repo" doc:"Exact exported repo identifier filter"`
+	Project       string                     `query:"project" doc:"Exact project display-name filter"`
+	Limit         int                        `query:"limit" default:"500" doc:"Maximum top-level reviews in this page"`
+	Cursor        string                     `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since."`
+
+	schemaVersionPresent  bool
+	schemaVersionMultiple bool
+}
+
+// Resolve records raw schema_version query presence so the handler can
+// distinguish an omitted parameter from an explicit empty or repeated one.
+func (i *ExportReviewsInput) Resolve(ctx huma.Context) []error {
+	if raw := ctx.URL(); raw.RawQuery != "" {
+		if values, ok := raw.Query()["schema_version"]; ok {
+			i.schemaVersionPresent = true
+			if len(values) > 1 {
+				i.schemaVersionMultiple = true
+			}
+		}
+	}
+	return nil
 }
 
 type ExportReviewsWindow struct {

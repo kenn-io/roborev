@@ -299,6 +299,10 @@ func TestExportReviewsCmdRejectsInvalidFlags(t *testing.T) {
 		{name: "schema-version-zero", code: 4, args: []string{"reviews", "--schema-version", "0"}},
 		{name: "schema-version-old", code: 4, args: []string{"reviews", "--schema-version", "1"}},
 		{name: "schema-version-future", code: 4, args: []string{"reviews", "--schema-version", "99"}},
+		{name: "schema-version-non-integer", code: 4, args: []string{"reviews", "--schema-version", "foo"}},
+		{name: "schema-version-empty", code: 4, args: []string{"reviews", "--schema-version", ""}},
+		{name: "schema-version-float", code: 4, args: []string{"reviews", "--schema-version", "2.0"}},
+		{name: "schema-version-spaces", code: 4, args: []string{"reviews", "--schema-version", " 2"}},
 		{name: "limit", code: 4, args: []string{"reviews", "--limit", "0"}},
 		{name: "cursor-since", code: 2, args: []string{"reviews", "--cursor", "opaque", "--since", "2026-06-29"}},
 	}
@@ -334,6 +338,195 @@ func TestExportReviewsCmdSendsSchemaVersionOnlyWhenExplicit(t *testing.T) {
 	runExportCmd(t, "reviews", "--schema-version", "2")
 
 	assert.Equal([]string{"", "2"}, seen)
+}
+
+func TestExportReviewsCmdEnforcesPinnedSchemaVersionAcrossPages(t *testing.T) {
+	t.Run("rejects page 1 mismatch with exit code 4", func(t *testing.T) {
+		NewMockDaemon(t, MockRefineHooks{
+			OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+				if r.URL.Path != "/api/export/reviews" {
+					return false
+				}
+				writeExportTestPageWithVersion(t, w, 1, r.URL.Query().Get("profile"), false, new("cursor-1"), []map[string]any{
+					{"review_id": testUUID("review-1")},
+				})
+				return true
+			},
+		})
+
+		cmd := exportCmd()
+		cmd.SetArgs([]string{"reviews", "--schema-version", "2"})
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Equal(t, 4, commandExitCode(err))
+		assert.Contains(t, err.Error(), "schema_version 1, requested 2")
+	})
+
+	t.Run("rejects continuation page mismatch with exit code 4", func(t *testing.T) {
+		var calls int
+		NewMockDaemon(t, MockRefineHooks{
+			OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+				if r.URL.Path != "/api/export/reviews" {
+					return false
+				}
+				calls++
+				if calls == 1 {
+					writeExportTestPageWithVersion(t, w, 2, r.URL.Query().Get("profile"), true, new("cursor-1"), []map[string]any{
+						{"review_id": testUUID("review-1")},
+					})
+					return true
+				}
+				writeExportTestPageWithVersion(t, w, 1, r.URL.Query().Get("profile"), false, new("cursor-2"), []map[string]any{
+					{"review_id": testUUID("review-2")},
+				})
+				return true
+			},
+		})
+
+		cmd := exportCmd()
+		cmd.SetArgs([]string{"reviews", "--schema-version", "2"})
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Equal(t, 4, commandExitCode(err))
+		assert.Contains(t, err.Error(), "schema_version 1, requested 2")
+	})
+
+	t.Run("allows older daemon default when flag is omitted", func(t *testing.T) {
+		NewMockDaemon(t, MockRefineHooks{
+			OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+				if r.URL.Path != "/api/export/reviews" {
+					return false
+				}
+				assert.Empty(t, r.URL.Query().Get("schema_version"))
+				writeExportTestPageWithVersion(t, w, 1, r.URL.Query().Get("profile"), false, new("cursor-1"), []map[string]any{
+					{"review_id": testUUID("review-1")},
+				})
+				return true
+			},
+		})
+
+		output := runExportCmd(t, "reviews")
+		var got struct {
+			SchemaVersion int `json:"schema_version"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(output), &got))
+		assert.Equal(t, 1, got.SchemaVersion)
+	})
+
+	t.Run("rejects mid-export header drift across pages", func(t *testing.T) {
+		var calls int
+		NewMockDaemon(t, MockRefineHooks{
+			OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+				if r.URL.Path != "/api/export/reviews" {
+					return false
+				}
+				calls++
+				if calls == 1 {
+					writeExportTestPageWithVersion(t, w, 2, "content", true, new("cursor-1"), []map[string]any{
+						{"review_id": testUUID("review-1")},
+					})
+					return true
+				}
+				writeExportTestPageWithVersion(t, w, 3, "content", false, new("cursor-2"), []map[string]any{
+					{"review_id": testUUID("review-2")},
+				})
+				return true
+			},
+		})
+
+		cmd := exportCmd()
+		cmd.SetArgs([]string{"reviews"})
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "changed export schema_version mid-export")
+	})
+
+	t.Run("maps daemon schema_version HTTP 400 to exit code 4", func(t *testing.T) {
+		NewMockDaemon(t, MockRefineHooks{
+			OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+				if r.URL.Path != "/api/export/reviews" {
+					return false
+				}
+				http.Error(w, "unsupported export schema_version 2", http.StatusBadRequest)
+				return true
+			},
+		})
+
+		cmd := exportCmd()
+		cmd.SetArgs([]string{"reviews", "--schema-version", "2"})
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Equal(t, 4, commandExitCode(err))
+		assert.Contains(t, err.Error(), "unsupported export schema_version")
+	})
+}
+
+func TestExportReviewsCmdPreservesAdditiveFieldsAndNestedDocument(t *testing.T) {
+	// Simulate a newer daemon emitting additive fields on the envelope, review,
+	// subagent, and nested document (including an unknown field on a finding).
+	const futureDoc = `{"schema_version":3,"summary":"All good.","verdict":"pass","extra_doc_field":"keep-me","findings":[{"severity":"low","problem":"Minor","fix":"Fix","location":null,"extra_finding_field":123}]}`
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/reviews" {
+				return false
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"schema_version":   2,
+				"tool":             "roborev",
+				"tool_version":     "dev",
+				"generated_at":     "2026-06-29T00:00:00Z",
+				"database_id":      testUUID("export-database"),
+				"profile":          "content",
+				"window":           map[string]any{"field": "completed_at", "since": nil, "until": nil, "extra_window_field": true},
+				"truncated":        false,
+				"next_cursor":      "cursor-1",
+				"extra_header_key": "preserve-me",
+				"reviews": []map[string]any{{
+					"review_id":          testUUID("review-1"),
+					"extra_review_field": "keep-review",
+					"document":           json.RawMessage(futureDoc),
+					"subagents": []map[string]any{{
+						"review_id":            testUUID("member-1"),
+						"extra_subagent_field": 42,
+						"document":             json.RawMessage(futureDoc),
+					}},
+				}},
+			}))
+			return true
+		},
+	})
+
+	output := runExportCmd(t, "reviews", "--schema-version", "2")
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(output), &got))
+	assert.Equal(t, "preserve-me", got["extra_header_key"])
+	window, ok := got["window"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, window["extra_window_field"])
+
+	reviews, ok := got["reviews"].([]any)
+	require.True(t, ok)
+	require.Len(t, reviews, 1)
+	review, ok := reviews[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "keep-review", review["extra_review_field"])
+	doc, ok := review["document"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "keep-me", doc["extra_doc_field"])
+	findings, ok := doc["findings"].([]any)
+	require.True(t, ok)
+	require.Len(t, findings, 1)
+	finding, ok := findings[0].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(t, 123, finding["extra_finding_field"], 0)
+
+	subagents, ok := review["subagents"].([]any)
+	require.True(t, ok)
+	require.Len(t, subagents, 1)
+	sub, ok := subagents[0].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(t, 42, sub["extra_subagent_field"], 0)
 }
 
 func TestExportReviewsCmdPropagatesCursorErrors(t *testing.T) {
@@ -394,11 +587,16 @@ func runExportCmd(t *testing.T, args ...string) string {
 
 func writeExportTestPage(t *testing.T, w http.ResponseWriter, profile string, truncated bool, nextCursor *string, reviews []map[string]any) {
 	t.Helper()
+	writeExportTestPageWithVersion(t, w, 2, profile, truncated, nextCursor, reviews)
+}
+
+func writeExportTestPageWithVersion(t *testing.T, w http.ResponseWriter, schemaVersion int, profile string, truncated bool, nextCursor *string, reviews []map[string]any) {
+	t.Helper()
 	if profile == "" {
 		profile = "content"
 	}
 	require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-		"schema_version": 2,
+		"schema_version": schemaVersion,
 		"tool":           "roborev",
 		"tool_version":   "dev",
 		"generated_at":   "2026-06-29T00:00:00Z",
