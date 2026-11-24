@@ -148,21 +148,30 @@ func (w *analysisScheduler) pruneRetry(ctx context.Context, repoID int64, types 
 	return kept, w.server.db.SetAnalysisScheduleRetry(ctx, repoID, kept)
 }
 
-// retryTypes returns the configured types that failed to enqueue, or whose
-// latest job from the current pass failed.
+// retryTypes returns the configured types that failed to enqueue, or that have
+// a scheduled job from the current pass that failed.
 func (w *analysisScheduler) retryTypes(ctx context.Context, repoID int64, last time.Time, types, saved []string) ([]string, error) {
 	var retry []string
 	for _, typ := range types {
-		jobs, err := w.server.db.ListJobs("", "", 1, 0, storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithSource(storage.JobSourceScheduled), storage.WithoutPrompt())
+		failed, err := w.failedSince(repoID, typ, last)
 		if err != nil {
 			return nil, err
 		}
-		failedJob := len(jobs) > 0 && jobs[0].Status == storage.JobStatusFailed && jobs[0].FinishedAt != nil && jobs[0].FinishedAt.Add(time.Second).After(last)
-		if failedJob || slices.Contains(saved, typ) {
+		if failed || slices.Contains(saved, typ) {
 			retry = append(retry, typ)
 		}
 	}
 	return retry, nil
+}
+
+// failedSince reports whether a scheduled job of typ failed at or after last,
+// even when a newer job of that type has since finished.
+func (w *analysisScheduler) failedSince(repoID int64, typ string, last time.Time) (bool, error) {
+	jobs, err := w.server.db.ListJobs(string(storage.JobStatusFailed), "", 1, 0, storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithSource(storage.JobSourceScheduled), storage.WithoutPrompt())
+	if err != nil || len(jobs) == 0 {
+		return false, err
+	}
+	return jobs[0].FinishedAt != nil && jobs[0].FinishedAt.Add(time.Second).After(last), nil
 }
 
 type changeSet struct {
