@@ -877,3 +877,39 @@ func partialClone(t *testing.T, source *testutil.TestRepo) string {
 	runGit(t, t.TempDir(), "clone", "--no-checkout", "--filter=blob:none", "file://"+source.Path(), clone)
 	return clone
 }
+
+func TestScheduledAnalysisClearsObsoleteRetries(t *testing.T) {
+	for _, change := range []string{"disabled", "removed type"} {
+		t.Run(change, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewGitRepo(t)
+			repo.CommitFile("a.go", "package a\n", "add source")
+			registered, err := db.GetOrCreateRepo(repo.Path())
+			require.NoError(t, err)
+			now := time.Now()
+			require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), registered.ID, now))
+			require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), registered.ID, []string{"complexity"}))
+			yes, interval := true, "1h"
+			cfg := server.configWatcher.Config()
+			cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, Types: []string{"refactor", "complexity"}}
+			cfg.AnalyzeAgent = "test"
+			watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+			if change == "disabled" {
+				yes = false
+			} else {
+				cfg.Schedule.Types = []string{"refactor"}
+			}
+			watcher.poll(t.Context(), now.Add(30*time.Second))
+			retry, err := db.AnalysisScheduleRetry(t.Context(), registered.ID)
+			require.NoError(t, err)
+			assert.Empty(t, retry)
+			yes = true
+			cfg.Schedule.Types = []string{"refactor", "complexity"}
+			restarted := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+			restarted.poll(t.Context(), now.Add(time.Minute))
+			jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+			require.NoError(t, err)
+			assert.Empty(t, jobs)
+		})
+	}
+}
