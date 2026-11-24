@@ -520,7 +520,7 @@ func TestCICheckUnlikely(t *testing.T) {
 		{Severity: "high", Problem: "four", Fix: "fix"},
 		{Severity: "high", Problem: "five", Fix: "fix", Unlikely: true},
 	}}
-	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true},{"finding":2,"keep":true,"unlikely":false},{"finding":3,"keep":true,"unlikely":true},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"evidence","reason":"reason"},{"finding":5,"keep":true,"unlikely":null}]}`)
+	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"},{"finding":2,"keep":true,"unlikely":false,"evidence":"e","reason":"r"},{"finding":3,"keep":true,"unlikely":true},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"evidence","reason":"reason"},{"finding":5,"keep":true,"unlikely":null}]}`)
 	got, err := applyCICheck(doc, raw, io.Discard)
 	require.NoError(t, err)
 	require.Len(t, got.Findings, 4)
@@ -544,14 +544,18 @@ func TestCICheckUnlikely(t *testing.T) {
 
 func TestCICheckFindingsIncludeOriginalClassifications(t *testing.T) {
 	doc := structuredreview.Document{Summary: "Review", Findings: []structuredreview.Finding{
-		{Severity: "high", Problem: "rare", Fix: "fix", Unlikely: true},
+		{Severity: "high", Kind: "defect", Topic: "security", Confidence: 0.9, Problem: "rare", Fix: "fix", Unlikely: true, Sources: []int{1}},
 		{Severity: "medium", Problem: "ordinary", Fix: "fix"},
 	}}
-	input := ciCheckFindings(doc, "medium")
-	assert.Contains(t, input, "### 1. High")
-	assert.Contains(t, input, "### 2. Medium")
-	assert.Contains(t, input, "1: true")
-	assert.Contains(t, input, "2: false")
+	input, err := ciCheckFindings(doc, "medium")
+	require.NoError(t, err)
+	_, payload, ok := strings.Cut(input, "## Structured findings\n\n```json\n")
+	require.True(t, ok)
+	raw, _, ok := strings.Cut(payload, "\n```\n")
+	require.True(t, ok)
+	var findings []structuredreview.Finding
+	require.NoError(t, json.Unmarshal([]byte(raw), &findings))
+	assert.Equal(t, doc.Findings, findings)
 }
 
 func TestCICheckSchemaAllowsInconclusiveClassification(t *testing.T) {
@@ -563,4 +567,21 @@ func TestCICheckSchemaAllowsInconclusiveClassification(t *testing.T) {
 	require.NoError(t, validator.Validate(map[string]any{"verdicts": []any{verdict}}))
 	verdict["unlikely"] = false
 	require.NoError(t, validator.Validate(map[string]any{"verdicts": []any{verdict}}))
+}
+
+func TestCICheckKeepsClassificationWithoutEvidenceAndReason(t *testing.T) {
+	doc := structuredreview.Document{Findings: []structuredreview.Finding{
+		{Severity: "high", Problem: "one", Fix: "fix", Unlikely: true},
+		{Severity: "high", Problem: "two", Fix: "fix", Unlikely: true},
+		{Severity: "high", Problem: "three", Fix: "fix", Unlikely: true},
+		{Severity: "high", Problem: "four", Fix: "fix", Unlikely: true},
+	}}
+	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":false},{"finding":2,"keep":true,"unlikely":false,"reason":"reason"},{"finding":3,"keep":true,"unlikely":false,"evidence":"evidence"},{"finding":4,"keep":true,"unlikely":false,"evidence":"evidence","reason":"reason"}]}`)
+	got, err := applyCICheck(doc, raw, io.Discard)
+	require.NoError(t, err)
+	require.Len(t, got.Findings, 4)
+	assert.True(t, got.Findings[0].Unlikely)
+	assert.True(t, got.Findings[1].Unlikely)
+	assert.True(t, got.Findings[2].Unlikely)
+	assert.False(t, got.Findings[3].Unlikely)
 }
