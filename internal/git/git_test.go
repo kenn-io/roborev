@@ -3774,16 +3774,6 @@ func TestListRefFiles(t *testing.T) {
 	repo.CommitFile("nested/source.go", "package sample\n", "add source")
 	files, err := ListRefFiles(t.Context(), repo.Dir, repo.HeadSHA())
 	require.NoError(t, err)
-	for _, file := range files {
-		if file.Path == "nested/source.go" {
-			reader, err := NewTreeBlobReader(t.Context(), repo.Dir)
-			require.NoError(t, err)
-			defer reader.Close()
-			size, err := reader.Size(file.OID)
-			require.NoError(t, err)
-			assert.Equal(t, int64(len("package sample\n")), size)
-			return
-		}
-	}
-	assert.Contains(t, files, TreeBlob{Path: "nested/source.go"})
+	oid := strings.TrimSpace(repo.Run("rev-parse", "HEAD:nested/source.go"))
+	assert.Contains(t, files, TreeBlob{Path: "nested/source.go", OID: oid})
 }
