@@ -36,21 +36,9 @@ const (
 // Other results without a verdict keep their existing export exclusion.
 const exportReviewHasVerdictExpr = "(rv.verdict_bool IS NOT NULL OR json_extract(rv.structured_output, '$.schema_version') = 0)"
 
-// exportReviewStoredUpdatedAtExpr is the review's update time with the
-// created_at fallback for rows that predate updated_at or carry an empty value.
-const exportReviewStoredUpdatedAtExpr = "COALESCE(NULLIF(TRIM(rv.updated_at), ''), rv.created_at)"
-
-var (
-	// Migration 21 changes exports with unknown origins. Keep the stored
-	// review timestamp intact because sync uses it to order edits.
-	exportOriginRefreshedExpr = "COALESCE(NULLIF(j.source_machine_id, ''), '00000000-0000-0000-0000-000000000000') = '00000000-0000-0000-0000-000000000000'" +
-		" AND " + sqlitePreciseJulianExpr("m21.applied_at") + " > COALESCE(" + sqlitePreciseJulianExpr(exportReviewStoredUpdatedAtExpr) + ", 0)"
-
-	// exportReviewUpdatedAtExpr is the review's effective export update time:
-	// the stored update time, or migration 21's time when that migration
-	// changed the exported origin later.
-	exportReviewUpdatedAtExpr = "CASE WHEN " + exportOriginRefreshedExpr + " THEN m21.applied_at ELSE " + exportReviewStoredUpdatedAtExpr + " END"
-)
+// exportReviewUpdatedAtExpr is the review's update time with the created_at
+// fallback for rows that predate updated_at or carry an empty value.
+const exportReviewUpdatedAtExpr = "COALESCE(NULLIF(TRIM(rv.updated_at), ''), rv.created_at)"
 
 var (
 	ErrExportCursorDatabaseMismatch = errors.New("export cursor database reset")
@@ -63,9 +51,8 @@ type ExportReviewsOptions struct {
 	Until      time.Time
 	Cursor     string
 	ClosedOnly bool
-	// UpdatedSince is an inclusive lower bound on the exported updated_at,
-	// including the migration time for unknown-origin corrections. Ordering
-	// and the cursor stay on completed_at.
+	// UpdatedSince is an inclusive lower bound on the review's updated_at. It
+	// is a filter, not a window: ordering and the cursor stay on completed_at.
 	UpdatedSince time.Time
 	Repo         string
 	Project      string
@@ -99,7 +86,7 @@ type ExportReview struct {
 	Content             *string                `json:"content"`
 	Document            *ExportDocument        `json:"document"`
 	Closed              bool                   `json:"closed" doc:"True when the review is marked closed."`
-	UpdatedAt           string                 `json:"updated_at" doc:"RFC3339 UTC time the review last changed, including close and reopen, or the migration time for a later unknown-origin correction. Falls back to completed_at when no update time is recorded."`
+	UpdatedAt           string                 `json:"updated_at" doc:"RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time."`
 	Subagents           []ExportSubagent       `json:"subagents"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
 	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid"`
@@ -454,7 +441,7 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 
 	query := `
 		SELECT rv.uuid, NULLIF(j.source_machine_id, ''), j.uuid, rv.verdict_bool, rv.created_at,
-		       COALESCE(rv.closed, 0), CASE WHEN ` + exportOriginRefreshedExpr + ` THEN m21.applied_at ELSE rv.updated_at END, ` + outputExpr + `,
+		       COALESCE(rv.closed, 0), rv.updated_at, ` + outputExpr + `,
 		       j.status, j.enqueued_at, j.started_at, j.finished_at, j.agent, j.model,
 		       j.git_ref, COALESCE(j.job_type, 'review'), j.branch, j.ci_base_branch,
 		       j.panel_run_uuid, j.panel_role, j.token_usage,
@@ -465,7 +452,6 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 		JOIN repos rp ON rp.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN ci_pr_panels cp ON cp.panel_run_uuid = j.panel_run_uuid
-		LEFT JOIN schema_migrations m21 ON m21.version = 21
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY ` + completedExpr + ` ASC, rv.uuid ASC` + limitClause
 	return query, args
@@ -559,7 +545,7 @@ func (row exportReviewRow) toExportReview(profile ExportProfile, machineID uuid.
 	return review
 }
 
-// exportUpdatedAt returns the review's effective updated_at, falling back to its
+// exportUpdatedAt returns the review's updated_at, falling back to its
 // completion time when the row has no usable update time. The SQL filter in
 // exportReviewUpdatedAtExpr applies the same fallback.
 func (row exportReviewRow) exportUpdatedAt(completed time.Time) time.Time {

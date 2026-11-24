@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
@@ -384,105 +383,4 @@ func TestOpenPreservesUnknownSyncedJobOrigin(t *testing.T) {
 		assertUnknownOrigins(t, db, machine, ids)
 		require.NoError(t, db.Close())
 	}
-}
-
-func TestSourceMachineOriginMigrationRetries(t *testing.T) {
-	t.Parallel()
-	for _, stage := range []string{"before baseline", "after baseline"} {
-		t.Run(stage, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "reviews.db")
-			machine, ids := seedUnknownOrigins(t, path)
-			raw, err := sql.Open("sqlite", path)
-			require.NoError(t, err)
-			db := &DB{DB: raw}
-			require.NoError(t, preserveUnknownSyncedJobOrigins(t.Context(), db))
-			if stage == "after baseline" {
-				require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:1]))
-			}
-			require.NoError(t, db.Close())
-			db, err = Open(path)
-			require.NoError(t, err)
-			defer db.Close()
-			assertUnknownOrigins(t, db, machine, ids)
-		})
-	}
-	t.Run("version 20", func(t *testing.T) {
-		db := openUnmigratedDB(t)
-		require.NoError(t, registerContentFunctions())
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:20]))
-		_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/retry", 4)
-		remote := testUUID("remote-machine")
-		origins := []any{"", nil, remote, nil}
-		synced := []any{"2024-01-01", "2024-01-01", "2024-01-01", nil}
-		for i, job := range jobs {
-			_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = ? WHERE id = ?`, origins[i], synced[i], job.ID)
-			require.NoError(t, err)
-		}
-		nilOrigin := sql.NullString{String: uuid.Nil().String(), Valid: true}
-		want := []sql.NullString{nilOrigin, nilOrigin, {String: remote.String(), Valid: true}, {}}
-		for range 2 {
-			require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
-			for i, job := range jobs {
-				var origin sql.NullString
-				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&origin))
-				assert.Equal(t, want[i], origin)
-			}
-			_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 21`)
-			require.NoError(t, err)
-		}
-	})
-}
-
-func TestOriginMigrationMakesReviewEligibleForUpdatedSince(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	db := openTestDB(t)
-	defer db.Close()
-	repo := createRepo(t, db, "/synthetic/export")
-	unknown := seedCompletedExportReview(t, db, repo.ID, "5555555555555555555555555555555555555555", "2024-01-01 00:00:00", false)
-	known := seedCompletedExportReview(t, db, repo.ID, "6666666666666666666666666666666666666666", "2024-01-01 00:00:00", false)
-	remote := seedCompletedExportReview(t, db, repo.ID, "7777777777777777777777777777777777777777", "2024-01-01 00:00:00", false)
-	remoteID := testUUID("remote-machine")
-	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, remoteID, remote.JobID)
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = NULL, synced_at = '2024-01-02' WHERE id = ?`, unknown.JobID)
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET updated_at = '2024-01-01 00:00:00'`)
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE schema_migrations SET applied_at = '2023-01-01T00:00:00Z' WHERE version = 21`)
-	require.NoError(t, err)
-	bound := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	opts := ExportReviewsOptions{Profile: ExportProfileMetadata, UpdatedSince: bound}
-	page, err := db.ExportReviews(opts)
-	require.NoError(t, err)
-	assert.Empty(page.Reviews)
-
-	_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 21`)
-	require.NoError(t, err)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
-	var appliedAt string
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT applied_at FROM schema_migrations WHERE version = 21`).Scan(&appliedAt))
-	page, err = db.ExportReviews(opts)
-	require.NoError(t, err)
-	require.Len(t, page.Reviews, 1)
-	assert.Equal(*unknown.UUID, page.Reviews[0].ReviewID)
-	assert.Equal(uuid.Nil(), page.Reviews[0].SourceMachineID)
-	assert.Equal(appliedAt, page.Reviews[0].UpdatedAt)
-
-	// The migration must not reorder sync edits or rewrite known origins.
-	for _, review := range []*Review{unknown, known, remote} {
-		var updatedAt string
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT updated_at FROM reviews WHERE id = ?`, review.ID).Scan(&updatedAt))
-		assert.Equal("2024-01-01 00:00:00", updatedAt)
-	}
-	job, err := db.GetJobByID(known.JobID)
-	require.NoError(t, err)
-	machineID, err := db.GetMachineID()
-	require.NoError(t, err)
-	require.NotNil(t, job.SourceMachineID)
-	assert.Equal(machineID, *job.SourceMachineID)
-	job, err = db.GetJobByID(remote.JobID)
-	require.NoError(t, err)
-	require.NotNil(t, job.SourceMachineID)
-	assert.Equal(remoteID, *job.SourceMachineID)
 }

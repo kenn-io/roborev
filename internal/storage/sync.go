@@ -315,9 +315,8 @@ func (db *DB) BackfillSourceMachineID() error {
 // This is used when syncing to a new Postgres database to ensure
 // all data gets re-synced.
 func (db *DB) ClearAllSyncedAt() error {
-	// Record unknown synced origins as the nil UUID before clearing the
-	// cursor, so BackfillSourceMachineID cannot later claim them as local.
-	if _, err := db.Exec(`UPDATE review_jobs SET source_machine_id = CASE WHEN source_machine_id IS NULL AND synced_at IS NOT NULL THEN ? ELSE source_machine_id END, synced_at = NULL`, uuid.Nil().String()); err != nil {
+	// Clear synced_at on review_jobs
+	if _, err := db.Exec(`UPDATE review_jobs SET synced_at = NULL`); err != nil {
 		return fmt.Errorf("clear review_jobs synced_at: %w", err)
 	}
 	// Clear synced_at on reviews
