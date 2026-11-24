@@ -2097,7 +2097,6 @@ type listJobsOptions struct {
 	jobType            string
 	excludeJobType     string
 	analysisType       string
-	source             string
 	analysisFiles      []string
 	hideClassifyJobs   bool
 	repoPrefix         string
@@ -2161,11 +2160,6 @@ func searchPRNumber(query string) int64 {
 // WithAnalysisType filters jobs by the recorded analysis type.
 func WithAnalysisType(analysisType string) ListJobsOption {
 	return func(o *listJobsOptions) { o.analysisType = analysisType }
-}
-
-// WithSource filters jobs by automation source.
-func WithSource(source string) ListJobsOption {
-	return func(o *listJobsOptions) { o.source = source }
 }
 
 // analysisFileCondition matches exact membership in a well-formed file list.
@@ -2422,10 +2416,6 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 	if o.analysisType != "" {
 		conditions = append(conditions, "j.analysis_type = ?")
 		args = append(args, o.analysisType)
-	}
-	if o.source != "" {
-		conditions = append(conditions, "j.source = ?")
-		args = append(args, o.source)
 	}
 	for _, analysisFile := range o.analysisFiles {
 		conditions = append(conditions, analysisFileCondition)

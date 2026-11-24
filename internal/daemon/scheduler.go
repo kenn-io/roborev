@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -102,7 +103,7 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, retry, now)
 }
 
-func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, retry []string, now time.Time) error {
+func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, entries []storage.AnalysisScheduleEntry, now time.Time) error {
 	last, loaded := w.lastRun[repo.ID]
 	if !loaded {
 		var err error
@@ -112,83 +113,88 @@ func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repo
 		}
 		w.lastRun[repo.ID] = last
 	}
-	retrying := !last.IsZero() && now.Sub(last) < schedule.Interval
-	if retrying {
-		var err error
-		if schedule.Types, err = w.retryTypes(ctx, repo.ID, last, schedule.Types, retry); err != nil || len(schedule.Types) == 0 {
-			return err
+	var watched []storage.AnalysisScheduleEntry
+	only := map[string][]string{}
+	for _, entry := range entries {
+		if entry.Job != 0 {
+			job, err := w.server.db.GetJobByIDContext(ctx, entry.Job)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			switch job.Status {
+			case storage.JobStatusQueued, storage.JobStatusRunning:
+				watched = append(watched, entry)
+				continue
+			case storage.JobStatusFailed:
+			default:
+				continue
+			}
+		}
+		files, exists := only[entry.Type]
+		if !exists {
+			only[entry.Type] = entry.Files
+		} else if files == nil || entry.Files == nil {
+			only[entry.Type] = nil
+		} else {
+			only[entry.Type] = append(files, entry.Files...)
 		}
 	}
-	failed, err := w.scheduleRepo(ctx, repo, repoCfg, global, schedule)
-	if failed == nil {
-		failed = schedule.Types
+	var errs []error
+	if len(only) > 0 {
+		retrySchedule := schedule
+		retrySchedule.Types = nil
+		for _, typ := range schedule.Types {
+			if _, ok := only[typ]; ok {
+				retrySchedule.Types = append(retrySchedule.Types, typ)
+			}
+		}
+		result, err := w.scheduleRepo(ctx, repo, repoCfg, global, retrySchedule, only)
+		if result == nil {
+			for _, typ := range retrySchedule.Types {
+				result = append(result, storage.AnalysisScheduleEntry{Type: typ, Files: only[typ]})
+			}
+		}
+		watched = append(watched, result...)
+		errs = append(errs, err)
 	}
-	err = errors.Join(err, w.server.db.SetAnalysisScheduleRetry(ctx, repo.ID, failed))
-	if retrying {
-		return err
+	if err := w.server.db.SetAnalysisScheduleRetry(ctx, repo.ID, watched); err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	if !last.IsZero() && now.Sub(last) < schedule.Interval {
+		return errors.Join(errs...)
+	}
+	result, err := w.scheduleRepo(ctx, repo, repoCfg, global, schedule, nil)
+	if result == nil {
+		for _, typ := range schedule.Types {
+			result = append(result, storage.AnalysisScheduleEntry{Type: typ})
+		}
+	}
+	watched = append(watched, result...)
+	errs = append(errs, err)
+	if err := w.server.db.SetAnalysisScheduleRetry(ctx, repo.ID, watched); err != nil {
+		return errors.Join(append(errs, err)...)
 	}
 	if setErr := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); setErr != nil {
-		return errors.Join(err, setErr)
+		return errors.Join(append(errs, setErr)...)
 	}
 	w.lastRun[repo.ID] = now
-	return err
+	return errors.Join(errs...)
 }
 
-// pruneRetry drops saved retries for types outside the schedule and returns
-// the rest. A disabled schedule has no types, so its retries are all dropped.
-func (w *analysisScheduler) pruneRetry(ctx context.Context, repoID int64, types []string) ([]string, error) {
+// pruneRetry drops watched entries for types outside the schedule.
+func (w *analysisScheduler) pruneRetry(ctx context.Context, repoID int64, types []string) ([]storage.AnalysisScheduleEntry, error) {
 	saved, err := w.server.db.AnalysisScheduleRetry(ctx, repoID)
 	if err != nil {
 		return nil, err
 	}
-	kept := slices.DeleteFunc(slices.Clone(saved), func(typ string) bool { return !slices.Contains(types, typ) })
+	kept := slices.DeleteFunc(slices.Clone(saved), func(entry storage.AnalysisScheduleEntry) bool { return !slices.Contains(types, entry.Type) })
 	if len(kept) == len(saved) {
 		return kept, nil
 	}
 	return kept, w.server.db.SetAnalysisScheduleRetry(ctx, repoID, kept)
-}
-
-// retryTypes returns the configured types that failed to enqueue, or that have
-// a scheduled job from the current pass that failed.
-func (w *analysisScheduler) retryTypes(ctx context.Context, repoID int64, last time.Time, types, saved []string) ([]string, error) {
-	var retry []string
-	for _, typ := range types {
-		failed, err := w.failedSince(repoID, typ, last)
-		if err != nil {
-			return nil, err
-		}
-		if failed || slices.Contains(saved, typ) {
-			retry = append(retry, typ)
-		}
-	}
-	return retry, nil
-}
-
-// failedSince reports whether a scheduled job of typ failed at or after last
-// and still needs a retry. A failed job is covered once a newer scheduled job
-// of that type includes each of its files, so it never starts files that were
-// not part of the failed pass.
-func (w *analysisScheduler) failedSince(repoID int64, typ string, last time.Time) (bool, error) {
-	scope := []storage.ListJobsOption{storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithSource(storage.JobSourceScheduled), storage.WithoutPrompt()}
-	failed, err := w.server.db.ListJobs(string(storage.JobStatusFailed), "", 0, 0, scope...)
-	if err != nil {
-		return false, err
-	}
-	for _, job := range failed {
-		if job.FinishedAt == nil || !job.FinishedAt.Add(time.Second).After(last) {
-			continue
-		}
-		for _, file := range job.AnalysisFiles {
-			newest, err := w.server.db.ListJobs("", "", 1, 0, append([]storage.ListJobsOption{storage.WithAnalysisFile(file)}, scope...)...)
-			if err != nil {
-				return false, err
-			}
-			if len(newest) == 0 || newest[0].ID <= job.ID {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
 }
 
 type changeSet struct {
@@ -203,9 +209,8 @@ type analysisCandidate struct {
 	oldest time.Time
 }
 
-// scheduleRepo queues due files and returns the types that failed. It returns
-// nil types when it fails before queueing, so every type is retried.
-func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) ([]string, error) {
+// scheduleRepo returns watched jobs and failed enqueues. A nil result means the pass failed before enqueueing.
+func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, only map[string][]string) ([]storage.AnalysisScheduleEntry, error) {
 	head, err := git.ResolveCommitCtx(ctx, repo.RootPath, "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("scheduled repository unavailable: %w", err)
@@ -218,7 +223,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	if err != nil {
 		return nil, err
 	}
-	failed := []string{}
+	entries := []storage.AnalysisScheduleEntry{}
 	usable := make(map[string]bool)
 	var errs []error
 	for _, typ := range schedule.Types {
@@ -231,18 +236,27 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			}
 		}
 		if err != nil {
-			failed = append(failed, typ)
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: only[typ]})
 			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			continue
 		}
 		usable[typ] = true
-		if err := w.markDue(ctx, repo, head, typ, candidates); err != nil {
+		typeCandidates := candidates
+		if names, restricted := only[typ]; restricted && names != nil {
+			typeCandidates = make(map[string]*analysisCandidate)
+			for _, name := range names {
+				if candidate, ok := candidates[name]; ok {
+					typeCandidates[name] = candidate
+				}
+			}
+		}
+		if err := w.markDue(ctx, repo, head, typ, typeCandidates); err != nil {
 			return nil, err
 		}
 	}
 	ordered := selectCandidates(candidates)
 	if len(ordered) == 0 {
-		return failed, errors.Join(errs...)
+		return entries, errors.Join(errs...)
 	}
 	var attributes []git.TreeBlob
 	var oids, names []string
@@ -308,13 +322,14 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			return nil, ctx.Err()
 		}
 		if names := dueNames(selected, typ); len(names) > 0 {
-			if err := w.enqueueType(ctx, repo, typ, names, head, files); err != nil {
-				failed = append(failed, typ)
+			id, err := w.enqueueType(ctx, repo, typ, names, head, files)
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names, Job: id})
+			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
 	}
-	return failed, errors.Join(errs...)
+	return entries, errors.Join(errs...)
 }
 
 // attributesMissing reports whether a committed .gitattributes file that can
@@ -466,18 +481,18 @@ func (w *analysisScheduler) lockRegistered(repo storage.Repo) (func(), error) {
 	return w.server.scheduledRepoMu.Unlock, nil
 }
 
-func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string, contents map[string]string) error {
+func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string, contents map[string]string) (int64, error) {
 	files := make(map[string]string, len(names))
 	for _, name := range names {
 		files[name] = contents[name]
 	}
 	prompt, err := analyze.GetType(typ).BuildPrompt(files)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	unlock, err := w.lockRegistered(repo)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer unlock()
 	if w.testHookBeforeEnqueue != nil {
@@ -485,12 +500,16 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 	}
 	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if result.Status != 201 {
-		return fmt.Errorf("enqueue analysis: %v", result.Body)
+		return 0, fmt.Errorf("enqueue analysis: %v", result.Body)
 	}
-	return nil
+	created, ok := result.Body.(EnqueueCreatedResponse)
+	if !ok || created.ReviewJob == nil {
+		return 0, fmt.Errorf("enqueue analysis: unexpected response")
+	}
+	return created.ID, nil
 }
 
 // isSourceContent accepts non-NUL source text, including legacy encodings such

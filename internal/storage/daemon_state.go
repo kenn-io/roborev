@@ -3,9 +3,9 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -111,20 +111,59 @@ func (db *DB) SetAnalysisScheduleLastRun(ctx context.Context, repoID int64, last
 	return nil
 }
 
-// AnalysisScheduleRetry returns analysis types awaiting retry for a repo.
-func (db *DB) AnalysisScheduleRetry(ctx context.Context, repoID int64) ([]string, error) {
-	var value string
-	err := db.QueryRowContext(ctx, `SELECT value FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_retry:%d", repoID)).Scan(&value)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("get analysis schedule retry: %w", err)
-	}
-	return strings.FieldsFunc(value, func(r rune) bool { return r == ',' }), nil
+// AnalysisScheduleEntry watches a scheduled job or holds files to retry.
+type AnalysisScheduleEntry struct {
+	Type  string   `json:"type"`
+	Files []string `json:"files"`
+	Job   int64    `json:"job"`
 }
 
-// SetAnalysisScheduleRetry records analysis types awaiting retry for a repo.
-func (db *DB) SetAnalysisScheduleRetry(ctx context.Context, repoID int64, types []string) error {
-	_, err := db.ExecContext(ctx, `INSERT INTO daemon_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, fmt.Sprintf("analysis_schedule_retry:%d", repoID), strings.Join(types, ","))
+type analysisScheduleEntryJSON struct {
+	Type  string          `json:"type"`
+	Files json.RawMessage `json:"files"`
+	Job   int64           `json:"job"`
+}
+
+// AnalysisScheduleRetry returns watched jobs and retries for a repo.
+func (db *DB) AnalysisScheduleRetry(ctx context.Context, repoID int64) ([]AnalysisScheduleEntry, error) {
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_retry:%d", repoID)).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get analysis schedule retry: %w", err)
+	}
+	var encoded []analysisScheduleEntryJSON
+	if err := json.Unmarshal([]byte(value), &encoded); err != nil {
+		return nil, fmt.Errorf("parse analysis schedule retry: %w", err)
+	}
+	var entries []AnalysisScheduleEntry
+	for _, entry := range encoded {
+		entries = append(entries, AnalysisScheduleEntry{Type: entry.Type, Files: decodeFileList(string(entry.Files)), Job: entry.Job})
+	}
+	return entries, nil
+}
+
+// SetAnalysisScheduleRetry records watched jobs and retries for a repo.
+func (db *DB) SetAnalysisScheduleRetry(ctx context.Context, repoID int64, entries []AnalysisScheduleEntry) error {
+	var encoded []analysisScheduleEntryJSON
+	for _, entry := range entries {
+		files, err := encodeAnalysisFiles(entry.Files)
+		if err != nil {
+			return fmt.Errorf("encode analysis schedule retry: %w", err)
+		}
+		if files == "" {
+			files = "null"
+		}
+		encoded = append(encoded, analysisScheduleEntryJSON{Type: entry.Type, Files: json.RawMessage(files), Job: entry.Job})
+	}
+	value, err := json.Marshal(encoded)
+	if err != nil {
+		return fmt.Errorf("encode analysis schedule retry: %w", err)
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO daemon_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, fmt.Sprintf("analysis_schedule_retry:%d", repoID), string(value))
 	if err != nil {
 		return fmt.Errorf("set analysis schedule retry: %w", err)
 	}
