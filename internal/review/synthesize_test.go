@@ -782,7 +782,7 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 				assert.Equal(outcome == "fallback", strings.Contains(result.GitHubComment, "Synthesis unavailable."))
 				for _, finding := range doc.Findings {
 					assert.Contains(result.Output, finding.Problem)
-					assert.Equal((finding.Severity == "low" || slices.Contains(policy.visible, finding.Problem)), strings.Contains(result.GitHubComment, finding.Problem), finding.Problem)
+					assert.Equal(slices.Contains(policy.visible, finding.Problem), strings.Contains(result.GitHubComment, finding.Problem), finding.Problem)
 				}
 				assert.Equal(policy.members[0], results[0].MinSeverity, "publication must not mutate member policy")
 				assert.Len(results[0].Structured.Findings, 3)
@@ -821,4 +821,16 @@ func TestSynthesizeShowAllPreservesProseFloor(t *testing.T) {
 		assert.Contains(t, result.GitHubComment, "High issue")
 		assert.NotContains(t, result.GitHubComment, "Low issue")
 	}
+}
+
+func TestProbeShowAllVerdictWithLowFindings(t *testing.T) {
+	doc := StructuredReview{Summary: "Review", Verdict: "fail", Findings: []StructuredFinding{
+		{Severity: "low", Problem: "One", Fix: "Fix"},
+		{Severity: "low", Problem: "Two", Fix: "Fix"},
+	}}
+	result, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc, Output: doc.Markdown(""), Verdict: storage.VerdictFail}}, SynthesizeOpts{MinSeverity: "medium", CommentShowAll: true})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Review Passed")
+	assert.Contains(t, result.GitHubComment, "Review Complete")
+	assert.Contains(t, result.GitHubComment, "Changes require fixes for 2 findings")
 }

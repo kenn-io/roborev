@@ -214,10 +214,12 @@ type CIConfig struct {
 	// comments. Zero (the default) is unlimited. Stored reviews remain complete.
 	CommentMaxFindings int `toml:"comment_max_findings"`
 
+	// CommentShowAll displays all structured findings in CI comments.
+	CommentShowAll bool `toml:"comment_show_all"`
+
 	// CommentWhenClean controls new comments when display filters leave no
 	// findings. Unset defaults to true, including a zero-valued CIConfig.
 	CommentWhenClean *bool `toml:"comment_when_clean"`
-	CommentShowAll   bool  `toml:"comment_show_all"`
 
 	// Panel names a [review.panels.X] panel to run for CI reviews. When set,
 	// the CI poller resolves the panel (members + synthesis) from the config
@@ -691,8 +693,10 @@ type RepoCIConfig struct {
 	// CommentMaxFindings overrides the global cap; an explicit zero disables it.
 	CommentMaxFindings *int `toml:"comment_max_findings" comment:"Maximum structured findings in synthesized GitHub daemon comments; zero is unlimited."`
 
+	// CommentShowAll overrides whether structured comments show all findings.
+	CommentShowAll *bool `toml:"comment_show_all" comment:"Show all findings in CI comments."`
+
 	// CommentWhenClean overrides whether display-clean synthesis creates comments.
-	CommentShowAll   *bool `toml:"comment_show_all" comment:"Show all findings in CI comments."`
 	CommentWhenClean *bool `toml:"comment_when_clean" comment:"Post synthesized GitHub daemon comments when no findings survive display filters. Default: true."`
 
 	// UpsertComments overrides the global ci.upsert_comments setting.

@@ -60,7 +60,7 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 }
 
 func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob, res synthesisResult, doc structuredreview.Document, check *ciCheckConfig) (synthesisResult, bool) {
-	if check != nil && !doc.Passed(job.MinSeverity) {
+	if check != nil && len(doc.Findings) > 0 {
 		jobLog := newAppendingJobLogWriter(job.ID)
 		defer jobLog.Close()
 		// Persist readable checker output because the job log keeps the synthesis provider.

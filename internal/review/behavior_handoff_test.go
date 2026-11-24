@@ -23,7 +23,7 @@ func TestBehaviorHandoffSurvivesSynthesisInput(t *testing.T) {
 		severity := []string{"critical", "high", "medium", "low"}[severityIndex%4]
 		confidence := float64(confidencePercent%101) / 100
 		document := structuredreview.Document{
-			SchemaVersion: 3, Summary: "Synthetic review", Verdict: structuredreview.VerdictFail,
+			SchemaVersion: structuredreview.SchemaVersion, Summary: "Synthetic review", Verdict: structuredreview.VerdictFail,
 			Findings: []structuredreview.Finding{
 				{
 					Severity: severity, Kind: kind, Topic: "security", Confidence: confidence,

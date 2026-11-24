@@ -484,8 +484,8 @@ func TestCICheckCompletionBelowSeverityThreshold(t *testing.T) {
 	}
 	doc := structuredreview.Document{Verdict: structuredreview.VerdictPass, Findings: []structuredreview.Finding{{Severity: "low"}}}
 	_, ran := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, synthesisResult{}, doc, &ciCheckConfig{})
-	assert.False(t, ran)
-	assert.Equal(t, 0, calls)
+	assert.True(t, ran)
+	assert.Equal(t, 1, calls)
 }
 
 func TestCICheckUsesRepositoryAuthForDefaultBranchReviews(t *testing.T) {
@@ -562,4 +562,18 @@ func TestCICheckPreservesMixedReviewerUnlikely(t *testing.T) {
 			assert.Contains(t, body, "Rare ordering")
 		})
 	}
+}
+
+func TestProbeCheckerMarksLowBelowFloor(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	calls := 0
+	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
+		calls++
+		return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"}]}`), io.Discard)
+	}
+	doc := structuredreview.Document{Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "low", Problem: "Rare case", Fix: "Fix it"}}}
+	res, ran := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "medium"}, synthesisResult{}, doc, &ciCheckConfig{})
+	assert.True(t, ran)
+	assert.Equal(t, 1, calls)
+	assert.Contains(t, string(res.review.StructuredOutput), `"unlikely":true`)
 }

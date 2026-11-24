@@ -137,6 +137,14 @@ func formatSingleResult(
 		(r.Output == "" || r.Output == "No issues found.") {
 		passed = true
 	}
+	output := r.Output
+	if commentConfig != nil {
+		prepared := PrepareComment(*commentConfig, r)
+		if commentConfig.ShowAll && prepared.structured && !prepared.IsClean() {
+			passed = false
+		}
+		output = TruncateComment(FormatComment(prepared))
+	}
 	var header string
 	if passed {
 		header = fmt.Sprintf(
@@ -148,10 +156,6 @@ func formatSingleResult(
 			gitrepo.ShortSHA(headSHA))
 	}
 
-	output := r.Output
-	if commentConfig != nil {
-		output = TruncateComment(FormatComment(PrepareComment(*commentConfig, r)))
-	}
 	return header + output
 }
 
