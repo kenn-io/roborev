@@ -198,7 +198,7 @@ roborev review --branch --type security  # Security review of branch
 | `design` | Completeness, feasibility, task scoping, missing considerations |
 | `exhaustive` | The default review, told to report every problem it can support, including concrete low-severity ones, and how many findings a change of this size usually has (6 per 100 changed lines, at most 40). Expect more findings and longer, costlier reviews than the default. |
 | `lookahead` | Time-series look-ahead bias (a.k.a. peekahead / future-data leakage): window/lag direction, train/test ordering, fit-on-full-series, as-of join alignment, point-in-time correctness, label/target leakage |
-| `test-value` | Added or modified tests that protect nothing: tests of dependency behavior, self-confirming assertions, static text checks, unreachable scenarios, duplicate coverage, and fixtures that bypass the behavior under test. Duplicate and otherwise harmless worthless tests are low severity; false regression coverage is medium. |
+| `test-value` | Added or modified tests that protect nothing: tests of dependency behavior, self-confirming assertions, static text checks, unreachable scenarios, duplicate coverage, and fixtures that bypass the behavior under test. Duplicate and otherwise harmless worthless tests are low severity; false regression coverage is medium, or high when it misses an established defect causing data loss, a security breach, a crash, or incorrect results. |
 
 Review types work with all review modes (`--branch`, `--dirty`, `--since`,
 single commits, ranges).

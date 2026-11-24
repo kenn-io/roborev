@@ -26,8 +26,8 @@ Do not report:
 
 For each finding, provide:
 - Severity, using these definitions:
-  - **high**: A worthless test that also creates separately established harm beyond its own cost, such as claiming regression coverage for a behavior it cannot detect
-  - **medium**: A confirmed worthless test, case, assertion, or helper that claims to protect behavior it cannot detect
+  - **high**: A test, case, assertion, or helper that claims to protect behavior but fails to detect an established defect causing data loss, a security breach, a crash, or incorrect results
+  - **medium**: A confirmed worthless test, case, assertion, or helper that claims to protect behavior it cannot detect, without an established high-impact defect
   - **low**: Any other confirmed worthless test, case, assertion, or helper, such as duplicate coverage or a redundant assertion
 - File and line reference, naming the changed test or assertion
 - What the test proves today and why that provides no unique value. Include the dependency-owned contract, enforcing invariant, existing test, or production mistake the assertion fails to detect, as applicable
