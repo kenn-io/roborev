@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -446,6 +447,9 @@ members = ["ux"]
 		t.Run(tt.name, func(t *testing.T) {
 			bin := t.TempDir()
 			for _, name := range tt.path {
+				if runtime.GOOS == "windows" {
+					name += ".exe"
+				}
 				require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 			}
 			t.Setenv("PATH", bin)
