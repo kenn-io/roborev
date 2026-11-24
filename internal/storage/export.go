@@ -280,7 +280,6 @@ type exportCursor struct {
 type exportReviewRow struct {
 	reviewID            uuid.UUID
 	sourceMachineID     sql.Null[uuid.UUID]
-	synced              bool
 	jobUUID             uuid.UUID
 	verdictBool         sql.NullInt64
 	reviewCreated       string
@@ -441,7 +440,7 @@ func exportReviewRowsQuery(opts ExportReviewsOptions, cursor *exportCursor) (str
 	}
 
 	query := `
-		SELECT rv.uuid, NULLIF(j.source_machine_id, ''), j.synced_at IS NOT NULL, j.uuid, rv.verdict_bool, rv.created_at,
+		SELECT rv.uuid, NULLIF(j.source_machine_id, ''), j.uuid, rv.verdict_bool, rv.created_at,
 		       COALESCE(rv.closed, 0), rv.updated_at, ` + outputExpr + `,
 		       j.status, j.enqueued_at, j.started_at, j.finished_at, j.agent, j.model,
 		       j.git_ref, COALESCE(j.job_type, 'review'), j.branch, j.ci_base_branch,
@@ -463,7 +462,6 @@ func scanExportReviewRow(rows *sql.Rows) (exportReviewRow, error) {
 	err := rows.Scan(
 		&row.reviewID,
 		&row.sourceMachineID,
-		&row.synced,
 		&row.jobUUID,
 		&row.verdictBool,
 		&row.reviewCreated,
@@ -533,8 +531,6 @@ func (row exportReviewRow) toExportReview(profile ExportProfile, machineID uuid.
 	}
 	if row.sourceMachineID.Valid && row.sourceMachineID.V != uuid.Nil() {
 		review.SourceMachineID = row.sourceMachineID.V
-	} else if !row.synced {
-		review.SourceMachineID = machineID
 	}
 	if row.resumeSourceJobUUID.Valid {
 		review.ResumeSourceJobUUID = &row.resumeSourceJobUUID.V

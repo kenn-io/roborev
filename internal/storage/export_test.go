@@ -56,30 +56,32 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 				byID[review.ReviewID] = review
 				assert.Equal(t, machineID, review.ExportedByMachineID)
 			}
-			assert.Equal(t, machineID, byID[*legacy.UUID].SourceMachineID)
-			assert.Equal(t, machineID, byID[*zeroSource.UUID].SourceMachineID)
+			assert.Equal(t, uuid.Nil(), byID[*legacy.UUID].SourceMachineID)
+			assert.Equal(t, uuid.Nil(), byID[*zeroSource.UUID].SourceMachineID)
 			assert.Equal(t, remoteID, byID[pulledID].SourceMachineID)
 		})
 	}
 }
 
-func TestExportReviewsOmitsUnknownSyncedOrigin(t *testing.T) {
+func TestExportReviewsOmitsUnknownOrigin(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	review := seedCompletedExportReview(t, db, repo.ID, "4444444444444444444444444444444444444444", "2026-06-29 00:00:01", false)
 	for _, source := range []any{nil, "", uuid.Nil()} {
-		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = datetime('now') WHERE id = ?`, source, review.JobID)
-		require.NoError(t, err)
-		page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata})
-		require.NoError(t, err)
-		require.Len(t, page.Reviews, 1)
-		assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
-		raw, err := jsonv2.Marshal(page.Reviews[0])
-		require.NoError(t, err)
-		assert.NotContains(t, string(raw), `"source_machine_id"`)
-		assert.Contains(t, string(raw), `"exported_by_machine_id"`)
+		for _, syncedAt := range []any{"2026-06-30 00:00:00", nil} {
+			_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = ? WHERE id = ?`, source, syncedAt, review.JobID)
+			require.NoError(t, err)
+			page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata})
+			require.NoError(t, err)
+			require.Len(t, page.Reviews, 1)
+			assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
+			raw, err := jsonv2.Marshal(page.Reviews[0])
+			require.NoError(t, err)
+			assert.NotContains(t, string(raw), `"source_machine_id"`)
+			assert.Contains(t, string(raw), `"exported_by_machine_id"`)
+		}
 	}
 }
 
