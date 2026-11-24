@@ -687,8 +687,10 @@ func TestScheduledAnalysisPartialClone(t *testing.T) {
 		cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, Types: []string{"refactor"}}
 		cfg.AnalyzeAgent = "test"
 		watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-		_, err = watcher.scheduleRepo(t.Context(), *registered, &config.RepoConfig{}, cfg, config.Schedule{Types: []string{"refactor"}, MaxFiles: 20})
+		watcher.poll(t.Context(), time.Now())
+		retries, err := db.AnalysisScheduleRetry(t.Context(), registered.ID)
 		require.NoError(t, err)
+		assert.Empty(t, retries)
 		jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)
