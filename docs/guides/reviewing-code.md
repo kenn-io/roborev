@@ -291,7 +291,9 @@ filing review findings back into Kata.
 
 Default reviews rate verified behavior and performance problems worth fixing
 before merge Medium or High, even when the trigger is uncommon. Low findings
-describe minor problems that can safely wait.
+describe minor problems that can safely wait. A changed test that leaves
+important correctness, permission, or data-safety behavior unguarded is Medium
+or High according to the consequence of the regression it could miss.
 
 Use `--min-severity` to decide which findings fail a review:
 
