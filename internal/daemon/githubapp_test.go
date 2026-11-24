@@ -1,21 +1,28 @@
 package daemon
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	ghpkg "go.kenn.io/roborev/internal/github"
 )
 
 const (
@@ -501,4 +508,85 @@ func TestTokenCaching_MultipleInstallations(t *testing.T) {
 			return false
 		}, "expected still 2 server calls (cached), got %d", mock.callCount)
 	}
+}
+
+type tokenBlackholeConn struct {
+	*tls.Conn
+	drop *atomic.Bool
+}
+
+func (c *tokenBlackholeConn) Write(b []byte) (int, error) {
+	if c.drop.Load() {
+		return len(b), nil
+	}
+	return c.Conn.Write(b)
+}
+
+func TestTokenExchangeRecoversFromBlackholedHTTP2Connection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, 2, r.ProtoMajor)
+			n := calls.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			expires := time.Now().Add(time.Hour)
+			if n == 1 {
+				// Within the 5-minute refresh buffer so the second lookup refreshes.
+				expires = time.Now().Add(time.Second)
+			}
+			err := json.NewEncoder(w).Encode(map[string]any{
+				"token":      fmt.Sprintf("ghs_token_%d", n),
+				"expires_at": expires.Format(time.RFC3339),
+			})
+			assert.NoError(t, err)
+		}))
+		srv.EnableHTTP2 = true
+
+		transport := srv.Client().Transport.(*http.Transport).Clone()
+		ghpkg.ConfigureHTTP2HealthCheck(transport)
+		origDialTLS := transport.DialTLSContext
+
+		var dials atomic.Int32
+		var dropFirst atomic.Bool
+		transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := origDialTLS(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			tc, ok := conn.(*tls.Conn)
+			if !ok {
+				return conn, nil
+			}
+			if err := tc.HandshakeContext(ctx); err != nil {
+				tc.Close()
+				return nil, err
+			}
+			if dials.Add(1) == 1 {
+				return &tokenBlackholeConn{Conn: tc, drop: &dropFirst}, nil
+			}
+			return tc, nil
+		}
+
+		_, pemData := testKey(t)
+		tp, err := NewGitHubAppTokenProvider(testAppID, pemData)
+		require.NoError(t, err)
+		tp.baseURL = "https://example.com"
+		tp.httpClient = &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: transport,
+		}
+
+		token1, err := tp.TokenForInstallation(t.Context(), testInstallationID)
+		require.NoError(t, err)
+		assert.Equal(t, "ghs_token_1", token1)
+		assert.Equal(t, int32(1), dials.Load())
+
+		// Silently drop writes on the pooled HTTP/2 connection.
+		dropFirst.Store(true)
+
+		token2, err := tp.TokenForInstallation(t.Context(), testInstallationID)
+		require.NoError(t, err)
+		assert.Equal(t, "ghs_token_2", token2)
+		assert.Equal(t, int32(2), dials.Load())
+	})
 }

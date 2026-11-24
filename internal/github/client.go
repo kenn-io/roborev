@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	ghtransport "github.com/bored-engineer/github-conditional-http-transport"
@@ -28,11 +29,75 @@ type Client struct {
 	api *googlegithub.Client
 }
 
-const defaultHTTPTimeout = 30 * time.Second
+const (
+	defaultHTTPTimeout          = 30 * time.Second
+	defaultHTTP2SendPingTimeout = 15 * time.Second
+	defaultHTTP2PingTimeout     = 5 * time.Second
+)
+
+var (
+	defaultTransportMu     sync.Mutex
+	defaultTransportSource *http.Transport
+	defaultTransportCached *http.Transport
+)
+
+// defaultTransportProxy delegates each request to DefaultHTTPTransport so
+// long-lived clients share the pooled health-checked transport in production
+// while honoring test-time http.DefaultTransport guards and overrides.
+type defaultTransportProxy struct{}
+
+func (defaultTransportProxy) RoundTrip(req *http.Request) (*http.Response, error) {
+	return DefaultHTTPTransport().RoundTrip(req)
+}
+
+// DefaultHTTPTransport returns a shared HTTP transport with HTTP/2 ping health
+// checks enabled when http.DefaultTransport is an *http.Transport. Non-standard
+// http.DefaultTransport wrappers (such as test guards) are returned as-is.
+func DefaultHTTPTransport() http.RoundTripper {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultTransport
+	}
+	defaultTransportMu.Lock()
+	defer defaultTransportMu.Unlock()
+	if base == defaultTransportSource && defaultTransportCached != nil {
+		return defaultTransportCached
+	}
+	cloned := base.Clone()
+	ConfigureHTTP2HealthCheck(cloned)
+	defaultTransportSource = base
+	defaultTransportCached = cloned
+	return cloned
+}
+
+// ConfigureHTTP2HealthCheck enables HTTP/2 ping health checks on transport when
+// they are not already configured. Without them, a silently dropped connection
+// (such as after a host IP or NAT change) stays in the pool until TCP retries
+// expire, causing pooled requests to time out repeatedly on the same socket.
+func ConfigureHTTP2HealthCheck(transport *http.Transport) {
+	if transport == nil {
+		return
+	}
+	if transport.HTTP2 == nil {
+		transport.HTTP2 = &http.HTTP2Config{}
+	} else {
+		cfg := *transport.HTTP2
+		transport.HTTP2 = &cfg
+	}
+	if transport.HTTP2.SendPingTimeout == 0 {
+		transport.HTTP2.SendPingTimeout = defaultHTTP2SendPingTimeout
+	}
+	if transport.HTTP2.PingTimeout == 0 {
+		transport.HTTP2.PingTimeout = defaultHTTP2PingTimeout
+	}
+}
 
 // NewConditionalHTTPClient revalidates unchanged GETs with quota-free 304 responses.
 func NewConditionalHTTPClient() *http.Client {
-	return &http.Client{Timeout: defaultHTTPTimeout, Transport: ghtransport.NewTransport(memory.NewStorage(), nil)}
+	return &http.Client{
+		Timeout:   defaultHTTPTimeout,
+		Transport: ghtransport.NewTransport(memory.NewStorage(), defaultTransportProxy{}),
+	}
 }
 
 var ghAuthTokenFn = func(ctx context.Context, hostname string) (string, error) {
@@ -157,7 +222,7 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	}
 	next := httpClient.Transport
 	if next == nil {
-		next = http.DefaultTransport
+		next = DefaultHTTPTransport()
 	}
 	transport := &limitTransport{next: next, key: cooldownKey{token: strings.TrimSpace(token)}}
 

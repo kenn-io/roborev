@@ -15,6 +15,10 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/cenkalti/backoff/v7"
+
+	ghpkg "go.kenn.io/roborev/internal/github"
 )
 
 // cachedToken holds a cached installation access token with its expiry.
@@ -32,6 +36,10 @@ type GitHubAppTokenProvider struct {
 
 	// baseURL is the GitHub REST API base URL. Empty uses public GitHub.
 	baseURL string
+
+	// httpClient is used for installation token exchanges. Nil uses a default
+	// client backed by ghpkg.DefaultHTTPTransport().
+	httpClient *http.Client
 
 	mu     sync.Mutex
 	tokens map[int64]*cachedToken // installation_id → cached token
@@ -111,33 +119,68 @@ func (p *GitHubAppTokenProvider) exchangeToken(ctx context.Context, jwt string, 
 	}
 
 	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", baseURL, installationID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	client := p.httpClient
+	if client == nil {
+		client = &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: ghpkg.DefaultHTTPTransport(),
+		}
+	}
+
+	policy := backoff.NewExponentialBackOff()
+	policy.InitialInterval = 500 * time.Millisecond
+	policy.MaxInterval = 4 * time.Second
+
+	result, err := backoff.Retry(ctx, func() (installationTokenResponse, error) {
+		var zero installationTokenResponse
+		if err := ctx.Err(); err != nil {
+			return zero, backoff.Permanent(err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+		if err != nil {
+			return zero, backoff.Permanent(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+jwt)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "roborev")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil || !ghpkg.IsTransientTransportError(err) {
+				return zero, backoff.Permanent(err)
+			}
+			return zero, err
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			if ctx.Err() != nil || !ghpkg.IsTransientTransportError(readErr) {
+				return zero, backoff.Permanent(readErr)
+			}
+			return zero, readErr
+		}
+
+		if resp.StatusCode != http.StatusCreated {
+			statusErr := fmt.Errorf("GitHub API %d: %s", resp.StatusCode, body)
+			switch resp.StatusCode {
+			case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+				return zero, statusErr
+			default:
+				return zero, backoff.Permanent(statusErr)
+			}
+		}
+
+		var parsed installationTokenResponse
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return zero, backoff.Permanent(fmt.Errorf("parse response: %w", err))
+		}
+		return parsed, nil
+	}, backoff.WithBackOff(policy), backoff.WithMaxTries(3), backoff.WithMaxElapsedTime(time.Minute))
 	if err != nil {
+		if retryErr := backoff.AsRetryError(err); retryErr != nil && retryErr.LastErr != nil {
+			return "", time.Time{}, retryErr.LastErr
+		}
 		return "", time.Time{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "roborev")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", time.Time{}, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", time.Time{}, err
-	}
-
-	if resp.StatusCode != http.StatusCreated {
-		return "", time.Time{}, fmt.Errorf("GitHub API %d: %s", resp.StatusCode, body)
-	}
-
-	var result installationTokenResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", time.Time{}, fmt.Errorf("parse response: %w", err)
 	}
 	return result.Token, result.ExpiresAt, nil
 }
