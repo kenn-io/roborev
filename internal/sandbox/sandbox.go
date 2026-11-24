@@ -19,8 +19,9 @@ import (
 // Job describes the caller's filesystem, environment, network, and memory grants.
 // Env must give nono a job-private, disposable HOME outside WorkDir for its session state.
 type Job struct {
-	WorkDir   string
-	ReadPaths []string
+	WorkDir    string
+	ReadPaths  []string
+	WritePaths []string
 	// DenyReadPaths names files that must be unreadable, including through symlinks.
 	DenyReadPaths []string
 	Route         Route
@@ -60,6 +61,14 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		readPaths = append(readPaths, resolved)
 	}
 	j.ReadPaths = readPaths
+	writePaths := make([]string, 0, len(j.WritePaths))
+	for _, path := range j.WritePaths {
+		resolved, err := ResolvePath(path)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("resolve sandbox write path %q: %w", path, err)
+		}
+		writePaths = append(writePaths, resolved)
+	}
 	nono, err := exec.LookPath("nono")
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("find sandbox nono: %w", err)
@@ -174,6 +183,9 @@ exec "$nono" run "$@"
 			flag = "--read"
 		}
 		cmd = append(cmd, flag, path)
+	}
+	for _, path := range writePaths {
+		cmd = append(cmd, "--allow", path)
 	}
 	cmd = append(cmd, "--")
 	checkUnit := filepath.Base(dir) + "-check.scope"

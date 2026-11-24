@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
+	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -502,4 +503,10 @@ func TestCICheckUsesRepositoryAuthForDefaultBranchReviews(t *testing.T) {
 	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
 	assert.Equal(t, []string{"AUTH_FOR=acme/api"}, gotEnv,
 		"the checker can fetch private dependencies for a landed-commit review")
+}
+
+func TestCICheckSandbox(t *testing.T) {
+	wp := &WorkerPool{cfgGetter: NewStaticConfig(config.DefaultConfig())}
+	got := wp.ciCheckSandbox(&storage.ReviewJob{ID: 42}, sandbox.Job{})
+	assert.Equal(t, "job-42", got.Label)
 }

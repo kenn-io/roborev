@@ -82,6 +82,7 @@ type ReviewJob struct {
 	CommitID            *int64     `json:"commit_id,omitempty"`  // nil for ranges
 	GitRef              string     `json:"git_ref"`              // SHA or "start..end" for ranges
 	Branch              string     `json:"branch,omitempty"`     // Branch name at time of job creation
+	CheckLogLabel       string     `json:"-"`                    // Local checker log grouping
 	CIBaseBranch        string     `json:"-"`                    // PR base branch for CI jobs; daemon-internal, used only for event/hook branch matching
 	SessionID           string     `json:"session_id,omitempty"` // Reused prior session or captured current session ID
 	SessionCLI          string     `json:"-"`                    // CLI that created the Gemini-compatible session ID

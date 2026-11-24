@@ -334,6 +334,7 @@ func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID uuid.UUID, diff str
 		PanelRole:             storage.PanelRoleSynthesis,
 		PanelName:             job.PanelName,
 		PanelMemberConfigJSON: job.PanelMemberConfigJSON,
+		CheckLogLabel:         job.CheckLogLabel,
 		ClaimBlocked:          true,
 	}
 }
