@@ -283,10 +283,12 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	}
 	defer reader.Close()
 	var selected []*analysisCandidate
+	var remaining []*analysisCandidate
 	files := map[string]string{}
 	var skipped []string
-	for _, candidate := range ordered {
+	for i, candidate := range ordered {
 		if len(selected) == schedule.MaxFiles {
+			remaining = ordered[i:]
 			break
 		}
 		if missing[candidate.oid] || attributesMissing(attributes, missing, candidate.path) {
@@ -326,6 +328,11 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names, Job: id})
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
+			}
+		}
+		if only != nil {
+			if names := dueNames(remaining, typ); len(names) > 0 {
+				entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names})
 			}
 		}
 	}
