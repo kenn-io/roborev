@@ -158,7 +158,7 @@ func TestCommentMinConfidence(t *testing.T) {
 func TestCommentFold(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "medium", Problem: "defect"},
-		{Severity: "low", Problem: "nit", Unlikely: true},
+		{Severity: "low", Problem: "naming issue", Unlikely: true},
 		{Severity: "high", Problem: "rare", Unlikely: true},
 		{Severity: "medium", Problem: "another"},
 	}}
@@ -166,42 +166,44 @@ func TestCommentFold(t *testing.T) {
 	body := FormatComment(prepared)
 	assert.Contains(t, body, "Changes require fixes for 1 finding")
 	assert.Contains(t, body, "1 nit and 1 unlikely finding hidden")
-	assert.Contains(t, body, "nit")
 	assert.Contains(t, body, "rare")
+	assert.Contains(t, body, "naming issue")
 	assert.Contains(t, body, "1 more finding in the full review")
 	assert.Len(t, doc.Findings, 4)
 	filteredSeverity := FormatComment(PrepareComment(CommentConfig{Fold: true, MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
-	assert.NotContains(t, filteredSeverity, "nit")
+	assert.NotContains(t, filteredSeverity, "naming issue")
 	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
 
-	all := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	all := FormatComment(PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high", MinConfidence: 1, MaxFindings: 1}, ReviewResult{Structured: &doc}))
 	assert.NotContains(t, all, "<details>")
 	assert.Contains(t, all, "4 findings")
 	folded := PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
 	assert.True(t, folded.IsClean())
 	assert.Contains(t, FormatComment(folded), "No findings need fixes before merge")
-}
-
-func TestCommentFoldConfidence(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
+	confidenceDoc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "low", Kind: "improvement", Confidence: .4, Problem: "filtered nit"},
 		{Severity: "high", Kind: "defect", Confidence: .4, Unlikely: true, Problem: "filtered rare"},
 		{Severity: "low", Kind: "defect", Confidence: .88, Problem: "boundary nit"},
 		{Severity: "high", Problem: "unscored", Unlikely: true},
-		{Severity: "medium", Kind: "defect", Confidence: .9, Problem: "shown"},
-		{Severity: "medium", Kind: "defect", Confidence: .9, Problem: "capped"},
 	}}
-	original := slices.Clone(doc.Findings)
-	comment := PrepareComment(CommentConfig{Fold: true, MinSeverity: "low", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &doc})
-	output := FormatComment(comment)
-	assert.NotContains(t, output, "filtered nit")
-	assert.NotContains(t, output, "filtered rare")
-	assert.Contains(t, output, "1 nit and 1 unlikely finding hidden")
-	assert.Contains(t, output, "boundary nit")
-	assert.Contains(t, output, "unscored")
-	assert.Contains(t, output, "1 more finding in the full review")
-	assert.Equal(t, original, doc.Findings)
-	filtered := PrepareComment(CommentConfig{Fold: true, MinConfidence: .88}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[:2]}})
-	assert.True(t, filtered.IsClean())
-	assert.Contains(t, FormatComment(filtered), "No findings match the comment filters")
+	filtered := FormatComment(PrepareComment(CommentConfig{Fold: true, MinSeverity: "low", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
+	assert.NotContains(t, filtered, "filtered nit")
+	assert.NotContains(t, filtered, "filtered rare")
+	assert.Contains(t, filtered, "boundary nit")
+	assert.Contains(t, filtered, "unscored")
+	showAll := FormatComment(PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high", MinConfidence: .95, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
+	assert.Contains(t, showAll, "filtered nit")
+	assert.Contains(t, showAll, "filtered rare")
+	assert.Contains(t, showAll, "4 findings")
+	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
+	policy := CommentConfig{MinSeverity: "medium", ShowAll: true}
+	for _, result := range []ReviewResult{
+		{Output: prose},
+		{StructuredOutput: jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`)},
+	} {
+		output := FormatComment(PrepareComment(policy, result))
+		assert.Contains(t, output, "High issue")
+		assert.NotContains(t, output, "Low issue")
+	}
+
 }

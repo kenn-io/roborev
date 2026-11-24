@@ -67,10 +67,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	}
 	if doc != nil {
 		if cfg.ShowAll {
-			comment.minSeverity = ""
-			threshold = config.SeverityRank("")
-			cfg.MinConfidence = 0
-			cfg.MaxFindings = 0
+			comment.minSeverity, threshold, cfg.MinConfidence, cfg.MaxFindings = "", 0, 0, 0
 		}
 		comment.structured = true
 		for _, finding := range doc.Findings {
@@ -85,13 +82,11 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
 			if cfg.Fold && finding.Severity == "low" {
 				comment.nits = append(comment.nits, item)
-				continue
-			}
-			if cfg.Fold && finding.Unlikely {
+			} else if cfg.Fold && finding.Unlikely {
 				comment.unlikely = append(comment.unlikely, item)
-				continue
+			} else {
+				comment.findings = append(comment.findings, item)
 			}
-			comment.findings = append(comment.findings, item)
 		}
 	} else {
 		// Publication supplies the current header; a stored wrapper is content
@@ -168,39 +163,41 @@ func FormatComment(comment PreparedComment) string {
 	} else {
 		fmt.Fprintf(&out, "**Verdict:** Changes require fixes for %d %s.", len(comment.findings), noun)
 	}
-	renderCommentFindings(&out, comment.findings, "###")
-	if len(comment.nits)+len(comment.unlikely) > 0 {
-		var labels []string
-		if n := len(comment.nits); n > 0 {
-			noun := "nits"
-			if n == 1 {
-				noun = "nit"
-			}
-			labels = append(labels, fmt.Sprintf("%d %s", n, noun))
-		}
-		if n := len(comment.unlikely); n > 0 {
-			noun := "unlikely findings"
-			if n == 1 {
-				noun = "unlikely finding"
-			}
-			labels = append(labels, fmt.Sprintf("%d %s", n, noun))
-		}
-		out.WriteString("\n")
-		fmt.Fprintf(&out, "\n<details><summary>%s hidden</summary>\n", strings.Join(labels, " and "))
-		for _, group := range []struct {
-			title    string
-			findings []commentFinding
-		}{{"Nits", comment.nits}, {"Unlikely findings", comment.unlikely}} {
-			if len(group.findings) == 0 {
+	for _, severity := range []string{"critical", "high", "medium", "low"} {
+		heading := false
+		for _, finding := range comment.findings {
+			if finding.severity != severity {
 				continue
 			}
-			fmt.Fprintf(&out, "\n#### %s\n", group.title)
-			for _, severity := range []string{"critical", "high", "medium", "low"} {
-				for _, finding := range group.findings {
-					if finding.severity == severity {
-						renderCommentFinding(&out, finding)
-					}
-				}
+			if !heading {
+				fmt.Fprintf(&out, "\n\n### %s\n", strings.ToUpper(severity[:1])+severity[1:])
+				heading = true
+			}
+			// Reviewer attribution belongs in the comment footer, not on
+			// each finding.
+			renderCommentFinding(&out, finding)
+		}
+	}
+	if len(comment.nits)+len(comment.unlikely) > 0 {
+		groups := []struct {
+			title, one, many string
+			findings         []commentFinding
+		}{{"Nits", "nit", "nits", comment.nits}, {"Unlikely findings", "unlikely finding", "unlikely findings", comment.unlikely}}
+		var labels []string
+		for _, group := range groups {
+			if n := len(group.findings); n == 1 {
+				labels = append(labels, "1 "+group.one)
+			} else if n > 1 {
+				labels = append(labels, fmt.Sprintf("%d %s", n, group.many))
+			}
+		}
+		fmt.Fprintf(&out, "\n\n<details><summary>%s hidden</summary>\n", strings.Join(labels, " and "))
+		for _, group := range groups {
+			if len(group.findings) > 0 {
+				fmt.Fprintf(&out, "\n#### %s\n", group.title)
+			}
+			for _, finding := range group.findings {
+				renderCommentFinding(&out, finding)
 			}
 		}
 		out.WriteString("\n</details>\n")
@@ -209,22 +206,6 @@ func FormatComment(comment PreparedComment) string {
 		return strings.TrimRight(out.String(), "\n") + notice
 	}
 	return out.String()
-}
-
-func renderCommentFindings(out *strings.Builder, findings []commentFinding, prefix string) {
-	for _, severity := range []string{"critical", "high", "medium", "low"} {
-		heading := false
-		for _, finding := range findings {
-			if finding.severity != severity {
-				continue
-			}
-			if !heading {
-				fmt.Fprintf(out, "\n\n%s %s\n", prefix, strings.ToUpper(severity[:1])+severity[1:])
-				heading = true
-			}
-			renderCommentFinding(out, finding)
-		}
-	}
 }
 
 func renderCommentFinding(out *strings.Builder, finding commentFinding) {

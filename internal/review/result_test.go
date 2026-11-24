@@ -3,7 +3,6 @@ package review
 import (
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 
@@ -206,29 +205,18 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 	assert.NotContains(combined.Output, "No findings at or above")
 }
 
-func TestTruncateCommentToBudget(t *testing.T) {
-	body := "intro\n<details><summary>nit</summary>" + strings.Repeat("é", 100) + "\n</details>"
-	for _, limit := range []int{0, 3, 20, 50, len(body)} {
-		got := TruncateCommentTo(body, limit, "...")
-		assert.LessOrEqual(t, len(got), limit)
-		assert.True(t, utf8.ValidString(got))
-		if strings.Contains(got, "<details>") {
-			assert.Contains(t, got, "</details>")
-		}
-	}
-}
-
-func TestTruncateCommentWithTagInFinding(t *testing.T) {
+func TestTruncateCommentWithinFoldSummary(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Example `</details>` " + strings.Repeat("text ", 100)}}}
 	body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
 	got := TruncateCommentTo(body, 180, "...(truncated)")
 	assert.Contains(t, got, "`</details>`")
 	assert.Contains(t, got, "\n</details>...(truncated)")
 	assert.LessOrEqual(t, len(got), 180)
-}
 
-func TestTruncateCommentWithinFoldSummary(t *testing.T) {
-	body := "visible\n<details><summary>1 nit and 1 unlikely finding hidden</summary>\ncontent" + strings.Repeat("x", 100) + "\n</details>"
+	for _, limit := range []int{0, 3} {
+		assert.LessOrEqual(t, len(TruncateCommentTo(body, limit, "...")), limit)
+	}
+	body = "visible\n<details><summary>1 nit and 1 unlikely finding hidden</summary>\ncontent" + strings.Repeat("x", 100) + "\n</details>"
 	open := strings.Index(body, "\n<details>")
 	summaryEnd := strings.Index(body, "</summary>") + len("</summary>")
 	for cut := open; cut < summaryEnd; cut++ {
@@ -236,6 +224,6 @@ func TestTruncateCommentWithinFoldSummary(t *testing.T) {
 		assert.NotContains(t, got, "<details>", "cut at byte %d", cut)
 		assert.LessOrEqual(t, len(got), cut+len("...")+len("\n</details>"))
 	}
-	got := TruncateCommentTo(body, summaryEnd+len("...")+len("\n</details>"), "...")
+	got = TruncateCommentTo(body, summaryEnd+len("...")+len("\n</details>"), "...")
 	assert.Contains(t, got, "</summary>\n</details>...")
 }

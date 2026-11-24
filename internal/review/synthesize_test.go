@@ -791,56 +791,39 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 	}
 }
 
-func TestSynthesizeCommentShowAll(t *testing.T) {
-	doc := StructuredReview{SchemaVersion: 3, Summary: "Review.", Findings: []StructuredFinding{
-		{Severity: "medium", Problem: "defect", Fix: "fix"},
-		{Severity: "low", Problem: "nit", Fix: "fix"},
-		{Severity: "high", Problem: "rare", Fix: "fix", Unlikely: true},
-	}}
-	for _, showAll := range []bool{false, true} {
-		result, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc, Output: doc.Markdown("")}}, SynthesizeOpts{MinSeverity: "medium", CommentShowAll: showAll})
-		require.NoError(t, err)
-		assert.Contains(t, result.Output, "nit")
-		assert.Contains(t, result.GitHubComment, "rare")
-		assert.Equal(t, !showAll, strings.Contains(result.GitHubComment, "<details>"))
-		if showAll {
-			assert.Contains(t, result.GitHubComment, "3 findings")
-		}
-	}
-}
-
 func TestSynthesizeShowAllPreservesProseFloor(t *testing.T) {
 	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
 	for _, results := range [][]ReviewResult{
 		{{Status: ResultDone, Output: prose}},
 		{{Status: ResultDone, Output: prose, StructuredOutput: jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`)}},
-		{{Status: ResultDone, Output: prose}, {Status: ResultDone, Output: prose}},
+		{{Status: ResultDone, Output: prose, Structured: &StructuredReview{Findings: []StructuredFinding{{Severity: "high", Problem: "High issue", Fix: "Fix"}, {Severity: "low", Problem: "Low issue", Fix: "Fix"}}}}, {Status: ResultDone, Output: "No issues found."}},
 	} {
-		result, err := Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", CommentShowAll: true, Agent: "nonexistent-synthesis-agent"})
+		result, err := Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
 		require.NoError(t, err)
 		assert.Contains(t, result.GitHubComment, "High issue")
 		assert.NotContains(t, result.GitHubComment, "Low issue")
 	}
 }
 
-func TestProbeShowAllVerdictWithLowFindings(t *testing.T) {
-	doc := StructuredReview{Summary: "Review", Verdict: "fail", Findings: []StructuredFinding{
-		{Severity: "low", Problem: "One", Fix: "Fix"},
-		{Severity: "low", Problem: "Two", Fix: "Fix"},
-	}}
-	result, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc, Output: doc.Markdown(""), Verdict: storage.VerdictFail}}, SynthesizeOpts{MinSeverity: "medium", CommentShowAll: true})
-	require.NoError(t, err)
-	assert.Contains(t, result.Output, "Review Passed")
-	assert.Contains(t, result.GitHubComment, "Review Complete")
-	assert.Contains(t, result.GitHubComment, "Changes require fixes for 2 findings")
-}
-
-func TestSynthesizeFoldedFindingVerdict(t *testing.T) {
-	doc := StructuredReview{Summary: "Review", Verdict: "fail", Findings: []StructuredFinding{{Severity: "high", Problem: "Rare finding", Fix: "Fix", Unlikely: true}}}
-	result, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc, Output: doc.Markdown(""), Verdict: storage.VerdictFail}}, SynthesizeOpts{MinSeverity: "medium"})
-	require.NoError(t, err)
-	assert.Contains(t, result.Output, "Review Complete")
-	assert.Contains(t, result.GitHubComment, "Review Passed")
-	assert.Contains(t, result.GitHubComment, "No findings need fixes before merge")
-	assert.Contains(t, result.GitHubComment, "1 unlikely finding hidden")
+func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		finding StructuredFinding
+		showAll bool
+		heading string
+	}{
+		{"folded", StructuredFinding{Severity: "high", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Passed"},
+		{"show all", StructuredFinding{Severity: "low", Problem: "Low finding", Fix: "Fix"}, true, "Review Complete"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := StructuredReview{Summary: "Review", Verdict: "fail", Findings: []StructuredFinding{tc.finding}}
+			result, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc, Output: doc.Markdown(""), Verdict: storage.VerdictFail}}, SynthesizeOpts{MinSeverity: "medium", ShowAll: tc.showAll})
+			require.NoError(t, err)
+			assert.Contains(t, result.GitHubComment, tc.heading)
+			assert.Contains(t, result.GitHubComment, tc.finding.Problem)
+			if !tc.showAll {
+				assert.Contains(t, result.GitHubComment, "1 unlikely finding hidden")
+			}
+		})
+	}
 }

@@ -22,17 +22,18 @@
 //
 // [SchemaVersion] versions the document, not this Go API. Every document
 // roborev writes uses it, and encoding a decoded older document writes it too.
-// A version 3 or later finding from a reviewing agent carries a kind, a
-// confidence, and a file and line range. Producers without that data, such as goal reviews and
+// A version 3 or later finding from a reviewing agent carries a kind, a confidence, and
+// a file and line range. Producers without that data, such as goal reviews and
 // converted historical reviews, leave kind and confidence null and may give a
-// free-text location instead of a file. Versions 1 through 3 are only decoded.
-// Versions 1 and 2 carry a free-text location, and version 1 has no verdict. [Schema] and [SourcedSchema] are the JSON Schemas that
+// free-text location instead of a file. Versions 1 through 3 are only decoded, so
+// stored reviews keep working: versions 1 and 2 carry a free-text location, and version 1
+// has no verdict. [Schema] and [SourcedSchema] are the JSON Schemas that
 // constrain agent output, and [ConversionSchema] and [ConversionSourcedSchema]
 // constrain converted historical reviews. Storage-only version 0 carries original historical
 // Markdown in Legacy, without extracted findings.
 //
-// A version 3 or later document may carry a [Check]: the record of roborev's
-// CI checker trying each finding before the review was stored. Documents the checker did
+// A version 3 or later document may carry a [Check]: the record of roborev's CI checker
+// trying each finding before the review was stored. Documents the checker did
 // not touch omit it.
 package structuredreview
 
@@ -113,11 +114,9 @@ func schema(withSources, conversion bool) jsontext.Value {
 	required := `"severity", "kind", "topic", "confidence", "unlikely", "problem", "fix", "file", "start_line", "end_line"`
 	// A live agent must state a verdict, a kind, and a confidence.
 	verdictType, kindType, confidenceType, nullable := `"string"`, `"string"`, `"number"`, ""
-	unlikelyType := `"boolean"`
 	location := ""
 	if conversion {
 		verdictType, kindType, confidenceType, nullable = `["string", "null"]`, `["string", "null"]`, `["number", "null"]`, ", null"
-		unlikelyType = `["boolean", "null"]`
 		required += `, "location"`
 		location = `,
           "location": {"type": ["string", "null"]}`
@@ -160,7 +159,7 @@ func schema(withSources, conversion bool) jsontext.Value {
             "enum": [%q, %q, %q, %q, %q, null]
           },
           "confidence": {"type": %s, "minimum": 0, "maximum": 1},
-          "unlikely": {"type": %s},
+          "unlikely": {"type": "boolean"},
           "problem": {"type": "string", "minLength": 1},
           "fix": {"type": "string", "minLength": 1},
           "file": {"type": ["string", "null"]},
@@ -173,7 +172,7 @@ func schema(withSources, conversion bool) jsontext.Value {
 }`, SchemaVersion, verdictType, VerdictPass, VerdictFail, VerdictUnableToReview, nullable,
 		required, kindType, KindDefect, KindImprovement, nullable,
 		TopicTests, TopicDocumentation, TopicSecurity, TopicPerformance, TopicDesign,
-		confidenceType, unlikelyType, location, sources))
+		confidenceType, location, sources))
 }
 
 // LegacyDocument preserves historical output without claiming extracted findings.
@@ -393,7 +392,7 @@ type findingWire struct {
 	Kind       *string        `json:"kind"`
 	Topic      *string        `json:"topic"`
 	Confidence *float64       `json:"confidence"`
-	Unlikely   jsontext.Value `json:"unlikely"`
+	Unlikely   *bool          `json:"unlikely"`
 	Problem    string         `json:"problem"`
 	Fix        string         `json:"fix"`
 	File       *string        `json:"file"`
@@ -433,7 +432,7 @@ func Decode(raw jsontext.Value) (Document, error) {
 		if wire.SchemaVersion >= 3 {
 			result.Findings[i], err = decodeLocatedFinding(finding, wire.SchemaVersion)
 		} else {
-			result.Findings[i], err = decodeTextLocatedFinding(finding, wire.SchemaVersion)
+			result.Findings[i], err = decodeTextLocatedFinding(finding)
 		}
 		if err != nil {
 			return Document{}, fmt.Errorf("structured review finding %d %w", i+1, err)
@@ -543,7 +542,9 @@ func decodeCheck(wire checkWire, version int) (Check, error) {
 			checked.Verdicts = make([]CheckVerdict, len(entry.Verdicts))
 		}
 		for j, verdict := range entry.Verdicts {
-			checked.Verdicts[j] = CheckVerdict{Keep: verdict.Keep, Evidence: strings.TrimSpace(verdict.Evidence), Reason: strings.TrimSpace(verdict.Reason)}
+			verdict.Evidence = strings.TrimSpace(verdict.Evidence)
+			verdict.Reason = strings.TrimSpace(verdict.Reason)
+			checked.Verdicts[j] = verdict
 		}
 	}
 	return check, nil
@@ -551,8 +552,8 @@ func decodeCheck(wire checkWire, version int) (Check, error) {
 
 // decodeTextLocatedFinding reads a version 1 or 2 finding, which must carry a
 // location field and none of the version 3 fields.
-func decodeTextLocatedFinding(wire findingWire, version int) (Finding, error) {
-	if len(wire.Unlikely) > 0 && version < 4 {
+func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
+	if wire.Unlikely != nil {
 		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
 	}
 	if wire.Kind != nil || wire.Topic != nil || wire.Confidence != nil || wire.File != nil || wire.StartLine != nil || wire.EndLine != nil {
@@ -581,7 +582,7 @@ func decodeTextLocatedFinding(wire findingWire, version int) (Finding, error) {
 // stored location is derived from the file and lines when there is a file,
 // and is kept as free text when there is not.
 func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
-	if len(wire.Unlikely) > 0 && version < 4 {
+	if wire.Unlikely != nil && version < 4 {
 		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
 	}
 	if (wire.Kind == nil) != (wire.Confidence == nil) {
@@ -608,12 +609,6 @@ func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
 			return Finding{}, fmt.Errorf("has confidence %v outside 0 to 1", confidence)
 		}
 	}
-	var unlikely bool
-	if len(wire.Unlikely) > 0 && !bytes.Equal(wire.Unlikely, []byte("null")) {
-		if err := json.Unmarshal(wire.Unlikely, &unlikely); err != nil {
-			return Finding{}, fmt.Errorf("has invalid unlikely: %w", err)
-		}
-	}
 	var location string
 	if len(wire.Location) > 0 && !bytes.Equal(wire.Location, []byte("null")) {
 		if err := json.Unmarshal(wire.Location, &location); err != nil {
@@ -625,7 +620,7 @@ func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
 		Kind:       kind,
 		Topic:      topic,
 		Confidence: confidence,
-		Unlikely:   unlikely,
+		Unlikely:   wire.Unlikely != nil && *wire.Unlikely,
 		Problem:    wire.Problem,
 		Fix:        wire.Fix,
 		Sources:    wire.Sources,

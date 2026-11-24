@@ -46,7 +46,7 @@ For each finding:
 2. Keep it if it fails that way and either a user on a normal workflow hits it, or the harm is lost data, a silently saved wrong result, or a security hole. Keep a finding about the project's own tests or CI when a test can't catch the bug it exists for and the fix is small.
 3. Drop it if it doesn't fail or if nothing but a hand-built state reaches it. Keep it with unlikely set to true if only rare timing or unusual input reaches it. Count everyone the failure reaches: in a library, a rare input in one consumer is still a broken build or wrong result in every repo that uses it. A bug that predates this PR still counts when the PR's code runs into it. Keep a finding that a test is redundant or tests code the project doesn't own only when no change to the project's code fails that test alone.
 
-If the sandbox stops a finding from running, or the code it needs can't build or run here, keep it, unless it asks to remove a test. Set unlikely to false when you cannot determine whether the trigger is rare.
+If the sandbox stops a finding from running, or the code it needs can't build or run here, keep it, unless it asks to remove a test.
 Return a JSON object with verdicts: [{"finding": 1, "keep": true, "unlikely": false, "evidence": "the command and its output, or what refutes it", "reason": "one sentence"}].
 Work alone: no sub-agents or background jobs.`
 
@@ -515,10 +515,10 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 	for _, v := range response.Verdicts {
 		encoded, _ := json.Marshal(v)
 		fmt.Fprintf(out, "CI checker verdict: %s\n", encoded)
-		if v.Unlikely {
-			rare[v.Finding] = true
-		}
-		verdicts[v.Finding] = append(verdicts[v.Finding], structuredreview.CheckVerdict{Keep: v.Keep, Evidence: strings.TrimSpace(v.Evidence), Reason: strings.TrimSpace(v.Reason)})
+		rare[v.Finding] = v.Unlikely
+		verdicts[v.Finding] = append(verdicts[v.Finding], structuredreview.CheckVerdict{
+			Keep: v.Keep, Evidence: strings.TrimSpace(v.Evidence), Reason: strings.TrimSpace(v.Reason),
+		})
 	}
 	check := &structuredreview.Check{Status: structuredreview.CheckCompleted}
 	kept := make([]structuredreview.Finding, 0, len(doc.Findings))
@@ -528,7 +528,7 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 		if v := entry.Verdicts; len(v) == 1 && v[0].Keep != nil && !*v[0].Keep && v[0].Evidence != "" && v[0].Reason != "" {
 			entry.Outcome = structuredreview.CheckDropped
 		} else {
-			if len(entry.Verdicts) == 1 && entry.Verdicts[0].Keep != nil && *entry.Verdicts[0].Keep && rare[i+1] && entry.Verdicts[0].Evidence != "" && entry.Verdicts[0].Reason != "" {
+			if len(v) == 1 && v[0].Keep != nil && *v[0].Keep && rare[i+1] && v[0].Evidence != "" && v[0].Reason != "" {
 				f.Unlikely = true
 			}
 			kept = append(kept, f)
@@ -536,11 +536,11 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 		check.Findings = append(check.Findings, entry)
 	}
 	doc.Check = check
-	sameCount := len(kept) == len(doc.Findings)
-	doc.Findings = kept
-	if sameCount {
+	if len(kept) == len(doc.Findings) {
+		doc.Findings = kept
 		return doc, nil
 	}
+	doc.Findings = kept
 	doc.Summary = fmt.Sprintf("%d findings.", len(kept))
 	if len(kept) == 1 {
 		doc.Summary = "1 finding."

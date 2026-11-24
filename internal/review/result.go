@@ -156,12 +156,11 @@ func TruncateComment(body string) string {
 // TruncateCommentTo fits a comment within limit bytes, closing a folded
 // section if the cut falls inside it. The suffix is included in the limit.
 func TruncateCommentTo(body string, limit int, suffix string) string {
-	limit = max(limit, 0)
 	if len(body) <= limit {
 		return body
 	}
-	suffix = TrimPartialRune(suffix[:min(limit, len(suffix))])
-	budget := limit - len(suffix)
+	suffix = TrimPartialRune(suffix[:min(max(limit, 0), len(suffix))])
+	budget := max(limit-len(suffix), 0)
 	const closing = "\n</details>"
 	open := strings.Index(body, "\n<details><summary>")
 	close := strings.LastIndex(body, closing)
@@ -174,8 +173,7 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 		}
 		return TrimPartialRune(body[:min(len(cut), open)]) + suffix
 	}
-	cut := TrimPartialRune(body[:budget])
-	return cut + suffix
+	return TrimPartialRune(body[:budget]) + suffix
 }
 
 // OutputTruncSuffix marks a single review's output as cut short. It is

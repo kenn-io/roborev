@@ -380,15 +380,15 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Synthesize
 	synthesis, synthErr := review.Synthesize(
 		ctx, results, review.SynthesizeOpts{
-			Agent:          synthAgent,
-			Model:          config.ResolveCISynthesisModel(globalCfg),
-			Reasoning:      globalCfg.ProjectSynthesisReasoning(),
-			MinSeverity:    ciMinSev,
-			CommentShowAll: config.ResolveCICommentShowAll(repoCfg, globalCfg),
-			RepoPath:       root,
-			GitRef:         gitRef,
-			HeadSHA:        headSHA,
-			GlobalConfig:   globalCfg,
+			Agent:        synthAgent,
+			Model:        config.ResolveCISynthesisModel(globalCfg),
+			Reasoning:    globalCfg.ProjectSynthesisReasoning(),
+			MinSeverity:  ciMinSev,
+			ShowAll:      config.ResolveCICommentShowAll(repoCfg, globalCfg),
+			RepoPath:     root,
+			GitRef:       gitRef,
+			HeadSHA:      headSHA,
+			GlobalConfig: globalCfg,
 		})
 	if synthErr != nil &&
 		!errors.Is(synthErr, review.ErrAllFailed) {

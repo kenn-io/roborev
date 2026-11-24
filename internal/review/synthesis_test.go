@@ -409,6 +409,11 @@ func TestFormatSingleResult_Truncation(t *testing.T) {
 	// portion must not exceed MaxCommentLen.
 	require.LessOrEqual(t, len(comment), MaxCommentLen+200, "comment too long")
 	assert.Contains(t, comment, "truncated", "expected truncation suffix")
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: strings.Repeat("a", MaxCommentLen), Fix: "fix"}}}
+	folded := formatSingleResult(ReviewResult{Status: ResultDone, Structured: &doc}, "abc1234", &CommentConfig{Fold: true})
+	assert.Contains(t, folded, "<details>")
+	assert.Contains(t, folded, "</details>")
+	assert.Contains(t, folded, CommentTruncSuffix)
 }
 
 func TestFormatSingleResult_TruncationUTF8Safe(t *testing.T) {
@@ -773,13 +778,4 @@ func TestParseLocation(t *testing.T) {
 			assert.Equal(t, tt.end, end)
 		})
 	}
-}
-
-func TestFormatSingleResultTruncationClosesFold(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: strings.Repeat("a", MaxCommentLen), Fix: "fix"}}}
-	result := ReviewResult{Status: ResultDone, Structured: &doc}
-	comment := formatSingleResult(result, "abc1234", &CommentConfig{Fold: true})
-	assert.Contains(t, comment, "<details>")
-	assert.Contains(t, comment, "</details>")
-	assert.Contains(t, comment, CommentTruncSuffix)
 }
