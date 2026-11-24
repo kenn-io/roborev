@@ -152,11 +152,11 @@ func (w *analysisScheduler) pruneRetry(ctx context.Context, repoID int64, types 
 func (w *analysisScheduler) retryTypes(ctx context.Context, repoID int64, last time.Time, types, saved []string) ([]string, error) {
 	var retry []string
 	for _, typ := range types {
-		jobs, err := w.server.db.ListJobs("", "", 1, 0, storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
+		jobs, err := w.server.db.ListJobs("", "", 1, 0, storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithSource(storage.JobSourceScheduled), storage.WithoutPrompt())
 		if err != nil {
 			return nil, err
 		}
-		failedJob := len(jobs) > 0 && jobs[0].Status == storage.JobStatusFailed && jobs[0].Source == storage.JobSourceScheduled && jobs[0].EnqueuedAt.Add(time.Second).After(last)
+		failedJob := len(jobs) > 0 && jobs[0].Status == storage.JobStatusFailed && jobs[0].EnqueuedAt.Add(time.Second).After(last)
 		if failedJob || slices.Contains(saved, typ) {
 			retry = append(retry, typ)
 		}
