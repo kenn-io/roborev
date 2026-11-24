@@ -84,7 +84,6 @@ export * from "./exportReview";
 export * from "./exportReviewCost";
 export * from "./exportReviewsDocument";
 export * from "./exportReviewsParams";
-export * from "./exportReviewsSchemaVersion";
 export * from "./exportReviewsWindow";
 export * from "./exportSubagent";
 export * from "./failureStats";

@@ -81,23 +81,6 @@ func (g GetCostQueryBranchEmpty) Validate() error {
 	}
 }
 
-// ExportReviewsQuerySchemaVersion Requested export schema version (supported: 2); omit to use the daemon's current default (2)
-type ExportReviewsQuerySchemaVersion int
-
-const (
-	N2 ExportReviewsQuerySchemaVersion = 2
-)
-
-// Validate checks if the ExportReviewsQuerySchemaVersion value is valid
-func (e ExportReviewsQuerySchemaVersion) Validate() error {
-	switch e {
-	case N2:
-		return nil
-	default:
-		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExportReviewsQuerySchemaVersion value, got: %v", e))
-	}
-}
-
 // ListJobsQueryBranchEmpty Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
 type ListJobsQueryBranchEmpty string
 

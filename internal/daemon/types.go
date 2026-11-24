@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"net/url"
+	"strings"
 	"time"
 	"uuid"
 
@@ -159,18 +161,24 @@ type GetReviewOutput struct {
 
 // exportReviewsSchemaVersion preserves handler-owned HTTP 400 errors for
 // malformed and unsupported schema_version values while publishing the integer
-// contract consumed by generated clients.
+// contract consumed by generated clients. Supported versions are documented in
+// prose rather than as an OpenAPI enum so the Go client generator does not
+// emit bare numeric constants (e.g. N2) that break callers on future additions.
 type exportReviewsSchemaVersion string
 
 func (exportReviewsSchemaVersion) Schema(huma.Registry) *huma.Schema {
+	minimum := float64(1)
 	return &huma.Schema{
 		Type:    huma.TypeInteger,
 		Default: ExportReviewsSchemaVersion,
-		Enum:    supportedExportReviewsSchemaVersionAny(),
+		Minimum: &minimum,
 	}
 }
 
 // ExportReviewsInput holds query parameters for exporting completed reviews.
+// GET /api/export/reviews sets SkipValidateParams so schema constraint tags on
+// this struct are documentation-only; every parameter constraint must be
+// validated in humaExportReviews.
 type ExportReviewsInput struct {
 	Format        string                     `query:"format" default:"json" doc:"Output format; only json is supported"`
 	Profile       string                     `query:"profile" default:"content" doc:"Export profile: content or metadata"`
@@ -186,18 +194,38 @@ type ExportReviewsInput struct {
 
 	schemaVersionPresent  bool
 	schemaVersionMultiple bool
+	schemaVersionInvalid  bool
 }
 
-// Resolve records raw schema_version query presence so the handler can
-// distinguish an omitted parameter from an explicit empty or repeated one.
+// Resolve scans the raw query string for schema_version so the handler can
+// distinguish an omitted parameter from an explicit empty, duplicate, or
+// invalidly percent-encoded one (which url.URL.Query silently drops).
 func (i *ExportReviewsInput) Resolve(ctx huma.Context) []error {
-	if raw := ctx.URL(); raw.RawQuery != "" {
-		if values, ok := raw.Query()["schema_version"]; ok {
-			i.schemaVersionPresent = true
-			if len(values) > 1 {
-				i.schemaVersionMultiple = true
+	rawQuery := ctx.URL().RawQuery
+	if rawQuery == "" {
+		return nil
+	}
+	count := 0
+	for part := range strings.SplitSeq(rawQuery, "&") {
+		if part == "" {
+			continue
+		}
+		rawKey, rawVal, hasEq := strings.Cut(part, "=")
+		key, keyErr := url.QueryUnescape(rawKey)
+		if (keyErr == nil && key == "schema_version") || rawKey == "schema_version" {
+			count++
+			if hasEq {
+				if _, valErr := url.QueryUnescape(rawVal); valErr != nil {
+					i.schemaVersionInvalid = true
+				}
 			}
 		}
+	}
+	if count > 0 {
+		i.schemaVersionPresent = true
+	}
+	if count > 1 {
+		i.schemaVersionMultiple = true
 	}
 	return nil
 }

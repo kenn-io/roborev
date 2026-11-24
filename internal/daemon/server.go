@@ -2132,15 +2132,6 @@ func FormatSupportedExportReviewsSchemaVersions() string {
 	return strings.Join(parts, ", ")
 }
 
-func supportedExportReviewsSchemaVersionAny() []any {
-	versions := SupportedExportReviewsSchemaVersions()
-	out := make([]any, len(versions))
-	for i, v := range versions {
-		out[i] = v
-	}
-	return out
-}
-
 // IsSupportedExportReviewsSchemaVersion reports whether GET /api/export/reviews
 // and `roborev export reviews` can serve the requested schema version.
 func IsSupportedExportReviewsSchemaVersion(version int) bool {
@@ -2150,6 +2141,9 @@ func IsSupportedExportReviewsSchemaVersion(version int) bool {
 func parseExportReviewsSchemaVersion(input *ExportReviewsInput) (int, error) {
 	if input.schemaVersionMultiple {
 		return 0, errors.New("duplicate export schema_version parameter")
+	}
+	if input.schemaVersionInvalid {
+		return 0, fmt.Errorf("invalid export schema_version (supported: %s)", FormatSupportedExportReviewsSchemaVersions())
 	}
 	raw := string(input.SchemaVersion)
 	if !input.schemaVersionPresent && raw == "" {

@@ -114,7 +114,7 @@ type ExportReviewsQuery struct {
 	Profile *string `json:"profile,omitempty"`
 
 	// SchemaVersion Requested export schema version (supported: 2); omit to use the daemon's current default (2)
-	SchemaVersion *ExportReviewsQuerySchemaVersion `json:"schema_version,omitempty"`
+	SchemaVersion *int `json:"schema_version,omitempty" validate:"omitempty,gte=1"`
 
 	// Since Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
 	Since *string `json:"since,omitempty"`
@@ -142,18 +142,7 @@ type ExportReviewsQuery struct {
 }
 
 func (e ExportReviewsQuery) Validate() error {
-	var errors runtime.ValidationErrors
-	if e.SchemaVersion != nil {
-		if v, ok := any(e.SchemaVersion).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("SchemaVersion", err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
 type GetJobInvocationsQuery struct {

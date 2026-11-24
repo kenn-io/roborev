@@ -237,6 +237,8 @@ func TestHumaExportReviewsSchemaVersionNegotiation(t *testing.T) {
 		{path: "/api/export/reviews?schema_version=%202", wantMsg: "invalid export schema_version"},
 		{path: "/api/export/reviews?schema_version=99999999999999999999999", wantMsg: "invalid export schema_version"},
 		{path: "/api/export/reviews?schema_version=", wantMsg: "invalid export schema_version"},
+		{path: "/api/export/reviews?schema_version=%zz", wantMsg: "invalid export schema_version"},
+		{path: "/api/export/reviews?schema_version=2&schema_version=%zz", wantMsg: "duplicate export schema_version"},
 		{path: "/api/export/reviews?schema_version=2&schema_version=3", wantMsg: "duplicate export schema_version"},
 	} {
 		t.Run("reject "+tc.path, func(t *testing.T) {

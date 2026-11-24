@@ -174,8 +174,11 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "export-reviews"
 			o.Summary = "Export completed reviews"
 			o.Tags = []string{"reviews"}
-			// Validate query parameters in the handler so invalid or
-			// unsupported schema_version values consistently return HTTP 400.
+			// Validate query parameter constraints in humaExportReviews so
+			// invalid or unsupported schema_version values consistently return
+			// HTTP 400. Because SkipValidateParams applies to the entire
+			// operation, every parameter constraint must be enforced in the
+			// handler rather than relying on OpenAPI schema tags.
 			o.SkipValidateParams = true
 			if o.Responses == nil {
 				o.Responses = map[string]*huma.Response{}
@@ -202,6 +205,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 	// Review export response schemas evolve additively within a schema_version:
 	// consumers must ignore unknown fields, so allow additional properties on
 	// these published response objects instead of forbidding future fields.
+	schemas := api.OpenAPI().Components.Schemas.Map()
 	for _, name := range []string{
 		"ExportReviewsDocument",
 		"ExportReviewsWindow",
@@ -210,9 +214,11 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 		"ExportSubagent",
 		"ExperimentAssignment",
 	} {
-		if schema := api.OpenAPI().Components.Schemas.Map()[name]; schema != nil {
-			schema.AdditionalProperties = nil
+		schema := schemas[name]
+		if schema == nil {
+			panic("missing OpenAPI schema for review export: " + name)
 		}
+		schema.AdditionalProperties = nil
 	}
 
 	huma.Get(api, "/api/export/ci-metrics", s.humaExportCIMetrics,

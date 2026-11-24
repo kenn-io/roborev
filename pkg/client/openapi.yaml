@@ -5935,8 +5935,7 @@ paths:
           schema:
             default: 2
             description: "Requested export schema version (supported: 2); omit to use the daemon's current default (2)"
-            enum:
-              - 2
+            minimum: 1
             type: integer
         - description: Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
           explode: false

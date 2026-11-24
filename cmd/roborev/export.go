@@ -160,15 +160,14 @@ func validateExportReviewsOpts(opts *exportReviewsOpts, limitSet bool) error {
 	if opts.schemaVersionSet {
 		raw := opts.schemaVersionRaw
 		if raw == "" || strings.TrimSpace(raw) != raw {
-			return invalidValue(fmt.Errorf("invalid export schema version %q (supported: %s)", raw, daemon.FormatSupportedExportReviewsSchemaVersions()))
+			return invalidValue(fmt.Errorf("invalid export schema version %q", raw))
 		}
 		v, err := strconv.Atoi(raw)
-		if err != nil {
-			return invalidValue(fmt.Errorf("invalid export schema version %q (supported: %s)", raw, daemon.FormatSupportedExportReviewsSchemaVersions()))
+		if err != nil || v <= 0 {
+			return invalidValue(fmt.Errorf("invalid export schema version %q (must be a positive integer)", raw))
 		}
-		if !daemon.IsSupportedExportReviewsSchemaVersion(v) {
-			return invalidValue(fmt.Errorf("unsupported export schema version %d (supported: %s)", v, daemon.FormatSupportedExportReviewsSchemaVersions()))
-		}
+		// Let the connected daemon decide which positive schema versions it
+		// supports so an older CLI can pin a newer daemon's version.
 		opts.schemaVersion = v
 	}
 	if limitSet && opts.limit <= 0 {
@@ -205,15 +204,15 @@ func fetchAllExportReviews(ctx context.Context, ep daemon.DaemonEndpoint, opts e
 			out = &copied
 		} else {
 			if page.schemaVersion != out.schemaVersion {
-				return nil, fmt.Errorf(
+				return nil, invalidValue(fmt.Errorf(
 					"daemon changed export schema_version mid-export from %d to %d",
 					out.schemaVersion, page.schemaVersion,
-				)
+				))
 			}
 			if page.databaseID != out.databaseID {
 				return nil, fmt.Errorf(
-					"daemon changed export database_id mid-export from %q to %q",
-					out.databaseID, page.databaseID,
+					"%w: daemon changed export database_id mid-export from %q to %q",
+					errExportCursorDatabaseReset, out.databaseID, page.databaseID,
 				)
 			}
 			if page.profile != out.profile {
@@ -224,7 +223,9 @@ func fetchAllExportReviews(ctx context.Context, ep daemon.DaemonEndpoint, opts e
 			}
 			out.reviews = append(out.reviews, page.reviews...)
 			out.truncated = page.truncated
-			out.nextCursor = page.nextCursor
+			if len(page.reviews) > 0 {
+				out.nextCursor = page.nextCursor
+			}
 		}
 
 		if limitSet {
@@ -251,6 +252,10 @@ func fetchAllExportReviews(ctx context.Context, ep daemon.DaemonEndpoint, opts e
 		out.truncated = false
 	}
 
+	// Strip Huma's transport-level $schema URL (bound to local daemon host/port)
+	// while keeping all export fields and unknown additive fields.
+	delete(out.raw, "$schema")
+
 	rawReviews, err := json.Marshal(out.reviews)
 	if err != nil {
 		return nil, fmt.Errorf("encode export reviews: %w", err)
@@ -267,6 +272,19 @@ func fetchAllExportReviews(ctx context.Context, ep daemon.DaemonEndpoint, opts e
 	out.raw["truncated"] = jsontext.Value(rawTruncated)
 	out.raw["next_cursor"] = jsontext.Value(rawNextCursor)
 	return out.raw, nil
+}
+
+func isDaemonSchemaVersionError(bodyText string) bool {
+	detail := bodyText
+	var problem struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal([]byte(bodyText), &problem) == nil && problem.Detail != "" {
+		detail = problem.Detail
+	}
+	return strings.HasPrefix(detail, "invalid export schema_version") ||
+		strings.HasPrefix(detail, "unsupported export schema_version") ||
+		strings.HasPrefix(detail, "duplicate export schema_version")
 }
 
 func fetchExportReviewsPage(ctx context.Context, ep daemon.DaemonEndpoint, opts exportReviewsOpts, cursor string, limit int) (exportReviewsRawPage, error) {
@@ -313,7 +331,7 @@ func fetchExportReviewsPage(ctx context.Context, ep daemon.DaemonEndpoint, opts 
 			return exportReviewsRawPage{}, fmt.Errorf("%w: daemon returned %s: %s",
 				errExportCursorDatabaseReset, resp.Status, bodyText)
 		}
-		if resp.StatusCode == http.StatusBadRequest && strings.Contains(bodyText, "schema_version") {
+		if opts.schemaVersionSet && resp.StatusCode == http.StatusBadRequest && isDaemonSchemaVersionError(bodyText) {
 			return exportReviewsRawPage{}, invalidValue(fmt.Errorf("daemon returned %s: %s", resp.Status, bodyText))
 		}
 		return exportReviewsRawPage{}, fmt.Errorf("daemon returned %s: %s", resp.Status, bodyText)
@@ -324,35 +342,55 @@ func fetchExportReviewsPage(ctx context.Context, ep daemon.DaemonEndpoint, opts 
 		return exportReviewsRawPage{}, fmt.Errorf("failed to read export response: %w", err)
 	}
 
-	// Preserve raw JSON members on the envelope and every review so unknown
-	// additive fields and nested document payloads pass through unmodified.
+	// Preserve raw JSON values and unknown additive fields on the envelope,
+	// reviews, subagents, and nested documents without strict struct decoding.
 	var raw map[string]jsontext.Value
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response: %w", err)
 	}
-	var meta struct {
-		SchemaVersion int              `json:"schema_version"`
-		DatabaseID    string           `json:"database_id"`
-		Profile       string           `json:"profile"`
-		Truncated     bool             `json:"truncated"`
-		NextCursor    *string          `json:"next_cursor"`
-		Reviews       []jsontext.Value `json:"reviews"`
+	if raw == nil {
+		return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response: expected JSON object")
 	}
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response: %w", err)
+
+	page := exportReviewsRawPage{
+		raw:     raw,
+		reviews: []jsontext.Value{},
 	}
-	if meta.Reviews == nil {
-		meta.Reviews = []jsontext.Value{}
+	if v, ok := raw["schema_version"]; ok {
+		if err := json.Unmarshal(v, &page.schemaVersion); err != nil {
+			return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response schema_version: %w", err)
+		}
 	}
-	return exportReviewsRawPage{
-		raw:           raw,
-		schemaVersion: meta.SchemaVersion,
-		databaseID:    meta.DatabaseID,
-		profile:       meta.Profile,
-		truncated:     meta.Truncated,
-		nextCursor:    meta.NextCursor,
-		reviews:       meta.Reviews,
-	}, nil
+	if v, ok := raw["database_id"]; ok {
+		if err := json.Unmarshal(v, &page.databaseID); err != nil {
+			return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response database_id: %w", err)
+		}
+	}
+	if v, ok := raw["profile"]; ok {
+		if err := json.Unmarshal(v, &page.profile); err != nil {
+			return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response profile: %w", err)
+		}
+	}
+	if v, ok := raw["truncated"]; ok {
+		if err := json.Unmarshal(v, &page.truncated); err != nil {
+			return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response truncated: %w", err)
+		}
+	}
+	if v, ok := raw["next_cursor"]; ok {
+		if err := json.Unmarshal(v, &page.nextCursor); err != nil {
+			return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response next_cursor: %w", err)
+		}
+	}
+	if v, ok := raw["reviews"]; ok {
+		var reviews []jsontext.Value
+		if err := json.Unmarshal(v, &reviews); err != nil {
+			return exportReviewsRawPage{}, fmt.Errorf("failed to parse export response reviews: %w", err)
+		}
+		if reviews != nil {
+			page.reviews = reviews
+		}
+	}
+	return page, nil
 }
 
 var exportReviewsHeaderKeyOrder = []string{
