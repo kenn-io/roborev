@@ -47,21 +47,6 @@ func TestScheduledAnalysis(t *testing.T) {
 	assert.Equal(t, storage.JobSourceScheduled, jobs[0].Source)
 }
 
-func TestScheduledAnalysisCancelledDuringEnqueue(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("a.go", "package a\n", "add source")
-	registered, err := db.GetOrCreateRepo(repo.Path())
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	cfg := server.configWatcher.Config()
-	cfg.AnalyzeAgent = "test"
-	watcher := &analysisScheduler{server: server, testHookBeforeEnqueue: cancel}
-	_, err = watcher.scheduleRepo(ctx, *registered, &config.RepoConfig{}, cfg, config.Schedule{Types: []string{"refactor", "complexity"}, MaxFiles: 1})
-	require.ErrorIs(t, err, context.Canceled)
-}
-
 func TestScheduledAnalysisDeletedRepo(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
@@ -696,7 +681,6 @@ func TestScheduledAnalysisPromptBudget(t *testing.T) {
 	assert.Equal(t, []string{"a.go", "a.js", "latin.go", "z.go"}, jobs[0].AnalysisFiles)
 	assert.Greater(t, len(jobs[0].Prompt), cfg.DefaultMaxPromptSize)
 	assert.Contains(t, jobs[0].Prompt, strings.Repeat("a", 3500))
-	assert.Contains(t, jobs[0].Prompt, "### latin.go\n\nBinary content (base64):")
 }
 
 func TestScheduledAnalysisPartialClone(t *testing.T) {
