@@ -708,7 +708,7 @@ func TestDeleteRepo(t *testing.T) {
 		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), repo.ID, last))
 		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), other.ID, last))
 		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), repo.ID, []AnalysisScheduleEntry{{Type: "refactor"}}))
-		entries := []AnalysisScheduleEntry{{Type: "complexity", Files: []string{"source.go"}, Job: 7}}
+		entries := []AnalysisScheduleEntry{{Type: "complexity", Files: []string{"invalid\xff.go"}, Job: 7}}
 		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), other.ID, entries))
 
 		err = db.DeleteRepo(repo.ID, false)
