@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -106,6 +107,26 @@ func (db *DB) SetAnalysisScheduleLastRun(ctx context.Context, repoID int64, last
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, fmt.Sprintf("analysis_schedule_last_run:%d", repoID), last.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("set analysis schedule last run: %w", err)
+	}
+	return nil
+}
+
+// AnalysisScheduleRetry returns analysis types awaiting retry for a repo.
+func (db *DB) AnalysisScheduleRetry(ctx context.Context, repoID int64) ([]string, error) {
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_retry:%d", repoID)).Scan(&value)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("get analysis schedule retry: %w", err)
+	}
+	return strings.FieldsFunc(value, func(r rune) bool { return r == ',' }), nil
+}
+
+// SetAnalysisScheduleRetry records analysis types awaiting retry for a repo.
+func (db *DB) SetAnalysisScheduleRetry(ctx context.Context, repoID int64, types []string) error {
+	_, err := db.ExecContext(ctx, `INSERT INTO daemon_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, fmt.Sprintf("analysis_schedule_retry:%d", repoID), strings.Join(types, ","))
+	if err != nil {
+		return fmt.Errorf("set analysis schedule retry: %w", err)
 	}
 	return nil
 }

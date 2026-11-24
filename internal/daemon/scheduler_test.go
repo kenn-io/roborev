@@ -717,20 +717,10 @@ func TestScheduledAnalysisPartialClone(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	source := testutil.NewGitRepo(t)
 	source.CommitFiles(map[string]string{"a.go": "package a\n", "excluded.go": "package excluded\n"}, "add files")
-	runGit := func(dir string, args ...string) string {
-		t.Helper()
-		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", out)
-		return string(out)
-	}
-	runGit(source.Path(), "config", "uploadpack.allowFilter", "true")
-	clone := filepath.Join(t.TempDir(), "clone")
-	runGit(t.TempDir(), "clone", "--no-checkout", "--filter=blob:none", "file://"+source.Path(), clone)
-	excluded := strings.TrimSpace(runGit(source.Path(), "rev-parse", "HEAD:excluded.go"))
-	runGit(clone, "show", "HEAD:a.go")
-	before := runGit(clone, "rev-list", "--objects", "--missing=print", "HEAD")
+	clone := partialClone(t, source)
+	excluded := strings.TrimSpace(runGit(t, source.Path(), "rev-parse", "HEAD:excluded.go"))
+	runGit(t, clone, "show", "HEAD:a.go")
+	before := runGit(t, clone, "rev-list", "--objects", "--missing=print", "HEAD")
 	require.Contains(t, before, "?"+excluded)
 	registered, err := db.GetOrCreateRepo(clone)
 	require.NoError(t, err)
@@ -744,7 +734,7 @@ func TestScheduledAnalysisPartialClone(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
-	after := runGit(clone, "rev-list", "--objects", "--missing=print", "HEAD")
+	after := runGit(t, clone, "rev-list", "--objects", "--missing=print", "HEAD")
 	assert.Contains(t, after, "?"+excluded)
 }
 
@@ -752,18 +742,8 @@ func TestScheduledAnalysisUnreadableBlob(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	source := testutil.NewGitRepo(t)
 	source.CommitFiles(map[string]string{"a.go": "package a\n", "b.go": "package b\n"}, "add files")
-	runGit := func(dir string, args ...string) string {
-		t.Helper()
-		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", out)
-		return string(out)
-	}
-	runGit(source.Path(), "config", "uploadpack.allowFilter", "true")
-	clone := filepath.Join(t.TempDir(), "clone")
-	runGit(t.TempDir(), "clone", "--no-checkout", "--filter=blob:none", "file://"+source.Path(), clone)
-	runGit(clone, "show", "HEAD:b.go")
+	clone := partialClone(t, source)
+	runGit(t, clone, "show", "HEAD:b.go")
 	require.NoError(t, os.Rename(filepath.Join(source.Path(), ".git"), filepath.Join(source.Path(), "hidden-git")))
 	registered, err := db.GetOrCreateRepo(clone)
 	require.NoError(t, err)
@@ -842,21 +822,11 @@ func TestScheduledAnalysisMissingAttributes(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	source := testutil.NewGitRepo(t)
 	source.CommitFiles(map[string]string{"nested/.gitattributes": "a.go binary\n", "nested/a.go": "package a\n", "b.go": "package b\n"}, "add files")
-	runGit := func(dir string, args ...string) string {
-		t.Helper()
-		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", out)
-		return string(out)
-	}
-	runGit(source.Path(), "config", "uploadpack.allowFilter", "true")
-	clone := filepath.Join(t.TempDir(), "clone")
-	runGit(t.TempDir(), "clone", "--no-checkout", "--filter=blob:none", "file://"+source.Path(), clone)
-	attribute := strings.TrimSpace(runGit(source.Path(), "rev-parse", "HEAD:nested/.gitattributes"))
-	runGit(clone, "show", "HEAD:nested/a.go")
-	runGit(clone, "show", "HEAD:b.go")
-	require.Contains(t, runGit(clone, "rev-list", "--objects", "--missing=print", "HEAD"), "?"+attribute)
+	clone := partialClone(t, source)
+	attribute := strings.TrimSpace(runGit(t, source.Path(), "rev-parse", "HEAD:nested/.gitattributes"))
+	runGit(t, clone, "show", "HEAD:nested/a.go")
+	runGit(t, clone, "show", "HEAD:b.go")
+	require.Contains(t, runGit(t, clone, "rev-list", "--objects", "--missing=print", "HEAD"), "?"+attribute)
 	registered, err := db.GetOrCreateRepo(clone)
 	require.NoError(t, err)
 	yes, interval := true, "1h"
@@ -869,7 +839,7 @@ func TestScheduledAnalysisMissingAttributes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, []string{"b.go"}, jobs[0].AnalysisFiles)
-	assert.Contains(t, runGit(clone, "rev-list", "--objects", "--missing=print", "HEAD"), "?"+attribute)
+	assert.Contains(t, runGit(t, clone, "rev-list", "--objects", "--missing=print", "HEAD"), "?"+attribute)
 }
 
 func TestScheduledAnalysisSourceWithControlCharacter(t *testing.T) {
@@ -888,4 +858,22 @@ func TestScheduledAnalysisSourceWithControlCharacter(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, []string{"a.js", "b.go"}, jobs[0].AnalysisFiles)
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	return string(out)
+}
+
+// partialClone clones source without blobs so tests control which are available.
+func partialClone(t *testing.T, source *testutil.TestRepo) string {
+	t.Helper()
+	runGit(t, source.Path(), "config", "uploadpack.allowFilter", "true")
+	clone := filepath.Join(t.TempDir(), "clone")
+	runGit(t, t.TempDir(), "clone", "--no-checkout", "--filter=blob:none", "file://"+source.Path(), clone)
+	return clone
 }

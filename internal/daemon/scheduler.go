@@ -104,40 +104,19 @@ func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repo
 	last, loaded := w.lastRun[repo.ID]
 	if !loaded {
 		var err error
-		last, err = w.server.db.AnalysisScheduleLastRun(ctx, repo.ID)
-		if err != nil {
+		if last, err = w.loadState(ctx, repo.ID); err != nil {
 			return err
 		}
-		w.lastRun[repo.ID] = last
-	}
-	if w.failedTypes == nil {
-		w.failedTypes = map[int64]map[string]bool{}
-	}
-	retry := w.failedTypes[repo.ID]
-	configured := map[string]bool{}
-	for _, typ := range schedule.Types {
-		configured[typ] = true
-	}
-	for typ := range retry {
-		if !configured[typ] {
-			delete(retry, typ)
-		}
-	}
-	if !last.IsZero() && now.Sub(last) < schedule.Interval {
-		if len(retry) == 0 {
-			return nil
-		}
-		var types []string
-		for _, typ := range schedule.Types {
-			if retry[typ] {
-				types = append(types, typ)
-			}
-		}
-		schedule.Types = types
 	}
 	retrying := !last.IsZero() && now.Sub(last) < schedule.Interval
+	if retrying {
+		var err error
+		if schedule.Types, err = w.retryTypes(ctx, repo.ID, last, schedule.Types); err != nil || len(schedule.Types) == 0 {
+			return err
+		}
+	}
 	failed, scheduleErr := w.scheduleRepoTypes(ctx, repo, repoCfg, global, schedule)
-	w.failedTypes[repo.ID] = failed
+	scheduleErr = errors.Join(scheduleErr, w.saveRetry(ctx, repo.ID, failed))
 	if retrying {
 		return scheduleErr
 	}
@@ -146,6 +125,64 @@ func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repo
 	}
 	w.lastRun[repo.ID] = now
 	return scheduleErr
+}
+
+// loadState restores a repo's last pass and persisted retries after a restart.
+func (w *analysisScheduler) loadState(ctx context.Context, repoID int64) (time.Time, error) {
+	last, err := w.server.db.AnalysisScheduleLastRun(ctx, repoID)
+	if err != nil {
+		return last, err
+	}
+	saved, err := w.server.db.AnalysisScheduleRetry(ctx, repoID)
+	if err != nil {
+		return last, err
+	}
+	retry := map[string]bool{}
+	for _, typ := range saved {
+		retry[typ] = true
+	}
+	w.remember(repoID, retry)
+	w.lastRun[repoID] = last
+	return last, nil
+}
+
+// remember keeps the types to retry. A true value marks an enqueue failure,
+// which is also persisted; other failures are retried only while the daemon runs.
+func (w *analysisScheduler) remember(repoID int64, failed map[string]bool) {
+	if w.failedTypes == nil {
+		w.failedTypes = map[int64]map[string]bool{}
+	}
+	w.failedTypes[repoID] = failed
+}
+
+func (w *analysisScheduler) saveRetry(ctx context.Context, repoID int64, failed map[string]bool) error {
+	w.remember(repoID, failed)
+	var persist []string
+	for typ, enqueue := range failed {
+		if enqueue {
+			persist = append(persist, typ)
+		}
+	}
+	sort.Strings(persist)
+	return w.server.db.SetAnalysisScheduleRetry(ctx, repoID, persist)
+}
+
+// retryTypes returns the configured types that failed, or whose latest job
+// from the current pass failed.
+func (w *analysisScheduler) retryTypes(ctx context.Context, repoID int64, last time.Time, types []string) ([]string, error) {
+	var retry []string
+	for _, typ := range types {
+		jobs, err := w.server.db.ListJobs("", "", 1, 0, storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
+		if err != nil {
+			return nil, err
+		}
+		_, failed := w.failedTypes[repoID][typ]
+		failedJob := len(jobs) > 0 && jobs[0].Status == storage.JobStatusFailed && jobs[0].Source == storage.JobSourceScheduled && jobs[0].EnqueuedAt.Add(time.Second).After(last)
+		if failedJob || failed {
+			retry = append(retry, typ)
+		}
+	}
+	return retry, nil
 }
 
 type changeSet struct {
@@ -171,7 +208,7 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 	defer func() {
 		if setupFailed && result != nil {
 			for _, typ := range schedule.Types {
-				failed[typ] = true
+				failed[typ] = false
 			}
 		}
 	}()
@@ -200,7 +237,7 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 			}
 		}
 		if err != nil {
-			failed[typ] = true
+			failed[typ] = false
 			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			continue
 		}
@@ -226,7 +263,7 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 	for i, candidate := range ordered {
 		pathsForAttributes[i] = candidate.path
 	}
-	binary, err := git.BinaryAttributes(ctx, repo.RootPath, head, pathsForAttributes)
+	binary, unknown, err := git.BinaryAttributes(ctx, repo.RootPath, head, pathsForAttributes)
 	if err != nil {
 		return failed, err
 	}
@@ -246,7 +283,7 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 		if len(selected) == schedule.MaxFiles {
 			break
 		}
-		if missing[candidate.oid] {
+		if missing[candidate.oid] || unknown[candidate.path] {
 			continue
 		}
 		if binary[candidate.path] {
@@ -259,7 +296,7 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 				return failed, ctx.Err()
 			}
 			for typ := range candidate.due {
-				failed[typ] = true
+				failed[typ] = false
 			}
 			errs = append(errs, fmt.Errorf("size %s: %w", candidate.path, err))
 			_ = reader.Close()
@@ -279,7 +316,7 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 				return failed, ctx.Err()
 			}
 			for typ := range candidate.due {
-				failed[typ] = true
+				failed[typ] = false
 			}
 			errs = append(errs, fmt.Errorf("read %s: %w", candidate.path, err))
 			_ = reader.Close()
@@ -289,7 +326,7 @@ func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.
 			}
 			continue
 		}
-		if analyze.IsBinary(string(content)) || !strings.HasPrefix(http.DetectContentType(content), "text/") {
+		if !isSourceContent(content) {
 			skipped = append(skipped, candidate.path)
 			continue
 		}
@@ -481,4 +518,11 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 		return fmt.Errorf("enqueue analysis: %v", result.Body)
 	}
 	return nil
+}
+
+// isSourceContent accepts valid UTF-8 text, including control bytes, and rejects
+// content with a binary signature such as PDF.
+func isSourceContent(content []byte) bool {
+	kind := http.DetectContentType(content)
+	return !analyze.IsBinary(string(content)) && (strings.HasPrefix(kind, "text/") || kind == "application/octet-stream")
 }

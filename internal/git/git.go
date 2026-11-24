@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -3287,10 +3288,15 @@ func (r *TreeBlobReader) Close() error {
 }
 
 // BinaryAttributes finds paths marked -diff in the selected commit's attributes.
-func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string) (map[string]bool, error) {
+// Paths governed by a committed .gitattributes that is unavailable locally are
+// reported as unknown rather than classified.
+func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string) (binary, unknown map[string]bool, err error) {
+	if unknown, err = unavailableAttributes(ctx, repoPath, sha, paths); err != nil {
+		return nil, nil, err
+	}
 	dir, err := os.MkdirTemp("", "roborev-attributes-")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer os.RemoveAll(dir)
 	index := filepath.Join(dir, "index")
@@ -3298,7 +3304,7 @@ func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string)
 	readTree.Dir = repoPath
 	readTree.Env = append(readTree.Environ(), "GIT_INDEX_FILE="+index, "GIT_NO_LAZY_FETCH=1")
 	if out, err := readTree.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("read attributes tree: %s: %w", out, err)
+		return nil, nil, fmt.Errorf("read attributes tree: %s: %w", out, err)
 	}
 	cmd := newGitCmdContext(ctx, "check-attr", "--cached", "-z", "--stdin", "diff")
 	cmd.Dir = repoPath
@@ -3306,14 +3312,48 @@ func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string)
 	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("check binary attributes: %w", err)
+		return nil, nil, fmt.Errorf("check binary attributes: %w", err)
 	}
+	return unsetPaths(out), unknown, nil
+}
+
+// unsetPaths parses check-attr -z output into the paths whose attribute is unset.
+func unsetPaths(out []byte) map[string]bool {
 	fields := bytes.Split(out, []byte{0})
-	binary := make(map[string]bool)
+	unset := make(map[string]bool)
 	for i := 0; i+2 < len(fields); i += 3 {
 		if string(fields[i+2]) == "unset" {
-			binary[string(fields[i])] = true
+			unset[string(fields[i])] = true
 		}
 	}
-	return binary, nil
+	return unset
+}
+
+// unavailableAttributes finds paths governed by a committed .gitattributes
+// blob that is missing locally, without fetching it.
+func unavailableAttributes(ctx context.Context, repoPath, sha string, paths []string) (map[string]bool, error) {
+	files, err := ListRefFiles(ctx, repoPath, sha)
+	if err != nil {
+		return nil, err
+	}
+	var attributes []TreeBlob
+	for _, file := range files {
+		if path.Base(file.Path) == ".gitattributes" {
+			attributes = append(attributes, file)
+		}
+	}
+	missing, err := MissingTreeBlobs(ctx, repoPath, attributes)
+	if err != nil {
+		return nil, err
+	}
+	unknown := map[string]bool{}
+	for _, file := range attributes {
+		dir := path.Dir(file.Path)
+		for _, p := range paths {
+			if missing[file.OID] && (dir == "." || strings.HasPrefix(p, dir+"/")) {
+				unknown[p] = true
+			}
+		}
+	}
+	return unknown, nil
 }
