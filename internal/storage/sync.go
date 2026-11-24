@@ -315,8 +315,9 @@ func (db *DB) BackfillSourceMachineID() error {
 // This is used when syncing to a new Postgres database to ensure
 // all data gets re-synced.
 func (db *DB) ClearAllSyncedAt() error {
-	// Preserve unknown synced origins before clearing the evidence that they synced.
-	if _, err := db.Exec(`UPDATE review_jobs SET source_machine_id = CASE WHEN source_machine_id IS NULL AND synced_at IS NOT NULL THEN '' ELSE source_machine_id END, synced_at = NULL`); err != nil {
+	// Record unknown synced origins as the nil UUID before clearing the
+	// cursor, so BackfillSourceMachineID cannot later claim them as local.
+	if _, err := db.Exec(`UPDATE review_jobs SET source_machine_id = CASE WHEN source_machine_id IS NULL AND synced_at IS NOT NULL THEN ? ELSE source_machine_id END, synced_at = NULL`, uuid.Nil().String()); err != nil {
 		return fmt.Errorf("clear review_jobs synced_at: %w", err)
 	}
 	// Clear synced_at on reviews
@@ -804,7 +805,7 @@ type SyncableReview struct {
 
 const reviewsToSyncQuery = `
 		SELECT
-			r.id, r.uuid, r.job_id, j.uuid, j.enqueued_at, COALESCE(NULLIF(j.source_machine_id, ''), '00000000-0000-0000-0000-000000000000'),
+			r.id, r.uuid, r.job_id, j.uuid, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'),
 			r.agent, r.output, r.closed,
 			r.verdict_bool, r.structured_output, r.reviewed_file_count, r.excluded_file_count,
 			r.updated_by_machine_id, r.created_at, r.updated_at,
@@ -1026,7 +1027,7 @@ func (s *pullSession) upsertPulledJob(ctx context.Context, j PulledJob, repoID i
 	var sourceMachineID uuid.UUID
 	var localReviewUUID sql.NullString
 	var pendingReview bool
-	err = s.queryRow(ctx, `SELECT j.id, j.enqueued_at, COALESCE(NULLIF(j.source_machine_id, ''), '00000000-0000-0000-0000-000000000000'), rv.uuid,
+	err = s.queryRow(ctx, `SELECT j.id, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'), rv.uuid,
 		COALESCE(rv.synced_at IS NULL AND rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0)
 		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`, j.UUID).
 		Scan(&localID, &enqueuedAt, &sourceMachineID, &localReviewUUID, &pendingReview)
@@ -1212,7 +1213,7 @@ func (s *pullSession) upsertPulledReview(ctx context.Context, r PulledReview) (b
 	var sourceMachineID uuid.UUID
 	err := s.queryRow(ctx, `SELECT j.id, j.job_type, COALESCE(j.min_severity, ''), j.enqueued_at, j.status,
 		COALESCE(j.source_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0),
-		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(rv.updated_at, ''), COALESCE(NULLIF(j.source_machine_id, ''), '00000000-0000-0000-0000-000000000000'),
+		rv.id IS NOT NULL, COALESCE(rv.uuid = ?, 0), COALESCE(rv.created_at, ''), COALESCE(rv.updated_at, ''), COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'),
 		COALESCE(rv.synced_at IS NULL AND rv.updated_by_machine_id = (SELECT value FROM sync_state WHERE key = 'machine_id'), 0)
 		FROM review_jobs j LEFT JOIN reviews rv ON rv.job_id = j.id WHERE j.uuid = ?`,
 		r.UUID, r.JobUUID).Scan(&jobID, &jobType, &threshold, &enqueuedAt, &status,

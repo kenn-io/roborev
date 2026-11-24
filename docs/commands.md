@@ -672,6 +672,15 @@ With [PostgreSQL sync](/docs/advanced/postgres-sync/), a change pulled from
 another machine keeps the `updated_at` that machine recorded. Overlap the bound
 by more than your sync delay so those changes are not missed.
 
+Older releases exported the local machine as `source_machine_id` for synced
+reviews whose origin was unknown. The upgrade that fixes this keeps each
+review's stored `updated_at`, which sync uses to order edits. Instead, the
+export reports the upgrade time as `updated_at` for those reviews, so the next
+`--updated-since` pull returns them once. Consumers holding an older snapshot
+should replace `source_machine_id` from that pull. Reviews an older release
+already stamped with the local machine stay indistinguishable from local
+reviews.
+
 !!! warning "Review content may be sensitive"
 
     The `content` profile exports the review text in `document` and `content`.

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"uuid"
 )
 
 // SQLite schema changes are numbered migrations recorded in
@@ -57,7 +59,11 @@ var schemaMigrations = []schemaMigration{
 	{21, "normalize unknown synced job origins", migrateUnknownSyncedJobOrigins},
 }
 
-// preserveUnknownSyncedJobOrigins protects unknown origins from the frozen baseline.
+// preserveUnknownSyncedJobOrigins runs before the frozen baseline, which
+// stamps every NULL origin with the local machine. Synced jobs with a NULL
+// origin came from a machine this database cannot name, so mark them with the
+// empty string, which the baseline's session-history seed also skips.
+// Migration 21 converts the marker to the nil UUID.
 func preserveUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
 	for _, column := range []string{"source_machine_id", "synced_at"} {
 		exists, err := hasColumn(ctx, db, "review_jobs", column)
@@ -69,24 +75,15 @@ func preserveUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
 	return err
 }
 
+// migrateUnknownSyncedJobOrigins stores unknown synced origins as the nil
+// UUID that pulled jobs and review uploads already use. It leaves
+// reviews.updated_at alone because sync orders review edits by it; export
+// reads this migration's applied_at instead. Jobs an older baseline already
+// stamped with the local machine cannot be told apart from local jobs.
 func migrateUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
-	// Retain the empty marker when sync cursors are cleared. Rows already
-	// stamped by an older baseline cannot be distinguished from local jobs.
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	now := preciseTimestampAt(time.Now())
-	if _, err = tx.ExecContext(ctx, `UPDATE reviews SET updated_at = ?1 WHERE job_id IN
-		(SELECT id FROM review_jobs WHERE COALESCE(source_machine_id, '') = '' AND synced_at IS NOT NULL)
-		AND COALESCE(`+sqlitePreciseJulianExpr("updated_at")+`, 0) < `+sqlitePreciseJulianExpr("?1"), now); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = '' WHERE source_machine_id IS NULL AND synced_at IS NOT NULL`); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err := db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = ?
+		WHERE source_machine_id = '' OR (source_machine_id IS NULL AND synced_at IS NOT NULL)`, uuid.Nil().String())
+	return err
 }
 
 func migrateCheckLogLabel(ctx context.Context, db *DB) error {

@@ -523,6 +523,7 @@ func TestUpsertPulledJob_ClearsModelAndProviderFields(t *testing.T) {
 
 func TestClearAllSyncedAtPreservesUnknownOrigins(t *testing.T) {
 	t.Parallel()
+	assert := assert.New(t)
 	db := openTestDB(t)
 	defer db.Close()
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -533,17 +534,26 @@ func TestClearAllSyncedAtPreservesUnknownOrigins(t *testing.T) {
 	require.NoError(t, db.BackfillSourceMachineID())
 	job, err := db.GetJobByID(review.JobID)
 	require.NoError(t, err)
-	require.Nil(t, job.SourceMachineID)
-	jobs, err := db.ListJobs("", "", 10, 0)
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	assert.Nil(t, jobs[0].SourceMachineID)
+	require.NotNil(t, job.SourceMachineID)
+	assert.Equal(uuid.Nil(), *job.SourceMachineID)
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata})
 	require.NoError(t, err)
 	require.Len(t, page.Reviews, 1)
-	assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
+	assert.Equal(uuid.Nil(), page.Reviews[0].SourceMachineID)
 
-	// A later pull must also read the marker as an unknown UUID.
-	pulled := PulledJob{UUID: *job.UUID, RepoIdentity: repo.RootPath, GitRef: job.GitRef, Agent: "test", JobType: JobTypeReview, Status: string(JobStatusDone), SourceMachineID: testUUID("remote-machine"), EnqueuedAt: time.Now(), UpdatedAt: time.Now(), CurrentReviewUUID: review.UUID}
-	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	// A local edit uploads against the nil origin, and its acknowledgment
+	// must match that same value to clear the pending review.
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	require.NoError(t, db.MarkJobSynced(review.JobID))
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET updated_by_machine_id = ?, synced_at = NULL WHERE id = ?`, machineID, review.ID)
+	require.NoError(t, err)
+	pending, err := db.GetReviewsToSync(machineID, 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(uuid.Nil(), pending[0].JobSourceMachineID)
+	require.NoError(t, db.MarkReviewsSynced(pending))
+	pending, err = db.GetReviewsToSync(machineID, 10)
+	require.NoError(t, err)
+	assert.Empty(pending)
 }
