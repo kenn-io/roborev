@@ -10,8 +10,8 @@ All notable changes to roborev, grouped by minor release.
 **Bug fixes**
 
 - Scheduled analysis defaults to 20 files per run when `max_files` is omitted.
-    It considers code files, skips binary and oversized files, and retries failed
-    analysis types at the next check. See
+    It considers code files, skips binary and oversized files, and retries
+    failed analysis types at the next check. See
     [Scheduled analysis](/docs/configuration/#scheduled-analysis).
 
 ## 0.76.0
