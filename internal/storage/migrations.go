@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"uuid"
 )
 
 // SQLite schema changes are numbered migrations recorded in
@@ -54,6 +55,42 @@ var schemaMigrations = []schemaMigration{
 	{18, "session CLI provenance", migrateSessionCLI},
 	{19, "CI default-branch commit reviews", migrateCIBranchReviews},
 	{20, "CI checker log label", migrateCheckLogLabel},
+	{21, "normalize unknown synced job origins", migrateUnknownSyncedJobOrigins},
+}
+
+// preserveUnknownSyncedJobOrigins runs before the frozen baseline, which
+// stamps every NULL origin with the local machine. Synced jobs with a NULL
+// origin came from a machine this database cannot name, so mark them with the
+// empty string, which the baseline's session-history seed also skips.
+// Migration 21 converts the marker to the nil UUID.
+func preserveUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
+	for _, column := range []string{"source_machine_id", "synced_at"} {
+		exists, err := hasColumn(ctx, db, "review_jobs", column)
+		if err != nil || !exists {
+			return err
+		}
+	}
+	_, err := db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = '' WHERE source_machine_id IS NULL AND synced_at IS NOT NULL`)
+	return err
+}
+
+// migrateUnknownSyncedJobOrigins stores the empty marker on synced jobs as the
+// nil UUID that pulled jobs and review uploads already use. Unsynced empty
+// origins belong to this machine. It leaves reviews.updated_at alone because
+// sync orders review edits by it. Jobs an older baseline stamped with the
+// local machine cannot be told apart from local jobs.
+func migrateUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = ?
+		WHERE source_machine_id = '' AND synced_at IS NULL`, machineID); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = ?
+		WHERE source_machine_id = '' AND synced_at IS NOT NULL`, uuid.Nil().String())
+	return err
 }
 
 func migrateCheckLogLabel(ctx context.Context, db *DB) error {
@@ -187,6 +224,11 @@ func (db *DB) runSchemaMigrations(ctx context.Context, migrations []schemaMigrat
 	for _, m := range migrations {
 		if m.version <= current {
 			continue
+		}
+		if m.version == 1 {
+			if err := preserveUnknownSyncedJobOrigins(ctx, db); err != nil {
+				return fmt.Errorf("preserve unknown synced job origins: %w", err)
+			}
 		}
 		log.Printf("Database migration %d: %s", m.version, m.name)
 		if err := m.apply(ctx, db); err != nil {

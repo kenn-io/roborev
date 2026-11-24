@@ -34,6 +34,7 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 	zeroSource := seedCompletedExportReview(t, db, repo.ID, "3333333333333333333333333333333333333333", "2026-06-29 00:00:02", false)
 	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, uuid.Nil(), zeroSource.JobID)
 	require.NoError(t, err)
+	local := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:03", false)
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 	remoteID := testUUID("machine-a")
@@ -50,16 +51,37 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 		t.Run(string(profile), func(t *testing.T) {
 			page, err := db.ExportReviews(ExportReviewsOptions{Profile: profile})
 			require.NoError(t, err)
-			require.Len(t, page.Reviews, 3)
+			require.Len(t, page.Reviews, 4)
 			byID := make(map[uuid.UUID]ExportReview)
 			for _, review := range page.Reviews {
 				byID[review.ReviewID] = review
 				assert.Equal(t, machineID, review.ExportedByMachineID)
 			}
-			assert.Equal(t, machineID, byID[*legacy.UUID].SourceMachineID)
-			assert.Equal(t, machineID, byID[*zeroSource.UUID].SourceMachineID)
+			assert.Equal(t, uuid.Nil(), byID[*legacy.UUID].SourceMachineID)
+			assert.Equal(t, uuid.Nil(), byID[*zeroSource.UUID].SourceMachineID)
+			assert.Equal(t, machineID, byID[*local.UUID].SourceMachineID)
 			assert.Equal(t, remoteID, byID[pulledID].SourceMachineID)
 		})
+	}
+}
+
+func TestExportReviewsOmitsUnknownOrigin(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	review := seedCompletedExportReview(t, db, repo.ID, "4444444444444444444444444444444444444444", "2026-06-29 00:00:01", false)
+	for _, source := range []any{nil, "", uuid.Nil()} {
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, source, review.JobID)
+		require.NoError(t, err)
+		page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata})
+		require.NoError(t, err)
+		require.Len(t, page.Reviews, 1)
+		assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
+		raw, err := jsonv2.Marshal(page.Reviews[0])
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), `"source_machine_id"`)
+		assert.Contains(t, string(raw), `"exported_by_machine_id"`)
 	}
 }
 

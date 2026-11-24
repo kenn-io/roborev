@@ -38,7 +38,7 @@ export interface ExportReview {
   /** @nullable */
   resume_source_job_uuid: string | null;
   review_id: string;
-  /** The roborev machine that ran the review. Another machine's ID for a review pulled through sync. */
+  /** The roborev machine that ran the review. Omitted when unknown. */
   source_machine_id?: string;
   status: string;
   subagents: ExportSubagent[];

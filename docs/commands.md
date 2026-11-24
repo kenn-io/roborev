@@ -511,7 +511,7 @@ Both profiles include these fields on each top-level review:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `source_machine_id` | UUID | Machine that ran the review. It differs from `exported_by_machine_id` when sync pulled the review from another machine |
+| `source_machine_id` | UUID | Machine that ran the review. Omitted when unknown. It differs from `exported_by_machine_id` when sync pulled the review from another machine |
 | `exported_by_machine_id` | UUID | Machine running the export |
 
 A daemon that predates these fields omits both.
@@ -671,6 +671,10 @@ Consumers that track closed state should combine two pulls:
 With [PostgreSQL sync](/docs/advanced/postgres-sync/), a change pulled from
 another machine keeps the `updated_at` that machine recorded. Overlap the bound
 by more than your sync delay so those changes are not missed.
+
+After upgrading, run one full export without `--updated-since` to correct
+`source_machine_id` on reviews exported by older releases. Reviews already
+stamped with the local machine remain indistinguishable from local reviews.
 
 !!! warning "Review content may be sensitive"
 

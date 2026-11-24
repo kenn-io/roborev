@@ -27,6 +27,10 @@ func TestBackfillSourceMachineID(t *testing.T) {
 	// Let's clear it to test the backfill
 	h.clearSourceMachineID(job.ID)
 
+	synced := h.createPendingJob("def456")
+	_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = NULL, synced_at = datetime('now') WHERE id = ?`, synced.ID)
+	require.NoError(t, err)
+
 	// Run backfill
 	err = h.db.BackfillSourceMachineID()
 	require.NoError(t, err, "BackfillSourceMachineID failed")
@@ -35,6 +39,11 @@ func TestBackfillSourceMachineID(t *testing.T) {
 	var newSourceMachineID uuid.UUID
 	err = h.db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&newSourceMachineID)
 	require.NoError(t, err, "Query after backfill failed")
+
+	var syncedSource sql.Null[uuid.UUID]
+	err = h.db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, synced.ID).Scan(&syncedSource)
+	require.NoError(t, err)
+	assert.False(t, syncedSource.Valid)
 
 	machineID, _ := h.db.GetMachineID()
 	require.Equal(t, machineID, newSourceMachineID,
