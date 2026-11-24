@@ -83,8 +83,17 @@ func TestDecodeRejectsInvalidVersion3Findings(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
-	_, err := Decode(jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":"yes"}]}`))
+	for _, value := range []string{`null`, `"yes"`, `0`, `[]`} {
+		_, err := Decode(jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":` + value + `}]}`))
+		require.Error(t, err, "unlikely=%s", value)
+	}
+	_, err := Decode(jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":null},"verdicts":[]}]}}`))
 	require.Error(t, err)
+	for _, value := range []string{`true`, `false`} {
+		doc, err := Decode(jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":` + value + `}]}`))
+		require.NoError(t, err)
+		assert.Equal(t, value == "true", doc.Findings[0].Unlikely)
+	}
 }
 
 func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
@@ -93,8 +102,14 @@ func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "need schema_version 3")
 	for _, raw := range []string{
+		`{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`,
+		`{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`,
+		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`,
+		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":null},"verdicts":[]}]}}`,
 		`{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":true}]}`,
 		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":true}]}`,
+		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":false}]}`,
+		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":"yes"}]}`,
 		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":true},"verdicts":[]}]}}`,
 	} {
 		_, err := Decode(jsontext.Value(raw))
