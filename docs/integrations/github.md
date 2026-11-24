@@ -890,24 +890,23 @@ saving, or reloading configuration. If confidence removes a finding that passed
 the severity filter and no findings remain, the comment says "No findings match
 the comment filters." Confidence does not filter prose.
 
-By default, structured CI comments apply the confidence floor, then fold Low
-and unlikely findings into a collapsible section. The finding cap applies to
-the main list. Set `comment_show_all = true` globally or per repository
-to show every finding inline, ignoring the comment severity and confidence
-floors and finding cap. The setting also applies to raw fallback comments and
-to GitHub comments from `roborev ci review`. Stored reviews retain every finding.
+By default, structured CI comments apply the confidence floor, then fold Low and
+unlikely findings into a collapsible section. The finding cap applies to the
+main list. Set `comment_show_all = true` globally or per repository to show
+every finding inline, ignoring the comment severity and confidence floors and
+finding cap. The setting also applies to raw fallback comments and to GitHub
+comments from `roborev ci review`. Stored reviews retain every finding.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
 synthesis has no findings after filtering, even if the stored review has
 findings. A comment with only folded findings is also suppressed.
-Severity-parsed prose is also silent when no labelled findings or
-unlabelled blocks survive. Verbatim prose and legacy Markdown remain
-publishable, even if their text says the review is clean. Roborev does not infer
-cleanliness from text or the stored verdict. With `upsert_comments = true`,
-silent reviews update an existing marker comment to the no-findings line.
-Missing or deleted comments are successful no-ops; cleanup never creates a
-replacement. Permission and transient delivery errors keep the normal error and
-retry behavior.
+Severity-parsed prose is also silent when no labelled findings or unlabelled
+blocks survive. Verbatim prose and legacy Markdown remain publishable, even if
+their text says the review is clean. Roborev does not infer cleanliness from
+text or the stored verdict. With `upsert_comments = true`, silent reviews update
+an existing marker comment to the no-findings line. Missing or deleted comments
+are successful no-ops; cleanup never creates a replacement. Permission and
+transient delivery errors keep the normal error and retry behavior.
 
 All four settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
 explicit repo cap of `0` restores unlimited findings; a confidence floor of `0`
@@ -1053,10 +1052,10 @@ original review unchanged.
 The stored review document records the check in its `check` member: whether the
 checker completed or failed, and for every finding it received, whether the
 finding was kept or dropped, with the checker's classification, evidence, and
-reason. Sync,
-`roborev export reviews`, and the API carry this record; the posted PR comment
-does not. See the [review document format](/docs/commands/#exporting-reviews).
-The job log also records each verdict.
+reason. Sync, `roborev export reviews`, and the API carry this record; the
+posted PR comment does not. See the
+[review document format](/docs/commands/#exporting-reviews). The job log also
+records each verdict.
 
 ## Rewriting checked findings
 

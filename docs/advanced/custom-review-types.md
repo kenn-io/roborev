@@ -223,8 +223,8 @@ The schema is fixed by roborev. The agent must return:
 ```
 
 `schema_version`, `summary`, `verdict`, and `findings` are required. The current
-schema version is `4`. Stored versions `1`, `2`, and `3` still load, and
-Roborev rejects missing or unsupported versions. `verdict` is `pass`, `fail`, or
+schema version is `4`. Stored versions `1`, `2`, and `3` still load, and Roborev
+rejects missing or unsupported versions. `verdict` is `pass`, `fail`, or
 `unable_to_review`.
 
 Every finding requires these members:
