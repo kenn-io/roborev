@@ -3,6 +3,7 @@ package review
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 
@@ -206,10 +207,11 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 }
 
 func TestTruncateCommentToBudget(t *testing.T) {
-	body := "<details><summary>nit</summary>" + strings.Repeat("x", 100) + "</details>"
+	body := "<details><summary>nit</summary>" + strings.Repeat("é", 100) + "</details>"
 	for _, limit := range []int{0, 3, 20, 50, len(body)} {
 		got := TruncateCommentTo(body, limit, "...")
 		assert.LessOrEqual(t, len(got), limit)
+		assert.True(t, utf8.ValidString(got))
 		if strings.Contains(got, "<details>") {
 			assert.Contains(t, got, "</details>")
 		}

@@ -4291,8 +4291,6 @@ func preparePanelReviewComment(cfg reviewpkg.CommentConfig, review *storage.Revi
 
 func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
 	var b strings.Builder
-	output := reviewpkg.FormatComment(prepared)
-	hasFold := strings.Contains(output, "<details>")
 
 	if headSHA != "" {
 		fmt.Fprintf(&b, "## roborev: Combined Review (`%s`)\n\n", gitpkg.ShortSHA(headSHA))
@@ -4300,9 +4298,7 @@ func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, re
 		switch verdict {
 		case "P":
 			b.WriteString("## roborev: Pass\n\n")
-			if !hasFold {
-				b.WriteString("No issues found.\n")
-			}
+			b.WriteString("No issues found.\n")
 		case "F":
 			b.WriteString("## roborev: Fail\n\n")
 		default:
@@ -4311,11 +4307,11 @@ func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, re
 	}
 
 	notice := prepared.OmissionNotice()
-	output = strings.TrimSuffix(output, notice)
+	output := strings.TrimSuffix(reviewpkg.FormatComment(prepared), notice)
 	if notice == "" && len(output) > reviewpkg.MaxCommentLen {
 		output = truncatePanelPRBodyForFooter(output, "", reviewpkg.MaxCommentLen)
 	}
-	if output != "" && (verdict != "P" || headSHA != "" || hasFold) {
+	if output != "" && (verdict != "P" || headSHA != "") {
 		b.WriteString(output)
 		b.WriteString("\n")
 	} else if verdict == "P" && headSHA != "" {
