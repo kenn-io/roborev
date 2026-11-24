@@ -384,3 +384,25 @@ func TestOpenPreservesUnknownSyncedJobOrigin(t *testing.T) {
 		require.NoError(t, db.Close())
 	}
 }
+
+func TestUnknownSyncedOriginMigrationFromVersion20(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, registerContentFunctions())
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:20]))
+	_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/origins", 3)
+	remote := testUUID("remote-machine")
+	origins := []any{nil, nil, remote}
+	synced := []any{"2024-01-01 00:00:00", nil, "2024-01-01 00:00:00"}
+	for i, job := range jobs {
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = ? WHERE id = ?`, origins[i], synced[i], job.ID)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	want := []sql.NullString{{String: uuid.Nil().String(), Valid: true}, {}, {String: remote.String(), Valid: true}}
+	for i, job := range jobs {
+		var origin sql.NullString
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&origin))
+		assert.Equal(t, want[i], origin)
+	}
+}
