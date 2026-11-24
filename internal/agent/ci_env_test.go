@@ -135,7 +135,7 @@ echo '> No issues found.'
 			assert.Contains(string(out), "OPENAI_API_KEY=provider-sentinel")
 			assert.Contains(string(out), "COPILOT_GITHUB_TOKEN=copilot-provider-sentinel")
 			assert.Equal("publisher-sentinel", os.Getenv("GH_TOKEN"), "parent keeps publishing auth")
-			if structured, ok := factory(command).(StructuredReviewAgent); ok {
+			if structured, ok := AsStructuredReviewAgent(factory(command)); ok {
 				require.NoError(t, os.Remove(capture))
 				_, runErr = structured.ReviewWithSchema(ctx, t.TempDir(), "HEAD", "review", []byte(`{"type":"object"}`), nil)
 				out, err = os.ReadFile(capture)

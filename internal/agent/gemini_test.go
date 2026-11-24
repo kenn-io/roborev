@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"io"
 	"os"
 	"path/filepath"
@@ -181,6 +182,7 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 			args := a.buildArgs(tc.agentic)
 
 			assertFlagValue(t, args, "--print-timeout", "30m")
+			assertFlagValue(t, args, "--model", "gemini-1.5-pro")
 			for _, flag := range tc.wantFlags {
 				assert.Contains(t, args, flag)
 			}
@@ -503,7 +505,7 @@ func TestParseAntigravityStreamJSON(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			input, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
 			require.NoError(t, err)
-			response, turnStarted, err := parseAntigravityStreamJSON(strings.NewReader(string(input)), nil)
+			response, turnStarted, err := parseAntigravityStreamJSON(strings.NewReader(string(input)), nil, false)
 			assert.Equal(t, tc.wantTurnStarted, turnStarted)
 			if tc.wantError != nil {
 				require.ErrorIs(t, err, tc.wantError)
@@ -806,33 +808,155 @@ func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
 	assert.False(antigravityVersionUsesPromptFlag("agy version 1.1.0"))
 }
 
-func TestGeminiAntigravityExplicitModelFailsClearly(t *testing.T) {
-	a := NewGeminiAgent("agy").WithModel("gemini-1.5-pro")
-
-	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", nil)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not support explicit Gemini model selection")
-}
-
-func TestGeminiAutoSelectedAntigravityExplicitModelFailsClearly(t *testing.T) {
-	skipIfWindows(t)
-
+// writeFakeAntigravity installs an agy that reports version, records its
+// arguments one per line, and prints stream as its stdout.
+func writeFakeAntigravity(t *testing.T, version, stream string) (string, string) {
+	t.Helper()
+	argsFile := filepath.Join(t.TempDir(), "args")
+	streamFile := filepath.Join(t.TempDir(), "stream.jsonl")
+	require.NoError(t, os.WriteFile(streamFile, []byte(stream), 0o600))
+	t.Setenv("ARGS_FILE", argsFile)
+	t.Setenv("STREAM_FILE", streamFile)
 	scriptPath := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
-echo "unexpected antigravity invocation"
+`+mockCLIVersionBlock(version)+`printf '%s\n' "$@" > "$ARGS_FILE"
+cat "$STREAM_FILE"
 `)
 	agyPath := filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, agyPath))
+	return agyPath, argsFile
+}
 
-	a := NewGeminiAgent(agyPath)
-	a.CommandAuto = true
-	a = a.WithModel("gemini-1.5-pro").(*GeminiAgent)
+func readFakeAntigravityArgs(t *testing.T, argsFile string) []string {
+	t.Helper()
+	argsBytes, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	return strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+}
 
-	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", nil)
+func TestGeminiAntigravityExplicitModelPassesModelFlag(t *testing.T) {
+	agyPath, argsFile := writeFakeAntigravity(t, "1.5.13",
+		`{"event":"result","result":{"status":"SUCCESS","response":"Model review\n","num_turns":1}}`+"\n")
+	a := NewGeminiAgent(agyPath).WithModel("gemini-4-neon-high")
+
+	result, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
+
+	require.NoError(t, err)
+	assert.Equal(t, "Model review", result)
+	assertFlagValue(t, readFakeAntigravityArgs(t, argsFile), "--model", "gemini-4-neon-high")
+}
+
+func TestGeminiAntigravityDefaultModelOmitsModelFlag(t *testing.T) {
+	agyPath, argsFile := writeFakeAntigravity(t, "1.5.13",
+		`{"event":"result","result":{"status":"SUCCESS","response":"Default review\n","num_turns":1}}`+"\n")
+
+	_, err := NewGeminiAgent(agyPath).Review(t.Context(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
+
+	require.NoError(t, err)
+	assert.NotContains(t, readFakeAntigravityArgs(t, argsFile), "--model")
+}
+
+func TestGeminiAntigravityExplicitModelNeedsModelFlagSupport(t *testing.T) {
+	// agy 1.1.9 print mode silently ran its default model despite --model.
+	agyPath, argsFile := writeFakeAntigravity(t, "1.1.9", "")
+	a := NewGeminiAgent(agyPath).WithModel("gemini-4-neon-high")
+
+	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not support explicit Gemini model selection")
+	assert.Contains(t, err.Error(), "ignores --model")
+	assert.NoFileExists(t, argsFile, "agy must not run a review on the wrong model")
+}
+
+const testReviewSchema = `{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string"}}}`
+
+func TestGeminiAntigravityReviewWithSchemaReturnsStructuredOutput(t *testing.T) {
+	agyPath, argsFile := writeFakeAntigravity(t, "1.5.13", strings.Join([]string{
+		`{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"{\"verdict\": \"pass\"}\n"}}`,
+		`{"event":"result","result":{"status":"SUCCESS","response":"{\"verdict\": \"pass\"}\n","num_turns":1,"structured_output":{"verdict":"pass"}}}`,
+	}, "\n")+"\n")
+	a := NewGeminiAgent(agyPath).WithModel("gemini-4-neon-high").(*GeminiAgent)
+
+	raw, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "sha", "prompt", jsontext.Value(testReviewSchema), &bytes.Buffer{})
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"verdict":"pass"}`, string(raw))
+	args := readFakeAntigravityArgs(t, argsFile)
+	schemaAt := slices.Index(args, "--json-schema")
+	require.GreaterOrEqual(t, schemaAt, 0, "args %v", args)
+	assert.JSONEq(t, testReviewSchema, args[schemaAt+1])
+	assertFlagValue(t, args, "--output-format", "stream-json")
+	assertFlagValue(t, args, "--model", "gemini-4-neon-high")
+}
+
+func TestGeminiAntigravityReviewWithSchemaRejectsMissingStructuredOutput(t *testing.T) {
+	agyPath, _ := writeFakeAntigravity(t, "1.5.13",
+		`{"event":"result","result":{"status":"SUCCESS","response":"LGTM, no issues.\n","num_turns":1}}`+"\n")
+
+	_, err := NewGeminiAgent(agyPath).ReviewWithSchema(t.Context(), t.TempDir(), "sha", "prompt", jsontext.Value(testReviewSchema), &bytes.Buffer{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no structured_output")
+	assert.Contains(t, err.Error(), "LGTM, no issues.")
+}
+
+func TestGeminiAntigravityReviewWithSchemaNeedsStreamJSON(t *testing.T) {
+	agyPath, argsFile := writeFakeAntigravity(t, "1.1.7", "")
+
+	_, err := NewGeminiAgent(agyPath).ReviewWithSchema(t.Context(), t.TempDir(), "sha", "prompt", jsontext.Value(testReviewSchema), &bytes.Buffer{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has no --json-schema")
+	assert.NoFileExists(t, argsFile)
+}
+
+func TestAntigravityJSONSchemaRewritesConstrainedNullableTypes(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "nullable integer with minimum",
+			in:   `{"type":"object","properties":{"line":{"type":["integer","null"],"minimum":1}}}`,
+			want: `{"type":"object","properties":{"line":{"anyOf":[{"type":"integer","minimum":1},{"type":"null"}]}}}`,
+		},
+		{
+			name: "nullable enum drops null from the typed branch",
+			in:   `{"type":["string","null"],"enum":["tests",null]}`,
+			want: `{"anyOf":[{"type":"string","enum":["tests"]},{"type":"null"}]}`,
+		},
+		{
+			name: "nested in array items",
+			in:   `{"type":"array","items":{"type":"object","properties":{"end":{"type":["null","integer"],"minimum":1}}}}`,
+			want: `{"type":"array","items":{"type":"object","properties":{"end":{"anyOf":[{"type":"integer","minimum":1},{"type":"null"}]}}}}`,
+		},
+		{
+			name: "bare nullable type array stays",
+			in:   `{"type":"object","properties":{"file":{"type":["string","null"]}}}`,
+			want: `{"type":"object","properties":{"file":{"type":["string","null"]}}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := antigravityJSONSchema(jsontext.Value(tt.in))
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.want, string(got))
+		})
+	}
+}
+
+func TestGeminiStructuredReviewDependsOnCommand(t *testing.T) {
+	assert := assert.New(t)
+	agy := NewGeminiAgent("/opt/bin/agy")
+	legacy := NewGeminiAgent("gemini")
+
+	assert.True(IsStructuredReviewAgent(agy))
+	assert.False(IsStructuredReviewAgent(legacy))
+	require.NoError(t, ValidateStructuredReviewSelection("ux", agy))
+	require.EqualError(t, ValidateStructuredReviewSelection("ux", legacy),
+		`agent "gemini" does not support schema-constrained reviews`)
+	require.NoError(t, ValidateStructuredReviewSelection("security", legacy))
 }
 
 func TestGemini_Review_Integration(t *testing.T) {

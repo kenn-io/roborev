@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -314,6 +315,9 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		if err := config.ValidateExperimentConfigs(globalCfg, nil, nil); err != nil {
 			return fmt.Errorf("validate global config: %w", err)
 		}
+		if err := agent.ValidateStructuredReviewConfig(nil, globalCfg); err != nil {
+			return fmt.Errorf("validate global config: %w", err)
+		}
 		return nil
 
 	case scopeLocal:
@@ -335,6 +339,9 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 			return fmt.Errorf("validate local config: %w", err)
 		}
 		if err := config.ValidateRepoExperimentConfigs(repoCfg, rawRepo); err != nil {
+			return fmt.Errorf("validate local config: %w", err)
+		}
+		if err := agent.ValidateStructuredReviewConfig(repoCfg, nil); err != nil {
 			return fmt.Errorf("validate local config: %w", err)
 		}
 		return nil
@@ -366,6 +373,9 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 			return fmt.Errorf("validate merged config: %w", err)
 		}
 		if err := config.ValidateExperimentConfigs(globalCfg, repoCfg, rawRepo); err != nil {
+			return fmt.Errorf("validate merged config: %w", err)
+		}
+		if err := agent.ValidateStructuredReviewConfig(repoCfg, globalCfg); err != nil {
 			return fmt.Errorf("validate merged config: %w", err)
 		}
 		return nil

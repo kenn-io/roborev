@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
@@ -42,8 +45,28 @@ type StructuredReviewAgent interface {
 	) (jsontext.Value, error)
 }
 
+// structuredReviewGate is implemented by a StructuredReviewAgent whose schema
+// support depends on the CLI it resolved to, such as Gemini, which has it only
+// when it runs agy.
+type structuredReviewGate interface {
+	StructuredReviewSupported() bool
+}
+
+// AsStructuredReviewAgent returns a as a StructuredReviewAgent when it can run
+// schema-constrained reviews with its resolved command.
+func AsStructuredReviewAgent(a Agent) (StructuredReviewAgent, bool) {
+	structured, ok := a.(StructuredReviewAgent)
+	if !ok {
+		return nil, false
+	}
+	if gate, ok := structured.(structuredReviewGate); ok && !gate.StructuredReviewSupported() {
+		return nil, false
+	}
+	return structured, true
+}
+
 func IsStructuredReviewAgent(a Agent) bool {
-	_, ok := a.(StructuredReviewAgent)
+	_, ok := AsStructuredReviewAgent(a)
 	return ok
 }
 
@@ -83,17 +106,9 @@ func ValidateStructuredReviewBackup(
 		return nil
 	}
 
-	var backup Agent
-	var err error
-	if isConfiguredACPAgentNameFromConfig(
-		backupName, resolution.GlobalConfig, resolution.RepoConfig,
-	) {
-		backup, err = configuredACPAgentFromConfig(
-			backupName, resolution.RepoConfig, resolution.GlobalConfig,
-		)
-	} else {
-		backup, err = Get(backupName)
-	}
+	backup, err := structuredReviewCandidate(
+		backupName, resolution.RepoConfig, resolution.GlobalConfig,
+	)
 	if err != nil {
 		return fmt.Errorf("resolve backup agent %q: %w", backupName, err)
 	}
@@ -101,6 +116,93 @@ func ValidateStructuredReviewBackup(
 		return fmt.Errorf("invalid backup agent: %w", err)
 	}
 	return nil
+}
+
+// structuredReviewCandidate returns the agent a name would run as, without
+// requiring it to be installed. An installed agent carries the command it
+// resolved to, which decides schema support for Gemini (agy versus the legacy
+// gemini CLI); an uninstalled one is checked as registered.
+func structuredReviewCandidate(
+	name string, repoCfg *config.RepoConfig, globalCfg *config.Config,
+) (Agent, error) {
+	if available, err := GetAvailableExactWithConfigFromConfig(repoCfg, name, globalCfg); err == nil {
+		return available, nil
+	}
+	if isConfiguredACPAgentNameFromConfig(name, globalCfg, repoCfg) {
+		return configuredACPAgentFromConfig(name, repoCfg, globalCfg)
+	}
+	return Get(name)
+}
+
+// ValidateStructuredReviewConfig rejects configuration that puts a custom
+// review type on an agent that cannot run schema-constrained reviews. It checks
+// each custom review type's own agent and each panel member, applying the
+// selection and backup checks that enqueue applies, so a configuration that
+// passes here does not fail later in the post-commit hook. Panels that do not
+// resolve are left to the panel validation that reports them.
+func ValidateStructuredReviewConfig(
+	repoCfg *config.RepoConfig, globalCfg *config.Config,
+) error {
+	merged := config.MergeReviewConfigFromConfig(repoCfg, globalCfg)
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(merged.Types)) {
+		reasoning, err := config.ResolveReviewReasoningForTypeFromConfig(
+			"", repoCfg, globalCfg, name,
+		)
+		if err != nil {
+			continue
+		}
+		if err := validateStructuredReviewWorkflow(
+			"", name, reasoning, repoCfg, globalCfg,
+		); err != nil {
+			errs = append(errs, fmt.Errorf("review type %q: %w", name, err))
+		}
+	}
+	for _, panel := range slices.Sorted(maps.Keys(merged.Panels)) {
+		members, _, err := config.ResolveCIPanel(panel, repoCfg, globalCfg)
+		if err != nil {
+			continue
+		}
+		for _, m := range members {
+			if err := validateStructuredReviewWorkflow(
+				m.Agent, m.ReviewType, m.Reasoning, repoCfg, globalCfg,
+			); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"panel %q member %q: %w", panel, m.Name, err,
+				))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func validateStructuredReviewWorkflow(
+	agentName, reviewType, reasoning string,
+	repoCfg *config.RepoConfig, globalCfg *config.Config,
+) error {
+	if config.IsBuiltInReviewType(reviewType) {
+		return nil
+	}
+	resolution, err := ResolveWorkflowConfigFromConfig(
+		agentName, repoCfg, globalCfg,
+		config.WorkflowForReviewType(reviewType), reasoning,
+	)
+	if err != nil {
+		return err
+	}
+	selected, err := structuredReviewCandidate(
+		resolution.PreferredAgent, repoCfg, globalCfg,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve agent %q: %w", resolution.PreferredAgent, err)
+	}
+	if err := ValidateStructuredReviewSelection(reviewType, selected); err != nil {
+		return err
+	}
+	return ValidateStructuredReviewBackup(
+		reviewType, resolution,
+		StorageNameFromConfig(selected.Name(), repoCfg, globalCfg),
+	)
 }
 
 // IsSchemaAgent reports whether a is a SchemaAgent.

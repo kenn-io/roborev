@@ -361,6 +361,107 @@ default_panel = "shared"
 	require.NoError(t, err)
 }
 
+func TestValidateConfigForScopeRejectsCustomTypeOnAgentWithoutSchemaOutput(t *testing.T) {
+	const reviewType = `
+[review.types.ux]
+template = "ux.md"
+`
+	tests := []struct {
+		name    string
+		global  string
+		path    []string
+		wantErr string
+	}{
+		{
+			name: "ACP panel member",
+			global: reviewType + `
+[acp.agy]
+command = "agy"
+args = ["acp", "--disable-telemetry"]
+model = "gemini-4-neon"
+
+[review.subagents.ux]
+agent = "acp.agy"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+`,
+			wantErr: `panel "full" member "ux": agent "acp.agy" does not support schema-constrained reviews`,
+		},
+		{
+			name: "review type agent",
+			global: `
+[review.types.ux]
+template = "ux.md"
+agent = "kilo"
+`,
+			wantErr: `review type "ux": agent "kilo" does not support schema-constrained reviews`,
+		},
+		{
+			name: "member backup agent",
+			global: `default_backup_agent = "kilo"
+` + reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+`,
+			wantErr: `panel "full" member "ux": invalid backup agent: agent "kilo" does not support schema-constrained reviews`,
+		},
+		{
+			name: "gemini resolved to the legacy CLI",
+			global: `
+[review.types.ux]
+template = "ux.md"
+agent = "gemini"
+`,
+			path:    []string{"gemini"},
+			wantErr: `review type "ux": agent "gemini" does not support schema-constrained reviews`,
+		},
+		{
+			name: "gemini resolved to agy",
+			global: `
+[review.types.ux]
+template = "ux.md"
+agent = "gemini"
+`,
+			path: []string{"agy", "gemini"},
+		},
+		{
+			name: "schema agent panel member",
+			global: reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin := t.TempDir()
+			for _, name := range tt.path {
+				require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+			}
+			t.Setenv("PATH", bin)
+			env := setupConfigEnv(t, tt.global, "")
+
+			err := validateConfigForScope(env.Resolver, scopeMerged)
+
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
 func TestConfigValidateCommand(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	cmd := configValidateCmd()
