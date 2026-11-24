@@ -63,6 +63,45 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 	}
 }
 
+func TestExportReviewsOmitsUnknownSyncedOrigin(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	review := seedCompletedExportReview(t, db, repo.ID, "4444444444444444444444444444444444444444", "2026-06-29 00:00:01", false)
+	for _, source := range []any{nil, "", uuid.Nil()} {
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = datetime('now') WHERE id = ?`, source, review.JobID)
+		require.NoError(t, err)
+		page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata})
+		require.NoError(t, err)
+		require.Len(t, page.Reviews, 1)
+		assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
+		raw, err := jsonv2.Marshal(page.Reviews[0])
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), `"source_machine_id"`)
+		assert.Contains(t, string(raw), `"exported_by_machine_id"`)
+	}
+}
+
+func TestOpenPreservesUnknownSyncedOrigin(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	review := seedCompletedExportReview(t, db, repo.ID, "5555555555555555555555555555555555555555", "2026-06-29 00:00:01", false)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = NULL, synced_at = datetime('now') WHERE id = ?`, review.JobID)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	db, err = Open(dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata})
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
+}
+
 func TestExportReviewsPagesUseCompletedIndex(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

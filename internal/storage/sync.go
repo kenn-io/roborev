@@ -291,7 +291,7 @@ func (db *DB) BackfillSourceMachineID() error {
 	}
 
 	// Backfill review_jobs
-	_, err = db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE source_machine_id IS NULL`, machineID)
+	_, err = db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE source_machine_id IS NULL AND synced_at IS NULL`, machineID)
 	if err != nil {
 		return fmt.Errorf("backfill review_jobs source_machine_id: %w", err)
 	}
