@@ -7,19 +7,6 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
-Default reviews rate minor code-quality findings, such as duplicate tests and
-misleading names, Low. Verified behavior and performance problems worth fixing
-before merge stay Medium or High even when their triggers are uncommon.
-Changed tests that leave important correctness, permission, or data-safety
-behavior unguarded are Medium or High according to the consequence of the
-regression they could miss.
-Test-value reviews rate harmless tests that protect no behavior Low. False
-regression coverage is Medium, or High when it misses an established defect
-causing data loss, a security breach, a crash, or incorrect results.
-
-With `review_min_severity = "medium"`, Low findings remain in the review but
-don't fail it or appear in GitHub comments.
-
 **Bug fixes**
 
 - Scheduled analysis defaults to 20 files per run when `max_files` is omitted.
