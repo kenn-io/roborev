@@ -2168,23 +2168,6 @@ func WithSource(source string) ListJobsOption {
 	return func(o *listJobsOptions) { o.source = source }
 }
 
-// appendAnalysisFilters adds the analysis type, source, and file conditions.
-func appendAnalysisFilters(conditions []string, args []any, o listJobsOptions) ([]string, []any) {
-	if o.analysisType != "" {
-		conditions = append(conditions, "j.analysis_type = ?")
-		args = append(args, o.analysisType)
-	}
-	if o.source != "" {
-		conditions = append(conditions, "j.source = ?")
-		args = append(args, o.source)
-	}
-	for _, analysisFile := range o.analysisFiles {
-		conditions = append(conditions, analysisFileCondition)
-		args = append(args, analysisFile, base64.StdEncoding.EncodeToString([]byte(analysisFile)))
-	}
-	return conditions, args
-}
-
 // analysisFileCondition matches exact membership in a well-formed file list.
 // Entries are plain strings or rawFileEntry objects for non-UTF-8 paths.
 const analysisFileCondition = `
@@ -2436,7 +2419,18 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 		}
 		conditions = append(conditions, clause+")")
 	}
-	conditions, args = appendAnalysisFilters(conditions, args, o)
+	if o.analysisType != "" {
+		conditions = append(conditions, "j.analysis_type = ?")
+		args = append(args, o.analysisType)
+	}
+	if o.source != "" {
+		conditions = append(conditions, "j.source = ?")
+		args = append(args, o.source)
+	}
+	for _, analysisFile := range o.analysisFiles {
+		conditions = append(conditions, analysisFileCondition)
+		args = append(args, analysisFile, base64.StdEncoding.EncodeToString([]byte(analysisFile)))
+	}
 	if o.branchEmpty {
 		conditions = append(conditions, emptyBranchCondition)
 	} else if o.branch != "" {

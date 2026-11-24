@@ -97,11 +97,6 @@ func (t AnalysisType) GetPrompt() (string, error) {
 	return string(data), nil
 }
 
-// IsBinary reports whether content requires binary encoding.
-func IsBinary(content string) bool {
-	return !utf8.ValidString(content) || strings.ContainsRune(content, 0)
-}
-
 // BuildPrompt constructs the full prompt with file contents
 func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 	template, err := t.GetPrompt()
@@ -136,7 +131,7 @@ func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 	for i, name := range fileNames {
 		content := files[name]
 		fmt.Fprintf(&sb, "### %s\n\n", displayNames[i])
-		if IsBinary(content) {
+		if !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
 			sb.WriteString("Binary content (base64):\n\n```\n")
 			sb.WriteString(base64.StdEncoding.EncodeToString([]byte(content)))
 			sb.WriteString("\n```\n\n")

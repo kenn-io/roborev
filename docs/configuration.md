@@ -724,8 +724,7 @@ that case.
 A type that fails to queue, for example when its agent is unavailable, or whose
 job fails, retries at the next check, including after a daemon restart.
 Successfully queued types keep their normal interval. Disabling a schedule or
-removing a type clears retries for types that failed to queue. A scheduled job
-that already failed can retry at the next check after its type is enabled again.
+removing a type clears retries for types that failed to queue.
 
 ### Binary Evidence
 
