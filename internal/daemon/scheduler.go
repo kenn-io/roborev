@@ -250,8 +250,12 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				}
 			}
 		}
-		if err := w.markDue(ctx, repo, head, typ, typeCandidates); err != nil {
+		pending, err := w.markDue(ctx, repo, head, typ, typeCandidates)
+		if err != nil {
 			return nil, err
+		}
+		if only != nil && len(pending) > 0 {
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: pending})
 		}
 	}
 	ordered := selectCandidates(candidates)
@@ -284,6 +288,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	defer reader.Close()
 	var selected []*analysisCandidate
 	var remaining []*analysisCandidate
+	var deferred []*analysisCandidate
 	files := map[string]string{}
 	var skipped []string
 	for i, candidate := range ordered {
@@ -292,10 +297,12 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			break
 		}
 		if missing[candidate.oid] || attributesMissing(attributes, missing, candidate.path) {
+			deferred = append(deferred, candidate)
 			continue
 		}
 		if binary[candidate.path] || large[candidate.oid] {
 			skipped = append(skipped, candidate.path)
+			deferred = append(deferred, candidate)
 			continue
 		}
 		content, err := reader.Read(candidate.oid)
@@ -304,10 +311,12 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				return nil, ctx.Err()
 			}
 			errs = append(errs, err)
+			deferred = append(deferred, candidate)
 			continue
 		}
 		if !isSourceContent(content) {
 			skipped = append(skipped, candidate.path)
+			deferred = append(deferred, candidate)
 			continue
 		}
 		files[candidate.path] = string(content)
@@ -315,6 +324,9 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 	}
 	if len(skipped) > 0 {
 		log.Printf("analysis scheduler %s: skipped %d binary or oversized files: %s", repo.RootPath, len(skipped), strings.Join(skipped[:min(len(skipped), 3)], ", "))
+	}
+	if only != nil {
+		deferred = append(deferred, remaining...)
 	}
 	for _, typ := range schedule.Types {
 		if !usable[typ] {
@@ -330,10 +342,8 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
-		if only != nil {
-			if names := dueNames(remaining, typ); len(names) > 0 {
-				entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names})
-			}
+		if names := dueNames(deferred, typ); len(names) > 0 {
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names})
 		}
 	}
 	return entries, errors.Join(errs...)
@@ -381,10 +391,10 @@ func matchesSchedulePaths(patterns []string, path string) (bool, error) {
 }
 
 // markDue records which candidates need an analysis of the given type.
-func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) error {
+func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) ([]string, error) {
 	jobs, err := w.server.db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{repo.ID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pending := map[string]bool{}
 	baseline := map[string]storage.ReviewJob{}
@@ -405,8 +415,10 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 		}
 	}
 	changes := map[string]changeSet{}
+	var deferred []string
 	for path, candidate := range candidates {
 		if pending[path] {
+			deferred = append(deferred, path)
 			continue
 		}
 		job, ok := baseline[path]
@@ -415,7 +427,7 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			changed, cached := changes[job.AnalysisCommitSHA]
 			if !cached {
 				if changed, err = changedSince(ctx, repo.RootPath, job.AnalysisCommitSHA, head); err != nil {
-					return err
+					return nil, err
 				}
 				changes[job.AnalysisCommitSHA] = changed
 			}
@@ -430,7 +442,8 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			}
 		}
 	}
-	return nil
+	sort.Strings(deferred)
+	return deferred, nil
 }
 
 // changedSince lists paths modified between base and head; an unresolvable
