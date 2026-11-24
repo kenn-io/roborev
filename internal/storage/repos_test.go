@@ -1234,6 +1234,7 @@ func TestRenameRepoByNameReturnsSelectedRepo(t *testing.T) {
 func TestMergeReposClearsAnalysisRetries(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	source := createRepo(t, db, filepath.Join(t.TempDir(), "source"))
 	target := createRepo(t, db, filepath.Join(t.TempDir(), "target"))
 	require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), source.ID, []string{"refactor"}))
