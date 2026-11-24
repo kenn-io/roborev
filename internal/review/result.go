@@ -153,7 +153,16 @@ func TruncateComment(body string) string {
 	if len(body) <= MaxCommentLen {
 		return body
 	}
-	return TrimPartialRune(body[:MaxCommentLen-len(CommentTruncSuffix)]) + CommentTruncSuffix
+	limit := MaxCommentLen - len(CommentTruncSuffix)
+	cut := TrimPartialRune(body[:limit])
+	if strings.Count(cut, "<details>") > strings.Count(cut, "</details>") {
+		const closing = "\n</details>"
+		cut = TrimPartialRune(body[:limit-len(closing)])
+		if strings.Count(cut, "<details>") > strings.Count(cut, "</details>") {
+			cut += closing
+		}
+	}
+	return cut + CommentTruncSuffix
 }
 
 // OutputTruncSuffix marks a single review's output as cut short. It is

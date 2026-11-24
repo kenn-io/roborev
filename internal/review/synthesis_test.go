@@ -774,3 +774,12 @@ func TestParseLocation(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatSingleResultTruncationClosesFold(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: strings.Repeat("a", MaxCommentLen), Fix: "fix"}}}
+	result := ReviewResult{Status: ResultDone, Structured: &doc}
+	comment := formatSingleResult(result, "abc1234", &CommentConfig{Fold: true})
+	assert.Contains(t, comment, "<details>")
+	assert.Contains(t, comment, "</details>")
+	assert.Contains(t, comment, CommentTruncSuffix)
+}
