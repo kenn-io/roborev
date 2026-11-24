@@ -164,14 +164,31 @@ func (w *analysisScheduler) retryTypes(ctx context.Context, repoID int64, last t
 	return retry, nil
 }
 
-// failedSince reports whether a scheduled job of typ failed at or after last,
-// even when a newer job of that type has since finished.
+// failedSince reports whether a scheduled job of typ failed at or after last
+// and still needs a retry. A failed job is covered once a newer scheduled job
+// of that type includes each of its files, so it never starts files that were
+// not part of the failed pass.
 func (w *analysisScheduler) failedSince(repoID int64, typ string, last time.Time) (bool, error) {
-	jobs, err := w.server.db.ListJobs(string(storage.JobStatusFailed), "", 1, 0, storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithSource(storage.JobSourceScheduled), storage.WithoutPrompt())
-	if err != nil || len(jobs) == 0 {
+	scope := []storage.ListJobsOption{storage.WithRepoIDs([]int64{repoID}), storage.WithAnalysisType(typ), storage.WithSource(storage.JobSourceScheduled), storage.WithoutPrompt()}
+	failed, err := w.server.db.ListJobs(string(storage.JobStatusFailed), "", 0, 0, scope...)
+	if err != nil {
 		return false, err
 	}
-	return jobs[0].FinishedAt != nil && jobs[0].FinishedAt.Add(time.Second).After(last), nil
+	for _, job := range failed {
+		if job.FinishedAt == nil || !job.FinishedAt.Add(time.Second).After(last) {
+			continue
+		}
+		for _, file := range job.AnalysisFiles {
+			newest, err := w.server.db.ListJobs("", "", 1, 0, append([]storage.ListJobsOption{storage.WithAnalysisFile(file)}, scope...)...)
+			if err != nil {
+				return false, err
+			}
+			if len(newest) == 0 || newest[0].ID <= job.ID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 type changeSet struct {

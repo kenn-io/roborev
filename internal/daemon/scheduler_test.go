@@ -494,6 +494,35 @@ func TestScheduledAnalysisRetryOlderFailedJob(t *testing.T) {
 	assert.Equal(t, storage.JobStatusQueued, jobs[0].Status)
 }
 
+func TestScheduledAnalysisRetryDoesNotStartNewFiles(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval, budget := true, "1h", 1
+	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+	server.configWatcher.Config().AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	now := time.Now()
+	watcher.poll(t.Context(), now)
+	jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	setJobStatus(t, db, jobs[0].ID, storage.JobStatusFailed)
+	watcher.poll(t.Context(), now.Add(30*time.Second))
+	jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
+	assert.Equal(t, storage.JobStatusQueued, jobs[0].Status)
+	repo.CommitFile("b.go", "package b\n", "add source")
+	watcher.poll(t.Context(), now.Add(time.Minute))
+	jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	assert.Len(t, jobs, 2)
+}
+
 func TestScheduledCancellationMatchesReviewDemand(t *testing.T) {
 	t.Run("review demand", func(t *testing.T) {
 		server, db, _ := newTestServer(t)
