@@ -251,6 +251,8 @@ type CheckedFinding struct {
 type CheckVerdict struct {
 	// Keep is the checker's decision, or nil when it gave none.
 	Keep *bool `json:"keep,omitempty"`
+	// Unlikely is the checker's classification, or nil when it could not decide.
+	Unlikely *bool `json:"unlikely,omitempty"`
 	// Evidence is the command the checker ran and its output, or what
 	// refutes the finding.
 	Evidence string `json:"evidence,omitempty"`
@@ -383,9 +385,16 @@ type checkWire struct {
 }
 
 type checkedFindingWire struct {
-	Outcome  string         `json:"outcome"`
-	Finding  *findingWire   `json:"finding"`
-	Verdicts []CheckVerdict `json:"verdicts"`
+	Outcome  string             `json:"outcome"`
+	Finding  *findingWire       `json:"finding"`
+	Verdicts []checkVerdictWire `json:"verdicts"`
+}
+
+type checkVerdictWire struct {
+	Keep     *bool          `json:"keep"`
+	Unlikely jsontext.Value `json:"unlikely"`
+	Evidence string         `json:"evidence"`
+	Reason   string         `json:"reason"`
 }
 
 type findingWire struct {
@@ -543,9 +552,18 @@ func decodeCheck(wire checkWire, version int) (Check, error) {
 			checked.Verdicts = make([]CheckVerdict, len(entry.Verdicts))
 		}
 		for j, verdict := range entry.Verdicts {
-			verdict.Evidence = strings.TrimSpace(verdict.Evidence)
-			verdict.Reason = strings.TrimSpace(verdict.Reason)
-			checked.Verdicts[j] = verdict
+			if len(verdict.Unlikely) > 0 && version < 4 {
+				return Check{}, fmt.Errorf("finding %d verdict %d has unlikely, which needs schema_version 4", i+1, j+1)
+			}
+			var unlikely *bool
+			if len(verdict.Unlikely) > 0 && !bytes.Equal(verdict.Unlikely, []byte("null")) {
+				var value bool
+				if err := json.Unmarshal(verdict.Unlikely, &value); err != nil {
+					return Check{}, fmt.Errorf("finding %d verdict %d has invalid unlikely: %w", i+1, j+1, err)
+				}
+				unlikely = &value
+			}
+			checked.Verdicts[j] = CheckVerdict{Keep: verdict.Keep, Unlikely: unlikely, Evidence: strings.TrimSpace(verdict.Evidence), Reason: strings.TrimSpace(verdict.Reason)}
 		}
 	}
 	return check, nil

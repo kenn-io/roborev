@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -512,14 +513,14 @@ func TestCICheckSandbox(t *testing.T) {
 }
 
 func TestCICheckUnlikely(t *testing.T) {
-	doc := structuredreview.Document{Findings: []structuredreview.Finding{
+	doc := structuredreview.Document{Summary: "Review", Verdict: "fail", Findings: []structuredreview.Finding{
 		{Severity: "high", Problem: "one", Fix: "fix"},
 		{Severity: "high", Problem: "two", Fix: "fix", Unlikely: true},
 		{Severity: "high", Problem: "three", Fix: "fix"},
 		{Severity: "high", Problem: "four", Fix: "fix"},
 		{Severity: "high", Problem: "five", Fix: "fix", Unlikely: true},
 	}}
-	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true},{"finding":2,"keep":true,"unlikely":false},{"finding":3,"keep":true,"unlikely":true},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"evidence","reason":"reason"},{"finding":5,"keep":true}]}`)
+	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true},{"finding":2,"keep":true,"unlikely":false},{"finding":3,"keep":true,"unlikely":true},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"evidence","reason":"reason"},{"finding":5,"keep":true,"unlikely":null}]}`)
 	got, err := applyCICheck(doc, raw, io.Discard)
 	require.NoError(t, err)
 	require.Len(t, got.Findings, 4)
@@ -527,5 +528,39 @@ func TestCICheckUnlikely(t *testing.T) {
 	assert.False(t, got.Findings[1].Unlikely)
 	assert.False(t, got.Findings[2].Unlikely)
 	assert.True(t, got.Findings[3].Unlikely)
-	assert.False(t, got.Check.Findings[1].Finding.Unlikely)
+	assert.True(t, got.Check.Findings[1].Finding.Unlikely)
+	require.NotNil(t, got.Check.Findings[1].Verdicts[0].Unlikely)
+	assert.False(t, *got.Check.Findings[1].Verdicts[0].Unlikely)
+	assert.Nil(t, got.Check.Findings[4].Verdicts[0].Unlikely)
+	encoded, err := json.Marshal(got)
+	require.NoError(t, err)
+	stored, err := structuredreview.Decode(encoded)
+	require.NoError(t, err)
+	assert.True(t, stored.Check.Findings[1].Finding.Unlikely)
+	require.NotNil(t, stored.Check.Findings[1].Verdicts[0].Unlikely)
+	assert.False(t, *stored.Check.Findings[1].Verdicts[0].Unlikely)
+	assert.True(t, stored.Findings[3].Unlikely)
+}
+
+func TestCICheckFindingsIncludeOriginalClassifications(t *testing.T) {
+	doc := structuredreview.Document{Summary: "Review", Findings: []structuredreview.Finding{
+		{Severity: "high", Problem: "rare", Fix: "fix", Unlikely: true},
+		{Severity: "medium", Problem: "ordinary", Fix: "fix"},
+	}}
+	input := ciCheckFindings(doc, "medium")
+	assert.Contains(t, input, "### 1. High")
+	assert.Contains(t, input, "### 2. Medium")
+	assert.Contains(t, input, "1: true")
+	assert.Contains(t, input, "2: false")
+}
+
+func TestCICheckSchemaAllowsInconclusiveClassification(t *testing.T) {
+	var schema jsonschema.Schema
+	require.NoError(t, json.Unmarshal(ciCheckSchema, &schema))
+	validator, err := schema.Resolve(nil)
+	require.NoError(t, err)
+	verdict := map[string]any{"finding": float64(1), "keep": true, "unlikely": nil, "evidence": "unavailable", "reason": "could not run"}
+	require.NoError(t, validator.Validate(map[string]any{"verdicts": []any{verdict}}))
+	verdict["unlikely"] = false
+	require.NoError(t, validator.Validate(map[string]any{"verdicts": []any{verdict}}))
 }

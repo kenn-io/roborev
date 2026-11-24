@@ -35,7 +35,7 @@ type ciCheckConfig struct {
 	Reasoning   string `json:"reasoning,omitempty"`
 }
 
-var ciCheckSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","keep","unlikely","evidence","reason"],"properties":{"finding":{"type":"integer"},"keep":{"type":"boolean"},"unlikely":{"type":"boolean"},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}`)
+var ciCheckSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","keep","unlikely","evidence","reason"],"properties":{"finding":{"type":"integer"},"keep":{"type":"boolean"},"unlikely":{"type":["boolean","null"]},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}`)
 
 const ciCheckPrompt = `An automated reviewer posted the findings in ../findings.md on this project's pull request for its maintainers to review before merging. You are its last step before the comment posts: keep each finding only if it holds up. The worktree you're in is the PR head; %s is its frozen base commit.
 
@@ -46,7 +46,7 @@ For each finding:
 2. Keep it if it fails that way and either a user on a normal workflow hits it, or the harm is lost data, a silently saved wrong result, or a security hole. Keep a finding about the project's own tests or CI when a test can't catch the bug it exists for and the fix is small.
 3. Drop it if it doesn't fail or if nothing but a hand-built state reaches it. Keep it with unlikely set to true if only rare timing or unusual input reaches it. Count everyone the failure reaches: in a library, a rare input in one consumer is still a broken build or wrong result in every repo that uses it. A bug that predates this PR still counts when the PR's code runs into it. Keep a finding that a test is redundant or tests code the project doesn't own only when no change to the project's code fails that test alone.
 
-If the sandbox stops a finding from running, or the code it needs can't build or run here, keep it, unless it asks to remove a test.
+If the sandbox stops a finding from running, or the code it needs can't build or run here, keep it, unless it asks to remove a test. Set unlikely to null when you cannot determine whether the trigger is rare; the reviewer's classification is listed in findings.md.
 Return a JSON object with verdicts: [{"finding": 1, "keep": true, "unlikely": false, "evidence": "the command and its output, or what refutes it", "reason": "one sentence"}].
 Work alone: no sub-agents or background jobs.`
 
@@ -150,7 +150,7 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 		return structuredreview.Document{}, err
 	}
 	defer run.cleanup()
-	if err := os.WriteFile(filepath.Join(run.Job.WorkDir, "findings.md"), []byte(doc.Markdown(job.MinSeverity)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(run.Job.WorkDir, "findings.md"), []byte(ciCheckFindings(doc, job.MinSeverity)), 0o600); err != nil {
 		return structuredreview.Document{}, err
 	}
 	a := codex.WithSandbox(wp.ciCheckSandbox(job, run.Job))
@@ -497,6 +497,17 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 	return paths, nil
 }
 
+// ciCheckFindings includes the reviewer's classifications alongside the numbered findings.
+func ciCheckFindings(doc structuredreview.Document, minSeverity string) string {
+	var out strings.Builder
+	out.WriteString(doc.Markdown(minSeverity))
+	out.WriteString("\n## Reviewer unlikely classifications\n")
+	for i, finding := range doc.Findings {
+		fmt.Fprintf(&out, "\n%d: %t\n", i+1, finding.Unlikely)
+	}
+	return out.String()
+}
+
 func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writer) (structuredreview.Document, error) {
 	var response struct {
 		Verdicts []struct {
@@ -510,34 +521,22 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return doc, fmt.Errorf("decode checker verdicts: %w", err)
 	}
-	type checkResult struct {
-		verdict  structuredreview.CheckVerdict
-		unlikely *bool
-	}
-	verdicts := make(map[int][]checkResult)
+	verdicts := make(map[int][]structuredreview.CheckVerdict)
 	for _, v := range response.Verdicts {
 		encoded, _ := json.Marshal(v)
 		fmt.Fprintf(out, "CI checker verdict: %s\n", encoded)
-		verdicts[v.Finding] = append(verdicts[v.Finding], checkResult{
-			verdict:  structuredreview.CheckVerdict{Keep: v.Keep, Evidence: strings.TrimSpace(v.Evidence), Reason: strings.TrimSpace(v.Reason)},
-			unlikely: v.Unlikely,
-		})
+		verdicts[v.Finding] = append(verdicts[v.Finding], structuredreview.CheckVerdict{Keep: v.Keep, Unlikely: v.Unlikely, Evidence: strings.TrimSpace(v.Evidence), Reason: strings.TrimSpace(v.Reason)})
 	}
 	check := &structuredreview.Check{Status: structuredreview.CheckCompleted}
 	kept := make([]structuredreview.Finding, 0, len(doc.Findings))
 	for i, f := range doc.Findings {
 		// Drop only on one verdict that refutes the finding with evidence and a reason.
-		entry := structuredreview.CheckedFinding{Outcome: structuredreview.CheckKept, Finding: f}
-		results := verdicts[i+1]
-		for _, result := range results {
-			entry.Verdicts = append(entry.Verdicts, result.verdict)
-		}
+		entry := structuredreview.CheckedFinding{Outcome: structuredreview.CheckKept, Finding: f, Verdicts: verdicts[i+1]}
 		if v := entry.Verdicts; len(v) == 1 && v[0].Keep != nil && !*v[0].Keep && v[0].Evidence != "" && v[0].Reason != "" {
 			entry.Outcome = structuredreview.CheckDropped
 		} else {
-			if len(results) == 1 && results[0].verdict.Keep != nil && *results[0].verdict.Keep && results[0].unlikely != nil {
-				f.Unlikely = *results[0].unlikely
-				entry.Finding = f
+			if len(entry.Verdicts) == 1 && entry.Verdicts[0].Keep != nil && *entry.Verdicts[0].Keep && entry.Verdicts[0].Unlikely != nil {
+				f.Unlikely = *entry.Verdicts[0].Unlikely
 			}
 			kept = append(kept, f)
 		}

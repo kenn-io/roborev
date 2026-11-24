@@ -12,4 +12,6 @@ export interface StructuredReviewCheckVerdict {
   keep?: boolean;
   /** The checker's one-sentence explanation. */
   reason?: string;
+  /** The checker's classification, omitted when inconclusive. */
+  unlikely?: boolean;
 }

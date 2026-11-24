@@ -4377,6 +4377,9 @@ type StructuredReviewCheckVerdict struct {
 
 	// Reason The checker's one-sentence explanation.
 	Reason *string `json:"reason,omitempty"`
+
+	// Unlikely The checker's classification, omitted when inconclusive.
+	Unlikely *bool `json:"unlikely,omitempty"`
 }
 
 // StructuredReviewCheckedFinding One finding the CI checker tried and what became of it.
