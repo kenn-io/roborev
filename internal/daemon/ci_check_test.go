@@ -535,3 +535,31 @@ func TestCICheckUnlikely(t *testing.T) {
 	assert.False(t, stored.Check.Findings[0].Finding.Unlikely)
 	assert.True(t, stored.Findings[0].Unlikely)
 }
+
+func TestCICheckPreservesMixedReviewerUnlikely(t *testing.T) {
+	finding := structuredreview.Finding{Severity: "high", Problem: "Rare ordering", Fix: "Keep order"}
+	rare := finding
+	rare.Unlikely = true
+	reviews := []reviewpkg.ReviewResult{
+		{Status: reviewpkg.ResultDone, Structured: &structuredreview.Document{Summary: "One", Findings: []structuredreview.Finding{rare}}},
+		{Status: reviewpkg.ResultDone, Structured: &structuredreview.Document{Summary: "Two", Findings: []structuredreview.Finding{finding}}},
+	}
+	prompt := reviewpkg.BuildSynthesisPrompt(reviews, false, "")
+	assert.Contains(t, prompt, "Mark a merged finding unlikely when any source marked it unlikely")
+	assert.Equal(t, 1, strings.Count(prompt, `"unlikely": true`))
+	raw := jsontext.Value(`{"schema_version":4,"summary":"Combined","verdict":"fail","findings":[{"severity":"high","problem":"Rare ordering","fix":"Keep order","unlikely":true,"sources":[1,2]}]}`)
+	doc, err := reviewpkg.DecodeSynthesisDocument(raw, reviews)
+	require.NoError(t, err)
+	for _, checker := range []bool{false, true} {
+		t.Run(fmt.Sprintf("checker=%t", checker), func(t *testing.T) {
+			result := doc
+			if checker {
+				result, err = applyCICheck(result, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":false,"evidence":"e","reason":"r"}]}`), io.Discard)
+				require.NoError(t, err)
+			}
+			body := reviewpkg.FormatComment(reviewpkg.PrepareComment(reviewpkg.CommentConfig{Fold: true}, reviewpkg.ReviewResult{Structured: &result}))
+			assert.Contains(t, body, "1 unlikely finding hidden")
+			assert.Contains(t, body, "Rare ordering")
+		})
+	}
+}

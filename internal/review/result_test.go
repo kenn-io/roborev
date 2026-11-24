@@ -226,3 +226,16 @@ func TestTruncateCommentWithTagInFinding(t *testing.T) {
 	assert.Contains(t, got, "\n</details>...(truncated)")
 	assert.LessOrEqual(t, len(got), 180)
 }
+
+func TestTruncateCommentWithinFoldSummary(t *testing.T) {
+	body := "visible\n<details><summary>1 nit and 1 unlikely finding hidden</summary>\ncontent" + strings.Repeat("x", 100) + "\n</details>"
+	open := strings.Index(body, "\n<details>")
+	summaryEnd := strings.Index(body, "</summary>") + len("</summary>")
+	for cut := open; cut < summaryEnd; cut++ {
+		got := TruncateCommentTo(body, cut+len("...")+len("\n</details>"), "...")
+		assert.NotContains(t, got, "<details>", "cut at byte %d", cut)
+		assert.LessOrEqual(t, len(got), cut+len("...")+len("\n</details>"))
+	}
+	got := TruncateCommentTo(body, summaryEnd+len("...")+len("\n</details>"), "...")
+	assert.Contains(t, got, "</summary>\n</details>...")
+}
