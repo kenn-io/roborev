@@ -466,9 +466,16 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 	return nil
 }
 
-// isSourceContent accepts valid UTF-8 text, including control bytes, and rejects
-// content with a binary signature such as PDF.
+// isSourceContent accepts non-NUL source text, including legacy encodings such
+// as Latin-1, and rejects content with a binary signature such as PDF or with
+// no valid UTF-8 at all.
 func isSourceContent(content []byte) bool {
 	kind := http.DetectContentType(content)
-	return !analyze.IsBinary(string(content)) && (strings.HasPrefix(kind, "text/") || kind == "application/octet-stream")
+	return isSourceText(string(content)) &&
+		(strings.HasPrefix(kind, "text/") || kind == "application/octet-stream")
+}
+
+func isSourceText(text string) bool {
+	return !strings.ContainsRune(text, 0) &&
+		(text == "" || strings.ToValidUTF8(text, "") != "")
 }
