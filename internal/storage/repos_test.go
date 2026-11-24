@@ -1232,6 +1232,7 @@ func TestRenameRepoByNameReturnsSelectedRepo(t *testing.T) {
 }
 
 func TestMergeReposClearsAnalysisRetries(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	source := createRepo(t, db, filepath.Join(t.TempDir(), "source"))
 	target := createRepo(t, db, filepath.Join(t.TempDir(), "target"))

@@ -302,11 +302,12 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 				setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
 				_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_complexity`)
 				require.NoError(t, err)
-				if change == "restart" {
+				switch change {
+				case "restart":
 					watcher = &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-				} else if change == "disabled" {
+				case "disabled":
 					yes = false
-				} else {
+				default:
 					cfg.Schedule.Types = []string{"refactor"}
 				}
 				watcher.poll(t.Context(), now.Add(30*time.Second))
@@ -407,7 +408,6 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)
 		assert.Equal(t, "refactor", jobs[0].AnalysisType)
-
 	})
 
 	t.Run("newer manual job", func(t *testing.T) {
@@ -431,9 +431,7 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)
 		assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
-
 	})
-
 }
 
 func TestScheduledCancellationMatchesReviewDemand(t *testing.T) {
