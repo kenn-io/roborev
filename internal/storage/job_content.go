@@ -323,7 +323,7 @@ func legacyJobPromptExpr(archiveExpr string) string {
 	// favor of the job's complete prompt.
 	remoteReviewPrompt := `CASE WHEN j.status = 'done'
 		AND COALESCE(j.job_type, 'review') NOT IN ` + storedPromptJobTypesSQL + `
-		AND j.source_machine_id IS NOT NULL
+		AND NULLIF(j.source_machine_id, '') IS NOT NULL
 		AND lower(j.source_machine_id) != (SELECT lower(value) FROM sync_state WHERE key = 'machine_id')
 		THEN CASE WHEN EXISTS (SELECT 1 FROM reviews rv WHERE rv.job_id = j.id)
 			THEN ` + withoutPromptFileHandoff(reviewPrompt) + `

@@ -520,3 +520,30 @@ func TestUpsertPulledJob_ClearsModelAndProviderFields(t *testing.T) {
 	assert.Nil(t, requestedModel)
 	assert.Nil(t, requestedProvider)
 }
+
+func TestClearAllSyncedAtPreservesUnknownOrigins(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	review := seedCompletedExportReview(t, db, repo.ID, "4444444444444444444444444444444444444444", "2024-01-01 00:00:00", false)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = NULL, synced_at = '2024-01-02' WHERE id = ?`, review.JobID)
+	require.NoError(t, err)
+	require.NoError(t, db.ClearAllSyncedAt())
+	require.NoError(t, db.BackfillSourceMachineID())
+	job, err := db.GetJobByID(review.JobID)
+	require.NoError(t, err)
+	require.Nil(t, job.SourceMachineID)
+	jobs, err := db.ListJobs("", "", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Nil(t, jobs[0].SourceMachineID)
+	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata})
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
+
+	// A later pull must also read the marker as an unknown UUID.
+	pulled := PulledJob{UUID: *job.UUID, RepoIdentity: repo.RootPath, GitRef: job.GitRef, Agent: "test", JobType: JobTypeReview, Status: string(JobStatusDone), SourceMachineID: testUUID("remote-machine"), EnqueuedAt: time.Now(), UpdatedAt: time.Now(), CurrentReviewUUID: review.UUID}
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+}

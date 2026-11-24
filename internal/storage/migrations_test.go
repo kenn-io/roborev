@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
@@ -357,7 +358,7 @@ func seedUnknownOrigins(t *testing.T, path string) (string, []int64) {
 
 func assertUnknownOrigins(t *testing.T, db *DB, machine string, ids []int64) {
 	t.Helper()
-	want := []sql.NullString{{}, {}, {String: machine, Valid: true}, {String: testUUID("remote-machine").String(), Valid: true}}
+	want := []sql.NullString{{Valid: true}, {Valid: true}, {String: machine, Valid: true}, {String: testUUID("remote-machine").String(), Valid: true}}
 	for i, id := range ids {
 		var origin sql.NullString
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, id).Scan(&origin))
@@ -420,10 +421,34 @@ func TestSourceMachineOriginMigrationRetries(t *testing.T) {
 			var known string
 			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobs[0].ID).Scan(&unknown))
 			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobs[1].ID).Scan(&known))
-			assert.Equal(t, sql.NullString{}, unknown)
+			assert.Equal(t, sql.NullString{Valid: true}, unknown)
 			assert.Equal(t, remote.String(), known)
 			_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 21`)
 			require.NoError(t, err)
 		}
 	})
+}
+
+func TestUnknownOriginMigrationMakesReviewEligibleForUpdatedSince(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, "/synthetic/export")
+	review := seedCompletedExportReview(t, db, repo.ID, "5555555555555555555555555555555555555555", "2024-01-01 00:00:00", false)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = NULL, synced_at = '2024-01-02' WHERE id = ?`, review.JobID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET updated_at = '2024-01-01 00:00:00' WHERE id = ?`, review.ID)
+	require.NoError(t, err)
+	bound := time.Now().UTC().Add(-time.Minute)
+	opts := ExportReviewsOptions{Profile: ExportProfileMetadata, UpdatedSince: bound}
+	page, err := db.ExportReviews(opts)
+	require.NoError(t, err)
+	assert.Empty(t, page.Reviews)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 21`)
+	require.NoError(t, err)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	page, err = db.ExportReviews(opts)
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
 }

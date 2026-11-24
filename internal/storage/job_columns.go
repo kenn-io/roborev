@@ -50,7 +50,7 @@ const jobSelectColumnsBase = `
 		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), j.job_type, j.review_type, j.patch_id,
 		       COALESCE(j.output_prefix, ''), j.parent_job_id, j.token_usage, COALESCE(j.worktree_path, ''), j.command_line,
 		       COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
-		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''), j.source_machine_id,
+		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''), NULLIF(j.source_machine_id, ''),
 		       NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0), COALESCE(j.non_voting, 0), j.budget_routing_locked,
 		       j.budget_original_agent, j.budget_original_backup_agent, j.budget_original_backup_model,
 		       r.root_path, r.name, c.subject,
