@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -127,8 +128,11 @@ func readGitHub[T any](ctx context.Context, operation string, read func() (T, *g
 	return result, response, nil
 }
 
-func retryableRead(err error, resp *googlegithub.Response) bool {
-	if isHTTP2StreamInterruption(err) {
+// IsTransientTransportError reports whether err is a transient network,
+// timeout, or HTTP/2 connection/stream interruption where retrying on a fresh
+// request or connection may succeed.
+func IsTransientTransportError(err error) bool {
+	if isHTTP2StreamInterruption(err) || isHTTP2ConnectionLost(err) {
 		return true
 	}
 	var networkError net.Error
@@ -138,7 +142,11 @@ func retryableRead(err error, resp *googlegithub.Response) bool {
 	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return true
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
+}
+
+func retryableRead(err error, resp *googlegithub.Response) bool {
+	if IsTransientTransportError(err) {
 		return true
 	}
 	if _, ok := errors.AsType[*googlegithub.RateLimitError](err); ok {
@@ -168,7 +176,7 @@ func readFailureDetail(err error, resp *googlegithub.Response) string {
 		return "timeout"
 	case errors.As(err, &networkError) && networkError.Timeout():
 		return "timeout"
-	case isHTTP2StreamInterruption(err), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE):
+	case isHTTP2StreamInterruption(err), isHTTP2ConnectionLost(err), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE):
 		return "network interruption"
 	}
 	if _, ok := errors.AsType[*net.OpError](err); ok {
@@ -216,4 +224,10 @@ func isHTTP2StreamInterruption(err error) bool {
 		}
 	}
 	return false
+}
+
+// isHTTP2ConnectionLost matches net/http's unexported lost-ping close error
+// ("http2: client connection lost"), which has no exported sentinel or type.
+func isHTTP2ConnectionLost(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "http2: client connection lost")
 }
