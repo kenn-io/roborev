@@ -707,6 +707,8 @@ func TestDeleteRepo(t *testing.T) {
 		last := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), repo.ID, last))
 		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), other.ID, last))
+		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), repo.ID, []string{"refactor"}))
+		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), other.ID, []string{"complexity"}))
 
 		err = db.DeleteRepo(repo.ID, false)
 		require.NoError(t, err, "DeleteRepo failed: %v")
@@ -725,6 +727,12 @@ func TestDeleteRepo(t *testing.T) {
 		otherLast, err := db.AnalysisScheduleLastRun(t.Context(), other.ID)
 		require.NoError(t, err)
 		assert.Equal(t, last, otherLast)
+		retry, err := db.AnalysisScheduleRetry(t.Context(), repo.ID)
+		require.NoError(t, err)
+		assert.Empty(t, retry)
+		retry, err = db.AnalysisScheduleRetry(t.Context(), other.ID)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"complexity"}, retry)
 	})
 
 	t.Run("delete repo with jobs without cascade returns error", func(t *testing.T) {
@@ -1223,26 +1231,18 @@ func TestRenameRepoByNameReturnsSelectedRepo(t *testing.T) {
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
-func TestRepositoryRemovalClearsAnalysisRetries(t *testing.T) {
-	for _, action := range []string{"delete", "merge"} {
-		t.Run(action, func(t *testing.T) {
-			db := openTestDB(t)
-			source := createRepo(t, db, filepath.Join(t.TempDir(), "source"))
-			target := createRepo(t, db, filepath.Join(t.TempDir(), "target"))
-			require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), source.ID, []string{"refactor"}))
-			require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), target.ID, []string{"complexity"}))
-			if action == "delete" {
-				require.NoError(t, db.DeleteRepo(source.ID, false))
-			} else {
-				_, err := db.MergeRepos(source.ID, target.ID)
-				require.NoError(t, err)
-			}
-			retry, err := db.AnalysisScheduleRetry(t.Context(), source.ID)
-			require.NoError(t, err)
-			assert.Empty(t, retry)
-			retry, err = db.AnalysisScheduleRetry(t.Context(), target.ID)
-			require.NoError(t, err)
-			assert.Equal(t, []string{"complexity"}, retry)
-		})
-	}
+func TestMergeReposClearsAnalysisRetries(t *testing.T) {
+	db := openTestDB(t)
+	source := createRepo(t, db, filepath.Join(t.TempDir(), "source"))
+	target := createRepo(t, db, filepath.Join(t.TempDir(), "target"))
+	require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), source.ID, []string{"refactor"}))
+	require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), target.ID, []string{"complexity"}))
+	_, err := db.MergeRepos(source.ID, target.ID)
+	require.NoError(t, err)
+	retry, err := db.AnalysisScheduleRetry(t.Context(), source.ID)
+	require.NoError(t, err)
+	assert.Empty(t, retry)
+	retry, err = db.AnalysisScheduleRetry(t.Context(), target.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"complexity"}, retry)
 }
