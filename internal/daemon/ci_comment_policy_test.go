@@ -65,7 +65,7 @@ func TestCIPanelCommentPolicy(t *testing.T) {
 					patches++
 					var body struct{ Body string }
 					assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-					assert.Contains(t, body.Body, "No findings at or above high severity.")
+					assert.Contains(t, body.Body, "No findings need fixes before merge.")
 					w.WriteHeader(tc.patchStatus)
 					if tc.patchStatus == 403 {
 						_, _ = fmt.Fprint(w, `{"message":"Resource not accessible by integration"}`)
@@ -147,7 +147,7 @@ func TestCIPanelCommentCapReference(t *testing.T) {
 	h.Cfg.CI.CommentMaxFindings = 1
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
-	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Notes.","verdict":"fail","findings":[{"severity":"low","problem":"Minor concern.","fix":"Fix it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`, synth.ID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","problem":"Minor concern.","fix":"Fix it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`, synth.ID)
 	require.NoError(t, err)
 	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
 	require.NoError(t, err)
@@ -367,4 +367,39 @@ func TestCICommentRemembersID(t *testing.T) {
 			assert.Equal(t, fmt.Sprintf("PATCH /repos/acme/api/issues/comments/%d", pages*100+2), requests[pages+2])
 		})
 	}
+}
+
+func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.CommentMaxFindings = 1
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
+	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
+	document := `{"schema_version":3,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","problem":"defect","fix":"fix"},{"severity":"low","problem":"nit","fix":"fix"},{"severity":"high","problem":"rare","fix":"fix","unlikely":true}]}`
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, document, synth.ID)
+	require.NoError(t, err)
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'medium' WHERE id = ?`, synth.ID)
+	require.NoError(t, err)
+	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
+	require.NoError(t, err)
+	body, err := h.Poller.panelCommentBody(panel, members)
+	require.NoError(t, err)
+	assert.Contains(t, body, "1 nit and 1 unlikely finding hidden")
+	assert.Contains(t, body, "defect")
+	h.Cfg.CI.CommentShowAll = true
+	body, err = h.Poller.panelCommentBody(panel, members)
+	require.NoError(t, err)
+	assert.NotContains(t, body, "<details>")
+	assert.Contains(t, body, "3 findings")
+	assert.Contains(t, body, "nit")
+	assert.Contains(t, body, "rare")
+	stored, err := h.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Len(t, stored.StructuredOutput["findings"], 3)
+}
+
+func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
+	body := "visible\n<details><summary>1 nit hidden</summary>\n" + strings.Repeat("x", 100)
+	got := truncatePanelPRBodyForFooter(body, "footer", 100)
+	assert.LessOrEqual(t, len(got)+len("footer"), 100)
+	assert.Contains(t, got, "</details>")
 }

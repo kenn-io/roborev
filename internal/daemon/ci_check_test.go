@@ -510,3 +510,19 @@ func TestCICheckSandbox(t *testing.T) {
 	got := wp.ciCheckSandbox(&storage.ReviewJob{ID: 42}, sandbox.Job{})
 	assert.Equal(t, "job-42", got.Label)
 }
+
+func TestCICheckUnlikely(t *testing.T) {
+	doc := structuredreview.Document{Findings: []structuredreview.Finding{
+		{Severity: "high", Problem: "one", Fix: "fix"},
+		{Severity: "high", Problem: "two", Fix: "fix", Unlikely: true},
+		{Severity: "high", Problem: "three", Fix: "fix"},
+		{Severity: "high", Problem: "four", Fix: "fix"},
+	}}
+	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true},{"finding":2,"keep":true,"unlikely":false},{"finding":3,"keep":true,"unlikely":true},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"evidence","reason":"reason"}]}`)
+	got, err := applyCICheck(doc, raw, io.Discard)
+	require.NoError(t, err)
+	require.Len(t, got.Findings, 3)
+	assert.True(t, got.Findings[0].Unlikely)
+	assert.True(t, got.Findings[1].Unlikely)
+	assert.False(t, got.Findings[2].Unlikely)
+}

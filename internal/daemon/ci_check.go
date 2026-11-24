@@ -35,7 +35,7 @@ type ciCheckConfig struct {
 	Reasoning   string `json:"reasoning,omitempty"`
 }
 
-var ciCheckSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","keep","evidence","reason"],"properties":{"finding":{"type":"integer"},"keep":{"type":"boolean"},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}`)
+var ciCheckSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","keep","unlikely","evidence","reason"],"properties":{"finding":{"type":"integer"},"keep":{"type":"boolean"},"unlikely":{"type":"boolean"},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}`)
 
 const ciCheckPrompt = `An automated reviewer posted the findings in ../findings.md on this project's pull request for its maintainers to review before merging. You are its last step before the comment posts: keep each finding only if it holds up. The worktree you're in is the PR head; %s is its frozen base commit.
 
@@ -44,10 +44,10 @@ Work in a scratch copy (cp -a . ../check-$$). Leave this worktree unchanged.
 For each finding:
 1. Make it fail. Write a test or command that shows the failure, starting from a state the product, its users, or an outside system can create: a file a user imports, a config value they type, and a server's reply all count. For an order of events, force that order. For a security control such as authentication, permissions, path or input validation, or secret handling, write a regression test in the project's test style that feeds the named input to its code and asserts the safe behavior, such as rejecting the request, refusing the path, or keeping the secret out of output. The test should fail on the head if the control is missing. Do not use exploit payloads, scanning, or access outside the scratch copy.
 2. Keep it if it fails that way and either a user on a normal workflow hits it, or the harm is lost data, a silently saved wrong result, or a security hole. Keep a finding about the project's own tests or CI when a test can't catch the bug it exists for and the fix is small.
-3. Drop it if it doesn't fail, if nothing but a hand-built state reaches it, or if only rare timing or unusual input reaches it and the fix would add new machinery. Count everyone the failure reaches: in a library, a rare input in one consumer is still a broken build or wrong result in every repo that uses it. A bug that predates this PR still counts when the PR's code runs into it. Keep a finding that a test is redundant or tests code the project doesn't own only when no change to the project's code fails that test alone.
+3. Drop it if it doesn't fail or if nothing but a hand-built state reaches it. Keep it with unlikely set to true if only rare timing or unusual input reaches it. Count everyone the failure reaches: in a library, a rare input in one consumer is still a broken build or wrong result in every repo that uses it. A bug that predates this PR still counts when the PR's code runs into it. Keep a finding that a test is redundant or tests code the project doesn't own only when no change to the project's code fails that test alone.
 
 If the sandbox stops a finding from running, or the code it needs can't build or run here, keep it, unless it asks to remove a test.
-Return a JSON object with verdicts: [{"finding": 1, "keep": true, "evidence": "the command and its output, or what refutes it", "reason": "one sentence"}].
+Return a JSON object with verdicts: [{"finding": 1, "keep": true, "unlikely": false, "evidence": "the command and its output, or what refutes it", "reason": "one sentence"}].
 Work alone: no sub-agents or background jobs.`
 
 func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult, doc structuredreview.Document, check *ciCheckConfig) {
@@ -502,6 +502,7 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 		Verdicts []struct {
 			Finding  int    `json:"finding"`
 			Keep     *bool  `json:"keep"`
+			Unlikely bool   `json:"unlikely"`
 			Evidence string `json:"evidence"`
 			Reason   string `json:"reason"`
 		} `json:"verdicts"`
@@ -510,7 +511,11 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 		return doc, fmt.Errorf("decode checker verdicts: %w", err)
 	}
 	verdicts := make(map[int][]structuredreview.CheckVerdict)
+	unlikely := make(map[int]bool)
 	for _, v := range response.Verdicts {
+		if v.Unlikely {
+			unlikely[v.Finding] = true
+		}
 		encoded, _ := json.Marshal(v)
 		fmt.Fprintf(out, "CI checker verdict: %s\n", encoded)
 		verdicts[v.Finding] = append(verdicts[v.Finding], structuredreview.CheckVerdict{
@@ -525,15 +530,20 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 		if v := entry.Verdicts; len(v) == 1 && v[0].Keep != nil && !*v[0].Keep && v[0].Evidence != "" && v[0].Reason != "" {
 			entry.Outcome = structuredreview.CheckDropped
 		} else {
+			if len(entry.Verdicts) == 1 && entry.Verdicts[0].Keep != nil && *entry.Verdicts[0].Keep && unlikely[i+1] {
+				f.Unlikely = true
+				entry.Finding = f
+			}
 			kept = append(kept, f)
 		}
 		check.Findings = append(check.Findings, entry)
 	}
 	doc.Check = check
-	if len(kept) == len(doc.Findings) {
+	sameCount := len(kept) == len(doc.Findings)
+	doc.Findings = kept
+	if sameCount {
 		return doc, nil
 	}
-	doc.Findings = kept
 	doc.Summary = fmt.Sprintf("%d findings.", len(kept))
 	if len(kept) == 1 {
 		doc.Summary = "1 finding."

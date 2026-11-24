@@ -154,3 +154,26 @@ func TestCommentMinConfidence(t *testing.T) {
 		})
 	}
 }
+
+func TestCommentFold(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "medium", Problem: "defect"},
+		{Severity: "low", Problem: "nit", Unlikely: true},
+		{Severity: "high", Problem: "rare", Unlikely: true},
+		{Severity: "medium", Problem: "another"},
+	}}
+	prepared := PrepareComment(CommentConfig{Fold: true, MinSeverity: "medium", MaxFindings: 1}, ReviewResult{Structured: &doc})
+	body := FormatComment(prepared)
+	assert.Contains(t, body, "Changes require fixes for 1 finding")
+	assert.Contains(t, body, "1 nit and 1 unlikely finding hidden")
+	assert.Contains(t, body, "nit")
+	assert.Contains(t, body, "rare")
+	assert.Contains(t, body, "1 more finding in the full review")
+	assert.Len(t, doc.Findings, 4)
+	all := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	assert.NotContains(t, all, "<details>")
+	assert.Contains(t, all, "4 findings")
+	folded := PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
+	assert.True(t, folded.IsClean())
+	assert.Contains(t, FormatComment(folded), "No findings need fixes before merge")
+}

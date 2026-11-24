@@ -148,3 +148,22 @@ func TestCICommentMinConfidence(t *testing.T) {
 	var cfg Config
 	require.ErrorContains(t, SetConfigValue(&cfg, "ci.comment_min_confidence", "high"), "invalid float")
 }
+
+func TestCICommentShowAll(t *testing.T) {
+	for _, tc := range []struct {
+		global, repo string
+		want         bool
+	}{
+		{"", "", false}, {"comment_show_all = true", "", true},
+		{"comment_show_all = true", "comment_show_all = false", false},
+		{"", "comment_show_all = true", true},
+	} {
+		var global Config
+		var repo RepoConfig
+		_, err := toml.Decode("[ci]\n"+tc.global, &global)
+		require.NoError(t, err)
+		_, err = toml.Decode("[ci]\n"+tc.repo, &repo)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, ResolveCICommentShowAll(&repo, &global))
+	}
+}

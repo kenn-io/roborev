@@ -72,7 +72,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project",
 					}, rows)
 					require.NoError(t, err)
-					if policy.lowVisible {
+					if policy.lowVisible || (format == "structured" && mode == "passthrough") {
 						assert.Contains(body, "Minor naming issue.")
 					} else {
 						assert.NotContains(body, "Minor naming issue.")
@@ -142,11 +142,8 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 			p := &CIPoller{db: tc.DB, cfgGetter: NewStaticConfig(config.DefaultConfig())}
 			body, err := p.panelCommentBody(&storage.CIPanel{PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project"}, rows)
 			require.NoError(t, err)
-			if policy.verdict == storage.VerdictFail {
-				assert.Contains(body, "Minor naming issue.")
-			} else {
-				assert.NotContains(body, "Minor naming issue.")
-			}
+			assert.Contains(body, "Minor naming issue.")
+			assert.Contains(body, "1 nit hidden")
 			for i, m := range members {
 				original, err := tc.DB.GetReviewByJobID(m.ID)
 				require.NoError(t, err)
@@ -219,7 +216,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(outcome == "fallback", strings.Contains(body, "Synthesis unavailable."))
 				for _, f := range doc.Findings {
-					assert.Equal(slices.Contains(policy.visible, f.Problem), strings.Contains(body, f.Problem), f.Problem)
+					assert.Equal(((outcome == "synthesis" && f.Severity == "low") || slices.Contains(policy.visible, f.Problem)), strings.Contains(body, f.Problem), f.Problem)
 				}
 				for i, m := range members {
 					stored, err := tc.DB.GetReviewByJobID(m.ID)

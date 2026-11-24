@@ -3,6 +3,7 @@ package structuredreview
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -268,4 +269,19 @@ func TestMarkdownLeavesTheCheckRecordOut(t *testing.T) {
 	unchecked.Check = nil
 	assert.Equal(t, unchecked.Markdown("medium"), checked.Markdown("medium"),
 		"rendered reviews are posted to pull requests and must not change when a checker ran")
+}
+
+func TestDecodeUnlikelyRoundTrip(t *testing.T) {
+	raw := jsontext.Value(`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"high","problem":"p","fix":"f","unlikely":true},{"severity":"low","problem":"q","fix":"f"}]}`)
+	doc, err := Decode(raw)
+	require.NoError(t, err)
+	require.Len(t, doc.Findings, 2)
+	assert.True(t, doc.Findings[0].Unlikely)
+	assert.False(t, doc.Findings[1].Unlikely)
+	encoded, err := json.Marshal(doc)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(encoded), `"unlikely"`))
+	decoded, err := Decode(encoded)
+	require.NoError(t, err)
+	assert.Equal(t, doc, decoded)
 }

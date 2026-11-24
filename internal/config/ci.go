@@ -217,6 +217,7 @@ type CIConfig struct {
 	// CommentWhenClean controls new comments when display filters leave no
 	// findings. Unset defaults to true, including a zero-valued CIConfig.
 	CommentWhenClean *bool `toml:"comment_when_clean"`
+	CommentShowAll   bool  `toml:"comment_show_all"`
 
 	// Panel names a [review.panels.X] panel to run for CI reviews. When set,
 	// the CI poller resolves the panel (members + synthesis) from the config
@@ -691,6 +692,7 @@ type RepoCIConfig struct {
 	CommentMaxFindings *int `toml:"comment_max_findings" comment:"Maximum structured findings in synthesized GitHub daemon comments; zero is unlimited."`
 
 	// CommentWhenClean overrides whether display-clean synthesis creates comments.
+	CommentShowAll   *bool `toml:"comment_show_all" comment:"Show all findings in CI comments."`
 	CommentWhenClean *bool `toml:"comment_when_clean" comment:"Post synthesized GitHub daemon comments when no findings survive display filters. Default: true."`
 
 	// UpsertComments overrides the global ci.upsert_comments setting.
@@ -1047,4 +1049,12 @@ func validateCICommentMinConfidence(value *float64) error {
 		return fmt.Errorf("ci.comment_min_confidence must be finite and between 0 and 1")
 	}
 	return nil
+}
+
+// ResolveCICommentShowAll resolves the comment display override.
+func ResolveCICommentShowAll(repoCfg *RepoConfig, globalCfg *Config) bool {
+	if repoCfg != nil && repoCfg.CI.CommentShowAll != nil {
+		return *repoCfg.CI.CommentShowAll
+	}
+	return globalCfg != nil && globalCfg.CI.CommentShowAll
 }

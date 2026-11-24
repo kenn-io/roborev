@@ -3016,6 +3016,10 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 		threshold = synth.MinSeverity
 	}
 	commentConfig := reviewpkg.CommentConfig{MinSeverity: reviewpkg.ResolveSynthesisMinSeverity(results, threshold)}
+	maxFindings, minConfidence, whenClean, showAll := p.resolveCommentPolicy(row.GithubRepo)
+	if showAll {
+		commentConfig.MinSeverity = ""
+	}
 	raw := func() panelCommentPublication {
 		// Raw diagnostics retain their existing publication policy.
 		return panelCommentPublication{body: reviewpkg.FormatRawBatchComment(commentConfig, results, row.HeadSHA)}
@@ -3027,7 +3031,12 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	if err != nil || rev == nil {
 		return raw(), nil
 	}
-	maxFindings, minConfidence, whenClean := p.resolveCommentPolicy(row.GithubRepo)
+	commentConfig.Fold = !showAll
+	if showAll {
+		commentConfig.MinSeverity = ""
+		maxFindings = 0
+		minConfidence = 0
+	}
 	commentConfig.MaxFindings = maxFindings
 	commentConfig.MinConfidence = minConfidence
 	commentConfig.FullReviewReference = fmt.Sprintf("roborev show --job %d", synth.ID)
@@ -4282,6 +4291,8 @@ func preparePanelReviewComment(cfg reviewpkg.CommentConfig, review *storage.Revi
 
 func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
 	var b strings.Builder
+	output := reviewpkg.FormatComment(prepared)
+	hasFold := strings.Contains(output, "<details>")
 
 	if headSHA != "" {
 		fmt.Fprintf(&b, "## roborev: Combined Review (`%s`)\n\n", gitpkg.ShortSHA(headSHA))
@@ -4289,7 +4300,9 @@ func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, re
 		switch verdict {
 		case "P":
 			b.WriteString("## roborev: Pass\n\n")
-			b.WriteString("No issues found.\n")
+			if !hasFold {
+				b.WriteString("No issues found.\n")
+			}
 		case "F":
 			b.WriteString("## roborev: Fail\n\n")
 		default:
@@ -4298,12 +4311,11 @@ func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, re
 	}
 
 	notice := prepared.OmissionNotice()
-	output := strings.TrimSuffix(reviewpkg.FormatComment(prepared), notice)
-	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
+	output = strings.TrimSuffix(output, notice)
 	if notice == "" && len(output) > reviewpkg.MaxCommentLen {
-		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix
+		output = truncatePanelPRBodyForFooter(output, "", reviewpkg.MaxCommentLen)
 	}
-	if output != "" && (verdict != "P" || headSHA != "") {
+	if output != "" && (verdict != "P" || headSHA != "" || hasFold) {
 		b.WriteString(output)
 		b.WriteString("\n")
 	} else if verdict == "P" && headSHA != "" {
@@ -4349,7 +4361,11 @@ func truncatePanelPRBodyForFooter(body string, footer string, maxLen int) string
 		return body
 	}
 	maxBodyLen := max(maxLen-len(footer)-len(panelCommentTruncSuffix), 0)
-	return truncateUTF8(body, maxBodyLen) + panelCommentTruncSuffix
+	cut := truncateUTF8(body, maxBodyLen)
+	if strings.Count(cut, "<details>") > strings.Count(cut, "</details>") {
+		cut = truncateUTF8(body, max(maxBodyLen-len("\n</details>"), 0)) + "\n</details>"
+	}
+	return cut + panelCommentTruncSuffix
 }
 
 func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members []storage.BatchReviewResult, includeCosts bool) string {
@@ -4646,7 +4662,7 @@ func (p *CIPoller) updateExistingPRComment(ghRepo string, prNumber int, body str
 
 // resolveCommentPolicy loads publication overrides from the default branch,
 // following the same precedence as existing comment upsert/cost settings.
-func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, float64, bool) {
+func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, float64, bool, bool) {
 	var repoCfg *config.RepoConfig
 	repo, err := p.findLocalRepo(context.Background(), ghRepo)
 	if err == nil && repo != nil {
@@ -4655,7 +4671,7 @@ func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, float64, bool) {
 		}
 	}
 	cfg := p.cfgGetter.Config()
-	return config.ResolveCICommentMaxFindings(repoCfg, cfg), config.ResolveCICommentMinConfidence(repoCfg, cfg), config.ResolveCICommentWhenClean(repoCfg, cfg)
+	return config.ResolveCICommentMaxFindings(repoCfg, cfg), config.ResolveCICommentMinConfidence(repoCfg, cfg), config.ResolveCICommentWhenClean(repoCfg, cfg), config.ResolveCICommentShowAll(repoCfg, cfg)
 }
 
 // resolveUpsertComments determines whether to upsert PR comments

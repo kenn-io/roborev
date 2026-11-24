@@ -16,6 +16,7 @@ import (
 // all findings; preparation never inherits policy from review data.
 type CommentConfig struct {
 	MinSeverity string
+	Fold        bool
 	// MinConfidence filters stated structured confidence; zero disables it.
 	MinConfidence float64
 	// MaxFindings limits structured findings; zero leaves them unlimited.
@@ -33,6 +34,8 @@ type PreparedComment struct {
 	structured          bool
 	verbatim            *string
 	findings            []commentFinding
+	nits                []commentFinding
+	unlikely            []commentFinding
 	omitted             int
 	fullReviewReference string
 }
@@ -64,6 +67,15 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	if doc != nil {
 		comment.structured = true
 		for _, finding := range doc.Findings {
+			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
+			if cfg.Fold && finding.Severity == "low" {
+				comment.nits = append(comment.nits, item)
+				continue
+			}
+			if cfg.Fold && finding.Unlikely {
+				comment.unlikely = append(comment.unlikely, item)
+				continue
+			}
 			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold {
 				continue
 			}
@@ -72,10 +84,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				comment.confidenceFiltered = true
 				continue
 			}
-			comment.findings = append(comment.findings, commentFinding{
-				severity: finding.Severity, problem: finding.Problem,
-				fix: finding.Fix, location: finding.Location,
-			})
+			comment.findings = append(comment.findings, item)
 		}
 	} else {
 		// Publication supplies the current header; a stored wrapper is content
@@ -126,7 +135,7 @@ func FormatComment(comment PreparedComment) string {
 	if comment.verbatim != nil {
 		return *comment.verbatim
 	}
-	if len(comment.findings) == 0 {
+	if len(comment.findings) == 0 && len(comment.nits)+len(comment.unlikely) == 0 {
 		if comment.confidenceFiltered {
 			return "**Verdict:** No findings match the comment filters.\n"
 		}
@@ -147,34 +156,80 @@ func FormatComment(comment PreparedComment) string {
 	if len(comment.findings) == 1 {
 		noun = "finding"
 	}
-	fmt.Fprintf(&out, "**Verdict:** Changes require fixes for %d %s.", len(comment.findings), noun)
-	for _, severity := range []string{"critical", "high", "medium", "low"} {
-		heading := false
-		for _, finding := range comment.findings {
-			if finding.severity != severity {
+	if len(comment.findings) == 0 {
+		out.WriteString("**Verdict:** No findings need fixes before merge.")
+	} else {
+		fmt.Fprintf(&out, "**Verdict:** Changes require fixes for %d %s.", len(comment.findings), noun)
+	}
+	renderCommentFindings(&out, comment.findings, "###")
+	if len(comment.nits)+len(comment.unlikely) > 0 {
+		var labels []string
+		if n := len(comment.nits); n > 0 {
+			noun := "nits"
+			if n == 1 {
+				noun = "nit"
+			}
+			labels = append(labels, fmt.Sprintf("%d %s", n, noun))
+		}
+		if n := len(comment.unlikely); n > 0 {
+			noun := "unlikely findings"
+			if n == 1 {
+				noun = "unlikely finding"
+			}
+			labels = append(labels, fmt.Sprintf("%d %s", n, noun))
+		}
+		out.WriteString("\n")
+		fmt.Fprintf(&out, "\n<details><summary>%s hidden</summary>\n", strings.Join(labels, " and "))
+		for _, group := range []struct {
+			title    string
+			findings []commentFinding
+		}{{"Nits", comment.nits}, {"Unlikely findings", comment.unlikely}} {
+			if len(group.findings) == 0 {
 				continue
 			}
-			if !heading {
-				fmt.Fprintf(&out, "\n\n### %s\n", strings.ToUpper(severity[:1])+severity[1:])
-				heading = true
+			fmt.Fprintf(&out, "\n#### %s\n", group.title)
+			for _, severity := range []string{"critical", "high", "medium", "low"} {
+				for _, finding := range group.findings {
+					if finding.severity == severity {
+						renderCommentFinding(&out, finding)
+					}
+				}
 			}
-			// Reviewer attribution belongs in the comment footer, not on
-			// each finding.
-			out.WriteString("\n- ")
-			if finding.location != "" {
-				fmt.Fprintf(&out, "`%s`: ", finding.location)
-			}
-			out.WriteString(finding.problem)
-			if finding.fix != "" {
-				fmt.Fprintf(&out, "\n\n  **Fix:** %s", finding.fix)
-			}
-			out.WriteString("\n")
 		}
+		out.WriteString("\n</details>\n")
 	}
 	if notice := comment.OmissionNotice(); notice != "" {
 		return strings.TrimRight(out.String(), "\n") + notice
 	}
 	return out.String()
+}
+
+func renderCommentFindings(out *strings.Builder, findings []commentFinding, prefix string) {
+	for _, severity := range []string{"critical", "high", "medium", "low"} {
+		heading := false
+		for _, finding := range findings {
+			if finding.severity != severity {
+				continue
+			}
+			if !heading {
+				fmt.Fprintf(out, "\n\n%s %s\n", prefix, strings.ToUpper(severity[:1])+severity[1:])
+				heading = true
+			}
+			renderCommentFinding(out, finding)
+		}
+	}
+}
+
+func renderCommentFinding(out *strings.Builder, finding commentFinding) {
+	out.WriteString("\n- ")
+	if finding.location != "" {
+		fmt.Fprintf(out, "`%s`: ", finding.location)
+	}
+	out.WriteString(finding.problem)
+	if finding.fix != "" {
+		fmt.Fprintf(out, "\n\n  **Fix:** %s", finding.fix)
+	}
+	out.WriteString("\n")
 }
 
 // OmissionNotice returns the cap explanation separately so publishers can

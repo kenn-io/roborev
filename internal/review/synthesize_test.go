@@ -571,7 +571,7 @@ func TestSynthesizeCommentsInheritReviewThreshold(t *testing.T) {
 					Agent: "nonexistent-synthesis-agent", MinSeverity: ciSeverity,
 				})
 				require.NoError(t, err)
-				if ciSeverity == "" {
+				if ciSeverity == "" && !structured {
 					assert.NotContains(t, synthesis.GitHubComment, "Minor naming issue.", "empty CI threshold inherits medium")
 				} else {
 					assert.Contains(t, synthesis.GitHubComment, "Minor naming issue.", "explicit low overrides medium")
@@ -731,11 +731,8 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 			result, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: a.Name(), MinSeverity: policy.ci})
 			require.NoError(t, err)
 			assert.Contains(t, result.Output, "Minor naming issue.")
-			if policy.visible {
-				assert.Contains(t, result.GitHubComment, "Minor naming issue.")
-			} else {
-				assert.NotContains(t, result.GitHubComment, "Minor naming issue.")
-			}
+			assert.Contains(t, result.GitHubComment, "Minor naming issue.")
+			assert.Contains(t, result.GitHubComment, "1 nit hidden")
 		})
 	}
 }
@@ -781,11 +778,29 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 				assert.Equal(outcome == "fallback", strings.Contains(result.GitHubComment, "Synthesis unavailable."))
 				for _, finding := range doc.Findings {
 					assert.Contains(result.Output, finding.Problem)
-					assert.Equal(slices.Contains(policy.visible, finding.Problem), strings.Contains(result.GitHubComment, finding.Problem), finding.Problem)
+					assert.Equal((finding.Severity == "low" || slices.Contains(policy.visible, finding.Problem)), strings.Contains(result.GitHubComment, finding.Problem), finding.Problem)
 				}
 				assert.Equal(policy.members[0], results[0].MinSeverity, "publication must not mutate member policy")
 				assert.Len(results[0].Structured.Findings, 3)
 			})
+		}
+	}
+}
+
+func TestSynthesizeCommentShowAll(t *testing.T) {
+	doc := StructuredReview{SchemaVersion: 3, Summary: "Review.", Findings: []StructuredFinding{
+		{Severity: "medium", Problem: "defect", Fix: "fix"},
+		{Severity: "low", Problem: "nit", Fix: "fix"},
+		{Severity: "high", Problem: "rare", Fix: "fix", Unlikely: true},
+	}}
+	for _, showAll := range []bool{false, true} {
+		result, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc, Output: doc.Markdown("")}}, SynthesizeOpts{MinSeverity: "medium", CommentShowAll: showAll})
+		require.NoError(t, err)
+		assert.Contains(t, result.Output, "nit")
+		assert.Contains(t, result.GitHubComment, "rare")
+		assert.Equal(t, !showAll, strings.Contains(result.GitHubComment, "<details>"))
+		if showAll {
+			assert.Contains(t, result.GitHubComment, "3 findings")
 		}
 	}
 }

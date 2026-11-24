@@ -866,6 +866,7 @@ nothing survives the display filters. Defaults preserve existing behavior:
 [ci]
 comment_max_findings = 0   # Unlimited structured findings
 comment_when_clean = true # Create comments even when no findings survive
+comment_show_all = false # Show all findings inline
 # comment_min_confidence = 0.8 # Optional; unset disables confidence filtering
 ```
 
@@ -889,6 +890,11 @@ saving, or reloading configuration. If confidence removes a finding that passed
 the severity filter and no findings remain, the comment says "No findings match
 the comment filters." Confidence does not filter prose.
 
+By default, structured CI comments fold Low and unlikely findings into a
+collapsible section. Set `comment_show_all = true` globally or per repository
+to show every finding inline, ignoring the comment severity and confidence
+floors and finding cap. Stored reviews retain every finding.
+
 Set `comment_when_clean = false` to avoid creating a comment when structured
 synthesis has no findings after filtering, even if the stored review has
 findings. Severity-parsed prose is also silent when no labelled findings or
@@ -900,7 +906,7 @@ Missing or deleted comments are successful no-ops; cleanup never creates a
 replacement. Permission and transient delivery errors keep the normal error and
 retry behavior.
 
-All three settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
+All four settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
 explicit repo cap of `0` restores unlimited findings; a confidence floor of `0`
 disables a global floor; an explicit `true` restores clean comments. These
 settings apply only to synthesized GitHub daemon comments. Raw member fallback
@@ -1203,6 +1209,7 @@ set, it takes priority over the matrix fields for that repo.
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
 | `comment_min_confidence` | float | global `comment_min_confidence` | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Zero disables filtering. |
 | `comment_max_findings` | int | global `comment_max_findings` | Maximum structured findings in synthesized GitHub daemon comments; `0` restores unlimited |
+| `comment_show_all` | bool | global `comment_show_all` | Show all findings inline in CI comments |
 | `comment_when_clean` | bool | global `comment_when_clean` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
@@ -1247,6 +1254,7 @@ set, it takes priority over the matrix fields for that repo.
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `comment_min_confidence` | float | unset | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Unset disables filtering. |
 | `comment_max_findings` | int | `0` | Maximum structured findings in synthesized GitHub daemon comments; `0` is unlimited |
+| `comment_show_all` | bool | `false` | Show all findings inline in CI comments |
 | `comment_when_clean` | bool | `true` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |

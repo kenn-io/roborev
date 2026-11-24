@@ -111,12 +111,14 @@ var ConversionSchema = schema(false, true)
 var ConversionSourcedSchema = schema(true, true)
 
 func schema(withSources, conversion bool) jsontext.Value {
-	required := `"severity", "kind", "topic", "confidence", "problem", "fix", "file", "start_line", "end_line"`
+	required := `"severity", "kind", "topic", "confidence", "unlikely", "problem", "fix", "file", "start_line", "end_line"`
 	// A live agent must state a verdict, a kind, and a confidence.
 	verdictType, kindType, confidenceType, nullable := `"string"`, `"string"`, `"number"`, ""
+	unlikelyType := `"boolean"`
 	location := ""
 	if conversion {
 		verdictType, kindType, confidenceType, nullable = `["string", "null"]`, `["string", "null"]`, `["number", "null"]`, ", null"
+		unlikelyType = `["boolean", "null"]`
 		required += `, "location"`
 		location = `,
           "location": {"type": ["string", "null"]}`
@@ -159,6 +161,7 @@ func schema(withSources, conversion bool) jsontext.Value {
             "enum": [%q, %q, %q, %q, %q, null]
           },
           "confidence": {"type": %s, "minimum": 0, "maximum": 1},
+          "unlikely": {"type": %s},
           "problem": {"type": "string", "minLength": 1},
           "fix": {"type": "string", "minLength": 1},
           "file": {"type": ["string", "null"]},
@@ -171,7 +174,7 @@ func schema(withSources, conversion bool) jsontext.Value {
 }`, SchemaVersion, verdictType, VerdictPass, VerdictFail, VerdictUnableToReview, nullable,
 		required, kindType, KindDefect, KindImprovement, nullable,
 		TopicTests, TopicDocumentation, TopicSecurity, TopicPerformance, TopicDesign,
-		confidenceType, location, sources))
+		confidenceType, unlikelyType, location, sources))
 }
 
 // LegacyDocument preserves historical output without claiming extracted findings.
@@ -282,6 +285,7 @@ type Finding struct {
 	// Confidence is the reviewer's estimate, from 0 to 1, that the problem is
 	// real. Models are poorly calibrated, so treat it as a weak signal.
 	Confidence float64 `json:"confidence,omitempty"`
+	Unlikely   bool    `json:"unlikely,omitzero"`
 	Problem    string  `json:"problem"`
 	Fix        string  `json:"fix"`
 	// File is a path relative to the repository root. StartLine and EndLine
@@ -337,6 +341,7 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 		Kind       *string  `json:"kind"`
 		Topic      *string  `json:"topic"`
 		Confidence *float64 `json:"confidence"`
+		Unlikely   bool     `json:"unlikely,omitzero"`
 		Problem    string   `json:"problem"`
 		Fix        string   `json:"fix"`
 		File       *string  `json:"file"`
@@ -346,7 +351,7 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 		Sources    []int    `json:"sources,omitempty"`
 	}
 	w := wire{
-		Severity: f.Severity, Problem: f.Problem, Fix: f.Fix,
+		Severity: f.Severity, Problem: f.Problem, Fix: f.Fix, Unlikely: f.Unlikely,
 		Location: location, Sources: f.Sources,
 	}
 	if f.Kind != "" {
@@ -390,6 +395,7 @@ type findingWire struct {
 	Kind       *string        `json:"kind"`
 	Topic      *string        `json:"topic"`
 	Confidence *float64       `json:"confidence"`
+	Unlikely   *bool          `json:"unlikely"`
 	Problem    string         `json:"problem"`
 	Fix        string         `json:"fix"`
 	File       *string        `json:"file"`
@@ -600,6 +606,7 @@ func decodeLocatedFinding(wire findingWire) (Finding, error) {
 			return Finding{}, fmt.Errorf("has confidence %v outside 0 to 1", confidence)
 		}
 	}
+	unlikely := wire.Unlikely != nil && *wire.Unlikely
 	var location string
 	if len(wire.Location) > 0 && !bytes.Equal(wire.Location, []byte("null")) {
 		if err := json.Unmarshal(wire.Location, &location); err != nil {
@@ -611,6 +618,7 @@ func decodeLocatedFinding(wire findingWire) (Finding, error) {
 		Kind:       kind,
 		Topic:      topic,
 		Confidence: confidence,
+		Unlikely:   unlikely,
 		Problem:    wire.Problem,
 		Fix:        wire.Fix,
 		Sources:    wire.Sources,

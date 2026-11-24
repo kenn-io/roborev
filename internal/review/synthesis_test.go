@@ -299,7 +299,7 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 	prompt := BuildSynthesisPrompt(reviews, false, "")
 
 	assert.Equal(t, "You are combining multiple code review outputs into a single GitHub PR comment.\n"+
-		`Return exactly one JSON object with this shape and no code fence: {"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}`+"\n"+
+		`Return exactly one JSON object with this shape and no code fence: {"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"unlikely":false,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}`+"\n"+
 		"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. List every finding that requires changes in `findings`; return an empty `findings` array if the reviewers agree the code is clean.\n"+
 		"In `sources`, list the numbers of the reviews below (### Review N) that reported the finding.\n"+
 		"Rules:\n"+
@@ -309,6 +309,7 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 		"- Deduplicate findings reported by multiple reviewers and cite every source\n"+
 		"- Order findings by severity (Critical > High > Medium > Low)\n"+
 		"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n"+
+		"- Mark a merged finding unlikely only when every source marked it unlikely\n"+
 		"- Preserve the known trigger, actual wrong behavior, expected outcome, and legitimate behavior to preserve in each finding's problem and fix\n"+
 		"- When merging duplicates, keep all distinct behavior and preservation constraints; sharing a location alone does not make two findings duplicates\n"+
 		"- Keep uncertainty and the distinction between proposed checks and observed results; do not invent evidence, reproduction steps, or test results\n"+

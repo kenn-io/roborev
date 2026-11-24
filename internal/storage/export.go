@@ -157,6 +157,7 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 			"kind":       {Type: huma.TypeString, Nullable: true, Description: "defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents."},
 			"topic":      {Type: huma.TypeString, Nullable: true, Description: "One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents."},
 			"confidence": {Type: huma.TypeNumber, Format: "double", Nullable: true, Minimum: new(float64(0)), Maximum: new(float64(1)), Description: "The reviewer's estimate, from 0 to 1, that the problem is real. Null exactly when kind is null. Present on version 3 documents."},
+			"unlikely":   {Type: huma.TypeBoolean, Description: "Whether only unusual timing or input reaches the finding."},
 			"problem":    {Type: huma.TypeString},
 			"fix":        {Type: huma.TypeString},
 			"file":       {Type: huma.TypeString, Nullable: true, Description: "Path relative to the repository root, or null. Present on version 3 documents."},

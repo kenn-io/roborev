@@ -4495,6 +4495,9 @@ type StructuredReviewFinding struct {
 
 	// Topic One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents.
 	Topic *string `json:"topic,omitempty"`
+
+	// Unlikely Whether only unusual timing or input reaches the finding.
+	Unlikely *bool `json:"unlikely,omitempty"`
 }
 
 func (s StructuredReviewFinding) Validate() error {
