@@ -140,8 +140,8 @@ func formatSingleResult(
 	output := r.Output
 	if commentConfig != nil {
 		prepared := PrepareComment(*commentConfig, r)
-		if commentConfig.ShowAll && prepared.structured && !prepared.IsClean() {
-			passed = false
+		if prepared.structured {
+			passed = prepared.IsClean()
 		}
 		output = TruncateComment(FormatComment(prepared))
 	}

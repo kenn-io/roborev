@@ -834,3 +834,13 @@ func TestProbeShowAllVerdictWithLowFindings(t *testing.T) {
 	assert.Contains(t, result.GitHubComment, "Review Complete")
 	assert.Contains(t, result.GitHubComment, "Changes require fixes for 2 findings")
 }
+
+func TestSynthesizeFoldedFindingVerdict(t *testing.T) {
+	doc := StructuredReview{Summary: "Review", Verdict: "fail", Findings: []StructuredFinding{{Severity: "high", Problem: "Rare finding", Fix: "Fix", Unlikely: true}}}
+	result, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc, Output: doc.Markdown(""), Verdict: storage.VerdictFail}}, SynthesizeOpts{MinSeverity: "medium"})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Review Complete")
+	assert.Contains(t, result.GitHubComment, "Review Passed")
+	assert.Contains(t, result.GitHubComment, "No findings need fixes before merge")
+	assert.Contains(t, result.GitHubComment, "1 unlikely finding hidden")
+}
