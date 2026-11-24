@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -364,6 +365,7 @@ func TestLoadGlobalConfigWithFixGuidelines(t *testing.T) {
 func TestRepoConfigLoadersRejectGlobalOnlyFixGuidelines(t *testing.T) {
 	for key, contents := range map[string]string{
 		"fix_guidelines":     `fix_guidelines = "Repo policy"`,
+		"ci.check_log_dir":   "[ci]\ncheck_log_dir = \"/logs\"\n",
 		"ci.check_model":     "[ci]\ncheck_model = \"high\"\n",
 		"ci.check_reasoning": "[ci]\ncheck_reasoning = \"high\"\n",
 	} {
@@ -5836,4 +5838,32 @@ func TestPostCommitBatchingInheritsGlobalAfterRepoSave(t *testing.T) {
 	period, err := ResolvePostCommitQuietPeriod(repo)
 	require.NoError(t, err)
 	assert.Equal(t, 5*time.Minute, period)
+}
+
+func TestLoadGlobalCheckLogDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	for _, tc := range []struct {
+		name, dir string
+		valid     bool
+	}{
+		{"unset", "", true},
+		{"absolute", filepath.Join(t.TempDir(), "logs"), true},
+		{"relative", "logs", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(path, []byte("[ci]\ncheck_log_dir = "+strconv.Quote(tc.dir)+"\n"), 0o600))
+			cfg, err := LoadGlobalFrom(path)
+			validationConfig := DefaultConfig()
+			validationConfig.CI.CheckLogDir = tc.dir
+			validationErr := validationConfig.Validate()
+			if tc.valid {
+				require.NoError(t, err)
+				assert.NoError(t, validationErr)
+				assert.Equal(t, tc.dir, cfg.CI.CheckLogDir)
+			} else {
+				require.ErrorContains(t, err, "check_log_dir must be an absolute path")
+				assert.ErrorContains(t, validationErr, "check_log_dir must be an absolute path")
+			}
+		})
+	}
 }

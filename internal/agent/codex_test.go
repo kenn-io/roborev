@@ -1332,3 +1332,48 @@ func TestCodexSandboxCleansHomeWhenJobCommandFails(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, homes)
 }
+
+func TestCodexSandboxLogDir(t *testing.T) {
+	work, logs := t.TempDir(), t.TempDir()
+	t.Setenv("CODEX_HOME", t.TempDir())
+	for _, tc := range []struct{ name, dir, label string }{
+		{"empty label", logs, ""},
+		{"absolute label", logs, work},
+		{"parent label", logs, "../outside"},
+		{"relative directory", "logs", "job"},
+		{"reserved label", logs, ".codex-run-v1-abc"},
+		{"reserved nested label", logs, "experiment/.codex-run-v1-abc/case"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}, LogDir: tc.dir, Label: tc.label}).prepare(work)
+			require.Error(t, err)
+		})
+	}
+	var homes []string
+	for i := range 2 {
+		job, cleanup, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}, LogDir: logs, Label: "nested/job"}).prepare(work)
+		require.NoError(t, err)
+		require.Len(t, job.WritePaths, 1)
+		home := job.WritePaths[0]
+		assert.Equal(t, filepath.Join(logs, "nested", "job"), filepath.Dir(home))
+		assert.True(t, strings.HasPrefix(filepath.Base(home), ".codex-run-v1-"))
+		assert.Contains(t, job.Env, "CODEX_HOME="+home)
+		if i == 0 {
+			sessions := filepath.Join(home, "sessions")
+			require.NoError(t, os.Mkdir(sessions, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(sessions, "rollout.jsonl"), []byte("session"), 0o600))
+		}
+		cleanup()
+		if i == 0 {
+			assert.FileExists(t, filepath.Join(home, "sessions", "rollout.jsonl"))
+		} else {
+			assert.NoDirExists(t, home)
+		}
+		homes = append(homes, home)
+	}
+	assert.NotEqual(t, homes[0], homes[1])
+	job, cleanup, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}}).prepare(work)
+	require.NoError(t, err)
+	assert.Empty(t, job.WritePaths)
+	cleanup()
+}

@@ -451,7 +451,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
 		Branch: "feature/panel", Agent: "synth-agent", PanelRunUUID: &oldUUID,
 		PanelRole: storage.PanelRoleSynthesis, PanelName: "panel",
-		JobType: storage.JobTypeSynthesis,
+		JobType: storage.JobTypeSynthesis, CheckLogLabel: "experiment/run",
 	}
 	plan, err := experimentPlanForPanel(srcMembers, srcSynth)
 	require.NoError(t, err)
@@ -515,6 +515,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	assert.True(newSynth.IsSynthesisJob())
 	assert.True(newSynth.ClaimBlocked, "new synthesis re-blocked until members finish")
 	assert.Equal(oldSynthAfter.Branch, newSynth.Branch)
+	assert.Equal("experiment/run", newSynth.CheckLogLabel)
 	assert.Equal(oldSynthAfter.Experiments, newSynth.Experiments)
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/sandbox"
@@ -13,6 +14,8 @@ import (
 type CodexSandbox struct {
 	Job      sandbox.Job
 	Upstream string
+	LogDir   string
+	Label    string
 }
 
 // WithSandbox returns a copy configured to run inside the job's nono sandbox.
@@ -79,11 +82,34 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		Name: "codex", Upstream: upstream, Path: "/responses", EnvVar: "CODEX_PHANTOM",
 		Capture: []string{"/usr/bin/python3", "-I", "-c", `import json,sys; print(json.load(open(sys.argv[1]))["tokens"]["access_token"])`, filepath.Join(hostHome, "auth.json")},
 	}
-	home, err := os.MkdirTemp(job.WorkDir, ".codex-home-")
+	homeDir, prefix := job.WorkDir, ".codex-home-"
+	if s.LogDir != "" {
+		if !filepath.IsAbs(s.LogDir) || !filepath.IsLocal(s.Label) {
+			return job, nil, fmt.Errorf("sandbox log directory must be absolute and label must be local")
+		}
+		for component := range strings.SplitSeq(filepath.Clean(s.Label), string(filepath.Separator)) {
+			if strings.HasPrefix(component, ".codex-run-v1-") {
+				return job, nil, fmt.Errorf("sandbox log label uses reserved prefix .codex-run-v1-")
+			}
+		}
+		homeDir, prefix = filepath.Join(s.LogDir, s.Label), ".codex-run-v1-"
+		if err := os.MkdirAll(homeDir, 0o700); err != nil {
+			return job, nil, fmt.Errorf("create sandbox log directory: %w", err)
+		}
+	}
+	home, err := os.MkdirTemp(homeDir, prefix)
 	if err != nil {
 		return job, nil, fmt.Errorf("create sandbox Codex home: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(home) }
+	if s.LogDir != "" {
+		job.WritePaths = append(append([]string{}, job.WritePaths...), home)
+		cleanup = func() {
+			if _, err := os.Stat(filepath.Join(home, "sessions")); os.IsNotExist(err) {
+				_ = os.RemoveAll(home)
+			}
+		}
+	}
 	const provider = `[model_providers.roborev-route]
 name = "roborev-route"
 env_key = "CODEX_PHANTOM"

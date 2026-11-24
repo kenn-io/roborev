@@ -724,6 +724,9 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if err := validateCICheckLogDir(c.CI.CheckLogDir); err != nil {
+		return err
+	}
 	if err := c.Schedule.Validate(); err != nil {
 		return err
 	}
@@ -1149,6 +1152,13 @@ func LoadGlobalFrom(path string) (*Config, error) {
 	return cfg, nil
 }
 
+func validateCICheckLogDir(path string) error {
+	if path != "" && !filepath.IsAbs(path) {
+		return fmt.Errorf("check_log_dir must be an absolute path")
+	}
+	return nil
+}
+
 func validateAgentMemoryMaxMB(mib int) error {
 	if mib < 0 {
 		return fmt.Errorf("agent_memory_max_mb must be 0 or more, got %d", mib)
@@ -1208,6 +1218,7 @@ func applyDaemonSections(c *Config) []error {
 			return errors.Join(
 				validateCICommentMaxFindings(c.CI.CommentMaxFindings),
 				validateCICommentMinConfidence(c.CI.CommentMinConfidence),
+				validateCICheckLogDir(c.CI.CheckLogDir),
 				c.CI.NormalizeInstallations(),
 				validateCIPRFilters(c.CI),
 			)
@@ -1557,7 +1568,7 @@ func validateRepoConfigScope(md toml.MetaData) error {
 			"goal_review.kata_gate",
 		)
 	}
-	for _, key := range []string{"check_model", "check_reasoning"} {
+	for _, key := range []string{"check_model", "check_reasoning", "check_log_dir"} {
 		if md.IsDefined("ci", key) {
 			return fmt.Errorf(
 				"repository config key %q is global-only; move it to ~/.roborev/config.toml",

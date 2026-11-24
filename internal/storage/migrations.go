@@ -53,6 +53,16 @@ var schemaMigrations = []schemaMigration{
 	{17, "supplied panel enqueue receipts", migratePanelEnqueueRequests},
 	{18, "session CLI provenance", migrateSessionCLI},
 	{19, "CI default-branch commit reviews", migrateCIBranchReviews},
+	{20, "CI checker log label", migrateCheckLogLabel},
+}
+
+func migrateCheckLogLabel(ctx context.Context, db *DB) error {
+	exists, err := hasColumn(ctx, db, "review_jobs", "check_log_label")
+	if err != nil || exists {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ALTER TABLE review_jobs ADD COLUMN check_log_label TEXT`)
+	return err
 }
 
 func migrateSessionCLI(ctx context.Context, db *DB) error {

@@ -37,12 +37,12 @@ type ciCheckConfig struct {
 
 var ciCheckSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","keep","evidence","reason"],"properties":{"finding":{"type":"integer"},"keep":{"type":"boolean"},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}`)
 
-const ciCheckPrompt = `An automated reviewer posted the findings in ../findings.md on this pull request. You are its last step before the comment posts: keep each finding only if it holds up. The worktree you're in is the PR head; %s is its frozen base commit.
+const ciCheckPrompt = `An automated reviewer posted the findings in ../findings.md on this project's pull request for its maintainers to review before merging. You are its last step before the comment posts: keep each finding only if it holds up. The worktree you're in is the PR head; %s is its frozen base commit.
 
 Work in a scratch copy (cp -a . ../check-$$). Leave this worktree unchanged.
 
 For each finding:
-1. Make it fail. Write a test or command that shows the failure, starting from a state the product, its users, or an outside system can create: a file a user imports, a config value they type, and a server's reply all count. For an order of events, force that order.
+1. Make it fail. Write a test or command that shows the failure, starting from a state the product, its users, or an outside system can create: a file a user imports, a config value they type, and a server's reply all count. For an order of events, force that order. For a security control such as authentication, permissions, path or input validation, or secret handling, write a regression test in the project's test style that feeds the named input to its code and asserts the safe behavior, such as rejecting the request, refusing the path, or keeping the secret out of output. The test should fail on the head if the control is missing. Do not use exploit payloads, scanning, or access outside the scratch copy.
 2. Keep it if it fails that way and either a user on a normal workflow hits it, or the harm is lost data, a silently saved wrong result, or a security hole. Keep a finding about the project's own tests or CI when a test can't catch the bug it exists for and the fix is small.
 3. Drop it if it doesn't fail, if nothing but a hand-built state reaches it, or if only rare timing or unusual input reaches it and the fix would add new machinery. Count everyone the failure reaches: in a library, a rare input in one consumer is still a broken build or wrong result in every repo that uses it. A bug that predates this PR still counts when the PR's code runs into it. Keep a finding that a test is redundant or tests code the project doesn't own only when no change to the project's code fails that test alone.
 
@@ -127,6 +127,14 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 	return res, false
 }
 
+func (wp *WorkerPool) ciCheckSandbox(job *storage.ReviewJob, sandboxJob sandbox.Job) *agent.CodexSandbox {
+	label := job.CheckLogLabel
+	if label == "" {
+		label = fmt.Sprintf("job-%d", job.ID)
+	}
+	return &agent.CodexSandbox{Job: sandboxJob, Upstream: wp.ciCheckUpstream, LogDir: wp.cfgGetter.Config().CI.CheckLogDir, Label: label}
+}
+
 // runCICheck owns the disposable checkout and every process used by the checker.
 func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, gitEnv []string, out io.Writer) (structuredreview.Document, error) {
 	baseAgent, err := agent.GetAvailableExactWithConfigFromConfig(nil, "codex", wp.cfgGetter.Config())
@@ -145,7 +153,7 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 	if err := os.WriteFile(filepath.Join(run.Job.WorkDir, "findings.md"), []byte(doc.Markdown(job.MinSeverity)), 0o600); err != nil {
 		return structuredreview.Document{}, err
 	}
-	a := codex.WithSandbox(&agent.CodexSandbox{Job: run.Job, Upstream: wp.ciCheckUpstream})
+	a := codex.WithSandbox(wp.ciCheckSandbox(job, run.Job))
 	a.Command = run.Command
 	a.Model = cfg.Model
 	a.Reasoning = agent.ParseReasoningLevel(cfg.Reasoning)
@@ -189,7 +197,7 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 					return nil, err
 				}
 				rewriteJob.ReadPaths = append(slices.Clone(run.Job.ReadPaths), repo)
-				rewriteAgent = a.WithSandbox(&agent.CodexSandbox{Job: rewriteJob, Upstream: wp.ciCheckUpstream})
+				rewriteAgent = a.WithSandbox(wp.ciCheckSandbox(job, rewriteJob))
 			}
 			phase++
 			fmt.Fprintf(out, "CI rewrite phase %d\n", phase)
