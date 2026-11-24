@@ -289,6 +289,10 @@ filing review findings back into Kata.
 
 ## Severity Filtering
 
+Default reviews rate verified behavior and performance problems worth fixing
+before merge Medium or High, even when the trigger is uncommon. Low findings
+describe minor problems that can safely wait.
+
 Use `--min-severity` to decide which findings fail a review:
 
 ```bash
