@@ -911,9 +911,7 @@ retry behavior.
 All four settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
 explicit repo cap of `0` restores unlimited findings; a confidence floor of `0`
 disables a global floor; an explicit `true` restores clean comments. These
-settings apply only to synthesized GitHub daemon comments. Raw member fallback
-diagnostics, daemon-free `roborev ci`, and GitLab keep existing behavior.
-Complete stored reviews, verdicts, prompts, and execution statuses are
+settings leave stored reviews, verdicts, prompts, and execution statuses
 unchanged. Unlike these display settings, `ci.min_severity` also controls the
 synthesis verdict.
 
