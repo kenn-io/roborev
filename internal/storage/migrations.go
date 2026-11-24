@@ -54,6 +54,24 @@ var schemaMigrations = []schemaMigration{
 	{18, "session CLI provenance", migrateSessionCLI},
 	{19, "CI default-branch commit reviews", migrateCIBranchReviews},
 	{20, "CI checker log label", migrateCheckLogLabel},
+	{21, "normalize unknown synced job origins", migrateUnknownSyncedJobOrigins},
+}
+
+// preserveUnknownSyncedJobOrigins protects unknown origins from the frozen baseline.
+func preserveUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
+	for _, column := range []string{"source_machine_id", "synced_at"} {
+		exists, err := hasColumn(ctx, db, "review_jobs", column)
+		if err != nil || !exists {
+			return err
+		}
+	}
+	_, err := db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = '' WHERE source_machine_id IS NULL AND synced_at IS NOT NULL`)
+	return err
+}
+
+func migrateUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = NULL WHERE source_machine_id = '' AND synced_at IS NOT NULL`)
+	return err
 }
 
 func migrateCheckLogLabel(ctx context.Context, db *DB) error {
@@ -187,6 +205,11 @@ func (db *DB) runSchemaMigrations(ctx context.Context, migrations []schemaMigrat
 	for _, m := range migrations {
 		if m.version <= current {
 			continue
+		}
+		if m.version == 1 {
+			if err := preserveUnknownSyncedJobOrigins(ctx, db); err != nil {
+				return fmt.Errorf("preserve unknown synced job origins: %w", err)
+			}
 		}
 		log.Printf("Database migration %d: %s", m.version, m.name)
 		if err := m.apply(ctx, db); err != nil {

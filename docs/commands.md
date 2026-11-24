@@ -511,7 +511,7 @@ Both profiles include these fields on each top-level review:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `source_machine_id` | UUID | Machine that ran the review. It differs from `exported_by_machine_id` when sync pulled the review from another machine |
+| `source_machine_id` | UUID | Machine that ran the review. Omitted when unknown. It differs from `exported_by_machine_id` when sync pulled the review from another machine |
 | `exported_by_machine_id` | UUID | Machine running the export |
 
 A daemon that predates these fields omits both.

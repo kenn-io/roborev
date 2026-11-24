@@ -34,6 +34,7 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 	zeroSource := seedCompletedExportReview(t, db, repo.ID, "3333333333333333333333333333333333333333", "2026-06-29 00:00:02", false)
 	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, uuid.Nil(), zeroSource.JobID)
 	require.NoError(t, err)
+	local := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:03", false)
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 	remoteID := testUUID("machine-a")
@@ -50,7 +51,7 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 		t.Run(string(profile), func(t *testing.T) {
 			page, err := db.ExportReviews(ExportReviewsOptions{Profile: profile})
 			require.NoError(t, err)
-			require.Len(t, page.Reviews, 3)
+			require.Len(t, page.Reviews, 4)
 			byID := make(map[uuid.UUID]ExportReview)
 			for _, review := range page.Reviews {
 				byID[review.ReviewID] = review
@@ -58,6 +59,7 @@ func TestExportReviewsReportsSourceMachine(t *testing.T) {
 			}
 			assert.Equal(t, uuid.Nil(), byID[*legacy.UUID].SourceMachineID)
 			assert.Equal(t, uuid.Nil(), byID[*zeroSource.UUID].SourceMachineID)
+			assert.Equal(t, machineID, byID[*local.UUID].SourceMachineID)
 			assert.Equal(t, remoteID, byID[pulledID].SourceMachineID)
 		})
 	}
@@ -83,25 +85,6 @@ func TestExportReviewsOmitsUnknownOrigin(t *testing.T) {
 			assert.Contains(t, string(raw), `"exported_by_machine_id"`)
 		}
 	}
-}
-
-func TestOpenPreservesUnknownSyncedOrigin(t *testing.T) {
-	t.Parallel()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := Open(dbPath)
-	require.NoError(t, err)
-	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	review := seedCompletedExportReview(t, db, repo.ID, "5555555555555555555555555555555555555555", "2026-06-29 00:00:01", false)
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = NULL, synced_at = datetime('now') WHERE id = ?`, review.JobID)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-	db, err = Open(dbPath)
-	require.NoError(t, err)
-	defer db.Close()
-	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata})
-	require.NoError(t, err)
-	require.Len(t, page.Reviews, 1)
-	assert.Equal(t, uuid.Nil(), page.Reviews[0].SourceMachineID)
 }
 
 func TestExportReviewsPagesUseCompletedIndex(t *testing.T) {

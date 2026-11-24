@@ -331,3 +331,99 @@ func TestPanelEnqueueRequestMigrationPreservesQueuedReviews(t *testing.T) {
 	require.NotNil(t, claimed)
 	assert.Equal(existing[0].ID, claimed.ID, "the upgrade must preserve queued work")
 }
+
+func seedUnknownOrigins(t *testing.T, path string) (string, []int64) {
+	t.Helper()
+	db, err := Open(path)
+	require.NoError(t, err)
+	machine, err := db.GetMachineID()
+	require.NoError(t, err)
+	_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/origin", 4)
+	origins := []any{nil, "", nil, testUUID("remote-machine")}
+	for i, job := range jobs {
+		var synced any = "2024-01-01 00:00:00"
+		if i == 2 {
+			synced = nil
+		}
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = ?, session_id = ?, uuid = ?, started_at = '2024-01-01 00:00:00' WHERE id = ?`, origins[i], synced, job.GitRef, testUUID(job.GitRef), job.ID)
+		require.NoError(t, err)
+	}
+	_, err = db.ExecContext(t.Context(), `DELETE FROM review_job_session_history`)
+	require.NoError(t, err)
+	forgetSchemaVersion(t, db)
+	require.NoError(t, db.Close())
+	return machine.String(), []int64{jobs[0].ID, jobs[1].ID, jobs[2].ID, jobs[3].ID}
+}
+
+func assertUnknownOrigins(t *testing.T, db *DB, machine string, ids []int64) {
+	t.Helper()
+	want := []sql.NullString{{}, {}, {String: machine, Valid: true}, {String: testUUID("remote-machine").String(), Valid: true}}
+	for i, id := range ids {
+		var origin sql.NullString
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, id).Scan(&origin))
+		assert.Equal(t, want[i], origin)
+		var history int
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_job_session_history WHERE job_uuid = (SELECT uuid FROM review_jobs WHERE id = ?)`, id).Scan(&history))
+		if i < 2 {
+			assert.Zero(t, history)
+		} else {
+			assert.Equal(t, 1, history)
+		}
+	}
+}
+
+func TestOpenPreservesUnknownSyncedJobOrigin(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "reviews.db")
+	machine, ids := seedUnknownOrigins(t, path)
+	for range 2 {
+		db, err := Open(path)
+		require.NoError(t, err)
+		assertUnknownOrigins(t, db, machine, ids)
+		require.NoError(t, db.Close())
+	}
+}
+
+func TestSourceMachineOriginMigrationRetries(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []string{"before baseline", "after baseline"} {
+		t.Run(stage, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "reviews.db")
+			machine, ids := seedUnknownOrigins(t, path)
+			raw, err := sql.Open("sqlite", path)
+			require.NoError(t, err)
+			db := &DB{DB: raw}
+			require.NoError(t, preserveUnknownSyncedJobOrigins(t.Context(), db))
+			if stage == "after baseline" {
+				require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:1]))
+			}
+			require.NoError(t, db.Close())
+			db, err = Open(path)
+			require.NoError(t, err)
+			defer db.Close()
+			assertUnknownOrigins(t, db, machine, ids)
+		})
+	}
+	t.Run("version 20", func(t *testing.T) {
+		db := openUnmigratedDB(t)
+		require.NoError(t, registerContentFunctions())
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:20]))
+		_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/retry", 2)
+		remote := testUUID("remote-machine")
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = '', synced_at = '2024-01-01' WHERE id = ?`, jobs[0].ID)
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = '2024-01-01' WHERE id = ?`, remote, jobs[1].ID)
+		require.NoError(t, err)
+		for range 2 {
+			require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+			var unknown sql.NullString
+			var known string
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobs[0].ID).Scan(&unknown))
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobs[1].ID).Scan(&known))
+			assert.Equal(t, sql.NullString{}, unknown)
+			assert.Equal(t, remote.String(), known)
+			_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 21`)
+			require.NoError(t, err)
+		}
+	})
+}

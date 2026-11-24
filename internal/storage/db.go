@@ -1571,7 +1571,8 @@ func (db *DB) migrate() error {
 	)`); err != nil {
 		return fmt.Errorf("create review_job_session_history: %w", err)
 	}
-	// Assign unsynced legacy jobs before seeding attempt history so reconciliation
+	// Rows created before sync ownership was introduced belong to this local
+	// database. Assign them before seeding attempt history so reconciliation
 	// can both select them and retain their prior session associations.
 	machineID, err := db.GetMachineID()
 	if err != nil {
@@ -1579,7 +1580,7 @@ func (db *DB) migrate() error {
 	}
 	if _, err = db.Exec(`UPDATE review_jobs
 		SET source_machine_id = ?
-		WHERE source_machine_id IS NULL AND synced_at IS NULL`, machineID); err != nil {
+		WHERE source_machine_id IS NULL`, machineID); err != nil {
 		return fmt.Errorf("backfill legacy review job source machine: %w", err)
 	}
 	if _, err = db.Exec(`INSERT OR IGNORE INTO review_job_session_history
