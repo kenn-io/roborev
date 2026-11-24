@@ -13,6 +13,9 @@ behavior Low. False regression coverage is Medium, or High when it misses an
 established defect causing data loss, a security breach, a crash, or incorrect
 results.
 
+With `review_min_severity = "medium"`, Low findings remain in the review but
+don't fail it or appear in GitHub comments.
+
 **Bug fixes**
 
 - Scheduled analysis defaults to 20 files per run when `max_files` is omitted.
