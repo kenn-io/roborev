@@ -108,93 +108,77 @@ func (c *blackholeConn) Write(b []byte) (int, error) {
 }
 
 func TestGitHubReadRecoversFromBlackholedHTTP2Connection(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var requests atomic.Int32
-		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, 2, r.ProtoMajor)
-			n := requests.Add(1)
-			_, err := fmt.Fprintf(w, `[{"number":%d}]`, n)
-			assert.NoError(t, err)
-		}))
-		server.EnableHTTP2 = true
+	for _, tc := range []struct {
+		name           string
+		useConditional bool
+	}{
+		{name: "default client", useConditional: false},
+		{name: "conditional client", useConditional: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, 2, r.ProtoMajor)
+					n := requests.Add(1)
+					_, err := fmt.Fprintf(w, `[{"number":%d}]`, n)
+					assert.NoError(t, err)
+				}))
+				server.EnableHTTP2 = true
 
-		baseClient := server.Client()
-		transport := baseClient.Transport.(*http.Transport).Clone()
-		ConfigureHTTP2HealthCheck(transport)
-		origDialTLS := transport.DialTLSContext
+				// Install a plain fake-network *http.Transport (no HTTP/2 ping
+				// config) as http.DefaultTransport so the test exercises the real
+				// DefaultHTTPTransport() production wiring.
+				transport := server.Client().Transport.(*http.Transport).Clone()
+				origDialTLS := transport.DialTLSContext
 
-		var dials atomic.Int32
-		var dropFirst atomic.Bool
-		transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			conn, err := origDialTLS(ctx, network, addr)
-			if err != nil {
-				return nil, err
-			}
-			tc, ok := conn.(*tls.Conn)
-			if !ok {
-				return conn, nil
-			}
-			if err := tc.HandshakeContext(ctx); err != nil {
-				tc.Close()
-				return nil, err
-			}
-			if dials.Add(1) == 1 {
-				return &blackholeConn{Conn: tc, drop: &dropFirst}, nil
-			}
-			return tc, nil
-		}
+				var dials atomic.Int32
+				var dropFirst atomic.Bool
+				transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					conn, err := origDialTLS(ctx, network, addr)
+					if err != nil {
+						return nil, err
+					}
+					tc, ok := conn.(*tls.Conn)
+					if !ok {
+						return conn, nil
+					}
+					if err := tc.HandshakeContext(ctx); err != nil {
+						tc.Close()
+						return nil, err
+					}
+					if dials.Add(1) == 1 {
+						return &blackholeConn{Conn: tc, drop: &dropFirst}, nil
+					}
+					return tc, nil
+				}
 
-		client, err := NewClient("", WithBaseURL("https://example.com/"), WithHTTPClient(&http.Client{
-			Timeout:   defaultHTTPTimeout,
-			Transport: transport,
-		}))
-		require.NoError(t, err)
+				prevDefault := http.DefaultTransport
+				http.DefaultTransport = transport
+				t.Cleanup(func() { http.DefaultTransport = prevDefault })
 
-		prs, err := client.ListOpenPullRequests(t.Context(), "acme/api")
-		require.NoError(t, err)
-		require.Len(t, prs, 1)
-		assert.Equal(t, 1, prs[0].Number)
-		assert.Equal(t, int32(1), dials.Load())
+				opts := []ClientOption{WithBaseURL("https://example.com/")}
+				if tc.useConditional {
+					opts = append(opts, WithHTTPClient(NewConditionalHTTPClient()))
+				}
+				client, err := NewClient("", opts...)
+				require.NoError(t, err)
 
-		// Silently drop all writes on the pooled HTTP/2 connection without closing it.
-		dropFirst.Store(true)
+				prs, err := client.ListOpenPullRequests(t.Context(), "acme/api")
+				require.NoError(t, err)
+				require.Len(t, prs, 1)
+				assert.Equal(t, 1, prs[0].Number)
+				assert.Equal(t, int32(1), dials.Load())
 
-		prs, err = client.ListOpenPullRequests(t.Context(), "acme/api")
-		require.NoError(t, err)
-		require.Len(t, prs, 1)
-		assert.Equal(t, 2, prs[0].Number)
-		assert.Equal(t, int32(2), dials.Load())
-	})
-}
+				// Silently drop all writes on the pooled HTTP/2 connection without closing it.
+				dropFirst.Store(true)
 
-func TestGitHubReadRetriesHTTP2ConnectionLost(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		attempts := 0
-		client, err := NewClient("", WithHTTPClient(&http.Client{
-			Timeout: defaultHTTPTimeout,
-			Transport: retryTransport(func(r *http.Request) (*http.Response, error) {
-				attempts++
-				return nil, errors.New("http2: client connection lost")
-			}),
-		}))
-		require.NoError(t, err)
-
-		_, err = client.ListOpenPullRequests(t.Context(), "acme/api")
-		require.Error(t, err)
-		assert.Equal(t, 4, attempts)
-		assert.Equal(t, "list pull requests: network interruption", ReadErrorSummary(err))
-	})
-}
-
-func TestDefaultHTTPTransportEnablesHTTP2HealthCheck(t *testing.T) {
-	prev := http.DefaultTransport
-	http.DefaultTransport = &http.Transport{}
-	t.Cleanup(func() { http.DefaultTransport = prev })
-
-	transport, ok := DefaultHTTPTransport().(*http.Transport)
-	require.True(t, ok)
-	require.NotNil(t, transport.HTTP2)
-	assert.Positive(t, transport.HTTP2.SendPingTimeout)
-	assert.Positive(t, transport.HTTP2.PingTimeout)
-	assert.Less(t, transport.HTTP2.SendPingTimeout+transport.HTTP2.PingTimeout, defaultHTTPTimeout)
+				prs, err = client.ListOpenPullRequests(t.Context(), "acme/api")
+				require.NoError(t, err)
+				require.Len(t, prs, 1)
+				assert.Equal(t, 2, prs[0].Number)
+				assert.Equal(t, int32(2), dials.Load())
+			})
+		})
+	}
 }

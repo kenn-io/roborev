@@ -41,15 +41,6 @@ var (
 	defaultTransportCached *http.Transport
 )
 
-// defaultTransportProxy delegates each request to DefaultHTTPTransport so
-// long-lived clients share the pooled health-checked transport in production
-// while honoring test-time http.DefaultTransport guards and overrides.
-type defaultTransportProxy struct{}
-
-func (defaultTransportProxy) RoundTrip(req *http.Request) (*http.Response, error) {
-	return DefaultHTTPTransport().RoundTrip(req)
-}
-
 // DefaultHTTPTransport returns a shared HTTP transport with HTTP/2 ping health
 // checks enabled when http.DefaultTransport is an *http.Transport. Non-standard
 // http.DefaultTransport wrappers (such as test guards) are returned as-is.
@@ -64,17 +55,17 @@ func DefaultHTTPTransport() http.RoundTripper {
 		return defaultTransportCached
 	}
 	cloned := base.Clone()
-	ConfigureHTTP2HealthCheck(cloned)
+	configureHTTP2HealthCheck(cloned)
 	defaultTransportSource = base
 	defaultTransportCached = cloned
 	return cloned
 }
 
-// ConfigureHTTP2HealthCheck enables HTTP/2 ping health checks on transport when
+// configureHTTP2HealthCheck enables HTTP/2 ping health checks on transport when
 // they are not already configured. Without them, a silently dropped connection
 // (such as after a host IP or NAT change) stays in the pool until TCP retries
 // expire, causing pooled requests to time out repeatedly on the same socket.
-func ConfigureHTTP2HealthCheck(transport *http.Transport) {
+func configureHTTP2HealthCheck(transport *http.Transport) {
 	if transport == nil {
 		return
 	}
@@ -96,7 +87,7 @@ func ConfigureHTTP2HealthCheck(transport *http.Transport) {
 func NewConditionalHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout:   defaultHTTPTimeout,
-		Transport: ghtransport.NewTransport(memory.NewStorage(), defaultTransportProxy{}),
+		Transport: ghtransport.NewTransport(memory.NewStorage(), DefaultHTTPTransport()),
 	}
 }
 

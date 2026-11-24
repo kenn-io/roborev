@@ -21,8 +21,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	ghpkg "go.kenn.io/roborev/internal/github"
 )
 
 const (
@@ -542,8 +540,10 @@ func TestTokenExchangeRecoversFromBlackholedHTTP2Connection(t *testing.T) {
 		}))
 		srv.EnableHTTP2 = true
 
+		// Install a plain fake-network *http.Transport (no HTTP/2 ping config) as
+		// http.DefaultTransport so TokenForInstallation exercises the real
+		// DefaultHTTPTransport() wiring.
 		transport := srv.Client().Transport.(*http.Transport).Clone()
-		ghpkg.ConfigureHTTP2HealthCheck(transport)
 		origDialTLS := transport.DialTLSContext
 
 		var dials atomic.Int32
@@ -567,14 +567,14 @@ func TestTokenExchangeRecoversFromBlackholedHTTP2Connection(t *testing.T) {
 			return tc, nil
 		}
 
+		prevDefault := http.DefaultTransport
+		http.DefaultTransport = transport
+		t.Cleanup(func() { http.DefaultTransport = prevDefault })
+
 		_, pemData := testKey(t)
 		tp, err := NewGitHubAppTokenProvider(testAppID, pemData)
 		require.NoError(t, err)
 		tp.baseURL = "https://example.com"
-		tp.httpClient = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: transport,
-		}
 
 		token1, err := tp.TokenForInstallation(t.Context(), testInstallationID)
 		require.NoError(t, err)
@@ -588,5 +588,34 @@ func TestTokenExchangeRecoversFromBlackholedHTTP2Connection(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "ghs_token_2", token2)
 		assert.Equal(t, int32(2), dials.Load())
+	})
+}
+
+func TestTokenExchangeDoesNotRetryTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			// Stay alive on the wire (HTTP/2 PINGs still succeed) without
+			// sending response headers, simulating a slow server.
+			<-r.Context().Done()
+		}))
+		srv.EnableHTTP2 = true
+
+		prevDefault := http.DefaultTransport
+		http.DefaultTransport = srv.Client().Transport
+		t.Cleanup(func() { http.DefaultTransport = prevDefault })
+
+		_, pemData := testKey(t)
+		tp, err := NewGitHubAppTokenProvider(testAppID, pemData)
+		require.NoError(t, err)
+		tp.baseURL = "https://example.com"
+
+		start := time.Now()
+		_, err = tp.TokenForInstallation(t.Context(), testInstallationID)
+		elapsed := time.Since(start)
+		require.Error(t, err)
+		assert.Equal(t, int32(1), calls.Load())
+		assert.Equal(t, 30*time.Second, elapsed)
 	})
 }

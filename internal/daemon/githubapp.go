@@ -37,10 +37,6 @@ type GitHubAppTokenProvider struct {
 	// baseURL is the GitHub REST API base URL. Empty uses public GitHub.
 	baseURL string
 
-	// httpClient is used for installation token exchanges. Nil uses a default
-	// client backed by ghpkg.DefaultHTTPTransport().
-	httpClient *http.Client
-
 	mu     sync.Mutex
 	tokens map[int64]*cachedToken // installation_id → cached token
 }
@@ -112,6 +108,9 @@ type installationTokenResponse struct {
 }
 
 // exchangeToken exchanges a JWT for an installation access token.
+// It retries once on a broken pooled connection (for example after an HTTP/2
+// ping health check evicts a dead socket) so a fresh dial can succeed, but
+// never retries client timeouts because TokenForInstallation holds p.mu.
 func (p *GitHubAppTokenProvider) exchangeToken(ctx context.Context, jwt string, installationID int64) (string, time.Time, error) {
 	baseURL := p.baseURL
 	if baseURL == "" {
@@ -119,17 +118,10 @@ func (p *GitHubAppTokenProvider) exchangeToken(ctx context.Context, jwt string, 
 	}
 
 	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", baseURL, installationID)
-	client := p.httpClient
-	if client == nil {
-		client = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: ghpkg.DefaultHTTPTransport(),
-		}
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: ghpkg.DefaultHTTPTransport(),
 	}
-
-	policy := backoff.NewExponentialBackOff()
-	policy.InitialInterval = 500 * time.Millisecond
-	policy.MaxInterval = 4 * time.Second
 
 	result, err := backoff.Retry(ctx, func() (installationTokenResponse, error) {
 		var zero installationTokenResponse
@@ -146,7 +138,7 @@ func (p *GitHubAppTokenProvider) exchangeToken(ctx context.Context, jwt string, 
 
 		resp, err := client.Do(req)
 		if err != nil {
-			if ctx.Err() != nil || !ghpkg.IsTransientTransportError(err) {
+			if ctx.Err() != nil || !ghpkg.IsConnectionInterruption(err) {
 				return zero, backoff.Permanent(err)
 			}
 			return zero, err
@@ -154,20 +146,14 @@ func (p *GitHubAppTokenProvider) exchangeToken(ctx context.Context, jwt string, 
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
-			if ctx.Err() != nil || !ghpkg.IsTransientTransportError(readErr) {
+			if ctx.Err() != nil || !ghpkg.IsConnectionInterruption(readErr) {
 				return zero, backoff.Permanent(readErr)
 			}
 			return zero, readErr
 		}
 
 		if resp.StatusCode != http.StatusCreated {
-			statusErr := fmt.Errorf("GitHub API %d: %s", resp.StatusCode, body)
-			switch resp.StatusCode {
-			case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-				return zero, statusErr
-			default:
-				return zero, backoff.Permanent(statusErr)
-			}
+			return zero, backoff.Permanent(fmt.Errorf("GitHub API %d: %s", resp.StatusCode, body))
 		}
 
 		var parsed installationTokenResponse
@@ -175,7 +161,7 @@ func (p *GitHubAppTokenProvider) exchangeToken(ctx context.Context, jwt string, 
 			return zero, backoff.Permanent(fmt.Errorf("parse response: %w", err))
 		}
 		return parsed, nil
-	}, backoff.WithBackOff(policy), backoff.WithMaxTries(3), backoff.WithMaxElapsedTime(time.Minute))
+	}, backoff.WithBackOff(&backoff.ZeroBackOff{}), backoff.WithMaxTries(2), backoff.WithMaxElapsedTime(0))
 	if err != nil {
 		if retryErr := backoff.AsRetryError(err); retryErr != nil && retryErr.LastErr != nil {
 			return "", time.Time{}, retryErr.LastErr
