@@ -658,7 +658,7 @@ func TestScheduledAnalysisPromptBudget(t *testing.T) {
 	files := map[string]string{
 		".gitattributes": "marked.go binary\n", "marked.go": "ordinary text\n",
 		"a.go": strings.Repeat("a", 3500), "a.js": "const a = '\x01';\n", "latin.go": "// caf\xe9\npackage latin\n",
-		"large.go": strings.Repeat("x", 3501), "pdf.go": "%PDF-1.4\n", "invalid.go": "\xff", "nullbyte.go": "a\x00b", "z.go": "package z\n",
+		"large.go": strings.Repeat("x", 3501), "pdf.go": "%PDF-1.4\n", "invalid.go": "\xff", "mixed.go": "\x01\xffx", "nullbyte.go": "a\x00b", "z.go": "package z\n",
 	}
 	for i := range 500 {
 		files[fmt.Sprintf("binary/%04d.go", i)] = "\x00binary"
