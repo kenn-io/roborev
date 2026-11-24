@@ -517,12 +517,15 @@ func TestCICheckUnlikely(t *testing.T) {
 		{Severity: "high", Problem: "two", Fix: "fix", Unlikely: true},
 		{Severity: "high", Problem: "three", Fix: "fix"},
 		{Severity: "high", Problem: "four", Fix: "fix"},
+		{Severity: "high", Problem: "five", Fix: "fix", Unlikely: true},
 	}}
-	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true},{"finding":2,"keep":true,"unlikely":false},{"finding":3,"keep":true,"unlikely":true},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"evidence","reason":"reason"}]}`)
+	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true},{"finding":2,"keep":true,"unlikely":false},{"finding":3,"keep":true,"unlikely":true},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"evidence","reason":"reason"},{"finding":5,"keep":true}]}`)
 	got, err := applyCICheck(doc, raw, io.Discard)
 	require.NoError(t, err)
-	require.Len(t, got.Findings, 3)
+	require.Len(t, got.Findings, 4)
 	assert.True(t, got.Findings[0].Unlikely)
-	assert.True(t, got.Findings[1].Unlikely)
+	assert.False(t, got.Findings[1].Unlikely)
 	assert.False(t, got.Findings[2].Unlikely)
+	assert.True(t, got.Findings[3].Unlikely)
+	assert.False(t, got.Check.Findings[1].Finding.Unlikely)
 }

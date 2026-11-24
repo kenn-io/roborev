@@ -502,7 +502,7 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 		Verdicts []struct {
 			Finding  int    `json:"finding"`
 			Keep     *bool  `json:"keep"`
-			Unlikely bool   `json:"unlikely"`
+			Unlikely *bool  `json:"unlikely"`
 			Evidence string `json:"evidence"`
 			Reason   string `json:"reason"`
 		} `json:"verdicts"`
@@ -510,28 +510,33 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return doc, fmt.Errorf("decode checker verdicts: %w", err)
 	}
-	verdicts := make(map[int][]structuredreview.CheckVerdict)
-	unlikely := make(map[int]bool)
+	type checkResult struct {
+		verdict  structuredreview.CheckVerdict
+		unlikely *bool
+	}
+	verdicts := make(map[int][]checkResult)
 	for _, v := range response.Verdicts {
-		if v.Unlikely {
-			unlikely[v.Finding] = true
-		}
 		encoded, _ := json.Marshal(v)
 		fmt.Fprintf(out, "CI checker verdict: %s\n", encoded)
-		verdicts[v.Finding] = append(verdicts[v.Finding], structuredreview.CheckVerdict{
-			Keep: v.Keep, Evidence: strings.TrimSpace(v.Evidence), Reason: strings.TrimSpace(v.Reason),
+		verdicts[v.Finding] = append(verdicts[v.Finding], checkResult{
+			verdict:  structuredreview.CheckVerdict{Keep: v.Keep, Evidence: strings.TrimSpace(v.Evidence), Reason: strings.TrimSpace(v.Reason)},
+			unlikely: v.Unlikely,
 		})
 	}
 	check := &structuredreview.Check{Status: structuredreview.CheckCompleted}
 	kept := make([]structuredreview.Finding, 0, len(doc.Findings))
 	for i, f := range doc.Findings {
 		// Drop only on one verdict that refutes the finding with evidence and a reason.
-		entry := structuredreview.CheckedFinding{Outcome: structuredreview.CheckKept, Finding: f, Verdicts: verdicts[i+1]}
+		entry := structuredreview.CheckedFinding{Outcome: structuredreview.CheckKept, Finding: f}
+		results := verdicts[i+1]
+		for _, result := range results {
+			entry.Verdicts = append(entry.Verdicts, result.verdict)
+		}
 		if v := entry.Verdicts; len(v) == 1 && v[0].Keep != nil && !*v[0].Keep && v[0].Evidence != "" && v[0].Reason != "" {
 			entry.Outcome = structuredreview.CheckDropped
 		} else {
-			if len(entry.Verdicts) == 1 && entry.Verdicts[0].Keep != nil && *entry.Verdicts[0].Keep && unlikely[i+1] {
-				f.Unlikely = true
+			if len(results) == 1 && results[0].verdict.Keep != nil && *results[0].verdict.Keep && results[0].unlikely != nil {
+				f.Unlikely = *results[0].unlikely
 				entry.Finding = f
 			}
 			kept = append(kept, f)

@@ -3016,8 +3016,12 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 		threshold = synth.MinSeverity
 	}
 	commentConfig := reviewpkg.CommentConfig{MinSeverity: reviewpkg.ResolveSynthesisMinSeverity(results, threshold)}
+	maxFindings, minConfidence, whenClean, showAll := p.resolveCommentPolicy(row.GithubRepo)
+	if showAll {
+		commentConfig.MinSeverity = ""
+	}
 	raw := func() panelCommentPublication {
-		// Raw diagnostics retain their existing publication policy.
+		// Raw diagnostics retain their publication policy unless show-all is enabled.
 		return panelCommentPublication{body: reviewpkg.FormatRawBatchComment(commentConfig, results, row.HeadSHA)}
 	}
 	if synth == nil || synth.Status != storage.JobStatusDone {
@@ -3027,7 +3031,6 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	if err != nil || rev == nil {
 		return raw(), nil
 	}
-	maxFindings, minConfidence, whenClean, showAll := p.resolveCommentPolicy(row.GithubRepo)
 	commentConfig.Fold = !showAll
 	if showAll {
 		commentConfig.MinSeverity = ""

@@ -894,9 +894,8 @@ By default, structured CI comments apply the confidence floor, then fold Low
 and unlikely findings into a collapsible section. The finding cap applies to
 the main list. Set `comment_show_all = true` globally or per repository
 to show every finding inline, ignoring the comment severity and confidence
-floors and finding cap. The daemon raw fallback retains its severity policy.
-The setting also applies to GitHub comments from `roborev ci review`, including
-its raw fallback. Stored reviews retain every finding.
+floors and finding cap. The setting also applies to raw fallback comments and
+to GitHub comments from `roborev ci review`. Stored reviews retain every finding.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
 synthesis has no findings after filtering, even if the stored review has
