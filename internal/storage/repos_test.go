@@ -1222,3 +1222,27 @@ func TestRenameRepoByNameReturnsSelectedRepo(t *testing.T) {
 	_, err = db.RenameRepoByName("missing", "friendly")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
+
+func TestRepositoryRemovalClearsAnalysisRetries(t *testing.T) {
+	for _, action := range []string{"delete", "merge"} {
+		t.Run(action, func(t *testing.T) {
+			db := openTestDB(t)
+			source := createRepo(t, db, filepath.Join(t.TempDir(), "source"))
+			target := createRepo(t, db, filepath.Join(t.TempDir(), "target"))
+			require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), source.ID, []string{"refactor"}))
+			require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), target.ID, []string{"complexity"}))
+			if action == "delete" {
+				require.NoError(t, db.DeleteRepo(source.ID, false))
+			} else {
+				_, err := db.MergeRepos(source.ID, target.ID)
+				require.NoError(t, err)
+			}
+			retry, err := db.AnalysisScheduleRetry(t.Context(), source.ID)
+			require.NoError(t, err)
+			assert.Empty(t, retry)
+			retry, err = db.AnalysisScheduleRetry(t.Context(), target.ID)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"complexity"}, retry)
+		})
+	}
+}

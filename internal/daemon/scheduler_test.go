@@ -813,3 +813,52 @@ func TestScheduledAnalysisClearsObsoleteRetries(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduledAnalysisRetryIgnoresNewerManualJob(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFiles(map[string]string{"a.go": "package a\n", "b.go": "package b\n"}, "add sources")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval, maxFiles := true, "1h", 1
+	cfg := server.configWatcher.Config()
+	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &maxFiles, Types: []string{"refactor"}}
+	cfg.AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	now := time.Now()
+	watcher.poll(t.Context(), now)
+	jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
+	setJobStatus(t, db, jobs[0].ID, storage.JobStatusFailed)
+	manual, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "test", Prompt: "manual", AnalysisType: "refactor", AnalysisFiles: []string{"b.go"}, AnalysisCommitSHA: repo.HeadSHA()})
+	require.NoError(t, err)
+	setJobStatus(t, db, manual.ID, storage.JobStatusDone)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, now.Add(time.Second).UTC().Format(time.RFC3339Nano), manual.ID)
+	require.NoError(t, err)
+	watcher.poll(t.Context(), now.Add(30*time.Second))
+	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
+}
+
+func TestScheduledAnalysisLatin1Source(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "// caf\xe9\npackage a\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	yes, interval := true, "1h"
+	cfg := server.configWatcher.Config()
+	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, Types: []string{"refactor"}}
+	cfg.AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
+	assert.Contains(t, jobs[0].Prompt, "Ly8gY2Fm6QpwYWNrYWdlIGEK")
+}
