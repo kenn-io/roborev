@@ -860,13 +860,13 @@ matrix has no synthesis instructions setting; use a named panel for that.
 ## Comment display policy
 
 The GitHub daemon poller can cap synthesized comments and stay silent when
-nothing survives the display filters. Defaults preserve existing behavior:
+nothing survives the display filters. The defaults are:
 
 ```toml
 [ci]
 comment_max_findings = 0   # Unlimited structured findings
 comment_when_clean = true # Create comments even when no findings survive
-comment_show_all = false # Show all findings inline
+comment_show_all = false # Fold Low and unlikely findings
 # comment_min_confidence = 0.8 # Optional; unset disables confidence filtering
 ```
 
