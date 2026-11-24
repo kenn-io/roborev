@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -472,7 +473,7 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 func isSourceContent(content []byte) bool {
 	kind := http.DetectContentType(content)
 	return isSourceText(string(content)) &&
-		(strings.HasPrefix(kind, "text/") || kind == "application/octet-stream")
+		(strings.HasPrefix(kind, "text/") || kind == "application/octet-stream" && utf8.Valid(content))
 }
 
 func isSourceText(text string) bool {
