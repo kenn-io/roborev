@@ -793,7 +793,9 @@ func runGit(t *testing.T, dir string, args ...string) string {
 func partialClone(t *testing.T, source *testutil.TestRepo) string {
 	t.Helper()
 	source.Run("config", "uploadpack.allowFilter", "true")
-	clone := filepath.Join(t.TempDir(), "clone")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	clone := filepath.Join(dir, "clone")
 	runGit(t, t.TempDir(), "clone", "--no-checkout", "--filter=blob:none", "file://"+source.Path(), clone)
 	return clone
 }
