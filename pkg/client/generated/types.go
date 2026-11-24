@@ -1905,7 +1905,7 @@ type ExportReview struct {
 	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
 	ReviewID            uuid.UUID  `json:"review_id" validate:"required"`
 
-	// SourceMachineID The roborev machine that ran the review. Another machine's ID for a review pulled through sync.
+	// SourceMachineID The roborev machine that ran the review. Omitted when unknown.
 	SourceMachineID *uuid.UUID       `json:"source_machine_id,omitempty"`
 	Status          string           `json:"status" validate:"required"`
 	Subagents       []ExportSubagent `json:"subagents" validate:"required"`
