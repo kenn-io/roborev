@@ -207,7 +207,7 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 }
 
 func TestTruncateCommentToBudget(t *testing.T) {
-	body := "<details><summary>nit</summary>" + strings.Repeat("é", 100) + "</details>"
+	body := "intro\n<details><summary>nit</summary>" + strings.Repeat("é", 100) + "\n</details>"
 	for _, limit := range []int{0, 3, 20, 50, len(body)} {
 		got := TruncateCommentTo(body, limit, "...")
 		assert.LessOrEqual(t, len(got), limit)
@@ -216,4 +216,13 @@ func TestTruncateCommentToBudget(t *testing.T) {
 			assert.Contains(t, got, "</details>")
 		}
 	}
+}
+
+func TestTruncateCommentWithTagInFinding(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Example `</details>` " + strings.Repeat("text ", 100)}}}
+	body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
+	got := TruncateCommentTo(body, 180, "...(truncated)")
+	assert.Contains(t, got, "`</details>`")
+	assert.Contains(t, got, "\n</details>...(truncated)")
+	assert.LessOrEqual(t, len(got), 180)
 }

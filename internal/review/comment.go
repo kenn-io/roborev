@@ -17,6 +17,7 @@ import (
 type CommentConfig struct {
 	MinSeverity string
 	Fold        bool
+	ShowAll     bool
 	// MinConfidence filters stated structured confidence; zero disables it.
 	MinConfidence float64
 	// MaxFindings limits structured findings; zero leaves them unlimited.
@@ -65,6 +66,12 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		doc = nil
 	}
 	if doc != nil {
+		if cfg.ShowAll {
+			comment.minSeverity = ""
+			threshold = config.SeverityRank("")
+			cfg.MinConfidence = 0
+			cfg.MaxFindings = 0
+		}
 		comment.structured = true
 		for _, finding := range doc.Findings {
 			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold {

@@ -44,9 +44,9 @@ scored a finding, so a floor above `0.5` can hide it. With
 `comment_when_clean = false`, an empty comment can be suppressed even when the
 stored review has findings. Negative caps and invalid confidence floors are
 rejected during loading, saving, and reloading. The daemon applies these
-settings to synthesized GitHub comments. `comment_show_all` also applies to raw
-fallback comments and to `roborev ci review` GitHub comments, including its raw
-fallback. Stored reviews and verdicts stay unchanged. Prose is uncapped. See
+settings to synthesized GitHub comments. `comment_show_all` also applies to
+structured `roborev ci review` GitHub comments. Raw fallback comments and prose
+keep their existing filters. Stored reviews and verdicts stay unchanged. Prose is uncapped. See
 [Comment display policy](/docs/integrations/github/#comment-display-policy) for
 filtering, complete review retrieval, silent upsert, and status permissions.
 

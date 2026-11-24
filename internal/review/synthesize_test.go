@@ -808,3 +808,17 @@ func TestSynthesizeCommentShowAll(t *testing.T) {
 		}
 	}
 }
+
+func TestSynthesizeShowAllPreservesProseFloor(t *testing.T) {
+	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
+	for _, results := range [][]ReviewResult{
+		{{Status: ResultDone, Output: prose}},
+		{{Status: ResultDone, Output: prose, StructuredOutput: jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`)}},
+		{{Status: ResultDone, Output: prose}, {Status: ResultDone, Output: prose}},
+	} {
+		result, err := Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", CommentShowAll: true, Agent: "nonexistent-synthesis-agent"})
+		require.NoError(t, err)
+		assert.Contains(t, result.GitHubComment, "High issue")
+		assert.NotContains(t, result.GitHubComment, "Low issue")
+	}
+}

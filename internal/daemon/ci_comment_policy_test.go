@@ -399,8 +399,26 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 }
 
 func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
-	body := "visible\n<details><summary>1 nit hidden</summary>\n" + strings.Repeat("x", 100)
+	body := "visible\n<details><summary>1 nit hidden</summary>\n" + strings.Repeat("x", 100) + "\n</details>"
 	got := truncatePanelPRBodyForFooter(body, "footer", 100)
 	assert.LessOrEqual(t, len(got)+len("footer"), 100)
 	assert.Contains(t, got, "</details>")
+}
+
+func TestCIPanelShowAllPreservesProseFloor(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.CommentShowAll = true
+	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: prose}})
+	h.completeSynthesisWithReview(t, synth.ID, prose)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`, synth.ID)
+	require.NoError(t, err)
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'medium' WHERE id = ?`, synth.ID)
+	require.NoError(t, err)
+	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
+	require.NoError(t, err)
+	body, err := h.Poller.panelCommentBody(panel, members)
+	require.NoError(t, err)
+	assert.Contains(t, body, "High issue")
+	assert.NotContains(t, body, "Low issue")
 }

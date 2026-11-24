@@ -3017,11 +3017,8 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	}
 	commentConfig := reviewpkg.CommentConfig{MinSeverity: reviewpkg.ResolveSynthesisMinSeverity(results, threshold)}
 	maxFindings, minConfidence, whenClean, showAll := p.resolveCommentPolicy(row.GithubRepo)
-	if showAll {
-		commentConfig.MinSeverity = ""
-	}
 	raw := func() panelCommentPublication {
-		// Raw diagnostics retain their publication policy unless show-all is enabled.
+		// Raw diagnostics retain their existing publication policy.
 		return panelCommentPublication{body: reviewpkg.FormatRawBatchComment(commentConfig, results, row.HeadSHA)}
 	}
 	if synth == nil || synth.Status != storage.JobStatusDone {
@@ -3032,11 +3029,7 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 		return raw(), nil
 	}
 	commentConfig.Fold = !showAll
-	if showAll {
-		commentConfig.MinSeverity = ""
-		maxFindings = 0
-		minConfidence = 0
-	}
+	commentConfig.ShowAll = showAll
 	commentConfig.MaxFindings = maxFindings
 	commentConfig.MinConfidence = minConfidence
 	commentConfig.FullReviewReference = fmt.Sprintf("roborev show --job %d", synth.ID)
