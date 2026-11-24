@@ -219,7 +219,7 @@ func TestCIPanelCappedPublicationPreservesOmissionNotice(t *testing.T) {
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
 	document := reviewpkg.StructuredReview{SchemaVersion: 2, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
 		{Severity: "high", Problem: strings.Repeat("界", reviewpkg.MaxCommentLen), Fix: "Persist it."},
-		{Severity: "low", Problem: "Omitted concern.", Fix: "Fix it."},
+		{Severity: "medium", Problem: "Omitted concern.", Fix: "Fix it."},
 	}}
 	raw, err := json.Marshal(document)
 	require.NoError(t, err)

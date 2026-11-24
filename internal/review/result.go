@@ -150,19 +150,29 @@ const CommentTruncSuffix = "\n\n...(truncated — comment exceeded size limit)"
 // TruncateComment caps a forge comment body at MaxCommentLen, replacing
 // the overflow with CommentTruncSuffix and keeping the cut UTF-8 safe.
 func TruncateComment(body string) string {
-	if len(body) <= MaxCommentLen {
+	return TruncateCommentTo(body, MaxCommentLen, CommentTruncSuffix)
+}
+
+// TruncateCommentTo fits a comment within limit bytes, closing a folded
+// section if the cut falls inside it. The suffix is included in the limit.
+func TruncateCommentTo(body string, limit int, suffix string) string {
+	limit = max(limit, 0)
+	if len(body) <= limit {
 		return body
 	}
-	limit := MaxCommentLen - len(CommentTruncSuffix)
-	cut := TrimPartialRune(body[:limit])
+	if len(suffix) >= limit {
+		return TrimPartialRune(suffix[:limit])
+	}
+	budget := limit - len(suffix)
+	cut := TrimPartialRune(body[:budget])
 	if strings.Count(cut, "<details>") > strings.Count(cut, "</details>") {
 		const closing = "\n</details>"
-		cut = TrimPartialRune(body[:limit-len(closing)])
+		cut = TrimPartialRune(body[:max(budget-len(closing), 0)])
 		if strings.Count(cut, "<details>") > strings.Count(cut, "</details>") {
 			cut += closing
 		}
 	}
-	return cut + CommentTruncSuffix
+	return cut + suffix
 }
 
 // OutputTruncSuffix marks a single review's output as cut short. It is

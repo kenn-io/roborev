@@ -204,3 +204,14 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 	assert.Equal("medium", combined.MinSeverity)
 	assert.NotContains(combined.Output, "No findings at or above")
 }
+
+func TestTruncateCommentToBudget(t *testing.T) {
+	body := "<details><summary>nit</summary>" + strings.Repeat("x", 100) + "</details>"
+	for _, limit := range []int{0, 3, 20, 50, len(body)} {
+		got := TruncateCommentTo(body, limit, "...")
+		assert.LessOrEqual(t, len(got), limit)
+		if strings.Contains(got, "<details>") {
+			assert.Contains(t, got, "</details>")
+		}
+	}
+}

@@ -4357,15 +4357,7 @@ func appendPanelPRFooterWithNotice(body, notice string, review *storage.Review, 
 }
 
 func truncatePanelPRBodyForFooter(body string, footer string, maxLen int) string {
-	if len(body)+len(footer) <= maxLen {
-		return body
-	}
-	maxBodyLen := max(maxLen-len(footer)-len(panelCommentTruncSuffix), 0)
-	cut := truncateUTF8(body, maxBodyLen)
-	if strings.Count(cut, "<details>") > strings.Count(cut, "</details>") {
-		cut = truncateUTF8(body, max(maxBodyLen-len("\n</details>"), 0)) + "\n</details>"
-	}
-	return cut + panelCommentTruncSuffix
+	return reviewpkg.TruncateCommentTo(body, max(maxLen-len(footer), 0), panelCommentTruncSuffix)
 }
 
 func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members []storage.BatchReviewResult, includeCosts bool) string {
