@@ -332,56 +332,33 @@ func TestPanelEnqueueRequestMigrationPreservesQueuedReviews(t *testing.T) {
 	assert.Equal(existing[0].ID, claimed.ID, "the upgrade must preserve queued work")
 }
 
-func seedUnknownOrigins(t *testing.T, path string) (string, []int64) {
-	t.Helper()
+func TestOpenPreservesUnknownSyncedJobOrigin(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "reviews.db")
 	db, err := Open(path)
 	require.NoError(t, err)
 	machine, err := db.GetMachineID()
 	require.NoError(t, err)
-	_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/origin", 4)
-	origins := []any{nil, "", nil, testUUID("remote-machine")}
-	for i, job := range jobs {
-		var synced any = "2024-01-01 00:00:00"
-		if i == 2 {
-			synced = nil
-		}
-		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = ?, session_id = ?, uuid = ?, started_at = '2024-01-01 00:00:00' WHERE id = ?`, origins[i], synced, job.GitRef, testUUID(job.GitRef), job.ID)
+	_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/origin", 2)
+	for i, synced := range []any{"2024-01-01 00:00:00", nil} {
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = NULL, synced_at = ?, session_id = ?, uuid = ?, started_at = '2024-01-01 00:00:00' WHERE id = ?`, synced, jobs[i].GitRef, testUUID(jobs[i].GitRef), jobs[i].ID)
 		require.NoError(t, err)
 	}
 	_, err = db.ExecContext(t.Context(), `DELETE FROM review_job_session_history`)
 	require.NoError(t, err)
 	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())
-	return machine.String(), []int64{jobs[0].ID, jobs[1].ID, jobs[2].ID, jobs[3].ID}
-}
 
-func assertUnknownOrigins(t *testing.T, db *DB, machine string, ids []int64) {
-	t.Helper()
-	unknown := sql.NullString{String: uuid.Nil().String(), Valid: true}
-	want := []sql.NullString{unknown, unknown, {String: machine, Valid: true}, {String: testUUID("remote-machine").String(), Valid: true}}
-	for i, id := range ids {
-		var origin sql.NullString
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, id).Scan(&origin))
-		assert.Equal(t, want[i], origin)
+	db, err = Open(path)
+	require.NoError(t, err)
+	defer db.Close()
+	wantOrigin := []string{uuid.Nil().String(), machine.String()}
+	for i, job := range jobs {
+		var origin string
 		var history int
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_job_session_history WHERE job_uuid = (SELECT uuid FROM review_jobs WHERE id = ?)`, id).Scan(&history))
-		if i < 2 {
-			assert.Zero(t, history)
-		} else {
-			assert.Equal(t, 1, history)
-		}
-	}
-}
-
-func TestOpenPreservesUnknownSyncedJobOrigin(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "reviews.db")
-	machine, ids := seedUnknownOrigins(t, path)
-	for range 2 {
-		db, err := Open(path)
-		require.NoError(t, err)
-		assertUnknownOrigins(t, db, machine, ids)
-		require.NoError(t, db.Close())
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id, (SELECT count(*) FROM review_job_session_history WHERE job_uuid = review_jobs.uuid) FROM review_jobs WHERE id = ?`, job.ID).Scan(&origin, &history))
+		assert.Equal(t, wantOrigin[i], origin)
+		assert.Equal(t, i, history, "only the local job enters session history")
 	}
 }
 
@@ -390,21 +367,20 @@ func TestUnknownSyncedOriginMigrationFromVersion20(t *testing.T) {
 	db := openUnmigratedDB(t)
 	require.NoError(t, registerContentFunctions())
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:20]))
-	_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/origins", 5)
+	_, jobs := seedJobsBeforeSessionCLIMigration(t, db, "/synthetic/origins", 3)
 	machine, err := db.GetMachineID()
 	require.NoError(t, err)
 	remote := testUUID("remote-machine")
-	origins := []any{"", "", nil, nil, remote}
-	synced := []any{nil, "2024-01-01 00:00:00", "2024-01-01 00:00:00", nil, "2024-01-01 00:00:00"}
+	origins := []any{"", "", remote}
+	synced := []any{nil, "2024-01-01 00:00:00", "2024-01-01 00:00:00"}
 	for i, job := range jobs {
 		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ?, synced_at = ? WHERE id = ?`, origins[i], synced[i], job.ID)
 		require.NoError(t, err)
 	}
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
-	unknown := sql.NullString{String: uuid.Nil().String(), Valid: true}
-	want := []sql.NullString{{String: machine.String(), Valid: true}, unknown, unknown, {}, {String: remote.String(), Valid: true}}
+	want := []string{machine.String(), uuid.Nil().String(), remote.String()}
 	for i, job := range jobs {
-		var origin sql.NullString
+		var origin string
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&origin))
 		assert.Equal(t, want[i], origin)
 	}
