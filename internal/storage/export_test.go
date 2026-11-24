@@ -214,7 +214,7 @@ const exportTestStoredDocument = `{
 // exportTestCanonicalDocument is the stored version 2 document as export
 // writes it: normalized and in the current version, with null for the version
 // 3 fields a version 2 finding does not have.
-const exportTestCanonicalDocument = `{"schema_version":3,"summary":"Two problems.","verdict":"fail","findings":[` +
+const exportTestCanonicalDocument = `{"schema_version":4,"summary":"Two problems.","verdict":"fail","findings":[` +
 	`{"severity":"high","kind":null,"topic":null,"confidence":null,"problem":"The token is logged.","fix":"Redact the token.","file":null,"start_line":null,"end_line":null,"location":"auth/login.go:42"},` +
 	`{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"Typo in a comment.","fix":"Fix the spelling.","file":null,"start_line":null,"end_line":null,"location":null}]}`
 
@@ -1286,7 +1286,7 @@ func exportDocumentValidator(t *testing.T) *jsonschema.Resolved {
 // exportTestCheckedDocument is a combined review after the CI checker kept
 // one finding and dropped another. One verdict has no reason, and the dropped
 // finding has no location.
-const exportTestCheckedDocument = `{"schema_version":3,"summary":"1 finding.","verdict":"fail","source_labels":["codex"],"findings":[` +
+const exportTestCheckedDocument = `{"schema_version":4,"summary":"1 finding.","verdict":"fail","source_labels":["codex"],"findings":[` +
 	`{"severity":"high","kind":"defect","topic":null,"confidence":0.9,"problem":"Saves lose data.","fix":"Flush before rename.","file":"save.go","start_line":10,"end_line":12,"location":"save.go:10-12","sources":[1]}],` +
 	`"check":{"status":"completed","findings":[` +
 	`{"outcome":"kept","finding":{"severity":"high","kind":"defect","topic":null,"confidence":0.9,"problem":"Saves lose data.","fix":"Flush before rename.","file":"save.go","start_line":10,"end_line":12,"location":"save.go:10-12","sources":[1]},"verdicts":[{"keep":true,"evidence":"go test ./save: FAIL"}]},` +

@@ -26,7 +26,7 @@ import (
 )
 
 func TestCICheckApply(t *testing.T) {
-	doc := structuredreview.Document{SchemaVersion: 3, Summary: "Original summary", Verdict: "fail", Findings: []structuredreview.Finding{
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Original summary", Verdict: "fail", Findings: []structuredreview.Finding{
 		{Severity: "high", Problem: "first", Fix: "fix"}, {Severity: "low", Problem: "second", Fix: "fix"},
 	}}
 	keep, drop := true, false
@@ -140,7 +140,7 @@ func TestCICheckSnapshot(t *testing.T) {
 
 func setupCICheckCompletion(t *testing.T, threshold, instructions string, usage *tokens.Usage) (*workerTestContext, *storage.ReviewJob, structuredreview.Document, synthesisResult) {
 	t.Helper()
-	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
+	const raw = `{"schema_version":4,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
 	tc := newWorkerTestContext(t, 1)
 	tc.Pool.cfgGetter.Config().CodexCmd = "custom-codex"
 	synthAgent := &synthesisEntrypointTestAgent{name: "checker-agent", result: raw}

@@ -262,7 +262,7 @@ func TestRunAgentReviewStoresSettledFindings(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: jsontext.Value(`{
-  "schema_version": 3,
+  "schema_version": 4,
   "verdict": "fail",
   "summary": "Two problems.",
   "findings": [
@@ -293,7 +293,7 @@ func TestRunAgentReviewPreservesDifferentCorrections(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: jsontext.Value(`{
-  "schema_version": 3,
+  "schema_version": 4,
   "summary": "Two missing checks.",
   "verdict": "fail",
   "findings": [

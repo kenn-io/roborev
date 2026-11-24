@@ -3,9 +3,11 @@ package structuredreview
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -99,9 +101,9 @@ func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 		name string
 		doc  Document
 	}{
-		{name: "version 3", doc: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{located, unlocated}}},
-		{name: "free-text location without kind", doc: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "Kata abc"}}}},
-		{name: "no verdict", doc: Document{SchemaVersion: 3, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}}},
+		{name: "current version", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{located, unlocated}}},
+		{name: "free-text location without kind", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "Kata abc"}}}},
+		{name: "no verdict", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,12 +125,12 @@ func TestEncodingAnOlderDocumentWritesTheCurrentVersion(t *testing.T) {
 		{
 			name: "version 1",
 			raw:  `{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":"a.go:3"}]}`,
-			want: Document{SchemaVersion: 3, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "a.go:3"}}},
+			want: Document{SchemaVersion: SchemaVersion, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "a.go:3"}}},
 		},
 		{
 			name: "version 2",
 			raw:  `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null}]}`,
-			want: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}},
+			want: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}},
 		},
 	}
 	for _, tc := range tests {
@@ -272,7 +274,7 @@ func TestMarkdownLeavesTheCheckRecordOut(t *testing.T) {
 }
 
 func TestDecodeUnlikelyRoundTrip(t *testing.T) {
-	raw := jsontext.Value(`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"high","problem":"p","fix":"f","unlikely":true},{"severity":"low","problem":"q","fix":"f"}]}`)
+	raw := jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"high","problem":"p","fix":"f","unlikely":true},{"severity":"low","problem":"q","fix":"f"}]}`)
 	doc, err := Decode(raw)
 	require.NoError(t, err)
 	require.Len(t, doc.Findings, 2)
@@ -284,4 +286,76 @@ func TestDecodeUnlikelyRoundTrip(t *testing.T) {
 	decoded, err := Decode(encoded)
 	require.NoError(t, err)
 	assert.Equal(t, doc, decoded)
+}
+
+func TestDecodeUnlikelyVersions(t *testing.T) {
+	for _, version := range []int{1, 2, 3} {
+		for _, value := range []string{"true", "false", "null"} {
+			verdict := `,"verdict":"fail"`
+			if version == 1 {
+				verdict = ""
+			}
+			finding := `{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":` + value + `}`
+			raw := fmt.Sprintf(`{"schema_version":%d,"summary":"s"%s,"findings":[%s]}`, version, verdict, finding)
+			_, err := Decode(jsontext.Value(raw))
+			require.ErrorContains(t, err, "unlikely, which needs schema_version 4")
+			if version == 3 {
+				nested := fmt.Sprintf(`{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":%s,"verdicts":[]}]}}`, finding)
+				_, err = Decode(jsontext.Value(nested))
+				require.ErrorContains(t, err, "unlikely, which needs schema_version 4")
+			}
+		}
+	}
+	for _, value := range []string{"null", "false"} {
+		raw := `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":` + value + `}]}`
+		doc, err := Decode(jsontext.Value(raw))
+		require.NoError(t, err)
+		assert.False(t, doc.Findings[0].Unlikely)
+	}
+	_, err := Decode(jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":"yes"}]}`))
+	require.ErrorContains(t, err, "invalid unlikely")
+	historical := jsontext.Value(`{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f"},"verdicts":[{"keep":true,"evidence":"e"}]}]}}`)
+	doc, err := Decode(historical)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(doc)
+	require.NoError(t, err)
+	upgraded, err := Decode(encoded)
+	require.NoError(t, err)
+	assert.Equal(t, 4, upgraded.SchemaVersion)
+	assert.Equal(t, doc.Check, upgraded.Check)
+}
+
+func TestSchemaUnlikely(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		schema              jsontext.Value
+		sources, conversion bool
+	}{
+		{"live", Schema, false, false}, {"sourced", SourcedSchema, true, false},
+		{"conversion", ConversionSchema, false, true}, {"sourced conversion", ConversionSourcedSchema, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var schema jsonschema.Schema
+			require.NoError(t, json.Unmarshal(tc.schema, &schema))
+			validator, err := schema.Resolve(nil)
+			require.NoError(t, err)
+			finding := map[string]any{"severity": "low", "kind": "defect", "topic": nil, "confidence": .5, "problem": "p", "fix": "f", "file": nil, "start_line": nil, "end_line": nil}
+			if tc.sources {
+				finding["sources"] = []int{1}
+			}
+			if tc.conversion {
+				finding["location"] = nil
+			}
+			doc := map[string]any{"schema_version": float64(4), "summary": "s", "verdict": "fail", "findings": []any{finding}}
+			require.Error(t, validator.Validate(doc))
+			finding["unlikely"] = false
+			require.NoError(t, validator.Validate(doc))
+			finding["unlikely"] = nil
+			if tc.conversion {
+				require.NoError(t, validator.Validate(doc))
+			} else {
+				require.Error(t, validator.Validate(doc))
+			}
+		})
+	}
 }

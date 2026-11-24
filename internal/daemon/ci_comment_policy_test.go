@@ -252,7 +252,7 @@ func TestCIPanelCommentMinConfidence(t *testing.T) {
 	floor := 0.8
 	h.Cfg.CI.CommentMinConfidence = &floor
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
-	document := reviewpkg.StructuredReview{SchemaVersion: 3, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
+	document := reviewpkg.StructuredReview{SchemaVersion: 4, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
 		{Severity: "high", Kind: "defect", Confidence: 0.5, Problem: "Filtered finding.", Fix: "Fix it."},
 		{Severity: "high", Kind: "defect", Confidence: 0.9, Problem: "Published finding.", Fix: "Fix it."},
 	}}
@@ -374,7 +374,7 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	h.Cfg.CI.CommentMaxFindings = 1
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
-	document := `{"schema_version":3,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","problem":"defect","fix":"fix"},{"severity":"low","problem":"nit","fix":"fix"},{"severity":"high","problem":"rare","fix":"fix","unlikely":true}]}`
+	document := `{"schema_version":4,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","problem":"defect","fix":"fix"},{"severity":"low","problem":"nit","fix":"fix"},{"severity":"high","problem":"rare","fix":"fix","unlikely":true}]}`
 	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, document, synth.ID)
 	require.NoError(t, err)
 	_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'medium' WHERE id = ?`, synth.ID)

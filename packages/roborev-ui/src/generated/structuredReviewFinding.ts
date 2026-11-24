@@ -49,6 +49,6 @@ export interface StructuredReviewFinding {
    * @nullable
    */
   topic?: string | null;
-  /** Whether only unusual timing or input reaches the finding. */
+  /** Whether only unusual timing or input reaches the finding. Introduced in version 4; omitted when false. */
   unlikely?: boolean;
 }

@@ -63,9 +63,9 @@ func TestStructuredReviewRejectsUnknownFields(t *testing.T) {
 
 func TestStructuredReviewRequiresKnownSchemaVersion(t *testing.T) {
 	_, err := DecodeStructuredReview(jsontext.Value(
-		`{"schema_version":4,"summary":"Done.","verdict":"pass","findings":[]}`,
+		`{"schema_version":5,"summary":"Done.","verdict":"pass","findings":[]}`,
 	))
-	require.ErrorContains(t, err, "unsupported structured review schema_version 4")
+	require.ErrorContains(t, err, "unsupported structured review schema_version 5")
 }
 
 func TestStructuredReviewVersionTwoCarriesVerdict(t *testing.T) {
@@ -131,12 +131,12 @@ func TestLiveReviewRequiresVerdictAndKind(t *testing.T) {
 	}{
 		{
 			name: "no verdict",
-			raw:  `{"schema_version":3,"summary":"Done.","findings":[]}`,
+			raw:  `{"schema_version":4,"summary":"Done.","findings":[]}`,
 			want: "without a verdict",
 		},
 		{
 			name: "finding without kind",
-			raw: `{"schema_version":3,"summary":"Done.","verdict":"fail","findings":[` +
+			raw: `{"schema_version":4,"summary":"Done.","verdict":"fail","findings":[` +
 				`{"severity":"high","kind":null,"confidence":null,"problem":"p","fix":"f","location":"a.go:3"}]}`,
 			want: "finding 1 without a kind",
 		},

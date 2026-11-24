@@ -67,6 +67,13 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	if doc != nil {
 		comment.structured = true
 		for _, finding := range doc.Findings {
+			// Stored findings carry kind and confidence together.
+			if finding.Kind != "" && finding.Confidence < cfg.MinConfidence {
+				if (cfg.Fold && (finding.Severity == "low" || finding.Unlikely)) || finding.Severity == "" || config.SeverityRank(finding.Severity) >= threshold {
+					comment.confidenceFiltered = true
+				}
+				continue
+			}
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
 			if cfg.Fold && finding.Severity == "low" {
 				comment.nits = append(comment.nits, item)
@@ -77,11 +84,6 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				continue
 			}
 			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold {
-				continue
-			}
-			// Stored findings carry kind and confidence together.
-			if finding.Kind != "" && finding.Confidence < cfg.MinConfidence {
-				comment.confidenceFiltered = true
 				continue
 			}
 			comment.findings = append(comment.findings, item)

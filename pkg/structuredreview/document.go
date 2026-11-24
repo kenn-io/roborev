@@ -22,18 +22,17 @@
 //
 // [SchemaVersion] versions the document, not this Go API. Every document
 // roborev writes uses it, and encoding a decoded older document writes it too.
-// A version 3 finding from a reviewing agent carries a kind, a confidence, and
-// a file and line range. Producers without that data, such as goal reviews and
+// A version 3 or later finding from a reviewing agent carries a kind, a
+// confidence, and a file and line range. Producers without that data, such as goal reviews and
 // converted historical reviews, leave kind and confidence null and may give a
-// free-text location instead of a file. Versions 1 and 2 are only decoded, so
-// stored reviews keep working: they carry a free-text location, and version 1
-// has no verdict. [Schema] and [SourcedSchema] are the JSON Schemas that
+// free-text location instead of a file. Versions 1 through 3 are only decoded.
+// Versions 1 and 2 carry a free-text location, and version 1 has no verdict. [Schema] and [SourcedSchema] are the JSON Schemas that
 // constrain agent output, and [ConversionSchema] and [ConversionSourcedSchema]
 // constrain converted historical reviews. Storage-only version 0 carries original historical
 // Markdown in Legacy, without extracted findings.
 //
-// A version 3 document may carry a [Check]: the record of roborev's CI checker
-// trying each finding before the review was stored. Documents the checker did
+// A version 3 or later document may carry a [Check]: the record of roborev's
+// CI checker trying each finding before the review was stored. Documents the checker did
 // not touch omit it.
 package structuredreview
 
@@ -49,9 +48,9 @@ import (
 )
 
 // SchemaVersion is the only version roborev writes and the version agents
-// must return. Versions 1 and 2 are still decoded so stored reviews keep
+// must return. Versions 1 through 3 are still decoded so stored reviews keep
 // working.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Kind values tell a proven fault apart from a suggestion. Every finding from
 // a reviewing agent has one.
@@ -328,9 +327,8 @@ func (f *Finding) SetLocation(file string, startLine, endLine int) {
 	f.Location = FormatLocation(file, startLine, endLine)
 }
 
-// MarshalJSON writes the version 3 shape. Every field is present, with null
-// for an absent kind, topic, confidence, file, line range, or location. A
-// finding without a kind has no confidence either.
+// MarshalJSON writes the current shape. Fields without values use null, except
+// unlikely, which is omitted when false. A finding without a kind has no confidence.
 func (f Finding) MarshalJSON() ([]byte, error) {
 	var location *string
 	if f.Location != "" {
@@ -395,7 +393,7 @@ type findingWire struct {
 	Kind       *string        `json:"kind"`
 	Topic      *string        `json:"topic"`
 	Confidence *float64       `json:"confidence"`
-	Unlikely   *bool          `json:"unlikely"`
+	Unlikely   jsontext.Value `json:"unlikely"`
 	Problem    string         `json:"problem"`
 	Fix        string         `json:"fix"`
 	File       *string        `json:"file"`
@@ -433,9 +431,9 @@ func Decode(raw jsontext.Value) (Document, error) {
 	for i, finding := range wire.Findings {
 		var err error
 		if wire.SchemaVersion >= 3 {
-			result.Findings[i], err = decodeLocatedFinding(finding)
+			result.Findings[i], err = decodeLocatedFinding(finding, wire.SchemaVersion)
 		} else {
-			result.Findings[i], err = decodeTextLocatedFinding(finding)
+			result.Findings[i], err = decodeTextLocatedFinding(finding, wire.SchemaVersion)
 		}
 		if err != nil {
 			return Document{}, fmt.Errorf("structured review finding %d %w", i+1, err)
@@ -448,7 +446,7 @@ func Decode(raw jsontext.Value) (Document, error) {
 				"structured review schema_version 1 does not carry a verdict",
 			)
 		}
-	case 2, SchemaVersion:
+	case 2, 3, SchemaVersion:
 		switch result.Verdict {
 		case VerdictPass, VerdictFail, VerdictUnableToReview:
 		case "":
@@ -478,10 +476,10 @@ func Decode(raw jsontext.Value) (Document, error) {
 		}
 	}
 	if wire.Check != nil {
-		if result.SchemaVersion < SchemaVersion {
-			return Document{}, fmt.Errorf("structured review check needs schema_version %d", SchemaVersion)
+		if result.SchemaVersion < 3 {
+			return Document{}, fmt.Errorf("structured review check needs schema_version 3")
 		}
-		check, err := decodeCheck(*wire.Check)
+		check, err := decodeCheck(*wire.Check, wire.SchemaVersion)
 		if err != nil {
 			return Document{}, fmt.Errorf("structured review check %w", err)
 		}
@@ -510,7 +508,7 @@ func normalizeFinding(finding *Finding) error {
 // decodeCheck validates the shape of a checker record. It does not re-apply
 // the drop rule, so a reader keeps working if roborev changes that rule.
 // Empty finding and verdict lists decode as nil.
-func decodeCheck(wire checkWire) (Check, error) {
+func decodeCheck(wire checkWire, version int) (Check, error) {
 	check := Check{Status: strings.ToLower(strings.TrimSpace(wire.Status))}
 	switch check.Status {
 	case CheckCompleted:
@@ -533,7 +531,7 @@ func decodeCheck(wire checkWire) (Check, error) {
 		if entry.Finding == nil {
 			return Check{}, fmt.Errorf("finding %d has no finding", i+1)
 		}
-		finding, err := decodeLocatedFinding(*entry.Finding)
+		finding, err := decodeLocatedFinding(*entry.Finding, version)
 		if err == nil {
 			err = normalizeFinding(&finding)
 		}
@@ -555,7 +553,10 @@ func decodeCheck(wire checkWire) (Check, error) {
 
 // decodeTextLocatedFinding reads a version 1 or 2 finding, which must carry a
 // location field and none of the version 3 fields.
-func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
+func decodeTextLocatedFinding(wire findingWire, version int) (Finding, error) {
+	if len(wire.Unlikely) > 0 && version < 4 {
+		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
+	}
 	if wire.Kind != nil || wire.Topic != nil || wire.Confidence != nil || wire.File != nil || wire.StartLine != nil || wire.EndLine != nil {
 		return Finding{}, fmt.Errorf("has kind, topic, confidence, file, or line fields, which need schema_version 3")
 	}
@@ -577,11 +578,14 @@ func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
 	}, nil
 }
 
-// decodeLocatedFinding reads a version 3 finding. Kind and confidence are
+// decodeLocatedFinding reads a version 3 or later finding. Kind and confidence are
 // both set or both null. A missing topic, file, or line is read as null. A
 // stored location is derived from the file and lines when there is a file,
 // and is kept as free text when there is not.
-func decodeLocatedFinding(wire findingWire) (Finding, error) {
+func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
+	if len(wire.Unlikely) > 0 && version < 4 {
+		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
+	}
 	if (wire.Kind == nil) != (wire.Confidence == nil) {
 		return Finding{}, fmt.Errorf("has a kind without a confidence, or a confidence without a kind")
 	}
@@ -606,7 +610,12 @@ func decodeLocatedFinding(wire findingWire) (Finding, error) {
 			return Finding{}, fmt.Errorf("has confidence %v outside 0 to 1", confidence)
 		}
 	}
-	unlikely := wire.Unlikely != nil && *wire.Unlikely
+	var unlikely bool
+	if len(wire.Unlikely) > 0 && !bytes.Equal(wire.Unlikely, []byte("null")) {
+		if err := json.Unmarshal(wire.Unlikely, &unlikely); err != nil {
+			return Finding{}, fmt.Errorf("has invalid unlikely: %w", err)
+		}
+	}
 	var location string
 	if len(wire.Location) > 0 && !bytes.Equal(wire.Location, []byte("null")) {
 		if err := json.Unmarshal(wire.Location, &location); err != nil {

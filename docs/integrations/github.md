@@ -890,8 +890,9 @@ saving, or reloading configuration. If confidence removes a finding that passed
 the severity filter and no findings remain, the comment says "No findings match
 the comment filters." Confidence does not filter prose.
 
-By default, structured CI comments fold Low and unlikely findings into a
-collapsible section. Set `comment_show_all = true` globally or per repository
+By default, structured CI comments apply the confidence floor, then fold Low
+and unlikely findings into a collapsible section. The finding cap applies to
+the main list. Set `comment_show_all = true` globally or per repository
 to show every finding inline, ignoring the comment severity and confidence
 floors and finding cap. The daemon raw fallback retains its severity policy.
 The setting also applies to GitHub comments from `roborev ci review`, including
@@ -899,7 +900,8 @@ its raw fallback. Stored reviews retain every finding.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
 synthesis has no findings after filtering, even if the stored review has
-findings. Severity-parsed prose is also silent when no labelled findings or
+findings. A comment with only folded findings is also suppressed.
+Severity-parsed prose is also silent when no labelled findings or
 unlabelled blocks survive. Verbatim prose and legacy Markdown remain
 publishable, even if their text says the review is clean. Roborev does not infer
 cleanliness from text or the stored verdict. With `upsert_comments = true`,

@@ -69,7 +69,7 @@ func (a *capturingAgent) Review(
 	_ context.Context, _, gitRef, _ string, _ io.Writer,
 ) (string, error) {
 	a.capturedGitRef = gitRef
-	return `{"schema_version":3,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
+	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
@@ -91,7 +91,7 @@ func (a *synthesisEntrypointAgent) Review(
 ) (string, error) {
 	a.reviewCalled = true
 	a.synthPrompt = prompt
-	return `{"schema_version":3,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
+	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
 
@@ -125,7 +125,7 @@ func (a *structuredSynthesisAgent) ReviewWithSchema(
 ) (jsontext.Value, error) {
 	a.schema = schema
 	a.repoPath = repoPath
-	return jsontext.Value(`{"schema_version":3,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`), nil
+	return jsontext.Value(`{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`), nil
 }
 func (a *structuredSynthesisAgent) CommandLine() string { return a.Name() }
 
@@ -538,8 +538,9 @@ func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Review Passed")
-	assert.Contains(t, comment, "No findings at or above high severity.")
-	assert.NotContains(t, comment, "Name is vague", "CI comments hide findings below the threshold")
+	assert.Contains(t, comment, "No findings need fixes before merge.")
+	assert.Contains(t, comment, "1 nit hidden")
+	assert.Contains(t, comment, "Name is vague")
 }
 
 func TestSynthesizePreservesCompleteOutput(t *testing.T) {
@@ -620,7 +621,8 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			assert.Contains(comment, "### High\n\n- `worker.go:10`: State is lost.\n\n  **Fix:** Persist it.")
 			assert.Contains(comment, "### Medium\n\n- `worker.go:20`: Missing cleanup.\n\n  **Fix:** Close the resource.")
 			assert.Contains(comment, "- Errors are ignored.\n\n  **Fix:** Return the error.")
-			assert.NotContains(comment, "Minor naming issue.")
+			assert.Contains(comment, "1 nit hidden")
+			assert.Contains(comment, "Minor naming issue.")
 			assert.Contains(synthesis.Output, "Minor naming issue.", "complete output retains low findings in every path")
 			assert.NotContains(comment, "Agent assessment")
 			assert.Len(doc.Findings, 4, "presentation must preserve the stored findings")
@@ -721,7 +723,7 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 		{"unfiltered member", []string{"medium", ""}, "", true},
 	} {
 		t.Run(policy.name, func(t *testing.T) {
-			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)}
+			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)}
 			agent.RegisterForTest(t, a)
 			doc := StructuredReview{SchemaVersion: 2, Summary: "Review complete.", Findings: []StructuredFinding{{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."}}}
 			results := make([]ReviewResult, len(policy.members))

@@ -177,3 +177,27 @@ func TestCommentFold(t *testing.T) {
 	assert.True(t, folded.IsClean())
 	assert.Contains(t, FormatComment(folded), "No findings need fixes before merge")
 }
+
+func TestCommentFoldConfidence(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "low", Kind: "improvement", Confidence: .4, Problem: "filtered nit"},
+		{Severity: "high", Kind: "defect", Confidence: .4, Unlikely: true, Problem: "filtered rare"},
+		{Severity: "low", Kind: "defect", Confidence: .88, Problem: "boundary nit"},
+		{Severity: "high", Problem: "unscored", Unlikely: true},
+		{Severity: "medium", Kind: "defect", Confidence: .9, Problem: "shown"},
+		{Severity: "medium", Kind: "defect", Confidence: .9, Problem: "capped"},
+	}}
+	original := slices.Clone(doc.Findings)
+	comment := PrepareComment(CommentConfig{Fold: true, MinSeverity: "medium", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &doc})
+	output := FormatComment(comment)
+	assert.NotContains(t, output, "filtered nit")
+	assert.NotContains(t, output, "filtered rare")
+	assert.Contains(t, output, "1 nit and 1 unlikely finding hidden")
+	assert.Contains(t, output, "boundary nit")
+	assert.Contains(t, output, "unscored")
+	assert.Contains(t, output, "1 more finding in the full review")
+	assert.Equal(t, original, doc.Findings)
+	filtered := PrepareComment(CommentConfig{Fold: true, MinConfidence: .88}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[:2]}})
+	assert.True(t, filtered.IsClean())
+	assert.Contains(t, FormatComment(filtered), "No findings match the comment filters")
+}

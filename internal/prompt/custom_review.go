@@ -16,7 +16,7 @@ import (
 const structuredReviewOutputInstruction = `
 
 Return exactly one JSON object, without a code fence or other text, with this shape:
-{"schema_version":3,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":null,"confidence":0.8,"unlikely":false,"problem":"...","fix":"...","file":"path/to/file.go","start_line":12,"end_line":14}]}
+{"schema_version":4,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":null,"confidence":0.8,"unlikely":false,"problem":"...","fix":"...","file":"path/to/file.go","start_line":12,"end_line":14}]}
 Use an empty findings array when there are no findings. This JSON format
 replaces any Markdown output format specified earlier in the prompt. Return a
 concise summary, your overall verdict, and every actionable finding.

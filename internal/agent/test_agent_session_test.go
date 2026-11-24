@@ -59,3 +59,11 @@ func TestTestAgent_NewInstanceResetsCounter(t *testing.T) {
 	assert.Equal(t, "test-session-1", ExtractSessionID(buf.String()),
 		"new instance starts its own counter at 1")
 }
+
+func TestTestAgentCurrentStructuredReview(t *testing.T) {
+	a := NewTestAgent()
+	a.Output = "No issues found."
+	output, err := a.Review(t.Context(), "/repo", "abc", `{"schema_version":4}`, nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"schema_version":4,"summary":"No issues found.","verdict":"pass","findings":[]}`, output)
+}
