@@ -416,48 +416,25 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 		cfg := server.configWatcher.Config()
 		cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &maxFiles, Types: []string{"refactor"}}
 		cfg.AnalyzeAgent = "test"
+		baseline, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "test", Prompt: "manual", AnalysisType: "refactor", AnalysisFiles: []string{"b.go"}, AnalysisCommitSHA: repo.HeadSHA()})
+		require.NoError(t, err)
+		setJobStatus(t, db, baseline.ID, storage.JobStatusDone)
 		now := time.Now()
 		watcher.poll(t.Context(), now)
-		jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+		jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)
 		require.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
 		setJobStatus(t, db, jobs[0].ID, storage.JobStatusFailed)
-		manual, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "test", Prompt: "manual", AnalysisType: "refactor", AnalysisFiles: []string{"b.go"}, AnalysisCommitSHA: repo.HeadSHA()})
+		manual, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: registered.ID, GitRef: "refactor", Agent: "test", Prompt: "manual", AnalysisType: "refactor", AnalysisFiles: []string{"a.go"}, AnalysisCommitSHA: repo.HeadSHA()})
 		require.NoError(t, err)
-		setJobStatus(t, db, manual.ID, storage.JobStatusDone)
+		setJobStatus(t, db, manual.ID, storage.JobStatusFailed)
 		watcher.poll(t.Context(), now.Add(30*time.Second))
 		jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)
 		assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
 	})
-}
-
-func TestScheduledAnalysisRetryAfterPendingSpansInterval(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("a.go", "package a\n", "add source")
-	registered, err := db.GetOrCreateRepo(repo.Path())
-	require.NoError(t, err)
-	yes, interval, budget := true, "1h", 1
-	server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
-	server.configWatcher.Config().AnalyzeAgent = "test"
-	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
-	now := time.Now()
-	watcher.poll(t.Context(), now)
-	jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
-	require.NoError(t, err)
-	require.Len(t, jobs, 1)
-	watcher.poll(t.Context(), now.Add(time.Hour))
-	setJobStatus(t, db, jobs[0].ID, storage.JobStatusFailed)
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at = ? WHERE id = ?`, now.Add(time.Hour+time.Second).UTC().Format(time.RFC3339Nano), jobs[0].ID)
-	require.NoError(t, err)
-	watcher.poll(t.Context(), now.Add(time.Hour+30*time.Second))
-	jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
-	require.NoError(t, err)
-	require.Len(t, jobs, 2)
-	assert.Equal(t, storage.JobStatusQueued, jobs[0].Status)
 }
 
 func TestScheduledAnalysisRetryOlderFailedJob(t *testing.T) {

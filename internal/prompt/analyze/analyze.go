@@ -225,7 +225,7 @@ func Workflow(label string) string {
 	return "review"
 }
 
-// IsCodeFile returns true if the file is a code file (stricter than isSourceFile).
+// IsCodeFile returns true if the file has a recognized code extension.
 // Excludes documentation, configuration, and markup files that are typically not
 // useful for code analysis on a branch.
 func IsCodeFile(path string) bool {
