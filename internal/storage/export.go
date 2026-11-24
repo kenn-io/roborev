@@ -63,8 +63,9 @@ type ExportReviewsOptions struct {
 	Until      time.Time
 	Cursor     string
 	ClosedOnly bool
-	// UpdatedSince is an inclusive lower bound on the review's updated_at. It
-	// is a filter, not a window: ordering and the cursor stay on completed_at.
+	// UpdatedSince is an inclusive lower bound on the exported updated_at,
+	// including the migration time for unknown-origin corrections. Ordering
+	// and the cursor stay on completed_at.
 	UpdatedSince time.Time
 	Repo         string
 	Project      string
@@ -98,7 +99,7 @@ type ExportReview struct {
 	Content             *string                `json:"content"`
 	Document            *ExportDocument        `json:"document"`
 	Closed              bool                   `json:"closed" doc:"True when the review is marked closed."`
-	UpdatedAt           string                 `json:"updated_at" doc:"RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time."`
+	UpdatedAt           string                 `json:"updated_at" doc:"RFC3339 UTC time the review last changed, including close and reopen, or the migration time for a later unknown-origin correction. Falls back to completed_at when no update time is recorded."`
 	Subagents           []ExportSubagent       `json:"subagents"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
 	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid"`
