@@ -9,6 +9,9 @@ All notable changes to roborev, grouped by minor release.
 
 Default reviews rate minor code-quality findings, such as duplicate tests and
 misleading names, Low. Test-value reviews also rate duplicate tests Low.
+Test-value reviews rate false regression coverage Medium, or High when it misses
+an established defect causing data loss, a security breach, a crash, or incorrect
+results.
 
 **Bug fixes**
 
