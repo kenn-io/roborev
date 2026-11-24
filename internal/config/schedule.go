@@ -9,6 +9,9 @@ import (
 	"go.kenn.io/roborev/internal/prompt/analyze"
 )
 
+// DefaultScheduleMaxFiles is the number of files selected per scheduled pass when unset.
+const DefaultScheduleMaxFiles = 20
+
 // ScheduleConfig controls periodic analysis. Repository values override global values.
 type ScheduleConfig struct {
 	Enabled  *bool    `toml:"enabled"`
@@ -78,11 +81,12 @@ func ResolveSchedule(global ScheduleConfig, repo ScheduleConfig) (Schedule, erro
 		return Schedule{}, fmt.Errorf("schedule.interval is required")
 	}
 	interval, _ := time.ParseDuration(*merged.Interval)
-	if merged.MaxFiles == nil {
-		return Schedule{}, fmt.Errorf("schedule.max_files must be positive")
+	maxFiles := DefaultScheduleMaxFiles
+	if merged.MaxFiles != nil {
+		maxFiles = *merged.MaxFiles
 	}
 	if len(merged.Types) == 0 {
 		return Schedule{}, fmt.Errorf("schedule.types must contain an analysis type")
 	}
-	return Schedule{Enabled: true, Interval: interval, Types: merged.Types, Paths: merged.Paths, MaxFiles: *merged.MaxFiles}, nil
+	return Schedule{Enabled: true, Interval: interval, Types: merged.Types, Paths: merged.Paths, MaxFiles: maxFiles}, nil
 }

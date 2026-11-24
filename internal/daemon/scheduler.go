@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 type analysisScheduler struct {
 	server                *Server
 	lastRun               map[int64]time.Time
+	failedTypes           map[int64]map[string]bool
 	testHookBeforeEnqueue func()
 }
 
@@ -92,6 +94,7 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 		return err
 	}
 	if !schedule.Enabled {
+		delete(w.failedTypes, repo.ID)
 		return nil
 	}
 	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
@@ -107,14 +110,42 @@ func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repo
 		}
 		w.lastRun[repo.ID] = last
 	}
+	if w.failedTypes == nil {
+		w.failedTypes = map[int64]map[string]bool{}
+	}
+	retry := w.failedTypes[repo.ID]
+	configured := map[string]bool{}
+	for _, typ := range schedule.Types {
+		configured[typ] = true
+	}
+	for typ := range retry {
+		if !configured[typ] {
+			delete(retry, typ)
+		}
+	}
 	if !last.IsZero() && now.Sub(last) < schedule.Interval {
-		return nil
+		if len(retry) == 0 {
+			return nil
+		}
+		var types []string
+		for _, typ := range schedule.Types {
+			if retry[typ] {
+				types = append(types, typ)
+			}
+		}
+		schedule.Types = types
+	}
+	retrying := !last.IsZero() && now.Sub(last) < schedule.Interval
+	failed, scheduleErr := w.scheduleRepoTypes(ctx, repo, repoCfg, global, schedule)
+	w.failedTypes[repo.ID] = failed
+	if retrying {
+		return scheduleErr
 	}
 	if err := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); err != nil {
-		return err
+		return errors.Join(scheduleErr, err)
 	}
 	w.lastRun[repo.ID] = now
-	return w.scheduleRepo(ctx, repo, repoCfg, global, schedule)
+	return scheduleErr
 }
 
 type changeSet struct {
@@ -124,23 +155,39 @@ type changeSet struct {
 
 type analysisCandidate struct {
 	path   string
+	oid    string
 	due    map[string]bool
 	oldest time.Time
 }
 
 func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) error {
+	_, err := w.scheduleRepoTypes(ctx, repo, repoCfg, global, schedule)
+	return err
+}
+
+func (w *analysisScheduler) scheduleRepoTypes(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) (failed map[string]bool, result error) {
+	failed = map[string]bool{}
+	setupFailed := true
+	defer func() {
+		if setupFailed && result != nil {
+			for _, typ := range schedule.Types {
+				failed[typ] = true
+			}
+		}
+	}()
 	head, err := git.ResolveCommitCtx(ctx, repo.RootPath, "HEAD")
 	if err != nil {
-		return fmt.Errorf("scheduled repository unavailable: %w", err)
+		return failed, fmt.Errorf("scheduled repository unavailable: %w", err)
 	}
 	paths, err := git.ListRefFiles(ctx, repo.RootPath, head)
 	if err != nil {
-		return fmt.Errorf("scheduled repository unavailable: %w", err)
+		return failed, fmt.Errorf("scheduled repository unavailable: %w", err)
 	}
 	candidates, err := scheduleCandidates(paths, schedule.Paths)
 	if err != nil {
-		return err
+		return failed, err
 	}
+	budget := config.ResolveMaxPromptSize(repo.RootPath, global)
 	usable := make(map[string]bool)
 	var errs []error
 	for _, typ := range schedule.Types {
@@ -153,40 +200,133 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			}
 		}
 		if err != nil {
+			failed[typ] = true
 			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			continue
 		}
 		usable[typ] = true
 		if err := w.markDue(ctx, repo, head, typ, candidates); err != nil {
-			return err
+			return failed, err
 		}
 	}
-	selected := selectCandidates(candidates, schedule.MaxFiles)
+	ordered := selectCandidates(candidates)
+	if len(ordered) == 0 {
+		setupFailed = false
+		return failed, errors.Join(errs...)
+	}
+	blobs := make([]git.TreeBlob, 0, len(ordered))
+	for _, candidate := range ordered {
+		blobs = append(blobs, git.TreeBlob{Path: candidate.path, OID: candidate.oid})
+	}
+	missing, err := git.MissingTreeBlobs(ctx, repo.RootPath, blobs)
+	if err != nil {
+		return failed, err
+	}
+	pathsForAttributes := make([]string, len(ordered))
+	for i, candidate := range ordered {
+		pathsForAttributes[i] = candidate.path
+	}
+	binary, err := git.BinaryAttributes(ctx, repo.RootPath, head, pathsForAttributes)
+	if err != nil {
+		return failed, err
+	}
+	reader, err := git.NewTreeBlobReader(ctx, repo.RootPath)
+	if err != nil {
+		return failed, err
+	}
+	defer func() {
+		if reader != nil {
+			_ = reader.Close()
+		}
+	}()
+	var selected []*analysisCandidate
+	files := map[string]string{}
+	var skipped []string
+	for _, candidate := range ordered {
+		if len(selected) == schedule.MaxFiles {
+			break
+		}
+		if missing[candidate.oid] {
+			continue
+		}
+		if binary[candidate.path] {
+			skipped = append(skipped, candidate.path)
+			continue
+		}
+		size, err := reader.Size(candidate.oid)
+		if err != nil {
+			if ctx.Err() != nil {
+				return failed, ctx.Err()
+			}
+			for typ := range candidate.due {
+				failed[typ] = true
+			}
+			errs = append(errs, fmt.Errorf("size %s: %w", candidate.path, err))
+			_ = reader.Close()
+			reader, err = git.NewTreeBlobReader(ctx, repo.RootPath)
+			if err != nil {
+				return failed, errors.Join(errors.Join(errs...), err)
+			}
+			continue
+		}
+		if size > int64(budget) {
+			skipped = append(skipped, candidate.path)
+			continue
+		}
+		content, err := reader.Read(candidate.oid)
+		if err != nil {
+			if ctx.Err() != nil {
+				return failed, ctx.Err()
+			}
+			for typ := range candidate.due {
+				failed[typ] = true
+			}
+			errs = append(errs, fmt.Errorf("read %s: %w", candidate.path, err))
+			_ = reader.Close()
+			reader, err = git.NewTreeBlobReader(ctx, repo.RootPath)
+			if err != nil {
+				return failed, errors.Join(errors.Join(errs...), err)
+			}
+			continue
+		}
+		if analyze.IsBinary(string(content)) || !strings.HasPrefix(http.DetectContentType(content), "text/") {
+			skipped = append(skipped, candidate.path)
+			continue
+		}
+		files[candidate.path] = string(content)
+
+		selected = append(selected, candidate)
+	}
+	if len(skipped) > 0 {
+		log.Printf("analysis scheduler %s: skipped %d binary or oversized files: %s", repo.RootPath, len(skipped), strings.Join(skipped[:min(len(skipped), 3)], ", "))
+	}
+	setupFailed = false
 	for _, typ := range schedule.Types {
 		if !usable[typ] {
 			continue
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return failed, ctx.Err()
 		}
 		if names := dueNames(selected, typ); len(names) > 0 {
-			if err := w.enqueueType(ctx, repo, typ, names, head); err != nil {
+			if err := w.enqueueType(ctx, repo, typ, names, head, files); err != nil {
+				failed[typ] = true
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
 	}
-	return errors.Join(errs...)
+	return failed, errors.Join(errs...)
 }
 
-func scheduleCandidates(paths, patterns []string) (map[string]*analysisCandidate, error) {
+func scheduleCandidates(paths []git.TreeBlob, patterns []string) (map[string]*analysisCandidate, error) {
 	candidates := map[string]*analysisCandidate{}
-	for _, path := range paths {
-		matched, err := matchesSchedulePaths(patterns, path)
+	for _, blob := range paths {
+		matched, err := matchesSchedulePaths(patterns, blob.Path)
 		if err != nil {
 			return nil, err
 		}
-		if matched {
-			candidates[path] = &analysisCandidate{path: path, due: map[string]bool{}}
+		if matched && analyze.IsCodeFile(blob.Path) {
+			candidates[blob.Path] = &analysisCandidate{path: blob.Path, oid: blob.OID, due: map[string]bool{}}
 		}
 	}
 	return candidates, nil
@@ -279,7 +419,7 @@ func changedSince(ctx context.Context, repoRoot, base, head string) (changeSet, 
 	return changed, err
 }
 
-func selectCandidates(candidates map[string]*analysisCandidate, limit int) []*analysisCandidate {
+func selectCandidates(candidates map[string]*analysisCandidate) []*analysisCandidate {
 	var selected []*analysisCandidate
 	for _, c := range candidates {
 		if len(c.due) > 0 {
@@ -292,9 +432,6 @@ func selectCandidates(candidates map[string]*analysisCandidate, limit int) []*an
 		}
 		return selected[i].oldest.Before(selected[j].oldest)
 	})
-	if len(selected) > limit {
-		selected = selected[:limit]
-	}
 	return selected
 }
 
@@ -308,19 +445,6 @@ func dueNames(selected []*analysisCandidate, typ string) []string {
 	return names
 }
 
-// buildTypePrompt reads names at head, honoring ctx cancellation, and builds typ's prompt.
-func buildTypePrompt(ctx context.Context, root, typ, head string, names []string) (string, error) {
-	files := make(map[string]string, len(names))
-	for _, name := range names {
-		content, err := git.ReadFile(ctx, root, head, name)
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", name, err)
-		}
-		files[name] = string(content)
-	}
-	return analyze.GetType(typ).BuildPrompt(files)
-}
-
 // lockRegistered coordinates enqueue with repo deletion, merge, and move so it
 // cannot recreate a repository removed or moved after it was selected.
 func (w *analysisScheduler) lockRegistered(repo storage.Repo) (func(), error) {
@@ -332,8 +456,12 @@ func (w *analysisScheduler) lockRegistered(repo storage.Repo) (func(), error) {
 	return w.server.scheduledRepoMu.Unlock, nil
 }
 
-func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string) error {
-	prompt, err := buildTypePrompt(ctx, repo.RootPath, typ, head, names)
+func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string, contents map[string]string) error {
+	files := make(map[string]string, len(names))
+	for _, name := range names {
+		files[name] = contents[name]
+	}
+	prompt, err := analyze.GetType(typ).BuildPrompt(files)
 	if err != nil {
 		return err
 	}

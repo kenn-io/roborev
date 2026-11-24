@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,6 +97,11 @@ func (t AnalysisType) GetPrompt() (string, error) {
 	return string(data), nil
 }
 
+// IsBinary reports whether content requires binary encoding.
+func IsBinary(content string) bool {
+	return !utf8.ValidString(content) || strings.ContainsRune(content, 0)
+}
+
 // BuildPrompt constructs the full prompt with file contents
 func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 	template, err := t.GetPrompt()
@@ -130,7 +136,7 @@ func (t AnalysisType) BuildPrompt(files map[string]string) (string, error) {
 	for i, name := range fileNames {
 		content := files[name]
 		fmt.Fprintf(&sb, "### %s\n\n", displayNames[i])
-		if !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
+		if IsBinary(content) {
 			sb.WriteString("Binary content (base64):\n\n```\n")
 			sb.WriteString(base64.StdEncoding.EncodeToString([]byte(content)))
 			sb.WriteString("\n```\n\n")
@@ -217,4 +223,20 @@ func Workflow(label string) string {
 		return "security"
 	}
 	return "review"
+}
+
+// IsCodeFile returns true if the file is a code file (stricter than isSourceFile).
+// Excludes documentation, configuration, and markup files that are typically not
+// useful for code analysis on a branch.
+func IsCodeFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	codeExts := map[string]bool{
+		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true,
+		".rs": true, ".c": true, ".h": true, ".cpp": true, ".hpp": true, ".cc": true,
+		".java": true, ".kt": true, ".scala": true, ".rb": true, ".php": true,
+		".swift": true, ".m": true, ".cs": true, ".fs": true, ".vb": true,
+		".sh": true, ".bash": true, ".zsh": true, ".fish": true,
+		".sql": true, ".graphql": true, ".proto": true,
+	}
+	return codeExts[ext]
 }

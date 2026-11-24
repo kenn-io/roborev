@@ -680,7 +680,6 @@ enabled = true
 interval = "24h"
 types = ["refactor", "complexity"]
 paths = ["**/*.go"]
-max_files = 20
 ```
 
 ```toml
@@ -689,30 +688,40 @@ max_files = 20
 enabled = true
 interval = "24h"
 types = ["refactor", "complexity"]
-max_files = 20
+max_files = 50
 ```
 
 Scheduling is off by default. Global `enabled = true` enables it for every
 repository; repository settings override global values, including `enabled`. An
-enabled schedule needs an interval, a positive `max_files`, and at least one
-known analysis type, supplied globally or by the repository. An empty `paths`
-list includes all tracked regular files, including binary files. Patterns use
-repository-relative paths; a trailing `/` includes the directory and its
-descendants.
+enabled schedule needs an interval and at least one known analysis type,
+supplied globally or by the repository. `max_files` is optional and defaults to
+20; a value you set must be positive. An empty `paths` list includes all tracked
+regular files. Patterns use repository-relative paths; a trailing `/` includes
+the directory and its descendants.
 
 Each run selects up to `max_files` distinct tracked files and queues jobs for
 each applicable type. Each job includes a snapshot of its selected files from
-the selected commit. Binary contents that are not UTF-8 are encoded as base64.
-Files with no previous attempt come first, followed by those with the oldest
-attempt. Queued and running jobs suppress their files. A successful analysis
-counts as coverage of the selected commit. A foreground review can cancel a
-running scheduled job when all workers are busy. Only enough jobs are canceled
-to serve the waiting reviews. The canceled files remain due for a later run. The
-daemon reloads settings on its next 30-second check. Set `analyze_agent`,
-`analyze_model`, and `analyze_reasoning` globally or per repository to choose
-the analysis agent, model, and reasoning. Per-type `[analyze.<type>]` settings
-take precedence within each scope; repository settings take precedence over
-global settings.
+the selected commit. Files with no previous attempt come first, followed by
+those with the oldest attempt. Queued and running jobs suppress their files.
+Each run considers the same code files as branch analysis. It skips binary
+files and files larger than the repository's
+[`max_prompt_size`](#prompt-size-budget), logs the count and first few paths,
+and continues looking for eligible files. Skipped files stay due and do not
+count toward `max_files`. Unavailable partial-clone blobs stay due without
+being fetched. A complete prompt can exceed `max_prompt_size` and uses the
+usual file handoff in that case.
+
+A successful analysis counts as coverage of the selected commit. A foreground
+review can cancel a running scheduled job when all workers are busy. Only enough
+jobs are canceled to serve the waiting reviews. The canceled files remain due
+for a later run. The daemon checks schedules and reloads settings every 30
+seconds. A failed analysis type, for example when its agent is unavailable, retries at
+the next check. Successfully queued types keep their normal interval. Retries
+are kept in memory and do not survive a daemon restart. Set
+`analyze_agent`, `analyze_model`, and `analyze_reasoning` globally or per
+repository to choose the analysis agent, model, and reasoning. Per-type
+`[analyze.<type>]` settings take precedence within each scope; repository
+settings take precedence over global settings.
 
 ### Binary Evidence
 

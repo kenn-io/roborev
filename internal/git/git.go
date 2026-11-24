@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -3153,15 +3154,21 @@ func LooksLikeSHA(s string) bool {
 	return len(s) >= 7 && len(s) <= 40 && isHex(s)
 }
 
+// TreeBlob describes a regular file in a commit's tree.
+type TreeBlob struct {
+	Path string
+	OID  string
+}
+
 // ListRefFiles lists regular files in a commit's tree.
-func ListRefFiles(ctx context.Context, repoPath, sha string) ([]string, error) {
+func ListRefFiles(ctx context.Context, repoPath, sha string) ([]TreeBlob, error) {
 	cmd := newGitCmdContext(ctx, "ls-tree", "-r", "-z", sha)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("list files at %s: %w", sha, err)
 	}
-	var paths []string
+	var paths []TreeBlob
 	for entry := range bytes.SplitSeq(out, []byte{0}) {
 		meta, path, ok := bytes.Cut(entry, []byte{'\t'})
 		if !ok {
@@ -3169,8 +3176,144 @@ func ListRefFiles(ctx context.Context, repoPath, sha string) ([]string, error) {
 		}
 		fields := bytes.Fields(meta)
 		if len(fields) == 3 && (string(fields[0]) == "100644" || string(fields[0]) == "100755") && string(fields[1]) == "blob" {
-			paths = append(paths, string(path))
+			paths = append(paths, TreeBlob{Path: string(path), OID: string(fields[2])})
 		}
 	}
 	return paths, nil
+}
+
+// MissingTreeBlobs reports objects unavailable locally without fetching them.
+func MissingTreeBlobs(ctx context.Context, repoPath string, blobs []TreeBlob) (map[string]bool, error) {
+	var input strings.Builder
+	for _, blob := range blobs {
+		input.WriteString(blob.OID + "\n")
+	}
+	cmd := newGitCmdContext(ctx, "rev-list", "--objects", "--no-walk", "--missing=print", "--stdin")
+	cmd.Dir = repoPath
+	cmd.Stdin = strings.NewReader(input.String())
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("check available blobs: %w", err)
+	}
+	missing := map[string]bool{}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if strings.HasPrefix(line, "?") {
+			missing[strings.TrimPrefix(line, "?")] = true
+		}
+	}
+	return missing, nil
+}
+
+// TreeBlobReader reads blob metadata and contents through Git batch processes.
+type TreeBlobReader struct {
+	checkCmd, readCmd *exec.Cmd
+	checkIn, readIn   io.WriteCloser
+	checkOut, readOut *bufio.Reader
+}
+
+// NewTreeBlobReader starts Git processes for reading tree blobs.
+func NewTreeBlobReader(ctx context.Context, repoPath string) (*TreeBlobReader, error) {
+	start := func(mode string) (*exec.Cmd, io.WriteCloser, *bufio.Reader, error) {
+		cmd := newGitCmdContext(ctx, "cat-file", mode)
+		cmd.Dir = repoPath
+		cmd.Env = append(cmd.Environ(), "GIT_NO_LAZY_FETCH=1")
+		in, err := cmd.StdinPipe()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		out, err := cmd.StdoutPipe()
+		if err != nil {
+			in.Close()
+			return nil, nil, nil, err
+		}
+		if err := cmd.Start(); err != nil {
+			in.Close()
+			return nil, nil, nil, err
+		}
+		return cmd, in, bufio.NewReader(out), nil
+	}
+	checkCmd, checkIn, checkOut, err := start("--batch-check")
+	if err != nil {
+		return nil, err
+	}
+	readCmd, readIn, readOut, err := start("--batch")
+	if err != nil {
+		checkIn.Close()
+		checkCmd.Wait()
+		return nil, err
+	}
+	return &TreeBlobReader{checkCmd, readCmd, checkIn, readIn, checkOut, readOut}, nil
+}
+
+func readBlobHeader(in io.Writer, out *bufio.Reader, oid string) (int64, error) {
+	if _, err := fmt.Fprintln(in, oid); err != nil {
+		return 0, err
+	}
+	header, err := out.ReadString('\n')
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(header)
+	if len(fields) != 3 || fields[0] != oid || fields[1] != "blob" {
+		return 0, fmt.Errorf("invalid blob response: %s", header)
+	}
+	return strconv.ParseInt(fields[2], 10, 64)
+}
+
+// Size returns the blob size in bytes.
+func (r *TreeBlobReader) Size(oid string) (int64, error) {
+	return readBlobHeader(r.checkIn, r.checkOut, oid)
+}
+
+// Read returns the blob contents.
+func (r *TreeBlobReader) Read(oid string) ([]byte, error) {
+	size, err := readBlobHeader(r.readIn, r.readOut, oid)
+	if err != nil {
+		return nil, err
+	}
+	data := make([]byte, size+1)
+	if _, err := io.ReadFull(r.readOut, data); err != nil {
+		return nil, err
+	}
+	if data[size] != '\n' {
+		return nil, fmt.Errorf("invalid blob terminator")
+	}
+	return data[:size], nil
+}
+
+// Close stops the Git processes.
+func (r *TreeBlobReader) Close() error {
+	return errors.Join(r.checkIn.Close(), r.readIn.Close(), r.checkCmd.Wait(), r.readCmd.Wait())
+}
+
+// BinaryAttributes finds paths marked -diff in the selected commit's attributes.
+func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string) (map[string]bool, error) {
+	dir, err := os.MkdirTemp("", "roborev-attributes-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	index := filepath.Join(dir, "index")
+	readTree := newGitCmdContext(ctx, "read-tree", sha)
+	readTree.Dir = repoPath
+	readTree.Env = append(readTree.Environ(), "GIT_INDEX_FILE="+index, "GIT_NO_LAZY_FETCH=1")
+	if out, err := readTree.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("read attributes tree: %s: %w", out, err)
+	}
+	cmd := newGitCmdContext(ctx, "check-attr", "--cached", "-z", "--stdin", "diff")
+	cmd.Dir = repoPath
+	cmd.Env = append(cmd.Environ(), "GIT_INDEX_FILE="+index, "GIT_NO_LAZY_FETCH=1")
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("check binary attributes: %w", err)
+	}
+	fields := bytes.Split(out, []byte{0})
+	binary := make(map[string]bool)
+	for i := 0; i+2 < len(fields); i += 3 {
+		if string(fields[i+2]) == "unset" {
+			binary[string(fields[i])] = true
+		}
+	}
+	return binary, nil
 }

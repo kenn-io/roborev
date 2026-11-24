@@ -1164,7 +1164,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 	// Filter to code files only
 	var codeFiles []string
 	for _, f := range changedFiles {
-		if isCodeFile(f) {
+		if analyze.IsCodeFile(f) {
 			codeFiles = append(codeFiles, f)
 		}
 	}
@@ -1193,22 +1193,6 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 	}
 
 	return files, targetSHA, nil
-}
-
-// isCodeFile returns true if the file is a code file (stricter than isSourceFile).
-// Excludes documentation, configuration, and markup files that are typically not
-// useful for code analysis on a branch.
-func isCodeFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	codeExts := map[string]bool{
-		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true,
-		".rs": true, ".c": true, ".h": true, ".cpp": true, ".hpp": true, ".cc": true,
-		".java": true, ".kt": true, ".scala": true, ".rb": true, ".php": true,
-		".swift": true, ".m": true, ".cs": true, ".fs": true, ".vb": true,
-		".sh": true, ".bash": true, ".zsh": true, ".fish": true,
-		".sql": true, ".graphql": true, ".proto": true,
-	}
-	return codeExts[ext]
 }
 
 // isSourceFile returns true if the file looks like source code

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,7 +56,7 @@ func TestScheduledAnalysisCancelledRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	watcher := &analysisScheduler{server: server}
-	err = watcher.enqueueType(ctx, *registered, "refactor", []string{"a.go"}, repo.HeadSHA())
+	err = watcher.scheduleRepo(ctx, *registered, &config.RepoConfig{}, server.configWatcher.Config(), config.Schedule{Types: []string{"refactor"}, MaxFiles: 1})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -67,7 +68,7 @@ func TestScheduledAnalysisDeletedRepo(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.DeleteRepo(registered.ID, true))
 	watcher := &analysisScheduler{server: server}
-	err = watcher.enqueueType(t.Context(), *registered, "refactor", []string{"a.go"}, repo.HeadSHA())
+	err = watcher.enqueueType(t.Context(), *registered, "refactor", []string{"a.go"}, repo.HeadSHA(), map[string]string{"a.go": "package a\n"})
 	require.Error(t, err)
 	jobs, err := db.ListJobs("", "", 0, 0)
 	require.NoError(t, err)
@@ -86,7 +87,7 @@ func TestScheduledAnalysisMovedRepo(t *testing.T) {
 	moved := filepath.Join(t.TempDir(), "moved")
 	require.NoError(t, db.MoveRepo(registered.ID, moved, ""))
 	watcher := &analysisScheduler{server: server}
-	err = watcher.enqueueType(t.Context(), *registered, "refactor", []string{"a.go"}, repo.HeadSHA())
+	err = watcher.enqueueType(t.Context(), *registered, "refactor", []string{"a.go"}, repo.HeadSHA(), map[string]string{"a.go": "package a\n"})
 	require.Error(t, err)
 	jobs, err := db.ListJobs("", "", 0, 0)
 	require.NoError(t, err)
@@ -156,7 +157,7 @@ func TestScheduledAnalysisTrackedFilesAndDirectories(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)
-		assert.ElementsMatch(t, []string{"Dockerfile", "Makefile", "internal/a.go", "internal/data.bin"}, jobs[0].AnalysisFiles)
+		assert.ElementsMatch(t, []string{"internal/a.go"}, jobs[0].AnalysisFiles)
 		assert.Contains(t, jobs[0].Prompt, "package a")
 		setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
 		server.configWatcher.Config().Schedule.Paths = []string{"internal/"}
@@ -309,8 +310,13 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
 		require.NoError(t, err)
 		require.Len(t, jobs, 1)
+		setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
 		_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_complexity`)
 		require.NoError(t, err)
+		watcher.poll(t.Context(), now.Add(30*time.Second))
+		jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+		require.NoError(t, err)
+		require.Len(t, jobs, 2)
 		watcher.poll(t.Context(), now.Add(time.Hour))
 		jobs, err = db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
 		require.NoError(t, err)
@@ -586,4 +592,189 @@ func TestScheduledAnalysisUsesBackupAgent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, "test", jobs[0].Agent)
+}
+
+func TestScheduledAnalysisDefaultBudget(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	files := map[string]string{}
+	for i := range 25 {
+		files[fmt.Sprintf("src/file%02d.go", i)] = "package sample\n"
+	}
+	repo.CommitFiles(files, "add sources")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"), []byte("analyze_agent = 'test'\n[schedule]\nenabled = true\ninterval = '24h'\ntypes = ['complexity', 'duplication']\npaths = ['src/']\n"), 0o644))
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	for _, job := range jobs {
+		assert.Len(t, job.AnalysisFiles, config.DefaultScheduleMaxFiles)
+	}
+}
+
+func TestScheduledAnalysisPromptBudget(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFiles(map[string]string{"a.go": strings.Repeat("a", 2000), "b.go": strings.Repeat("b", 2000), "large.go": strings.Repeat("x", 4000), "big.json": strings.Repeat("x", 6000), "pdf.go": "%PDF-1.4\n", "invalid.go": "\xff", "nullbyte.go": "a\x00b", ".gitattributes": "marked.go binary\n", "marked.go": "ordinary text\n"}, "add files")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	repo.WriteFile("a.go", "dirty edit")
+	cfg := server.configWatcher.Config()
+	yes, interval := true, "1h"
+	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, Types: []string{"refactor"}}
+	agentName := "scheduled-prompt-handoff"
+	var handoff string
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(_ context.Context, repoPath, _, task string, _ io.Writer) (string, error) {
+			files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "*", "prompt.md"))
+			require.NoError(t, err)
+			require.Len(t, files, 1)
+			data, err := os.ReadFile(files[0])
+			require.NoError(t, err)
+			handoff = string(data)
+			assert.Contains(t, task, "Read the complete task prompt")
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		},
+	})
+	cfg.AnalyzeAgent = agentName
+	cfg.DefaultMaxPromptSize = 3500
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"a.go", "b.go"}, jobs[0].AnalysisFiles)
+	assert.Greater(t, len(jobs[0].Prompt), cfg.DefaultMaxPromptSize)
+	assert.Contains(t, jobs[0].Prompt, strings.Repeat("a", 2000))
+	assert.NotContains(t, jobs[0].Prompt, "dirty edit")
+	claimed, err := db.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	pool.processJob(testWorkerID, claimed)
+	updated, err := db.GetJobByID(claimed.ID)
+	require.NoError(t, err)
+	require.Equal(t, storage.JobStatusDone, updated.Status)
+	assert.Contains(t, handoff, strings.Repeat("a", 2000))
+	assert.Contains(t, handoff, strings.Repeat("b", 2000))
+}
+
+func TestScheduledAnalysisRetriesFailedPass(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.go", "package a\n", "add source")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	cfg := server.configWatcher.Config()
+	yes, interval := true, "1h"
+	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, Types: []string{"refactor"}}
+	cfg.AnalyzeAgent = "no-such-agent"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	now := time.Now()
+	watcher.poll(t.Context(), now)
+	last, err := db.AnalysisScheduleLastRun(t.Context(), registered.ID)
+	require.NoError(t, err)
+	assert.Equal(t, now.Unix(), last.Unix())
+	cfg.AnalyzeAgent = "test"
+	restarted := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	restarted.poll(t.Context(), now.Add(30*time.Second))
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	watcher.poll(t.Context(), now.Add(30*time.Second))
+	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+}
+
+func TestScheduledAnalysisBinaryAttributesAndManyBinaryFiles(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	files := map[string]string{".gitattributes": "a.go binary\n", "a.go": "ordinary text\n", "z.go": "package z\n"}
+	for i := range 500 {
+		files[fmt.Sprintf("binary/%04d.go", i)] = "\x00binary"
+	}
+	repo.CommitFiles(files, "add files")
+	registered, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	cfg := server.configWatcher.Config()
+	yes, interval := true, "1h"
+	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, Types: []string{"refactor"}, Paths: []string{"*.go", "binary/"}}
+	cfg.AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"z.go"}, jobs[0].AnalysisFiles)
+}
+
+func TestScheduledAnalysisPartialClone(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	source := testutil.NewGitRepo(t)
+	source.CommitFiles(map[string]string{"a.go": "package a\n", "excluded.go": "package excluded\n"}, "add files")
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		return string(out)
+	}
+	runGit(source.Path(), "config", "uploadpack.allowFilter", "true")
+	clone := filepath.Join(t.TempDir(), "clone")
+	runGit(t.TempDir(), "clone", "--no-checkout", "--filter=blob:none", "file://"+source.Path(), clone)
+	excluded := strings.TrimSpace(runGit(source.Path(), "rev-parse", "HEAD:excluded.go"))
+	runGit(clone, "show", "HEAD:a.go")
+	before := runGit(clone, "rev-list", "--objects", "--missing=print", "HEAD")
+	require.Contains(t, before, "?"+excluded)
+	registered, err := db.GetOrCreateRepo(clone)
+	require.NoError(t, err)
+	cfg := server.configWatcher.Config()
+	yes, interval := true, "1h"
+	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, Types: []string{"refactor"}, Paths: []string{"*.go"}}
+	cfg.AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
+	after := runGit(clone, "rev-list", "--objects", "--missing=print", "HEAD")
+	assert.Contains(t, after, "?"+excluded)
+}
+
+func TestScheduledAnalysisUnreadableBlob(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	source := testutil.NewGitRepo(t)
+	source.CommitFiles(map[string]string{"a.go": "package a\n", "b.go": "package b\n"}, "add files")
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		return string(out)
+	}
+	runGit(source.Path(), "config", "uploadpack.allowFilter", "true")
+	clone := filepath.Join(t.TempDir(), "clone")
+	runGit(t.TempDir(), "clone", "--no-checkout", "--filter=blob:none", "file://"+source.Path(), clone)
+	runGit(clone, "show", "HEAD:b.go")
+	require.NoError(t, os.Rename(filepath.Join(source.Path(), ".git"), filepath.Join(source.Path(), "hidden-git")))
+	registered, err := db.GetOrCreateRepo(clone)
+	require.NoError(t, err)
+	cfg := server.configWatcher.Config()
+	yes, interval := true, "1h"
+	cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, Types: []string{"refactor"}}
+	cfg.AnalyzeAgent = "test"
+	watcher := &analysisScheduler{server: server, lastRun: map[int64]time.Time{}}
+	watcher.poll(t.Context(), time.Now())
+	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, []string{"b.go"}, jobs[0].AnalysisFiles)
 }
