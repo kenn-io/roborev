@@ -899,6 +899,11 @@ func TestMergeRepos(t *testing.T) {
 			target.RootPath, sharedWorktree, "main", now.Add(2*time.Hour),
 		)
 		require.NoError(t, err)
+		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), source.ID, []string{"refactor"}))
+		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), target.ID, []string{"complexity"}))
+		last := now.Truncate(time.Second)
+		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), source.ID, last))
+		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), target.ID, last))
 
 		_, err = db.MergeRepos(source.ID, target.ID)
 		require.NoError(t, err)
@@ -919,19 +924,6 @@ func TestMergeRepos(t *testing.T) {
 			`SELECT COUNT(*) FROM agent_hook_snoozes WHERE repo_id = ?`, source.ID,
 		).Scan(&sourceCount))
 		assert.Zero(t, sourceCount)
-	})
-	t.Run("merge clears source analysis schedule", func(t *testing.T) {
-		db := openTestDB(t)
-		defer db.Close()
-		source := createRepo(t, db, filepath.Join(t.TempDir(), "source"))
-		target := createRepo(t, db, filepath.Join(t.TempDir(), "target"))
-		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), source.ID, []string{"refactor"}))
-		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), target.ID, []string{"complexity"}))
-		last := time.Now().UTC().Truncate(time.Second)
-		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), source.ID, last))
-		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), target.ID, last))
-		_, err := db.MergeRepos(source.ID, target.ID)
-		require.NoError(t, err)
 		retry, err := db.AnalysisScheduleRetry(t.Context(), source.ID)
 		require.NoError(t, err)
 		assert.Empty(t, retry)
