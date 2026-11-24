@@ -7,6 +7,9 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+Default reviews rate minor code-quality findings, such as duplicate tests and
+misleading names, Low. Test-value reviews also rate duplicate tests Low.
+
 **Bug fixes**
 
 - Scheduled analysis defaults to 20 files per run when `max_files` is omitted.
