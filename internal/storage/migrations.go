@@ -76,13 +76,22 @@ func preserveUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
 }
 
 // migrateUnknownSyncedJobOrigins stores unknown synced origins as the nil
-// UUID that pulled jobs and review uploads already use. It leaves
+// UUID that pulled jobs and review uploads already use. Unsynced empty origins
+// belong to this machine. It leaves
 // reviews.updated_at alone because sync orders review edits by it. Jobs an
 // older baseline stamped with the local machine cannot be told apart from
 // local jobs.
 func migrateUnknownSyncedJobOrigins(ctx context.Context, db *DB) error {
-	_, err := db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = ?
-		WHERE source_machine_id = '' OR (source_machine_id IS NULL AND synced_at IS NOT NULL)`, uuid.Nil().String())
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = ?
+		WHERE source_machine_id = '' AND synced_at IS NULL`, machineID); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `UPDATE review_jobs SET source_machine_id = ?
+		WHERE (source_machine_id = '' OR source_machine_id IS NULL) AND synced_at IS NOT NULL`, uuid.Nil().String())
 	return err
 }
 
