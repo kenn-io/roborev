@@ -12,6 +12,10 @@ export type ExportReviewsParams = {
    */
   profile?: string;
   /**
+   * Requested export schema version; defaults to the current version (2)
+   */
+  schema_version?: number;
+  /**
    * Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
    */
   since?: string;

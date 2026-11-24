@@ -2097,9 +2097,24 @@ const (
 	exportReviewsDefaultLimit = 500
 	exportReviewsMaxLimit     = 5000
 	// exportReviewsSchemaVersion is 2 since reviews gained closed and
-	// updated_at. The CI metrics and CI cost documents version separately.
-	exportReviewsSchemaVersion = 2
+	// ExportReviewsSchemaVersion is the current wire schema version for
+	// GET /api/export/reviews and `roborev export reviews`. Within a schema
+	// version, wire changes are strictly additive: existing fields are never
+	// removed, renamed, or changed in type or nullability, and consumers must
+	// ignore unknown fields. Breaking changes bump this version while keeping
+	// previously supported versions selectable via schema_version.
+	//
+	// Version 2 added `document` on reviews and subagents plus `closed` and
+	// `updated_at` on top-level reviews. The CI metrics and CI cost documents
+	// version separately.
+	ExportReviewsSchemaVersion = 2
 )
+
+// IsSupportedExportReviewsSchemaVersion reports whether GET /api/export/reviews
+// and `roborev export reviews` can serve the requested schema version.
+func IsSupportedExportReviewsSchemaVersion(version int) bool {
+	return version == ExportReviewsSchemaVersion
+}
 
 func (s *Server) humaExportReviews(
 	ctx context.Context, input *ExportReviewsInput,
@@ -2110,6 +2125,13 @@ func (s *Server) humaExportReviews(
 	}
 	if format != "json" {
 		return nil, huma.Error400BadRequest("unsupported export format")
+	}
+
+	schemaVersion := input.SchemaVersion
+	if !IsSupportedExportReviewsSchemaVersion(schemaVersion) {
+		return nil, huma.Error400BadRequest(
+			fmt.Sprintf("unsupported export schema_version %d (supported: %d)", schemaVersion, ExportReviewsSchemaVersion),
+		)
 	}
 
 	profile := input.Profile
@@ -2174,7 +2196,7 @@ func (s *Server) humaExportReviews(
 	}
 	resp := &ExportReviewsOutput{}
 	resp.Body = ExportReviewsDocument{
-		SchemaVersion: exportReviewsSchemaVersion,
+		SchemaVersion: schemaVersion,
 		Tool:          "roborev",
 		ToolVersion:   version.Version,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),

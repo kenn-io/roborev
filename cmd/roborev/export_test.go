@@ -296,6 +296,9 @@ func TestExportReviewsCmdRejectsInvalidFlags(t *testing.T) {
 	}{
 		{name: "format", code: 4, args: []string{"reviews", "--format", "yaml"}},
 		{name: "profile", code: 4, args: []string{"reviews", "--profile", "full"}},
+		{name: "schema-version-zero", code: 4, args: []string{"reviews", "--schema-version", "0"}},
+		{name: "schema-version-old", code: 4, args: []string{"reviews", "--schema-version", "1"}},
+		{name: "schema-version-future", code: 4, args: []string{"reviews", "--schema-version", "99"}},
 		{name: "limit", code: 4, args: []string{"reviews", "--limit", "0"}},
 		{name: "cursor-since", code: 2, args: []string{"reviews", "--cursor", "opaque", "--since", "2026-06-29"}},
 	}
@@ -309,6 +312,28 @@ func TestExportReviewsCmdRejectsInvalidFlags(t *testing.T) {
 			assert.Equal(t, tt.code, commandExitCode(err))
 		})
 	}
+}
+
+func TestExportReviewsCmdSendsSchemaVersionOnlyWhenExplicit(t *testing.T) {
+	assert := assert.New(t)
+	var seen []string
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/reviews" {
+				return false
+			}
+			seen = append(seen, r.URL.Query().Get("schema_version"))
+			writeExportTestPage(t, w, r.URL.Query().Get("profile"), false, new("cursor-1"), []map[string]any{
+				{"review_id": testUUID("review-1"), "content": nil},
+			})
+			return true
+		},
+	})
+
+	runExportCmd(t, "reviews")
+	runExportCmd(t, "reviews", "--schema-version", "2")
+
+	assert.Equal([]string{"", "2"}, seen)
 }
 
 func TestExportReviewsCmdPropagatesCursorErrors(t *testing.T) {

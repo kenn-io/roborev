@@ -113,6 +113,9 @@ type ExportReviewsQuery struct {
 	// Profile Export profile: content or metadata
 	Profile *string `json:"profile,omitempty"`
 
+	// SchemaVersion Requested export schema version; defaults to the current version (2)
+	SchemaVersion *int64 `json:"schema_version,omitempty"`
+
 	// Since Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
 	Since *string `json:"since,omitempty"`
 

@@ -5941,6 +5941,15 @@ paths:
             default: content
             description: "Export profile: content or metadata"
             type: string
+        - description: Requested export schema version; defaults to the current version (2)
+          explode: false
+          in: query
+          name: schema_version
+          schema:
+            default: 2
+            description: Requested export schema version; defaults to the current version (2)
+            format: int64
+            type: integer
         - description: Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
           explode: false
           in: query

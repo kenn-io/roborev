@@ -28,16 +28,18 @@ const (
 var errExportCursorDatabaseReset = errors.New("export cursor database reset")
 
 type exportReviewsOpts struct {
-	format       string
-	profile      string
-	since        string
-	until        string
-	cursor       string
-	closedOnly   bool
-	updatedSince string
-	repo         string
-	project      string
-	limit        int
+	format           string
+	profile          string
+	schemaVersion    int
+	schemaVersionSet bool
+	since            string
+	until            string
+	cursor           string
+	closedOnly       bool
+	updatedSince     string
+	repo             string
+	project          string
+	limit            int
 }
 
 func exportCmd() *cobra.Command {
@@ -86,9 +88,15 @@ review again after its closed state changes. --updated-since is an inclusive
 updated_at lower bound that works as a filter: it combines with --since,
 --until, --cursor, --limit, --profile, and the other filters, and rows stay
 ordered by completed_at. Consumers that track closed state should combine the
-completed_at cursor pull with a separate --updated-since pull.`),
+completed_at cursor pull with a separate --updated-since pull.
+
+Use --schema-version to pin a specific export schema version (currently 2).
+Within a schema version, changes are strictly additive: existing fields are
+never removed, renamed, or changed in type or nullability, and consumers should
+ignore unknown fields.`),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limitSet := cmd.Flags().Changed("limit")
+			opts.schemaVersionSet = cmd.Flags().Changed("schema-version")
 			if err := validateExportReviewsOpts(opts, limitSet); err != nil {
 				return usageErr(cmd, err)
 			}
@@ -96,7 +104,7 @@ completed_at cursor pull with a separate --updated-since pull.`),
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
 
-			doc, err := fetchAllExportReviews(getDaemonEndpoint(), opts, limitSet)
+			doc, err := fetchAllExportReviews(cmd.Context(), getDaemonEndpoint(), opts, limitSet)
 			if err != nil {
 				if errors.Is(err, errExportCursorDatabaseReset) {
 					return &exitError{code: exportReviewsCursorResetExitCode, cause: err}
@@ -109,6 +117,7 @@ completed_at cursor pull with a separate --updated-since pull.`),
 	}
 	cmd.Flags().StringVar(&opts.format, "format", "json", "output format")
 	cmd.Flags().StringVar(&opts.profile, "profile", string(storage.ExportProfileContent), "export profile (content or metadata)")
+	cmd.Flags().IntVar(&opts.schemaVersion, "schema-version", daemon.ExportReviewsSchemaVersion, fmt.Sprintf("export schema version (supported: %d)", daemon.ExportReviewsSchemaVersion))
 	cmd.Flags().StringVar(&opts.since, "since", "", "inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)")
 	cmd.Flags().StringVar(&opts.until, "until", "", "exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD)")
 	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "opaque next_cursor from a previous export; resumes after that cursor and cannot be used with --since")
@@ -128,6 +137,9 @@ func validateExportReviewsOpts(opts exportReviewsOpts, limitSet bool) error {
 		opts.profile != string(storage.ExportProfileMetadata) {
 		return invalidValue(fmt.Errorf("unsupported export profile %q", opts.profile))
 	}
+	if !daemon.IsSupportedExportReviewsSchemaVersion(opts.schemaVersion) {
+		return invalidValue(fmt.Errorf("unsupported export schema version %d (supported: %d)", opts.schemaVersion, daemon.ExportReviewsSchemaVersion))
+	}
 	if limitSet && opts.limit <= 0 {
 		return invalidValue(fmt.Errorf("--limit must be greater than 0"))
 	}
@@ -137,7 +149,7 @@ func validateExportReviewsOpts(opts exportReviewsOpts, limitSet bool) error {
 	return nil
 }
 
-func fetchAllExportReviews(ep daemon.DaemonEndpoint, opts exportReviewsOpts, limitSet bool) (*daemon.ExportReviewsDocument, error) {
+func fetchAllExportReviews(ctx context.Context, ep daemon.DaemonEndpoint, opts exportReviewsOpts, limitSet bool) (*daemon.ExportReviewsDocument, error) {
 	var out *daemon.ExportReviewsDocument
 	cursor := opts.cursor
 	remaining := opts.limit
@@ -146,7 +158,7 @@ func fetchAllExportReviews(ep daemon.DaemonEndpoint, opts exportReviewsOpts, lim
 		if limitSet {
 			pageLimit = min(remaining, exportReviewsMaxPageSize)
 		}
-		page, err := fetchExportReviewsPage(ep, opts, cursor, pageLimit)
+		page, err := fetchExportReviewsPage(ctx, ep, opts, cursor, pageLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -186,10 +198,13 @@ func fetchAllExportReviews(ep daemon.DaemonEndpoint, opts exportReviewsOpts, lim
 	return out, nil
 }
 
-func fetchExportReviewsPage(ep daemon.DaemonEndpoint, opts exportReviewsOpts, cursor string, limit int) (daemon.ExportReviewsDocument, error) {
+func fetchExportReviewsPage(ctx context.Context, ep daemon.DaemonEndpoint, opts exportReviewsOpts, cursor string, limit int) (daemon.ExportReviewsDocument, error) {
 	params := url.Values{}
 	params.Set("format", opts.format)
 	params.Set("profile", opts.profile)
+	if opts.schemaVersionSet {
+		params.Set("schema_version", strconv.Itoa(opts.schemaVersion))
+	}
 	if opts.since != "" && cursor == "" {
 		params.Set("since", opts.since)
 	}
@@ -215,7 +230,7 @@ func fetchExportReviewsPage(ep daemon.DaemonEndpoint, opts exportReviewsOpts, cu
 		params.Set("cursor", cursor)
 	}
 
-	resp, err := ep.APIClient(30*time.Second).ExportReviewsRaw(context.Background(), nil, roborevclient.WithQuery(params))
+	resp, err := ep.APIClient(30*time.Second).ExportReviewsRaw(ctx, nil, roborevclient.WithQuery(params))
 	if err != nil {
 		return daemon.ExportReviewsDocument{}, fmt.Errorf("failed to connect to daemon: %w", err)
 	}

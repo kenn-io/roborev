@@ -486,6 +486,7 @@ cannot be canceled and return an error.
 ```bash
 roborev export reviews
 roborev export reviews --profile metadata
+roborev export reviews --schema-version 2
 roborev export reviews --since 2026-06-01 --until 2026-06-30
 roborev export reviews --closed-only --repo github.com/org/repo
 roborev export reviews --project my-workspace --limit 1000
@@ -497,6 +498,7 @@ roborev export reviews --updated-since 2026-07-01T00:00:00Z
 |------|-------------|
 | `--format json` | Output format. JSON is the only supported format and the default |
 | `--profile content\|metadata` | Export profile. `content` is the default |
+| `--schema-version <n>` | Export schema version to request. Defaults to the current version (`2`) |
 | `--since <time>` | Inclusive `completed_at` lower bound. Accepts RFC3339 or `YYYY-MM-DD` |
 | `--until <time>` | Exclusive `completed_at` upper bound. Accepts RFC3339 or `YYYY-MM-DD` |
 | `--cursor <opaque>` | Resume strictly after a previous `next_cursor`. Mutually exclusive with `--since` |
@@ -625,8 +627,15 @@ Review export documents use `schema_version: 2`. Version 2 added `closed` and
 `updated_at` to every top-level review, and `document` to every top-level review
 and subagent. No version 1 field changed meaning. Documents also include a
 stable `database_id` for the local review database. `database_id` did not bump
-`schema_version` because it is an additive header field, and consumers must
-ignore unknown header keys.
+`schema_version` because it is an additive header field.
+
+Within a major `schema_version`, export evolution is strictly additive: existing
+fields are never removed, renamed, or changed in type or nullability, and
+existing CLI flag semantics and exit code `3` (cursor database reset) stay
+stable. Consumers must ignore unknown fields on the document header, reviews,
+subagents, and nested objects. Any breaking wire change introduces a new
+`schema_version` while prior supported versions remain selectable via
+`--schema-version` (CLI) or `schema_version` (HTTP `GET /api/export/reviews`).
 
 Review exports preserve complete content and metadata strings. Pagination limits
 control the number of rows returned; they do not truncate individual fields.
