@@ -157,7 +157,7 @@ func (w *analysisScheduler) retryTypes(ctx context.Context, repoID int64, last t
 		if err != nil {
 			return nil, err
 		}
-		failedJob := len(jobs) > 0 && jobs[0].Status == storage.JobStatusFailed && jobs[0].EnqueuedAt.Add(time.Second).After(last)
+		failedJob := len(jobs) > 0 && jobs[0].Status == storage.JobStatusFailed && jobs[0].FinishedAt != nil && jobs[0].FinishedAt.Add(time.Second).After(last)
 		if failedJob || slices.Contains(saved, typ) {
 			retry = append(retry, typ)
 		}
