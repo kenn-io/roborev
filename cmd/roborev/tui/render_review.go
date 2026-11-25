@@ -60,7 +60,11 @@ func (m model) reviewContentString(review *storage.Review) string {
 	}
 	output := review.Output
 	if !m.reviewExpanded(review) {
-		output, _ = review.FoldedOutput()
+		var folded bool
+		output, folded = review.FoldedOutput()
+		if folded {
+			output = strings.TrimSuffix(output, "\n") + " · press e to expand\n"
+		}
 	}
 	content.WriteString(output)
 
@@ -75,6 +79,47 @@ func (m model) reviewContentString(review *storage.Review) string {
 		}
 	}
 	return content.String()
+}
+
+// renderReviewLines keeps the tool's folded-findings note distinct from review text.
+func (m model) renderReviewLines(review *storage.Review, wrapWidth, maxWidth int) []string {
+	content := m.reviewContentString(review)
+	render := func(text string) []string {
+		if m.mdCache != nil {
+			return m.mdCache.getReviewLines(text, wrapWidth, maxWidth, review.ID)
+		}
+		return sanitizeLines(wrapText(text, wrapWidth))
+	}
+	if m.reviewExpanded(review) {
+		return render(content)
+	}
+	folded, ok := review.FoldedOutput()
+	if !ok {
+		return render(content)
+	}
+	folded = strings.TrimSuffix(folded, "\n")
+	index := strings.LastIndex(folded, "\n") + 1
+	note := folded[index:] + " · press e to expand"
+	withNote := folded[:index] + note + "\n"
+	at := strings.Index(content, withNote)
+	if at < 0 {
+		return render(content)
+	}
+	noteAt := at + index
+	lines := append([]string(nil), render(content[:noteAt])...)
+	lines = append(lines, "")
+	for _, line := range wrapText(note, wrapWidth) {
+		lines = append(lines, helpStyle.Render(line))
+	}
+	if tail := strings.Trim(content[noteAt+len(note):], "\n"); tail != "" {
+		lines = append(lines, "")
+		if m.mdCache != nil {
+			lines = append(lines, renderMarkdownLines(tail, wrapWidth, maxWidth, m.mdCache.glamourStyle, m.mdCache.tabWidth, m.mdCache.colorProfile)...)
+		} else {
+			lines = append(lines, sanitizeLines(wrapText(tail, wrapWidth))...)
+		}
+	}
+	return lines
 }
 
 func reviewTypeMetadata(job storage.ReviewJob) string {
@@ -210,13 +255,7 @@ func (m model) renderReviewView() string {
 	// wrapWidth caps at 100 for readability; maxWidth uses actual terminal width for truncation.
 	maxWidth := max(20, m.width-4)
 	wrapWidth := min(maxWidth, 100)
-	contentStr := m.reviewContentString(review)
-	var lines []string
-	if m.mdCache != nil {
-		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, maxWidth, review.ID)
-	} else {
-		lines = sanitizeLines(wrapText(contentStr, wrapWidth))
-	}
+	lines := m.renderReviewLines(review, wrapWidth, maxWidth)
 
 	// Compute title line count based on actual title length
 	titleLines := 1

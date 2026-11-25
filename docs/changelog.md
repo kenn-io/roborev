@@ -8,8 +8,8 @@ All notable changes to roborev, grouped by minor release.
 ## Unreleased
 
 Reviews shown by `review --wait`, `review --local`, `job wait`, `job show`,
-and the TUI now fold nits and unlikely findings. Use `--all` in the CLI or `e`
-in the TUI to show them. Agent skill invocations using `--from-skill` receive
+and the TUI now fold low-severity and unlikely findings. Use `--all` in the CLI
+or `e` in the TUI to show them. Agent skill invocations using `--from-skill` receive
 all findings in text output as part of the agent-output contract.
 
 **Bug fixes**

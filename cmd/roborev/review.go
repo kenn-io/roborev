@@ -457,7 +457,7 @@ Examples:
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress informational output and the usage block; runtime errors are still printed")
 	cmd.Flags().BoolVar(&dirty, "dirty", false, "review uncommitted changes instead of a commit")
-	cmd.Flags().BoolVar(&all, "all", false, "list nits and unlikely findings instead of folding them")
+	cmd.Flags().BoolVar(&all, "all", false, "list low-severity and unlikely findings instead of folding them")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")
 	cmd.Flags().StringVar(&branch, "branch", "", "review all changes since branch diverged from base (optionally specify branch name)")
 	cmd.Flags().Lookup("branch").NoOptDefVal = "HEAD"
@@ -669,7 +669,7 @@ func runLocalReviewAgent(cmd *cobra.Command, a agent.Agent, repoPath, gitRef, re
 	if !all && !fromSkill {
 		folded := result.Structured.FoldedMarkdown(minSeverity)
 		if folded != output {
-			output = folded + "Run with --all to list them."
+			output = formatFoldedNote(folded, "Run with --all to list them.", out)
 		}
 	}
 	fmt.Fprintln(out, output)

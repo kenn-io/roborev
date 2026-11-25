@@ -11,11 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
@@ -123,7 +125,7 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 	if !quiet {
 		cmd.Printf("Review (by %s)\n", review.Agent)
 		cmd.Println(strings.Repeat("-", 60))
-		cmd.Println(reviewText(review, all))
+		cmd.Println(reviewText(review, all, cmd.OutOrStdout()))
 		if review.Job != nil && review.Job.IsReadableReview() {
 			reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 		}
@@ -305,13 +307,13 @@ func daemonRequestError(action string, err error) error {
 	return fmt.Errorf("%s: %w", action, err)
 }
 
-func reviewText(review *storage.Review, all bool) string {
+func reviewText(review *storage.Review, all bool, out io.Writer) string {
 	if all || fromSkill {
 		return review.Output
 	}
 	output, folded := review.FoldedOutput()
 	if folded {
-		output += "Run " + reviewShowCommand(review.JobID) + " to list them."
+		output = formatFoldedNote(output, "Run "+reviewShowCommand(review.JobID)+" to list them.", out)
 	}
 	return output
 }
@@ -322,4 +324,14 @@ func reviewShowCommand(jobID int64) string {
 		command += " --server " + daemon.ShellEscape(getDaemonEndpoint().ConfigAddr())
 	}
 	return fmt.Sprintf("%s job show --job %d --all", command, jobID)
+}
+
+func formatFoldedNote(output, hint string, out io.Writer) string {
+	output = strings.TrimSuffix(output, "\n")
+	index := strings.LastIndex(output, "\n") + 1
+	note := output[index:] + ". " + hint
+	if streamfmt.WriterIsTerminal(out) && streamfmt.ResolveColorProfile() != termenv.Ascii {
+		note = termenv.String(note).Faint().String()
+	}
+	return output[:index] + note
 }

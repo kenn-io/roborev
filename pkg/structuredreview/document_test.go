@@ -339,12 +339,12 @@ func TestFoldedMarkdown(t *testing.T) {
 	assert.Contains(t, got, "### 3. Medium")
 	assert.NotContains(t, got, "**Problem:** nit")
 	assert.NotContains(t, got, "**Problem:** rare")
-	assert.Contains(t, got, "1 nit and 1 unlikely finding hidden")
+	assert.Contains(t, got, "1 low-severity finding and 1 unlikely finding hidden")
 	doc.Findings = doc.Findings[1:2]
 	got = doc.FoldedMarkdown("")
 	assert.NotContains(t, got, "## Findings")
 	assert.NotContains(t, got, "No issues found")
-	assert.Contains(t, got, "1 nit hidden")
+	assert.Contains(t, got, "1 low-severity finding hidden")
 	doc.Findings = nil
 	assert.Equal(t, doc.Markdown(""), doc.FoldedMarkdown(""))
 	doc.Legacy = &LegacyDocument{Markdown: "old"}
