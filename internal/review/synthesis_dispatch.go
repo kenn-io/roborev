@@ -176,6 +176,8 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 	}
 	for i := range doc.Findings {
 		finding := &doc.Findings[i]
+		covered := make(map[int]bool)
+		allUnlikely := len(refs[i]) > 0
 		for _, ref := range refs[i] {
 			if ref.Review < 1 || ref.Review > len(reviews) || !slices.Contains(finding.Sources, ref.Review) {
 				return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has invalid source review %d", i+1, ref.Review)
@@ -185,10 +187,15 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 				return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has invalid source finding %d in review %d", i+1, ref.Finding, ref.Review)
 			}
 			original := source.Findings[ref.Finding-1]
-			finding.Unlikely = finding.Unlikely || original.Unlikely
+			covered[ref.Review] = true
+			allUnlikely = allUnlikely && original.Unlikely
 			if original.Topic == "security" {
 				finding.Topic = "security"
 			}
+		}
+		// Missing references leave the model's mark as the best available result.
+		if len(covered) == len(finding.Sources) && len(covered) > 0 {
+			finding.Unlikely = allUnlikely
 		}
 	}
 	// minSeverity never removes findings; callers apply it when rendering
