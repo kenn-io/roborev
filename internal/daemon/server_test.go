@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 // safeRecorder wraps httptest.ResponseRecorder with mutex protection for concurrent access
@@ -176,6 +177,33 @@ func newTestServer(t *testing.T) (*Server, *storage.DB, string) {
 	// background work.
 	t.Cleanup(func() { _ = server.Close() })
 	return server, db, tmpDir
+}
+
+type handlerRoundTripper struct {
+	handler http.Handler
+}
+
+func (rt handlerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		defer func() { _ = req.Body.Close() }()
+	}
+	w := httptest.NewRecorder()
+	rt.handler.ServeHTTP(w, req.Clone(req.Context()))
+	resp := w.Result()
+	resp.Request = req
+	return resp, nil
+}
+
+// newHandlerAPIClient returns a generated API client wired directly to handler
+// in memory so tests exercise the typed HTTP client without allocating loopback
+// TCP sockets or exhausting Windows ephemeral ports.
+func newHandlerAPIClient(t *testing.T, handler http.Handler) *roborevclient.Client {
+	t.Helper()
+	api, err := roborevclient.NewWithHTTPClient("http://roborev.test", &http.Client{
+		Transport: handlerRoundTripper{handler: handler},
+	})
+	require.NoError(t, err)
+	return api
 }
 
 func newTestErrorLog() *ErrorLog {

@@ -164,7 +164,7 @@ func TestSuppliedPanelRequestGeneratedClientRecoversLostResponse(t *testing.T) {
 		server.httpServer.Handler.ServeHTTP(w, r)
 	}))
 	t.Cleanup(httpServer.Close)
-	api, err := roborevclient.New(httpServer.URL)
+	api, err := roborevclient.NewWithHTTPClient(httpServer.URL, httpServer.Client())
 	require.NoError(t, err)
 	options := &generated.EnqueueSuppliedPanelRequestOptions{Body: &input}
 	first, err := api.EnqueueSuppliedPanel(t.Context(), options)

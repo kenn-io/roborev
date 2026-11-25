@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
-	"go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -102,10 +101,7 @@ func TestSuppliedReviewInvocationHistorySurvivesRetryAndRerun(t *testing.T) {
 			assert.Equal(first, records)
 		}
 	}
-	httpServer := httptest.NewServer(server.httpServer.Handler)
-	defer httpServer.Close()
-	api, err := client.NewWithHTTPClient(httpServer.URL, httpServer.Client())
-	require.NoError(t, err)
+	api := newHandlerAPIClient(t, server.httpServer.Handler)
 	decoded, err := api.GetJobInvocations(t.Context(), &generated.GetJobInvocationsRequestOptions{
 		Query: &generated.GetJobInvocationsQuery{JobID: job.ID},
 	})

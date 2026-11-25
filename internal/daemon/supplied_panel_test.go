@@ -26,7 +26,6 @@ import (
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
-	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -82,10 +81,7 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 		assert.Equal(t, "VISIBLE_CHANGE\n", string(data))
 		return string(testutil.ReviewFixtureJSON("No issues found.")), nil
 	}})
-	httpServer := httptest.NewServer(server.httpServer.Handler)
-	t.Cleanup(httpServer.Close)
-	client, err := roborevclient.New(httpServer.URL)
-	require.NoError(t, err)
+	client := newHandlerAPIClient(t, server.httpServer.Handler)
 	panel, err := client.EnqueueSuppliedPanel(t.Context(), &generated.EnqueueSuppliedPanelRequestOptions{
 		Body: &generated.EnqueueSuppliedPanelInputBody{
 			RepoPath: repo.Path(), GitRef: ref, HoldSynthesis: new(true),

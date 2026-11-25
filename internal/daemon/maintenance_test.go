@@ -21,7 +21,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
-	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -479,10 +478,7 @@ func TestMaintenanceLegacyReviewLifecycle(t *testing.T) {
 	assert.Equal(t, prose.ID, record.JobID)
 	assert.Equal(t, "The save routine looks risky. Consider a rename.", record.Output)
 
-	httpServer := httptest.NewServer(server.httpServer.Handler)
-	t.Cleanup(httpServer.Close)
-	api, err := roborevclient.NewWithHTTPClient(httpServer.URL, httpServer.Client())
-	require.NoError(t, err)
+	api := newHandlerAPIClient(t, server.httpServer.Handler)
 	typedExport, err := api.ExportLegacyReviews(t.Context(), &generated.ExportLegacyReviewsRequestOptions{Body: &generated.LegacyMaintenanceTarget{}})
 	require.NoError(t, err)
 	require.Len(t, typedExport.SqliteRecords, 1)

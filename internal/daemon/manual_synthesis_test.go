@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
-	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -83,10 +82,7 @@ func TestManualSynthesisSurvivesRestartAndStartsOnce(t *testing.T) {
 	assert.Nil(t, job, "the recovery sweep must preserve the hold")
 
 	var wg sync.WaitGroup
-	httpServer := httptest.NewServer(restarted.httpServer.Handler)
-	t.Cleanup(httpServer.Close)
-	client, err := roborevclient.New(httpServer.URL)
-	require.NoError(t, err)
+	client := newHandlerAPIClient(t, restarted.httpServer.Handler)
 	for range 4 {
 		wg.Go(func() {
 			job, err := client.StartPanelSynthesis(t.Context(), &generated.StartPanelSynthesisRequestOptions{
