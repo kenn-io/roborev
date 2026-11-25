@@ -118,8 +118,20 @@ type AnalysisScheduleEntry struct {
 	Job   int64    `json:"job"`
 }
 
+type analysisScheduleEntryJSON struct {
+	Type  string          `json:"type"`
+	Files json.RawMessage `json:"files"`
+	Job   int64           `json:"job"`
+}
+
 // AnalysisScheduleRetry returns watched jobs and retries for a repo.
 func (db *DB) AnalysisScheduleRetry(ctx context.Context, repoID int64) ([]AnalysisScheduleEntry, error) {
+	return analysisScheduleRetry(ctx, db, repoID)
+}
+
+func analysisScheduleRetry(ctx context.Context, db interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, repoID int64) ([]AnalysisScheduleEntry, error) {
 	var value string
 	err := db.QueryRowContext(ctx, `SELECT value FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_retry:%d", repoID)).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -128,16 +140,37 @@ func (db *DB) AnalysisScheduleRetry(ctx context.Context, repoID int64) ([]Analys
 	if err != nil {
 		return nil, fmt.Errorf("get analysis schedule retry: %w", err)
 	}
-	var entries []AnalysisScheduleEntry
-	if err := json.Unmarshal([]byte(value), &entries); err != nil {
+	var encoded []analysisScheduleEntryJSON
+	if err := json.Unmarshal([]byte(value), &encoded); err != nil {
 		return nil, fmt.Errorf("parse analysis schedule retry: %w", err)
+	}
+	var entries []AnalysisScheduleEntry
+	for _, entry := range encoded {
+		entries = append(entries, AnalysisScheduleEntry{Type: entry.Type, Files: decodeFileList(string(entry.Files)), Job: entry.Job})
 	}
 	return entries, nil
 }
 
 // SetAnalysisScheduleRetry records watched jobs and retries for a repo.
 func (db *DB) SetAnalysisScheduleRetry(ctx context.Context, repoID int64, entries []AnalysisScheduleEntry) error {
-	value, err := json.Marshal(entries)
+	return setAnalysisScheduleRetry(ctx, db, repoID, entries)
+}
+
+func setAnalysisScheduleRetry(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, repoID int64, entries []AnalysisScheduleEntry) error {
+	var encoded []analysisScheduleEntryJSON
+	for _, entry := range entries {
+		files, err := encodeAnalysisFiles(entry.Files)
+		if err != nil {
+			return fmt.Errorf("encode analysis schedule retry: %w", err)
+		}
+		if files == "" {
+			files = "null"
+		}
+		encoded = append(encoded, analysisScheduleEntryJSON{Type: entry.Type, Files: json.RawMessage(files), Job: entry.Job})
+	}
+	value, err := json.Marshal(encoded)
 	if err != nil {
 		return fmt.Errorf("encode analysis schedule retry: %w", err)
 	}

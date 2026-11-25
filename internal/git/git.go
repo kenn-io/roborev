@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -3200,4 +3201,90 @@ func CheckBlobs(ctx context.Context, repoPath string, oids []string, limit int) 
 		}
 	}
 	return missing, large, nil
+}
+
+// BlobReader reads blobs through one git cat-file --batch process.
+type BlobReader struct {
+	cmd *exec.Cmd
+	in  io.WriteCloser
+	out *bufio.Reader
+}
+
+// NewBlobReader starts the batch process; Close stops it.
+func NewBlobReader(ctx context.Context, repoPath string) (*BlobReader, error) {
+	cmd := newGitCmdContext(ctx, "cat-file", "--batch")
+	cmd.Dir = repoPath
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &BlobReader{cmd, in, bufio.NewReader(out)}, nil
+}
+
+// Read returns a blob's contents.
+func (r *BlobReader) Read(oid string) ([]byte, error) {
+	if _, err := fmt.Fprintln(r.in, oid); err != nil {
+		return nil, err
+	}
+	header, err := r.out.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(header)
+	if len(fields) != 3 || fields[0] != oid || fields[1] != "blob" {
+		return nil, fmt.Errorf("read blob %s: %s", oid, strings.TrimSpace(header))
+	}
+	size, err := strconv.Atoi(fields[2])
+	if err != nil {
+		return nil, err
+	}
+	data := make([]byte, size+1)
+	if _, err := io.ReadFull(r.out, data); err != nil {
+		return nil, err
+	}
+	return data[:size], nil
+}
+
+// Close stops the batch process.
+func (r *BlobReader) Close() error {
+	return errors.Join(r.in.Close(), r.cmd.Wait())
+}
+
+// BinaryAttributes finds paths marked -diff in the selected commit's attributes.
+func BinaryAttributes(ctx context.Context, repoPath, sha string, paths []string) (map[string]bool, error) {
+	dir, err := os.MkdirTemp("", "roborev-attributes-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	index := filepath.Join(dir, "index")
+	readTree := newGitCmdContext(ctx, "read-tree", sha)
+	readTree.Dir = repoPath
+	readTree.Env = append(readTree.Environ(), "GIT_INDEX_FILE="+index, "GIT_NO_LAZY_FETCH=1")
+	if out, err := readTree.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("read attributes tree: %s: %w", out, err)
+	}
+	cmd := newGitCmdContext(ctx, "check-attr", "--cached", "-z", "--stdin", "diff")
+	cmd.Dir = repoPath
+	cmd.Env = append(cmd.Environ(), "GIT_INDEX_FILE="+index, "GIT_NO_LAZY_FETCH=1")
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("check binary attributes: %w", err)
+	}
+	fields := bytes.Split(out, []byte{0})
+	binary := make(map[string]bool)
+	for i := 0; i+2 < len(fields); i += 3 {
+		if string(fields[i+2]) == "unset" {
+			binary[string(fields[i])] = true
+		}
+	}
+	return binary, nil
 }

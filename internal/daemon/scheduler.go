@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"path"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -82,6 +85,8 @@ func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 }
 
 func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, global *config.Config, now time.Time) error {
+	w.server.scheduleRetryMu.Lock()
+	defer w.server.scheduleRetryMu.Unlock()
 	repoCfg, err := config.LoadRepoConfig(repo.RootPath)
 	if err != nil {
 		return err
@@ -247,36 +252,57 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				}
 			}
 		}
-		if err := w.markDue(ctx, repo, head, typ, typeCandidates); err != nil {
+		if pending, err := w.markDue(ctx, repo, head, typ, typeCandidates); err != nil {
 			return nil, err
+		} else if only != nil && len(pending) > 0 {
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: pending})
 		}
 	}
 	ordered := selectCandidates(candidates)
 	if len(ordered) == 0 {
 		return entries, errors.Join(errs...)
 	}
-	var oids []string
+	var attributes []git.TreeBlob
+	var oids, names []string
+	for _, blob := range tree {
+		if path.Base(blob.Path) == ".gitattributes" {
+			attributes = append(attributes, blob)
+			oids = append(oids, blob.OID)
+		}
+	}
 	for _, candidate := range ordered {
-		oids = append(oids, candidate.oid)
+		oids, names = append(oids, candidate.oid), append(names, candidate.path)
 	}
 	missing, large, err := git.CheckBlobs(ctx, repo.RootPath, oids, config.ResolveMaxPromptSize(repo.RootPath, global)+1)
 	if err != nil {
 		return nil, err
 	}
+	binary, err := git.BinaryAttributes(ctx, repo.RootPath, head, names)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := git.NewBlobReader(ctx, repo.RootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
 	files := map[string]string{}
 	var skipped []string
-	for _, candidate := range ordered {
+	for i, candidate := range ordered {
 		if len(files) == schedule.MaxFiles {
+			if only == nil {
+				ordered = ordered[:i]
+			}
 			break
 		}
-		if missing[candidate.oid] {
+		if missing[candidate.oid] || attributesMissing(attributes, missing, candidate.path) {
 			continue
 		}
-		if large[candidate.oid] {
+		if binary[candidate.path] || large[candidate.oid] {
 			skipped = append(skipped, candidate.path)
 			continue
 		}
-		content, err := git.ReadFile(ctx, repo.RootPath, head, candidate.path)
+		content, err := reader.Read(candidate.oid)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -284,7 +310,7 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			errs = append(errs, err)
 			continue
 		}
-		if strings.ContainsRune(string(content), 0) {
+		if !isSourceContent(content) {
 			skipped = append(skipped, candidate.path)
 			continue
 		}
@@ -307,11 +333,22 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
-		if names := dueNames(ordered, typ, files, false); only != nil && len(names) > 0 {
+		if names := dueNames(ordered, typ, files, false); len(names) > 0 {
 			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names})
 		}
 	}
 	return entries, errors.Join(errs...)
+}
+
+// attributesMissing reports whether a committed .gitattributes file that can
+// apply to p is unavailable locally, leaving p's classification unknown.
+func attributesMissing(attributes []git.TreeBlob, missing map[string]bool, p string) bool {
+	for _, file := range attributes {
+		if dir := path.Dir(file.Path); missing[file.OID] && (dir == "." || strings.HasPrefix(p, dir+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 func scheduleCandidates(tree []git.TreeBlob, patterns []string) (map[string]*analysisCandidate, error) {
@@ -345,10 +382,10 @@ func matchesSchedulePaths(patterns []string, path string) (bool, error) {
 }
 
 // markDue records which candidates need an analysis of the given type.
-func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) error {
+func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) (deferred []string, err error) {
 	jobs, err := w.server.db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{repo.ID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pending := map[string]bool{}
 	baseline := map[string]storage.ReviewJob{}
@@ -361,16 +398,15 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
 				pending[path] = true
 			}
-			if job.Status == storage.JobStatusDone && job.AnalysisCommitSHA != "" {
-				if _, ok := baseline[path]; !ok {
-					baseline[path] = job
-				}
+			if _, ok := baseline[path]; !ok && job.Status == storage.JobStatusDone && job.AnalysisCommitSHA != "" {
+				baseline[path] = job
 			}
 		}
 	}
 	changes := map[string]changeSet{}
 	for path, candidate := range candidates {
 		if pending[path] {
+			deferred = append(deferred, path)
 			continue
 		}
 		job, ok := baseline[path]
@@ -379,7 +415,7 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			changed, cached := changes[job.AnalysisCommitSHA]
 			if !cached {
 				if changed, err = changedSince(ctx, repo.RootPath, job.AnalysisCommitSHA, head); err != nil {
-					return err
+					return nil, err
 				}
 				changes[job.AnalysisCommitSHA] = changed
 			}
@@ -394,7 +430,8 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			}
 		}
 	}
-	return nil
+	sort.Strings(deferred)
+	return deferred, nil
 }
 
 // changedSince lists paths modified between base and head; an unresolvable
@@ -482,4 +519,13 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 		return 0, fmt.Errorf("enqueue analysis: unexpected response")
 	}
 	return created.ID, nil
+}
+
+// isSourceContent accepts non-NUL source text, including legacy encodings such
+// as Latin-1, and rejects content with a binary signature such as PDF or with
+// no valid UTF-8 at all.
+func isSourceContent(content []byte) bool {
+	text, kind := string(content), http.DetectContentType(content)
+	return !strings.ContainsRune(text, 0) && (text == "" || strings.ToValidUTF8(text, "") != "") &&
+		(strings.HasPrefix(kind, "text/") || kind == "application/octet-stream" && utf8.Valid(content))
 }
