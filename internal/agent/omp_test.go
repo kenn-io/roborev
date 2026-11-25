@@ -2,6 +2,8 @@ package agent
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,10 +64,10 @@ func TestOmpReviewRequiresToolLimit(t *testing.T) {
 		name    string
 		version string
 		agentic bool
-		wantErr bool
+		wantErr string
 	}{
-		{name: "review on 19.1", version: "omp/19.1.1", wantErr: true},
-		{name: "review without a version", version: "unknown", wantErr: true},
+		{name: "review on 19.1", version: "omp/19.1.1", wantErr: `reports "omp/19.1.1"; upgrade omp`},
+		{name: "review without a version", version: "unknown", wantErr: `reports "unknown"; upgrade omp`},
 		{name: "review on 19.2.0", version: "omp/19.2.0"},
 		{name: "agentic on 19.1", version: "omp/19.1.1", agentic: true},
 	}
@@ -74,8 +76,8 @@ func TestOmpReviewRequiresToolLimit(t *testing.T) {
 			withUnsafeAgents(t, false)
 			mock := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, Version: tt.version, StdoutLines: strings.Split(ompReviewStream, "\n")})
 			_, err := NewOmpAgent(mock.CmdPath).WithAgentic(tt.agentic).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
-			if tt.wantErr {
-				require.ErrorContains(t, err, "upgrade omp")
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
 				assert.NotContains(t, readMockArgs(t, mock.ArgsFile), "--mode", "omp must not start")
 				return
 			}
@@ -83,6 +85,38 @@ func TestOmpReviewRequiresToolLimit(t *testing.T) {
 			assert.Contains(t, readMockArgs(t, mock.ArgsFile), "--mode")
 		})
 	}
+}
+
+// A wrapper or a version manager shim can change the omp behind an unchanged
+// omp_cmd, so each review checks the version again.
+func TestOmpReviewChecksVersionEachRun(t *testing.T) {
+	versionFile := filepath.Join(t.TempDir(), "version")
+	require.NoError(t, os.WriteFile(versionFile, []byte("omp/19.2.1\n"), 0o600))
+	command := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; --version) cat '`+versionFile+`'; exit 0;; esac
+cat <<'EOF'
+`+ompReviewStream+`
+EOF
+`)
+	a := NewOmpAgent(command)
+	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(versionFile, []byte("omp/19.1.1\n"), 0o600))
+	_, err = a.Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+	require.ErrorContains(t, err, `reports "omp/19.1.1"`)
+}
+
+func TestOmpReviewReportsFailedVersionCheck(t *testing.T) {
+	command := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+echo 'unknown profile "work"' >&2
+exit 1
+`)
+	_, err := NewOmpAgent(command).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+	require.ErrorContains(t, err, "check omp version: exit status 1")
+	assert.Contains(t, err.Error(), `unknown profile "work"`)
+	assert.NotContains(t, err.Error(), "upgrade omp")
 }
 
 func TestOmpReviewPromptAndOutput(t *testing.T) {
@@ -122,46 +156,57 @@ func TestOmpReviewReportsProviderError(t *testing.T) {
 // reports why only in the event stream.
 func TestOmpReviewReportsStopReason(t *testing.T) {
 	const costCap = "Cost cap reached: this session spent $1.02 of its $1.00 cap (--max-cost / session.maxCost), so the next model request was not sent."
+	costCapNotice := `{"type":"notice","level":"error","message":"` + costCap + `","source":"cost-gate"}`
 	tests := []struct {
 		name     string
 		exitCode int
-		stdout   string
+		stdout   []string
 		want     string
 		kind     LimitKind
 	}{
 		{
+			// A retry starts a new omp session that can spend up to the cap
+			// again, so the job fails over instead.
 			name:     "cost cap",
 			exitCode: 3,
-			stdout:   `{"type":"notice","level":"error","message":"` + costCap + `","source":"cost-gate"}`,
+			stdout:   []string{costCapNotice},
 			want:     "exit status 3: " + costCap,
-			// A retry starts a new omp session that can spend up to the cap again.
-			kind: LimitKindPermanent,
+			kind:     LimitKindPermanent,
+		},
+		{
+			name:     "cost cap after a provider error",
+			exitCode: 3,
+			stdout:   []string{piBedrockImageError, costCapNotice},
+			want:     "exit status 3: " + costCap,
+			kind:     LimitKindPermanent,
+		},
+		{
+			name:     "cost cap without a notice",
+			exitCode: 3,
+			stdout:   []string{`{"type":"session","id":"omp-session-1"}`},
+			want:     "exit status 3: cost cap reached",
+			kind:     LimitKindPermanent,
 		},
 		{
 			name:     "aborted",
 			exitCode: 1,
-			stdout:   `{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Request was aborted"}}`,
+			stdout:   []string{`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Request was aborted"}}`},
 			want:     "exit status 1: Request was aborted",
 		},
 		{
 			name:     "error notice from another source",
 			exitCode: 1,
-			stdout:   `{"type":"notice","level":"error","message":"Compaction failed","source":"compaction"}`,
+			stdout:   []string{`{"type":"notice","level":"error","message":"Compaction failed","source":"compaction"}`},
 			want:     "omp failed: exit status 1\nstderr:",
-		},
-		{
-			name:     "no reason in the stream",
-			exitCode: 3,
-			stdout:   `{"type":"session","id":"omp-session-1"}`,
-			want:     "omp failed: exit status 3\nstderr:",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: []string{tt.stdout}, ExitCode: tt.exitCode})
+			mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: tt.stdout, ExitCode: tt.exitCode})
 			_, err := NewOmpAgent(mock.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 			require.ErrorContains(t, err, tt.want)
-			assert.Equal(t, tt.kind, ClassifyLimit("omp", err.Error()).Kind)
+			classification, _ := LimitClassificationFromError(err)
+			assert.Equal(t, tt.kind, classification.Kind)
 		})
 	}
 }

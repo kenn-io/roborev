@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"go.kenn.io/roborev/internal/procutil"
@@ -137,14 +138,25 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	if err != nil {
 		return "", err
 	}
+	// omp's cost cap (--max-cost / session.maxCost) ends a run with its own
+	// exit status, whatever the stream reported before it. A retry starts a
+	// new session that can spend up to the cap again, so the job fails over.
+	if exitErr, ok := errors.AsType[*exec.ExitError](result.WaitErr); ok && exitErr.ExitCode() == ompCostCapExit {
+		reason := stopReason
+		if reason == "" {
+			reason = "cost cap reached"
+		}
+		return "", WithLimitClassification(fmt.Errorf("omp failed: %w: %s", result.WaitErr, reason),
+			LimitClassification{Kind: LimitKindPermanent, Agent: "omp", Message: reason})
+	}
 	// omp exits 1 when the provider ends the run with an error, and its JSON
 	// mode reports the provider's message only in the event stream.
 	if stream.Error != "" {
 		return "", fmt.Errorf("omp provider error: %s", stream.Error)
 	}
 	if result.WaitErr != nil {
-		// A cost cap or an abort also ends the run with a non-zero exit, and
-		// JSON mode reports why only in the event stream.
+		// An abort also ends the run with a non-zero exit, and JSON mode
+		// reports why only in the event stream.
 		if stopReason != "" {
 			return "", fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, stopReason, result.Stderr)
 		}
@@ -166,12 +178,21 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 // Breaking Changes).
 const ompToolLimitVersion = "19.2.0"
 
+// ompCostCapExit is the exit status of an omp print-mode run that its cost
+// cap stopped (omp 19.2.1 modes/print-mode.ts).
+const ompCostCapExit = 3
+
 // ompCheckToolLimit returns an error unless command is an omp release that
 // honors --no-tools. omp prints its version as "omp/19.2.1". The probe runs
 // from repoPath before every read-only run, not from a cache keyed on the
 // command file: a wrapper script or a version manager shim can switch the
 // omp behind an unchanged file, or pin a different omp per directory.
 func ompCheckToolLimit(ctx context.Context, command, repoPath string) error {
+	// The review run resolves a relative path such as ./bin/omp against its
+	// working directory, so the probe must too.
+	if !filepath.IsAbs(command) && strings.ContainsAny(command, `/\`) {
+		command = filepath.Join(repoPath, command)
+	}
 	cmd := exec.CommandContext(ctx, command, "--version")
 	configureCapabilityProbe(ctx, cmd)
 	cmd.Dir = repoPath
