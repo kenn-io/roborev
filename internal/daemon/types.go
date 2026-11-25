@@ -182,7 +182,7 @@ func (exportReviewsSchemaVersion) Schema(huma.Registry) *huma.Schema {
 type ExportReviewsInput struct {
 	Format        string                     `query:"format" default:"json" doc:"Output format; only json is supported"`
 	Profile       string                     `query:"profile" default:"content" doc:"Export profile: content or metadata"`
-	SchemaVersion exportReviewsSchemaVersion `query:"schema_version" doc:"Requested export schema version (supported: 2); omit to use the daemon's current default (2)"`
+	SchemaVersion exportReviewsSchemaVersion `query:"schema_version" doc:"Requested export schema version (supported: 2, 3); omit to use the daemon's current default (2)"`
 	Since         string                     `query:"since" doc:"Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)"`
 	Until         string                     `query:"until" doc:"Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
 	ClosedOnly    bool                       `query:"closed_only" doc:"Only include reviews marked closed"`

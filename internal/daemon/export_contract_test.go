@@ -5,15 +5,18 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/client/generated"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -748,6 +751,28 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 		checked := assertJSONArray(t, assertJSONObject(t, doc, "check"), "findings")
 		require.Len(t, checked, 1)
 		assert.True(t, assertJSONBool(t, assertJSONObject(t, checked[0], "finding"), "unlikely"))
+
+		specResponse := serveHuma(t, srv, http.MethodGet, "/openapi.json", nil)
+		require.Equal(t, http.StatusOK, specResponse.Code)
+		var spec struct {
+			Components struct {
+				Schemas jsontext.Value `json:"schemas"`
+			} `json:"components"`
+		}
+		require.NoError(t, json.Unmarshal(specResponse.Body.Bytes(), &spec))
+		var definitions map[string]*jsonschema.Schema
+		require.NoError(t, json.Unmarshal([]byte(strings.ReplaceAll(string(spec.Components.Schemas), "#/components/schemas/", "#/$defs/")), &definitions))
+		schema := &jsonschema.Schema{Ref: "#/$defs/StructuredReviewDocument", Defs: definitions}
+		validator, err := schema.Resolve(nil)
+		require.NoError(t, err)
+		rawDoc, err := json.Marshal(doc)
+		require.NoError(t, err)
+		var value any
+		require.NoError(t, json.Unmarshal(rawDoc, &value))
+		assert.NoError(t, validator.Validate(value))
+		var clientDoc generated.ExportReview_Document
+		require.NoError(t, json.Unmarshal(rawDoc, &clientDoc))
+		assert.NoError(t, clientDoc.Validate())
 	})
 
 	t.Run("window bounds pagination and empty page", func(t *testing.T) {

@@ -3,7 +3,10 @@ package review
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"fmt"
 	"io"
+	"slices"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -116,43 +119,12 @@ func RunSynthesisAgent(
 		return SynthesisDocument{}, output, err
 	}
 	settleFindings(ctx, checkout.RepoPath, checkout.GitRef, &doc)
-	preserveSourceVisibility(&doc, reviews)
 	return doc, output, nil
 }
 
-// preserveSourceVisibility keeps source classifications on derived findings.
-func preserveSourceVisibility(doc *SynthesisDocument, reviews []ReviewResult) {
-	for i := range doc.Findings {
-		finding := &doc.Findings[i]
-		for _, source := range finding.Sources {
-			if original := reviews[source-1].structuredReview(); original != nil {
-				finding.Unlikely = finding.Unlikely || sourceFindingMatches(*finding, original.Findings, func(f StructuredFinding) bool { return f.Unlikely })
-				if sourceFindingMatches(*finding, original.Findings, func(f StructuredFinding) bool { return f.Topic == "security" }) {
-					finding.Topic = "security"
-				}
-			}
-		}
-	}
-}
-
-// sourceFindingMatches checks matching source findings for a classification.
-// Identical text at the same place matches; otherwise, the sole finding at
-// exactly the same lines matches even if synthesis reworded it.
-func sourceFindingMatches(finding StructuredFinding, candidates []StructuredFinding, marked func(StructuredFinding) bool) bool {
-	var sameLocation []StructuredFinding
-	exact, matched := false, false
-	for _, candidate := range candidates {
-		if candidate.Problem == finding.Problem && candidate.Fix == finding.Fix && samePlace(candidate, finding) {
-			exact, matched = true, matched || marked(candidate)
-		}
-		if finding.File != "" && finding.StartLine != 0 && candidate.File == finding.File && candidate.StartLine == finding.StartLine && candidate.EndLine == finding.EndLine {
-			sameLocation = append(sameLocation, candidate)
-		}
-	}
-	if exact {
-		return matched
-	}
-	return len(sameLocation) == 1 && marked(sameLocation[0])
+type synthesisFindingRef struct {
+	Review  int `json:"review"`
+	Finding int `json:"finding"`
 }
 
 func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.Value, err error) (SynthesisDocument, error) {
@@ -163,12 +135,63 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
+	var wire map[string]jsontext.Value
+	if err := json.Unmarshal(document, &wire); err != nil {
+		return SynthesisDocument{}, err
+	}
+	var findings []map[string]jsontext.Value
+	if err := json.Unmarshal(wire["findings"], &findings); err != nil {
+		return SynthesisDocument{}, err
+	}
+	refs := make([][]synthesisFindingRef, len(findings))
+	for i, finding := range findings {
+		if len(finding["source_findings"]) == 0 {
+			return SynthesisDocument{}, fmt.Errorf("synthesis finding %d is missing source_findings", i+1)
+		}
+		if string(finding["source_findings"]) == "null" {
+			return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has null source_findings", i+1)
+		}
+		if err := json.Unmarshal(finding["source_findings"], &refs[i]); err != nil {
+			return SynthesisDocument{}, fmt.Errorf("synthesis finding %d: %w", i+1, err)
+		}
+		delete(finding, "source_findings")
+	}
+	wire["findings"], err = json.Marshal(findings)
+	if err != nil {
+		return SynthesisDocument{}, err
+	}
+	document, err = json.Marshal(wire)
+	if err != nil {
+		return SynthesisDocument{}, err
+	}
 	doc, err := DecodeSynthesisDocument(document, reviews)
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
 	if err := validateLiveDocument(a.Name(), doc); err != nil {
 		return SynthesisDocument{}, err
+	}
+	for i := range doc.Findings {
+		finding := &doc.Findings[i]
+		for _, ref := range refs[i] {
+			if ref.Review < 1 || ref.Review > len(reviews) || !slices.Contains(finding.Sources, ref.Review) {
+				return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has invalid source review %d", i+1, ref.Review)
+			}
+			source := reviews[ref.Review-1].structuredReview()
+			if source == nil || source.Legacy != nil || ref.Finding < 1 || ref.Finding > len(source.Findings) {
+				return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has invalid source finding %d in review %d", i+1, ref.Finding, ref.Review)
+			}
+			original := source.Findings[ref.Finding-1]
+			finding.Unlikely = finding.Unlikely || original.Unlikely
+			if original.Topic == "security" {
+				finding.Topic = "security"
+			}
+		}
+		for _, source := range finding.Sources {
+			if original := reviews[source-1].structuredReview(); original != nil && len(original.Findings) > 0 && !slices.ContainsFunc(refs[i], func(ref synthesisFindingRef) bool { return ref.Review == source }) {
+				return SynthesisDocument{}, fmt.Errorf("synthesis finding %d is missing a finding reference for review %d", i+1, source)
+			}
+		}
 	}
 	// minSeverity never removes findings; callers apply it when rendering
 	// and deriving the verdict.

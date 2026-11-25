@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -69,7 +71,7 @@ func (a *capturingAgent) Review(
 	_ context.Context, _, gitRef, _ string, _ io.Writer,
 ) (string, error) {
 	a.capturedGitRef = gitRef
-	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
+	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1],"source_findings":[]}]}`, nil
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
@@ -89,8 +91,8 @@ func TestSynthesisPreservesMatchingSourceUnlikely(t *testing.T) {
 		reviews      []ReviewResult
 		want         []StructuredFinding
 	}{
-		{"unlikely", `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Rare issue","fix":"Fix rare","file":"file.go","start_line":1,"end_line":1,"sources":[1]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Ordinary issue","fix":"Fix ordinary","file":"file.go","start_line":20,"end_line":20,"sources":[1]}]}`, []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{rare, ordinary}}}}, []StructuredFinding{{Problem: "Rare issue", Unlikely: true}, {Problem: "Ordinary issue"}}},
-		{"security", `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","topic":"performance","confidence":0.8,"unlikely":true,"problem":"Reworded issue","fix":"Fix it","file":"file.go","start_line":1,"end_line":1,"sources":[1,2,3]}]}`, securityReviews, []StructuredFinding{{Problem: "Reworded issue", Topic: "security", Unlikely: true}}},
+		{"unlikely", `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Rare issue","fix":"Fix rare","file":"file.go","start_line":1,"end_line":1,"sources":[1],"source_findings":[{"review":1,"finding":1}]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Ordinary issue","fix":"Fix ordinary","file":"file.go","start_line":20,"end_line":20,"sources":[1],"source_findings":[{"review":1,"finding":2}]}]}`, []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{rare, ordinary}}}}, []StructuredFinding{{Problem: "Rare issue", Unlikely: true}, {Problem: "Ordinary issue"}}},
+		{"security", `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","topic":"performance","confidence":0.8,"unlikely":true,"problem":"Reworded issue","fix":"Fix it","file":"file.go","start_line":1,"end_line":1,"sources":[1,2,3],"source_findings":[{"review":1,"finding":1},{"review":2,"finding":1},{"review":3,"finding":1}]}]}`, securityReviews, []StructuredFinding{{Problem: "Reworded issue", Topic: "security", Unlikely: true}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := &structuredBatchAgent{name: "visibility-synthesis", result: []byte(tc.output)}
@@ -104,6 +106,50 @@ func TestSynthesisPreservesMatchingSourceUnlikely(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSynthesisPreservesRewordedUnlocatedSecurity(t *testing.T) {
+	source := StructuredFinding{Severity: "medium", Topic: "security", Problem: "Original security issue", Fix: "Fix original"}
+	ordinary := StructuredFinding{Severity: "medium", Topic: "performance", Problem: "Different issue", Fix: "Fix it"}
+	reviews := []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{source, ordinary}}}}
+	output := `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","topic":"performance","confidence":0.8,"unlikely":true,"problem":"Reworded issue","fix":"Fix it","file":null,"start_line":null,"end_line":null,"sources":[1],"source_findings":[{"review":1,"finding":1}]},{"severity":"medium","kind":"defect","topic":"performance","confidence":0.8,"unlikely":false,"problem":"Other issue","fix":"Fix it","file":null,"start_line":null,"end_line":null,"sources":[1],"source_findings":[{"review":1,"finding":2}]}]}`
+	a := &structuredBatchAgent{name: "visibility-synthesis", result: []byte(output)}
+	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
+	require.NoError(t, err)
+	require.Len(t, doc.Findings, 2)
+	assert.Equal(t, "security", doc.Findings[0].Topic)
+	assert.Equal(t, "performance", doc.Findings[1].Topic)
+	assert.False(t, doc.Findings[1].Unlikely)
+	assert.Contains(t, FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc})), "Changes require fixes")
+	stored, err := json.Marshal(doc)
+	require.NoError(t, err)
+	assert.NotContains(t, string(stored), "source_findings")
+}
+
+func TestSynthesisRejectsInvalidFindingReferences(t *testing.T) {
+	reviews := []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{{Problem: "One"}}}}}
+	for _, refs := range []string{`[]`, `null`, `[{"review":1,"finding":2}]`, `[{"review":2,"finding":1}]`} {
+		t.Run(refs, func(t *testing.T) {
+			output := `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"Issue","fix":"Fix","file":null,"start_line":null,"end_line":null,"sources":[1],"source_findings":` + refs + `}]}`
+			a := &structuredBatchAgent{name: "invalid-reference", result: []byte(output)}
+			_, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestSynthesisSchemaRequiresFindingReferences(t *testing.T) {
+	var schema jsonschema.Schema
+	require.NoError(t, json.Unmarshal(SynthesisSchema, &schema))
+	validator, err := schema.Resolve(nil)
+	require.NoError(t, err)
+	document := `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","topic":null,"confidence":0.8,"unlikely":false,"problem":"Issue","fix":"Fix","file":null,"start_line":null,"end_line":null,"sources":[1],"source_findings":[{"review":1,"finding":1}]}]}`
+	var value any
+	require.NoError(t, json.Unmarshal([]byte(document), &value))
+	assert.NoError(t, validator.Validate(value))
+	missing := strings.Replace(document, `,"source_findings":[{"review":1,"finding":1}]`, "", 1)
+	require.NoError(t, json.Unmarshal([]byte(missing), &value))
+	assert.Error(t, validator.Validate(value))
 }
 
 type synthesisEntrypointAgent struct {
@@ -124,7 +170,7 @@ func (a *synthesisEntrypointAgent) Review(
 ) (string, error) {
 	a.reviewCalled = true
 	a.synthPrompt = prompt
-	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
+	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1],"source_findings":[]}]}`, nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
 
@@ -158,7 +204,7 @@ func (a *structuredSynthesisAgent) ReviewWithSchema(
 ) (jsontext.Value, error) {
 	a.schema = schema
 	a.repoPath = repoPath
-	return jsontext.Value(`{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`), nil
+	return jsontext.Value(`{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1],"source_findings":[]}]}`), nil
 }
 func (a *structuredSynthesisAgent) CommandLine() string { return a.Name() }
 
@@ -754,7 +800,7 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 		{"unfiltered member", []string{"medium", ""}, "", true},
 	} {
 		t.Run(policy.name, func(t *testing.T) {
-			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)}
+			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2],"source_findings":[{"review":1,"finding":1},{"review":2,"finding":1}]}]}`)}
 			agent.RegisterForTest(t, a)
 			doc := StructuredReview{SchemaVersion: 2, Summary: "Review complete.", Findings: []StructuredFinding{{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."}}}
 			results := make([]ReviewResult, len(policy.members))
@@ -797,6 +843,9 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 				}}
 				raw, err := json.Marshal(doc)
 				require.NoError(t, err)
+				for i := range doc.Findings {
+					raw = []byte(strings.Replace(string(raw), `"sources":[1]}`, fmt.Sprintf(`"sources":[1],"source_findings":[{"review":1,"finding":%d}]}`, i+1), 1))
+				}
 				a := &structuredBatchAgent{name: "policy-outcome", result: raw}
 				if outcome == "fallback" {
 					a.err = errors.New("synthesis unavailable")

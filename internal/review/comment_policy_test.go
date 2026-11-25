@@ -99,6 +99,19 @@ func TestCommentCleanWithCappedFoldedFindings(t *testing.T) {
 	}
 }
 
+func TestCommentCapPrioritizesActionableFindings(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "medium", Problem: "Rare issue", Unlikely: true},
+		{Severity: "medium", Problem: "Ordinary issue"},
+	}}
+	prepared := PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &doc})
+	body := FormatComment(prepared)
+	assert.Contains(t, body, "Ordinary issue")
+	assert.Contains(t, body, "Changes require fixes")
+	assert.NotContains(t, body, "No findings need fixes")
+	assert.Contains(t, body, "1 more finding in the full review")
+}
+
 func FuzzCommentMaxFindings(f *testing.F) {
 	f.Add([]byte{0, 3, 1, 3, 2}, uint8(2), uint8(1))
 	f.Add([]byte{}, uint8(0), uint8(0))

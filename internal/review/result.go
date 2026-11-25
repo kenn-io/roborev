@@ -187,8 +187,10 @@ func completeFoldItems(body string, summaryEnd, budget int) string {
 	var starts, headings []int
 	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering && node.Kind() == ast.KindHeading && node.Parent() == root {
-			pos := node.(ast.BlockNode).Source()[0].Start
-			headings = append(headings, strings.LastIndex(source[:pos], "\n")+1)
+			if segments := node.(ast.BlockNode).Source(); len(segments) > 0 {
+				pos := segments[0].Start
+				headings = append(headings, strings.LastIndex(source[:pos], "\n")+1)
+			}
 		}
 		if !entering || node.Kind() != ast.KindParagraph || node.Parent().Kind() != ast.KindListItem || node.Parent().Parent().Parent() != root {
 			return ast.WalkContinue, nil

@@ -299,9 +299,10 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 	prompt := BuildSynthesisPrompt(reviews, false, "")
 
 	assert.Equal(t, "You are combining multiple code review outputs into a single GitHub PR comment.\n"+
-		`Return exactly one JSON object with this shape and no code fence: {"schema_version":4,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"unlikely":false,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}`+"\n"+
+		`Return exactly one JSON object with this shape and no code fence: {"schema_version":4,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"unlikely":false,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1],"source_findings":[{"review":1,"finding":1}]}]}`+"\n"+
 		"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. List every finding that requires changes in `findings`; return an empty `findings` array if the reviewers agree the code is clean.\n"+
 		"In `sources`, list the numbers of the reviews below (### Review N) that reported the finding.\n"+
+		"In `source_findings`, list each structured input finding by its 1-based review number and position in that review's findings array. Use an empty array for prose sources.\n"+
 		"Rules:\n"+
 		"- Only combine the input review results according to these rules\n"+
 		"- Do not independently review source code or inspect the repository\n"+

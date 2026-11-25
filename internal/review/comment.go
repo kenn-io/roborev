@@ -71,7 +71,16 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 		}
 		comment.structured = true
 		findings := slices.Clone(doc.Findings)
+		shouldFold := func(finding StructuredFinding) bool {
+			return foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Severity == "low" || finding.Unlikely)
+		}
 		slices.SortStableFunc(findings, func(a, b StructuredFinding) int {
+			if shouldFold(a) != shouldFold(b) {
+				if shouldFold(a) {
+					return 1
+				}
+				return -1
+			}
 			return config.SeverityRank(b.Severity) - config.SeverityRank(a.Severity)
 		})
 		selected := 0
@@ -84,7 +93,7 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 				comment.confidenceFiltered = true
 				continue
 			}
-			fold := foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Severity == "low" || finding.Unlikely)
+			fold := shouldFold(finding)
 			if selected++; cfg.MaxFindings > 0 && selected > cfg.MaxFindings {
 				comment.omitted++
 				comment.omittedShown = comment.omittedShown || !fold

@@ -12,9 +12,9 @@ export interface StructuredReviewDocument {
   check?: StructuredReviewCheck;
   findings: StructuredReviewFinding[];
   /**
-   * Version of the document format, separate from the export schema_version. Export schema_version 2 writes structured documents in version 3.
+   * Version of the document format, separate from the export schema_version. Export schema 2 writes version 3; export schema 3 writes version 4.
    * @minimum 1
-   * @maximum 3
+   * @maximum 4
    */
   schema_version: number;
   /** Names of the input reviews that findings cite in sources, indexed by review number minus one. */

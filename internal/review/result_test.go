@@ -258,3 +258,12 @@ func TestTruncateCommentFold(t *testing.T) {
 		})
 	}
 }
+
+func TestTruncateCommentFoldWithEmptyHeading(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "First issue\n\n#\n\n" + strings.Repeat("text ", 100)}}}
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	result := TruncateCommentTo(body, 200, "\nfooter")
+	assert.LessOrEqual(t, len(result), 200)
+	assert.Contains(t, result, "</details>")
+	assert.True(t, strings.HasSuffix(result, "\nfooter"))
+}
