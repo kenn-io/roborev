@@ -80,19 +80,12 @@ func TestSynthesisPreservesMatchingSourceUnlikely(t *testing.T) {
 	rare.SetLocation("file.go", 1, 1)
 	ordinary := StructuredFinding{Severity: "medium", Kind: "defect", Confidence: 0.8, Problem: "Ordinary issue", Fix: "Fix ordinary"}
 	ordinary.SetLocation("file.go", 20, 20)
-	securityReviews := make([]ReviewResult, 3)
-	for i, topic := range []string{"security", "performance", "performance"} {
-		source := StructuredFinding{Severity: "medium", Topic: topic, Problem: "Original issue", Fix: "Fix original", Unlikely: true}
-		source.SetLocation("file.go", 1, 1)
-		securityReviews[i] = ReviewResult{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{source}}}
-	}
 	for _, tc := range []struct {
 		name, output string
 		reviews      []ReviewResult
 		want         []StructuredFinding
 	}{
 		{"unlikely", `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Rare issue","fix":"Fix rare","file":"file.go","start_line":1,"end_line":1,"sources":[1],"source_findings":[{"review":1,"finding":1}]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Ordinary issue","fix":"Fix ordinary","file":"file.go","start_line":20,"end_line":20,"sources":[1],"source_findings":[{"review":1,"finding":2}]}]}`, []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{rare, ordinary}}}}, []StructuredFinding{{Problem: "Rare issue", Unlikely: true}, {Problem: "Ordinary issue"}}},
-		{"security", `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","topic":"performance","confidence":0.8,"unlikely":true,"problem":"Reworded issue","fix":"Fix it","file":"file.go","start_line":1,"end_line":1,"sources":[1,2,3],"source_findings":[{"review":1,"finding":1},{"review":2,"finding":1},{"review":3,"finding":1}]}]}`, securityReviews, []StructuredFinding{{Problem: "Reworded issue", Topic: "security", Unlikely: true}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := &structuredBatchAgent{name: "visibility-synthesis", result: []byte(tc.output)}
@@ -128,7 +121,7 @@ func TestSynthesisPreservesRewordedUnlocatedSecurity(t *testing.T) {
 
 func TestSynthesisRejectsInvalidFindingReferences(t *testing.T) {
 	reviews := []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{{Problem: "One"}}}}}
-	for _, refs := range []string{`null`, `[{"review":1,"finding":2}]`, `[{"review":2,"finding":1}]`} {
+	for _, refs := range []string{`[{"review":1,"finding":2}]`, `[{"review":2,"finding":1}]`} {
 		t.Run(refs, func(t *testing.T) {
 			output := `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Issue","fix":"Fix","file":null,"start_line":null,"end_line":null,"sources":[1],"source_findings":` + refs + `}]}`
 			a := &structuredBatchAgent{name: "invalid-reference", result: []byte(output)}

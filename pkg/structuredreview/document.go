@@ -413,7 +413,7 @@ type findingWire struct {
 	Kind       *string        `json:"kind"`
 	Topic      *string        `json:"topic"`
 	Confidence *float64       `json:"confidence"`
-	Unlikely   jsontext.Value `json:"unlikely"`
+	Unlikely   *bool          `json:"unlikely"`
 	Problem    string         `json:"problem"`
 	Fix        string         `json:"fix"`
 	File       *string        `json:"file"`
@@ -574,7 +574,7 @@ func decodeCheck(wire checkWire, version int) (Check, error) {
 // decodeTextLocatedFinding reads a version 1 or 2 finding, which must carry a
 // location field and none of the version 3 fields.
 func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
-	if len(wire.Unlikely) > 0 {
+	if wire.Unlikely != nil {
 		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
 	}
 	if wire.Kind != nil || wire.Topic != nil || wire.Confidence != nil || wire.File != nil || wire.StartLine != nil || wire.EndLine != nil {
@@ -603,11 +603,8 @@ func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
 // stored location is derived from the file and lines when there is a file,
 // and is kept as free text when there is not.
 func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
-	if len(wire.Unlikely) > 0 && version < 4 {
+	if wire.Unlikely != nil && version < 4 {
 		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
-	}
-	if len(wire.Unlikely) > 0 && !bytes.Equal(wire.Unlikely, []byte("true")) && !bytes.Equal(wire.Unlikely, []byte("false")) {
-		return Finding{}, fmt.Errorf("has invalid unlikely: expected a boolean")
 	}
 	if (wire.Kind == nil) != (wire.Confidence == nil) {
 		return Finding{}, fmt.Errorf("has a kind without a confidence, or a confidence without a kind")
@@ -644,7 +641,7 @@ func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
 		Kind:       kind,
 		Topic:      topic,
 		Confidence: confidence,
-		Unlikely:   bytes.Equal(wire.Unlikely, []byte("true")),
+		Unlikely:   wire.Unlikely != nil && *wire.Unlikely,
 		Problem:    wire.Problem,
 		Fix:        wire.Fix,
 		Sources:    wire.Sources,

@@ -210,60 +210,31 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 }
 
 func TestTruncateCommentFold(t *testing.T) {
-	makeBody := func(findings ...StructuredFinding) string {
-		doc := StructuredReview{Findings: findings}
-		return FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	}
-	long := makeBody(
-		StructuredFinding{Severity: "low", Problem: "First complete finding", Fix: "First fix"},
-		StructuredFinding{Severity: "low", Problem: "Second complete finding", Fix: "Second fix"},
-		StructuredFinding{Severity: "low", Problem: "Long finding\n\n```go\n" + strings.Repeat("- code\n", 100) + "```"},
-	)
-	boundary := makeBody(
-		StructuredFinding{Severity: "low", Problem: "Complete finding", Fix: "Complete fix"},
-		StructuredFinding{Severity: "low", Problem: "Next finding " + strings.Repeat("more ", 100)},
-	)
-	groupBoundary := makeBody(
-		StructuredFinding{Severity: "low", Problem: "Complete nit", Fix: "Fix the nit"},
-		StructuredFinding{Severity: "medium", Unlikely: true, Problem: strings.Repeat("Rare issue ", 50)},
-	)
-	single := makeBody(StructuredFinding{Severity: "low", Problem: "Example `</details>` " + strings.Repeat("text ", 100)})
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Issue\n\n```go\n" + strings.Repeat("code\n", 100) + "```"}}}
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	const suffix = "\n\nfooter"
-	summaryEnd := strings.Index(single, "</summary>") + len("</summary>")
+	summaryEnd := strings.Index(body, "</summary>") + len("</summary>")
 	for _, tc := range []struct {
-		name, body   string
-		limit        int
-		want, absent []string
+		name        string
+		limit       int
+		wantDetails bool
 	}{
-		{"fenced finding", long, 250, []string{"First complete finding", "First fix", "Second complete finding", "Second fix", "</details>"}, []string{"Long finding", "&lt;/details&gt;"}},
-		{"exact item boundary", boundary, strings.Index(boundary, "Complete fix") + len("Complete fix") + len(foldClosing) + len(suffix), []string{"Complete finding", "Complete fix", "</details>"}, []string{"Next finding"}},
-		{"before next group", groupBoundary, strings.Index(groupBoundary, "Fix the nit") + len("Fix the nit") + len(foldClosing) + len(suffix), []string{"Complete nit", "Fix the nit", "</details>"}, []string{"Rare issue"}},
-		{"no item fits", single, 180, []string{"</details>"}, []string{"Example"}},
-		{"cut in summary", single, summaryEnd - 1 + len(foldClosing) + len(suffix), nil, []string{"<details>"}},
+		{"inside fold", summaryEnd + len(foldClosing) + len(suffix) + 20, true},
+		{"inside summary", summaryEnd - 1 + len(foldClosing) + len(suffix), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := TruncateCommentTo(tc.body, tc.limit, suffix)
+			got := TruncateCommentTo(body, tc.limit, suffix)
 			var rendered bytes.Buffer
 			source := []byte(got)
-			err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
-			require.NoError(t, err)
-			for _, want := range tc.want {
-				assert.Contains(t, rendered.String(), want)
-			}
-			for _, absent := range tc.absent {
-				assert.NotContains(t, rendered.String(), absent)
+			require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
+			if tc.wantDetails {
+				assert.Contains(t, rendered.String(), "</details>")
+				assert.NotContains(t, got, "```go")
+			} else {
+				assert.NotContains(t, got, "<details>")
 			}
 			assert.LessOrEqual(t, len(got), tc.limit)
 			assert.True(t, strings.HasSuffix(got, suffix))
 		})
 	}
-}
-
-func TestTruncateCommentFoldWithEmptyHeading(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "First issue\n\n#\n\n" + strings.Repeat("text ", 100)}}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	result := TruncateCommentTo(body, 200, "\nfooter")
-	assert.LessOrEqual(t, len(result), 200)
-	assert.Contains(t, result, "</details>")
-	assert.True(t, strings.HasSuffix(result, "\nfooter"))
 }

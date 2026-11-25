@@ -148,9 +148,6 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 		if len(finding["source_findings"]) == 0 {
 			continue
 		}
-		if string(finding["source_findings"]) == "null" {
-			return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has null source_findings", i+1)
-		}
 		if err := json.Unmarshal(finding["source_findings"], &refs[i]); err != nil {
 			return SynthesisDocument{}, fmt.Errorf("synthesis finding %d: %w", i+1, err)
 		}

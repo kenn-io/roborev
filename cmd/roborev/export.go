@@ -102,7 +102,7 @@ updated_at lower bound that works as a filter: it combines with --since,
 ordered by completed_at. Consumers that track closed state should combine the
 completed_at cursor pull with a separate --updated-since pull.
 
-Use --schema-version to pin a specific export schema version (supported: 2, 3).
+Use --schema-version to pin a specific export schema version.
 Omitting --schema-version uses the connected daemon's current default; consumers
 that require stability across upgrades should pass --schema-version explicitly.
 Within a schema version, changes are strictly additive: existing fields are

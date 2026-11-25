@@ -8,9 +8,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark/v2/ast"
-	"github.com/yuin/goldmark/v2/parser"
-
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -170,7 +167,7 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 		cut := TrimPartialRune(body[:budget])
 		summaryEnd := strings.Index(body[open:], "</summary>")
 		if summaryEnd >= 0 && len(cut) >= open+summaryEnd+len("</summary>") {
-			return completeFoldItems(body, open+summaryEnd+len("</summary>"), len(cut)) + foldClosing + suffix
+			return body[:open+summaryEnd+len("</summary>")] + foldClosing + suffix
 		}
 		return TrimPartialRune(body[:min(len(cut), open)]) + suffix
 	}
@@ -178,53 +175,6 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 }
 
 const foldClosing = "\n</details>"
-
-// completeFoldItems keeps complete items within the budget. Parsing the full
-// fold keeps list markers inside code blocks out of the scan.
-func completeFoldItems(body string, summaryEnd, budget int) string {
-	source := body[summaryEnd:]
-	root := parser.New().Parse([]byte(source))
-	var starts, headings []int
-	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
-		if entering && node.Kind() == ast.KindHeading && node.Parent() == root {
-			if segments := node.(ast.BlockNode).Source(); len(segments) > 0 {
-				pos := segments[0].Start
-				headings = append(headings, strings.LastIndex(source[:pos], "\n")+1)
-			}
-		}
-		if !entering || node.Kind() != ast.KindParagraph || node.Parent().Kind() != ast.KindListItem || node.Parent().Parent().Parent() != root {
-			return ast.WalkContinue, nil
-		}
-		pos := node.Pos()
-		if pos < 0 {
-			return ast.WalkContinue, nil
-		}
-		start := strings.LastIndex(source[:pos], "\n") + 1
-		if strings.HasPrefix(source[start:], "- ") {
-			starts = append(starts, start)
-		}
-		return ast.WalkContinue, nil
-	})
-	end := summaryEnd
-	foldEnd := strings.LastIndex(source, foldClosing)
-	for i, start := range starts {
-		next := foldEnd
-		if i+1 < len(starts) {
-			next = starts[i+1]
-		}
-		for _, heading := range headings {
-			if heading > start && heading < next {
-				next = heading
-			}
-		}
-		itemEnd := summaryEnd + start + len(strings.TrimRight(source[start:next], " \t\r\n"))
-		if itemEnd > budget {
-			break
-		}
-		end = itemEnd
-	}
-	return body[:end]
-}
 
 // OutputTruncSuffix marks a single review's output as cut short. It is
 // deliberately not CommentTruncSuffix: this is one section being capped inside a
