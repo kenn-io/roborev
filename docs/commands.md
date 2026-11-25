@@ -281,7 +281,7 @@ roborev review --branch --panel none          # Force single-agent review
 | `--fast` | Legacy shorthand for `--reasoning fast` |
 | `--min-severity <level>` | Lowest severity that fails the review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--panel <name or none>` | Run a named review panel. Use `none` to bypass configured defaults |
-| `--local` | Run a review without the daemon |
+| `--local` | Run review locally without the daemon (streams output to console) |
 | `--repo <path>` | Specify repository path |
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)

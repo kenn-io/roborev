@@ -650,11 +650,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	}
 	defer toolCleanup()
 
-	return runLocalReviewAgent(cmd, a, repoPath, gitRef, reviewPrompt, reviewType, resolvedMinSev, settings.Tools, out, quiet)
-}
-
-func runLocalReviewAgent(cmd *cobra.Command, a agent.Agent, repoPath, gitRef, reviewPrompt, reviewType, minSeverity string, tools *config.ReviewToolPolicy, out io.Writer, quiet bool) error {
-	result, err := reviewpkg.RunAgentReview(cmd.Context(), a, repoPath, gitRef, reviewPrompt, reviewType, minSeverity, tools, out)
+	result, err := reviewpkg.RunAgentReview(cmd.Context(), a, repoPath, gitRef, reviewPrompt, reviewType, resolvedMinSev, settings.Tools, out)
 	if err != nil {
 		return fmt.Errorf("review failed: %w", err)
 	}

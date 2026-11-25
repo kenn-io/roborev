@@ -733,15 +733,6 @@ func TestShowFoldedFindings(t *testing.T) {
 	var structured storage.StructuredOutput
 	require.NoError(t, json.Unmarshal(raw, &structured))
 	mockReviewDaemon(t, storage.Review{JobID: 7, Agent: "test", Output: doc.Markdown(""), StructuredOutput: structured, Job: &storage.ReviewJob{ID: 7}})
-	ep := getDaemonEndpoint()
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{Network: ep.Network, Address: ep.Address, Version: version.Version}, nil
-	}
-	t.Run("explicit server", func(t *testing.T) {
-		run := runCLI(t, "--server", ep.ConfigAddr(), "job", "show", "--job", "7")
-		require.NoError(t, run.err)
-		assert.Contains(t, run.stdout, "To list them:\n  roborev --server "+daemon.ShellEscape(ep.ConfigAddr())+" job show --job 7 --all")
-	})
 	for _, tc := range []struct {
 		name string
 		args []string

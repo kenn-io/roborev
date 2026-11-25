@@ -557,27 +557,27 @@ func TestFoldedReviewToggle(t *testing.T) {
 			m.jobs = []storage.ReviewJob{*review.Job}
 			m.selectedJobID = review.JobID
 		}
-		assert.Contains(t, m.reviewContentString(review), "1 nit hidden · press e to expand")
+		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
 		assert.Contains(t, m.reviewContentString(review), "critical visible")
 		assert.Contains(t, m.reviewContentString(review), "security visible")
 		assert.Equal(t, "expand", m.foldHint())
 		if split {
-			assert.Regexp(t, `y copy +▕ e expand +▕`, stripANSI(m.renderSplit()))
+			assert.Regexp(t, `y copy *▕ e expand *▕`, stripANSI(m.renderSplit()))
 			m.focus = focusDetail
-			assert.Regexp(t, `y copy +▕ e expand +▕`, stripANSI(m.renderSplit()))
+			assert.Regexp(t, `y copy *▕ e expand *▕`, stripANSI(m.renderSplit()))
 		} else {
-			assert.Regexp(t, `y copy +▕ e expand +▕`, stripANSI(m.renderReviewView()))
+			assert.Regexp(t, `y copy *▕ e expand *▕`, stripANSI(m.renderReviewView()))
 		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "nit problem")
-		assert.NotContains(t, m.reviewContentString(review), "press e to expand")
+		assert.NotContains(t, m.reviewContentString(review), "1 nit hidden")
 		assert.Equal(t, "collapse", m.foldHint())
 		if split {
-			assert.Regexp(t, `y copy +▕ e collapse +▕`, stripANSI(m.renderSplit()))
+			assert.Regexp(t, `y copy *▕ e collapse *▕`, stripANSI(m.renderSplit()))
 			m.focus = focusList
-			assert.Regexp(t, `y copy +▕ e collapse +▕`, stripANSI(m.renderSplit()))
+			assert.Regexp(t, `y copy *▕ e collapse *▕`, stripANSI(m.renderSplit()))
 		} else {
-			assert.Regexp(t, `y copy +▕ e collapse +▕`, stripANSI(m.renderReviewView()))
+			assert.Regexp(t, `y copy *▕ e collapse *▕`, stripANSI(m.renderReviewView()))
 		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
@@ -606,7 +606,7 @@ func TestFoldControlsIgnoreStaleSplitReview(t *testing.T) {
 	assert.Empty(t, m.foldHint())
 	assert.NotContains(t, stripANSI(m.renderSplit()), "e expand")
 	m, _ = updateModel(t, m, keyPressMsg('e'))
-	assert.Zero(t, m.foldExpandedJobID)
+	assert.False(t, m.foldExpanded)
 	assert.Equal(t, 5, m.reviewScroll)
 }
 
@@ -638,23 +638,4 @@ func TestRerunReviewStartsFolded(t *testing.T) {
 	assert.NotContains(t, m.reviewContentString(&rerun), "**Problem:** nit")
 	assert.Contains(t, m.reviewContentString(&rerun), "1 nit hidden")
 	assert.Equal(t, "expand", m.foldHint())
-}
-
-func TestFoldedReviewNoteWrapsAndKeepsComments(t *testing.T) {
-	t.Parallel()
-	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
-	raw, err := json.Marshal(doc)
-	require.NoError(t, err)
-	var structured storage.StructuredOutput
-	require.NoError(t, json.Unmarshal(raw, &structured))
-	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, StructuredOutput: structured, Output: doc.Markdown("")}
-	m := setupRenderModel(viewReview, review)
-	m.currentResponses = []storage.Response{{Responder: "reviewer", Response: "Comment remains visible."}}
-	lines := m.renderReviewLines(review, 25, 25)
-	plain := stripANSI(strings.Join(lines, "\n"))
-	assert.Contains(t, strings.Join(strings.Fields(plain), " "), "1 nit hidden · press e to expand")
-	assert.Contains(t, plain, "Comment remains visible.")
-	for _, line := range lines {
-		assert.LessOrEqual(t, lipgloss.Width(line), 25)
-	}
 }

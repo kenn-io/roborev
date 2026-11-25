@@ -733,6 +733,7 @@ func (m *model) acceptReview(msg reviewMsg) {
 	m.currentResponses = msg.responses
 	m.currentBranch = msg.branchName
 	m.reviewScroll = 0
+	m.foldExpanded = false
 	// The review is now ACCEPTED -- clear here, not at dispatch
 	// (splitReconcileDetail), so a fetch that instead FAILS
 	// (handleReviewFollowErrMsg) leaves the observation outstanding and a

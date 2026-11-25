@@ -55,7 +55,7 @@ func newRootCmd() *cobra.Command {
 
 	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "", "daemon address (loopback, unix://, or explicit remote HTTPS base URL)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-	rootCmd.PersistentFlags().BoolVar(&fromSkill, "from-skill", false, "agent skill invocation; show all findings and do not count an app open")
+	rootCmd.PersistentFlags().BoolVar(&fromSkill, "from-skill", false, "set by bundled agent skills; the command is not counted as an app open")
 	_ = rootCmd.PersistentFlags().MarkHidden("from-skill")
 
 	rootCmd.AddCommand(signingInitCmd())
