@@ -75,7 +75,7 @@ func Synthesize(
 		results[i] = results[i].ApplyMinSeverity(opts.MinSeverity)
 	}
 	opts.MinSeverity = ResolveSynthesisMinSeverity(results, opts.MinSeverity)
-	commentConfig := CommentConfig{MinSeverity: opts.MinSeverity, ShowAll: opts.ShowAll}
+	commentConfig := CommentConfig{MinSeverity: opts.MinSeverity, Fold: !opts.ShowAll, ShowAll: opts.ShowAll}
 
 	successCount := 0
 	for _, r := range results {
@@ -117,6 +117,8 @@ func Synthesize(
 		log.Printf(
 			"ci review: synthesis failed: %v "+
 				"(falling back to raw format)", err)
+		commentConfig.ShowAll = false
+		commentConfig.Fold = false
 		return SynthesisResult{
 			Output:        formatRawBatchOutput(results, opts.HeadSHA, nil),
 			GitHubComment: FormatRawBatchComment(commentConfig, results, opts.HeadSHA),

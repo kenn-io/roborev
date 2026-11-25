@@ -3028,6 +3028,7 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 		return raw(), nil
 	}
 	maxFindings, minConfidence, whenClean, showAll := p.resolveCommentPolicy(row.GithubRepo)
+	commentConfig.Fold = !showAll
 	commentConfig.ShowAll = showAll
 	commentConfig.MaxFindings = maxFindings
 	commentConfig.MinConfidence = minConfidence

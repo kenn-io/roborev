@@ -124,27 +124,23 @@ func settleSynthesisFindings(ctx context.Context, checkout SynthesisCheckout, do
 	preserveSourceUnlikely(doc, reviews)
 }
 
+// preserveSourceUnlikely keeps a source's unlikely mark on the synthesized
+// finding derived from it, even when the synthesis agent drops the mark.
 func preserveSourceUnlikely(doc *SynthesisDocument, reviews []ReviewResult) {
 	for i := range doc.Findings {
 		finding := &doc.Findings[i]
 		for _, source := range finding.Sources {
-			review := reviews[source-1]
-			original := review.Structured
-			if original == nil && len(review.StructuredOutput) > 0 {
-				if decoded, err := DecodeStructuredReview(review.StructuredOutput); err == nil {
-					original = &decoded
-				}
-			}
-			if original == nil {
-				continue
-			}
-			if sourceFindingUnlikely(*finding, original.Findings) {
+			if original := reviews[source-1].structuredReview(); original != nil && sourceFindingUnlikely(*finding, original.Findings) {
 				finding.Unlikely = true
 			}
 		}
 	}
 }
 
+// sourceFindingUnlikely reports whether the source finding matching finding is
+// marked unlikely. A source finding with the same text at the same place
+// matches; otherwise, since synthesis may reword, the only source finding at
+// exactly the same lines does. Other findings in the source never match.
 func sourceFindingUnlikely(finding StructuredFinding, candidates []StructuredFinding) bool {
 	var sameLocation []StructuredFinding
 	exact, unlikely := false, false

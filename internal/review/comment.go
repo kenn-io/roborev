@@ -16,6 +16,7 @@ import (
 // all findings; preparation never inherits policy from review data.
 type CommentConfig struct {
 	MinSeverity string
+	Fold        bool
 	ShowAll     bool
 	// MinConfidence filters stated structured confidence; zero disables it.
 	MinConfidence float64
@@ -53,12 +54,7 @@ type commentFinding struct {
 func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
 	threshold := config.SeverityRank(comment.minSeverity)
-	doc := r.Structured
-	if doc == nil && len(r.StructuredOutput) > 0 {
-		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
-			doc = &decoded
-		}
-	}
+	doc := r.structuredReview()
 	if doc != nil && doc.Legacy != nil {
 		comment.legacy = true
 		r.Output = doc.Legacy.Markdown
@@ -79,7 +75,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				continue
 			}
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
-			fold := !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical"
+			fold := cfg.Fold && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical"
 			if fold && finding.Severity == "low" {
 				comment.nits = append(comment.nits, item)
 			} else if fold && finding.Unlikely {
@@ -206,6 +202,17 @@ func FormatComment(comment PreparedComment) string {
 		return strings.TrimRight(out.String(), "\n") + notice
 	}
 	return out.String()
+}
+
+// structuredReview returns the review's structured document, decoding the raw
+// agent output when only that is stored. It returns nil for prose reviews.
+func (r ReviewResult) structuredReview() *StructuredReview {
+	if r.Structured == nil && len(r.StructuredOutput) > 0 {
+		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
+			return &decoded
+		}
+	}
+	return r.Structured
 }
 
 func renderCommentFinding(out *strings.Builder, finding commentFinding) {

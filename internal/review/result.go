@@ -164,25 +164,27 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 		return body
 	}
 	budget := max(limit-len(suffix), 0)
-	const closing = "\n</details>"
 	open := strings.Index(body, "\n<details><summary>")
-	close := strings.LastIndex(body, closing)
+	close := strings.LastIndex(body, foldClosing)
 	if open >= 0 && close > open && close >= budget {
-		budget = max(budget-len(closing), 0)
+		budget = max(budget-len(foldClosing), 0)
 		cut := TrimPartialRune(body[:budget])
 		summaryEnd := strings.Index(body[open:], "</summary>")
 		if summaryEnd >= 0 && len(cut) >= open+summaryEnd+len("</summary>") {
-			cut = closeFoldSafely(cut, open+summaryEnd+len("</summary>"))
-			return cut + closing + suffix
+			return closeFoldSafely(cut, open+summaryEnd+len("</summary>")) + foldClosing + suffix
 		}
 		return TrimPartialRune(body[:min(len(cut), open)]) + suffix
 	}
 	return TrimPartialRune(body[:budget]) + suffix
 }
 
+const foldClosing = "\n</details>"
+
+// closeFoldSafely drops trailing folded findings until closing the fold after
+// cut renders as HTML rather than as code, keeping at least the summary.
 func closeFoldSafely(cut string, summaryEnd int) string {
 	for {
-		source := []byte(cut + "\n</details>\n")
+		source := []byte(cut + foldClosing + "\n")
 		var rendered bytes.Buffer
 		err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
 		if err == nil && strings.HasSuffix(strings.TrimSpace(rendered.String()), "</details>") {

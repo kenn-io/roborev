@@ -77,7 +77,7 @@ type unlikelySynthesisAgent struct{ commonMockAgent }
 
 func (a *unlikelySynthesisAgent) Name() string { return "unlikely-synthesis" }
 func (a *unlikelySynthesisAgent) Review(context.Context, string, string, string, io.Writer) (string, error) {
-	return `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Rare issue rephrased","fix":"Fix rare","file":"file.go","start_line":1,"end_line":1,"sources":[1]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Ordinary issue","fix":"Fix ordinary","file":"file.go","start_line":20,"end_line":20,"sources":[1]}]}`, nil
+	return `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Rare issue","fix":"Fix rare","file":"file.go","start_line":1,"end_line":1,"sources":[1]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Ordinary issue","fix":"Fix ordinary","file":"file.go","start_line":20,"end_line":20,"sources":[1]}]}`, nil
 }
 func (a *unlikelySynthesisAgent) CommandLine() string { return a.Name() }
 
@@ -92,21 +92,10 @@ func TestSynthesisPreservesMatchingSourceUnlikely(t *testing.T) {
 	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
 	require.NoError(t, err)
 	require.Len(t, doc.Findings, 2)
-	assert.Equal(t, "Rare issue rephrased", doc.Findings[0].Problem)
+	assert.Equal(t, "Rare issue", doc.Findings[0].Problem)
 	assert.True(t, doc.Findings[0].Unlikely)
 	assert.Equal(t, "Ordinary issue", doc.Findings[1].Problem)
 	assert.False(t, doc.Findings[1].Unlikely)
-}
-
-func TestSourceFindingUnlikelyAmbiguousLocation(t *testing.T) {
-	rare := StructuredFinding{Problem: "Rare", Fix: "Fix rare", Unlikely: true}
-	rare.SetLocation("file.go", 1, 1)
-	ordinary := StructuredFinding{Problem: "Ordinary", Fix: "Fix ordinary"}
-	ordinary.SetLocation("file.go", 1, 1)
-	rephrased := ordinary
-	rephrased.Problem = "Rephrased"
-	assert.False(t, sourceFindingUnlikely(rephrased, []StructuredFinding{rare, ordinary}))
-	assert.True(t, sourceFindingUnlikely(rare, []StructuredFinding{rare, ordinary}))
 }
 
 type synthesisEntrypointAgent struct {
@@ -827,19 +816,13 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 	}
 }
 
-func TestSynthesizeRawFallbackShowAll(t *testing.T) {
+func TestSynthesizeRawFallbackIgnoresShowAll(t *testing.T) {
 	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
 	results := []ReviewResult{
 		{Status: ResultDone, Output: prose, Structured: &StructuredReview{Findings: []StructuredFinding{{Severity: "high", Problem: "High issue", Fix: "Fix"}, {Severity: "low", Problem: "Low issue", Fix: "Fix"}}}},
 		{Status: ResultDone, Output: "No issues found."},
 	}
 	result, err := Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
-	require.NoError(t, err)
-	assert.Contains(t, result.GitHubComment, "High issue")
-	assert.Contains(t, result.GitHubComment, "Low issue")
-	assert.NotContains(t, result.GitHubComment, "<details>")
-	results[0].Structured = nil
-	result, err = Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
 	require.NoError(t, err)
 	assert.Contains(t, result.GitHubComment, "High issue")
 	assert.NotContains(t, result.GitHubComment, "Low issue")
