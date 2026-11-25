@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json/jsontext"
 	"fmt"
 	"slices"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/renderer/html"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -250,4 +253,30 @@ func TestCommentFoldEscapesClosingDetailsInFinding(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(body, "</details>"))
 	assert.Contains(t, body, "&lt;/details&gt;")
 	assert.Contains(t, body, "&lt;/DETAILS &gt;")
+}
+
+func TestCommentFoldPreservesCodeExamples(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{
+		Severity: "low",
+		Problem:  "Use `</details>` in code. Outside </details> stays text.",
+		Fix:      "Example:\n\n```html\n</details>\n```",
+	}}}
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	var rendered bytes.Buffer
+	source := []byte(body)
+	require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
+	assert.Contains(t, rendered.String(), "<code>&lt;/details&gt;</code>")
+	assert.Contains(t, rendered.String(), "<code class=\"language-html\">&lt;/details&gt;\n</code>")
+	assert.NotContains(t, rendered.String(), "&amp;lt;/details&amp;gt;")
+	assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
+}
+
+func TestCommentFoldEscapesTagAfterFixLabel(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Issue", Fix: "    </details>"}}}
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	var rendered bytes.Buffer
+	source := []byte(body)
+	require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
+	assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
+	assert.Contains(t, rendered.String(), "&lt;/details&gt;")
 }

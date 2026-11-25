@@ -208,10 +208,9 @@ func FormatComment(comment PreparedComment) string {
 				fmt.Fprintf(&out, "\n#### %s\n", group.title)
 			}
 			for _, finding := range group.findings {
-				finding.problem = escapeFoldClose(finding.problem)
-				finding.fix = escapeFoldClose(finding.fix)
-				finding.location = escapeFoldClose(finding.location)
-				renderCommentFinding(&out, finding)
+				var item strings.Builder
+				renderCommentFinding(&item, finding)
+				out.WriteString(escapeFoldClose(item.String()))
 			}
 		}
 		out.WriteString("\n</details>\n")
@@ -225,9 +224,50 @@ func FormatComment(comment PreparedComment) string {
 var foldCloseTag = regexp.MustCompile(`(?i)</details\s*>`)
 
 func escapeFoldClose(s string) string {
-	return foldCloseTag.ReplaceAllStringFunc(s, func(tag string) string {
-		return "&lt;" + tag[1:len(tag)-1] + "&gt;"
+	matches := foldCloseTag.FindAllStringIndex(s, -1)
+	if len(matches) == 0 {
+		return s
+	}
+	// Mask closing tags before parsing so an HTML block cannot hide later code.
+	source := []byte(s)
+	for _, match := range matches {
+		source[match[0]] = 'x'
+	}
+	var code [][2]int
+	root := parser.New().Parse(source)
+	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch n := node.(type) {
+		case *ast.CodeSpan:
+			if !n.Value.IsOwned() {
+				index := n.Value.Index()
+				code = append(code, [2]int{index.Start, index.Stop})
+			}
+		case *ast.CodeBlock:
+			for _, segment := range n.Value.Segments() {
+				code = append(code, [2]int{segment.Start, segment.Stop})
+			}
+		}
+		return ast.WalkContinue, nil
 	})
+	var out strings.Builder
+	last := 0
+	for _, match := range matches {
+		out.WriteString(s[last:match[0]])
+		inCode := slices.ContainsFunc(code, func(span [2]int) bool {
+			return span[0] <= match[0] && match[1] <= span[1]
+		})
+		if inCode {
+			out.WriteString(s[match[0]:match[1]])
+		} else {
+			out.WriteString("&lt;" + s[match[0]+1:match[1]-1] + "&gt;")
+		}
+		last = match[1]
+	}
+	out.WriteString(s[last:])
+	return out.String()
 }
 
 // structuredReview returns the review's structured document, decoding the raw
