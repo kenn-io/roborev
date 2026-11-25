@@ -143,24 +143,30 @@ func (comment PreparedComment) IsClean() bool {
 // FormatComment renders prepared findings. It does not resolve configuration,
 // parse review output, or filter findings.
 func FormatComment(comment PreparedComment) string {
+	body, _ := FormatCommentWithFold(comment)
+	return body
+}
+
+// FormatCommentWithFold also returns the offset of the generated fold, or -1.
+func FormatCommentWithFold(comment PreparedComment) (string, int) {
 	if comment.verbatim != nil {
-		return *comment.verbatim
+		return *comment.verbatim, -1
 	}
 	if len(comment.findings) == 0 && len(comment.nits)+len(comment.unlikely) == 0 {
 		if comment.confidenceFiltered {
-			return "**Verdict:** No findings match the comment filters.\n"
+			return "**Verdict:** No findings match the comment filters.\n", -1
 		}
 		if comment.minSeverity != "" && comment.minSeverity != "low" {
-			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", comment.minSeverity)
+			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", comment.minSeverity), -1
 		}
-		return "**Verdict:** No issues found.\n"
+		return "**Verdict:** No issues found.\n", -1
 	}
 	if !comment.structured {
 		blocks := make([]string, len(comment.findings))
 		for i, finding := range comment.findings {
 			blocks[i] = finding.markdown
 		}
-		return strings.Join(blocks, "\n\n---\n\n")
+		return strings.Join(blocks, "\n\n---\n\n"), -1
 	}
 	var out strings.Builder
 	noun := "findings"
@@ -187,6 +193,7 @@ func FormatComment(comment PreparedComment) string {
 			renderCommentFinding(&out, finding)
 		}
 	}
+	foldAt := -1
 	if len(comment.nits)+len(comment.unlikely) > 0 {
 		groups := []struct {
 			title, one, many string
@@ -200,6 +207,7 @@ func FormatComment(comment PreparedComment) string {
 				labels = append(labels, fmt.Sprintf("%d %s", n, group.many))
 			}
 		}
+		foldAt = out.Len()
 		fmt.Fprintf(&out, "\n\n<details><summary>%s hidden</summary>\n", strings.Join(labels, " and "))
 		for _, group := range groups {
 			if len(group.findings) > 0 {
@@ -214,9 +222,9 @@ func FormatComment(comment PreparedComment) string {
 		out.WriteString("\n</details>\n")
 	}
 	if notice := comment.OmissionNotice(); notice != "" {
-		return strings.TrimRight(out.String(), "\n") + notice
+		return strings.TrimRight(out.String(), "\n") + notice, foldAt
 	}
-	return out.String()
+	return out.String(), foldAt
 }
 
 var foldCloseTag = regexp.MustCompile(`(?i)</?details(?:\s[^>]*|/?)>`)

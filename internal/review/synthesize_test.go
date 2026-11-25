@@ -933,3 +933,15 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 		})
 	}
 }
+
+func TestSingleResultTruncationPreservesVisibleExample(t *testing.T) {
+	example := "```html\n<details><summary>Example</summary>\ncontent\n</details>\n```"
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "high", Problem: example, Fix: "Fix it."},
+		{Severity: "low", Problem: strings.Repeat("nit ", MaxCommentLen), Fix: "Fix it."},
+	}}
+	got := formatSingleResult(ReviewResult{Structured: &doc}, "abcdef123456", &CommentConfig{})
+	assert.Contains(t, got, example)
+	assert.Contains(t, got, "<details><summary>1 nit hidden</summary>\n</details>")
+	assert.Contains(t, got, CommentTruncSuffix)
+}

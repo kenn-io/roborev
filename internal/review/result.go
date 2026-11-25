@@ -150,26 +150,26 @@ const CommentTruncSuffix = "\n\n...(truncated — comment exceeded size limit)"
 // TruncateComment caps a forge comment body at MaxCommentLen, replacing
 // the overflow with CommentTruncSuffix and keeping the cut UTF-8 safe.
 func TruncateComment(body string) string {
-	return TruncateCommentTo(body, MaxCommentLen, CommentTruncSuffix)
+	if len(body) <= MaxCommentLen {
+		return body
+	}
+	return TrimPartialRune(body[:MaxCommentLen-len(CommentTruncSuffix)]) + CommentTruncSuffix
 }
 
 // TruncateCommentTo fits a comment within limit bytes, closing a folded
 // section if the cut falls inside it. The suffix is included in the limit.
-func TruncateCommentTo(body string, limit int, suffix string) string {
+func TruncateCommentTo(body string, foldAt, limit int, suffix string) string {
 	if len(body) <= limit {
 		return body
 	}
 	budget := max(limit-len(suffix), 0)
-	open := strings.Index(body, "\n<details><summary>")
-	close := strings.LastIndex(body, foldClosing)
-	if open >= 0 && close > open && close >= budget {
+	if foldAt >= 0 && budget > foldAt {
 		budget = max(budget-len(foldClosing), 0)
-		cut := TrimPartialRune(body[:budget])
-		summaryEnd := strings.Index(body[open:], "</summary>")
-		if summaryEnd >= 0 && len(cut) >= open+summaryEnd+len("</summary>") {
-			return body[:open+summaryEnd+len("</summary>")] + foldClosing + suffix
+		summaryEnd := strings.Index(body[foldAt:], "</summary>")
+		if summaryEnd >= 0 && budget >= foldAt+summaryEnd+len("</summary>") {
+			return body[:foldAt+summaryEnd+len("</summary>")] + foldClosing + suffix
 		}
-		return TrimPartialRune(body[:min(len(cut), open)]) + suffix
+		return body[:foldAt] + suffix
 	}
 	return TrimPartialRune(body[:budget]) + suffix
 }

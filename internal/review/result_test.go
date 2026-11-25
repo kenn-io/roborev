@@ -211,7 +211,7 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 
 func TestTruncateCommentFold(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Issue\n\n```go\n" + strings.Repeat("code\n", 100) + "```"}}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	body, foldAt := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	const suffix = "\n\nfooter"
 	summaryEnd := strings.Index(body, "</summary>") + len("</summary>")
 	for _, tc := range []struct {
@@ -223,7 +223,7 @@ func TestTruncateCommentFold(t *testing.T) {
 		{"inside summary", summaryEnd - 1 + len(foldClosing) + len(suffix), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := TruncateCommentTo(body, tc.limit, suffix)
+			got := TruncateCommentTo(body, foldAt, tc.limit, suffix)
 			var rendered bytes.Buffer
 			source := []byte(got)
 			require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
@@ -232,9 +232,40 @@ func TestTruncateCommentFold(t *testing.T) {
 				assert.NotContains(t, got, "```go")
 			} else {
 				assert.NotContains(t, got, "<details>")
+				assert.Equal(t, body[:foldAt]+suffix, got)
 			}
 			assert.LessOrEqual(t, len(got), tc.limit)
 			assert.True(t, strings.HasSuffix(got, suffix))
 		})
 	}
+}
+
+func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "high", Problem: "Example:\n\n```html\n<details><summary>Example</summary>\ncontent\n</details>\n```\nKeep this finding.", Fix: "Fix it."},
+		{Severity: "low", Problem: strings.Repeat("nit ", 100), Fix: "Fix it."},
+	}}
+	body, foldAt := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	const suffix = "\n\nfooter"
+	require.Positive(t, foldAt)
+	for _, tc := range []struct {
+		name  string
+		limit int
+		want  string
+	}{
+		{"before fold", foldAt - 5 + len(suffix), body[:foldAt-5] + suffix},
+		{"inside fold", foldAt + len("\n\n<details><summary>1 nit hidden</summary>") + len(foldClosing) + len(suffix), body[:foldAt] + "\n\n<details><summary>1 nit hidden</summary>" + foldClosing + suffix},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, TruncateCommentTo(body, foldAt, tc.limit, suffix))
+		})
+	}
+}
+
+func TestTruncateCommentKeepsProseDetails(t *testing.T) {
+	body := "Review:\n<details><summary>Example</summary>\n" + strings.Repeat("text ", MaxCommentLen) + "\n</details>"
+	got := TruncateComment(body)
+	require.Len(t, got, MaxCommentLen)
+	assert.Equal(t, body[:MaxCommentLen-len(CommentTruncSuffix)], strings.TrimSuffix(got, CommentTruncSuffix))
+	assert.True(t, strings.HasSuffix(got, CommentTruncSuffix))
 }

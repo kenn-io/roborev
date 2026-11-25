@@ -4299,27 +4299,32 @@ func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, re
 	}
 
 	notice := prepared.OmissionNotice()
-	output := strings.TrimSuffix(reviewpkg.FormatComment(prepared), notice)
+	output, outputFoldAt := reviewpkg.FormatCommentWithFold(prepared)
+	output = strings.TrimSuffix(output, notice)
 	if notice == "" && len(output) > reviewpkg.MaxCommentLen {
-		output = truncatePanelPRBodyForFooter(output, "", reviewpkg.MaxCommentLen)
+		output = truncatePanelPRBodyForFooter(output, outputFoldAt, "", reviewpkg.MaxCommentLen)
 	}
+	foldAt := -1
 	if output != "" && (verdict != "P" || headSHA != "") {
+		if outputFoldAt >= 0 && outputFoldAt < len(output) && strings.HasPrefix(output[outputFoldAt:], "\n\n<details><summary>") {
+			foldAt = b.Len() + outputFoldAt
+		}
 		b.WriteString(output)
 		b.WriteString("\n")
 	} else if verdict == "P" && headSHA != "" {
 		b.WriteString("No issues found.\n")
 	}
 
-	return appendPanelPRFooterWithNotice(b.String(), notice, review, members, includeCosts)
+	return appendPanelPRFooterWithNotice(b.String(), foldAt, notice, review, members, includeCosts)
 }
 
 const panelCommentTruncSuffix = "\n\n...(truncated)"
 
 func appendPanelPRFooter(body string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
-	return appendPanelPRFooterWithNotice(body, "", review, members, includeCosts)
+	return appendPanelPRFooterWithNotice(body, -1, "", review, members, includeCosts)
 }
 
-func appendPanelPRFooterWithNotice(body, notice string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
+func appendPanelPRFooterWithNotice(body string, foldAt int, notice string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
 	if review == nil {
 		return body
 	}
@@ -4340,12 +4345,12 @@ func appendPanelPRFooterWithNotice(body, notice string, review *storage.Review, 
 		footer = truncateUTF8(footer, max(maxLen-len(notice)-len(panelCommentTruncSuffix), 0))
 	}
 	suffix := strings.TrimRight(notice, "\n") + footer
-	body = truncatePanelPRBodyForFooter(body, suffix, maxLen)
+	body = truncatePanelPRBodyForFooter(body, foldAt, suffix, maxLen)
 	return strings.TrimRight(body, "\n") + suffix
 }
 
-func truncatePanelPRBodyForFooter(body string, footer string, maxLen int) string {
-	return reviewpkg.TruncateCommentTo(body, max(maxLen-len(footer), 0), panelCommentTruncSuffix)
+func truncatePanelPRBodyForFooter(body string, foldAt int, footer string, maxLen int) string {
+	return reviewpkg.TruncateCommentTo(body, foldAt, max(maxLen-len(footer), 0), panelCommentTruncSuffix)
 }
 
 func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members []storage.BatchReviewResult, includeCosts bool) string {

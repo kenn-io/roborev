@@ -141,7 +141,9 @@ func formatSingleResult(
 		if prepared.structured {
 			passed = prepared.IsClean()
 		}
-		output = TruncateComment(FormatComment(prepared))
+		var foldAt int
+		output, foldAt = FormatCommentWithFold(prepared)
+		output = TruncateCommentTo(output, foldAt, MaxCommentLen, CommentTruncSuffix)
 	}
 	var header string
 	if passed {

@@ -392,7 +392,22 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 
 func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Problem: strings.Repeat("x", 100)}}}
-	body := reviewpkg.FormatComment(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))
-	got := truncatePanelPRBodyForFooter(body, "footer", 150)
+	body, foldAt := reviewpkg.FormatCommentWithFold(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))
+	got := truncatePanelPRBodyForFooter(body, foldAt, "footer", 150)
 	assert.True(t, strings.HasSuffix(got, "\n</details>"+panelCommentTruncSuffix))
+}
+
+func TestCIPanelCommentTruncationPreservesVisibleExample(t *testing.T) {
+	example := "```html\n<details><summary>Example</summary>\ncontent\n</details>\n```"
+	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{
+		{Severity: "high", Problem: example, Fix: "Fix it."},
+		{Severity: "low", Problem: strings.Repeat("nit ", reviewpkg.MaxCommentLen), Fix: "Fix it."},
+	}}
+	prepared := reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc})
+	stored := &storage.Review{Job: &storage.ReviewJob{Agent: "test"}}
+	got := formatPreparedPanelPRCommentWithHead(prepared, stored, "F", nil, false, "abcdef123456")
+	assert.Contains(t, got, example)
+	assert.Contains(t, got, "<details><summary>1 nit hidden</summary>\n</details>")
+	assert.Contains(t, got, "Reviewers:")
+	assert.LessOrEqual(t, len(got), reviewpkg.MaxCommentLen)
 }
