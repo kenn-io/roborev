@@ -187,17 +187,7 @@ func tidyFindings(findings []structuredreview.Finding) []structuredreview.Findin
 			kept = append(kept, finding)
 			continue
 		}
-		sources := mergeSources(kept[twin].Sources, finding.Sources)
-		unlikely := kept[twin].Unlikely || finding.Unlikely
-		security := kept[twin].Topic == "security" || finding.Topic == "security"
-		if better(finding, kept[twin]) {
-			kept[twin] = finding
-		}
-		kept[twin].Sources = sources
-		kept[twin].Unlikely = unlikely
-		if security {
-			kept[twin].Topic = "security"
-		}
+		kept[twin] = mergeDuplicateFindings(kept[twin], finding)
 	}
 	slices.SortStableFunc(kept, func(a, b structuredreview.Finding) int {
 		return cmp.Or(
@@ -207,6 +197,20 @@ func tidyFindings(findings []structuredreview.Finding) []structuredreview.Findin
 		)
 	})
 	return kept
+}
+
+func mergeDuplicateFindings(first, second structuredreview.Finding) structuredreview.Finding {
+	sources := mergeSources(first.Sources, second.Sources)
+	unlikely := first.Unlikely || second.Unlikely
+	security := first.Topic == "security" || second.Topic == "security"
+	if better(second, first) {
+		first = second
+	}
+	first.Sources, first.Unlikely = sources, unlikely
+	if security {
+		first.Topic = "security"
+	}
+	return first
 }
 
 func samePlace(a, b structuredreview.Finding) bool {

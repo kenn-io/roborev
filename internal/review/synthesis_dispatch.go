@@ -115,9 +115,13 @@ func RunSynthesisAgent(
 	if err != nil {
 		return SynthesisDocument{}, output, err
 	}
-	settleFindings(ctx, checkout.RepoPath, checkout.GitRef, &doc)
-	preserveSourceUnlikely(&doc, reviews)
+	settleSynthesisFindings(ctx, checkout, &doc, reviews)
 	return doc, output, nil
+}
+
+func settleSynthesisFindings(ctx context.Context, checkout SynthesisCheckout, doc *SynthesisDocument, reviews []ReviewResult) {
+	settleFindings(ctx, checkout.RepoPath, checkout.GitRef, doc)
+	preserveSourceUnlikely(doc, reviews)
 }
 
 func preserveSourceUnlikely(doc *SynthesisDocument, reviews []ReviewResult) {
