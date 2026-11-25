@@ -161,7 +161,7 @@ func TestLocalReviewBuiltInBinaryEvidence(t *testing.T) {
 		NameStr: "local-evidence",
 		ReviewFn: func(_ context.Context, _, _ string, prompt string, _ io.Writer) (string, error) {
 			capturedPrompt = prompt
-			return `{"schema_version":3,"verdict":"pass","summary":"No findings.","findings":[]}`, nil
+			return `{"schema_version":4,"verdict":"pass","summary":"No findings.","findings":[]}`, nil
 		},
 	}
 	agent.RegisterForTest(t, a)
@@ -184,7 +184,7 @@ func TestLocalReviewRetainsLocationsForDirtyBranch(t *testing.T) {
 		NameStr: "test-dirty-branch",
 		ReviewFn: func(_ context.Context, _, ref, _ string, _ io.Writer) (string, error) {
 			assert.Equal(t, head, ref, "committed targets are resolved before invoking the agent")
-			return `{"schema_version":3,"verdict":"fail","summary":"One problem.","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The value is incorrect.","fix":"Correct it.","file":"added.go","start_line":2,"end_line":2}]}`, nil
+			return `{"schema_version":4,"verdict":"fail","summary":"One problem.","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The value is incorrect.","fix":"Correct it.","file":"added.go","start_line":2,"end_line":2}]}`, nil
 		},
 	}
 	agent.RegisterForTest(t, a)

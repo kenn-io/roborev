@@ -383,7 +383,7 @@ func TestHumaExportReviewsExportsDocumentInContentProfileOnly(t *testing.T) {
 	// The stored version 2 document is exported normalized and in the
 	// current version, with null for the version 3 fields it lacks.
 	assert.JSONEq(`{
-		"schema_version": 3,
+		"schema_version": 4,
 		"summary": "Two problems.",
 		"verdict": "fail",
 		"findings": [
