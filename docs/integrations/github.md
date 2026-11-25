@@ -893,11 +893,11 @@ the comment filters." Confidence does not filter prose.
 By default, structured CI comments apply the severity and confidence floors and
 the finding cap, then fold Low and unlikely findings into a collapsible section.
 High, Critical, and security findings remain in the main list. Set
-`comment_show_all = true` globally or per repository to show every
-structured finding inline, ignoring the comment severity and confidence floors
-and finding cap. The setting also applies to structured GitHub comments from
-`roborev ci review`, including structured raw fallback comments. Text-only
-and legacy comments keep their existing filters. Stored reviews retain every
+`comment_show_all = true` globally or per repository to show every structured
+finding inline, ignoring the comment severity and confidence floors and finding
+cap. The setting also applies to structured GitHub comments from
+`roborev ci review`, including structured raw fallback comments. Text-only and
+legacy comments keep their existing filters. Stored reviews retain every
 finding.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
