@@ -313,7 +313,7 @@ func reviewText(review *storage.Review, all bool, out io.Writer) string {
 	}
 	output, folded := review.FoldedOutput()
 	if folded {
-		output = formatFoldedNote(output, "Run "+reviewShowCommand(review.JobID)+" to list them.", out)
+		output = formatFoldedNote(output, "To list them:\n  "+reviewShowCommand(review.JobID), out)
 	}
 	return output
 }

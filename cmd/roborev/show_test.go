@@ -740,7 +740,7 @@ func TestShowFoldedFindings(t *testing.T) {
 	t.Run("explicit server", func(t *testing.T) {
 		run := runCLI(t, "--server", ep.ConfigAddr(), "job", "show", "--job", "7")
 		require.NoError(t, run.err)
-		assert.Contains(t, run.stdout, "Run roborev --server "+daemon.ShellEscape(ep.ConfigAddr())+" job show --job 7 --all to list them.")
+		assert.Contains(t, run.stdout, "To list them:\n  roborev --server "+daemon.ShellEscape(ep.ConfigAddr())+" job show --job 7 --all")
 	})
 	for _, tc := range []struct {
 		name string
@@ -759,7 +759,7 @@ func TestShowFoldedFindings(t *testing.T) {
 			} else {
 				assert.NotContains(t, run.stdout, "nit problem")
 				assert.NotContains(t, run.stdout, "rare problem")
-				assert.Contains(t, run.stdout, "1 low-severity finding and 1 unlikely finding hidden.\nRun roborev job show --job 7 --all to list them.")
+				assert.Contains(t, run.stdout, "1 low-severity finding and 1 unlikely finding hidden.\nTo list them:\n  roborev job show --job 7 --all\n")
 			}
 		})
 	}
