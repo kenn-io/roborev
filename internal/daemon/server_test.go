@@ -212,23 +212,25 @@ func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Start(t.Context()) }()
 
-	var info *RuntimeInfo
 	var startErr error
-	// Wall-clock wait: real daemon listener startup.
-	require.Eventually(t, func() bool {
-		select {
-		case startErr = <-errCh:
-			return true
-		default:
-		}
-		var err error
-		info, err = ReadRuntime()
-		server.endpointMu.Lock()
-		defer server.endpointMu.Unlock()
-		return err == nil && info.PID == os.Getpid() && info.Address == server.endpoint.Address
-	}, 5*time.Second, 10*time.Millisecond)
+	ready := false
+	select {
+	case startErr = <-errCh:
+	case <-server.readyCh:
+		ready = true
+	case <-t.Context().Done():
+		require.NoError(t, t.Context().Err(), "context ended before daemon published runtime info")
+	}
 	require.NoError(t, startErr)
-	require.NotNil(t, info)
+	require.True(t, ready, "daemon exited before publishing runtime info")
+
+	info, err := ReadRuntime()
+	require.NoError(t, err)
+	require.Equal(t, os.Getpid(), info.PID)
+	server.endpointMu.Lock()
+	endpointAddr := server.endpoint.Address
+	server.endpointMu.Unlock()
+	require.Equal(t, endpointAddr, info.Address)
 	return errCh, info
 }
 
@@ -425,6 +427,98 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 	sweepCancel := server.sweepCancel
 	server.sweepMu.Unlock()
 	assert.Nil(t, sweepCancel, "panel sweep must not remain active after startup readiness failure")
+}
+
+func TestServerStartReadySignalsAfterRuntimePublication(t *testing.T) {
+	t.Run("closes readyCh only after readiness and runtime publication", func(t *testing.T) {
+		testenv.SetDataDir(t)
+		db, _ := testutil.OpenTestDBWithDir(t)
+		cfg := config.DefaultConfig()
+		cfg.ServerAddr = "127.0.0.1:0"
+		cfg.Web.Enabled = false
+		server := NewServer(db, cfg, "")
+		t.Cleanup(func() { require.NoError(t, server.Close()) })
+
+		pingEntered := make(chan struct{})
+		allowPing := make(chan struct{})
+		var enteredOnce sync.Once
+		baseHandler := server.httpServer.Handler
+		server.httpServer.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/ping" {
+				enteredOnce.Do(func() { close(pingEntered) })
+				select {
+				case <-allowPing:
+				case <-r.Context().Done():
+					return
+				}
+			}
+			baseHandler.ServeHTTP(w, r)
+		})
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- server.Start(t.Context()) }()
+
+		var startErr error
+		pingReached := false
+		select {
+		case <-pingEntered:
+			pingReached = true
+		case startErr = <-errCh:
+		}
+		require.NoError(t, startErr)
+		require.True(t, pingReached, "server exited before readiness probe")
+
+		// While the readiness probe is blocked, startup has not published runtime
+		// metadata and must not signal readiness.
+		readyEarly := false
+		select {
+		case <-server.readyCh:
+			readyEarly = true
+		default:
+		}
+		assert.False(t, readyEarly)
+		assert.NoFileExists(t, RuntimePath())
+
+		close(allowPing)
+
+		ready := false
+		select {
+		case <-server.readyCh:
+			ready = true
+		case startErr = <-errCh:
+		}
+		require.NoError(t, startErr)
+		require.True(t, ready, "server exited before signaling ready")
+
+		info, err := ReadRuntime()
+		require.NoError(t, err)
+		assert.Equal(t, os.Getpid(), info.PID)
+		server.endpointMu.Lock()
+		endpointAddr := server.endpoint.Address
+		server.endpointMu.Unlock()
+		assert.Equal(t, endpointAddr, info.Address)
+		assert.Equal(t, WebDisabledReasonConfig, info.WebDisabledReason)
+
+		stopTestServer(t, server, errCh)
+	})
+
+	t.Run("leaves readyCh open on startup error", func(t *testing.T) {
+		testenv.SetDataDir(t)
+		db, _ := testutil.OpenTestDBWithDir(t)
+		cfg := config.DefaultConfig()
+		cfg.ServerAddr = "0.0.0.0:0"
+		server := NewServer(db, cfg, "")
+		t.Cleanup(func() { require.NoError(t, server.Close()) })
+
+		require.Error(t, server.Start(t.Context()))
+		ready := false
+		select {
+		case <-server.readyCh:
+			ready = true
+		default:
+		}
+		assert.False(t, ready)
+	})
 }
 
 func TestServerStartRefusesLegacyLivePID(t *testing.T) {
