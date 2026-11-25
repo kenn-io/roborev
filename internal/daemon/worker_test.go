@@ -365,8 +365,8 @@ func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
   "summary":"Review complete.",
   "verdict":"fail",
   "findings":[
-    {"severity":"high","kind":"defect","confidence":0.9,"problem":"State diverges.","fix":"Use one owner.","file":null,"start_line":null,"end_line":null},
-    {"severity":"low","kind":"improvement","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"problem":"State diverges.","fix":"Use one owner.","file":null,"start_line":null,"end_line":null},
+    {"severity":"low","kind":"improvement","confidence":0.5,"unlikely":false,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	})
