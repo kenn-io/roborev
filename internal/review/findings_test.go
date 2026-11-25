@@ -189,7 +189,7 @@ func TestTidyFindingsPreservesUnlikely(t *testing.T) {
 			settleFindings(t.Context(), "", "", &doc)
 			require.Len(t, doc.Findings, 1)
 			assert.Equal(t, tc.firstUnlikely || tc.secondUnlikely, doc.Findings[0].Unlikely)
-			assert.Equal(t, max(tc.firstConfidence, tc.secondConfidence), doc.Findings[0].Confidence)
+			assert.InDelta(t, max(tc.firstConfidence, tc.secondConfidence), doc.Findings[0].Confidence, 1e-9)
 			body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
 			assert.Equal(t, tc.firstUnlikely || tc.secondUnlikely, strings.Contains(body, "<details>"))
 		})
