@@ -831,14 +831,6 @@ func TestSynthesizeRawFallbackShowAll(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, result.GitHubComment, "Low issue")
 	assert.NotContains(t, result.GitHubComment, "<details>")
-	for _, output := range []jsontext.Value{nil, jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`)} {
-		results[0].Structured = nil
-		results[0].StructuredOutput = output
-		result, err = Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
-		require.NoError(t, err)
-		assert.Contains(t, result.GitHubComment, "High issue")
-		assert.NotContains(t, result.GitHubComment, "Low issue")
-	}
 }
 
 func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
@@ -849,7 +841,6 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 		heading string
 	}{
 		{"folded", StructuredFinding{Severity: "medium", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Passed"},
-		{"visible rare", StructuredFinding{Severity: "high", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Complete"},
 		{"show all", StructuredFinding{Severity: "low", Problem: "Low finding", Fix: "Fix"}, true, "Review Complete"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

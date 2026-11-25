@@ -3,6 +3,7 @@ package structuredreview
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestDecodeNormalizesVersion3LineRanges(t *testing.T) {
 	}
 }
 
-func TestDecodeRejectsInvalidVersion3Findings(t *testing.T) {
+func TestDecodeRejectsInvalidCurrentFindings(t *testing.T) {
 	tests := []struct {
 		name    string
 		finding string
@@ -74,10 +75,12 @@ func TestDecodeRejectsInvalidVersion3Findings(t *testing.T) {
 		{name: "kind without confidence", finding: `"kind":"defect"`, want: "kind without a confidence"},
 		{name: "confidence above 1", finding: `"kind":"defect","confidence":1.5`, want: "outside 0 to 1"},
 		{name: "negative line", finding: `"kind":"defect","confidence":0.5,"file":"a.go","start_line":-1`, want: "negative line"},
+		{name: "null unlikely", finding: `"unlikely":null`, want: "invalid unlikely: expected a boolean"},
+		{name: "string unlikely", finding: `"unlikely":"yes"`, want: "invalid unlikely: expected a boolean"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Decode(jsontext.Value(`{"schema_version":3,"summary":"s","verdict":"fail","findings":[` +
+			_, err := Decode(jsontext.Value(`{"schema_version":` + strconv.Itoa(SchemaVersion) + `,"summary":"s","verdict":"fail","findings":[` +
 				`{"severity":"low","problem":"p","fix":"f",` + tc.finding + `}]}`))
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
@@ -100,23 +103,17 @@ func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
 	}
 }
 
-func TestDecodeUnlikely(t *testing.T) {
-	for _, value := range []string{`null`, `"yes"`} {
-		_, err := Decode(jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":` + value + `}]}`))
-		require.Error(t, err, "unlikely=%s", value)
-	}
-}
-
 func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 	located := Finding{Severity: "high", Kind: KindDefect, Confidence: 0.75, Problem: "p", Fix: "f", Sources: []int{2}}
 	located.SetLocation("a.go", 3, 8)
 	unlocated := Finding{Severity: "low", Kind: KindImprovement, Topic: TopicTests, Confidence: 0, Problem: "p2", Fix: "f2"}
 	tests := []struct {
-		name string
-		doc  Document
+		name          string
+		doc           Document
+		unlikelyCount int
 	}{
 		{name: "current version", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{located, unlocated}}},
-		{name: "unlikely", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "high", Problem: "p", Fix: "f", Unlikely: true}, {Severity: "low", Problem: "q", Fix: "f"}}}},
+		{name: "unlikely", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "high", Problem: "p", Fix: "f", Unlikely: true}, {Severity: "low", Problem: "q", Fix: "f"}}}, unlikelyCount: 1},
 		{name: "free-text location without kind", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "Kata abc"}}}},
 		{name: "no verdict", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}}},
 	}
@@ -127,9 +124,7 @@ func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 			got, err := Decode(raw)
 			require.NoError(t, err)
 			assert.Equal(t, tc.doc, got)
-			if tc.name == "unlikely" {
-				assert.Equal(t, 1, strings.Count(string(raw), `"unlikely"`))
-			}
+			assert.Equal(t, tc.unlikelyCount, strings.Count(string(raw), `"unlikely"`))
 		})
 	}
 }

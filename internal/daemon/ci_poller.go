@@ -3017,7 +3017,7 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	}
 	commentConfig := reviewpkg.CommentConfig{MinSeverity: reviewpkg.ResolveSynthesisMinSeverity(results, threshold)}
 	raw := func() panelCommentPublication {
-		// Raw diagnostics retain their existing publication policy.
+		_, _, _, commentConfig.ShowAll = p.resolveCommentPolicy(row.GithubRepo)
 		return panelCommentPublication{body: reviewpkg.FormatRawBatchComment(commentConfig, results, row.HeadSHA)}
 	}
 	if synth == nil || synth.Status != storage.JobStatusDone {

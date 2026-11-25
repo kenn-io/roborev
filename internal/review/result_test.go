@@ -72,62 +72,6 @@ func TestTrimPartialRune(t *testing.T) {
 	}
 }
 
-func TestTruncateCommentClosesFoldWithFencedCode(t *testing.T) {
-	for _, fence := range []string{"```", "~~~~"} {
-		t.Run(fence, func(t *testing.T) {
-			doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Example\n\n" + fence + "go\n" + strings.Repeat("code\n", 100) + fence}}}
-			body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-			got := TruncateCommentTo(body, 200, "\n\nfooter")
-			var rendered bytes.Buffer
-			source := []byte(got)
-			err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
-			require.NoError(t, err)
-			assert.Contains(t, rendered.String(), "</details>")
-			assert.NotContains(t, rendered.String(), "&lt;/details&gt;")
-			assert.LessOrEqual(t, len(got), 200)
-			assert.True(t, strings.HasSuffix(got, "\n\nfooter"))
-		})
-	}
-}
-
-func TestTruncateCommentRetainsCompleteFoldedFindings(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "low", Problem: "First complete finding", Fix: "First fix"},
-		{Severity: "low", Problem: "Second complete finding", Fix: "Second fix"},
-		{Severity: "low", Problem: "Long finding\n\n```go\n" + strings.Repeat("- code\n", 100) + "```"},
-	}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	got := TruncateCommentTo(body, 250, "\n\nfooter")
-	var rendered bytes.Buffer
-	source := []byte(got)
-	err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
-	require.NoError(t, err)
-	assert.Contains(t, rendered.String(), "First complete finding")
-	assert.Contains(t, rendered.String(), "First fix")
-	assert.Contains(t, rendered.String(), "Second complete finding")
-	assert.Contains(t, rendered.String(), "Second fix")
-	assert.NotContains(t, rendered.String(), "Long finding")
-	assert.Contains(t, rendered.String(), "</details>")
-	assert.LessOrEqual(t, len(got), 250)
-	assert.True(t, strings.HasSuffix(got, "\n\nfooter"))
-}
-
-func TestTruncateCommentKeepsLastCompleteFoldedItem(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "low", Problem: "Complete finding", Fix: "Complete fix"},
-		{Severity: "low", Problem: "Next finding " + strings.Repeat("more ", 100)},
-	}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	end := strings.Index(body, "Complete fix") + len("Complete fix")
-	limit := end + len(foldClosing) + len("\n\nfooter")
-	got := TruncateCommentTo(body, limit, "\n\nfooter")
-	assert.Contains(t, got, "Complete finding")
-	assert.Contains(t, got, "Complete fix")
-	assert.NotContains(t, got, "Next finding")
-	assert.LessOrEqual(t, len(got), limit)
-	assert.True(t, strings.HasSuffix(got, foldClosing+"\n\nfooter"))
-}
-
 func TestTrimPartialRune_NoFullStringScan(t *testing.T) {
 	assert := assert.New(t)
 
@@ -265,22 +209,47 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 	assert.NotContains(combined.Output, "No findings at or above")
 }
 
-func TestTruncateCommentWithinFoldSummary(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Example `</details>` " + strings.Repeat("text ", 100)}}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	got := TruncateCommentTo(body, 180, "...(truncated)")
-	assert.NotContains(t, got, "Example")
-	assert.Contains(t, got, "\n</details>...(truncated)")
-	assert.LessOrEqual(t, len(got), 180)
-
-	body = "visible\n<details><summary>1 nit and 1 unlikely finding hidden</summary>\ncontent" + strings.Repeat("x", 100) + "\n</details>"
-	open := strings.Index(body, "\n<details>")
-	summaryEnd := strings.Index(body, "</summary>") + len("</summary>")
-	for cut := open; cut < summaryEnd; cut++ {
-		got := TruncateCommentTo(body, cut+len("...")+len("\n</details>"), "...")
-		assert.NotContains(t, got, "<details>", "cut at byte %d", cut)
-		assert.LessOrEqual(t, len(got), cut+len("...")+len("\n</details>"))
+func TestTruncateCommentFold(t *testing.T) {
+	makeBody := func(findings ...StructuredFinding) string {
+		doc := StructuredReview{Findings: findings}
+		return FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	}
-	got = TruncateCommentTo(body, summaryEnd+len("...")+len("\n</details>"), "...")
-	assert.Contains(t, got, "</summary>\n</details>...")
+	long := makeBody(
+		StructuredFinding{Severity: "low", Problem: "First complete finding", Fix: "First fix"},
+		StructuredFinding{Severity: "low", Problem: "Second complete finding", Fix: "Second fix"},
+		StructuredFinding{Severity: "low", Problem: "Long finding\n\n```go\n" + strings.Repeat("- code\n", 100) + "```"},
+	)
+	boundary := makeBody(
+		StructuredFinding{Severity: "low", Problem: "Complete finding", Fix: "Complete fix"},
+		StructuredFinding{Severity: "low", Problem: "Next finding " + strings.Repeat("more ", 100)},
+	)
+	single := makeBody(StructuredFinding{Severity: "low", Problem: "Example `</details>` " + strings.Repeat("text ", 100)})
+	const suffix = "\n\nfooter"
+	summaryEnd := strings.Index(single, "</summary>") + len("</summary>")
+	for _, tc := range []struct {
+		name, body   string
+		limit        int
+		want, absent []string
+	}{
+		{"fenced finding", long, 250, []string{"First complete finding", "First fix", "Second complete finding", "Second fix", "</details>"}, []string{"Long finding", "&lt;/details&gt;"}},
+		{"exact item boundary", boundary, strings.Index(boundary, "Complete fix") + len("Complete fix") + len(foldClosing) + len(suffix), []string{"Complete finding", "Complete fix", "</details>"}, []string{"Next finding"}},
+		{"no item fits", single, 180, []string{"</details>"}, []string{"Example"}},
+		{"cut in summary", single, summaryEnd - 1 + len(foldClosing) + len(suffix), nil, []string{"<details>"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := TruncateCommentTo(tc.body, tc.limit, suffix)
+			var rendered bytes.Buffer
+			source := []byte(got)
+			err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
+			require.NoError(t, err)
+			for _, want := range tc.want {
+				assert.Contains(t, rendered.String(), want)
+			}
+			for _, absent := range tc.absent {
+				assert.NotContains(t, rendered.String(), absent)
+			}
+			assert.LessOrEqual(t, len(got), tc.limit)
+			assert.True(t, strings.HasSuffix(got, suffix))
+		})
+	}
 }

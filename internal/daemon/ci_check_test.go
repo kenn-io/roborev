@@ -36,7 +36,8 @@ func TestCICheckApply(t *testing.T) {
 		want               []string
 		outcomes           []string
 		// firstVerdicts are the verdicts recorded for finding 1.
-		firstVerdicts []structuredreview.CheckVerdict
+		firstVerdicts                 []structuredreview.CheckVerdict
+		initialUnlikely, wantUnlikely bool
 	}{
 		{
 			name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, summary: "1 finding.", want: []string{"second"},
@@ -68,8 +69,14 @@ func TestCICheckApply(t *testing.T) {
 		},
 		{name: "missing verdict", raw: `{"verdicts":[]}`, outcomes: []string{kept, kept}},
 		{name: "unknown finding number", raw: `{"verdicts":[{"finding":3,"keep":false,"evidence":"ok","reason":"refuted"}]}`, outcomes: []string{kept, kept}},
+		{name: "checker marks unlikely", raw: `{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"}]}`, outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &keep, Evidence: "e", Reason: "r"}}, wantUnlikely: true},
+		{name: "reviewer mark survives", raw: `{"verdicts":[{"finding":1,"keep":true,"unlikely":false,"evidence":"e","reason":"r"}]}`, outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &keep, Evidence: "e", Reason: "r"}}, initialUnlikely: true, wantUnlikely: true},
+		{name: "mark without evidence", raw: `{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"","reason":""}]}`, outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &keep}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			doc := doc
+			doc.Findings = append([]structuredreview.Finding(nil), doc.Findings...)
+			doc.Findings[0].Unlikely = tc.initialUnlikely
 			if tc.want == nil {
 				tc.want, tc.summary = []string{"first", "second"}, doc.Summary
 			}
@@ -81,6 +88,9 @@ func TestCICheckApply(t *testing.T) {
 				problems = append(problems, f.Problem)
 			}
 			assert.Equal(t, tc.want, problems)
+			if len(got.Findings) > 0 && got.Findings[0].Problem == "first" {
+				assert.Equal(t, tc.wantUnlikely, got.Findings[0].Unlikely)
+			}
 			assert.Equal(t, tc.summary, got.Summary)
 			assert.Equal(t, strings.Count(tc.raw, `"finding":`), strings.Count(log.String(), "CI checker verdict: "), "the job log keeps every verdict")
 			require.NotNil(t, got.Check)
@@ -475,6 +485,19 @@ func TestCICheckCompletionInterruption(t *testing.T) {
 	}
 }
 
+func TestCICheckCompletionBelowSeverityThreshold(t *testing.T) {
+	calls := 0
+	tc := newWorkerTestContext(t, 1)
+	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
+		calls++
+		return doc, nil
+	}
+	doc := structuredreview.Document{Verdict: structuredreview.VerdictPass, Findings: []structuredreview.Finding{{Severity: "low"}}}
+	_, ran := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, synthesisResult{}, doc, &ciCheckConfig{})
+	assert.False(t, ran)
+	assert.Equal(t, 0, calls)
+}
+
 func TestCICheckUsesRepositoryAuthForDefaultBranchReviews(t *testing.T) {
 	tc, job, _, _ := setupCICheckCompletion(t, "high", "", nil)
 	_, err := tc.DB.ExecContext(t.Context(), `INSERT INTO ci_branch_reviews
@@ -496,34 +519,4 @@ func TestCICheckSandbox(t *testing.T) {
 	wp := &WorkerPool{cfgGetter: NewStaticConfig(config.DefaultConfig())}
 	got := wp.ciCheckSandbox(&storage.ReviewJob{ID: 42}, sandbox.Job{})
 	assert.Equal(t, "job-42", got.Label)
-}
-
-func TestCICheckUnlikely(t *testing.T) {
-	doc := structuredreview.Document{Summary: "Review", Verdict: "fail", Findings: []structuredreview.Finding{
-		{Severity: "high", Problem: "one", Fix: "fix"},
-		{Severity: "high", Problem: "two", Fix: "fix", Unlikely: true},
-		{Severity: "high", Problem: "three", Fix: "fix"},
-		{Severity: "high", Problem: "four", Fix: "fix"},
-	}}
-	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"},{"finding":2,"keep":true,"unlikely":false,"evidence":"e","reason":"r"},{"finding":3,"keep":true,"unlikely":true,"evidence":"","reason":""},{"finding":4,"keep":false,"unlikely":true,"evidence":"e","reason":"r"}]}`)
-	got, err := applyCICheck(doc, raw, io.Discard)
-	require.NoError(t, err)
-	require.Len(t, got.Findings, 3)
-	assert.True(t, got.Findings[0].Unlikely)
-	assert.True(t, got.Findings[1].Unlikely)
-	assert.False(t, got.Findings[2].Unlikely)
-	assert.Equal(t, structuredreview.CheckDropped, got.Check.Findings[3].Outcome)
-}
-
-func TestCICheckCompletionBelowSeverityThreshold(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	calls := 0
-	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
-		calls++
-		return doc, nil
-	}
-	doc := structuredreview.Document{Verdict: structuredreview.VerdictPass, Findings: []structuredreview.Finding{{Severity: "low"}}}
-	_, ran := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, synthesisResult{}, doc, &ciCheckConfig{})
-	assert.False(t, ran)
-	assert.Equal(t, 0, calls)
 }

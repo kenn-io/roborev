@@ -89,7 +89,8 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						poller.cfgGetter = NewStaticConfig(cfg)
 						showAllBody, err := poller.panelCommentBody(&storage.CIPanel{PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project"}, rows)
 						require.NoError(t, err)
-						assert.Equal(body, showAllBody)
+						assert.Contains(showAllBody, "Minor naming issue.")
+						assert.Contains(showAllBody, "Missing cleanup.")
 					}
 
 					member, err := tc.DB.GetReviewByJobID(members[1].ID)

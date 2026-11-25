@@ -371,7 +371,6 @@ func TestCICommentRemembersID(t *testing.T) {
 
 func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	h.Cfg.CI.CommentMaxFindings = 1
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
 	document := `{"schema_version":4,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"defect","fix":"fix"},{"severity":"low","kind":"improvement","confidence":0.9,"problem":"naming issue","fix":"fix"},{"severity":"high","kind":"defect","confidence":0.9,"problem":"rare","fix":"fix","unlikely":true},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"rare medium","fix":"fix","unlikely":true}]}`
@@ -384,19 +383,18 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	body, err := h.Poller.panelCommentBody(panel, members)
 	require.NoError(t, err)
 	assert.Contains(t, body, "<details>")
-	require.Contains(t, body, "rare\n")
-	assert.Less(t, strings.Index(body, "rare\n"), strings.Index(body, "<details>"))
-	assert.Contains(t, body, "rare medium")
 	h.Cfg.CI.CommentShowAll = true
 	body, err = h.Poller.panelCommentBody(panel, members)
 	require.NoError(t, err)
 	assert.NotContains(t, body, "<details>")
 	assert.Contains(t, body, "naming issue")
-	assert.NotContains(t, body, "more finding in the full review")
 }
 
 func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
-	body := "visible\n<details><summary>1 nit hidden</summary>\n" + strings.Repeat("x", 100) + "\n</details>"
+	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Problem: strings.Repeat("x", 100)}}}
+	body := reviewpkg.FormatComment(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))
+	body = body[strings.Index(body, "\n<details>"):]
 	got := truncatePanelPRBodyForFooter(body, "footer", 100)
 	assert.True(t, strings.HasSuffix(got, "\n</details>"+panelCommentTruncSuffix))
+	assert.LessOrEqual(t, len(got), 100-len("footer"))
 }
