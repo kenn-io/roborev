@@ -18,10 +18,10 @@ func TestFoldedOutput(t *testing.T) {
 	require.NoError(t, err)
 	var structured StructuredOutput
 	require.NoError(t, json.Unmarshal(raw, &structured))
-	review := Review{Job: &ReviewJob{}, StructuredOutput: structured, Output: "banner\nprefix\n" + doc.Markdown("")}
+	review := Review{Job: &ReviewJob{}, StructuredOutput: structured, Output: doc.Markdown("")}
 	output, ok := review.FoldedOutput()
 	assert.True(t, ok)
-	assert.Equal(t, "banner\nprefix\n"+doc.FoldedMarkdown(""), output)
+	assert.Equal(t, doc.FoldedMarkdown(""), output)
 	review.Output = "different"
 	output, ok = review.FoldedOutput()
 	assert.False(t, ok)

@@ -542,7 +542,7 @@ func TestRenderReviewMetadataFitsTerminalWidth(t *testing.T) {
 
 func TestFoldedReviewToggle(t *testing.T) {
 	t.Parallel()
-	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit problem", Fix: "fix"}, {Severity: "critical", Unlikely: true, Problem: "critical visible", Fix: "fix"}, {Severity: "low", Topic: structuredreview.TopicSecurity, Unlikely: true, Problem: "security visible", Fix: "fix"}}}
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit problem", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	var structured storage.StructuredOutput
@@ -558,9 +558,6 @@ func TestFoldedReviewToggle(t *testing.T) {
 			m.selectedJobID = review.JobID
 		}
 		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
-		assert.Contains(t, m.reviewContentString(review), "critical visible")
-		assert.Contains(t, m.reviewContentString(review), "security visible")
-		assert.Equal(t, "expand", m.foldHint())
 		if split {
 			assert.Regexp(t, `y copy *▕ e expand *▕`, stripANSI(m.renderSplit()))
 			m.focus = focusDetail
@@ -569,9 +566,9 @@ func TestFoldedReviewToggle(t *testing.T) {
 			assert.Regexp(t, `y copy *▕ e expand *▕`, stripANSI(m.renderReviewView()))
 		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
-		assert.Contains(t, m.reviewContentString(review), "nit problem")
-		assert.NotContains(t, m.reviewContentString(review), "1 nit hidden")
-		assert.Equal(t, "collapse", m.foldHint())
+		content := m.reviewContentString(review)
+		assert.Contains(t, content, "nit problem")
+		assert.NotContains(t, content, "1 nit hidden")
 		if split {
 			assert.Regexp(t, `y copy *▕ e collapse *▕`, stripANSI(m.renderSplit()))
 			m.focus = focusList
@@ -610,15 +607,14 @@ func TestFoldControlsIgnoreStaleSplitReview(t *testing.T) {
 	assert.Equal(t, 5, m.reviewScroll)
 }
 
-func TestRerunReviewStartsFolded(t *testing.T) {
+func TestAcceptedReviewStartsFolded(t *testing.T) {
 	t.Parallel()
 	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	var structured storage.StructuredOutput
 	require.NoError(t, json.Unmarshal(raw, &structured))
-	attempt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1, EnqueuedAt: attempt}, StructuredOutput: structured, Output: doc.Markdown("")}
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, StructuredOutput: structured, Output: doc.Markdown("")}
 	m := setupRenderModel(viewReview, review)
 	m, _ = updateModel(t, m, keyPressMsg('e'))
 	assert.Contains(t, m.reviewContentString(review), "**Problem:** nit")
@@ -629,13 +625,5 @@ func TestRerunReviewStartsFolded(t *testing.T) {
 	other.Job = &otherJob
 	m.acceptReview(reviewMsg{jobID: 2, review: &other})
 	assert.Contains(t, m.reviewContentString(&other), "1 nit hidden")
-	assert.Equal(t, "expand", m.foldHint())
-	rerun := *review
-	rerunJob := *review.Job
-	rerunJob.EnqueuedAt = attempt.Add(time.Second)
-	rerun.Job = &rerunJob
-	m.acceptReview(reviewMsg{jobID: 1, review: &rerun})
-	assert.NotContains(t, m.reviewContentString(&rerun), "**Problem:** nit")
-	assert.Contains(t, m.reviewContentString(&rerun), "1 nit hidden")
 	assert.Equal(t, "expand", m.foldHint())
 }

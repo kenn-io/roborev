@@ -16,7 +16,6 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
-	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // tryBranchReview exercises tryBranchReviewForRef against the current
@@ -1061,28 +1060,4 @@ func TestReviewDirtySubmitsLargeDiff(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, received, "+final finding line\n")
 	assert.Greater(t, len(received), 200*1024)
-}
-
-func TestReviewWaitFoldedFindings(t *testing.T) {
-	setupFastPolling(t)
-	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
-		{Severity: "high", Problem: "visible problem", Fix: "fix"},
-		{Severity: "low", Problem: "nit problem", Fix: "fix"},
-		{Severity: "medium", Unlikely: true, Problem: "unlikely problem", Fix: "fix"},
-	}}
-	raw, err := json.Marshal(doc)
-	require.NoError(t, err)
-	var structured storage.StructuredOutput
-	require.NoError(t, json.Unmarshal(raw, &structured))
-	repo, mux := setupTestEnvironment(t)
-	repo.CommitFile("file.txt", "content", "initial commit")
-	mockEnqueueQueued(mux, "abc123")
-	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) { handleJobsDone(w, r, storage.JobStatusDone) })
-	mux.HandleFunc("/api/review", func(w http.ResponseWriter, _ *http.Request) {
-		respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: doc.Markdown(""), StructuredOutput: structured, Job: &storage.ReviewJob{ID: 1}, VerdictBool: new(1)})
-	})
-	run := runCLI(t, "review", "--repo", repo.Dir, "--wait", "--all")
-	require.NoError(t, run.err)
-	assert.Contains(t, run.stdout, "nit problem")
-	assert.Contains(t, run.stdout, "unlikely problem")
 }

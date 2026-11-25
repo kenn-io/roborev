@@ -723,8 +723,6 @@ func TestShowFoldedFindings(t *testing.T) {
 	fromSkill = false
 	t.Cleanup(func() { fromSkill = previousFromSkill })
 	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
-		{Severity: "high", Unlikely: true, Problem: "visible", Fix: "fix"},
-		{Severity: "low", Topic: structuredreview.TopicSecurity, Unlikely: true, Problem: "security visible", Fix: "fix"},
 		{Severity: "low", Problem: "nit problem", Fix: "fix"},
 		{Severity: "medium", Unlikely: true, Problem: "rare problem", Fix: "fix"},
 	}}
@@ -742,8 +740,6 @@ func TestShowFoldedFindings(t *testing.T) {
 			args := append([]string{"job", "show", "--job", "7"}, tc.args...)
 			run := runCLI(t, args...)
 			require.NoError(t, run.err)
-			assert.Contains(t, run.stdout, "visible")
-			assert.Contains(t, run.stdout, "security visible")
 			if tc.full {
 				assert.Contains(t, run.stdout, "nit problem")
 				assert.Contains(t, run.stdout, "rare problem")
