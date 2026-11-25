@@ -59,7 +59,7 @@ func TestOmpReviewToolPermissions(t *testing.T) {
 
 // Before 19.2.0, --no-tools does not keep MCP, extension and custom tools
 // out of a run, so reviews refuse those releases. Fix and refine still run.
-func TestOmpReviewRequiresToolLimit(t *testing.T) {
+func TestOmpReviewRequiresReadOnlyVersion(t *testing.T) {
 	tests := []struct {
 		name    string
 		version string

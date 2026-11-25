@@ -103,7 +103,7 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	}
 	agentic := effectiveAgentic(ctx, a.Agentic)
 	if !agentic {
-		if err := ompCheckToolLimit(ctx, a.Command, repoPath); err != nil {
+		if err := ompCheckReadOnlyVersion(ctx, a.Command, repoPath); err != nil {
 			return "", err
 		}
 	}
@@ -173,23 +173,23 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	return result.Result, nil
 }
 
-// ompToolLimitVersion is the first omp release whose --no-tools limits a run
+// ompReadOnlyMinVersion is the first omp release whose --no-tools limits a run
 // to the tools --tools names. Earlier releases accept --no-tools but still
 // add MCP, extension and custom tools, and a user's tools.approval allow rule
 // lets them run under --approval-mode always-ask (omp 19.2.0 changelog,
 // Breaking Changes).
-const ompToolLimitVersion = "19.2.0"
+const ompReadOnlyMinVersion = "19.2.0"
 
 // ompCostCapExit is the exit status of an omp print-mode run that its cost
 // cap stopped (omp 19.2.1 modes/print-mode.ts).
 const ompCostCapExit = 3
 
-// ompCheckToolLimit returns an error unless command is an omp release that
-// honors --no-tools. omp prints its version as "omp/19.2.1". The probe runs
-// from repoPath before every read-only run, not from a cache keyed on the
-// command file: a wrapper script or a version manager shim can switch the
+// ompCheckReadOnlyVersion returns an error unless command is an omp release
+// that honors --no-tools. omp prints its version as "omp/19.2.1". The probe
+// runs from repoPath before every read-only run, not from a cache keyed on
+// the command file: a wrapper script or a version manager shim can switch the
 // omp behind an unchanged file, or pin a different omp per directory.
-func ompCheckToolLimit(ctx context.Context, command, repoPath string) error {
+func ompCheckReadOnlyVersion(ctx context.Context, command, repoPath string) error {
 	// The review run resolves a relative path such as ./bin/omp against its
 	// working directory, so the probe must too.
 	if !filepath.IsAbs(command) && strings.ContainsAny(command, `/\`) {
@@ -203,8 +203,8 @@ func ompCheckToolLimit(ctx context.Context, command, repoPath string) error {
 		return fmt.Errorf("check omp version: %w", procutil.WithStderr(err))
 	}
 	version := strings.TrimSpace(string(out))
-	if !versionAtLeast(strings.ReplaceAll(version, "/", " "), ompToolLimitVersion) {
-		return fmt.Errorf("omp reviews need omp %s or later, which limits a run to read-only tools, but %q reports %q; upgrade omp", ompToolLimitVersion, command, version)
+	if !versionAtLeast(strings.ReplaceAll(version, "/", " "), ompReadOnlyMinVersion) {
+		return fmt.Errorf("omp reviews need omp %s or later, which limits a run to read-only tools, but %q reports %q; upgrade omp", ompReadOnlyMinVersion, command, version)
 	}
 	return nil
 }
