@@ -4826,9 +4826,6 @@ components:
           type:
             - string
             - "null"
-        unlikely:
-          description: Whether only unusual timing or input reaches the finding.
-          type: boolean
       required:
         - severity
         - problem

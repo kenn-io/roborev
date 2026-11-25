@@ -268,6 +268,27 @@ func (r Document) MarshalJSON() ([]byte, error) {
 	return json.Marshal(plain(r))
 }
 
+// MarshalVersion3 encodes a document in the format used by export schema 2.
+func (r Document) MarshalVersion3() ([]byte, error) {
+	type plain Document
+	if r.Legacy == nil {
+		r.SchemaVersion = 3
+		r.Findings = slices.Clone(r.Findings)
+		for i := range r.Findings {
+			r.Findings[i].Unlikely = false
+		}
+		if r.Check != nil {
+			check := *r.Check
+			check.Findings = slices.Clone(check.Findings)
+			for i := range check.Findings {
+				check.Findings[i].Finding.Unlikely = false
+			}
+			r.Check = &check
+		}
+	}
+	return json.Marshal(plain(r))
+}
+
 // Finding is one problem a review reports.
 //
 // A finding from a reviewing agent has a Kind, an optional Topic, a

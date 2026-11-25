@@ -46,11 +46,12 @@ var (
 )
 
 type ExportReviewsOptions struct {
-	Profile    ExportProfile
-	Since      time.Time
-	Until      time.Time
-	Cursor     string
-	ClosedOnly bool
+	SchemaVersion int
+	Profile       ExportProfile
+	Since         time.Time
+	Until         time.Time
+	Cursor        string
+	ClosedOnly    bool
 	// UpdatedSince is an inclusive lower bound on the review's updated_at. It
 	// is a filter, not a window: ordering and the cursor stay on completed_at.
 	UpdatedSince time.Time
@@ -110,13 +111,16 @@ type ExportSubagent struct {
 
 // ExportDocument is a stored structured review document as the export emits
 // it. It always holds a document that passed structuredreview.Decode, and it
-// encodes as that document's canonical JSON in the current version rather
-// than the stored bytes.
+// encodes it at the requested export schema's document version.
 type ExportDocument struct {
 	structuredreview.Document
+	ExportSchemaVersion int `json:"-"`
 }
 
 func (d ExportDocument) MarshalJSON() ([]byte, error) {
+	if d.ExportSchemaVersion != 3 {
+		return d.Document.MarshalVersion3()
+	}
 	return json.Marshal(d.Document)
 }
 
@@ -157,7 +161,6 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 			"kind":       {Type: huma.TypeString, Nullable: true, Description: "defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents."},
 			"topic":      {Type: huma.TypeString, Nullable: true, Description: "One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents."},
 			"confidence": {Type: huma.TypeNumber, Format: "double", Nullable: true, Minimum: new(float64(0)), Maximum: new(float64(1)), Description: "The reviewer's estimate, from 0 to 1, that the problem is real. Null exactly when kind is null. Present on version 3 documents."},
-			"unlikely":   {Type: huma.TypeBoolean, Description: "Whether only unusual timing or input reaches the finding."},
 			"problem":    {Type: huma.TypeString},
 			"fix":        {Type: huma.TypeString},
 			"file":       {Type: huma.TypeString, Nullable: true, Description: "Path relative to the repository root, or null. Present on version 3 documents."},
@@ -346,6 +349,9 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 			break
 		}
 		review := row.toExportReview(opts.Profile, machineID)
+		if review.Document != nil {
+			review.Document.ExportSchemaVersion = opts.SchemaVersion
+		}
 		review.Experiments, err = db.GetExperimentAssignmentsForJobUUID(row.jobUUID)
 		if err != nil {
 			return ExportReviewsPage{}, err
@@ -354,6 +360,11 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 			review.Subagents, err = db.exportSubagents(row.panelRunUUID.V, opts.Profile)
 			if err != nil {
 				return ExportReviewsPage{}, err
+			}
+			for i := range review.Subagents {
+				if review.Subagents[i].Document != nil {
+					review.Subagents[i].Document.ExportSchemaVersion = opts.SchemaVersion
+				}
 			}
 		}
 		page.Reviews = append(page.Reviews, review)

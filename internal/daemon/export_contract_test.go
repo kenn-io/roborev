@@ -222,6 +222,11 @@ func TestHumaExportReviewsSchemaVersionNegotiation(t *testing.T) {
 			assert.Equal(t, int64(2), assertJSONInt64(t, raw, "schema_version"))
 		})
 	}
+	rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews?schema_version=3", nil)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	var raw map[string]jsontext.Value
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
+	assert.Equal(t, int64(3), assertJSONInt64(t, raw, "schema_version"))
 
 	for _, tc := range []struct {
 		path    string
@@ -229,7 +234,7 @@ func TestHumaExportReviewsSchemaVersionNegotiation(t *testing.T) {
 	}{
 		{path: "/api/export/reviews?schema_version=0", wantMsg: "unsupported export schema_version"},
 		{path: "/api/export/reviews?schema_version=1", wantMsg: "superset of version 1"},
-		{path: "/api/export/reviews?schema_version=3", wantMsg: "unsupported export schema_version"},
+		{path: "/api/export/reviews?schema_version=4", wantMsg: "unsupported export schema_version"},
 		{path: "/api/export/reviews?schema_version=99", wantMsg: "unsupported export schema_version"},
 		{path: "/api/export/reviews?schema_version=-1", wantMsg: "unsupported export schema_version"},
 		{path: "/api/export/reviews?schema_version=abc", wantMsg: "invalid export schema_version"},
@@ -344,6 +349,7 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 				Kind:       "defect",
 				Topic:      "security",
 				Confidence: 0.85,
+				Unlikely:   true,
 				Problem:    "Missing validation.",
 				Fix:        "Validate input.",
 				File:       "auth/login.go",
@@ -357,6 +363,14 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 				Fix:      "Update comment wording.",
 			},
 		},
+	}
+	memberBDoc.Check = &structuredreview.Check{
+		Status: structuredreview.CheckCompleted,
+		Findings: []structuredreview.CheckedFinding{{
+			Outcome:  structuredreview.CheckKept,
+			Finding:  memberBDoc.Findings[0],
+			Verdicts: []structuredreview.CheckVerdict{},
+		}},
 	}
 	synthDoc := structuredreview.Document{
 		SchemaVersion: structuredreview.SchemaVersion,
@@ -644,6 +658,10 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 				require.Len(t, findings, 2)
 
 				populated := findings[0]
+				assert.NotContains(populated, "unlikely")
+				checked := assertJSONArray(t, assertJSONObject(t, memberBDocObj, "check"), "findings")
+				require.Len(t, checked, 1)
+				assert.NotContains(assertJSONObject(t, checked[0], "finding"), "unlikely")
 				for _, key := range exportReviewsV2FindingKeys {
 					requireJSONKey(t, populated, key)
 				}
@@ -705,6 +723,32 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 			assertJSONNull(t, noDoc, "document")
 		})
 	}
+	t.Run("schema 3 includes unlikely", func(t *testing.T) {
+		rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews?schema_version=3", nil)
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		var header map[string]jsontext.Value
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &header))
+		var doc map[string]jsontext.Value
+		for _, review := range assertJSONArray(t, header, "reviews") {
+			if assertJSONString(t, review, "review_id") != synthStoredReview.UUID.String() {
+				continue
+			}
+			for _, sub := range assertJSONArray(t, review, "subagents") {
+				if assertJSONString(t, sub, "name") != "reviewer-b" {
+					continue
+				}
+				doc = assertJSONObject(t, sub, "document")
+			}
+		}
+		require.NotNil(t, doc)
+		assert.Equal(t, int64(4), assertJSONInt64(t, doc, "schema_version"))
+		findings := assertJSONArray(t, doc, "findings")
+		require.NotEmpty(t, findings)
+		assert.True(t, assertJSONBool(t, findings[0], "unlikely"))
+		checked := assertJSONArray(t, assertJSONObject(t, doc, "check"), "findings")
+		require.Len(t, checked, 1)
+		assert.True(t, assertJSONBool(t, assertJSONObject(t, checked[0], "finding"), "unlikely"))
+	})
 
 	t.Run("window bounds pagination and empty page", func(t *testing.T) {
 		assert := assert.New(t)

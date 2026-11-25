@@ -126,10 +126,10 @@ func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
 }
 
 func TestExportReviewsCmdKeepsDocumentAsJSONObject(t *testing.T) {
-	// The daemon exports every document in version 4. One finding is from a
+	// The daemon exports every document in version 3. One finding is from a
 	// reviewing agent; the other has no kind and no location, as goal reviews
 	// and converted historical reviews may.
-	const document = `{"schema_version":4,"summary":"Two problems.","verdict":"fail","findings":[` +
+	const document = `{"schema_version":3,"summary":"Two problems.","verdict":"fail","findings":[` +
 		`{"severity":"high","kind":"defect","topic":"security","confidence":0.8,"problem":"The token is logged.","fix":"Redact the token.",` +
 		`"file":"auth/login.go","start_line":42,"end_line":42,"location":"auth/login.go:42"},` +
 		`{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"Typo in a comment.","fix":"Fix the spelling.",` +
