@@ -4,14 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/testutil"
-	"go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
@@ -38,10 +36,7 @@ func TestMigrateReviewEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, review.Output, unchanged.Output)
 	body := []byte(fmt.Sprintf(`{"review_id":%d,"document":{"schema_version":1,"summary":"Converted.","findings":[{"severity":"high","problem":"The write loses data.","fix":"Keep the old file until rename.","location":null}]}}`, review.ID))
-	server := httptest.NewServer(srv.httpServer.Handler)
-	defer server.Close()
-	api, err := client.New(server.URL)
-	require.NoError(t, err)
+	api := newHandlerAPIClient(t, srv.httpServer.Handler)
 	var request generated.MigrateReviewBody
 	require.NoError(t, json.Unmarshal(body, &request))
 	accepted, err := api.MigrateReview(t.Context(), &generated.MigrateReviewRequestOptions{Body: &request})
