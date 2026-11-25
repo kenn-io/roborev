@@ -542,7 +542,6 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 			})
 		}
 	})
-
 }
 
 func TestScheduledCancellationMatchesReviewDemand(t *testing.T) {

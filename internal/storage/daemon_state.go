@@ -131,7 +131,8 @@ func (db *DB) AnalysisScheduleRetry(ctx context.Context, repoID int64) ([]Analys
 
 func analysisScheduleRetry(ctx context.Context, db interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, repoID int64) ([]AnalysisScheduleEntry, error) {
+}, repoID int64,
+) ([]AnalysisScheduleEntry, error) {
 	var value string
 	err := db.QueryRowContext(ctx, `SELECT value FROM daemon_state WHERE key = ?`, fmt.Sprintf("analysis_schedule_retry:%d", repoID)).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -158,7 +159,8 @@ func (db *DB) SetAnalysisScheduleRetry(ctx context.Context, repoID int64, entrie
 
 func setAnalysisScheduleRetry(ctx context.Context, db interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}, repoID int64, entries []AnalysisScheduleEntry) error {
+}, repoID int64, entries []AnalysisScheduleEntry,
+) error {
 	var encoded []analysisScheduleEntryJSON
 	for _, entry := range entries {
 		files, err := encodeAnalysisFiles(entry.Files)
