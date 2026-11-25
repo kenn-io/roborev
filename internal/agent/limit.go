@@ -100,11 +100,9 @@ var defaultLimitRules = []limitRule{
 	// Factory Droid subscription allowance used up (HTTP 403), captured from a
 	// real droid failure. It lasts until the next billing period.
 	{Agents: []string{"droid"}, Substring: "allowance for this period is used up", Kind: LimitKindQuota},
-	// omp's session cost cap (--max-cost / session.maxCost) stopped the run;
-	// wording from omp 19.2.1 session/cost-gate.ts. A retry starts a new
-	// session that can spend up to the cap again. The omp adapter also
-	// attaches this classification for callers that read it from the error.
-	{Agents: []string{"omp"}, Substring: "cost cap reached", Kind: LimitKindPermanent},
+	// omp stopped at its cost cap (--max-cost / session.maxCost). A retry
+	// starts a new session that can spend up to the cap again.
+	{Agents: []string{"omp"}, Substring: ompCostCapStopped, Kind: LimitKindPermanent},
 	{Agents: []string{"codex"}, Substring: "stream disconnected before completion: access denied", Kind: LimitKindPermanent},
 	// Codex sent no credentials (401). Retrying cannot fix a missing login.
 	{Agents: []string{"codex"}, Substring: "missing bearer or basic authentication", Kind: LimitKindPermanent},

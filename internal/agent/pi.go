@@ -657,7 +657,6 @@ func parsePiJSON(r io.Reader) (piStream, error) {
 	return stream, nil
 }
 
-// observe records one event of a Pi --mode json event stream.
 func (s *piStream) observe(line string) error {
 	var ev struct {
 		Type    string `json:"type"`

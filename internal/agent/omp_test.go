@@ -45,7 +45,7 @@ func TestOmpReviewToolPermissions(t *testing.T) {
 			assert.Equal("anthropic/claude-sonnet-4-5", argAfter(args, "--model"))
 			assert.Equal(tt.thinking, argAfter(args, "--thinking"))
 			if tt.readOnly {
-				assert.Equal(ompReadOnlyTools, argAfter(args, "--tools"))
+				assert.Equal("read,grep,glob", argAfter(args, "--tools"))
 				assert.Contains(args, "--no-tools")
 				assert.Equal("always-ask", argAfter(args, "--approval-mode"))
 			} else {
@@ -134,11 +134,13 @@ func TestOmpReviewRelativeCommand(t *testing.T) {
 func TestOmpReviewPromptAndOutput(t *testing.T) {
 	command := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; --version) echo `+ompVersionOutput+`; exit 0;; esac
+found=
 for arg in "$@"; do
   case "$arg" in
-    @*) test "$(cat "${arg#@}")" = 'prompt body' || exit 2 ;;
+    @*) test "$(cat "${arg#@}")" = 'prompt body' || exit 2; found=1 ;;
   esac
 done
+test -n "$found" || exit 4
 test -z "$(cat)" || exit 3
 cat <<'EOF'
 `+ompReviewStream+`
@@ -159,9 +161,7 @@ echo 'status message' >&2
 func TestOmpReviewReportsProviderError(t *testing.T) {
 	mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: []string{piBedrockImageError}, ExitCode: 1})
 	_, err := NewOmpAgent(mock.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "This model doesn't support the image field")
-	assert.Equal(t, LimitKindPermanent, ClassifyLimit("omp", err.Error()).Kind)
+	require.ErrorContains(t, err, "This model doesn't support the image field")
 }
 
 // A cost cap or an abort ends the run with a non-zero exit. JSON mode reports
@@ -182,21 +182,21 @@ func TestOmpReviewReportsStopReason(t *testing.T) {
 			name:     "cost cap",
 			exitCode: 3,
 			stdout:   []string{costCapNotice},
-			want:     "exit status 3: " + costCap,
+			want:     ompCostCapStopped + " (exit status 3): " + costCap,
 			kind:     LimitKindPermanent,
 		},
 		{
 			name:     "cost cap after a provider error",
 			exitCode: 3,
 			stdout:   []string{piBedrockImageError, costCapNotice},
-			want:     "exit status 3: " + costCap,
+			want:     ompCostCapStopped + " (exit status 3): " + costCap,
 			kind:     LimitKindPermanent,
 		},
 		{
 			name:     "cost cap without a notice",
 			exitCode: 3,
 			stdout:   []string{`{"type":"session","id":"omp-session-1"}`},
-			want:     "exit status 3: cost cap reached",
+			want:     ompCostCapStopped + " (exit status 3)",
 			kind:     LimitKindPermanent,
 		},
 		{
@@ -217,10 +217,8 @@ func TestOmpReviewReportsStopReason(t *testing.T) {
 			mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: tt.stdout, ExitCode: tt.exitCode})
 			_, err := NewOmpAgent(mock.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 			require.ErrorContains(t, err, tt.want)
-			classification, _ := LimitClassificationFromError(err)
-			assert.Equal(t, tt.kind, classification.Kind)
-			// Synthesis and roborev fix classify by the error text alone.
-			assert.Equal(t, tt.kind, ClassifyLimit("omp", err.Error()).Kind)
+			// The worker prefixes the error before it classifies the text.
+			assert.Equal(t, tt.kind, ClassifyLimit("omp", "agent: "+err.Error()).Kind)
 		})
 	}
 }

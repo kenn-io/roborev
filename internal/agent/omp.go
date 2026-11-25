@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"go.kenn.io/roborev/internal/procutil"
@@ -19,18 +18,31 @@ import (
 // search that calls a second model, so glob takes its place.
 const ompReadOnlyTools = "read,grep,glob"
 
+// ompReadOnlyMinVersion is the first omp release whose --no-tools limits a run
+// to the tools --tools names. Earlier releases accept --no-tools but still
+// add MCP, extension and custom tools, and a user's tools.approval allow rule
+// lets them run under --approval-mode always-ask (omp 19.2.0 changelog,
+// Breaking Changes).
+const ompReadOnlyMinVersion = "19.2.0"
+
+// ompCostCapExit is the exit status of an omp print-mode run that its cost
+// cap stopped (omp 19.2.1 modes/print-mode.ts).
+const ompCostCapExit = 3
+
+// ompCostCapStopped starts the error of a run that omp's cost cap stopped;
+// defaultLimitRules matches it.
+const ompCostCapStopped = "omp stopped at its cost cap"
+
 // OmpAgent runs code reviews using the omp (oh-my-pi) CLI. omp is a fork of
-// Pi that writes the same --mode json event stream, so it reuses Pi's parser.
-// It is a separate agent because its tools, flags, exit codes and session
-// store differ from Pi's.
+// Pi that writes the same --mode json event stream. It is a separate agent
+// because its tools, flags, exit codes and session store differ from Pi's.
 type OmpAgent struct {
-	Command   string         // The omp command to run (default: "omp")
-	Model     string         // Model to use (bare name or provider/model)
-	Reasoning ReasoningLevel // Reasoning level mapped to --thinking
-	Agentic   bool           // Agentic mode
+	Command   string
+	Model     string // bare name (fuzzy match) or provider/model (exact)
+	Reasoning ReasoningLevel
+	Agentic   bool
 }
 
-// NewOmpAgent creates a new omp agent
 func NewOmpAgent(command string) *OmpAgent {
 	if command == "" {
 		command = "omp"
@@ -89,7 +101,6 @@ func (a *OmpAgent) CommandLine() string {
 	return a.Command + " " + strings.Join(a.buildArgs(a.Agentic || AllowUnsafeAgents()), " ")
 }
 
-// PlanningCommandLine returns omp's representative read-only planning command.
 func (a *OmpAgent) PlanningCommandLine() string {
 	return a.Command + " " + strings.Join(a.buildArgs(false), " ")
 }
@@ -107,8 +118,8 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 			return "", err
 		}
 	}
-	// A file keeps large prompts off the command line. omp reads a non-TTY
-	// stdin as prompt text, so stdin stays empty.
+	// omp reads a non-TTY stdin as prompt text, so the prompt goes in a file
+	// and stdin stays empty.
 	promptPath, cleanup, err := createPromptFile("omp", prompt)
 	if err != nil {
 		return "", err
@@ -117,19 +128,12 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	args := append(a.buildArgs(agentic),
 		"@"+promptPath, "Please follow the instructions in the attached file to review the code.")
 
-	var stream piStream
-	var stopReason string
+	var stream ompStream
 	result, err := runStreamingCLI(ctx, streamingCLISpec{
 		Name: "omp", Command: a.Command, Args: args,
 		Dir: repoPath, Output: output, StreamStderr: true, DrainStdout: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			err := scanStreamJSONLines(r, sw, func(line string) error {
-				if reason := ompStopReason(line); reason != "" {
-					stopReason = reason
-				}
-				return stream.observe(line)
-			})
-			if err != nil {
+			if err := scanStreamJSONLines(r, sw, stream.observe); err != nil {
 				return stream.Text, fmt.Errorf("read omp stream: %w", err)
 			}
 			return stream.Text, nil
@@ -138,31 +142,8 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	if err != nil {
 		return "", err
 	}
-	// omp's cost cap (--max-cost / session.maxCost) ends a run with its own
-	// exit status, whatever the stream reported before it. A retry starts a
-	// new session that can spend up to the cap again, so the job fails over.
-	// Callers that classify by error text alone match "cost cap reached"
-	// through the omp rule in defaultLimitRules.
-	if exitErr, ok := errors.AsType[*exec.ExitError](result.WaitErr); ok && exitErr.ExitCode() == ompCostCapExit {
-		reason := stopReason
-		if reason == "" {
-			reason = "cost cap reached"
-		}
-		return "", WithLimitClassification(fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, reason, result.Stderr),
-			LimitClassification{Kind: LimitKindPermanent, Agent: "omp", Message: reason})
-	}
-	// omp exits 1 when the provider ends the run with an error, and its JSON
-	// mode reports the provider's message only in the event stream.
-	if stream.Error != "" {
-		return "", fmt.Errorf("omp provider error: %s", stream.Error)
-	}
-	if result.WaitErr != nil {
-		// An abort also ends the run with a non-zero exit, and JSON mode
-		// reports why only in the event stream.
-		if stopReason != "" {
-			return "", fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, stopReason, result.Stderr)
-		}
-		return "", formatStreamingCLIWaitError("omp", result, result.Stderr)
+	if err := ompRunError(result, stream); err != nil {
+		return "", err
 	}
 	if result.ParseErr != nil {
 		return result.Result, result.ParseErr
@@ -173,44 +154,43 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	return result.Result, nil
 }
 
-// ompReadOnlyMinVersion is the first omp release whose --no-tools limits a run
-// to the tools --tools names. Earlier releases accept --no-tools but still
-// add MCP, extension and custom tools, and a user's tools.approval allow rule
-// lets them run under --approval-mode always-ask (omp 19.2.0 changelog,
-// Breaking Changes).
-const ompReadOnlyMinVersion = "19.2.0"
-
-// ompCostCapExit is the exit status of an omp print-mode run that its cost
-// cap stopped (omp 19.2.1 modes/print-mode.ts).
-const ompCostCapExit = 3
-
-// ompCheckReadOnlyVersion returns an error unless command is an omp release
-// that honors --no-tools. omp prints its version as "omp/19.2.1". The probe
-// runs from repoPath before every read-only run, not from a cache keyed on
-// the command file: a wrapper script or a version manager shim can switch the
-// omp behind an unchanged file, or pin a different omp per directory.
-func ompCheckReadOnlyVersion(ctx context.Context, command, repoPath string) error {
-	// The review run resolves a relative path such as ./bin/omp against its
-	// working directory, so the probe must too.
-	if !filepath.IsAbs(command) && strings.ContainsAny(command, `/\`) {
-		command = filepath.Join(repoPath, command)
+// ompRunError reports why an omp run failed. JSON mode writes the provider's
+// message and the reason for a stop only to the event stream.
+func ompRunError(result streamingCLIResult, stream ompStream) error {
+	exitErr, exited := errors.AsType[*exec.ExitError](result.WaitErr)
+	switch {
+	case exited && exitErr.ExitCode() == ompCostCapExit:
+		// The cost cap's exit status outranks a provider error earlier in the
+		// stream. A retry starts a new session that can spend up to the cap
+		// again, so the error must classify as permanent.
+		return fmt.Errorf("%s (%w): %s\nstderr: %s", ompCostCapStopped, result.WaitErr, stream.StopReason, result.Stderr)
+	case stream.Error != "":
+		return fmt.Errorf("omp provider error: %s", stream.Error)
+	case result.WaitErr == nil:
+		return nil
+	case stream.StopReason != "":
+		return fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, stream.StopReason, result.Stderr)
+	default:
+		return formatStreamingCLIWaitError("omp", result, result.Stderr)
 	}
-	cmd := exec.CommandContext(ctx, command, "--version")
-	configureCapabilityProbe(ctx, cmd)
-	cmd.Dir = repoPath
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("check omp version: %w", procutil.WithStderr(err))
-	}
-	version := strings.TrimSpace(string(out))
-	if !versionAtLeast(strings.ReplaceAll(version, "/", " "), ompReadOnlyMinVersion) {
-		return fmt.Errorf("omp reviews need omp %s or later, which limits a run to read-only tools, but %q reports %q; upgrade omp", ompReadOnlyMinVersion, command, version)
-	}
-	return nil
 }
 
-// ompStopReason returns why omp stopped a run early when line reports it: the
-// cost gate's refusal, or the error message of an aborted assistant message.
+// ompStream is what an omp --mode json event stream reports: Pi's events, and
+// why omp stopped a run early.
+type ompStream struct {
+	piStream
+	StopReason string
+}
+
+func (s *ompStream) observe(line string) error {
+	if reason := ompStopReason(line); reason != "" {
+		s.StopReason = reason
+	}
+	return s.piStream.observe(line)
+}
+
+// ompStopReason returns the cost gate's refusal or an aborted assistant
+// message's error when line reports one.
 func ompStopReason(line string) string {
 	if !strings.Contains(line, `"cost-gate"`) && !strings.Contains(line, `"aborted"`) {
 		return ""
@@ -241,6 +221,27 @@ func ompStopReason(line string) string {
 		}
 	}
 	return ""
+}
+
+// ompCheckReadOnlyVersion returns an error unless command is an omp release
+// that honors --no-tools. omp prints its version as "omp/19.2.1". The probe
+// runs before every read-only run, set up like the run itself, not from a
+// cache keyed on the command file: a wrapper script or a version manager shim
+// can switch the omp behind an unchanged file, or pin a different omp per
+// directory.
+func ompCheckReadOnlyVersion(ctx context.Context, command, repoPath string) error {
+	cmd := exec.CommandContext(ctx, command, "--version")
+	cmd.Dir = repoPath
+	configureSubprocess(ctx, cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("check omp version: %w", procutil.WithStderr(err))
+	}
+	version := strings.TrimSpace(string(out))
+	if !versionAtLeast(strings.ReplaceAll(version, "/", " "), ompReadOnlyMinVersion) {
+		return fmt.Errorf("omp reviews need omp %s or later, which limits a run to read-only tools, but %q reports %q; upgrade omp", ompReadOnlyMinVersion, command, version)
+	}
+	return nil
 }
 
 func init() { Register(NewOmpAgent("")) }
