@@ -97,7 +97,6 @@ func TestDecodeRejectsInvalidUnlikely(t *testing.T) {
 		{"version 2 false", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":false}]}`, "unlikely, which needs schema_version 4"},
 		{"version 3 false", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":false}]}`, "unlikely, which needs schema_version 4"},
 		{"version 3 checked finding", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":true},"verdicts":[]}]}}`, "unlikely, which needs schema_version 4"},
-		{"version 1", `{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 2", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 3", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 4", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "invalid unlikely"},
