@@ -411,7 +411,7 @@ func TestLocalReviewSkipsWhenNothingIsReviewable(t *testing.T) {
 	assert.NotContains(t, out.String(), "No issues found")
 }
 
-func TestLocalReviewFoldsMinorFindings(t *testing.T) {
+func TestLocalReviewShowsMinorFindings(t *testing.T) {
 	previousFromSkill := fromSkill
 	fromSkill = false
 	t.Cleanup(func() { fromSkill = previousFromSkill })
@@ -425,30 +425,36 @@ func TestLocalReviewFoldsMinorFindings(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
-		full bool
 	}{
-		{"folded", []string{"--wait"}, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--wait", "--from-skill"}, true},
+		{"default", []string{"--wait"}}, {"all", []string{"--all"}}, {"skill", []string{"--wait", "--from-skill"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"review", "--local", "--repo", repo.Root, "--agent", "test"}, tc.args...)
 			run := runCLI(t, args...)
 			require.NoError(t, run.err)
 			assert.Contains(t, run.stdout, "visible problem")
-			if tc.full {
-				assert.Contains(t, run.stdout, "nit problem")
-				assert.Contains(t, run.stdout, "unlikely problem")
-				assert.NotContains(t, run.stdout, "hidden")
-			} else {
-				assert.NotContains(t, run.stdout, "nit problem")
-				assert.NotContains(t, run.stdout, "unlikely problem")
-				assert.Contains(t, run.stdout, "1 low-severity finding and 1 unlikely finding hidden")
-				assert.Contains(t, run.stdout, "Run with --all to list them.")
-			}
+			assert.Contains(t, run.stdout, "nit problem")
+			assert.Contains(t, run.stdout, "unlikely problem")
+			assert.NotContains(t, run.stdout, "hidden")
 		})
 	}
 }
 
-func TestLocalReviewReportsBufferedAgentOutputOnError(t *testing.T) {
+func TestLocalReviewStreamsProgress(t *testing.T) {
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.SetOut(&out)
+	a := &agent.FakeAgent{NameStr: "progress", ReviewFn: func(_ context.Context, _, _, _ string, stream io.Writer) (string, error) {
+		_, err := io.WriteString(stream, "reading files\n")
+		require.NoError(t, err)
+		assert.Contains(t, out.String(), "reading files")
+		return `{"schema_version":4,"verdict":"pass","summary":"Done.","findings":[]}`, nil
+	}}
+	require.NoError(t, runLocalReviewAgent(cmd, a, t.TempDir(), "HEAD", "prompt", "", "", nil, &out, false))
+}
+
+func TestLocalReviewReportsAgentOutputOnError(t *testing.T) {
 	previousFromSkill := fromSkill
 	fromSkill = false
 	t.Cleanup(func() { fromSkill = previousFromSkill })
@@ -461,5 +467,5 @@ func TestLocalReviewReportsBufferedAgentOutputOnError(t *testing.T) {
 	agent.RegisterForTest(t, a)
 	run := runCLI(t, "review", "--local", "--wait", "--repo", repo.Root, "--agent", a.Name())
 	require.Error(t, run.err)
-	assert.Contains(t, run.stderr, "agent diagnostic")
+	assert.Contains(t, run.stdout, "agent diagnostic")
 }

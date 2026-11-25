@@ -770,15 +770,11 @@ func (f Finding) Folds() (nit, unlikely bool) {
 
 // FoldLabel describes the hidden findings.
 func FoldLabel(nits, unlikely int) string {
-	return foldLabel(nits, unlikely, "nit", "nits")
-}
-
-func foldLabel(nits, unlikely int, lowOne, lowMany string) string {
 	var labels []string
 	for _, group := range []struct {
 		n         int
 		one, many string
-	}{{nits, lowOne, lowMany}, {unlikely, "unlikely finding", "unlikely findings"}} {
+	}{{nits, "nit", "nits"}, {unlikely, "unlikely finding", "unlikely findings"}} {
 		if group.n == 1 {
 			labels = append(labels, "1 "+group.one)
 		} else if group.n > 1 {
@@ -851,7 +847,7 @@ func (r Document) markdown(minSeverity string, fold bool) string {
 			fmt.Fprintf(&out, "\n**Reported by:** %s\n", strings.Join(labels, ", "))
 		}
 	}
-	if label := foldLabel(nits, unlikely, "low-severity finding", "low-severity findings"); label != "" {
+	if label := FoldLabel(nits, unlikely); label != "" {
 		if shown > 0 {
 			out.WriteString("\n")
 		} else {

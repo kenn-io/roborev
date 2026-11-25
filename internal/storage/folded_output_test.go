@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"encoding/json/v2"
 	"testing"
 
@@ -29,4 +30,16 @@ func TestFoldedOutput(t *testing.T) {
 	output, ok = review.FoldedOutput()
 	assert.False(t, ok)
 	assert.Equal(t, "different", output)
+}
+
+func TestFoldedOutputHydratedSynthesis(t *testing.T) {
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	review := Review{Job: &ReviewJob{JobType: JobTypeSynthesis}}
+	fields := reviewScanFields{JobType: JobTypeSynthesis, NonVoting: 1, OutputPrefix: "Panel summary\n\n", StructuredOutput: sql.NullString{String: string(raw), Valid: true}}
+	require.NoError(t, applyReviewScan(&review, fields))
+	output, ok := review.FoldedOutput()
+	assert.True(t, ok)
+	assert.Equal(t, NonVotingBanner+fields.OutputPrefix+doc.FoldedMarkdown(""), output)
 }
