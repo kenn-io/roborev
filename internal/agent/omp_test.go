@@ -119,6 +119,18 @@ exit 1
 	assert.NotContains(t, err.Error(), "upgrade omp")
 }
 
+// A relative omp_cmd such as ./bin/omp runs from the repository, so the
+// version check must find the same file there.
+func TestOmpReviewRelativeCommand(t *testing.T) {
+	mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: strings.Split(ompReviewStream, "\n")})
+	repo := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(repo, "bin"), 0o755))
+	require.NoError(t, os.Symlink(mock.CmdPath, filepath.Join(repo, "bin", "omp")))
+	result, err := NewOmpAgent("./bin/omp").Review(t.Context(), repo, "HEAD", "review", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "No issues found.", result)
+}
+
 func TestOmpReviewPromptAndOutput(t *testing.T) {
 	command := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; --version) echo `+ompVersionOutput+`; exit 0;; esac
@@ -152,8 +164,8 @@ func TestOmpReviewReportsProviderError(t *testing.T) {
 	assert.Equal(t, LimitKindPermanent, ClassifyLimit("omp", err.Error()).Kind)
 }
 
-// A cost cap or an abort ends the run with a non-zero exit, and JSON mode
-// reports why only in the event stream.
+// A cost cap or an abort ends the run with a non-zero exit. JSON mode reports
+// why only in the event stream; a cost cap also has its own exit status.
 func TestOmpReviewReportsStopReason(t *testing.T) {
 	const costCap = "Cost cap reached: this session spent $1.02 of its $1.00 cap (--max-cost / session.maxCost), so the next model request was not sent."
 	costCapNotice := `{"type":"notice","level":"error","message":"` + costCap + `","source":"cost-gate"}`
@@ -207,6 +219,8 @@ func TestOmpReviewReportsStopReason(t *testing.T) {
 			require.ErrorContains(t, err, tt.want)
 			classification, _ := LimitClassificationFromError(err)
 			assert.Equal(t, tt.kind, classification.Kind)
+			// Synthesis and roborev fix classify by the error text alone.
+			assert.Equal(t, tt.kind, ClassifyLimit("omp", err.Error()).Kind)
 		})
 	}
 }

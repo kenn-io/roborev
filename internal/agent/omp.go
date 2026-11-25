@@ -141,12 +141,14 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	// omp's cost cap (--max-cost / session.maxCost) ends a run with its own
 	// exit status, whatever the stream reported before it. A retry starts a
 	// new session that can spend up to the cap again, so the job fails over.
+	// Callers that classify by error text alone match "cost cap reached"
+	// through the omp rule in defaultLimitRules.
 	if exitErr, ok := errors.AsType[*exec.ExitError](result.WaitErr); ok && exitErr.ExitCode() == ompCostCapExit {
 		reason := stopReason
 		if reason == "" {
 			reason = "cost cap reached"
 		}
-		return "", WithLimitClassification(fmt.Errorf("omp failed: %w: %s", result.WaitErr, reason),
+		return "", WithLimitClassification(fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, reason, result.Stderr),
 			LimitClassification{Kind: LimitKindPermanent, Agent: "omp", Message: reason})
 	}
 	// omp exits 1 when the provider ends the run with an error, and its JSON
