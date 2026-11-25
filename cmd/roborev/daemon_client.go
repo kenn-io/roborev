@@ -329,7 +329,7 @@ func reviewShowCommand(jobID int64) string {
 func formatFoldedNote(output, hint string, out io.Writer) string {
 	output = strings.TrimSuffix(output, "\n")
 	index := strings.LastIndex(output, "\n") + 1
-	note := output[index:] + ". " + hint
+	note := output[index:] + ".\n" + hint
 	if streamfmt.WriterIsTerminal(out) && streamfmt.ResolveColorProfile() != termenv.Ascii {
 		note = termenv.String(note).Faint().String()
 	}

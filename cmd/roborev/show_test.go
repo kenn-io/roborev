@@ -759,8 +759,7 @@ func TestShowFoldedFindings(t *testing.T) {
 			} else {
 				assert.NotContains(t, run.stdout, "nit problem")
 				assert.NotContains(t, run.stdout, "rare problem")
-				assert.Contains(t, run.stdout, "1 low-severity finding and 1 unlikely finding hidden. Run roborev job show --job 7 --all to list them.")
-				assert.Contains(t, run.stdout, "Run roborev job show --job 7 --all to list them.")
+				assert.Contains(t, run.stdout, "1 low-severity finding and 1 unlikely finding hidden.\nRun roborev job show --job 7 --all to list them.")
 			}
 		})
 	}
