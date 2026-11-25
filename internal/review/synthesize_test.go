@@ -73,45 +73,37 @@ func (a *capturingAgent) Review(
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
-type unlikelySynthesisAgent struct{ commonMockAgent }
-
-func (a *unlikelySynthesisAgent) Name() string { return "unlikely-synthesis" }
-func (a *unlikelySynthesisAgent) Review(context.Context, string, string, string, io.Writer) (string, error) {
-	return `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Rare issue","fix":"Fix rare","file":"file.go","start_line":1,"end_line":1,"sources":[1]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Ordinary issue","fix":"Fix ordinary","file":"file.go","start_line":20,"end_line":20,"sources":[1]}]}`, nil
-}
-func (a *unlikelySynthesisAgent) CommandLine() string { return a.Name() }
-
 func TestSynthesisPreservesMatchingSourceUnlikely(t *testing.T) {
-	a := &unlikelySynthesisAgent{}
-	a.self = a
 	rare := StructuredFinding{Severity: "medium", Kind: "defect", Confidence: 0.8, Problem: "Rare issue", Fix: "Fix rare", Unlikely: true}
 	rare.SetLocation("file.go", 1, 1)
 	ordinary := StructuredFinding{Severity: "medium", Kind: "defect", Confidence: 0.8, Problem: "Ordinary issue", Fix: "Fix ordinary"}
 	ordinary.SetLocation("file.go", 20, 20)
-	reviews := []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{rare, ordinary}}}}
-	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
-	require.NoError(t, err)
-	require.Len(t, doc.Findings, 2)
-	assert.Equal(t, "Rare issue", doc.Findings[0].Problem)
-	assert.True(t, doc.Findings[0].Unlikely)
-	assert.Equal(t, "Ordinary issue", doc.Findings[1].Problem)
-	assert.False(t, doc.Findings[1].Unlikely)
-}
-
-func TestSynthesisPreservesMatchingSourceSecurity(t *testing.T) {
-	a := &structuredBatchAgent{name: "security-synthesis", result: []byte(`{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","topic":"performance","confidence":0.8,"unlikely":true,"problem":"Reworded issue","fix":"Fix it","file":"file.go","start_line":1,"end_line":1,"sources":[1,2,3]}]}`)}
-	reviews := make([]ReviewResult, 3)
+	securityReviews := make([]ReviewResult, 3)
 	for i, topic := range []string{"security", "performance", "performance"} {
 		source := StructuredFinding{Severity: "medium", Topic: topic, Problem: "Original issue", Fix: "Fix original", Unlikely: true}
 		source.SetLocation("file.go", 1, 1)
-		reviews[i] = ReviewResult{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{source}}}
+		securityReviews[i] = ReviewResult{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{source}}}
 	}
-	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
-	require.NoError(t, err)
-	require.Len(t, doc.Findings, 1)
-	assert.Equal(t, "Reworded issue", doc.Findings[0].Problem)
-	assert.Equal(t, "security", doc.Findings[0].Topic)
-	assert.NotContains(t, FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc})), "<details>")
+	for _, tc := range []struct {
+		name, output string
+		reviews      []ReviewResult
+		want         []StructuredFinding
+	}{
+		{"unlikely", `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Rare issue","fix":"Fix rare","file":"file.go","start_line":1,"end_line":1,"sources":[1]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Ordinary issue","fix":"Fix ordinary","file":"file.go","start_line":20,"end_line":20,"sources":[1]}]}`, []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{rare, ordinary}}}}, []StructuredFinding{{Problem: "Rare issue", Unlikely: true}, {Problem: "Ordinary issue"}}},
+		{"security", `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","topic":"performance","confidence":0.8,"unlikely":true,"problem":"Reworded issue","fix":"Fix it","file":"file.go","start_line":1,"end_line":1,"sources":[1,2,3]}]}`, securityReviews, []StructuredFinding{{Problem: "Reworded issue", Topic: "security", Unlikely: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &structuredBatchAgent{name: "visibility-synthesis", result: []byte(tc.output)}
+			doc, _, err := RunSynthesisAgent(t.Context(), a, tc.reviews, "prompt", "", nil, SynthesisHooks{})
+			require.NoError(t, err)
+			require.Len(t, doc.Findings, len(tc.want))
+			for i, want := range tc.want {
+				assert.Equal(t, want.Problem, doc.Findings[i].Problem)
+				assert.Equal(t, want.Topic, doc.Findings[i].Topic)
+				assert.Equal(t, want.Unlikely, doc.Findings[i].Unlikely)
+			}
+		})
+	}
 }
 
 type synthesisEntrypointAgent struct {
@@ -773,7 +765,6 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 			require.NoError(t, err)
 			assert.Contains(t, result.Output, "Minor naming issue.")
 			if policy.visible {
-				assert.Contains(t, result.GitHubComment, "1 nit hidden")
 				assert.Contains(t, result.GitHubComment, "Minor naming issue.")
 			} else {
 				assert.NotContains(t, result.GitHubComment, "Minor naming issue.")

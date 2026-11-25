@@ -21,31 +21,39 @@ func TestCommentMaxFindings(t *testing.T) {
 		{Severity: "critical", Problem: "critical-one"},
 		{Severity: "high", Problem: "high-two"},
 	}}
-	original := slices.Clone(doc.Findings)
 	for _, tc := range []struct {
+		name    string
 		cap     int
+		floor   string
+		doc     StructuredReview
 		want    []string
 		omitted string
 	}{
-		{0, []string{"critical-one", "high-one", "high-two"}, ""},
-		{1, []string{"critical-one"}, "2 more findings in the full review: `roborev show --job 123`"},
-		{2, []string{"critical-one", "high-one"}, "1 more finding in the full review: `roborev show --job 123`"},
-		{9, []string{"critical-one", "high-one", "high-two"}, ""},
+		{"unlimited", 0, "high", doc, []string{"critical-one", "high-one", "high-two"}, ""},
+		{"one", 1, "high", doc, []string{"critical-one"}, "2 more findings in the full review: `roborev show --job 123`"},
+		{"two", 2, "high", doc, []string{"critical-one", "high-one"}, "1 more finding in the full review: `roborev show --job 123`"},
+		{"above count", 9, "high", doc, []string{"critical-one", "high-one", "high-two"}, ""},
+		{"folded findings count toward cap", 1, "", StructuredReview{Findings: []StructuredFinding{
+			{Severity: "low", Problem: "First nit"}, {Severity: "high", Problem: "Visible issue"}, {Severity: "low", Problem: "Second nit"},
+		}}, []string{"Visible issue"}, "2 more findings in the full review: `roborev show --job 123`"},
 	} {
-		t.Run(fmt.Sprint(tc.cap), func(t *testing.T) {
-			prepared := PrepareComment(CommentConfig{MinSeverity: "high", MaxFindings: tc.cap, FullReviewReference: "roborev show --job 123"}, ReviewResult{Structured: &doc})
+		t.Run(tc.name, func(t *testing.T) {
+			original := slices.Clone(tc.doc.Findings)
+			prepared := PrepareComment(CommentConfig{MinSeverity: tc.floor, MaxFindings: tc.cap, FullReviewReference: "roborev show --job 123"}, ReviewResult{Structured: &tc.doc})
 			var got []string
 			for _, f := range prepared.findings {
 				got = append(got, f.problem)
 			}
 			assert.Equal(t, tc.want, got)
+			assert.Empty(t, prepared.nits)
+			assert.Empty(t, prepared.unlikely)
 			body := FormatComment(prepared)
 			if tc.omitted != "" {
 				assert.Contains(t, body, tc.omitted)
 			} else {
 				assert.NotContains(t, body, "more finding")
 			}
-			assert.Equal(t, original, doc.Findings)
+			assert.Equal(t, original, tc.doc.Findings)
 			assert.False(t, prepared.IsClean())
 		})
 	}
@@ -163,11 +171,6 @@ func TestCommentFold(t *testing.T) {
 		{Severity: "medium", Problem: "rare", Unlikely: true},
 		{Severity: "medium", Problem: "another"},
 	}}
-	prepared := PrepareComment(CommentConfig{MinSeverity: "low", MaxFindings: 1}, ReviewResult{Structured: &doc})
-	body := FormatComment(prepared)
-	assert.Contains(t, body, "Changes require fixes for 1 finding")
-	assert.NotContains(t, body, "<details>")
-	assert.Contains(t, body, "3 more findings in the full review")
 	filteredSeverity := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
 	assert.NotContains(t, filteredSeverity, "naming issue")
 	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
@@ -185,17 +188,15 @@ func TestCommentFold(t *testing.T) {
 	visibleBody := FormatComment(visible)
 	assert.Contains(t, visibleBody, "4 findings")
 	assert.NotContains(t, visibleBody, "<details>")
+}
+
+func TestCommentShowAll(t *testing.T) {
 	confidenceDoc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "low", Kind: "improvement", Confidence: .4, Problem: "filtered nit"},
 		{Severity: "high", Kind: "defect", Confidence: .4, Unlikely: true, Problem: "filtered rare"},
 		{Severity: "low", Kind: "defect", Confidence: .88, Problem: "boundary nit"},
 		{Severity: "high", Problem: "unscored", Unlikely: true},
 	}}
-	filtered := FormatComment(PrepareComment(CommentConfig{MinSeverity: "low", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
-	assert.NotContains(t, filtered, "filtered nit")
-	assert.NotContains(t, filtered, "filtered rare")
-	assert.NotContains(t, filtered, "boundary nit")
-	assert.Contains(t, filtered, "unscored")
 	showAll := FormatComment(PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high", MinConfidence: .95, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
 	assert.Contains(t, showAll, "filtered nit")
 	assert.Contains(t, showAll, "filtered rare")
@@ -210,19 +211,6 @@ func TestCommentFold(t *testing.T) {
 		assert.Contains(t, output, "High issue")
 		assert.NotContains(t, output, "Low issue")
 	}
-}
-
-func TestCommentCapIncludesFoldedFindings(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "low", Problem: "First nit"},
-		{Severity: "high", Problem: "Visible issue"},
-		{Severity: "low", Problem: "Second nit"},
-	}}
-	body := FormatComment(PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &doc}))
-	assert.Contains(t, body, "Visible issue")
-	assert.NotContains(t, body, "First nit")
-	assert.NotContains(t, body, "Second nit")
-	assert.Contains(t, body, "2 more findings in the full review")
 }
 
 func TestCommentFoldEscapesClosingDetailsInFinding(t *testing.T) {

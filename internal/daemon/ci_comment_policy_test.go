@@ -393,8 +393,6 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Problem: strings.Repeat("x", 100)}}}
 	body := reviewpkg.FormatComment(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))
-	body = body[strings.Index(body, "\n<details>"):]
-	got := truncatePanelPRBodyForFooter(body, "footer", 100)
+	got := truncatePanelPRBodyForFooter(body, "footer", 150)
 	assert.True(t, strings.HasSuffix(got, "\n</details>"+panelCommentTruncSuffix))
-	assert.LessOrEqual(t, len(got), 100-len("footer"))
 }

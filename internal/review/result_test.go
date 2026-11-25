@@ -223,6 +223,10 @@ func TestTruncateCommentFold(t *testing.T) {
 		StructuredFinding{Severity: "low", Problem: "Complete finding", Fix: "Complete fix"},
 		StructuredFinding{Severity: "low", Problem: "Next finding " + strings.Repeat("more ", 100)},
 	)
+	groupBoundary := makeBody(
+		StructuredFinding{Severity: "low", Problem: "Complete nit", Fix: "Fix the nit"},
+		StructuredFinding{Severity: "medium", Unlikely: true, Problem: strings.Repeat("Rare issue ", 50)},
+	)
 	single := makeBody(StructuredFinding{Severity: "low", Problem: "Example `</details>` " + strings.Repeat("text ", 100)})
 	const suffix = "\n\nfooter"
 	summaryEnd := strings.Index(single, "</summary>") + len("</summary>")
@@ -233,6 +237,7 @@ func TestTruncateCommentFold(t *testing.T) {
 	}{
 		{"fenced finding", long, 250, []string{"First complete finding", "First fix", "Second complete finding", "Second fix", "</details>"}, []string{"Long finding", "&lt;/details&gt;"}},
 		{"exact item boundary", boundary, strings.Index(boundary, "Complete fix") + len("Complete fix") + len(foldClosing) + len(suffix), []string{"Complete finding", "Complete fix", "</details>"}, []string{"Next finding"}},
+		{"before next group", groupBoundary, strings.Index(groupBoundary, "Fix the nit") + len("Fix the nit") + len(foldClosing) + len(suffix), []string{"Complete nit", "Fix the nit", "</details>"}, []string{"Rare issue"}},
 		{"no item fits", single, 180, []string{"</details>"}, []string{"Example"}},
 		{"cut in summary", single, summaryEnd - 1 + len(foldClosing) + len(suffix), nil, []string{"<details>"}},
 	} {
@@ -252,18 +257,4 @@ func TestTruncateCommentFold(t *testing.T) {
 			assert.True(t, strings.HasSuffix(got, suffix))
 		})
 	}
-}
-
-func TestTruncateFoldKeepsItemBeforeNextGroup(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "low", Problem: "Complete nit", Fix: "Fix the nit"},
-		{Severity: "medium", Unlikely: true, Problem: strings.Repeat("Rare issue ", 50)},
-	}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	limit := strings.Index(body, "Fix the nit") + len("Fix the nit") + len(foldClosing) + len(CommentTruncSuffix)
-	got := TruncateCommentTo(body, limit, CommentTruncSuffix)
-	assert.Contains(t, got, "Complete nit")
-	assert.Contains(t, got, "Fix the nit")
-	assert.Contains(t, got, "</details>")
-	assert.LessOrEqual(t, len(got), limit)
 }
