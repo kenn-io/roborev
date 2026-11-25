@@ -250,11 +250,9 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				}
 			}
 		}
-		pending, err := w.markDue(ctx, repo, head, typ, typeCandidates)
-		if err != nil {
+		if pending, err := w.markDue(ctx, repo, head, typ, typeCandidates); err != nil {
 			return nil, err
-		}
-		if only != nil && len(pending) > 0 {
+		} else if only != nil && len(pending) > 0 {
 			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: pending})
 		}
 	}
@@ -286,23 +284,20 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 		return nil, err
 	}
 	defer reader.Close()
-	var selected []*analysisCandidate
-	var remaining []*analysisCandidate
-	var deferred []*analysisCandidate
 	files := map[string]string{}
 	var skipped []string
 	for i, candidate := range ordered {
-		if len(selected) == schedule.MaxFiles {
-			remaining = ordered[i:]
+		if len(files) == schedule.MaxFiles {
+			if only == nil {
+				ordered = ordered[:i]
+			}
 			break
 		}
 		if missing[candidate.oid] || attributesMissing(attributes, missing, candidate.path) {
-			deferred = append(deferred, candidate)
 			continue
 		}
 		if binary[candidate.path] || large[candidate.oid] {
 			skipped = append(skipped, candidate.path)
-			deferred = append(deferred, candidate)
 			continue
 		}
 		content, err := reader.Read(candidate.oid)
@@ -311,22 +306,16 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 				return nil, ctx.Err()
 			}
 			errs = append(errs, err)
-			deferred = append(deferred, candidate)
 			continue
 		}
 		if !isSourceContent(content) {
 			skipped = append(skipped, candidate.path)
-			deferred = append(deferred, candidate)
 			continue
 		}
 		files[candidate.path] = string(content)
-		selected = append(selected, candidate)
 	}
 	if len(skipped) > 0 {
 		log.Printf("analysis scheduler %s: skipped %d binary or oversized files: %s", repo.RootPath, len(skipped), strings.Join(skipped[:min(len(skipped), 3)], ", "))
-	}
-	if only != nil {
-		deferred = append(deferred, remaining...)
 	}
 	for _, typ := range schedule.Types {
 		if !usable[typ] {
@@ -335,14 +324,14 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if names := dueNames(selected, typ); len(names) > 0 {
+		if names := dueNames(ordered, typ, files, true); len(names) > 0 {
 			id, err := w.enqueueType(ctx, repo, typ, names, head, files)
 			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names, Job: id})
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
-		if names := dueNames(deferred, typ); len(names) > 0 {
+		if names := dueNames(ordered, typ, files, false); len(names) > 0 {
 			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names})
 		}
 	}
@@ -391,7 +380,7 @@ func matchesSchedulePaths(patterns []string, path string) (bool, error) {
 }
 
 // markDue records which candidates need an analysis of the given type.
-func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) ([]string, error) {
+func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) (deferred []string, err error) {
 	jobs, err := w.server.db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{repo.ID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
 	if err != nil {
 		return nil, err
@@ -407,15 +396,12 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
 				pending[path] = true
 			}
-			if job.Status == storage.JobStatusDone && job.AnalysisCommitSHA != "" {
-				if _, ok := baseline[path]; !ok {
-					baseline[path] = job
-				}
+			if _, ok := baseline[path]; !ok && job.Status == storage.JobStatusDone && job.AnalysisCommitSHA != "" {
+				baseline[path] = job
 			}
 		}
 	}
 	changes := map[string]changeSet{}
-	var deferred []string
 	for path, candidate := range candidates {
 		if pending[path] {
 			deferred = append(deferred, path)
@@ -480,10 +466,11 @@ func selectCandidates(candidates map[string]*analysisCandidate) []*analysisCandi
 	return selected
 }
 
-func dueNames(selected []*analysisCandidate, typ string) []string {
+// dueNames lists candidates due for typ whose content was read, or was not.
+func dueNames(candidates []*analysisCandidate, typ string, read map[string]string, wantRead bool) []string {
 	var names []string
-	for _, c := range selected {
-		if c.due[typ] {
+	for _, c := range candidates {
+		if _, ok := read[c.path]; c.due[typ] && ok == wantRead {
 			names = append(names, c.path)
 		}
 	}
