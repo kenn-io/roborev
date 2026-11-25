@@ -3,7 +3,6 @@ package structuredreview
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -63,7 +62,7 @@ func TestDecodeNormalizesVersion3LineRanges(t *testing.T) {
 	}
 }
 
-func TestDecodeRejectsInvalidCurrentFindings(t *testing.T) {
+func TestDecodeRejectsInvalidVersion3Findings(t *testing.T) {
 	tests := []struct {
 		name    string
 		finding string
@@ -75,12 +74,10 @@ func TestDecodeRejectsInvalidCurrentFindings(t *testing.T) {
 		{name: "kind without confidence", finding: `"kind":"defect"`, want: "kind without a confidence"},
 		{name: "confidence above 1", finding: `"kind":"defect","confidence":1.5`, want: "outside 0 to 1"},
 		{name: "negative line", finding: `"kind":"defect","confidence":0.5,"file":"a.go","start_line":-1`, want: "negative line"},
-		{name: "null unlikely", finding: `"unlikely":null`, want: "invalid unlikely: expected a boolean"},
-		{name: "string unlikely", finding: `"unlikely":"yes"`, want: "invalid unlikely: expected a boolean"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Decode(jsontext.Value(`{"schema_version":` + strconv.Itoa(SchemaVersion) + `,"summary":"s","verdict":"fail","findings":[` +
+			_, err := Decode(jsontext.Value(`{"schema_version":3,"summary":"s","verdict":"fail","findings":[` +
 				`{"severity":"low","problem":"p","fix":"f",` + tc.finding + `}]}`))
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
@@ -94,12 +91,26 @@ func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "need schema_version 3")
 	for _, raw := range []string{
-		`{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`,
+		`{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":false}]}`,
 		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":false}]}`,
 		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":true},"verdicts":[]}]}}`,
 	} {
 		_, err := Decode(jsontext.Value(raw))
 		require.ErrorContains(t, err, "unlikely, which needs schema_version 4")
+	}
+}
+
+func TestDecodeRejectsNullUnlikely(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"version 1", `{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
+		{"version 2", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
+		{"version 3", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "unlikely, which needs schema_version 4"},
+		{"version 4", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "invalid unlikely"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(jsontext.Value(tc.raw))
+			require.ErrorContains(t, err, tc.want)
+		})
 	}
 }
 
