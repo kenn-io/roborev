@@ -327,7 +327,7 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
 			if cfg != nil {
-				b.WriteString(FormatComment(PrepareComment(*cfg, r)))
+				b.WriteString(FormatComment(prepareComment(*cfg, r, false)))
 			} else {
 				b.WriteString(r.Output)
 			}

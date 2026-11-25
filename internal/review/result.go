@@ -3,14 +3,13 @@
 package review
 
 import (
-	"bytes"
 	"encoding/json/jsontext"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/yuin/goldmark/v2/ast"
 	"github.com/yuin/goldmark/v2/parser"
-	"github.com/yuin/goldmark/v2/renderer/html"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
@@ -171,7 +170,7 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 		cut := TrimPartialRune(body[:budget])
 		summaryEnd := strings.Index(body[open:], "</summary>")
 		if summaryEnd >= 0 && len(cut) >= open+summaryEnd+len("</summary>") {
-			return closeFoldSafely(cut, open+summaryEnd+len("</summary>")) + foldClosing + suffix
+			return completeFoldItems(body, open+summaryEnd+len("</summary>"), len(cut)) + foldClosing + suffix
 		}
 		return TrimPartialRune(body[:min(len(cut), open)]) + suffix
 	}
@@ -180,22 +179,27 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 
 const foldClosing = "\n</details>"
 
-// closeFoldSafely drops trailing folded findings until closing the fold after
-// cut renders as HTML rather than as code, keeping at least the summary.
-func closeFoldSafely(cut string, summaryEnd int) string {
-	for {
-		source := []byte(cut + foldClosing + "\n")
-		var rendered bytes.Buffer
-		err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
-		if err == nil && strings.HasSuffix(strings.TrimSpace(rendered.String()), "</details>") {
-			return cut
+// completeFoldItems cuts before the last item that begins within the budget.
+// Parsing the full fold keeps list markers inside code blocks out of the scan.
+func completeFoldItems(body string, summaryEnd, budget int) string {
+	source := body[summaryEnd:]
+	root := parser.New().Parse([]byte(source))
+	end := summaryEnd
+	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering || node.Kind() != ast.KindParagraph || node.Parent().Kind() != ast.KindListItem || node.Parent().Parent().Parent() != root {
+			return ast.WalkContinue, nil
 		}
-		boundary := strings.LastIndex(cut[summaryEnd:], "\n- ")
-		if boundary < 0 {
-			return cut[:summaryEnd]
+		pos := node.Pos()
+		if pos < 0 {
+			return ast.WalkContinue, nil
 		}
-		cut = cut[:summaryEnd+boundary]
-	}
+		start := strings.LastIndex(source[:pos], "\n") + 1
+		if strings.HasPrefix(source[start:], "- ") && summaryEnd+start <= budget {
+			end = max(end, summaryEnd+start)
+		}
+		return ast.WalkContinue, nil
+	})
+	return strings.TrimRight(body[:end], "\n")
 }
 
 // OutputTruncSuffix marks a single review's output as cut short. It is

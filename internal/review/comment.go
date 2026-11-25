@@ -16,7 +16,6 @@ import (
 // all findings; preparation never inherits policy from review data.
 type CommentConfig struct {
 	MinSeverity string
-	Fold        bool
 	ShowAll     bool
 	// MinConfidence filters stated structured confidence; zero disables it.
 	MinConfidence float64
@@ -52,6 +51,10 @@ type commentFinding struct {
 // PrepareComment ingests structured or prose review data and applies the
 // supplied publication policy. It never changes the review or its findings.
 func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
+	return prepareComment(cfg, r, true)
+}
+
+func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) PreparedComment {
 	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
 	threshold := config.SeverityRank(comment.minSeverity)
 	doc := r.structuredReview()
@@ -75,7 +78,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				continue
 			}
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
-			fold := cfg.Fold && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical"
+			fold := foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical"
 			if fold && finding.Severity == "low" {
 				comment.nits = append(comment.nits, item)
 			} else if fold && finding.Unlikely {
