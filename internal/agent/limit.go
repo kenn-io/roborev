@@ -80,6 +80,11 @@ type limitRule struct {
 // local retry with backoff (no cooldown), so the bar is deliberately
 // kept high to avoid retrying deterministic failures forever.
 var defaultLimitRules = []limitRule{
+	// The omp adapter writes this marker when omp's cost cap (--max-cost /
+	// session.maxCost) stopped the run, decided by omp's exit status. It
+	// precedes the quota rules so stderr text cannot reclassify it. A retry
+	// starts a new session that can spend up to the cap again.
+	{Agents: []string{"omp"}, Substring: ompCostCapStopped, Kind: LimitKindPermanent},
 	{Agents: []string{"*"}, Substring: "resource exhausted", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "quota exceeded", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "quota_exceeded", Kind: LimitKindQuota},
@@ -100,9 +105,6 @@ var defaultLimitRules = []limitRule{
 	// Factory Droid subscription allowance used up (HTTP 403), captured from a
 	// real droid failure. It lasts until the next billing period.
 	{Agents: []string{"droid"}, Substring: "allowance for this period is used up", Kind: LimitKindQuota},
-	// omp stopped at its cost cap (--max-cost / session.maxCost). A retry
-	// starts a new session that can spend up to the cap again.
-	{Agents: []string{"omp"}, Substring: ompCostCapStopped, Kind: LimitKindPermanent},
 	{Agents: []string{"codex"}, Substring: "stream disconnected before completion: access denied", Kind: LimitKindPermanent},
 	// Codex sent no credentials (401). Retrying cannot fix a missing login.
 	{Agents: []string{"codex"}, Substring: "missing bearer or basic authentication", Kind: LimitKindPermanent},

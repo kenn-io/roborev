@@ -173,6 +173,7 @@ func TestOmpReviewReportsStopReason(t *testing.T) {
 		name     string
 		exitCode int
 		stdout   []string
+		stderr   []string
 		want     string
 		kind     LimitKind
 	}{
@@ -196,7 +197,15 @@ func TestOmpReviewReportsStopReason(t *testing.T) {
 			name:     "cost cap without a notice",
 			exitCode: 3,
 			stdout:   []string{`{"type":"session","id":"omp-session-1"}`},
-			want:     ompCostCapStopped + " (exit status 3)",
+			want:     ompCostCapStopped + " (exit status 3)\nstderr:",
+			kind:     LimitKindPermanent,
+		},
+		{
+			name:     "cost cap with quota wording on stderr",
+			exitCode: 3,
+			stdout:   []string{costCapNotice},
+			stderr:   []string{"Retrying (1/3): quota exceeded"},
+			want:     ompCostCapStopped,
 			kind:     LimitKindPermanent,
 		},
 		{
@@ -214,7 +223,7 @@ func TestOmpReviewReportsStopReason(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: tt.stdout, ExitCode: tt.exitCode})
+			mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: tt.stdout, StderrLines: tt.stderr, ExitCode: tt.exitCode})
 			_, err := NewOmpAgent(mock.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 			require.ErrorContains(t, err, tt.want)
 			// The worker prefixes the error before it classifies the text.

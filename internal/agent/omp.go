@@ -157,19 +157,23 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 // ompRunError reports why an omp run failed. JSON mode writes the provider's
 // message and the reason for a stop only to the event stream.
 func ompRunError(result streamingCLIResult, stream ompStream) error {
+	var reason string
+	if stream.StopReason != "" {
+		reason = ": " + stream.StopReason
+	}
 	exitErr, exited := errors.AsType[*exec.ExitError](result.WaitErr)
 	switch {
 	case exited && exitErr.ExitCode() == ompCostCapExit:
 		// The cost cap's exit status outranks a provider error earlier in the
 		// stream. A retry starts a new session that can spend up to the cap
 		// again, so the error must classify as permanent.
-		return fmt.Errorf("%s (%w): %s\nstderr: %s", ompCostCapStopped, result.WaitErr, stream.StopReason, result.Stderr)
+		return fmt.Errorf("%s (%w)%s\nstderr: %s", ompCostCapStopped, result.WaitErr, reason, result.Stderr)
 	case stream.Error != "":
 		return fmt.Errorf("omp provider error: %s", stream.Error)
 	case result.WaitErr == nil:
 		return nil
-	case stream.StopReason != "":
-		return fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, stream.StopReason, result.Stderr)
+	case reason != "":
+		return fmt.Errorf("omp failed: %w%s\nstderr: %s", result.WaitErr, reason, result.Stderr)
 	default:
 		return formatStreamingCLIWaitError("omp", result, result.Stderr)
 	}
@@ -225,10 +229,11 @@ func ompStopReason(line string) string {
 
 // ompCheckReadOnlyVersion returns an error unless command is an omp release
 // that honors --no-tools. omp prints its version as "omp/19.2.1". The probe
-// runs before every read-only run, set up like the run itself, not from a
-// cache keyed on the command file: a wrapper script or a version manager shim
-// can switch the omp behind an unchanged file, or pin a different omp per
-// directory.
+// runs before every read-only run, not from a cache keyed on the command
+// file: a wrapper script or a version manager shim can switch the omp behind
+// an unchanged file, or pin a different omp per directory. It is set up like
+// the run, not as a capability probe from the temp directory, so it resolves
+// the same command from the same directory.
 func ompCheckReadOnlyVersion(ctx context.Context, command, repoPath string) error {
 	cmd := exec.CommandContext(ctx, command, "--version")
 	cmd.Dir = repoPath
