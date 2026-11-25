@@ -561,21 +561,21 @@ func TestFoldedReviewToggle(t *testing.T) {
 		assert.Contains(t, m.reviewContentString(review), "security visible")
 		assert.Equal(t, "expand", m.foldHint())
 		if split {
-			assert.Regexp(t, `e expand +▕`, stripANSI(m.renderSplit()))
+			assert.Regexp(t, `y copy +▕ e expand +▕`, stripANSI(m.renderSplit()))
 			m.focus = focusDetail
-			assert.Regexp(t, `e expand +▕`, stripANSI(m.renderSplit()))
+			assert.Regexp(t, `y copy +▕ e expand +▕`, stripANSI(m.renderSplit()))
 		} else {
-			assert.Regexp(t, `e expand +▕`, stripANSI(m.renderReviewView()))
+			assert.Regexp(t, `y copy +▕ e expand +▕`, stripANSI(m.renderReviewView()))
 		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "nit problem")
 		assert.Equal(t, "collapse", m.foldHint())
 		if split {
-			assert.Regexp(t, `e collapse +▕`, stripANSI(m.renderSplit()))
+			assert.Regexp(t, `y copy +▕ e collapse +▕`, stripANSI(m.renderSplit()))
 			m.focus = focusList
-			assert.Regexp(t, `e collapse +▕`, stripANSI(m.renderSplit()))
+			assert.Regexp(t, `y copy +▕ e collapse +▕`, stripANSI(m.renderSplit()))
 		} else {
-			assert.Regexp(t, `e collapse +▕`, stripANSI(m.renderReviewView()))
+			assert.Regexp(t, `y copy +▕ e collapse +▕`, stripANSI(m.renderReviewView()))
 		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")

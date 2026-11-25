@@ -20,6 +20,7 @@ func (m model) splitFooterRows() [][]helplayout.HelpItem {
 			{{Key: "↑/↓", Description: "scroll"}, {Key: "←/→", Description: "prev/next"}, {Key: "L", Description: "layout"}, {Key: "esc", Description: "back to list"}, {Key: "?", Description: "commands"}},
 		}
 		if hint := m.foldHint(); hint != "" {
+			rows[0][len(rows[0])-1].Description += " "
 			rows[0] = append(rows[0], helplayout.HelpItem{Key: "e", Description: hint + " "})
 		}
 		if m.tasksWorkflowEnabled() {
@@ -30,6 +31,7 @@ func (m model) splitFooterRows() [][]helplayout.HelpItem {
 	rows := filterHelpItem(m.queueHelpRows(), "↵")
 	if hint := m.foldHint(); hint != "" {
 		at := slices.IndexFunc(rows[0], func(item helplayout.HelpItem) bool { return item.Key == "y" }) + 1
+		rows[0][at-1].Description += " "
 		rows[0] = slices.Insert(rows[0], at, helplayout.HelpItem{Key: "e", Description: hint + " "})
 	}
 	last := len(rows) - 1
