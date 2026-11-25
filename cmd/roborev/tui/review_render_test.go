@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/tui/splitlayout"
-	"go.kenn.io/roborev/pkg/structuredreview"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // setupRenderModel creates a standardized model for rendering tests
@@ -541,6 +541,7 @@ func TestRenderReviewMetadataFitsTerminalWidth(t *testing.T) {
 }
 
 func TestFoldedReviewToggle(t *testing.T) {
+	t.Parallel()
 	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit problem", Fix: "fix"}, {Severity: "critical", Unlikely: true, Problem: "critical visible", Fix: "fix"}, {Severity: "low", Topic: structuredreview.TopicSecurity, Unlikely: true, Problem: "security visible", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
@@ -584,6 +585,7 @@ func TestFoldedReviewToggle(t *testing.T) {
 }
 
 func TestReviewHelpShowsFoldKey(t *testing.T) {
+	t.Parallel()
 	m := initTestModel(withCurrentView(viewHelp), withDimensions(100, 200))
 	rendered := stripANSI(m.renderHelpView())
 	assert.Contains(t, rendered, "Review View")
@@ -591,6 +593,7 @@ func TestReviewHelpShowsFoldKey(t *testing.T) {
 }
 
 func TestFoldControlsIgnoreStaleSplitReview(t *testing.T) {
+	t.Parallel()
 	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
@@ -608,6 +611,7 @@ func TestFoldControlsIgnoreStaleSplitReview(t *testing.T) {
 }
 
 func TestRerunReviewStartsFolded(t *testing.T) {
+	t.Parallel()
 	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
@@ -637,6 +641,7 @@ func TestRerunReviewStartsFolded(t *testing.T) {
 }
 
 func TestFoldedReviewNoteWrapsAndKeepsComments(t *testing.T) {
+	t.Parallel()
 	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
