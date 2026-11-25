@@ -15,9 +15,8 @@ import (
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
-// SynthesisSchema asks for transient finding references as well as review sources.
-var SynthesisSchema = jsontext.Value(strings.Replace(string(structuredreview.SourcedSchema),
-	`"sources": {`, `"source_findings": {"type":"array","items":{"type":"object","additionalProperties":false,"required":["review","finding"],"properties":{"review":{"type":"integer","minimum":1},"finding":{"type":"integer","minimum":1}}}}, "sources": {`, 1))
+// SynthesisSchema requires each finding to cite its input reviews.
+var SynthesisSchema = structuredreview.SourcedSchema
 
 // SynthesisDocument is the structured result returned by a synthesis agent.
 // It has the same shape as a single structured review, so the verdict derives
@@ -124,13 +123,12 @@ func BuildSynthesisPrompt(
 	b.WriteString(
 		intro +
 			"Return exactly one JSON object with this shape and no code fence: " +
-			`{"schema_version":4,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"unlikely":false,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1],"source_findings":[{"review":1,"finding":1}]}]}` + "\n" +
+			`{"schema_version":4,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"unlikely":false,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
 			"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. " +
 			"List every finding that requires changes in `findings`; " +
 			"return an empty `findings` array if the reviewers agree " + material + " is clean.\n" +
 			"In `sources`, list the numbers of the reviews below (### Review N) " +
 			"that reported the finding.\n" +
-			"In `source_findings`, list each structured input finding by its 1-based review number and position in that review's findings array. Use an empty array for prose sources.\n" +
 			"Rules:\n" +
 			scopeRules +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
@@ -192,14 +190,12 @@ func synthesisReviewContent(r ReviewResult) string {
 	} else if IsTransientFailure(r) {
 		b.WriteString(
 			"(review skipped — provider unavailable)")
-	} else if structured := r.structuredReview(); structured != nil && structured.Legacy != nil {
-		b.WriteString(structured.Legacy.Markdown)
-	} else if structured != nil {
+	} else if r.Structured != nil {
 		// The JSON document keeps each finding's kind, confidence, and line
 		// range, which the Markdown rendering drops or flattens. It carries
 		// no severity threshold, so the synthesis agent never learns which
 		// severities are informational.
-		member := anchorLegacyLocations(*structured)
+		member := anchorLegacyLocations(*r.Structured)
 		if document, err := json.Marshal(member, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  ")); err == nil {
 			b.WriteString("```json\n" + string(document) + "\n```")
 		} else {

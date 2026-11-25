@@ -58,7 +58,12 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) PreparedComment {
 	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
 	threshold := config.SeverityRank(comment.minSeverity)
-	doc := r.structuredReview()
+	doc := r.Structured
+	if doc == nil && len(r.StructuredOutput) > 0 {
+		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
+			doc = &decoded
+		}
+	}
 	if doc != nil && doc.Legacy != nil {
 		comment.legacy = true
 		r.Output = doc.Legacy.Markdown
@@ -274,17 +279,6 @@ func escapeFoldClose(s string) string {
 	}
 	out.WriteString(s[last:])
 	return out.String()
-}
-
-// structuredReview returns the review's structured document, decoding the raw
-// agent output when only that is stored. It returns nil for prose reviews.
-func (r ReviewResult) structuredReview() *StructuredReview {
-	if r.Structured == nil && len(r.StructuredOutput) > 0 {
-		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
-			return &decoded
-		}
-	}
-	return r.Structured
 }
 
 func renderCommentFinding(out *strings.Builder, finding commentFinding) {

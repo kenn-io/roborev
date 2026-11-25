@@ -84,18 +84,6 @@ func TestRunAgentReviewRequiresJSONWithoutNativeSchema(t *testing.T) {
 	require.ErrorContains(t, err, "decode structured review")
 }
 
-func TestLiveReviewRequiresUnlikely(t *testing.T) {
-	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"Issue","fix":"Fix","file":null,"start_line":null,"end_line":null}]}`
-	a := &mockAgent{name: "plain", output: raw}
-	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil)
-	require.ErrorContains(t, err, "unlikely")
-	_, err = DecodeStructuredReview(jsontext.Value(raw))
-	require.NoError(t, err)
-	synthesis := strings.Replace(raw, `"end_line":null`, `"end_line":null,"sources":[1],"source_findings":[]`, 1)
-	_, err = decodeSynthesisResult(a, []ReviewResult{{}}, jsontext.Value(synthesis), nil)
-	require.ErrorContains(t, err, "unlikely")
-}
-
 func TestRunAgentReviewAcceptsJSONWithoutNativeSchema(t *testing.T) {
 	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
 	a := &mockAgent{name: "plain", output: raw}

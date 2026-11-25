@@ -292,7 +292,7 @@ func (a *synthesisEntrypointTestAgent) Review(_ context.Context, _, _, prompt st
 	if a.result != "" {
 		return a.result, nil
 	}
-	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"combined","fix":"fix","file":"test.txt","start_line":1,"end_line":1,"sources":[1],"source_findings":[{"review":1,"finding":1}]}]}`, nil
+	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"combined","fix":"fix","file":"test.txt","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 
 func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
@@ -646,7 +646,7 @@ func TestSynthesisInstructionsRunAgentForSingleSuccess(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
-			return `{"schema_version":4,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"problem":"Label: just fix. Nil map write.","fix":"Initialize the map.","file":"alpha.go","start_line":3,"end_line":3,"sources":[1],"source_findings":[{"review":1,"finding":1}]}]}`, nil
+			return `{"schema_version":4,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"problem":"Label: just fix. Nil map write.","fix":"Initialize the map.","file":"alpha.go","start_line":3,"end_line":3,"sources":[1]}]}`, nil
 		},
 	})
 
@@ -781,7 +781,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 
 	synthAgent := &synthesisEntrypointTestAgent{
 		name:   "panel-retained-findings-synth",
-		result: `{"schema_version":4,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"unlikely":false,"problem":"shared nit","fix":"tidy","file":null,"start_line":null,"end_line":null,"sources":[1,2],"source_findings":[{"review":1,"finding":1},{"review":2,"finding":1}]}]}`,
+		result: `{"schema_version":4,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"unlikely":false,"problem":"shared nit","fix":"tidy","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`,
 	}
 	agent.RegisterForTest(t, synthAgent)
 
@@ -1105,7 +1105,7 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
-			return `{"schema_version":4,"summary":"Combined","verdict":"pass","findings":[{"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"problem":"Consolidated finding.","fix":"Fix it.","file":"alpha.go","start_line":1,"end_line":1,"sources":[1,2],"source_findings":[{"review":1,"finding":1},{"review":2,"finding":1}]}]}`, nil
+			return `{"schema_version":4,"summary":"Combined","verdict":"pass","findings":[{"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"problem":"Consolidated finding.","fix":"Fix it.","file":"alpha.go","start_line":1,"end_line":1,"sources":[1,2]}]}`, nil
 		},
 	})
 
@@ -1423,7 +1423,7 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return `{"schema_version":4,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","kind":"improvement","confidence":0.7,"unlikely":false,"problem":"Missing test","fix":"Add one","file":null,"start_line":null,"end_line":null,"sources":[1],"source_findings":[{"review":1,"finding":1}]}]}`, nil
+			return `{"schema_version":4,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","kind":"improvement","confidence":0.7,"unlikely":false,"problem":"Missing test","fix":"Add one","file":null,"start_line":null,"end_line":null,"sources":[1]}]}`, nil
 		},
 	})
 

@@ -58,9 +58,6 @@ func RunAgentReview(
 	if err := validateLiveDocument(a.Name(), structured); err != nil {
 		return ReviewResult{RawOutput: raw}, err
 	}
-	if err := validateLiveUnlikely(document); err != nil {
-		return ReviewResult{RawOutput: raw}, err
-	}
 	settleFindings(ctx, repoPath, gitRef, &structured)
 	document, err = json.Marshal(structured)
 	if err != nil {

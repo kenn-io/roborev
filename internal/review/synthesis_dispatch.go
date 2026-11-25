@@ -3,10 +3,7 @@ package review
 import (
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
-	"fmt"
 	"io"
-	"slices"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -122,42 +119,11 @@ func RunSynthesisAgent(
 	return doc, output, nil
 }
 
-type synthesisFindingRef struct {
-	Review  int `json:"review"`
-	Finding int `json:"finding"`
-}
-
 func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.Value, err error) (SynthesisDocument, error) {
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
 	document, err := agentReviewJSON(string(raw))
-	if err != nil {
-		return SynthesisDocument{}, err
-	}
-	var wire map[string]jsontext.Value
-	if err := json.Unmarshal(document, &wire); err != nil {
-		return SynthesisDocument{}, err
-	}
-	var findings []map[string]jsontext.Value
-	if err := json.Unmarshal(wire["findings"], &findings); err != nil {
-		return SynthesisDocument{}, err
-	}
-	refs := make([][]synthesisFindingRef, len(findings))
-	for i, finding := range findings {
-		if len(finding["source_findings"]) == 0 {
-			continue
-		}
-		if err := json.Unmarshal(finding["source_findings"], &refs[i]); err != nil {
-			return SynthesisDocument{}, fmt.Errorf("synthesis finding %d: %w", i+1, err)
-		}
-		delete(finding, "source_findings")
-	}
-	wire["findings"], err = json.Marshal(findings)
-	if err != nil {
-		return SynthesisDocument{}, err
-	}
-	document, err = json.Marshal(wire)
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
@@ -167,33 +133,6 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 	}
 	if err := validateLiveDocument(a.Name(), doc); err != nil {
 		return SynthesisDocument{}, err
-	}
-	if err := validateLiveUnlikely(document); err != nil {
-		return SynthesisDocument{}, err
-	}
-	for i := range doc.Findings {
-		finding := &doc.Findings[i]
-		covered := make(map[int]bool)
-		allUnlikely := len(refs[i]) > 0
-		for _, ref := range refs[i] {
-			if ref.Review < 1 || ref.Review > len(reviews) || !slices.Contains(finding.Sources, ref.Review) {
-				return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has invalid source review %d", i+1, ref.Review)
-			}
-			source := reviews[ref.Review-1].structuredReview()
-			if source == nil || source.Legacy != nil || ref.Finding < 1 || ref.Finding > len(source.Findings) {
-				return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has invalid source finding %d in review %d", i+1, ref.Finding, ref.Review)
-			}
-			original := source.Findings[ref.Finding-1]
-			covered[ref.Review] = true
-			allUnlikely = allUnlikely && original.Unlikely
-			if original.Topic == "security" {
-				finding.Topic = "security"
-			}
-		}
-		// Missing references leave the model's mark as the best available result.
-		if len(covered) == len(finding.Sources) && len(covered) > 0 {
-			finding.Unlikely = allUnlikely
-		}
 	}
 	// minSeverity never removes findings; callers apply it when rendering
 	// and deriving the verdict.
