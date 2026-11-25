@@ -80,9 +80,10 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				continue
 			}
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
-			if cfg.Fold && finding.Severity == "low" {
+			fold := cfg.Fold && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical"
+			if fold && finding.Severity == "low" {
 				comment.nits = append(comment.nits, item)
-			} else if cfg.Fold && finding.Unlikely {
+			} else if fold && finding.Unlikely {
 				comment.unlikely = append(comment.unlikely, item)
 			} else {
 				comment.findings = append(comment.findings, item)

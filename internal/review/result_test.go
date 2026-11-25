@@ -1,10 +1,14 @@
 package review
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/renderer/html"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -64,6 +68,24 @@ func TestTrimPartialRune(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := TrimPartialRune(tt.in)
 			assert.Equalf(tt.want, got, "TrimPartialRune(%q) = %q, want %q", tt.in, got, tt.want)
+		})
+	}
+}
+
+func TestTruncateCommentClosesFoldWithFencedCode(t *testing.T) {
+	for _, fence := range []string{"```", "~~~~"} {
+		t.Run(fence, func(t *testing.T) {
+			doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Example\n\n" + fence + "go\n" + strings.Repeat("code\n", 100) + fence}}}
+			body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
+			got := TruncateCommentTo(body, 200, "\n\nfooter")
+			var rendered bytes.Buffer
+			source := []byte(got)
+			err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
+			require.NoError(t, err)
+			assert.Contains(t, rendered.String(), "</details>")
+			assert.NotContains(t, rendered.String(), "&lt;/details&gt;")
+			assert.LessOrEqual(t, len(got), 200)
+			assert.True(t, strings.HasSuffix(got, "\n\nfooter"))
 		})
 	}
 }

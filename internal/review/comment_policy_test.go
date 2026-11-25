@@ -159,7 +159,7 @@ func TestCommentFold(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "medium", Problem: "defect"},
 		{Severity: "low", Problem: "naming issue", Unlikely: true},
-		{Severity: "high", Problem: "rare", Unlikely: true},
+		{Severity: "medium", Problem: "rare", Unlikely: true},
 		{Severity: "medium", Problem: "another"},
 	}}
 	prepared := PrepareComment(CommentConfig{Fold: true, MinSeverity: "low", MaxFindings: 1}, ReviewResult{Structured: &doc})
@@ -176,6 +176,16 @@ func TestCommentFold(t *testing.T) {
 	folded := PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
 	assert.True(t, folded.IsClean())
 	assert.Contains(t, FormatComment(folded), "No findings need fixes before merge")
+	visible := PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &StructuredReview{Findings: []StructuredFinding{
+		{Severity: "high", Problem: "high rare", Unlikely: true},
+		{Severity: "critical", Problem: "critical rare", Unlikely: true},
+		{Severity: "low", Topic: "security", Problem: "low security"},
+		{Severity: "medium", Topic: "security", Problem: "medium security", Unlikely: true},
+	}}})
+	assert.False(t, visible.IsClean())
+	visibleBody := FormatComment(visible)
+	assert.Contains(t, visibleBody, "4 findings")
+	assert.NotContains(t, visibleBody, "<details>")
 	confidenceDoc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "low", Kind: "improvement", Confidence: .4, Problem: "filtered nit"},
 		{Severity: "high", Kind: "defect", Confidence: .4, Unlikely: true, Problem: "filtered rare"},

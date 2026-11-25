@@ -810,7 +810,8 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 		showAll bool
 		heading string
 	}{
-		{"folded", StructuredFinding{Severity: "high", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Passed"},
+		{"folded", StructuredFinding{Severity: "medium", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Passed"},
+		{"visible rare", StructuredFinding{Severity: "high", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Complete"},
 		{"show all", StructuredFinding{Severity: "low", Problem: "Low finding", Fix: "Fix"}, true, "Review Complete"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

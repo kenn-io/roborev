@@ -3,10 +3,14 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json/jsontext"
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/renderer/html"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
@@ -168,6 +172,13 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 		cut := TrimPartialRune(body[:budget])
 		summaryEnd := strings.Index(body[open:], "</summary>")
 		if summaryEnd >= 0 && len(cut) >= open+summaryEnd+len("</summary>") {
+			// A cut inside a code fence would turn the closing tag into code.
+			source := []byte(cut + closing + "\n")
+			var rendered bytes.Buffer
+			err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
+			if err != nil || !strings.HasSuffix(strings.TrimSpace(rendered.String()), "</details>") {
+				cut = body[:open+summaryEnd+len("</summary>")]
+			}
 			return cut + closing + suffix
 		}
 		return TrimPartialRune(body[:min(len(cut), open)]) + suffix
