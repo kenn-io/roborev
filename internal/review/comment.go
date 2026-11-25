@@ -85,12 +85,11 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 				continue
 			}
 			fold := foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Severity == "low" || finding.Unlikely)
-			if cfg.MaxFindings > 0 && selected >= cfg.MaxFindings {
+			if selected++; cfg.MaxFindings > 0 && selected > cfg.MaxFindings {
 				comment.omitted++
 				comment.omittedShown = comment.omittedShown || !fold
 				continue
 			}
-			selected++
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
 			if fold && finding.Severity == "low" {
 				comment.nits = append(comment.nits, item)
