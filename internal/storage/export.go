@@ -119,7 +119,7 @@ type ExportDocument struct {
 
 func (d ExportDocument) MarshalJSON() ([]byte, error) {
 	if d.ExportSchemaVersion != 3 {
-		return d.Document.MarshalVersion3()
+		return d.MarshalVersion3()
 	}
 	return json.Marshal(d.Document)
 }

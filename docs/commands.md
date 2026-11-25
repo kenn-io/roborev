@@ -639,12 +639,11 @@ existing CLI flag semantics and exit code `3` (cursor database reset) stay
 stable. Consumers must ignore unknown fields on the document header, reviews,
 subagents, and nested objects (including `document` and its findings). Export
 `schema_version: 2` emits structured `document` objects in document version `3`
-without `unlikely`. Schema 3 emits version 4 with `unlikely`. Both retain version
-`0` for historical unstructured Markdown reviews. Any breaking
-wire change to the envelope, reviews, subagents, or nested `document` introduces
-a new export `schema_version` while prior supported versions remain selectable
-via `--schema-version` (CLI) or `schema_version` (HTTP
-`GET /api/export/reviews`).
+without `unlikely`. Schema 3 emits version 4 with `unlikely`. Both retain
+version `0` for historical unstructured Markdown reviews. Any breaking wire
+change to the envelope, reviews, subagents, or nested `document` introduces a
+new export `schema_version` while prior supported versions remain selectable via
+`--schema-version` (CLI) or `schema_version` (HTTP `GET /api/export/reviews`).
 
 Omitting `--schema-version` or `schema_version` uses the connected daemon's
 current default version (`2`). Consumers that require wire stability across
