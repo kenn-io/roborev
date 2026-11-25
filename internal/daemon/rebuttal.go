@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -13,6 +15,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/rebuttal"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -116,6 +119,11 @@ superseded: the original finding is outdated or replaced. Explain any severity d
 Original finding: %q
 User explanation: %q
 `, req.Finding, req.Comment)
+	bound, err := rebuttal.EncodeSelection(rebuttal.Selection{ReviewUUID: review.UUID.String(), Finding: req.Finding}, focused) //nolint:forbidigo // Stored prompt metadata is a text boundary.
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	focused = bound
 	if _, err := s.db.AddCommentToJobWithSourceIfReviewUUID(
 		parent.ID, *review.UUID, req.Commenter, req.Comment, storage.ResponseSourceLocal,
 	); err != nil {
@@ -142,4 +150,31 @@ User explanation: %q
 	s.broadcaster.Broadcast(eventForJob("review.enqueued", job, job.ID))
 	s.workerPool.wake()
 	return &RebuttalOutput{Body: job}, nil
+}
+
+const assessmentJSONSchema = `{"type":"object","additionalProperties":false,"required":["outcome","explanation"],"properties":{"outcome":{"type":"string","enum":["confirmed","refuted","superseded"]},"explanation":{"type":"string","minLength":1}}}`
+
+// runRebuttalAssessment returns the final assessment output, using the agent's
+// native structured-review mode when available.
+func runRebuttalAssessment(
+	ctx context.Context,
+	a agent.Agent,
+	repoPath, gitRef, prompt string,
+	out io.Writer,
+) (string, error) {
+	readOnly, ok := a.(agent.ReadOnlyReviewAgent)
+	if !ok || !readOnly.SupportsReadOnlyReview() {
+		return "", fmt.Errorf("agent %q cannot enforce read-only assessments", a.Name())
+	}
+	ctx = agent.WithReadOnlyReview(ctx)
+	if structured, ok := a.(agent.StructuredReviewAgent); ok {
+		result, err := structured.ReviewWithSchema(
+			ctx, repoPath, gitRef, prompt, jsontext.Value(assessmentJSONSchema), out,
+		)
+		if err != nil {
+			return "", err
+		}
+		return string(result), nil
+	}
+	return a.Review(ctx, repoPath, gitRef, prompt, out)
 }
