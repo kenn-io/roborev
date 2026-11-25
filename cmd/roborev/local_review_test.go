@@ -437,7 +437,7 @@ func TestLocalReviewFoldsMinorFindings(t *testing.T) {
 			if tc.full {
 				assert.Contains(t, run.stdout, "nit problem")
 				assert.Contains(t, run.stdout, "unlikely problem")
-				assert.NotContains(t, run.stdout, "findings hidden")
+				assert.NotContains(t, run.stdout, "hidden")
 			} else {
 				assert.NotContains(t, run.stdout, "nit problem")
 				assert.NotContains(t, run.stdout, "unlikely problem")

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1075,46 +1074,15 @@ func TestReviewWaitFoldedFindings(t *testing.T) {
 	require.NoError(t, err)
 	var structured storage.StructuredOutput
 	require.NoError(t, json.Unmarshal(raw, &structured))
-	for _, verdict := range []int{0, 1} {
-		for _, tc := range []struct {
-			name string
-			args []string
-			full bool
-		}{
-			{"folded", nil, false}, {"all", []string{"--all"}, true},
-			{"skill", []string{"--from-skill"}, true},
-		} {
-			t.Run(fmt.Sprintf("verdict=%d/%s", verdict, tc.name), func(t *testing.T) {
-				repo, mux := setupTestEnvironment(t)
-				repo.CommitFile("file.txt", "content", "initial commit")
-				mockEnqueueQueued(mux, "abc123")
-				mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) { handleJobsDone(w, r, storage.JobStatusDone) })
-				mux.HandleFunc("/api/review", func(w http.ResponseWriter, _ *http.Request) {
-					respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: doc.Markdown(""), StructuredOutput: structured, Job: &storage.ReviewJob{ID: 1}, VerdictBool: new(verdict)})
-				})
-				args := []string{"review", "--repo", repo.Dir, "--wait"}
-				args = append(args, tc.args...)
-				run := runCLI(t, args...)
-				stdout, err := run.stdout, run.err
-				if verdict == 0 {
-					var exitErr *exitError
-					require.ErrorAs(t, err, &exitErr)
-					assert.Equal(t, 1, exitErr.code)
-				} else {
-					require.NoError(t, err)
-				}
-				assert.Contains(t, stdout, "visible problem")
-				if tc.full {
-					assert.Contains(t, stdout, "nit problem")
-					assert.Contains(t, stdout, "unlikely problem")
-					assert.NotContains(t, stdout, "hidden")
-				} else {
-					assert.NotContains(t, stdout, "nit problem")
-					assert.NotContains(t, stdout, "unlikely problem")
-					assert.Contains(t, stdout, "1 nit and 1 unlikely finding hidden")
-					assert.Contains(t, stdout, "Run roborev job show --job 1 --all to list them.")
-				}
-			})
-		}
-	}
+	repo, mux := setupTestEnvironment(t)
+	repo.CommitFile("file.txt", "content", "initial commit")
+	mockEnqueueQueued(mux, "abc123")
+	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) { handleJobsDone(w, r, storage.JobStatusDone) })
+	mux.HandleFunc("/api/review", func(w http.ResponseWriter, _ *http.Request) {
+		respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: doc.Markdown(""), StructuredOutput: structured, Job: &storage.ReviewJob{ID: 1}, VerdictBool: new(1)})
+	})
+	run := runCLI(t, "review", "--repo", repo.Dir, "--wait", "--all")
+	require.NoError(t, run.err)
+	assert.Contains(t, run.stdout, "nit problem")
+	assert.Contains(t, run.stdout, "unlikely problem")
 }

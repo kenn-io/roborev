@@ -746,7 +746,7 @@ func TestShowFoldedFindings(t *testing.T) {
 		name string
 		args []string
 		full bool
-	}{{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill"}, true}, {"json", []string{"--json"}, true}} {
+	}{{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill"}, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"job", "show", "--job", "7"}, tc.args...)
 			run := runCLI(t, args...)

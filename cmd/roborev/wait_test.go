@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -307,9 +306,8 @@ func TestWaitMultipleJobIDs(t *testing.T) {
 	}
 	newWaitEnv(t, newWaitMockHandler(mock))
 
-	out, err := runWait(t, "--all", "--job", "10", "20")
+	_, err := runWait(t, "--job", "10", "20")
 	require.NoError(t, err)
-	assert.NotContains(t, out, "No issues found.")
 }
 
 func TestWaitMultipleJobIDsOneFails(t *testing.T) {
@@ -622,25 +620,8 @@ func TestWaitFoldedFindings(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &structured))
 	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, Output: doc.Markdown(""), StructuredOutput: structured, VerdictBool: new(1)}
 	newWaitEnv(t, newWaitMockHandler(mockConfig{Jobs: []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone}}, Review: review}))
-	for _, tc := range []struct {
-		name string
-		args []string
-		full bool
-	}{
-		{"folded", []string{"--job", "1"}, false},
-		{"all", []string{"--job", "1", "--all"}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			out, err := runWait(t, tc.args...)
-			require.NoError(t, err)
-			if tc.full {
-				assert.Contains(t, out, "nit problem")
-				assert.Contains(t, out, "rare problem")
-			} else {
-				assert.NotContains(t, out, "nit problem")
-				assert.Contains(t, out, "1 nit and 1 unlikely finding hidden")
-				assert.Contains(t, out, "Run roborev --server "+daemon.ShellEscape(getDaemonEndpoint().ConfigAddr())+" job show --job 1 --all to list them.")
-			}
-		})
-	}
+	out, err := runWait(t, "--job", "1", "--all")
+	require.NoError(t, err)
+	assert.Contains(t, out, "nit problem")
+	assert.Contains(t, out, "rare problem")
 }

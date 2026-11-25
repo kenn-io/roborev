@@ -553,6 +553,7 @@ func TestFoldedReviewToggle(t *testing.T) {
 		if split {
 			m.currentView = viewQueue
 			m.layout = splitlayout.Split
+			m.width, m.height = 150, 40
 			m.jobs = []storage.ReviewJob{*review.Job}
 			m.selectedJobID = review.JobID
 		}
@@ -560,17 +561,16 @@ func TestFoldedReviewToggle(t *testing.T) {
 		assert.Contains(t, m.reviewContentString(review), "critical visible")
 		assert.Contains(t, m.reviewContentString(review), "security visible")
 		assert.Equal(t, "expand", m.foldHint())
+		if split {
+			assert.Contains(t, stripANSI(m.renderSplit()), "e expand")
+		} else {
+			assert.Contains(t, stripANSI(m.renderReviewView()), "e expand")
+		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "nit problem")
 		assert.Equal(t, "collapse", m.foldHint())
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
-		m.foldExpandedJobID = review.JobID
-		other := *review
-		other.JobID = 2
-		m.acceptReview(reviewMsg{review: &other})
-		m.currentView = viewReview
-		assert.Equal(t, "expand", m.foldHint())
 	}
 }
 
@@ -610,6 +610,13 @@ func TestRerunReviewStartsFolded(t *testing.T) {
 	m, _ = updateModel(t, m, keyPressMsg('e'))
 	assert.Contains(t, m.reviewContentString(review), "**Problem:** nit")
 	assert.Equal(t, "collapse", m.foldHint())
+	other := *review
+	otherJob := *review.Job
+	other.JobID, otherJob.ID = 2, 2
+	other.Job = &otherJob
+	m.acceptReview(reviewMsg{jobID: 2, review: &other})
+	assert.Contains(t, m.reviewContentString(&other), "1 nit hidden")
+	assert.Equal(t, "expand", m.foldHint())
 	rerun := *review
 	rerunJob := *review.Job
 	rerunJob.EnqueuedAt = attempt.Add(time.Second)
