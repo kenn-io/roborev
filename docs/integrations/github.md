@@ -1042,8 +1042,8 @@ sockets outside scratch remain blocked. Tests can read their own scope's CPU and
 memory limits, which DuckDB needs at startup. Model calls use nono's credential
 route, which reads the host's current Codex login outside the sandbox. Tests
 that start TCP loopback servers cannot run in this sandbox; the checker keeps
-findings it cannot try. When the checker cannot determine whether a trigger is
-unlikely, it retains the reviewer's classification.
+findings it cannot try. The checker can mark a finding unlikely but never clears
+a reviewer's mark.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. If every finding drops, the

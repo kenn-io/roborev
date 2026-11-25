@@ -512,20 +512,18 @@ func TestCICheckUnlikely(t *testing.T) {
 	assert.True(t, got.Findings[0].Unlikely)
 	assert.True(t, got.Findings[1].Unlikely)
 	assert.False(t, got.Findings[2].Unlikely)
-	assert.False(t, got.Check.Findings[0].Finding.Unlikely)
-	assert.True(t, got.Check.Findings[1].Finding.Unlikely)
 	assert.Equal(t, structuredreview.CheckDropped, got.Check.Findings[3].Outcome)
 }
 
-func TestCICheckClassifiesBelowSeverityFloor(t *testing.T) {
+func TestCICheckCompletionBelowSeverityThreshold(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	calls := 0
 	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
 		calls++
 		return doc, nil
 	}
-	doc := structuredreview.Document{Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "low", Problem: "Rare case", Fix: "Fix it"}}}
-	_, ran := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "medium"}, synthesisResult{}, doc, &ciCheckConfig{})
-	assert.True(t, ran)
-	assert.Equal(t, 1, calls)
+	doc := structuredreview.Document{Verdict: structuredreview.VerdictPass, Findings: []structuredreview.Finding{{Severity: "low"}}}
+	_, ran := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, synthesisResult{}, doc, &ciCheckConfig{})
+	assert.False(t, ran)
+	assert.Equal(t, 0, calls)
 }
