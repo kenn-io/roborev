@@ -816,7 +816,7 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 	}
 }
 
-func TestSynthesizeRawFallbackIgnoresShowAll(t *testing.T) {
+func TestSynthesizeRawFallbackShowAll(t *testing.T) {
 	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
 	results := []ReviewResult{
 		{Status: ResultDone, Output: prose, Structured: &StructuredReview{Findings: []StructuredFinding{{Severity: "high", Problem: "High issue", Fix: "Fix"}, {Severity: "low", Problem: "Low issue", Fix: "Fix"}}}},
@@ -825,7 +825,20 @@ func TestSynthesizeRawFallbackIgnoresShowAll(t *testing.T) {
 	result, err := Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
 	require.NoError(t, err)
 	assert.Contains(t, result.GitHubComment, "High issue")
-	assert.NotContains(t, result.GitHubComment, "Low issue")
+	assert.Contains(t, result.GitHubComment, "Low issue")
+	assert.NotContains(t, result.GitHubComment, "<details>")
+	result, err = Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "low", Agent: "nonexistent-synthesis-agent"})
+	require.NoError(t, err)
+	assert.Contains(t, result.GitHubComment, "Low issue")
+	assert.NotContains(t, result.GitHubComment, "<details>")
+	for _, output := range []jsontext.Value{nil, jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`)} {
+		results[0].Structured = nil
+		results[0].StructuredOutput = output
+		result, err = Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
+		require.NoError(t, err)
+		assert.Contains(t, result.GitHubComment, "High issue")
+		assert.NotContains(t, result.GitHubComment, "Low issue")
+	}
 }
 
 func TestSynthesizeStructuredCommentVerdict(t *testing.T) {

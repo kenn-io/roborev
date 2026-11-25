@@ -117,7 +117,6 @@ func Synthesize(
 		log.Printf(
 			"ci review: synthesis failed: %v "+
 				"(falling back to raw format)", err)
-		commentConfig.ShowAll = false
 		commentConfig.Fold = false
 		return SynthesisResult{
 			Output:        formatRawBatchOutput(results, opts.HeadSHA, nil),
