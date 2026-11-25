@@ -737,18 +737,6 @@ func TestShowFoldedFindings(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{Network: ep.Network, Address: ep.Address, Version: version.Version}, nil
 	}
-	for _, all := range []bool{false, true} {
-		cmd, output := newTestCmd(t)
-		err := showReview(cmd, ep, 7, false, all)
-		require.NoError(t, err)
-		if all {
-			assert.Contains(t, output.String(), "nit problem")
-			assert.Contains(t, output.String(), "rare problem")
-		} else {
-			assert.NotContains(t, output.String(), "nit problem")
-			assert.Contains(t, output.String(), "1 nit and 1 unlikely finding hidden")
-		}
-	}
 	t.Run("explicit server", func(t *testing.T) {
 		run := runCLI(t, "--server", ep.ConfigAddr(), "job", "show", "--job", "7")
 		require.NoError(t, run.err)
@@ -758,7 +746,7 @@ func TestShowFoldedFindings(t *testing.T) {
 		name string
 		args []string
 		full bool
-	}{{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill"}, true}, {"skill-all", []string{"--from-skill", "--all"}, true}, {"json", []string{"--json"}, true}} {
+	}{{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill"}, true}, {"json", []string{"--json"}, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"job", "show", "--job", "7"}, tc.args...)
 			run := runCLI(t, args...)

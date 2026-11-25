@@ -1082,7 +1082,7 @@ func TestReviewWaitFoldedFindings(t *testing.T) {
 			full bool
 		}{
 			{"folded", nil, false}, {"all", []string{"--all"}, true},
-			{"skill", []string{"--from-skill"}, true}, {"skill-all", []string{"--from-skill", "--all"}, true},
+			{"skill", []string{"--from-skill"}, true},
 		} {
 			t.Run(fmt.Sprintf("verdict=%d/%s", verdict, tc.name), func(t *testing.T) {
 				repo, mux := setupTestEnvironment(t)

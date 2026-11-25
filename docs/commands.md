@@ -267,7 +267,7 @@ roborev review --branch --panel none          # Force single-agent review
 
 | Flag | Description |
 |------|-------------|
-| `--all` | Show nits and unlikely findings with `--wait` |
+| `--all` | Show nits and unlikely findings in the review output |
 | `--wait` | Block until review completes (intended for CI, scripting, and orchestrators; not recommended in interactive agent sessions) |
 | `--quiet` | Only show progress/elapsed time |
 | `--branch [name]` | Review all commits on branch since base (optionally specify branch name) |
@@ -326,7 +326,7 @@ Unlike `roborev review --wait`, this does not enqueue a new review. It waits for
 an already-running job, making it useful when a post-commit hook has already
 triggered the review. A single job shows its review, folding nits and unlikely
 findings by default. Use `--all` to show every finding. Multiple jobs report
-status only and do not accept `--all`. For interactive workflows, use
+status only. For interactive workflows, use
 `roborev tui` to browse completed reviews.
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)

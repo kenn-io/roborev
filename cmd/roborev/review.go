@@ -103,10 +103,6 @@ Examples:
 				defer func() { err = quietExit(cmd, err) }()
 			}
 
-			if all && !wait {
-				return usageErr(cmd, fmt.Errorf("--all requires --wait"))
-			}
-
 			// --fast is shorthand for --reasoning fast (explicit --reasoning takes precedence)
 			reasoning = resolveReasoningWithFast(reasoning, fast, cmd.Flags().Changed("reasoning"))
 

@@ -427,10 +427,10 @@ func TestLocalReviewFoldsMinorFindings(t *testing.T) {
 		args []string
 		full bool
 	}{
-		{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill"}, true},
+		{"folded", []string{"--wait"}, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--wait", "--from-skill"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := append([]string{"review", "--local", "--wait", "--repo", repo.Root, "--agent", "test"}, tc.args...)
+			args := append([]string{"review", "--local", "--repo", repo.Root, "--agent", "test"}, tc.args...)
 			run := runCLI(t, args...)
 			require.NoError(t, run.err)
 			assert.Contains(t, run.stdout, "visible problem")

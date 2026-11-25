@@ -307,8 +307,9 @@ func TestWaitMultipleJobIDs(t *testing.T) {
 	}
 	newWaitEnv(t, newWaitMockHandler(mock))
 
-	_, err := runWait(t, "--job", "10", "20")
+	out, err := runWait(t, "--all", "--job", "10", "20")
 	require.NoError(t, err)
+	assert.NotContains(t, out, "No issues found.")
 }
 
 func TestWaitMultipleJobIDsOneFails(t *testing.T) {
@@ -459,10 +460,7 @@ func TestWaitMultipleValidationBeforeDaemon(t *testing.T) {
 	repo.CommitFile("file.txt", "content", "initial commit")
 	chdir(t, repo.Dir)
 
-	_, err := runWait(t, "--all", "--job", "10", "20")
-	assertErrorContains(t, err, "--all needs one job")
-
-	_, err = runWait(t, "--job", "10", "abc")
+	_, err := runWait(t, "--job", "10", "abc")
 	assertErrorContains(t, err, "invalid job ID")
 
 	_, err = runWait(t, "--job", "10", "0")

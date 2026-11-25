@@ -77,9 +77,6 @@ Examples:
 
 			// Multiple args: wait for all concurrently
 			if len(args) > 1 {
-				if all {
-					return usageErr(cmd, fmt.Errorf("--all needs one job"))
-				}
 				return waitMultiple(ctx, cmd, args, forceJobID, quiet)
 			}
 
