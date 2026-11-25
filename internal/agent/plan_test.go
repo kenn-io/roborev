@@ -91,7 +91,7 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	SetAllowUnsafeAgents(true)
 	t.Cleanup(func() { SetAllowUnsafeAgents(false) })
-	for _, name := range []string{"cursor", "codex", "claude", "droid", "gemini", "copilot", "pi", "opencode", "kilo", "grok", "muse"} {
+	for _, name := range []string{"cursor", "codex", "claude", "droid", "gemini", "copilot", "pi", "opencode", "kilo", "grok", "muse", "omp"} {
 		t.Run(name, func(t *testing.T) {
 			repoPath := newPlanTestRepo(t)
 			argsPath := filepath.Join(t.TempDir(), "args")
@@ -119,6 +119,8 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				a = NewKiloAgent(command)
 			case "muse":
 				a = NewMuseAgent(command)
+			case "omp":
+				a = NewOmpAgent(command)
 			case "grok":
 				a = NewGrokAgent(command)
 			}
@@ -144,6 +146,10 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				assert.Contains(t, args, "--tools\nread,grep,find,ls\n")
 				assert.Equal(t, 1, strings.Count(args, "--tools\n"))
 				assert.Contains(t, args, "--no-extensions")
+			case "omp":
+				assert.Contains(t, args, "--tools\nread,grep,glob\n--no-tools\n")
+				assert.Contains(t, args, "--approval-mode\nalways-ask\n")
+				assert.NotContains(t, args, "yolo")
 			case "copilot":
 				assert.Contains(t, args, "--available-tools=view,glob,grep,skill\n")
 			case "kilo":

@@ -330,6 +330,8 @@ func TestSuppliedReviewInvocationKeepsAdapterEvidence(t *testing.T) {
 		{"copilot", "copilot", `{"type":"assistant.message","data":{"messageId":"msg-1","content":` + string(encodedNarration) + `,"toolRequests":[]}}` + "\n" +
 			`{"type":"result","exitCode":0,"sessionId":"invocation-session"}`, false},
 		{"muse", "muse", narration, false},
+		{"omp", "omp", `{"type":"session","id":"invocation-session"}` + "\n" +
+			`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + string(encoded) + `}],"stopReason":"stop","usage":{"input":10,"output":3}}}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testenv.SetDataDir(t)

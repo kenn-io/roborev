@@ -22,6 +22,7 @@ installed.
 | Pi | `pi` | `npm install -g @mariozechner/pi-coding-agent` |
 | Grok Build | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` ([x.ai/cli](https://x.ai/cli)) |
 | Muse Code | `muse` | `curl -fsSL https://dev.meta.ai/install.sh \| sh` ([Meta installation guide](https://dev.meta.ai/docs/overview)) |
+| omp | `omp` | `curl -fsSL https://omp.sh/install \| sh` ([can1357/oh-my-pi](https://github.com/can1357/oh-my-pi)) |
 
 For Claude Code, Codex, and Copilot, roborev checks the resolved executable's
 path, size, and modification time before reusing cached CLI capabilities. When
@@ -44,6 +45,7 @@ roborev auto-detects installed agents and falls back in this order:
 1. Pi
 1. Grok Build
 1. Muse Code
+1. omp
 
 The first available agent is used unless you specify one explicitly.
 
@@ -97,6 +99,7 @@ roborev refine --model claude-sonnet-4-20250514
 | Pi | Model name | `claude-sonnet-4-20250514`, `gpt-4.1` |
 | Grok Build | xAI model ID | `grok-4.5` (see [x.ai/cli](https://x.ai/cli)) |
 | Muse Code | Meta model ID | `muse-spark-1.3` |
+| omp | Model name, or `provider/model` for an exact match | `claude-sonnet-4-5`, `anthropic/claude-sonnet-4-5` |
 
 ### Configuration
 
@@ -362,6 +365,7 @@ and commands):
 | Pi | Full (agentic runs use Pi's default tools) |
 | Grok Build | Full (uses `--always-approve` in agentic mode; review uses layered read-only safety — see below) |
 | Muse Code | Full (uses `--yolo`; reviews and planning allow only `read_file` and `search`) |
+| omp | Full (uses `--approval-mode yolo`; reviews and planning allow only `read`, `grep`, and `glob`) |
 
 See [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/) for details on
 review vs agentic modes.

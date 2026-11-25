@@ -22,6 +22,7 @@ var canonicalByName = map[string]string{
 	"kilo":        "kilo",
 	"droid":       "droid",
 	"pi":          "pi",
+	"omp":         "omp",
 	"muse":        "muse",
 	"grok":        "grok",
 	"grok-build":  "grok",

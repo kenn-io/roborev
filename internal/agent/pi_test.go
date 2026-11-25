@@ -22,7 +22,7 @@ func TestParsePiJSON(t *testing.T) {
 		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Hello"},{"type":"text","text":"World"}]}}`,
 	}, "\n") + "\n"
 
-	result, err := parsePiJSON(strings.NewReader(input))
+	result, err := parsePiJSON(strings.NewReader(input), nil)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello\nWorld", result.Text)
 	assert.Empty(t, result.Error)
@@ -55,7 +55,7 @@ func TestParsePiJSONProviderError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parsePiJSON(strings.NewReader(strings.Join(tt.lines, "\n") + "\n"))
+			result, err := parsePiJSON(strings.NewReader(strings.Join(tt.lines, "\n")+"\n"), nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, result.Error)
 		})
@@ -99,7 +99,7 @@ func TestParsePiJSONLargeMessage(t *testing.T) {
 	bigText := strings.Repeat("x", 5*1024*1024)
 	input := `{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"` + bigText + `"}]}}` + "\n"
 
-	result, err := parsePiJSON(strings.NewReader(input))
+	result, err := parsePiJSON(strings.NewReader(input), nil)
 	require.NoError(t, err)
 	assert.Equal(t, bigText, result.Text)
 }

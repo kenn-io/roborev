@@ -27,7 +27,7 @@ func TestAgentSpecsResolveAliasesAndCanonicalNames(t *testing.T) {
 func TestAgentSpecsFallbackOrder(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kiro", "kilo", "droid", "pi", "grok", "muse"}, fallbackAgentOrder)
+	assert.Equal(t, []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kiro", "kilo", "droid", "pi", "grok", "muse", "omp"}, fallbackAgentOrder)
 	assert.Equal(t, fallbackAgentOrder, installHintAgentNames())
 }
 
@@ -61,6 +61,7 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 		OpenCodeCmd:   "custom-opencode",
 		GrokCmd:       "custom-grok",
 		MuseCmd:       "custom-muse",
+		OmpCmd:        "custom-omp",
 		DroidCmd:      "custom-droid",
 	}
 	expectedOverrides := map[string]string{
@@ -72,6 +73,7 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 		"opencode":    "custom-opencode",
 		"grok":        "custom-grok",
 		"muse":        "custom-muse",
+		"omp":         "custom-omp",
 		"droid":       "custom-droid",
 	}
 

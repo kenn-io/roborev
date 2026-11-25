@@ -88,7 +88,7 @@ func (wp *WorkerPool) finishReviewInvocation(ctx context.Context, report storage
 	switch report.Agent {
 	case "codex":
 		report.Usage, err = tokens.ParseCodexUsageJSONL(strings.NewReader(stream))
-	case "claude-code", "pi":
+	case "claude-code", "pi", "omp":
 		report.Usage, err = tokens.ParseSchemaUsage(report.Agent, strings.NewReader(stream))
 	}
 	if err != nil {

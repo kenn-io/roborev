@@ -1186,8 +1186,11 @@ func TestFormatter_PiRendering(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		runStreamTestCase(t, "pi", tc)
+	// omp writes the same event stream as Pi.
+	for _, agent := range []string{"pi", "omp"} {
+		for _, tc := range tests {
+			runStreamTestCase(t, agent, tc)
+		}
 	}
 }
 

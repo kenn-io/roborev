@@ -80,7 +80,7 @@ func legacyProtocolForAgent(agent string) legacyProtocol {
 		return legacyCodex
 	case "opencode", "kilo":
 		return legacyOpenCode
-	case "pi":
+	case "pi", "omp":
 		return legacyPi
 	case "grok", "grok-build":
 		return legacyGrok

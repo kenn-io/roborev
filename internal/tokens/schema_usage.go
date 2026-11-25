@@ -45,7 +45,7 @@ func sumClaudeModels(models map[string]claudeModelUsage) (Usage, bool) {
 	return total, priced
 }
 
-// ParseSchemaUsage reads usage emitted by Pi and Claude invocations.
+// ParseSchemaUsage reads usage emitted by Pi, omp and Claude invocations.
 // Non-JSON progress lines and unrelated events are ignored. Missing cost is
 // distinct from an explicit zero-dollar run.
 //
@@ -58,7 +58,7 @@ func sumClaudeModels(models map[string]claudeModelUsage) (Usage, bool) {
 // summed. The per-model objects are preferred over the top-level usage object
 // because they also count requests the CLI makes outside the main turn.
 func ParseSchemaUsage(agentName string, r io.Reader) (*Usage, error) {
-	if agentName != "pi" && agentName != "claude-code" {
+	if agentName != "pi" && agentName != "omp" && agentName != "claude-code" {
 		return nil, nil
 	}
 	reader := bufio.NewReader(r)
@@ -97,7 +97,7 @@ func ParseSchemaUsage(agentName string, r io.Reader) (*Usage, error) {
 		}
 		if json.Unmarshal(line, &event) == nil {
 			switch agentName {
-			case "pi":
+			case "pi", "omp":
 				if event.Type == "session" {
 					threadID = event.ID
 				}

@@ -534,7 +534,7 @@ func (a *PiAgent) Review(
 		return "No review output generated", nil
 	}
 
-	stream, parseErr := parsePiJSON(strings.NewReader(result))
+	stream, parseErr := parsePiJSON(strings.NewReader(result), nil)
 	if parseErr != nil {
 		return "", parseErr
 	}
@@ -649,9 +649,11 @@ func (s piStream) err() error {
 	return fmt.Errorf("pi provider error: %s", s.Error)
 }
 
-func parsePiJSON(r io.Reader) (piStream, error) {
+// parsePiJSON reads a Pi --mode json event stream, copying each event to
+// output when it is not nil.
+func parsePiJSON(r io.Reader, output io.Writer) (piStream, error) {
 	var stream piStream
-	err := scanStreamJSONLines(r, nil, func(line string) error {
+	err := scanStreamJSONLines(r, output, func(line string) error {
 		var ev struct {
 			Type    string `json:"type"`
 			Message struct {
@@ -700,7 +702,7 @@ func parsePiJSON(r io.Reader) (piStream, error) {
 // piMissingOutputError explains why a Pi run that exited 0 wrote no
 // structured output. A provider error in the event stream is the usual cause.
 func piMissingOutputError(stdout []byte, label string, readErr error) error {
-	if stream, _ := parsePiJSON(bytes.NewReader(stdout)); stream.err() != nil {
+	if stream, _ := parsePiJSON(bytes.NewReader(stdout), nil); stream.err() != nil {
 		return fmt.Errorf("pi %s failed: %w", label, stream.err())
 	}
 	return fmt.Errorf("read pi %s output: %w", label, readErr)
