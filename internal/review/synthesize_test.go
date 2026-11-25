@@ -99,14 +99,17 @@ func TestSynthesisPreservesMatchingSourceUnlikely(t *testing.T) {
 }
 
 func TestSynthesisPreservesMatchingSourceSecurity(t *testing.T) {
-	a := &unlikelySynthesisAgent{}
-	a.self = a
-	source := StructuredFinding{Severity: "medium", Topic: "security", Problem: "Rare issue", Fix: "Fix rare", Unlikely: true}
-	source.SetLocation("file.go", 1, 1)
-	reviews := []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{source}}}}
+	a := &structuredBatchAgent{name: "security-synthesis", result: []byte(`{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","topic":"performance","confidence":0.8,"unlikely":true,"problem":"Reworded issue","fix":"Fix it","file":"file.go","start_line":1,"end_line":1,"sources":[1,2,3]}]}`)}
+	reviews := make([]ReviewResult, 3)
+	for i, topic := range []string{"security", "performance", "performance"} {
+		source := StructuredFinding{Severity: "medium", Topic: topic, Problem: "Original issue", Fix: "Fix original", Unlikely: true}
+		source.SetLocation("file.go", 1, 1)
+		reviews[i] = ReviewResult{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{source}}}
+	}
 	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
 	require.NoError(t, err)
-	require.Len(t, doc.Findings, 2)
+	require.Len(t, doc.Findings, 1)
+	assert.Equal(t, "Reworded issue", doc.Findings[0].Problem)
 	assert.Equal(t, "security", doc.Findings[0].Topic)
 	assert.NotContains(t, FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc})), "<details>")
 }

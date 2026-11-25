@@ -896,8 +896,9 @@ and security findings remain in the main list. The finding cap applies to that
 list. Set `comment_show_all = true` globally or per repository to show every
 structured finding inline, ignoring the comment severity and confidence floors
 and finding cap. The setting also applies to structured GitHub comments from
-`roborev ci review`. Raw fallback comments and prose keep their existing
-filters. Stored reviews retain every finding.
+`roborev ci review`, including structured raw fallback comments. Text-only
+and legacy comments keep their existing filters. Stored reviews retain every
+finding.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
 synthesis has no findings after filtering, even if the stored review has
