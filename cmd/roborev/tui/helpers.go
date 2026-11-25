@@ -495,10 +495,11 @@ type markdownCache struct {
 	colorProfile termenv.Profile   // color profile for glamour rendering (Ascii when NO_COLOR)
 	tabWidth     int               // tab expansion width (default 2)
 
-	reviewLines []string
-	reviewID    int64
-	reviewWidth int
-	reviewText  string // raw input text used to produce reviewLines
+	reviewLines  []string
+	reviewID     int64
+	reviewWidth  int
+	reviewText   string // raw input text used to produce reviewLines
+	reviewStyled bool
 
 	promptLines []string
 	promptID    int64
@@ -727,6 +728,7 @@ func (c *markdownCache) getReviewLines(text string, wrapWidth, maxWidth int, rev
 		return c.reviewLines
 	}
 	c.reviewLines = renderMarkdownLines(text, wrapWidth, maxWidth, c.glamourStyle, c.tabWidth, c.colorProfile)
+	c.reviewStyled = false
 	c.reviewID = reviewID
 	c.reviewWidth = maxWidth
 	c.reviewText = text

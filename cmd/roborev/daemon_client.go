@@ -311,11 +311,15 @@ func reviewText(review *storage.Review, all bool, ep daemon.DaemonEndpoint) stri
 	}
 	output, folded := review.FoldedOutput()
 	if folded {
-		addr := ep.ConfigAddr()
-		if ep.IsRemote() {
-			addr = ep.BaseURL()
+		command := "roborev"
+		if serverAddr != "" {
+			addr := ep.ConfigAddr()
+			if ep.IsRemote() {
+				addr = ep.BaseURL()
+			}
+			command += " --server " + daemon.ShellEscape(addr)
 		}
-		output = strings.TrimSuffix(output, "\n") + fmt.Sprintf(".\nTo list them:\n  roborev --server %s job show --job %d --all", daemon.ShellEscape(addr), review.JobID)
+		output = strings.TrimSuffix(output, "\n") + fmt.Sprintf(".\nTo list them:\n  %s job show --job %d --all", command, review.JobID)
 	}
 	return output
 }

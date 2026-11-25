@@ -8,11 +8,13 @@ import (
 	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
+	"github.com/muesli/termenv"
 	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/helprender"
 	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/termstyle"
 	"go.kenn.io/roborev/internal/tokens"
 )
 
@@ -75,6 +77,52 @@ func (m model) reviewContentString(review *storage.Review) string {
 		}
 	}
 	return content.String()
+}
+
+func (m model) reviewBodyLines(review *storage.Review, wrapWidth, maxWidth int) []string {
+	content := m.reviewContentString(review)
+	if m.mdCache == nil {
+		return sanitizeLines(wrapText(content, wrapWidth))
+	}
+	lines := m.mdCache.getReviewLines(content, wrapWidth, maxWidth, review.ID)
+	if m.foldExpanded || m.mdCache.colorProfile == termenv.Ascii {
+		return lines
+	}
+	if m.mdCache.reviewStyled {
+		return lines
+	}
+	folded, ok := review.FoldedOutput()
+	if !ok {
+		return lines
+	}
+	label := strings.TrimSpace(folded)
+	label = label[strings.LastIndex(label, "\n")+1:]
+	withoutComments := m
+	withoutComments.currentResponses = nil
+	prefix := renderMarkdownLines(withoutComments.reviewContentString(review), wrapWidth, maxWidth, m.mdCache.glamourStyle, m.mdCache.tabWidth, m.mdCache.colorProfile)
+	count := renderMarkdownLines(label, wrapWidth, maxWidth, m.mdCache.glamourStyle, m.mdCache.tabWidth, m.mdCache.colorProfile)
+	for len(prefix) > 0 && strings.TrimSpace(xansi.Strip(prefix[len(prefix)-1])) == "" {
+		prefix = prefix[:len(prefix)-1]
+	}
+	for len(count) > 0 && strings.TrimSpace(xansi.Strip(count[len(count)-1])) == "" {
+		count = count[:len(count)-1]
+	}
+	for len(count) > 0 && strings.TrimSpace(xansi.Strip(count[0])) == "" {
+		count = count[1:]
+	}
+	start, end := len(prefix)-len(count), len(prefix)
+	if start < 0 || end > len(lines) {
+		return lines
+	}
+	color := "#6b7280"
+	if termstyle.DarkBackground() {
+		color = "#9ca3af"
+	}
+	for i := start; i < end; i++ {
+		lines[i] = termenv.String(xansi.Strip(lines[i])).Foreground(m.mdCache.colorProfile.Color(color)).String()
+	}
+	m.mdCache.reviewStyled = true
+	return lines
 }
 
 func reviewTypeMetadata(job storage.ReviewJob) string {
@@ -210,13 +258,7 @@ func (m model) renderReviewView() string {
 	// wrapWidth caps at 100 for readability; maxWidth uses actual terminal width for truncation.
 	maxWidth := max(20, m.width-4)
 	wrapWidth := min(maxWidth, 100)
-	contentStr := m.reviewContentString(review)
-	var lines []string
-	if m.mdCache != nil {
-		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, maxWidth, review.ID)
-	} else {
-		lines = sanitizeLines(wrapText(contentStr, wrapWidth))
-	}
+	lines := m.reviewBodyLines(review, wrapWidth, maxWidth)
 
 	// Compute title line count based on actual title length
 	titleLines := 1

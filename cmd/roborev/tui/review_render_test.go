@@ -9,6 +9,7 @@ import (
 	"uuid"
 
 	"charm.land/lipgloss/v2"
+	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/tui/splitlayout"
@@ -578,6 +579,23 @@ func TestFoldedReviewToggle(t *testing.T) {
 		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
+	}
+}
+
+func TestFoldedReviewCountIsMuted(t *testing.T) {
+	t.Setenv("ROBOREV_COLOR_MODE", "dark")
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, Output: doc.Markdown(""), StructuredOutput: structured}
+	m := setupRenderModel(viewReview, review, withDimensions(100, 40))
+	m.currentResponses = []storage.Response{{Responder: "reviewer", Response: "A comment"}}
+	m.mdCache.colorProfile = termenv.TrueColor
+	for _, lines := range [][]string{m.reviewPaneBodyLines(96), strings.Split(m.renderReviewView(), "\n")} {
+		assert.Regexp(t, `\x1b\[38;2;156;163;175m[^\n]*1 nit hidden`, strings.Join(lines, "\n"))
+		assert.Contains(t, stripANSI(strings.Join(lines, "\n")), "A comment")
 	}
 }
 

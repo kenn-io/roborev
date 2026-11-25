@@ -286,7 +286,9 @@ roborev review --branch --panel none          # Force single-agent review
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)
 
-The verdict and exit code include findings hidden by folding.
+Daemon-backed `review --wait` folds low-severity and unlikely findings unless
+you pass `--all`. The verdict and exit code include the hidden findings.
+`review --local` streams the full review without folding.
 
 A commit or range review is skipped when its diff is empty after
 [file exclusions](/docs/configuration/#exclude-patterns), for example an empty

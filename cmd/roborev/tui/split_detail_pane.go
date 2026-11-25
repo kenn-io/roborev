@@ -75,10 +75,7 @@ func (m model) reviewPaneBodyLines(innerW int) []string {
 	review := m.currentReview
 	maxWidth := max(20, innerW)
 	wrapWidth := min(maxWidth, 100)
-	if m.mdCache != nil {
-		return m.mdCache.getReviewLines(m.reviewContentString(review), wrapWidth, maxWidth, review.ID)
-	}
-	return sanitizeLines(wrapText(m.reviewContentString(review), wrapWidth))
+	return m.reviewBodyLines(review, wrapWidth, maxWidth)
 }
 
 // renderReviewPaneBody renders the current review body-only for the split
