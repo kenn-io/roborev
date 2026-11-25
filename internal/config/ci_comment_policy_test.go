@@ -154,7 +154,8 @@ func TestCICommentShowAll(t *testing.T) {
 		global, repo string
 		want         bool
 	}{
-		{"", "", false}, {"comment_show_all = true", "", true},
+		{"", "", false},
+		{"comment_show_all = true", "", true},
 		{"comment_show_all = true", "comment_show_all = false", false},
 		{"", "comment_show_all = true", true},
 	} {

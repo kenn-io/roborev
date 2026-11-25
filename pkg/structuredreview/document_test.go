@@ -313,8 +313,10 @@ func TestSchemaUnlikely(t *testing.T) {
 		schema              jsontext.Value
 		sources, conversion bool
 	}{
-		{"live", Schema, false, false}, {"sourced", SourcedSchema, true, false},
-		{"conversion", ConversionSchema, false, true}, {"sourced conversion", ConversionSourcedSchema, true, true},
+		{"live", Schema, false, false},
+		{"sourced", SourcedSchema, true, false},
+		{"conversion", ConversionSchema, false, true},
+		{"sourced conversion", ConversionSourcedSchema, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var schema jsonschema.Schema

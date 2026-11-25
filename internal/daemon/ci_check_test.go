@@ -515,7 +515,6 @@ func TestCICheckUnlikely(t *testing.T) {
 	assert.False(t, got.Check.Findings[0].Finding.Unlikely)
 	assert.True(t, got.Check.Findings[1].Finding.Unlikely)
 	assert.Equal(t, structuredreview.CheckDropped, got.Check.Findings[3].Outcome)
-
 }
 
 func TestCICheckClassifiesBelowSeverityFloor(t *testing.T) {

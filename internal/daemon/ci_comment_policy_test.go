@@ -388,7 +388,6 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	body, err = h.Poller.panelCommentBody(panel, members)
 	require.NoError(t, err)
 	assert.NotContains(t, body, "<details>")
-
 }
 
 func TestCIPanelCommentTruncationClosesFold(t *testing.T) {

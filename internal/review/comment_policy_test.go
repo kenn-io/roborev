@@ -205,5 +205,4 @@ func TestCommentFold(t *testing.T) {
 		assert.Contains(t, output, "High issue")
 		assert.NotContains(t, output, "Low issue")
 	}
-
 }
