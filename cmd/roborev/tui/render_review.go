@@ -57,7 +57,11 @@ func (m model) reviewContentString(review *storage.Review) string {
 			content.WriteString("\n\n")
 		}
 	}
-	content.WriteString(review.Output)
+	output := review.Output
+	if m.foldExpandedJobID == 0 || m.foldExpandedJobID != review.JobID {
+		output, _ = review.FoldedOutput()
+	}
+	content.WriteString(output)
 
 	// Append responses if any
 	if len(m.currentResponses) > 0 {
@@ -223,6 +227,9 @@ func (m model) renderReviewView() string {
 	reviewHelpRows := [][]helplayout.HelpItem{
 		{{Key: "p", Description: "prompt"}, {Key: "c", Description: "comment"}, {Key: "m", Description: "commit"}, {Key: "a", Description: "close"}, {Key: "y", Description: "copy"}},
 		{{Key: "↑/↓", Description: "scroll"}, {Key: "←/→", Description: "prev/next"}, {Key: "?", Description: "commands"}, {Key: "esc", Description: "back"}},
+	}
+	if hint := m.foldHint(); hint != "" {
+		reviewHelpRows[0] = append(reviewHelpRows[0], helplayout.HelpItem{Key: "e", Description: hint})
 	}
 	if m.tasksWorkflowEnabled() {
 		reviewHelpRows[0] = append(reviewHelpRows[0], helplayout.HelpItem{Key: "F", Description: "fix"})
@@ -591,4 +598,17 @@ func (m model) renderCommitMsgView() string {
 	b.WriteString("\x1b[J") // Clear to end of screen to prevent artifacts
 
 	return b.String()
+}
+
+func (m model) foldHint() string {
+	if m.currentReview == nil {
+		return ""
+	}
+	if _, ok := m.currentReview.FoldedOutput(); !ok {
+		return ""
+	}
+	if m.foldExpandedJobID != 0 && m.foldExpandedJobID == m.currentReview.JobID {
+		return "collapse"
+	}
+	return "expand"
 }

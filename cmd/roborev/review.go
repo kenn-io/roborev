@@ -59,6 +59,7 @@ func reviewCmd() *cobra.Command {
 		quiet       bool
 		dirty       bool
 		wait        bool
+		all         bool
 		branch      string
 		baseBranch  string
 		since       string
@@ -99,6 +100,10 @@ Examples:
 			// (hook backgrounds the call, so output would be noise).
 			if quiet {
 				defer func() { err = quietExit(cmd, err) }()
+			}
+
+			if all && !wait {
+				return usageErr(cmd, fmt.Errorf("--all requires --wait"))
 			}
 
 			// --fast is shorthand for --reasoning fast (explicit --reasoning takes precedence)
@@ -145,7 +150,7 @@ Examples:
 				if cmd.Flags().Changed("plan") {
 					plan = &planFile
 				}
-				return runGoalReview(cmd, root, goalreview.AgentOptions{Agent: agent, Model: model, Provider: provider, Reasoning: reasoning}, local, wait, quiet, spec, plan)
+				return runGoalReview(cmd, root, goalreview.AgentOptions{Agent: agent, Model: model, Provider: provider, Reasoning: reasoning}, local, wait, quiet, all, spec, plan)
 			}
 			if cmd.Flags().Changed("spec") || cmd.Flags().Changed("plan") {
 				return usageErr(cmd, fmt.Errorf("--spec and --plan require --type goal"))
@@ -440,7 +445,7 @@ Examples:
 			// here so the user doesn't see "Error: exit code 1" after the
 			// review output is already on screen.
 			if wait {
-				return silenceIfExit(cmd, waitForJob(cmd, ep, job.ID, quiet))
+				return silenceIfExit(cmd, waitForJob(cmd, ep, job.ID, quiet, all))
 			}
 
 			return nil
@@ -455,6 +460,7 @@ Examples:
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress informational output and the usage block; runtime errors are still printed")
 	cmd.Flags().BoolVar(&dirty, "dirty", false, "review uncommitted changes instead of a commit")
+	cmd.Flags().BoolVar(&all, "all", false, "list nits and unlikely findings instead of folding them")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for review to complete and show result")
 	cmd.Flags().StringVar(&branch, "branch", "", "review all changes since branch diverged from base (optionally specify branch name)")
 	cmd.Flags().Lookup("branch").NoOptDefVal = "HEAD"

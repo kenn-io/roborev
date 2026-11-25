@@ -326,3 +326,51 @@ func TestNitVersionAndRoundTrip(t *testing.T) {
 	require.NotNil(t, decoded.Check)
 	require.Len(t, decoded.Check.Findings, 1)
 }
+
+func TestFoldedMarkdown(t *testing.T) {
+	doc := Document{Summary: "Summary", Findings: []Finding{
+		{Severity: "high", Problem: "visible", Fix: "fix"},
+		{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"},
+		{Severity: "medium", Problem: "also visible", Fix: "fix"},
+		{Severity: "medium", Unlikely: true, Problem: "rare", Fix: "fix"},
+	}}
+	got := doc.FoldedMarkdown("")
+	assert.Contains(t, got, "### 1. High")
+	assert.Contains(t, got, "### 3. Medium")
+	assert.NotContains(t, got, "**Problem:** nit")
+	assert.NotContains(t, got, "**Problem:** rare")
+	assert.Contains(t, got, "1 nit and 1 unlikely finding hidden")
+	doc.Findings = doc.Findings[1:2]
+	got = doc.FoldedMarkdown("")
+	assert.NotContains(t, got, "## Findings")
+	assert.NotContains(t, got, "No issues found")
+	assert.Contains(t, got, "1 nit hidden")
+	doc.Findings = nil
+	assert.Equal(t, doc.Markdown(""), doc.FoldedMarkdown(""))
+	doc.Legacy = &LegacyDocument{Markdown: "old"}
+	assert.Equal(t, doc.Markdown(""), doc.FoldedMarkdown(""))
+}
+
+func TestFindingFoldsExceptions(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		finding       Finding
+		nit, unlikely bool
+	}{
+		{"critical", Finding{Severity: "critical", Nit: true, Unlikely: true}, false, false},
+		{"high", Finding{Severity: "high", Nit: true, Unlikely: true}, false, false},
+		{"security low", Finding{Severity: "low", Topic: TopicSecurity, Nit: true, Unlikely: true}, false, false},
+		{"security medium", Finding{Severity: "medium", Topic: TopicSecurity, Nit: true, Unlikely: true}, false, false},
+		{"real low", Finding{Severity: "low"}, false, false},
+		{"medium nit", Finding{Severity: "medium", Nit: true}, true, false},
+		{"nit and unlikely", Finding{Severity: "low", Nit: true, Unlikely: true}, true, false},
+		{"unlikely low", Finding{Severity: "low", Unlikely: true}, false, true},
+		{"unlikely medium", Finding{Severity: "medium", Unlikely: true}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nit, unlikely := tc.finding.Folds()
+			assert.Equal(t, tc.nit, nit)
+			assert.Equal(t, tc.unlikely, unlikely)
+		})
+	}
+}

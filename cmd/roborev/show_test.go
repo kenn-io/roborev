@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func TestShowOpenFailedReviewHint(t *testing.T) {
@@ -712,6 +713,59 @@ func TestShowNumericRefFallback(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			assert.Equal(t, tc.wantCalls, calls)
+		})
+	}
+}
+
+func TestShowFoldedFindings(t *testing.T) {
+	isolateDaemonSelection(t)
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
+		{Severity: "high", Unlikely: true, Problem: "visible", Fix: "fix"},
+		{Severity: "low", Topic: structuredreview.TopicSecurity, Unlikely: true, Problem: "security visible", Fix: "fix"},
+		{Severity: "low", Problem: "nit problem", Fix: "fix"},
+		{Severity: "medium", Unlikely: true, Problem: "rare problem", Fix: "fix"},
+	}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	mockReviewDaemon(t, storage.Review{JobID: 7, Agent: "test", Output: doc.Markdown(""), StructuredOutput: structured, Job: &storage.ReviewJob{ID: 7}})
+	ep := getDaemonEndpoint()
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{Network: ep.Network, Address: ep.Address, Version: version.Version}, nil
+	}
+	for _, all := range []bool{false, true} {
+		cmd, output := newTestCmd(t)
+		err := showReview(cmd, ep, 7, false, all)
+		require.NoError(t, err)
+		if all {
+			assert.Contains(t, output.String(), "nit problem")
+			assert.Contains(t, output.String(), "rare problem")
+		} else {
+			assert.NotContains(t, output.String(), "nit problem")
+			assert.Contains(t, output.String(), "1 nit and 1 unlikely finding hidden")
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		full bool
+	}{{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill", "--all"}, true}, {"json", []string{"--json"}, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"job", "show", "--job", "7"}, tc.args...)
+			run := runCLI(t, args...)
+			require.NoError(t, run.err)
+			assert.Contains(t, run.stdout, "visible")
+			assert.Contains(t, run.stdout, "security visible")
+			if tc.full {
+				assert.Contains(t, run.stdout, "nit problem")
+				assert.Contains(t, run.stdout, "rare problem")
+			} else {
+				assert.NotContains(t, run.stdout, "nit problem")
+				assert.NotContains(t, run.stdout, "rare problem")
+				assert.Contains(t, run.stdout, "1 nit and 1 unlikely finding hidden")
+				assert.Contains(t, run.stdout, "Run with --all to list them.")
+			}
 		})
 	}
 }

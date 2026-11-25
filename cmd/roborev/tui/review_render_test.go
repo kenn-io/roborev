@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,6 +10,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/tui/splitlayout"
+	"go.kenn.io/roborev/pkg/structuredreview"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -534,4 +538,41 @@ func TestRenderReviewMetadataFitsTerminalWidth(t *testing.T) {
 	assert.NotEmpty(t, metadataLine)
 	assert.LessOrEqual(t, lipgloss.Width(strings.ReplaceAll(metadataLine, "\x1b[K", "")), m.width)
 	assert.Contains(t, stripANSI(metadataLine), reviewType)
+}
+
+func TestFoldedReviewToggle(t *testing.T) {
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit problem", Fix: "fix"}, {Severity: "critical", Unlikely: true, Problem: "critical visible", Fix: "fix"}, {Severity: "low", Topic: structuredreview.TopicSecurity, Unlikely: true, Problem: "security visible", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, StructuredOutput: structured, Output: doc.Markdown("")}
+	for _, split := range []bool{false, true} {
+		m := setupRenderModel(viewReview, review)
+		if split {
+			m.currentView = viewQueue
+			m.layout = splitlayout.Split
+		}
+		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
+		assert.Contains(t, m.reviewContentString(review), "critical visible")
+		assert.Contains(t, m.reviewContentString(review), "security visible")
+		assert.Equal(t, "expand", m.foldHint())
+		m, _ = updateModel(t, m, keyPressMsg('e'))
+		assert.Contains(t, m.reviewContentString(review), "nit problem")
+		assert.Equal(t, "collapse", m.foldHint())
+		m, _ = updateModel(t, m, keyPressMsg('e'))
+		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
+		m.foldExpandedJobID = review.JobID
+		other := *review
+		other.JobID = 2
+		m.acceptReview(reviewMsg{review: &other})
+		assert.Equal(t, "expand", m.foldHint())
+	}
+}
+
+func TestReviewHelpShowsFoldKey(t *testing.T) {
+	m := initTestModel(withCurrentView(viewHelp), withDimensions(100, 200))
+	rendered := stripANSI(m.renderHelpView())
+	assert.Contains(t, rendered, "Review View")
+	assert.Contains(t, rendered, "e              Expand or collapse hidden findings")
 }

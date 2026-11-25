@@ -267,6 +267,7 @@ roborev review --branch --panel none          # Force single-agent review
 
 | Flag | Description |
 |------|-------------|
+| `--all` | Show nits and unlikely findings with `--wait` |
 | `--wait` | Block until review completes (intended for CI, scripting, and orchestrators; not recommended in interactive agent sessions) |
 | `--quiet` | Only show progress/elapsed time |
 | `--branch [name]` | Review all commits on branch since base (optionally specify branch name) |
@@ -316,14 +317,17 @@ roborev job wait --quiet             # Suppress output (for hooks/agents)
 
 | Flag | Description |
 |------|-------------|
+| `--all` | Show nits and unlikely findings |
 | `--sha <ref>` | Git ref to find the most recent job for |
 | `--job` | Force argument to be treated as job ID |
 | `-q, --quiet` | Suppress output (exit code only) |
 
 Unlike `roborev review --wait`, this does not enqueue a new review. It waits for
 an already-running job, making it useful when a post-commit hook has already
-triggered the review. For most interactive workflows, use `roborev tui` to
-browse completed reviews instead of blocking.
+triggered the review. A single job shows its review, folding nits and unlikely
+findings by default. Use `--all` to show every finding. Multiple jobs report
+status only and do not accept `--all`. For interactive workflows, use
+`roborev tui` to browse completed reviews.
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)
 
@@ -353,6 +357,7 @@ roborev job log 42             # View job log
 | Flag | Description |
 |------|-------------|
 | `--job` | Force interpretation as job ID |
+| `--all` | Show nits and unlikely findings |
 | `--prompt` | Show the prompt sent to the agent instead of the review output |
 | `--json` | Output as JSON for machine-readable workflows |
 | `--analysis-type <name>` | Filter by the recorded `roborev analyze` type |

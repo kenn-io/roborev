@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // tryBranchReview exercises tryBranchReviewForRef against the current
@@ -1060,4 +1062,54 @@ func TestReviewDirtySubmitsLargeDiff(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, received, "+final finding line\n")
 	assert.Greater(t, len(received), 200*1024)
+}
+
+func TestReviewWaitFoldedFindings(t *testing.T) {
+	setupFastPolling(t)
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
+		{Severity: "high", Problem: "visible problem", Fix: "fix"},
+		{Severity: "low", Problem: "nit problem", Fix: "fix"},
+		{Severity: "medium", Unlikely: true, Problem: "unlikely problem", Fix: "fix"},
+	}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	for _, verdict := range []int{0, 1} {
+		for _, all := range []bool{false, true} {
+			t.Run(fmt.Sprintf("verdict=%d/all=%t", verdict, all), func(t *testing.T) {
+				repo, mux := setupTestEnvironment(t)
+				repo.CommitFile("file.txt", "content", "initial commit")
+				mockEnqueueQueued(mux, "abc123")
+				mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) { handleJobsDone(w, r, storage.JobStatusDone) })
+				mux.HandleFunc("/api/review", func(w http.ResponseWriter, _ *http.Request) {
+					respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: doc.Markdown(""), StructuredOutput: structured, Job: &storage.ReviewJob{ID: 1}, VerdictBool: new(verdict)})
+				})
+				args := []string{"review", "--repo", repo.Dir, "--wait"}
+				if all {
+					args = append(args, "--from-skill", "--all")
+				}
+				run := runCLI(t, args...)
+				stdout, err := run.stdout, run.err
+				if verdict == 0 {
+					var exitErr *exitError
+					require.ErrorAs(t, err, &exitErr)
+					assert.Equal(t, 1, exitErr.code)
+				} else {
+					require.NoError(t, err)
+				}
+				assert.Contains(t, stdout, "visible problem")
+				if all {
+					assert.Contains(t, stdout, "nit problem")
+					assert.Contains(t, stdout, "unlikely problem")
+					assert.NotContains(t, stdout, "hidden")
+				} else {
+					assert.NotContains(t, stdout, "nit problem")
+					assert.NotContains(t, stdout, "unlikely problem")
+					assert.Contains(t, stdout, "1 nit and 1 unlikely finding hidden")
+					assert.Contains(t, stdout, "Run with --all to list them.")
+				}
+			})
+		}
+	}
 }

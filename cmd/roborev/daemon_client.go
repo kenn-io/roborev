@@ -23,7 +23,7 @@ import (
 
 // waitForJob polls until a job completes and displays the review
 // Uses the provided serverAddr to ensure we poll the same daemon that received the job.
-func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
+func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet, all bool) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -52,7 +52,7 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 				cmd.Printf(" done!\n\n")
 			}
 			// Fetch and display the review
-			return showReview(cmd, ep, jobID, quiet)
+			return showReview(cmd, ep, jobID, quiet, all)
 
 		case storage.JobStatusFailed:
 			if !quiet {
@@ -106,7 +106,7 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 // On a FAIL verdict returns a bare *exitError (no cmd mutation) so the function
 // is safe to call from concurrent goroutines; the top-level caller is responsible
 // for silencing cobra after all concurrent waits complete.
-func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet bool) error {
+func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet, all bool) error {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -123,7 +123,7 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 	if !quiet {
 		cmd.Printf("Review (by %s)\n", review.Agent)
 		cmd.Println(strings.Repeat("-", 60))
-		cmd.Println(review.Output)
+		cmd.Println(reviewText(review, all))
 		if review.Job != nil && review.Job.IsReadableReview() {
 			reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 		}
@@ -303,4 +303,15 @@ func daemonRequestError(action string, err error) error {
 		return fmt.Errorf("%s: %s", action, *problem.Detail)
 	}
 	return fmt.Errorf("%s: %w", action, err)
+}
+
+func reviewText(review *storage.Review, all bool) string {
+	if all {
+		return review.Output
+	}
+	output, folded := review.FoldedOutput()
+	if folded {
+		output += "\nRun with --all to list them."
+	}
+	return output
 }

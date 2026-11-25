@@ -112,7 +112,7 @@ func formatReviewersSummary(members []storage.ReviewJob) string {
 
 func showCmd() *cobra.Command {
 	var forceJobID bool
-	var showPrompt bool
+	var showPrompt, all bool
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
@@ -363,7 +363,7 @@ Examples:
 			if showPrompt {
 				fmt.Println(review.Prompt)
 			} else {
-				fmt.Println(review.Output)
+				fmt.Println(reviewText(&review, all))
 			}
 
 			// Fetch and display comments (including legacy commit-based)
@@ -392,6 +392,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force argument to be treated as job ID")
+	cmd.Flags().BoolVar(&all, "all", false, "list nits and unlikely findings instead of folding them")
 	cmd.Flags().BoolVar(&showPrompt, "prompt", false, "show the prompt sent to the agent instead of the review output")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	return cmd

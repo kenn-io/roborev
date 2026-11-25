@@ -248,6 +248,16 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleToggleClassifyKey()
 	case "c":
 		return m.handleCommentOpenKey()
+	case "e":
+		if (m.currentView == viewReview || (m.currentView == viewQueue && m.layout == splitlayout.Split)) && m.foldHint() != "" {
+			if m.foldExpandedJobID == m.currentReview.JobID {
+				m.foldExpandedJobID = 0
+			} else {
+				m.foldExpandedJobID = m.currentReview.JobID
+			}
+			m.reviewScroll = 0
+		}
+		return m, nil
 	case "y":
 		return m.handleCopyKey()
 	case "m":

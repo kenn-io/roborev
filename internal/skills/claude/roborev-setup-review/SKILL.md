@@ -505,8 +505,8 @@ rubric with its members. When providers are restricted and budget routing is
 on, use a panel instead; see [Confidential material](#confidential-material).
 
 ```bash
-roborev review --from-skill --type facts --panel none --wait
-roborev review --from-skill --panel brief --wait
+roborev review --from-skill --type facts --panel none --wait --all
+roborev review --from-skill --panel brief --wait --all
 ```
 
 Without a commit, these review `HEAD`. To review another commit or a range,
@@ -515,7 +515,7 @@ argument, or use `--since <commit>`. For a panel, the job printed at enqueue is 
 review. Read a member's own review with:
 
 ```bash
-roborev job show --from-skill --job <member-job-id>
+roborev job show --from-skill --job <member-job-id> --all
 ```
 
 Show the user the verdict and findings, then tune together:

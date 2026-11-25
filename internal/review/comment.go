@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // CommentConfig is the resolved publication policy. An empty threshold shows
@@ -78,7 +79,8 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		comment.structured = true
 		findings := slices.Clone(doc.Findings)
 		shouldFold := func(finding StructuredFinding) bool {
-			return !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Nit || finding.Unlikely)
+			nit, unlikely := finding.Folds()
+			return !cfg.ShowAll && (nit || unlikely)
 		}
 		slices.SortStableFunc(findings, func(a, b StructuredFinding) int {
 			if shouldFold(a) != shouldFold(b) {
@@ -99,15 +101,16 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				comment.confidenceFiltered = true
 				continue
 			}
+			nit, unlikely := finding.Folds()
 			fold := shouldFold(finding)
 			if selected++; cfg.MaxFindings > 0 && selected > cfg.MaxFindings {
 				comment.omitted++
 				continue
 			}
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
-			if fold && finding.Nit {
+			if fold && nit {
 				comment.nits = append(comment.nits, item)
-			} else if fold && finding.Unlikely {
+			} else if fold && unlikely {
 				comment.unlikely = append(comment.unlikely, item)
 			} else {
 				comment.findings = append(comment.findings, item)
@@ -222,19 +225,11 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 	var fold *CommentFold
 	if len(comment.nits)+len(comment.unlikely) > 0 {
 		groups := []struct {
-			title, one, many string
-			findings         []commentFinding
-		}{{"Nits", "nit", "nits", comment.nits}, {"Unlikely findings", "unlikely finding", "unlikely findings", comment.unlikely}}
-		var labels []string
-		for _, group := range groups {
-			if n := len(group.findings); n == 1 {
-				labels = append(labels, "1 "+group.one)
-			} else if n > 1 {
-				labels = append(labels, fmt.Sprintf("%d %s", n, group.many))
-			}
-		}
+			title    string
+			findings []commentFinding
+		}{{"Nits", comment.nits}, {"Unlikely findings", comment.unlikely}}
 		fold = &CommentFold{Start: out.Len(), FullReviewReference: comment.fullReviewReference}
-		fmt.Fprintf(&out, "\n\n<details><summary>%s hidden</summary>", strings.Join(labels, " and "))
+		fmt.Fprintf(&out, "\n\n<details><summary>%s</summary>", structuredreview.FoldLabel(len(comment.nits), len(comment.unlikely)))
 		out.WriteString("\n")
 		for _, group := range groups {
 			if len(group.findings) > 0 {

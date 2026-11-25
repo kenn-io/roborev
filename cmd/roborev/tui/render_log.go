@@ -318,6 +318,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 				{"a", "Toggle closed"},
 				{"c", "Add comment"},
 				{"y", "Copy review to clipboard"},
+				{"e", "Expand or collapse hidden findings"},
 				{"m", "View commit message"},
 				{"F", "Trigger fix (opens inline panel)"},
 				{"esc/q", "Back to queue"},

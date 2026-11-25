@@ -52,6 +52,7 @@ branch.
 | `a` | Toggle closed |
 | `c` | Add comment |
 | `y` | Copy review to clipboard |
+| `e` | Expand or collapse hidden findings |
 | `x` | Cancel running/queued job |
 | `r` | Rerun completed/failed/canceled job with its stored agent |
 | `R` | Choose another available agent, then rerun an ordinary terminal job |
@@ -336,6 +337,7 @@ Press `Enter` on a job to view its review.
 | `a` | Toggle closed |
 | `c` | Add comment |
 | `y` | Copy review to clipboard |
+| `e` | Expand or collapse hidden findings |
 | `x` | Cancel running/queued job |
 | `r` | Rerun completed/failed/canceled job with its stored agent |
 | `F` | Open inline fix panel (requires [`advanced.tasks_enabled`](/docs/advanced/background-tasks/)) |

@@ -827,7 +827,7 @@ func TestCoreActionDefaultOutputStreams(t *testing.T) {
 				}
 				cmd := &cobra.Command{}
 				require.Nil(t, cmd.Context())
-				require.NoError(t, showReview(cmd, ep, 1, false))
+				require.NoError(t, showReview(cmd, ep, 1, false, false))
 			})
 			assert.Empty(t, stdout)
 			assert.Contains(t, stderr, "Consolidated findings")
