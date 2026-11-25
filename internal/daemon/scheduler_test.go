@@ -481,6 +481,67 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 		require.Len(t, jobs, 1)
 		assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
 	})
+	t.Run("rerun completed scheduled analysis retries after failure", func(t *testing.T) {
+		server, db, _, registered, watcher := setup(t, map[string]string{"a.go": "package a\n"})
+		yes, interval, budget := true, "1h", 1
+		server.configWatcher.Config().Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+		server.configWatcher.Config().AnalyzeAgent = "test"
+		now := time.Now()
+		watcher.poll(t.Context(), now)
+		jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
+		watcher.poll(t.Context(), now.Add(30*time.Second))
+		_, err = server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: jobs[0].ID}})
+		require.NoError(t, err)
+		setJobStatus(t, db, jobs[0].ID, storage.JobStatusFailed)
+		watcher.poll(t.Context(), now.Add(time.Minute))
+		jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		assert.Equal(t, []string{"a.go"}, jobs[0].AnalysisFiles)
+	})
+	t.Run("rerun retry follows schedule removal", func(t *testing.T) {
+		for _, change := range []string{"disabled", "removed type", "disabled before rerun", "removed type before rerun"} {
+			t.Run(change, func(t *testing.T) {
+				server, db, _, registered, watcher := setup(t, map[string]string{"a.go": "package a\n"})
+				yes, interval, budget := true, "1h", 1
+				cfg := server.configWatcher.Config()
+				cfg.Schedule = config.ScheduleConfig{Enabled: &yes, Interval: &interval, MaxFiles: &budget, Types: []string{"refactor"}}
+				cfg.AnalyzeAgent = "test"
+				now := time.Now()
+				watcher.poll(t.Context(), now)
+				jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+				require.NoError(t, err)
+				require.Len(t, jobs, 1)
+				setJobStatus(t, db, jobs[0].ID, storage.JobStatusDone)
+				watcher.poll(t.Context(), now.Add(30*time.Second))
+				if change == "disabled before rerun" {
+					yes = false
+				} else if change == "removed type before rerun" {
+					cfg.Schedule.Types = []string{"complexity"}
+				}
+				_, err = server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: jobs[0].ID}})
+				require.NoError(t, err)
+				setJobStatus(t, db, jobs[0].ID, storage.JobStatusFailed)
+				if change == "disabled" {
+					yes = false
+				} else if change == "removed type" {
+					cfg.Schedule.Types = []string{"complexity"}
+				}
+				if !strings.HasSuffix(change, "before rerun") {
+					watcher.poll(t.Context(), now.Add(time.Minute))
+				}
+				yes = true
+				cfg.Schedule.Types = []string{"refactor"}
+				watcher.poll(t.Context(), now.Add(90*time.Second))
+				jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithRepoIDs([]int64{registered.ID}))
+				require.NoError(t, err)
+				assert.Empty(t, jobs)
+			})
+		}
+	})
 	t.Run("skipped retry becomes eligible", func(t *testing.T) {
 		server, db, repo, registered, watcher := setup(t, map[string]string{"a.go": "package a\n"})
 		yes, interval, budget := true, "1h", 1

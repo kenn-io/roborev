@@ -85,6 +85,8 @@ func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 }
 
 func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, global *config.Config, now time.Time) error {
+	w.server.scheduleRetryMu.Lock()
+	defer w.server.scheduleRetryMu.Unlock()
 	repoCfg, err := config.LoadRepoConfig(repo.RootPath)
 	if err != nil {
 		return err
