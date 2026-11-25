@@ -259,14 +259,14 @@ func TestCommentFoldPreservesCodeExamples(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{{
 		Severity: "low",
 		Problem:  "Use `</details>` in code. Outside </details> stays text.",
-		Fix:      "Example:\n\n```html\n</details>\n```",
+		Fix:      "Example:\n\n```html\n<details open>\n</details>\n```",
 	}}}
 	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	var rendered bytes.Buffer
 	source := []byte(body)
 	require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
 	assert.Contains(t, rendered.String(), "<code>&lt;/details&gt;</code>")
-	assert.Contains(t, rendered.String(), "<code class=\"language-html\">&lt;/details&gt;\n</code>")
+	assert.Contains(t, rendered.String(), "<code class=\"language-html\">&lt;details open&gt;\n&lt;/details&gt;\n</code>")
 	assert.NotContains(t, rendered.String(), "&amp;lt;/details&amp;gt;")
 	assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
 }
@@ -279,4 +279,15 @@ func TestCommentFoldEscapesTagAfterFixLabel(t *testing.T) {
 	require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
 	assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
 	assert.Contains(t, rendered.String(), "&lt;/details&gt;")
+}
+
+func TestCommentFoldEscapesNestedDetails(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: `Before <details open>nested</details> after`}}}
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	var rendered bytes.Buffer
+	source := []byte(body)
+	require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
+	assert.Equal(t, 1, strings.Count(rendered.String(), "<details"))
+	assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
+	assert.Contains(t, rendered.String(), "&lt;details open&gt;")
 }

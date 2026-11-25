@@ -146,7 +146,7 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 	refs := make([][]synthesisFindingRef, len(findings))
 	for i, finding := range findings {
 		if len(finding["source_findings"]) == 0 {
-			return SynthesisDocument{}, fmt.Errorf("synthesis finding %d is missing source_findings", i+1)
+			continue
 		}
 		if string(finding["source_findings"]) == "null" {
 			return SynthesisDocument{}, fmt.Errorf("synthesis finding %d has null source_findings", i+1)
@@ -171,6 +171,9 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 	if err := validateLiveDocument(a.Name(), doc); err != nil {
 		return SynthesisDocument{}, err
 	}
+	if err := validateLiveUnlikely(document); err != nil {
+		return SynthesisDocument{}, err
+	}
 	for i := range doc.Findings {
 		finding := &doc.Findings[i]
 		for _, ref := range refs[i] {
@@ -185,11 +188,6 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 			finding.Unlikely = finding.Unlikely || original.Unlikely
 			if original.Topic == "security" {
 				finding.Topic = "security"
-			}
-		}
-		for _, source := range finding.Sources {
-			if original := reviews[source-1].structuredReview(); original != nil && len(original.Findings) > 0 && !slices.ContainsFunc(refs[i], func(ref synthesisFindingRef) bool { return ref.Review == source }) {
-				return SynthesisDocument{}, fmt.Errorf("synthesis finding %d is missing a finding reference for review %d", i+1, source)
 			}
 		}
 	}

@@ -16,10 +16,8 @@ import (
 )
 
 // SynthesisSchema asks for transient finding references as well as review sources.
-var SynthesisSchema = jsontext.Value(strings.ReplaceAll(
-	strings.ReplaceAll(string(structuredreview.SourcedSchema), `"sources"`, `"sources", "source_findings"`),
-	`"sources", "source_findings": {`, `"source_findings": {"type":"array","items":{"type":"object","additionalProperties":false,"required":["review","finding"],"properties":{"review":{"type":"integer","minimum":1},"finding":{"type":"integer","minimum":1}}}}, "sources": {`,
-))
+var SynthesisSchema = jsontext.Value(strings.Replace(string(structuredreview.SourcedSchema),
+	`"sources": {`, `"source_findings": {"type":"array","items":{"type":"object","additionalProperties":false,"required":["review","finding"],"properties":{"review":{"type":"integer","minimum":1},"finding":{"type":"integer","minimum":1}}}}, "sources": {`, 1))
 
 // SynthesisDocument is the structured result returned by a synthesis agent.
 // It has the same shape as a single structured review, so the verdict derives

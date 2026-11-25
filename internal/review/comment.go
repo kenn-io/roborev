@@ -221,14 +221,14 @@ func FormatComment(comment PreparedComment) string {
 	return out.String()
 }
 
-var foldCloseTag = regexp.MustCompile(`(?i)</details\s*>`)
+var foldCloseTag = regexp.MustCompile(`(?i)</?details(?:\s[^>]*|/?)>`)
 
 func escapeFoldClose(s string) string {
 	matches := foldCloseTag.FindAllStringIndex(s, -1)
 	if len(matches) == 0 {
 		return s
 	}
-	// Mask closing tags before parsing so an HTML block cannot hide later code.
+	// Mask details tags before parsing so an HTML block cannot hide later code.
 	source := []byte(s)
 	for _, match := range matches {
 		source[match[0]] = 'x'

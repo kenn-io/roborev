@@ -280,8 +280,8 @@ func TestRunAgentReviewStoresSettledFindings(t *testing.T) {
   "verdict": "fail",
   "summary": "Two problems.",
   "findings": [
-    {"severity":"low","kind":"improvement","topic":"documentation","confidence":0.6,"problem":"The comment on main describes the old greeting.","fix":"Update it.","file":"b/main.go","start_line":3,"end_line":99},
-    {"severity":"high","kind":"defect","confidence":0.9,"problem":"main prints to stderr.","fix":"Print to stdout.","file":"ghost.go","start_line":1,"end_line":1}
+    {"severity":"low","kind":"improvement","topic":"documentation","confidence":0.6,"unlikely":false,"problem":"The comment on main describes the old greeting.","fix":"Update it.","file":"b/main.go","start_line":3,"end_line":99},
+    {"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"problem":"main prints to stderr.","fix":"Print to stdout.","file":"ghost.go","start_line":1,"end_line":1}
   ]
 }`),
 	}
@@ -311,8 +311,8 @@ func TestRunAgentReviewPreservesDifferentCorrections(t *testing.T) {
   "summary": "Two missing checks.",
   "verdict": "fail",
   "findings": [
-    {"severity":"medium","kind":"defect","confidence":0.9,"problem":"Input is not validated.","fix":"Validate the name.","file":"main.go","start_line":3,"end_line":3},
-    {"severity":"medium","kind":"defect","confidence":0.9,"problem":"Input is not validated.","fix":"Validate the email.","file":"main.go","start_line":4,"end_line":4}
+    {"severity":"medium","kind":"defect","confidence":0.9,"unlikely":false,"problem":"Input is not validated.","fix":"Validate the name.","file":"main.go","start_line":3,"end_line":3},
+    {"severity":"medium","kind":"defect","confidence":0.9,"unlikely":false,"problem":"Input is not validated.","fix":"Validate the email.","file":"main.go","start_line":4,"end_line":4}
   ]
 }`),
 	}

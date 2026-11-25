@@ -26,7 +26,7 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	  "verdict": "pass",
 	  "summary": "High: no actionable findings remain.",
   "findings": [
-    {"severity":"low","kind":"improvement","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	}
@@ -55,7 +55,7 @@ func TestRunAgentReviewUsesSchemaForBuiltInTypesWhenSupported(t *testing.T) {
   "verdict": "pass",
   "summary": "One real bug.",
   "findings": [
-    {"severity":"high","kind":"defect","confidence":0.9,"problem":"Nil deref.","fix":"Check the pointer.","file":"main.go","start_line":10,"end_line":null}
+    {"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"problem":"Nil deref.","fix":"Check the pointer.","file":"main.go","start_line":10,"end_line":null}
   ]
 }`),
 	}
@@ -84,8 +84,20 @@ func TestRunAgentReviewRequiresJSONWithoutNativeSchema(t *testing.T) {
 	require.ErrorContains(t, err, "decode structured review")
 }
 
+func TestLiveReviewRequiresUnlikely(t *testing.T) {
+	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"Issue","fix":"Fix","file":null,"start_line":null,"end_line":null}]}`
+	a := &mockAgent{name: "plain", output: raw}
+	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil)
+	assert.ErrorContains(t, err, "unlikely")
+	_, err = DecodeStructuredReview(jsontext.Value(raw))
+	require.NoError(t, err)
+	synthesis := strings.Replace(raw, `"end_line":null`, `"end_line":null,"sources":[1],"source_findings":[]`, 1)
+	_, err = decodeSynthesisResult(a, []ReviewResult{{}}, jsontext.Value(synthesis), nil)
+	require.ErrorContains(t, err, "unlikely")
+}
+
 func TestRunAgentReviewAcceptsJSONWithoutNativeSchema(t *testing.T) {
-	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
+	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
 	a := &mockAgent{name: "plain", output: raw}
 	got, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil, nil)
 	require.NoError(t, err)

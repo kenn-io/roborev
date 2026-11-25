@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -15,6 +16,24 @@ type StructuredFinding = structuredreview.Finding
 
 func DecodeStructuredReview(raw jsontext.Value) (StructuredReview, error) {
 	return structuredreview.Decode(raw)
+}
+
+// validateLiveUnlikely checks the wire field before decoding loses its presence.
+func validateLiveUnlikely(raw jsontext.Value) error {
+	var document struct {
+		Findings []struct {
+			Unlikely *bool `json:"unlikely"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return err
+	}
+	for i, finding := range document.Findings {
+		if finding.Unlikely == nil {
+			return fmt.Errorf("live review finding %d is missing unlikely", i+1)
+		}
+	}
+	return nil
 }
 
 // validateLiveDocument rejects documents a live agent must not return. Stored

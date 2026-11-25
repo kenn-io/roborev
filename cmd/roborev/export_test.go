@@ -11,6 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExportReviewsHelpSupportedVersions(t *testing.T) {
+	cmd := exportReviewsCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--help"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "pin a specific export schema version (supported: 2, 3)")
+}
+
 func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 	assert := assert.New(t)
 	var calls []string
