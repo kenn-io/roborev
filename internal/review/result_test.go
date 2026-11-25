@@ -112,6 +112,22 @@ func TestTruncateCommentRetainsCompleteFoldedFindings(t *testing.T) {
 	assert.True(t, strings.HasSuffix(got, "\n\nfooter"))
 }
 
+func TestTruncateCommentKeepsLastCompleteFoldedItem(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "low", Problem: "Complete finding", Fix: "Complete fix"},
+		{Severity: "low", Problem: "Next finding " + strings.Repeat("more ", 100)},
+	}}
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	end := strings.Index(body, "Complete fix") + len("Complete fix")
+	limit := end + len(foldClosing) + len("\n\nfooter")
+	got := TruncateCommentTo(body, limit, "\n\nfooter")
+	assert.Contains(t, got, "Complete finding")
+	assert.Contains(t, got, "Complete fix")
+	assert.NotContains(t, got, "Next finding")
+	assert.LessOrEqual(t, len(got), limit)
+	assert.True(t, strings.HasSuffix(got, foldClosing+"\n\nfooter"))
+}
+
 func TestTrimPartialRune_NoFullStringScan(t *testing.T) {
 	assert := assert.New(t)
 

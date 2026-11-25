@@ -179,12 +179,12 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 
 const foldClosing = "\n</details>"
 
-// completeFoldItems cuts before the last item that begins within the budget.
-// Parsing the full fold keeps list markers inside code blocks out of the scan.
+// completeFoldItems keeps complete items within the budget. Parsing the full
+// fold keeps list markers inside code blocks out of the scan.
 func completeFoldItems(body string, summaryEnd, budget int) string {
 	source := body[summaryEnd:]
 	root := parser.New().Parse([]byte(source))
-	end := summaryEnd
+	var starts []int
 	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering || node.Kind() != ast.KindParagraph || node.Parent().Kind() != ast.KindListItem || node.Parent().Parent().Parent() != root {
 			return ast.WalkContinue, nil
@@ -194,12 +194,25 @@ func completeFoldItems(body string, summaryEnd, budget int) string {
 			return ast.WalkContinue, nil
 		}
 		start := strings.LastIndex(source[:pos], "\n") + 1
-		if strings.HasPrefix(source[start:], "- ") && summaryEnd+start <= budget {
-			end = max(end, summaryEnd+start)
+		if strings.HasPrefix(source[start:], "- ") {
+			starts = append(starts, start)
 		}
 		return ast.WalkContinue, nil
 	})
-	return strings.TrimRight(body[:end], "\n")
+	end := summaryEnd
+	foldEnd := strings.LastIndex(source, foldClosing)
+	for i, start := range starts {
+		next := foldEnd
+		if i+1 < len(starts) {
+			next = starts[i+1]
+		}
+		itemEnd := summaryEnd + start + len(strings.TrimRight(source[start:next], " \t\r\n"))
+		if itemEnd > budget {
+			break
+		}
+		end = itemEnd
+	}
+	return body[:end]
 }
 
 // OutputTruncSuffix marks a single review's output as cut short. It is
