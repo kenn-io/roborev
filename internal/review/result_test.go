@@ -90,6 +90,28 @@ func TestTruncateCommentClosesFoldWithFencedCode(t *testing.T) {
 	}
 }
 
+func TestTruncateCommentRetainsCompleteFoldedFindings(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "low", Problem: "First complete finding", Fix: "First fix"},
+		{Severity: "low", Problem: "Second complete finding", Fix: "Second fix"},
+		{Severity: "low", Problem: "Long finding\n\n```go\n" + strings.Repeat("code\n", 100) + "```"},
+	}}
+	body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
+	got := TruncateCommentTo(body, 250, "\n\nfooter")
+	var rendered bytes.Buffer
+	source := []byte(got)
+	err := html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source))
+	require.NoError(t, err)
+	assert.Contains(t, rendered.String(), "First complete finding")
+	assert.Contains(t, rendered.String(), "First fix")
+	assert.Contains(t, rendered.String(), "Second complete finding")
+	assert.Contains(t, rendered.String(), "Second fix")
+	assert.NotContains(t, rendered.String(), "Long finding")
+	assert.Contains(t, rendered.String(), "</details>")
+	assert.LessOrEqual(t, len(got), 250)
+	assert.True(t, strings.HasSuffix(got, "\n\nfooter"))
+}
+
 func TestTrimPartialRune_NoFullStringScan(t *testing.T) {
 	assert := assert.New(t)
 

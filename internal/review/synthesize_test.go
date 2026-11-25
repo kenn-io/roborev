@@ -73,6 +73,31 @@ func (a *capturingAgent) Review(
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
+type unlikelySynthesisAgent struct{ commonMockAgent }
+
+func (a *unlikelySynthesisAgent) Name() string { return "unlikely-synthesis" }
+func (a *unlikelySynthesisAgent) Review(context.Context, string, string, string, io.Writer) (string, error) {
+	return `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Rare issue","fix":"Fix rare","file":"file.go","start_line":1,"end_line":1,"sources":[1]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Ordinary issue","fix":"Fix ordinary","file":"file.go","start_line":20,"end_line":20,"sources":[1]}]}`, nil
+}
+func (a *unlikelySynthesisAgent) CommandLine() string { return a.Name() }
+
+func TestSynthesisPreservesMatchingSourceUnlikely(t *testing.T) {
+	a := &unlikelySynthesisAgent{}
+	a.self = a
+	rare := StructuredFinding{Severity: "medium", Kind: "defect", Confidence: 0.8, Problem: "Rare issue", Fix: "Fix rare", Unlikely: true}
+	rare.SetLocation("file.go", 1, 1)
+	ordinary := StructuredFinding{Severity: "medium", Kind: "defect", Confidence: 0.8, Problem: "Ordinary issue", Fix: "Fix ordinary"}
+	ordinary.SetLocation("file.go", 20, 20)
+	reviews := []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{rare, ordinary}}}}
+	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
+	require.NoError(t, err)
+	require.Len(t, doc.Findings, 2)
+	assert.Equal(t, "Rare issue", doc.Findings[0].Problem)
+	assert.True(t, doc.Findings[0].Unlikely)
+	assert.Equal(t, "Ordinary issue", doc.Findings[1].Problem)
+	assert.False(t, doc.Findings[1].Unlikely)
+}
+
 type synthesisEntrypointAgent struct {
 	commonMockAgent
 	synthPrompt  string

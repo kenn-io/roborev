@@ -196,6 +196,23 @@ func TestTidyFindingsPreservesUnlikely(t *testing.T) {
 	}
 }
 
+func TestTidyFindingsPreservesSecurityTopic(t *testing.T) {
+	security := located("a.go", 10, 10)
+	security.Topic, security.Unlikely, security.Confidence = "security", true, 0.4
+	other := security
+	other.Topic, other.Confidence = "", 0.9
+	for _, findings := range [][]structuredreview.Finding{{security, other}, {other, security}} {
+		doc := StructuredReview{Findings: findings}
+		settleFindings(t.Context(), "", "", &doc)
+		require.Len(t, doc.Findings, 1)
+		assert.Equal(t, "security", doc.Findings[0].Topic)
+		assert.InDelta(t, 0.9, doc.Findings[0].Confidence, 1e-9)
+		prepared := PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc})
+		assert.False(t, prepared.IsClean())
+		assert.NotContains(t, FormatComment(prepared), "<details>")
+	}
+}
+
 // Reviewers often report one problem per field or variable on neighboring
 // lines. Each has its own fix, so similar wording must not merge them.
 func TestTidyFindingsKeepsSimilarProblemsAboutDifferentNames(t *testing.T) {
