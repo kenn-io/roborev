@@ -1,11 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json/v2"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -131,4 +138,105 @@ func TestRepoLabels_Windows(t *testing.T) {
 	}
 	got := repoLabels(repos)
 	assert.Equal(t, []string{`C:\work\repo`, `D:\work\repo`}, got)
+}
+
+func TestSummaryFindingValidationBeforeDaemon(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--by", "agent"}, "require --findings"},
+		{[]string{"--min-samples", "5"}, "require --findings"},
+		{[]string{"--findings", "--by", "unknown"}, "invalid findings grouping"},
+		{[]string{"--findings", "--min-samples", "-1"}, "positive integer"},
+		{[]string{"--findings", "--min-samples", "0"}, "positive integer"},
+	} {
+		cmd := summaryCmd()
+		cmd.SetArgs(tc.args)
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), tc.want)
+		assert.NotContains(t, err.Error(), "daemon")
+	}
+}
+
+func TestPrintFindingSummary(t *testing.T) {
+	cmd := summaryCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	f := storage.FindingStats{
+		GroupBy:           "severity",
+		MinSamples:        5,
+		LogicalReviews:    3,
+		StructuredReviews: 2,
+		Rows: []storage.FindingStatsRow{{
+			Key: "high", Findings: 4, Labeled: 2, Positive: 1, Negative: 1, Unlabeled: 2,
+			RateState: "below_minimum", FailingReviews: 1, ClosedReviews: 1,
+			Cost:            storage.CostAggregate{TotalUSD: 3, JobsTotal: 2, JobsWithCost: 1},
+			CostPerPositive: new(3.0),
+		}},
+	}
+	printSummary(cmd, storage.Summary{CI: &storage.CISummary{TotalPanels: 1}, Findings: &f})
+	assert.Contains(t, out.String(), "CI Run Health")
+	assert.NotContains(t, out.String(), "No review data")
+	assert.Contains(t, out.String(), "2/3")
+	assert.Contains(t, out.String(), "n<5")
+	assert.Contains(t, out.String(), "1/1")
+	assert.Contains(t, out.String(), "≥$3.00 (1/2 priced)")
+	out.Reset()
+	f.Rows[0].Cost.JobsWithCost = 0
+	printFindingSummary(cmd, &f)
+	assert.Equal(t, 2, strings.Count(out.String(), "≥$3.00 (0/2 priced)"), "spend and cost per positive are lower bounds")
+	out.Reset()
+	f.Rows[0].Cost.TotalUSD = 0
+	f.Rows[0].CostPerPositive = nil
+	printFindingSummary(cmd, &f)
+	assert.NotContains(t, out.String(), "Retained spend")
+	assert.NotContains(t, out.String(), "Cost/positive")
+}
+
+func TestSummaryFindingRequest(t *testing.T) {
+	queries := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/ping" {
+			assert.NoError(t, json.MarshalWrite(w, daemon.PingInfo{OK: true, Service: "roborev"}))
+			return
+		}
+		assert.Equal(t, "/api/summary", r.URL.Path)
+		queries <- r.URL.RawQuery
+		assert.NoError(t, json.MarshalWrite(w, storage.Summary{Findings: &storage.FindingStats{GroupBy: "agent", MinSamples: 2}}))
+	}))
+	defer server.Close()
+	patchServerAddr(t, server.URL)
+	old := parsedServerEndpoint
+	parsedServerEndpoint = nil
+	t.Cleanup(func() { parsedServerEndpoint = old })
+	cmd := summaryCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--all", "--findings", "--by", "agent", "--min-samples", "2"})
+	require.NoError(t, cmd.Execute())
+	query := <-queries
+	assert.Contains(t, query, "findings=true")
+	assert.Contains(t, query, "by=agent")
+	assert.Contains(t, query, "min_samples=2")
+	assert.Contains(t, out.String(), "Finding outcomes by agent")
+}
+
+func TestPrintFindingSummaryReasons(t *testing.T) {
+	cmd := summaryCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	reasons := storage.RefuteReasonCounts{FalsePositive: 1, Spurious: 2, RiskAccepted: 3, Unspecified: 4}
+	f := storage.FindingStats{
+		GroupBy: "severity",
+		Kata:    storage.FindingKataCoverage{State: "unavailable", Eligible: 10, Unavailable: 10},
+		Total:   storage.FindingOutcomeCounts{Negative: 10, RefuteReasons: reasons},
+		Rows:    []storage.FindingStatsRow{{Key: "high", Negative: 10, RefuteReasons: reasons}},
+	}
+	printFindingSummary(cmd, &f)
+	assert.Contains(t, out.String(), "false-positive: 1 | spurious: 2 | risk-accepted: 3 | unspecified: 4")
+	assert.Contains(t, out.String(), "K coverage (unavailable): 0/10 mapped, 0/10 readable")
+	assert.Contains(t, out.String(), "Confirmed share")
+	assert.Contains(t, out.String(), "Risk-accepted")
 }
