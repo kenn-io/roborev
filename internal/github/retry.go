@@ -128,25 +128,26 @@ func readGitHub[T any](ctx context.Context, operation string, read func() (T, *g
 	return result, response, nil
 }
 
-// IsTransientTransportError reports whether err is a transient network,
-// timeout, or HTTP/2 connection/stream interruption where retrying on a fresh
-// request or connection may succeed.
-func IsTransientTransportError(err error) bool {
+// IsConnectionInterruption reports whether err is a non-timeout connection or
+// HTTP/2 stream interruption (such as an evicted dead pooled connection) where
+// redialing immediately can succeed. Client timeouts return false so callers
+// holding shared locks do not repeat a full wait against a slow server.
+func IsConnectionInterruption(err error) bool {
 	if isHTTP2StreamInterruption(err) || isHTTP2ConnectionLost(err) {
 		return true
 	}
-	var networkError net.Error
-	if errors.As(err, &networkError) && networkError.Timeout() {
-		return true
-	}
-	if _, ok := errors.AsType[*net.OpError](err); ok {
-		return true
+	if opErr, ok := errors.AsType[*net.OpError](err); ok {
+		return !opErr.Timeout()
 	}
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
 
 func retryableRead(err error, resp *googlegithub.Response) bool {
-	if IsTransientTransportError(err) {
+	if IsConnectionInterruption(err) {
+		return true
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
 		return true
 	}
 	if _, ok := errors.AsType[*googlegithub.RateLimitError](err); ok {
