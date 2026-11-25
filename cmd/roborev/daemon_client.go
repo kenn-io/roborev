@@ -311,7 +311,7 @@ func reviewText(review *storage.Review, all bool) string {
 	}
 	output, folded := review.FoldedOutput()
 	if folded {
-		output += "\nRun with --all to list them."
+		output += "Run with --all to list them."
 	}
 	return output
 }
