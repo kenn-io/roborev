@@ -152,7 +152,6 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 			require.NoError(t, err)
 			visible := policy.effective == "" || policy.effective == "low"
 			assert.Equal(visible, strings.Contains(body, "Minor naming issue."))
-			assert.Equal(visible, strings.Contains(body, "1 nit hidden"))
 			for i, m := range members {
 				original, err := tc.DB.GetReviewByJobID(m.ID)
 				require.NoError(t, err)

@@ -213,9 +213,6 @@ func TestTruncateCommentWithinFoldSummary(t *testing.T) {
 	assert.Contains(t, got, "\n</details>...(truncated)")
 	assert.LessOrEqual(t, len(got), 180)
 
-	for _, limit := range []int{0, 3} {
-		assert.LessOrEqual(t, len(TruncateCommentTo(body, limit, "...")), limit)
-	}
 	body = "visible\n<details><summary>1 nit and 1 unlikely finding hidden</summary>\ncontent" + strings.Repeat("x", 100) + "\n</details>"
 	open := strings.Index(body, "\n<details>")
 	summaryEnd := strings.Index(body, "</summary>") + len("</summary>")

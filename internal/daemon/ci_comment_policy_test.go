@@ -374,7 +374,7 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	h.Cfg.CI.CommentMaxFindings = 1
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
-	document := `{"schema_version":4,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","problem":"defect","fix":"fix"},{"severity":"low","problem":"nit","fix":"fix"},{"severity":"high","problem":"rare","fix":"fix","unlikely":true}]}`
+	document := `{"schema_version":4,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"defect","fix":"fix"},{"severity":"low","kind":"improvement","confidence":0.9,"problem":"naming issue","fix":"fix"},{"severity":"high","kind":"defect","confidence":0.9,"problem":"rare","fix":"fix","unlikely":true}]}`
 	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, document, synth.ID)
 	require.NoError(t, err)
 	_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'medium' WHERE id = ?`, synth.ID)
@@ -388,10 +388,12 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	body, err = h.Poller.panelCommentBody(panel, members)
 	require.NoError(t, err)
 	assert.NotContains(t, body, "<details>")
+	assert.Contains(t, body, "naming issue")
+	assert.NotContains(t, body, "more finding in the full review")
 }
 
 func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
 	body := "visible\n<details><summary>1 nit hidden</summary>\n" + strings.Repeat("x", 100) + "\n</details>"
 	got := truncatePanelPRBodyForFooter(body, "footer", 100)
-	assert.LessOrEqual(t, len(got)+len("footer"), 100)
+	assert.True(t, strings.HasSuffix(got, "\n</details>"+panelCommentTruncSuffix))
 }

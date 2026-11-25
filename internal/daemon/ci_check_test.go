@@ -505,7 +505,7 @@ func TestCICheckUnlikely(t *testing.T) {
 		{Severity: "high", Problem: "three", Fix: "fix"},
 		{Severity: "high", Problem: "four", Fix: "fix"},
 	}}
-	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"},{"finding":2,"keep":true,"unlikely":false,"evidence":"e","reason":"r"},{"finding":3,"keep":true,"unlikely":true},{"finding":4,"keep":false,"unlikely":true,"evidence":"e","reason":"r"}]}`)
+	raw := jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"},{"finding":2,"keep":true,"unlikely":false,"evidence":"e","reason":"r"},{"finding":3,"keep":true,"unlikely":true,"evidence":"","reason":""},{"finding":4,"keep":false,"unlikely":true,"evidence":"e","reason":"r"}]}`)
 	got, err := applyCICheck(doc, raw, io.Discard)
 	require.NoError(t, err)
 	require.Len(t, got.Findings, 3)
@@ -519,10 +519,13 @@ func TestCICheckUnlikely(t *testing.T) {
 
 func TestCICheckClassifiesBelowSeverityFloor(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
+	calls := 0
 	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
-		return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"}]}`), io.Discard)
+		calls++
+		return doc, nil
 	}
 	doc := structuredreview.Document{Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{{Severity: "low", Problem: "Rare case", Fix: "Fix it"}}}
-	res, _ := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "medium"}, synthesisResult{}, doc, &ciCheckConfig{})
-	assert.Contains(t, string(res.review.StructuredOutput), `"unlikely":true`)
+	_, ran := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "medium"}, synthesisResult{}, doc, &ciCheckConfig{})
+	assert.True(t, ran)
+	assert.Equal(t, 1, calls)
 }

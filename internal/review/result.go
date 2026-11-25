@@ -159,7 +159,6 @@ func TruncateCommentTo(body string, limit int, suffix string) string {
 	if len(body) <= limit {
 		return body
 	}
-	suffix = TrimPartialRune(suffix[:min(max(limit, 0), len(suffix))])
 	budget := max(limit-len(suffix), 0)
 	const closing = "\n</details>"
 	open := strings.Index(body, "\n<details><summary>")

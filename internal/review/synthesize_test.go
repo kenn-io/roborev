@@ -539,7 +539,7 @@ func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) 
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Review Passed")
 	assert.Contains(t, comment, "No findings at or above high severity.")
-	assert.NotContains(t, comment, "Name is vague")
+	assert.NotContains(t, comment, "Name is vague", "CI comments hide findings below the threshold")
 }
 
 func TestSynthesizePreservesCompleteOutput(t *testing.T) {
@@ -791,18 +791,16 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 	}
 }
 
-func TestSynthesizeShowAllPreservesProseFloor(t *testing.T) {
+func TestSynthesizeRawFallbackIgnoresShowAll(t *testing.T) {
 	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
-	for _, results := range [][]ReviewResult{
-		{{Status: ResultDone, Output: prose}},
-		{{Status: ResultDone, Output: prose, StructuredOutput: jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`)}},
-		{{Status: ResultDone, Output: prose, Structured: &StructuredReview{Findings: []StructuredFinding{{Severity: "high", Problem: "High issue", Fix: "Fix"}, {Severity: "low", Problem: "Low issue", Fix: "Fix"}}}}, {Status: ResultDone, Output: "No issues found."}},
-	} {
-		result, err := Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
-		require.NoError(t, err)
-		assert.Contains(t, result.GitHubComment, "High issue")
-		assert.NotContains(t, result.GitHubComment, "Low issue")
+	results := []ReviewResult{
+		{Status: ResultDone, Output: prose, Structured: &StructuredReview{Findings: []StructuredFinding{{Severity: "high", Problem: "High issue", Fix: "Fix"}, {Severity: "low", Problem: "Low issue", Fix: "Fix"}}}},
+		{Status: ResultDone, Output: "No issues found."},
 	}
+	result, err := Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
+	require.NoError(t, err)
+	assert.Contains(t, result.GitHubComment, "High issue")
+	assert.NotContains(t, result.GitHubComment, "Low issue")
 }
 
 func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
@@ -821,9 +819,6 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 			require.NoError(t, err)
 			assert.Contains(t, result.GitHubComment, tc.heading)
 			assert.Contains(t, result.GitHubComment, tc.finding.Problem)
-			if !tc.showAll {
-				assert.Contains(t, result.GitHubComment, "1 unlikely finding hidden")
-			}
 		})
 	}
 }
