@@ -98,6 +98,19 @@ func TestSynthesisPreservesMatchingSourceUnlikely(t *testing.T) {
 	assert.False(t, doc.Findings[1].Unlikely)
 }
 
+func TestSynthesisPreservesMatchingSourceSecurity(t *testing.T) {
+	a := &unlikelySynthesisAgent{}
+	a.self = a
+	source := StructuredFinding{Severity: "medium", Topic: "security", Problem: "Rare issue", Fix: "Fix rare", Unlikely: true}
+	source.SetLocation("file.go", 1, 1)
+	reviews := []ReviewResult{{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{source}}}}
+	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
+	require.NoError(t, err)
+	require.Len(t, doc.Findings, 2)
+	assert.Equal(t, "security", doc.Findings[0].Topic)
+	assert.NotContains(t, FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc})), "<details>")
+}
+
 type synthesisEntrypointAgent struct {
 	commonMockAgent
 	synthPrompt  string

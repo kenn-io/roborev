@@ -253,3 +253,17 @@ func TestTruncateCommentFold(t *testing.T) {
 		})
 	}
 }
+
+func TestTruncateFoldKeepsItemBeforeNextGroup(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "low", Problem: "Complete nit", Fix: "Fix the nit"},
+		{Severity: "medium", Unlikely: true, Problem: strings.Repeat("Rare issue ", 50)},
+	}}
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	limit := strings.Index(body, "Fix the nit") + len("Fix the nit") + len(foldClosing) + len(CommentTruncSuffix)
+	got := TruncateCommentTo(body, limit, CommentTruncSuffix)
+	assert.Contains(t, got, "Complete nit")
+	assert.Contains(t, got, "Fix the nit")
+	assert.Contains(t, got, "</details>")
+	assert.LessOrEqual(t, len(got), limit)
+}

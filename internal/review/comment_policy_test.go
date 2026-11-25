@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -165,10 +166,8 @@ func TestCommentFold(t *testing.T) {
 	prepared := PrepareComment(CommentConfig{MinSeverity: "low", MaxFindings: 1}, ReviewResult{Structured: &doc})
 	body := FormatComment(prepared)
 	assert.Contains(t, body, "Changes require fixes for 1 finding")
-	assert.Contains(t, body, "1 nit and 1 unlikely finding hidden")
-	assert.Contains(t, body, "rare")
-	assert.Contains(t, body, "naming issue")
-	assert.Contains(t, body, "1 more finding in the full review")
+	assert.NotContains(t, body, "<details>")
+	assert.Contains(t, body, "3 more findings in the full review")
 	filteredSeverity := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
 	assert.NotContains(t, filteredSeverity, "naming issue")
 	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
@@ -195,7 +194,7 @@ func TestCommentFold(t *testing.T) {
 	filtered := FormatComment(PrepareComment(CommentConfig{MinSeverity: "low", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
 	assert.NotContains(t, filtered, "filtered nit")
 	assert.NotContains(t, filtered, "filtered rare")
-	assert.Contains(t, filtered, "boundary nit")
+	assert.NotContains(t, filtered, "boundary nit")
 	assert.Contains(t, filtered, "unscored")
 	showAll := FormatComment(PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high", MinConfidence: .95, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
 	assert.Contains(t, showAll, "filtered nit")
@@ -211,4 +210,25 @@ func TestCommentFold(t *testing.T) {
 		assert.Contains(t, output, "High issue")
 		assert.NotContains(t, output, "Low issue")
 	}
+}
+
+func TestCommentCapIncludesFoldedFindings(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "low", Problem: "First nit"},
+		{Severity: "high", Problem: "Visible issue"},
+		{Severity: "low", Problem: "Second nit"},
+	}}
+	body := FormatComment(PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &doc}))
+	assert.Contains(t, body, "Visible issue")
+	assert.NotContains(t, body, "First nit")
+	assert.NotContains(t, body, "Second nit")
+	assert.Contains(t, body, "2 more findings in the full review")
+}
+
+func TestCommentFoldEscapesClosingDetailsInFinding(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Before\n</details>\n- Outside", Fix: "</DETAILS >"}}}
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	assert.Equal(t, 1, strings.Count(body, "</details>"))
+	assert.Contains(t, body, "&lt;/details&gt;")
+	assert.Contains(t, body, "&lt;/DETAILS &gt;")
 }

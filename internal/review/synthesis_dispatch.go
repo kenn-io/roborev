@@ -116,42 +116,43 @@ func RunSynthesisAgent(
 		return SynthesisDocument{}, output, err
 	}
 	settleFindings(ctx, checkout.RepoPath, checkout.GitRef, &doc)
-	preserveSourceUnlikely(&doc, reviews)
+	preserveSourceVisibility(&doc, reviews)
 	return doc, output, nil
 }
 
-// preserveSourceUnlikely keeps a source's unlikely mark on the synthesized
-// finding derived from it, even when the synthesis agent drops the mark.
-func preserveSourceUnlikely(doc *SynthesisDocument, reviews []ReviewResult) {
+// preserveSourceVisibility keeps source classifications on derived findings.
+func preserveSourceVisibility(doc *SynthesisDocument, reviews []ReviewResult) {
 	for i := range doc.Findings {
 		finding := &doc.Findings[i]
 		for _, source := range finding.Sources {
-			if original := reviews[source-1].structuredReview(); original != nil && sourceFindingUnlikely(*finding, original.Findings) {
-				finding.Unlikely = true
+			if original := reviews[source-1].structuredReview(); original != nil {
+				finding.Unlikely = finding.Unlikely || sourceFindingMatches(*finding, original.Findings, func(f StructuredFinding) bool { return f.Unlikely })
+				if sourceFindingMatches(*finding, original.Findings, func(f StructuredFinding) bool { return f.Topic == "security" }) {
+					finding.Topic = "security"
+				}
 			}
 		}
 	}
 }
 
-// sourceFindingUnlikely reports whether the source finding matching finding is
-// marked unlikely. A source finding with the same text at the same place
-// matches; otherwise, since synthesis may reword, the only source finding at
-// exactly the same lines does. Other findings in the source never match.
-func sourceFindingUnlikely(finding StructuredFinding, candidates []StructuredFinding) bool {
+// sourceFindingMatches checks matching source findings for a classification.
+// Identical text at the same place matches; otherwise, the sole finding at
+// exactly the same lines matches even if synthesis reworded it.
+func sourceFindingMatches(finding StructuredFinding, candidates []StructuredFinding, marked func(StructuredFinding) bool) bool {
 	var sameLocation []StructuredFinding
-	exact, unlikely := false, false
+	exact, matched := false, false
 	for _, candidate := range candidates {
 		if candidate.Problem == finding.Problem && candidate.Fix == finding.Fix && samePlace(candidate, finding) {
-			exact, unlikely = true, unlikely || candidate.Unlikely
+			exact, matched = true, matched || marked(candidate)
 		}
 		if finding.File != "" && finding.StartLine != 0 && candidate.File == finding.File && candidate.StartLine == finding.StartLine && candidate.EndLine == finding.EndLine {
 			sameLocation = append(sameLocation, candidate)
 		}
 	}
 	if exact {
-		return unlikely
+		return matched
 	}
-	return len(sameLocation) == 1 && sameLocation[0].Unlikely
+	return len(sameLocation) == 1 && marked(sameLocation[0])
 }
 
 func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.Value, err error) (SynthesisDocument, error) {

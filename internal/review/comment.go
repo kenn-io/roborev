@@ -2,6 +2,7 @@ package review
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -68,7 +69,12 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 			comment.minSeverity, threshold, cfg.MinConfidence, cfg.MaxFindings = "", 0, 0, 0
 		}
 		comment.structured = true
-		for _, finding := range doc.Findings {
+		findings := slices.Clone(doc.Findings)
+		slices.SortStableFunc(findings, func(a, b StructuredFinding) int {
+			return config.SeverityRank(b.Severity) - config.SeverityRank(a.Severity)
+		})
+		selected := 0
+		for _, finding := range findings {
 			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold {
 				continue
 			}
@@ -77,6 +83,11 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 				comment.confidenceFiltered = true
 				continue
 			}
+			if cfg.MaxFindings > 0 && selected >= cfg.MaxFindings {
+				comment.omitted++
+				continue
+			}
+			selected++
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
 			fold := foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical"
 			if fold && finding.Severity == "low" {
@@ -110,15 +121,6 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 			comment.verbatim = &r.Output
 			comment.findings = nil
 			return comment
-		}
-	}
-	if comment.structured {
-		slices.SortStableFunc(comment.findings, func(a, b commentFinding) int {
-			return config.SeverityRank(b.severity) - config.SeverityRank(a.severity)
-		})
-		if cfg.MaxFindings > 0 && len(comment.findings) > cfg.MaxFindings {
-			comment.omitted = len(comment.findings) - cfg.MaxFindings
-			comment.findings = comment.findings[:cfg.MaxFindings]
 		}
 	}
 	return comment
@@ -196,6 +198,9 @@ func FormatComment(comment PreparedComment) string {
 				fmt.Fprintf(&out, "\n#### %s\n", group.title)
 			}
 			for _, finding := range group.findings {
+				finding.problem = escapeFoldClose(finding.problem)
+				finding.fix = escapeFoldClose(finding.fix)
+				finding.location = escapeFoldClose(finding.location)
 				renderCommentFinding(&out, finding)
 			}
 		}
@@ -205,6 +210,14 @@ func FormatComment(comment PreparedComment) string {
 		return strings.TrimRight(out.String(), "\n") + notice
 	}
 	return out.String()
+}
+
+var foldCloseTag = regexp.MustCompile(`(?i)</details\s*>`)
+
+func escapeFoldClose(s string) string {
+	return foldCloseTag.ReplaceAllStringFunc(s, func(tag string) string {
+		return "&lt;" + tag[1:len(tag)-1] + "&gt;"
+	})
 }
 
 // structuredReview returns the review's structured document, decoding the raw
