@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -488,6 +489,7 @@ func TestHandleStreamEvents(t *testing.T) {
 }
 
 func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
+	testenv.SetDataDir(t)
 	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	cfg.ServerAddr = "127.0.0.1:0"

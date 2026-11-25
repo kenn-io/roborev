@@ -115,6 +115,8 @@ type Server struct {
 	sweepDone               chan struct{}
 	shutdownCh              chan struct{} // closed when /api/shutdown is requested
 	shutdownOnce            sync.Once
+	readyCh                 chan struct{} // closed after Start publishes runtime metadata and finishes startup
+	readyOnce               sync.Once
 	shutdownDrainMu         sync.Mutex
 	shutdownDraining        bool
 	updateDrain             *updateDrainLease
@@ -243,6 +245,7 @@ func newServerWithLogs(
 		agentActivityGate:  make(chan struct{}, 1),
 		startTime:          time.Now(),
 		shutdownCh:         make(chan struct{}),
+		readyCh:            make(chan struct{}),
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
@@ -571,6 +574,8 @@ func (s *Server) Start(ctx context.Context) error {
 			go repairRegisteredHooks(ctx, repos)
 		}
 	}
+
+	s.readyOnce.Do(func() { close(s.readyCh) })
 
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()

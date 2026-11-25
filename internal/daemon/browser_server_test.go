@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 	webassets "go.kenn.io/roborev/internal/web"
 )
@@ -168,6 +169,7 @@ func TestBrowserDevelopmentOriginOption(t *testing.T) {
 }
 
 func TestServerBrowserLifecycleAndRuntimePublication(t *testing.T) {
+	testenv.SetDataDir(t)
 	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	cfg.ServerAddr = "127.0.0.1:0"
@@ -224,6 +226,7 @@ func TestServerBrowserLifecycleAndRuntimePublication(t *testing.T) {
 }
 
 func TestServerBrowserShutdownCancelsActiveEventStream(t *testing.T) {
+	testenv.SetDataDir(t)
 	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	cfg.ServerAddr = "127.0.0.1:0"
@@ -282,6 +285,7 @@ func TestServerBrowserShutdownCancelsActiveEventStream(t *testing.T) {
 }
 
 func TestServerBrowserBindFailureAbortsWithoutRuntime(t *testing.T) {
+	testenv.SetDataDir(t)
 	occupied, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, occupied.Close()) })
@@ -298,6 +302,7 @@ func TestServerBrowserBindFailureAbortsWithoutRuntime(t *testing.T) {
 }
 
 func TestServerDisabledBrowserOmitsRuntimeMetadata(t *testing.T) {
+	testenv.SetDataDir(t)
 	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	cfg.ServerAddr = "127.0.0.1:0"
@@ -314,6 +319,7 @@ func TestServerDisabledBrowserOmitsRuntimeMetadata(t *testing.T) {
 }
 
 func TestServerRestartInvalidatesBrowserSession(t *testing.T) {
+	testenv.SetDataDir(t)
 	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	cfg.ServerAddr = "127.0.0.1:0"
