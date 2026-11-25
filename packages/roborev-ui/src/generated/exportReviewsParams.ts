@@ -12,6 +12,11 @@ export type ExportReviewsParams = {
    */
   profile?: string;
   /**
+   * Requested export schema version (supported: 2); omit to use the daemon's current default (2)
+   * @minimum 1
+   */
+  schema_version?: number;
+  /**
    * Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
    */
   since?: string;

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2096,10 +2097,79 @@ func (s *Server) humaGetReview(
 const (
 	exportReviewsDefaultLimit = 500
 	exportReviewsMaxLimit     = 5000
-	// exportReviewsSchemaVersion is 2 since reviews gained closed and
-	// updated_at. The CI metrics and CI cost documents version separately.
-	exportReviewsSchemaVersion = 2
+	// ExportReviewsSchemaVersion is the current wire schema version for
+	// GET /api/export/reviews and `roborev export reviews`. Within a schema
+	// version, wire changes are strictly additive: existing fields are never
+	// removed, renamed, or changed in type or nullability, and consumers must
+	// ignore unknown fields. Breaking changes bump this version while keeping
+	// previously supported versions selectable via schema_version.
+	//
+	// Version 2 added `document` on reviews and subagents plus `closed` and
+	// `updated_at` on top-level reviews, and emits structured `document`
+	// objects in document version 3 (or version 0 for historical unstructured
+	// Markdown reviews). Breaking changes to nested `document` require a new
+	// export schema_version while keeping v2 serving document version 3.
+	// When bumping this constant, also update the OpenAPI doc string in
+	// internal/daemon/types.go, docs/commands.md, and regenerate clients.
+	// The CI metrics and CI cost documents version separately.
+	ExportReviewsSchemaVersion = 2
 )
+
+// SupportedExportReviewsSchemaVersions returns the export schema versions
+// served by GET /api/export/reviews and `roborev export reviews`.
+func SupportedExportReviewsSchemaVersions() []int {
+	return []int{ExportReviewsSchemaVersion}
+}
+
+// FormatSupportedExportReviewsSchemaVersions formats the supported export
+// schema versions for CLI help and error messages.
+func FormatSupportedExportReviewsSchemaVersions() string {
+	versions := SupportedExportReviewsSchemaVersions()
+	parts := make([]string, len(versions))
+	for i, v := range versions {
+		parts[i] = strconv.Itoa(v)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// IsSupportedExportReviewsSchemaVersion reports whether GET /api/export/reviews
+// and `roborev export reviews` can serve the requested schema version.
+func IsSupportedExportReviewsSchemaVersion(version int) bool {
+	return slices.Contains(SupportedExportReviewsSchemaVersions(), version)
+}
+
+func parseExportReviewsSchemaVersion(input *ExportReviewsInput) (int, error) {
+	if input.schemaVersionMultiple {
+		return 0, errors.New("duplicate export schema_version parameter")
+	}
+	if input.schemaVersionInvalid {
+		return 0, fmt.Errorf("invalid export schema_version (supported: %s)", FormatSupportedExportReviewsSchemaVersions())
+	}
+	raw := string(input.SchemaVersion)
+	if !input.schemaVersionPresent && raw == "" {
+		return ExportReviewsSchemaVersion, nil
+	}
+	if raw == "" || strings.TrimSpace(raw) != raw {
+		return 0, fmt.Errorf("invalid export schema_version %q (supported: %s)", raw, FormatSupportedExportReviewsSchemaVersions())
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid export schema_version %q (supported: %s)", raw, FormatSupportedExportReviewsSchemaVersions())
+	}
+	if !IsSupportedExportReviewsSchemaVersion(v) {
+		if v == 1 {
+			return 0, fmt.Errorf(
+				"unsupported export schema_version %d (supported: %s; schema_version 2 is a backwards-compatible superset of version 1)",
+				v, FormatSupportedExportReviewsSchemaVersions(),
+			)
+		}
+		return 0, fmt.Errorf(
+			"unsupported export schema_version %d (supported: %s)",
+			v, FormatSupportedExportReviewsSchemaVersions(),
+		)
+	}
+	return v, nil
+}
 
 func (s *Server) humaExportReviews(
 	ctx context.Context, input *ExportReviewsInput,
@@ -2110,6 +2180,11 @@ func (s *Server) humaExportReviews(
 	}
 	if format != "json" {
 		return nil, huma.Error400BadRequest("unsupported export format")
+	}
+
+	schemaVersion, err := parseExportReviewsSchemaVersion(input)
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	profile := input.Profile
@@ -2174,7 +2249,7 @@ func (s *Server) humaExportReviews(
 	}
 	resp := &ExportReviewsOutput{}
 	resp.Body = ExportReviewsDocument{
-		SchemaVersion: exportReviewsSchemaVersion,
+		SchemaVersion: schemaVersion,
 		Tool:          "roborev",
 		ToolVersion:   version.Version,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),

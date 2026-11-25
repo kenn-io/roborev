@@ -1713,7 +1713,6 @@ components:
         - error
       type: object
     ExperimentAssignment:
-      additionalProperties: false
       properties:
         arm:
           type: string
@@ -2001,7 +2000,6 @@ components:
         - postgres_records
       type: object
     ExportReview:
-      additionalProperties: false
       properties:
         agent:
           type: string
@@ -2111,7 +2109,6 @@ components:
         - resume_source_job_uuid
       type: object
     ExportReviewCost:
-      additionalProperties: false
       properties:
         tokens_in:
           format: int64
@@ -2134,7 +2131,6 @@ components:
         - usd
       type: object
     ExportReviewsDocument:
-      additionalProperties: false
       properties:
         $schema:
           description: A URL to the JSON Schema for this object.
@@ -2185,7 +2181,6 @@ components:
         - reviews
       type: object
     ExportReviewsWindow:
-      additionalProperties: false
       properties:
         field:
           type: string
@@ -2203,7 +2198,6 @@ components:
         - until
       type: object
     ExportSubagent:
-      additionalProperties: false
       properties:
         agent:
           type: string
@@ -2684,7 +2678,6 @@ components:
         - migration_error
       type: object
     LegacyReviewDocument:
-      additionalProperties: false
       description: Historical Markdown without extracted findings.
       properties:
         findings:
@@ -2695,7 +2688,6 @@ components:
             - array
             - "null"
         legacy:
-          additionalProperties: false
           description: Historical Markdown without extracted findings. Only present in storage-only schema version 0.
           properties:
             markdown:
@@ -4701,7 +4693,6 @@ components:
         - panel_run_uuid
       type: object
     StructuredReviewCheck:
-      additionalProperties: false
       description: How the CI checker judged the review's findings before roborev stored and posted it.
       properties:
         findings:
@@ -4717,7 +4708,6 @@ components:
         - findings
       type: object
     StructuredReviewCheckVerdict:
-      additionalProperties: false
       description: One verdict as the CI checker returned it. A member the checker left blank is omitted.
       properties:
         evidence:
@@ -4731,7 +4721,6 @@ components:
           type: string
       type: object
     StructuredReviewCheckedFinding:
-      additionalProperties: false
       description: One finding the CI checker tried and what became of it.
       properties:
         finding:
@@ -4751,7 +4740,6 @@ components:
         - verdicts
       type: object
     StructuredReviewDocument:
-      additionalProperties: false
       description: The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.
       properties:
         check:
@@ -4762,7 +4750,7 @@ components:
             $ref: "#/components/schemas/StructuredReviewFinding"
           type: array
         schema_version:
-          description: Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3.
+          description: Version of the document format, separate from the export schema_version. Export schema_version 2 writes structured documents in version 3.
           format: int64
           maximum: 3
           minimum: 1
@@ -4783,7 +4771,6 @@ components:
         - findings
       type: object
     StructuredReviewFinding:
-      additionalProperties: false
       description: One finding in a structured review document.
       properties:
         confidence:
@@ -5941,6 +5928,15 @@ paths:
             default: content
             description: "Export profile: content or metadata"
             type: string
+        - description: "Requested export schema version (supported: 2); omit to use the daemon's current default (2)"
+          explode: false
+          in: query
+          name: schema_version
+          schema:
+            default: 2
+            description: "Requested export schema version (supported: 2); omit to use the daemon's current default (2)"
+            minimum: 1
+            type: integer
         - description: Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
           explode: false
           in: query
@@ -6006,6 +6002,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExportReviewsDocument"
           description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Invalid or unsupported export parameter (including schema_version, format, profile, time bounds, or cursor)
         "409":
           content:
             application/problem+json:

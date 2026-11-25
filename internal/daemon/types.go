@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"net/url"
+	"strings"
 	"time"
 	"uuid"
 
@@ -157,18 +159,75 @@ type GetReviewOutput struct {
 
 // -- GET /api/export/reviews --
 
+// exportReviewsSchemaVersion preserves handler-owned HTTP 400 errors for
+// malformed and unsupported schema_version values while publishing the integer
+// contract consumed by generated clients. Supported versions are documented in
+// prose rather than as an OpenAPI enum so the Go client generator does not
+// emit bare numeric constants (e.g. N2) that break callers on future additions.
+type exportReviewsSchemaVersion string
+
+func (exportReviewsSchemaVersion) Schema(huma.Registry) *huma.Schema {
+	minimum := float64(1)
+	return &huma.Schema{
+		Type:    huma.TypeInteger,
+		Default: ExportReviewsSchemaVersion,
+		Minimum: &minimum,
+	}
+}
+
 // ExportReviewsInput holds query parameters for exporting completed reviews.
+// GET /api/export/reviews sets SkipValidateParams so schema constraint tags on
+// this struct are documentation-only; every parameter constraint must be
+// validated in humaExportReviews.
 type ExportReviewsInput struct {
-	Format       string `query:"format" default:"json" doc:"Output format; only json is supported"`
-	Profile      string `query:"profile" default:"content" doc:"Export profile: content or metadata"`
-	Since        string `query:"since" doc:"Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)"`
-	Until        string `query:"until" doc:"Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
-	ClosedOnly   bool   `query:"closed_only" doc:"Only include reviews marked closed"`
-	UpdatedSince string `query:"updated_since" doc:"Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at."`
-	Repo         string `query:"repo" doc:"Exact exported repo identifier filter"`
-	Project      string `query:"project" doc:"Exact project display-name filter"`
-	Limit        int    `query:"limit" default:"500" doc:"Maximum top-level reviews in this page"`
-	Cursor       string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since."`
+	Format        string                     `query:"format" default:"json" doc:"Output format; only json is supported"`
+	Profile       string                     `query:"profile" default:"content" doc:"Export profile: content or metadata"`
+	SchemaVersion exportReviewsSchemaVersion `query:"schema_version" doc:"Requested export schema version (supported: 2); omit to use the daemon's current default (2)"`
+	Since         string                     `query:"since" doc:"Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)"`
+	Until         string                     `query:"until" doc:"Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
+	ClosedOnly    bool                       `query:"closed_only" doc:"Only include reviews marked closed"`
+	UpdatedSince  string                     `query:"updated_since" doc:"Inclusive updated_at lower bound (RFC3339 or YYYY-MM-DD). A filter that combines with since, until, cursor, and the other filters; ordering stays on completed_at."`
+	Repo          string                     `query:"repo" doc:"Exact exported repo identifier filter"`
+	Project       string                     `query:"project" doc:"Exact project display-name filter"`
+	Limit         int                        `query:"limit" default:"500" doc:"Maximum top-level reviews in this page"`
+	Cursor        string                     `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since."`
+
+	schemaVersionPresent  bool
+	schemaVersionMultiple bool
+	schemaVersionInvalid  bool
+}
+
+// Resolve scans the raw query string for schema_version so the handler can
+// distinguish an omitted parameter from an explicit empty, duplicate, or
+// invalidly percent-encoded one (which url.URL.Query silently drops).
+func (i *ExportReviewsInput) Resolve(ctx huma.Context) []error {
+	rawQuery := ctx.URL().RawQuery
+	if rawQuery == "" {
+		return nil
+	}
+	count := 0
+	for part := range strings.SplitSeq(rawQuery, "&") {
+		if part == "" {
+			continue
+		}
+		rawKey, rawVal, hasEq := strings.Cut(part, "=")
+		key, keyErr := url.QueryUnescape(rawKey)
+		if (keyErr == nil && key == "schema_version") || rawKey == "schema_version" {
+			count++
+			if hasEq {
+				if _, valErr := url.QueryUnescape(rawVal); valErr != nil {
+					i.schemaVersionInvalid = true
+				}
+			}
+		}
+	}
+	if count > 0 {
+		i.schemaVersionPresent = true
+	}
+	if count > 1 {
+		i.schemaVersionMultiple = true
+	}
+	return nil
 }
 
 type ExportReviewsWindow struct {
