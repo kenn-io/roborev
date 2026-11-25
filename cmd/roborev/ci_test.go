@@ -157,12 +157,12 @@ func TestCIReviewKeepsCommitsWhenHEADMoves(t *testing.T) {
 				moveErr = fmt.Errorf("commit: %w: %s", err, data)
 			}
 		})
-		return `{"schema_version":4,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5}]}`, moveErr
+		return `{"schema_version":4,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"unlikely":false,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5}]}`, moveErr
 	}}
 	var synthesisCall invocation
 	synthesizer := &agent.FakeAgent{NameStr: "ci-moving-head-synthesizer", ReviewFn: func(_ context.Context, _, gitRef, prompt string, _ io.Writer) (string, error) {
 		synthesisCall = invocation{gitRef, prompt}
-		return `{"schema_version":4,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5,"sources":[1,2]}]}`, nil
+		return `{"schema_version":4,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"unlikely":false,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5,"sources":[1,2]}]}`, nil
 	}}
 	agent.RegisterForTest(t, reviewer)
 	agent.RegisterForTest(t, synthesizer)

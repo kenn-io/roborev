@@ -70,7 +70,7 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 		data, err := os.ReadFile(matches[0])
 		require.NoError(t, err)
 		assert.Contains(t, string(data), "+VISIBLE_CHANGE")
-		return `{"schema_version":4,"summary":"Check missing","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"problem":"Missing check.","fix":"Add check.","file":null,"start_line":null,"end_line":null}]}`, nil
+		return `{"schema_version":4,"summary":"Check missing","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"unlikely":false,"problem":"Missing check.","fix":"Add check.","file":null,"start_line":null,"end_line":null}]}`, nil
 	}})
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "supplied-panel-synthesis", ReviewFn: func(_ context.Context, root, gotRef, text string, _ io.Writer) (string, error) {
 		synthesisCalls++
