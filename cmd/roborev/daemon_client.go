@@ -123,7 +123,7 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 	if !quiet {
 		cmd.Printf("Review (by %s)\n", review.Agent)
 		cmd.Println(strings.Repeat("-", 60))
-		cmd.Println(reviewText(review, all))
+		cmd.Println(reviewText(review, all, ep))
 		if review.Job != nil && review.Job.IsReadableReview() {
 			reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 		}
@@ -305,13 +305,17 @@ func daemonRequestError(action string, err error) error {
 	return fmt.Errorf("%s: %w", action, err)
 }
 
-func reviewText(review *storage.Review, all bool) string {
+func reviewText(review *storage.Review, all bool, ep daemon.DaemonEndpoint) string {
 	if all || fromSkill {
 		return review.Output
 	}
 	output, folded := review.FoldedOutput()
 	if folded {
-		output = strings.TrimSuffix(output, "\n") + fmt.Sprintf(".\nTo list them:\n  roborev job show --job %d --all", review.JobID)
+		addr := ep.ConfigAddr()
+		if ep.IsRemote() {
+			addr = ep.BaseURL()
+		}
+		output = strings.TrimSuffix(output, "\n") + fmt.Sprintf(".\nTo list them:\n  roborev --server %s job show --job %d --all", daemon.ShellEscape(addr), review.JobID)
 	}
 	return output
 }

@@ -729,11 +729,13 @@ func (m *model) releaseReconcileFetch(fetchSeq uint64) {
 func (m *model) acceptReview(msg reviewMsg) {
 	m.consecutiveErrors = 0
 	m.reviewErrReportedJobID = 0
+	if m.currentReview == nil || m.currentReview.JobID != msg.jobID {
+		m.foldExpanded = false
+	}
 	m.currentReview = msg.review
 	m.currentResponses = msg.responses
 	m.currentBranch = msg.branchName
 	m.reviewScroll = 0
-	m.foldExpanded = false
 	// The review is now ACCEPTED -- clear here, not at dispatch
 	// (splitReconcileDetail), so a fetch that instead FAILS
 	// (handleReviewFollowErrMsg) leaves the observation outstanding and a

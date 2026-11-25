@@ -619,6 +619,9 @@ func TestAcceptedReviewStartsFolded(t *testing.T) {
 	m, _ = updateModel(t, m, keyPressMsg('e'))
 	assert.Contains(t, m.reviewContentString(review), "**Problem:** nit")
 	assert.Equal(t, "collapse", m.foldHint())
+	m.acceptReview(reviewMsg{jobID: 1, review: review})
+	assert.Contains(t, m.reviewContentString(review), "**Problem:** nit")
+	assert.Equal(t, "collapse", m.foldHint())
 	other := *review
 	otherJob := *review.Job
 	other.JobID, otherJob.ID = 2, 2

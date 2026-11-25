@@ -746,7 +746,7 @@ func TestShowFoldedFindings(t *testing.T) {
 			} else {
 				assert.NotContains(t, run.stdout, "nit problem")
 				assert.NotContains(t, run.stdout, "rare problem")
-				assert.Contains(t, run.stdout, "1 nit and 1 unlikely finding hidden.\nTo list them:\n  roborev job show --job 7 --all\n")
+				assert.Contains(t, run.stdout, "1 nit and 1 unlikely finding hidden.\nTo list them:\n  roborev --server "+daemon.ShellEscape(getDaemonEndpoint().ConfigAddr())+" job show --job 7 --all\n")
 			}
 		})
 	}

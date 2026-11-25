@@ -267,7 +267,7 @@ roborev review --branch --panel none          # Force single-agent review
 
 | Flag | Description |
 |------|-------------|
-| `--all` | Show low-severity and unlikely findings in the review output |
+| `--all` | Show low-severity and unlikely findings with `--wait` (local reviews always show all findings) |
 | `--wait` | Block until review completes (intended for CI, scripting, and orchestrators; not recommended in interactive agent sessions) |
 | `--quiet` | Only show progress/elapsed time |
 | `--branch [name]` | Review all commits on branch since base (optionally specify branch name) |
@@ -285,6 +285,8 @@ roborev review --branch --panel none          # Force single-agent review
 | `--repo <path>` | Specify repository path |
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)
+
+The verdict and exit code include findings hidden by folding.
 
 A commit or range review is skipped when its diff is empty after
 [file exclusions](/docs/configuration/#exclude-patterns), for example an empty

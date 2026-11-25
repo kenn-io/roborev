@@ -363,7 +363,7 @@ Examples:
 			if showPrompt {
 				fmt.Println(review.Prompt)
 			} else {
-				fmt.Println(reviewText(&review, all))
+				fmt.Println(reviewText(&review, all, ep))
 			}
 
 			// Fetch and display comments (including legacy commit-based)
