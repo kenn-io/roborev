@@ -163,6 +163,32 @@ func TestSynthesisUnlikelyRequiresAllSources(t *testing.T) {
 	assert.False(t, doc.Findings[0].Unlikely)
 }
 
+func TestSynthesisDuplicateUnlikelyRequiresAllSources(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rare []bool
+		want bool
+	}{
+		{"rare then ordinary", []bool{true, false}, false},
+		{"ordinary then rare", []bool{false, true}, false},
+		{"both rare", []bool{true, true}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reviews := []ReviewResult{
+				{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{{Problem: "One", Unlikely: tc.rare[0]}}}},
+				{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{{Problem: "Two", Unlikely: tc.rare[1]}}}},
+			}
+			output := `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":true,"problem":"Issue","fix":"Fix","file":"a.go","start_line":1,"end_line":1,"sources":[1],"source_findings":[{"review":1,"finding":1}]},{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":true,"problem":"Issue","fix":"Fix","file":"a.go","start_line":1,"end_line":1,"sources":[2],"source_findings":[{"review":2,"finding":1}]}]}`
+			a := &structuredBatchAgent{name: "duplicate-sources", result: []byte(output)}
+			doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
+			require.NoError(t, err)
+			require.Len(t, doc.Findings, 1)
+			assert.Equal(t, tc.want, doc.Findings[0].Unlikely)
+			assert.Equal(t, []int{1, 2}, doc.Findings[0].Sources)
+		})
+	}
+}
+
 func TestSynthesisSchemaAllowsFindingReferences(t *testing.T) {
 	var schema jsonschema.Schema
 	require.NoError(t, json.Unmarshal(SynthesisSchema, &schema))

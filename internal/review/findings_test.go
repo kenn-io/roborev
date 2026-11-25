@@ -162,7 +162,7 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	require.Len(t, got, 5, "only the two retry findings in a.go merge")
 	checks := assert.New(t)
 	checks.Equal("high", got[0].Severity, "the more severe copy is kept")
-	checks.True(got[0].Unlikely)
+	checks.False(got[0].Unlikely)
 	checks.Equal("Stop retrying on 503.", got[0].Fix)
 	checks.Equal([]int{1, 2}, got[0].Sources, "a merged finding keeps every source")
 	t.Run("security topic survives either order", func(t *testing.T) {
