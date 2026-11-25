@@ -142,6 +142,7 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	first.Problem = "The retry loop never stops when the server returns 503."
 	first.Fix = "Stop retrying on 503."
 	first.Severity = "medium"
+	first.Unlikely = true
 	first.Sources = []int{2}
 	second := located("a.go", 13, 13)
 	second.Problem = first.Problem
@@ -161,8 +162,38 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	require.Len(t, got, 5, "only the two retry findings in a.go merge")
 	assert := assert.New(t)
 	assert.Equal("high", got[0].Severity, "the more severe copy is kept")
+	assert.True(got[0].Unlikely)
 	assert.Equal("Stop retrying on 503.", got[0].Fix)
 	assert.Equal([]int{1, 2}, got[0].Sources, "a merged finding keeps every source")
+}
+
+func TestTidyFindingsPreservesUnlikely(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		firstConfidence  float64
+		secondConfidence float64
+		firstUnlikely    bool
+		secondUnlikely   bool
+	}{
+		{"first marked, second preferred", 0.4, 0.9, true, false},
+		{"second marked, first preferred", 0.9, 0.4, false, true},
+		{"first marked and preferred", 0.9, 0.4, true, false},
+		{"second marked and preferred", 0.4, 0.9, false, true},
+		{"neither marked", 0.4, 0.9, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first, second := located("a.go", 10, 10), located("a.go", 10, 10)
+			first.Confidence, first.Unlikely = tc.firstConfidence, tc.firstUnlikely
+			second.Confidence, second.Unlikely = tc.secondConfidence, tc.secondUnlikely
+			doc := StructuredReview{Findings: []StructuredFinding{first, second}}
+			settleFindings(t.Context(), "", "", &doc)
+			require.Len(t, doc.Findings, 1)
+			assert.Equal(t, tc.firstUnlikely || tc.secondUnlikely, doc.Findings[0].Unlikely)
+			assert.Equal(t, max(tc.firstConfidence, tc.secondConfidence), doc.Findings[0].Confidence)
+			body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
+			assert.Equal(t, tc.firstUnlikely || tc.secondUnlikely, strings.Contains(body, "<details>"))
+		})
+	}
 }
 
 // Reviewers often report one problem per field or variable on neighboring
