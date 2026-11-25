@@ -484,6 +484,47 @@ Muse 1.4.10 defaults to `muse-spark-1.3-contributor`, so set
 tier. roborev passes `--model` only when it has a model configured; otherwise,
 Muse uses its own model settings.
 
+## omp
+
+[omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) is a fork of Pi with its
+own tools, flags, and session store, so roborev runs it as a separate agent. Set
+`omp_cmd` in global config to use a custom binary path. The flags were verified
+against omp 19.2.1.
+
+Reviews and planning run omp with a read-only tool allowlist:
+
+```bash
+omp -p --mode json --tools read,grep,glob --no-tools --approval-mode always-ask --no-lsp
+```
+
+- `--tools read,grep,glob` names the built-in tools the run may use. omp has no
+    `ls` tool, and its `find` tool is a semantic search that calls a second
+    model, so `glob` takes their place.
+- `--no-tools` leaves out MCP, extension, custom, and memory tools, and stops
+    extensions and LSP from loading. omp releases before 19.2.0 accept the flag
+    but still add MCP, extension, and custom tools.
+- `--approval-mode always-ask` refuses every tool call that needs approval,
+    because print mode has nobody to answer the prompt. On releases before
+    19.2.0, this is what refuses MCP and custom tools.
+
+Fix and refine use omp's default tools with `--approval-mode yolo`, whatever
+approval mode your omp settings choose. Setting `allow_unsafe_agents = true`
+also enables that mode for reviews. Planning always uses the read-only
+allowlist.
+
+roborev passes `--model` only when it has a model configured; otherwise, omp
+uses its own default. omp matches a bare model name fuzzily; `provider/model`
+matches exactly. Reasoning levels map to `--thinking`, and `standard` leaves
+omp's default unchanged.
+
+omp exits with an error status when the model provider rejects a request.
+roborev reports the provider's message from omp's event stream as the job error.
+
+omp has no way to ignore a checkout's project configuration, so roborev fails
+reviews of untrusted checkouts, such as pull requests in CI, instead of running
+omp there. omp has no session resume, rebuttal, or structured-output (schema)
+review or classification support in roborev.
+
 ## Grok Build
 
 [Grok Build](https://x.ai/cli) (`grok`) is xAI's coding agent
