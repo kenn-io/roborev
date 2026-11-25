@@ -325,9 +325,9 @@ roborev job wait --quiet             # Suppress output (for hooks/agents)
 Unlike `roborev review --wait`, this does not enqueue a new review. It waits for
 an already-running job, making it useful when a post-commit hook has already
 triggered the review. A single job shows its review, folding low-severity and
-unlikely findings by default. Use `--all` to show every finding. Multiple jobs report
-status only. For interactive workflows, use
-`roborev tui` to browse completed reviews.
+unlikely findings by default. Use `--all` to show every finding. Multiple jobs
+report status only. For interactive workflows, use `roborev tui` to browse
+completed reviews.
 
 See: [Reviewing Code](/docs/guides/reviewing-code/)
 
