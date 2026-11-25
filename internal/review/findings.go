@@ -189,11 +189,15 @@ func tidyFindings(findings []structuredreview.Finding) []structuredreview.Findin
 		}
 		sources := mergeSources(kept[twin].Sources, finding.Sources)
 		unlikely := kept[twin].Unlikely || finding.Unlikely
+		security := kept[twin].Topic == "security" || finding.Topic == "security"
 		if better(finding, kept[twin]) {
 			kept[twin] = finding
 		}
 		kept[twin].Sources = sources
 		kept[twin].Unlikely = unlikely
+		if security {
+			kept[twin].Topic = "security"
+		}
 	}
 	slices.SortStableFunc(kept, func(a, b structuredreview.Finding) int {
 		return cmp.Or(

@@ -76,7 +76,7 @@ func TestTruncateCommentClosesFoldWithFencedCode(t *testing.T) {
 	for _, fence := range []string{"```", "~~~~"} {
 		t.Run(fence, func(t *testing.T) {
 			doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Example\n\n" + fence + "go\n" + strings.Repeat("code\n", 100) + fence}}}
-			body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
+			body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 			got := TruncateCommentTo(body, 200, "\n\nfooter")
 			var rendered bytes.Buffer
 			source := []byte(got)
@@ -96,7 +96,7 @@ func TestTruncateCommentRetainsCompleteFoldedFindings(t *testing.T) {
 		{Severity: "low", Problem: "Second complete finding", Fix: "Second fix"},
 		{Severity: "low", Problem: "Long finding\n\n```go\n" + strings.Repeat("code\n", 100) + "```"},
 	}}
-	body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	got := TruncateCommentTo(body, 250, "\n\nfooter")
 	var rendered bytes.Buffer
 	source := []byte(got)
@@ -251,7 +251,7 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 
 func TestTruncateCommentWithinFoldSummary(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Example `</details>` " + strings.Repeat("text ", 100)}}}
-	body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
+	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	got := TruncateCommentTo(body, 180, "...(truncated)")
 	assert.Contains(t, got, "`</details>`")
 	assert.Contains(t, got, "\n</details>...(truncated)")

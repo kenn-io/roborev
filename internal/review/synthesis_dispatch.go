@@ -116,7 +116,46 @@ func RunSynthesisAgent(
 		return SynthesisDocument{}, output, err
 	}
 	settleFindings(ctx, checkout.RepoPath, checkout.GitRef, &doc)
+	preserveSourceUnlikely(&doc, reviews)
 	return doc, output, nil
+}
+
+func preserveSourceUnlikely(doc *SynthesisDocument, reviews []ReviewResult) {
+	for i := range doc.Findings {
+		finding := &doc.Findings[i]
+		for _, source := range finding.Sources {
+			review := reviews[source-1]
+			original := review.Structured
+			if original == nil && len(review.StructuredOutput) > 0 {
+				if decoded, err := DecodeStructuredReview(review.StructuredOutput); err == nil {
+					original = &decoded
+				}
+			}
+			if original == nil {
+				continue
+			}
+			if sourceFindingUnlikely(*finding, original.Findings) {
+				finding.Unlikely = true
+			}
+		}
+	}
+}
+
+func sourceFindingUnlikely(finding StructuredFinding, candidates []StructuredFinding) bool {
+	var sameLocation []StructuredFinding
+	exact, unlikely := false, false
+	for _, candidate := range candidates {
+		if candidate.Problem == finding.Problem && candidate.Fix == finding.Fix && samePlace(candidate, finding) {
+			exact, unlikely = true, unlikely || candidate.Unlikely
+		}
+		if finding.File != "" && finding.StartLine != 0 && candidate.File == finding.File && candidate.StartLine == finding.StartLine && candidate.EndLine == finding.EndLine {
+			sameLocation = append(sameLocation, candidate)
+		}
+	}
+	if exact {
+		return unlikely
+	}
+	return len(sameLocation) == 1 && sameLocation[0].Unlikely
 }
 
 func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.Value, err error) (SynthesisDocument, error) {

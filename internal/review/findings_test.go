@@ -190,7 +190,7 @@ func TestTidyFindingsPreservesUnlikely(t *testing.T) {
 			require.Len(t, doc.Findings, 1)
 			assert.Equal(t, tc.firstUnlikely || tc.secondUnlikely, doc.Findings[0].Unlikely)
 			assert.InDelta(t, max(tc.firstConfidence, tc.secondConfidence), doc.Findings[0].Confidence, 1e-9)
-			body := FormatComment(PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc}))
+			body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 			assert.Equal(t, tc.firstUnlikely || tc.secondUnlikely, strings.Contains(body, "<details>"))
 		})
 	}
@@ -207,7 +207,7 @@ func TestTidyFindingsPreservesSecurityTopic(t *testing.T) {
 		require.Len(t, doc.Findings, 1)
 		assert.Equal(t, "security", doc.Findings[0].Topic)
 		assert.InDelta(t, 0.9, doc.Findings[0].Confidence, 1e-9)
-		prepared := PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &doc})
+		prepared := PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc})
 		assert.False(t, prepared.IsClean())
 		assert.NotContains(t, FormatComment(prepared), "<details>")
 	}

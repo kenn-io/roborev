@@ -410,7 +410,7 @@ func TestFormatSingleResult_Truncation(t *testing.T) {
 	require.LessOrEqual(t, len(comment), MaxCommentLen+200, "comment too long")
 	assert.Contains(t, comment, "truncated", "expected truncation suffix")
 	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: strings.Repeat("a", MaxCommentLen), Fix: "fix"}}}
-	folded := formatSingleResult(ReviewResult{Status: ResultDone, Structured: &doc}, "abc1234", &CommentConfig{Fold: true})
+	folded := formatSingleResult(ReviewResult{Status: ResultDone, Structured: &doc}, "abc1234", &CommentConfig{})
 	assert.Contains(t, folded, "<details>")
 	assert.Contains(t, folded, "</details>")
 	assert.Contains(t, folded, CommentTruncSuffix)

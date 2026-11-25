@@ -162,21 +162,21 @@ func TestCommentFold(t *testing.T) {
 		{Severity: "medium", Problem: "rare", Unlikely: true},
 		{Severity: "medium", Problem: "another"},
 	}}
-	prepared := PrepareComment(CommentConfig{Fold: true, MinSeverity: "low", MaxFindings: 1}, ReviewResult{Structured: &doc})
+	prepared := PrepareComment(CommentConfig{MinSeverity: "low", MaxFindings: 1}, ReviewResult{Structured: &doc})
 	body := FormatComment(prepared)
 	assert.Contains(t, body, "Changes require fixes for 1 finding")
 	assert.Contains(t, body, "1 nit and 1 unlikely finding hidden")
 	assert.Contains(t, body, "rare")
 	assert.Contains(t, body, "naming issue")
 	assert.Contains(t, body, "1 more finding in the full review")
-	filteredSeverity := FormatComment(PrepareComment(CommentConfig{Fold: true, MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
+	filteredSeverity := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
 	assert.NotContains(t, filteredSeverity, "naming issue")
 	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
 
-	folded := PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
+	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
 	assert.True(t, folded.IsClean())
 	assert.Contains(t, FormatComment(folded), "No findings need fixes before merge")
-	visible := PrepareComment(CommentConfig{Fold: true}, ReviewResult{Structured: &StructuredReview{Findings: []StructuredFinding{
+	visible := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: []StructuredFinding{
 		{Severity: "high", Problem: "high rare", Unlikely: true},
 		{Severity: "critical", Problem: "critical rare", Unlikely: true},
 		{Severity: "low", Topic: "security", Problem: "low security"},
@@ -192,7 +192,7 @@ func TestCommentFold(t *testing.T) {
 		{Severity: "low", Kind: "defect", Confidence: .88, Problem: "boundary nit"},
 		{Severity: "high", Problem: "unscored", Unlikely: true},
 	}}
-	filtered := FormatComment(PrepareComment(CommentConfig{Fold: true, MinSeverity: "low", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
+	filtered := FormatComment(PrepareComment(CommentConfig{MinSeverity: "low", MinConfidence: .88, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
 	assert.NotContains(t, filtered, "filtered nit")
 	assert.NotContains(t, filtered, "filtered rare")
 	assert.Contains(t, filtered, "boundary nit")
