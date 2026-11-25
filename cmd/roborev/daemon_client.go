@@ -306,7 +306,7 @@ func daemonRequestError(action string, err error) error {
 }
 
 func reviewText(review *storage.Review, all bool) string {
-	if all {
+	if all || fromSkill {
 		return review.Output
 	}
 	output, folded := review.FoldedOutput()

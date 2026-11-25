@@ -7,6 +7,9 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+Agent skill invocations using `--from-skill` receive all findings in text output,
+including nits and unlikely findings. This is the agent-output contract.
+
 **Bug fixes**
 
 - Scheduled analysis defaults to 20 files per run when `max_files` is omitted.

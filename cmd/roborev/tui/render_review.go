@@ -10,6 +10,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/helprender"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -58,7 +59,7 @@ func (m model) reviewContentString(review *storage.Review) string {
 		}
 	}
 	output := review.Output
-	if m.foldExpandedJobID == 0 || m.foldExpandedJobID != review.JobID {
+	if !m.reviewExpanded(review) {
 		output, _ = review.FoldedOutput()
 	}
 	content.WriteString(output)
@@ -600,14 +601,19 @@ func (m model) renderCommitMsgView() string {
 	return b.String()
 }
 
+// A rerun keeps its job ID but gets a new enqueue time.
+func (m model) reviewExpanded(review *storage.Review) bool {
+	return review != nil && review.Job != nil && m.foldExpandedJobID != 0 && m.foldExpandedJobID == review.JobID && m.foldExpandedAttempt.Equal(review.Job.EnqueuedAt)
+}
+
 func (m model) foldHint() string {
-	if m.currentReview == nil {
+	if m.currentReview == nil || (m.currentView == viewQueue && m.layout == splitlayout.Split && !m.selectedReviewLoaded()) {
 		return ""
 	}
 	if _, ok := m.currentReview.FoldedOutput(); !ok {
 		return ""
 	}
-	if m.foldExpandedJobID != 0 && m.foldExpandedJobID == m.currentReview.JobID {
+	if m.reviewExpanded(m.currentReview) {
 		return "collapse"
 	}
 	return "expand"

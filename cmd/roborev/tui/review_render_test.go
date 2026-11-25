@@ -546,12 +546,15 @@ func TestFoldedReviewToggle(t *testing.T) {
 	require.NoError(t, err)
 	var structured storage.StructuredOutput
 	require.NoError(t, json.Unmarshal(raw, &structured))
-	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, StructuredOutput: structured, Output: doc.Markdown("")}
+	finished := time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC)
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, FinishedAt: &finished}, StructuredOutput: structured, Output: doc.Markdown("")}
 	for _, split := range []bool{false, true} {
 		m := setupRenderModel(viewReview, review)
 		if split {
 			m.currentView = viewQueue
 			m.layout = splitlayout.Split
+			m.jobs = []storage.ReviewJob{*review.Job}
+			m.selectedJobID = review.JobID
 		}
 		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
 		assert.Contains(t, m.reviewContentString(review), "critical visible")
@@ -566,6 +569,7 @@ func TestFoldedReviewToggle(t *testing.T) {
 		other := *review
 		other.JobID = 2
 		m.acceptReview(reviewMsg{review: &other})
+		m.currentView = viewReview
 		assert.Equal(t, "expand", m.foldHint())
 	}
 }
@@ -575,4 +579,43 @@ func TestReviewHelpShowsFoldKey(t *testing.T) {
 	rendered := stripANSI(m.renderHelpView())
 	assert.Contains(t, rendered, "Review View")
 	assert.Contains(t, rendered, "e              Expand or collapse hidden findings")
+}
+
+func TestFoldControlsIgnoreStaleSplitReview(t *testing.T) {
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, StructuredOutput: structured, Output: doc.Markdown("")}
+	m := splitModel(withReview(review), withSelection(0, 2))
+	m.jobs = []storage.ReviewJob{{ID: 2, Status: storage.JobStatusRunning}}
+	m.reviewScroll = 5
+	assert.Empty(t, m.foldHint())
+	assert.NotContains(t, stripANSI(m.renderSplit()), "e expand")
+	m, _ = updateModel(t, m, keyPressMsg('e'))
+	assert.Zero(t, m.foldExpandedJobID)
+	assert.Equal(t, 5, m.reviewScroll)
+}
+
+func TestRerunReviewStartsFolded(t *testing.T) {
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	attempt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1, EnqueuedAt: attempt}, StructuredOutput: structured, Output: doc.Markdown("")}
+	m := setupRenderModel(viewReview, review)
+	m, _ = updateModel(t, m, keyPressMsg('e'))
+	assert.Contains(t, m.reviewContentString(review), "**Problem:** nit")
+	assert.Equal(t, "collapse", m.foldHint())
+	rerun := *review
+	rerunJob := *review.Job
+	rerunJob.EnqueuedAt = attempt.Add(time.Second)
+	rerun.Job = &rerunJob
+	m.acceptReview(reviewMsg{jobID: 1, review: &rerun})
+	assert.NotContains(t, m.reviewContentString(&rerun), "**Problem:** nit")
+	assert.Contains(t, m.reviewContentString(&rerun), "1 nit hidden")
+	assert.Equal(t, "expand", m.foldHint())
 }

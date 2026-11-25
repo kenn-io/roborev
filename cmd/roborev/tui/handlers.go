@@ -250,10 +250,11 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCommentOpenKey()
 	case "e":
 		if (m.currentView == viewReview || (m.currentView == viewQueue && m.layout == splitlayout.Split)) && m.foldHint() != "" {
-			if m.foldExpandedJobID == m.currentReview.JobID {
+			if m.reviewExpanded(m.currentReview) {
 				m.foldExpandedJobID = 0
 			} else {
 				m.foldExpandedJobID = m.currentReview.JobID
+				m.foldExpandedAttempt = m.currentReview.Job.EnqueuedAt
 			}
 			m.reviewScroll = 0
 		}

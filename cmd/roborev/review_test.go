@@ -1076,8 +1076,15 @@ func TestReviewWaitFoldedFindings(t *testing.T) {
 	var structured storage.StructuredOutput
 	require.NoError(t, json.Unmarshal(raw, &structured))
 	for _, verdict := range []int{0, 1} {
-		for _, all := range []bool{false, true} {
-			t.Run(fmt.Sprintf("verdict=%d/all=%t", verdict, all), func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			args []string
+			full bool
+		}{
+			{"folded", nil, false}, {"all", []string{"--all"}, true},
+			{"skill", []string{"--from-skill"}, true}, {"skill-all", []string{"--from-skill", "--all"}, true},
+		} {
+			t.Run(fmt.Sprintf("verdict=%d/%s", verdict, tc.name), func(t *testing.T) {
 				repo, mux := setupTestEnvironment(t)
 				repo.CommitFile("file.txt", "content", "initial commit")
 				mockEnqueueQueued(mux, "abc123")
@@ -1086,9 +1093,7 @@ func TestReviewWaitFoldedFindings(t *testing.T) {
 					respondJSON(w, http.StatusOK, storage.Review{ID: 1, JobID: 1, Agent: "test", Output: doc.Markdown(""), StructuredOutput: structured, Job: &storage.ReviewJob{ID: 1}, VerdictBool: new(verdict)})
 				})
 				args := []string{"review", "--repo", repo.Dir, "--wait"}
-				if all {
-					args = append(args, "--from-skill", "--all")
-				}
+				args = append(args, tc.args...)
 				run := runCLI(t, args...)
 				stdout, err := run.stdout, run.err
 				if verdict == 0 {
@@ -1099,7 +1104,7 @@ func TestReviewWaitFoldedFindings(t *testing.T) {
 					require.NoError(t, err)
 				}
 				assert.Contains(t, stdout, "visible problem")
-				if all {
+				if tc.full {
 					assert.Contains(t, stdout, "nit problem")
 					assert.Contains(t, stdout, "unlikely problem")
 					assert.NotContains(t, stdout, "hidden")

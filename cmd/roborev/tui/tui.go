@@ -158,6 +158,7 @@ type model struct {
 	currentBranch        string             // Cached branch name for current review (computed on load)
 	reviewScroll         int
 	foldExpandedJobID    int64
+	foldExpandedAttempt  time.Time
 	promptScroll         int
 	promptFromQueue      bool // true if prompt view was entered from queue (not review)
 	width                int

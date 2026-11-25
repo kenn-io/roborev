@@ -719,6 +719,9 @@ func TestShowNumericRefFallback(t *testing.T) {
 
 func TestShowFoldedFindings(t *testing.T) {
 	isolateDaemonSelection(t)
+	previousFromSkill := fromSkill
+	fromSkill = false
+	t.Cleanup(func() { fromSkill = previousFromSkill })
 	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
 		{Severity: "high", Unlikely: true, Problem: "visible", Fix: "fix"},
 		{Severity: "low", Topic: structuredreview.TopicSecurity, Unlikely: true, Problem: "security visible", Fix: "fix"},
@@ -750,7 +753,7 @@ func TestShowFoldedFindings(t *testing.T) {
 		name string
 		args []string
 		full bool
-	}{{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill", "--all"}, true}, {"json", []string{"--json"}, true}} {
+	}{{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill"}, true}, {"skill-all", []string{"--from-skill", "--all"}, true}, {"json", []string{"--json"}, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"job", "show", "--job", "7"}, tc.args...)
 			run := runCLI(t, args...)
