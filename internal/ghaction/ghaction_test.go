@@ -49,6 +49,11 @@ func TestValidate(t *testing.T) {
 			wantErr: "invalid agent",
 		},
 		{
+			name:    "omp is not allowed in CI",
+			cfg:     WorkflowConfig{Agents: []string{"omp"}},
+			wantErr: "invalid agent",
+		},
+		{
 			name:    "invalid agent",
 			cfg:     WorkflowConfig{Agents: []string{"evil; rm -rf /"}},
 			wantErr: "invalid agent",

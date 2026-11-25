@@ -494,36 +494,39 @@ against omp 19.2.1.
 Reviews and planning run omp with a read-only tool allowlist:
 
 ```bash
-omp -p --mode json --tools read,grep,glob --no-tools --approval-mode always-ask --no-lsp
+omp -p --mode json --tools read,grep,glob --no-tools --approval-mode always-ask
 ```
 
 - `--tools read,grep,glob` names the built-in tools the run may use. omp has no
     `ls` tool, and its `find` tool is a semantic search that calls a second
     model, so `glob` takes their place.
 - `--no-tools` leaves out MCP, extension, custom, and memory tools, and stops
-    extensions and LSP from loading. omp releases before 19.2.0 accept the flag
-    but still add MCP, extension, and custom tools.
-- `--approval-mode always-ask` refuses every tool call that needs approval,
-    because print mode has nobody to answer the prompt. On releases before
-    19.2.0, this is what refuses MCP and custom tools.
+    extensions and LSP from loading.
+- `--approval-mode always-ask` refuses every tool call that needs approval, such
+    as a `read` of an `ssh://` path, because print mode has nobody to answer the
+    prompt.
+
+Reviews and planning need omp 19.2.0 or later. Earlier releases accept
+`--no-tools` but still add MCP, extension, and custom tools, so roborev checks
+`omp --version` and fails the review on those releases.
 
 Fix and refine use omp's default tools with `--approval-mode yolo`, whatever
-approval mode your omp settings choose. Setting `allow_unsafe_agents = true`
-also enables that mode for reviews. Planning always uses the read-only
-allowlist.
+approval mode your omp settings choose. Per-tool `deny` rules and restricted
+folders in those settings still apply. Setting `allow_unsafe_agents = true` also
+enables that mode for reviews. Planning always uses the read-only allowlist.
 
 roborev passes `--model` only when it has a model configured; otherwise, omp
 uses its own default. omp matches a bare model name fuzzily; `provider/model`
 matches exactly. Reasoning levels map to `--thinking`, and `standard` leaves
 omp's default unchanged.
 
-omp exits with an error status when the model provider rejects a request.
-roborev reports the provider's message from omp's event stream as the job error.
+When omp stops a run early, roborev reports why from omp's event stream: the
+model provider's error message, or the reason for a cost cap or an abort.
 
-omp has no way to ignore a checkout's project configuration, so roborev fails
-reviews of untrusted checkouts, such as pull requests in CI, instead of running
-omp there. omp has no session resume, rebuttal, or structured-output (schema)
-review or classification support in roborev.
+roborev refuses to run omp on untrusted checkouts; see
+[Agent configuration in the pull request](/docs/integrations/github/#agent-configuration-in-the-pull-request).
+omp has no session resume, rebuttal, or structured-output (schema) review or
+classification support in roborev.
 
 ## Grok Build
 

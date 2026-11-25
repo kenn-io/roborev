@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 )
 
@@ -57,17 +60,18 @@ func (a *OmpAgent) WithModel(model string) Agent {
 
 // buildArgs returns the flags for one print-mode run. Non-agentic runs name
 // their tools with --tools, and --no-tools keeps MCP, extension, custom and
-// memory tools out; omp releases before 19.2.0 accept --no-tools but still
-// add those tools. --approval-mode always-ask then refuses any tool that needs
-// approval, since print mode has nobody to answer the prompt. Agentic runs
-// use omp's default tools and approve every call, whatever the user's saved
-// approval mode.
+// memory tools out and stops extensions and LSP from loading.
+// --approval-mode always-ask also refuses any tool call that needs approval,
+// such as a read of an ssh:// path, since print mode has nobody to answer the
+// prompt. Agentic runs use omp's default tools in yolo mode, whatever approval
+// mode the user's settings choose; per-tool deny rules and restricted folders
+// in those settings still apply.
 func (a *OmpAgent) buildArgs(agentic bool) []string {
 	args := []string{"-p", "--mode", "json"}
 	if agentic {
 		args = append(args, "--approval-mode", "yolo")
 	} else {
-		args = append(args, "--tools", ompReadOnlyTools, "--no-tools", "--approval-mode", "always-ask", "--no-lsp")
+		args = append(args, "--tools", ompReadOnlyTools, "--no-tools", "--approval-mode", "always-ask")
 	}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
@@ -88,11 +92,15 @@ func (a *OmpAgent) PlanningCommandLine() string {
 }
 
 func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	// omp has no mode that ignores project configuration: tool modules under
-	// .omp/tools load even with every --no-* flag, and Bun loads the
-	// checkout's .env, which can redirect provider requests.
+	// omp has no mode that ignores project configuration: it loads the
+	// checkout's .env, which can redirect provider requests and the
+	// credentials they carry, and reads its .omp/config.yml.
 	if untrustedCheckout(ctx) {
 		return "", errors.New("omp cannot review an untrusted checkout: it has no mode that ignores project configuration")
+	}
+	agentic := effectiveAgentic(ctx, a.Agentic)
+	if !agentic && !ompLimitsTools(ctx, a.Command) {
+		return "", fmt.Errorf("omp reviews need omp %s or later, which limits a run to read-only tools; upgrade omp", ompToolLimitVersion)
 	}
 	// A file keeps large prompts off the command line. omp reads a non-TTY
 	// stdin as prompt text, so stdin stays empty.
@@ -101,13 +109,13 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 		return "", err
 	}
 	defer cleanup()
-	args := append(a.buildArgs(effectiveAgentic(ctx, a.Agentic)),
+	args := append(a.buildArgs(agentic),
 		"@"+promptPath, "Please follow the instructions in the attached file to review the code.")
 
 	var stream piStream
 	result, err := runStreamingCLI(ctx, streamingCLISpec{
 		Name: "omp", Command: a.Command, Args: args,
-		Dir: repoPath, Output: output, StreamStderr: true, DrainStdout: true,
+		Dir: repoPath, Output: output, StreamStderr: true, CaptureStdout: true, DrainStdout: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
 			var parseErr error
 			stream, parseErr = parsePiJSON(r, sw)
@@ -123,6 +131,11 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 		return "", fmt.Errorf("omp provider error: %s", stream.Error)
 	}
 	if result.WaitErr != nil {
+		// A cost cap or an abort also ends the run with a non-zero exit, and
+		// JSON mode reports why only in the event stream.
+		if reason := ompStopReason(result.Stdout); reason != "" {
+			return "", fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, reason, result.Stderr)
+		}
 		return "", formatStreamingCLIWaitError("omp", result, result.Stderr)
 	}
 	if result.ParseErr != nil {
@@ -132,6 +145,70 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 		return "No review output generated", nil
 	}
 	return result.Result, nil
+}
+
+// ompToolLimitVersion is the first omp release whose --no-tools limits a run
+// to the tools --tools names. Earlier releases accept --no-tools but still
+// add MCP, extension and custom tools, and a user's tools.approval allow rule
+// lets them run under --approval-mode always-ask (omp 19.2.0 changelog,
+// Breaking Changes).
+const ompToolLimitVersion = "19.2.0"
+
+var ompToolLimitSupport capabilityCache
+
+// ompLimitsTools reports whether command is an omp release that honors
+// --no-tools. omp prints its version as "omp/19.2.1"; a version it does not
+// report counts as too old.
+func ompLimitsTools(ctx context.Context, command string) bool {
+	cacheKey := capabilityCacheKey(command)
+	if cached, ok := ompToolLimitSupport.Load(cacheKey); ok {
+		return cached.(bool)
+	}
+	cmd := exec.CommandContext(ctx, command, "--version")
+	configureCapabilityProbe(ctx, cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	supported := versionAtLeast(strings.ReplaceAll(string(out), "/", " "), ompToolLimitVersion)
+	ompToolLimitSupport.Store(cacheKey, supported)
+	return supported
+}
+
+// ompStopReason returns why omp stopped a run early: the message of the last
+// error notice, such as the cost gate's refusal, or of an aborted assistant
+// message. It returns "" when the stream names no reason.
+func ompStopReason(stdout string) string {
+	var reason string
+	_ = scanStreamJSONLines(strings.NewReader(stdout), nil, func(line string) error {
+		var ev struct {
+			Type    string         `json:"type"`
+			Level   string         `json:"level"`
+			Message jsontext.Value `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &ev) != nil {
+			return nil
+		}
+		switch {
+		case ev.Type == "notice" && ev.Level == "error":
+			var message string
+			if json.Unmarshal(ev.Message, &message) == nil && strings.TrimSpace(message) != "" {
+				reason = strings.TrimSpace(message)
+			}
+		case ev.Type == "message_end":
+			var message struct {
+				Role         string `json:"role"`
+				StopReason   string `json:"stopReason"`
+				ErrorMessage string `json:"errorMessage"`
+			}
+			if json.Unmarshal(ev.Message, &message) == nil && message.Role == "assistant" &&
+				message.StopReason == "aborted" && strings.TrimSpace(message.ErrorMessage) != "" {
+				reason = strings.TrimSpace(message.ErrorMessage)
+			}
+		}
+		return nil
+	})
+	return reason
 }
 
 func init() { Register(NewOmpAgent("")) }

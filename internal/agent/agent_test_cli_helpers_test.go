@@ -112,6 +112,7 @@ type MockCLIOpts struct {
 	CaptureEnv   bool
 	StdoutLines  []string
 	StderrLines  []string
+	Version      string // --version output; default "0.34.0"
 }
 
 // MockCLIResult holds paths to the mock command and any capture files.
@@ -202,7 +203,11 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 		script.WriteString(fmt.Sprintf(`case "$*" in *--help*) cat %q; exit 0;; esac`, helpFile) + "\n")
 	}
 
-	script.WriteString(mockCLIVersionBlock("0.34.0"))
+	version := opts.Version
+	if version == "" {
+		version = "0.34.0"
+	}
+	script.WriteString(mockCLIVersionBlock(version))
 
 	if opts.CaptureArgs {
 		result.ArgsFile = filepath.Join(tmpDir, "args.txt")

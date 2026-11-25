@@ -9,8 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const ompReviewStream = `{"type":"session","version":3,"id":"omp-session-1"}
+const (
+	ompVersionOutput = "omp/19.2.1"
+	ompReviewStream  = `{"type":"session","version":3,"id":"omp-session-1"}
 {"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"No issues found."}],"stopReason":"stop"}}`
+)
 
 func TestOmpReviewToolPermissions(t *testing.T) {
 	tests := []struct {
@@ -28,7 +31,7 @@ func TestOmpReviewToolPermissions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withUnsafeAgents(t, tt.unsafe)
-			mock := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, StdoutLines: strings.Split(ompReviewStream, "\n")})
+			mock := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, Version: ompVersionOutput, StdoutLines: strings.Split(ompReviewStream, "\n")})
 
 			a := NewOmpAgent(mock.CmdPath).WithModel("anthropic/claude-sonnet-4-5").WithReasoning(tt.reasoning).WithAgentic(tt.agentic)
 			_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
@@ -42,7 +45,6 @@ func TestOmpReviewToolPermissions(t *testing.T) {
 			if tt.readOnly {
 				assert.Equal(ompReadOnlyTools, argAfter(args, "--tools"))
 				assert.Contains(args, "--no-tools")
-				assert.Contains(args, "--no-lsp")
 				assert.Equal("always-ask", argAfter(args, "--approval-mode"))
 			} else {
 				assert.NotContains(args, "--tools")
@@ -53,9 +55,39 @@ func TestOmpReviewToolPermissions(t *testing.T) {
 	}
 }
 
+// Before 19.2.0, --no-tools does not keep MCP, extension and custom tools
+// out of a run, so reviews refuse those releases. Fix and refine still run.
+func TestOmpReviewRequiresToolLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		agentic bool
+		wantErr bool
+	}{
+		{name: "review on 19.1", version: "omp/19.1.1", wantErr: true},
+		{name: "review without a version", version: "unknown", wantErr: true},
+		{name: "review on 19.2.0", version: "omp/19.2.0"},
+		{name: "agentic on 19.1", version: "omp/19.1.1", agentic: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withUnsafeAgents(t, false)
+			mock := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, Version: tt.version, StdoutLines: strings.Split(ompReviewStream, "\n")})
+			_, err := NewOmpAgent(mock.CmdPath).WithAgentic(tt.agentic).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+			if tt.wantErr {
+				require.ErrorContains(t, err, "upgrade omp")
+				assert.NotContains(t, readMockArgs(t, mock.ArgsFile), "--mode", "omp must not start")
+				return
+			}
+			require.NoError(t, err)
+			assert.Contains(t, readMockArgs(t, mock.ArgsFile), "--mode")
+		})
+	}
+}
+
 func TestOmpReviewPromptAndOutput(t *testing.T) {
 	command := writeTempCommand(t, `#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; esac
+case "$1" in *etxtbsy*) exit 0;; --version) echo `+ompVersionOutput+`; exit 0;; esac
 for arg in "$@"; do
   case "$arg" in
     @*) test "$(cat "${arg#@}")" = 'prompt body' || exit 2 ;;
@@ -79,26 +111,52 @@ echo 'status message' >&2
 // omp exits 1 when the provider ends the run with an error, and JSON mode
 // writes the provider's message only to the event stream.
 func TestOmpReviewReportsProviderError(t *testing.T) {
-	mock := mockAgentCLI(t, MockCLIOpts{StdoutLines: []string{piBedrockImageError}, ExitCode: 1})
+	mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: []string{piBedrockImageError}, ExitCode: 1})
 	_, err := NewOmpAgent(mock.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "This model doesn't support the image field")
 	assert.Equal(t, LimitKindPermanent, ClassifyLimit("omp", err.Error()).Kind)
 }
 
-func TestOmpReviewFailureReportsStderr(t *testing.T) {
-	mock := mockAgentCLI(t, MockCLIOpts{
-		StdoutLines: []string{`{"type":"session","id":"omp-session-1"}`},
-		StderrLines: []string{"Session cost cap reached"},
-		ExitCode:    3,
-	})
-	_, err := NewOmpAgent(mock.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
-	require.ErrorContains(t, err, "omp failed: exit status 3")
-	assert.Contains(t, err.Error(), "Session cost cap reached")
+// A cost cap or an abort ends the run with a non-zero exit, and JSON mode
+// reports why only in the event stream.
+func TestOmpReviewReportsStopReason(t *testing.T) {
+	tests := []struct {
+		name     string
+		exitCode int
+		stdout   string
+		want     string
+	}{
+		{
+			name:     "cost cap",
+			exitCode: 3,
+			stdout:   `{"type":"notice","level":"error","message":"Session cost cap reached: $1.02 of $1.00","source":"cost-gate"}`,
+			want:     "exit status 3: Session cost cap reached: $1.02 of $1.00",
+		},
+		{
+			name:     "aborted",
+			exitCode: 1,
+			stdout:   `{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Request was aborted"}}`,
+			want:     "exit status 1: Request was aborted",
+		},
+		{
+			name:     "no reason in the stream",
+			exitCode: 3,
+			stdout:   `{"type":"session","id":"omp-session-1"}`,
+			want:     "omp failed: exit status 3",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: []string{tt.stdout}, ExitCode: tt.exitCode})
+			_, err := NewOmpAgent(mock.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
 }
 
 func TestOmpReviewRefusesUntrustedCheckout(t *testing.T) {
-	mock := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, StdoutLines: strings.Split(ompReviewStream, "\n")})
+	mock := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, Version: ompVersionOutput, StdoutLines: strings.Split(ompReviewStream, "\n")})
 	ctx := WithUntrustedCheckout(t.Context())
 	_, err := NewOmpAgent(mock.CmdPath).Review(ctx, t.TempDir(), "HEAD", "review", nil)
 	require.ErrorContains(t, err, "untrusted checkout")

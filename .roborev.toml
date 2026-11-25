@@ -91,7 +91,7 @@ draft skips to avoid publishing a status.
 
 Non-agentic reviews restrict each agent with that agent's own mechanism. Codex
 runs with `--sandbox read-only`, Claude Code loads only `Read`, `Glob`, and
-`Grep`, Pi and Muse Code use read-only tool allowlists, and Copilot allows all
+`Grep`, Pi, Muse Code, and omp use read-only tool allowlists, and Copilot allows all
 tools minus a deny-list. `disable_codex_sandbox` (for hosts where bwrap is
 broken) and `allow_unsafe_agents` lift these limits, and agentic jobs such as
 fix and refine run with full tool access. docs/agents/index.md lists each

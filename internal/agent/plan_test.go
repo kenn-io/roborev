@@ -96,6 +96,9 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 			repoPath := newPlanTestRepo(t)
 			argsPath := filepath.Join(t.TempDir(), "args")
 			script := "#!/bin/sh\ncase \"$*\" in\n*--help*) echo '--sandbox --dangerously-skip-permissions --dangerously-bypass-approvals-and-sandbox --tools --stream --output-format --disable-builtin-mcps --available-tools'; exit 0;;\nesac\nprintf '%s\\n' \"$@\" > '" + argsPath + "'\nexit 1\n"
+			if name == "omp" {
+				script = strings.Replace(script, "esac\n", "--version) echo omp/19.2.1; exit 0;;\nesac\n", 1)
+			}
 			command := writeTempCommand(t, script)
 			var a Agent
 			switch name {
