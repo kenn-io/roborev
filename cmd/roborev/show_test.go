@@ -749,6 +749,11 @@ func TestShowFoldedFindings(t *testing.T) {
 			assert.Contains(t, output.String(), "1 nit and 1 unlikely finding hidden")
 		}
 	}
+	t.Run("explicit server", func(t *testing.T) {
+		run := runCLI(t, "--server", ep.ConfigAddr(), "job", "show", "--job", "7")
+		require.NoError(t, run.err)
+		assert.Contains(t, run.stdout, "Run roborev --server "+daemon.ShellEscape(ep.ConfigAddr())+" job show --job 7 --all to list them.")
+	})
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -767,7 +772,7 @@ func TestShowFoldedFindings(t *testing.T) {
 				assert.NotContains(t, run.stdout, "nit problem")
 				assert.NotContains(t, run.stdout, "rare problem")
 				assert.Contains(t, run.stdout, "1 nit and 1 unlikely finding hidden")
-				assert.Contains(t, run.stdout, "Run with --all to list them.")
+				assert.Contains(t, run.stdout, "Run roborev job show --job 7 --all to list them.")
 			}
 		})
 	}

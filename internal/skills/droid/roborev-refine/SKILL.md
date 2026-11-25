@@ -87,13 +87,13 @@ read -r since <<'ROBOREV_REF'
 ROBOREV_REF
 resolved_since=$(git rev-parse --verify --end-of-options "$since^{commit}") || exit 1
 git merge-base --is-ancestor "$resolved_since" HEAD || exit 1
-roborev review --from-skill --since "$since" --wait --all
+roborev review --from-skill --since "$since" --wait
 ```
 
 or, if `--since` was not provided:
 
 ```bash
-roborev review --from-skill --branch --wait --all
+roborev review --from-skill --branch --wait
 ```
 
 `--since` is the closest manual equivalent to `roborev refine --since`.
@@ -203,13 +203,13 @@ read -r since <<'ROBOREV_REF'
 ROBOREV_REF
 resolved_since=$(git rev-parse --verify --end-of-options "$since^{commit}") || exit 1
 git merge-base --is-ancestor "$resolved_since" HEAD || exit 1
-roborev review --from-skill --since "$since" --wait --all
+roborev review --from-skill --since "$since" --wait
 ```
 
 If refining without `--since`:
 
 ```bash
-roborev review --from-skill --branch --wait --all
+roborev review --from-skill --branch --wait
 ```
 
 **Retrieving the job ID:** extract it from the
@@ -281,14 +281,14 @@ User: `/roborev-refine`
 
 Agent:
 1. Validates that the current branch is not the default branch
-2. Runs `roborev review --from-skill --branch --wait --all`
+2. Runs `roborev review --from-skill --branch --wait`
 3. Review returns verdict Fail with 2 findings
 4. Fixes both findings in code
 5. Runs `go test ./...` — passes
 6. Commits changes
 7. Records comment and closes the old review
 8. Runs `roborev job wait --from-skill` — if hook review found, remembers job ID to close later
-9. Runs `roborev review --from-skill --branch --wait --all`
+9. Runs `roborev review --from-skill --branch --wait`
 10. Closes hook review job if one was found
 11. Full branch review returns Pass
 12. Tells user: "Branch review passed after 1 fix iteration. All findings resolved."
@@ -299,10 +299,10 @@ User: `/roborev-refine --since abc123 --max-iterations 3`
 
 Agent:
 1. Validates `abc123` resolves and is an ancestor of `HEAD`
-2. Runs `roborev review --from-skill --since abc123 --wait --all`
+2. Runs `roborev review --from-skill --since abc123 --wait`
 3. Review returns verdict Fail
 4. Fixes findings, tests, commits, comments, closes
-5. Checks for hook review via `roborev job wait --from-skill` — if a commit-scoped hook review is found, remembers it to close after the next explicit `roborev review --from-skill --since abc123 --wait --all`
+5. Checks for hook review via `roborev job wait --from-skill` — if a commit-scoped hook review is found, remembers it to close after the next explicit `roborev review --from-skill --since abc123 --wait`
 6. Continues until the full requested range passes or 3 iterations are exhausted
 
 ## See also

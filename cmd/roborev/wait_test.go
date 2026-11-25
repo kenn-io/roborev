@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -609,6 +610,9 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 }
 
 func TestWaitFoldedFindings(t *testing.T) {
+	previousFromSkill := fromSkill
+	fromSkill = false
+	t.Cleanup(func() { fromSkill = previousFromSkill })
 	setupFastPolling(t)
 	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
 		{Severity: "low", Problem: "nit problem", Fix: "fix"},
@@ -637,7 +641,7 @@ func TestWaitFoldedFindings(t *testing.T) {
 			} else {
 				assert.NotContains(t, out, "nit problem")
 				assert.Contains(t, out, "1 nit and 1 unlikely finding hidden")
-				assert.Contains(t, out, "Run with --all to list them.")
+				assert.Contains(t, out, "Run roborev --server "+daemon.ShellEscape(getDaemonEndpoint().ConfigAddr())+" job show --job 1 --all to list them.")
 			}
 		})
 	}

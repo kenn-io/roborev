@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json/v2"
@@ -377,7 +378,7 @@ Examples:
 				if panel != "" && panel != "none" && !quiet {
 					cmd.PrintErrf("Note: --panel %q is ignored with --local (panels require the daemon); running a single-agent review.\n", panel)
 				}
-				return runLocalReview(cmd, root, gitRef, diffContent, dirtyFiles, agent, model, provider, reasoning, reviewType, quiet, minSeverity)
+				return runLocalReview(cmd, root, gitRef, diffContent, dirtyFiles, agent, model, provider, reasoning, reviewType, quiet, all, minSeverity)
 			}
 
 			// Build request body
@@ -508,7 +509,7 @@ func freezeReviewRef(ctx context.Context, repoPath, gitRef string) (string, erro
 }
 
 // runLocalReview runs a review directly without the daemon
-func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, dirtyFiles []string, agentName, model, provider, reasoning, reviewType string, quiet bool, minSeverity string) error {
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, dirtyFiles []string, agentName, model, provider, reasoning, reviewType string, quiet, all bool, minSeverity string) error {
 	ctx := cmd.Context()
 	dirty := diffContent != "" || len(dirtyFiles) > 0
 	if !dirty {
@@ -654,17 +655,30 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	}
 	defer toolCleanup()
 
-	result, err := reviewpkg.RunAgentReview(
-		cmd.Context(), a, repoPath, gitRef, reviewPrompt, reviewType,
-		resolvedMinSev, settings.Tools, out,
-	)
+	return runLocalReviewAgent(cmd, a, repoPath, gitRef, reviewPrompt, reviewType, resolvedMinSev, settings.Tools, out, quiet, all)
+}
+
+func runLocalReviewAgent(cmd *cobra.Command, a agent.Agent, repoPath, gitRef, reviewPrompt, reviewType, minSeverity string, tools *config.ReviewToolPolicy, out io.Writer, quiet, all bool) error {
+	var buffered bytes.Buffer
+	stream := out
+	if !quiet && !all && !fromSkill {
+		stream = &buffered
+	}
+	result, err := reviewpkg.RunAgentReview(cmd.Context(), a, repoPath, gitRef, reviewPrompt, reviewType, minSeverity, tools, stream)
 	if err != nil {
+		_, _ = io.Copy(cmd.ErrOrStderr(), &buffered)
 		return fmt.Errorf("review failed: %w", err)
 	}
-	fmt.Fprintln(out, result.Output)
-
+	output := result.Output
+	if !all && !fromSkill {
+		folded := result.Structured.FoldedMarkdown(minSeverity)
+		if folded != output {
+			output = folded + "Run with --all to list them."
+		}
+	}
+	fmt.Fprintln(out, output)
 	if !quiet {
-		fmt.Fprintln(out) // Final newline
+		fmt.Fprintln(out)
 	}
 	return nil
 }

@@ -7,8 +7,10 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
-Agent skill invocations using `--from-skill` receive all findings in text output,
-including nits and unlikely findings. This is the agent-output contract.
+Reviews shown by `review --wait`, `review --local`, `job wait`, `job show`,
+and the TUI now fold nits and unlikely findings. Use `--all` in the CLI or `e`
+in the TUI to show them. Agent skill invocations using `--from-skill` receive
+all findings in text output as part of the agent-output contract.
 
 **Bug fixes**
 

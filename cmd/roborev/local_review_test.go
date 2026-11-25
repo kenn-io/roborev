@@ -410,3 +410,56 @@ func TestLocalReviewSkipsWhenNothingIsReviewable(t *testing.T) {
 	assert.Contains(t, out.String(), "the only changed file is excluded")
 	assert.NotContains(t, out.String(), "No issues found")
 }
+
+func TestLocalReviewFoldsMinorFindings(t *testing.T) {
+	previousFromSkill := fromSkill
+	fromSkill = false
+	t.Cleanup(func() { fromSkill = previousFromSkill })
+	repo := testutil.NewTestRepoWithCommit(t)
+	previous, err := agent.Get("test")
+	require.NoError(t, err)
+	a := agent.NewTestAgent()
+	a.Output = `{"schema_version":4,"verdict":"fail","summary":"Review complete.","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"visible problem","fix":"fix"},{"severity":"low","kind":"defect","confidence":0.9,"problem":"nit problem","fix":"fix"},{"severity":"medium","kind":"defect","confidence":0.9,"unlikely":true,"problem":"unlikely problem","fix":"fix"}]}`
+	agent.Register(a)
+	t.Cleanup(func() { agent.Register(previous) })
+	for _, tc := range []struct {
+		name string
+		args []string
+		full bool
+	}{
+		{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"review", "--local", "--wait", "--repo", repo.Root, "--agent", "test"}, tc.args...)
+			run := runCLI(t, args...)
+			require.NoError(t, run.err)
+			assert.Contains(t, run.stdout, "visible problem")
+			if tc.full {
+				assert.Contains(t, run.stdout, "nit problem")
+				assert.Contains(t, run.stdout, "unlikely problem")
+				assert.NotContains(t, run.stdout, "findings hidden")
+			} else {
+				assert.NotContains(t, run.stdout, "nit problem")
+				assert.NotContains(t, run.stdout, "unlikely problem")
+				assert.Contains(t, run.stdout, "1 nit and 1 unlikely finding hidden")
+				assert.Contains(t, run.stdout, "Run with --all to list them.")
+			}
+		})
+	}
+}
+
+func TestLocalReviewReportsBufferedAgentOutputOnError(t *testing.T) {
+	previousFromSkill := fromSkill
+	fromSkill = false
+	t.Cleanup(func() { fromSkill = previousFromSkill })
+	repo := testutil.NewTestRepoWithCommit(t)
+	a := &agent.FakeAgent{NameStr: "test-local-error", ReviewFn: func(_ context.Context, _, _, _ string, out io.Writer) (string, error) {
+		_, err := io.WriteString(out, "agent diagnostic")
+		require.NoError(t, err)
+		return "invalid review", nil
+	}}
+	agent.RegisterForTest(t, a)
+	run := runCLI(t, "review", "--local", "--wait", "--repo", repo.Root, "--agent", a.Name())
+	require.Error(t, run.err)
+	assert.Contains(t, run.stderr, "agent diagnostic")
+}

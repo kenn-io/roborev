@@ -1112,7 +1112,7 @@ func TestReviewWaitFoldedFindings(t *testing.T) {
 					assert.NotContains(t, stdout, "nit problem")
 					assert.NotContains(t, stdout, "unlikely problem")
 					assert.Contains(t, stdout, "1 nit and 1 unlikely finding hidden")
-					assert.Contains(t, stdout, "Run with --all to list them.")
+					assert.Contains(t, stdout, "Run roborev job show --job 1 --all to list them.")
 				}
 			})
 		}

@@ -311,7 +311,15 @@ func reviewText(review *storage.Review, all bool) string {
 	}
 	output, folded := review.FoldedOutput()
 	if folded {
-		output += "Run with --all to list them."
+		output += "Run " + reviewShowCommand(review.JobID) + " to list them."
 	}
 	return output
+}
+
+func reviewShowCommand(jobID int64) string {
+	command := "roborev"
+	if serverAddr != "" {
+		command += " --server " + daemon.ShellEscape(getDaemonEndpoint().ConfigAddr())
+	}
+	return fmt.Sprintf("%s job show --job %d --all", command, jobID)
 }
