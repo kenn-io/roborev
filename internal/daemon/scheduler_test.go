@@ -481,6 +481,13 @@ func TestScheduledAnalysisRetryAfterIntervalChange(t *testing.T) {
 				}
 				_, err = server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: jobs[0].ID}})
 				require.NoError(t, err)
+				retry, err := db.AnalysisScheduleRetry(t.Context(), registered.ID)
+				require.NoError(t, err)
+				if change == "enabled" {
+					assert.Equal(t, []storage.AnalysisScheduleEntry{{Type: "refactor", Files: []string{"a.go"}, Job: jobs[0].ID}}, retry)
+				} else {
+					assert.Empty(t, retry)
+				}
 				setJobStatus(t, db, jobs[0].ID, storage.JobStatusFailed)
 				yes = true
 				cfg.Schedule.Types = []string{"refactor"}
