@@ -100,12 +100,13 @@ func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
 	}
 }
 
-func TestDecodeRejectsNullUnlikely(t *testing.T) {
+func TestDecodeRejectsInvalidUnlikely(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want string }{
 		{"version 1", `{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 2", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 3", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 4", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "invalid unlikely"},
+		{"version 4 string", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":"yes"}]}`, "invalid unlikely"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Decode(jsontext.Value(tc.raw))
