@@ -230,7 +230,7 @@ func (m model) renderReviewView() string {
 		{{Key: "↑/↓", Description: "scroll"}, {Key: "←/→", Description: "prev/next"}, {Key: "?", Description: "commands"}, {Key: "esc", Description: "back"}},
 	}
 	if hint := m.foldHint(); hint != "" {
-		reviewHelpRows[0] = append(reviewHelpRows[0], helplayout.HelpItem{Key: "e", Description: hint})
+		reviewHelpRows[0] = append(reviewHelpRows[0], helplayout.HelpItem{Key: "e", Description: hint + " "})
 	}
 	if m.tasksWorkflowEnabled() {
 		reviewHelpRows[0] = append(reviewHelpRows[0], helplayout.HelpItem{Key: "F", Description: "fix"})

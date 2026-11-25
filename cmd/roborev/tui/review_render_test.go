@@ -549,11 +549,10 @@ func TestFoldedReviewToggle(t *testing.T) {
 	finished := time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC)
 	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, FinishedAt: &finished}, StructuredOutput: structured, Output: doc.Markdown("")}
 	for _, split := range []bool{false, true} {
-		m := setupRenderModel(viewReview, review)
+		m := setupRenderModel(viewReview, review, withDimensions(200, 40), withTasksEnabled(true))
 		if split {
 			m.currentView = viewQueue
 			m.layout = splitlayout.Split
-			m.width, m.height = 150, 40
 			m.jobs = []storage.ReviewJob{*review.Job}
 			m.selectedJobID = review.JobID
 		}
@@ -562,13 +561,22 @@ func TestFoldedReviewToggle(t *testing.T) {
 		assert.Contains(t, m.reviewContentString(review), "security visible")
 		assert.Equal(t, "expand", m.foldHint())
 		if split {
-			assert.Contains(t, stripANSI(m.renderSplit()), "e expand")
+			assert.Regexp(t, `e expand +▕`, stripANSI(m.renderSplit()))
+			m.focus = focusDetail
+			assert.Regexp(t, `e expand +▕`, stripANSI(m.renderSplit()))
 		} else {
-			assert.Contains(t, stripANSI(m.renderReviewView()), "e expand")
+			assert.Regexp(t, `e expand +▕`, stripANSI(m.renderReviewView()))
 		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "nit problem")
 		assert.Equal(t, "collapse", m.foldHint())
+		if split {
+			assert.Regexp(t, `e collapse +▕`, stripANSI(m.renderSplit()))
+			m.focus = focusList
+			assert.Regexp(t, `e collapse +▕`, stripANSI(m.renderSplit()))
+		} else {
+			assert.Regexp(t, `e collapse +▕`, stripANSI(m.renderReviewView()))
+		}
 		m, _ = updateModel(t, m, keyPressMsg('e'))
 		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
 	}
