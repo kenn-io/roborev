@@ -81,6 +81,24 @@ func TestCommentCleanMetadata(t *testing.T) {
 	}
 }
 
+func TestCommentCleanWithCappedFoldedFindings(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		findings []StructuredFinding
+		clean    bool
+	}{
+		{"only nits", []StructuredFinding{{Severity: "low", Problem: "First"}, {Severity: "low", Problem: "Second"}}, true},
+		{"omitted visible finding", []StructuredFinding{{Severity: "medium", Problem: "Rare", Unlikely: true}, {Severity: "medium", Problem: "Ordinary"}}, false},
+		{"omitted security finding", []StructuredFinding{{Severity: "medium", Problem: "Rare", Unlikely: true}, {Severity: "low", Topic: "security", Problem: "Security"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &StructuredReview{Findings: tc.findings}})
+			assert.Equal(t, tc.clean, prepared.IsClean())
+			assert.Contains(t, FormatComment(prepared), "1 more finding in the full review")
+		})
+	}
+}
+
 func FuzzCommentMaxFindings(f *testing.F) {
 	f.Add([]byte{0, 3, 1, 3, 2}, uint8(2), uint8(1))
 	f.Add([]byte{}, uint8(0), uint8(0))

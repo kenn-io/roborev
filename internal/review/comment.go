@@ -38,6 +38,7 @@ type PreparedComment struct {
 	nits                []commentFinding
 	unlikely            []commentFinding
 	omitted             int
+	omittedShown        bool
 	fullReviewReference string
 }
 
@@ -83,13 +84,14 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 				comment.confidenceFiltered = true
 				continue
 			}
+			fold := foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Severity == "low" || finding.Unlikely)
 			if cfg.MaxFindings > 0 && selected >= cfg.MaxFindings {
 				comment.omitted++
+				comment.omittedShown = comment.omittedShown || !fold
 				continue
 			}
 			selected++
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
-			fold := foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical"
 			if fold && finding.Severity == "low" {
 				comment.nits = append(comment.nits, item)
 			} else if fold && finding.Unlikely {
@@ -129,7 +131,7 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 // IsClean reports whether filtering proved there is nothing to publish.
 // Verbatim prose has no reliable finding metadata and remains publishable.
 func (comment PreparedComment) IsClean() bool {
-	return !comment.legacy && comment.verbatim == nil && len(comment.findings) == 0 && comment.omitted == 0
+	return !comment.legacy && comment.verbatim == nil && len(comment.findings) == 0 && !comment.omittedShown
 }
 
 // FormatComment renders prepared findings. It does not resolve configuration,
