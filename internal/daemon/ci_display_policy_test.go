@@ -121,7 +121,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 	} {
 		t.Run(policy.name, func(t *testing.T) {
 			assert := assert.New(t)
-			document := jsontext.Value(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
+			document := jsontext.Value(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"unlikely":false,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
 			// Storage holds the canonical encoding, which adds the derived location.
 			canonical := `{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","topic":null,"confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1,2]}]}`
 			a := &synthesisEntrypointTestAgent{name: "threshold-synthesis", result: string(document)}
@@ -187,7 +187,8 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 				}}
 				raw, err := json.Marshal(doc)
 				require.NoError(t, err)
-				a := &synthesisEntrypointTestAgent{name: "policy-outcome", result: string(raw)}
+				liveOutput := strings.ReplaceAll(string(raw), `"sources":[1]`, `"unlikely":false,"sources":[1]`)
+				a := &synthesisEntrypointTestAgent{name: "policy-outcome", result: liveOutput}
 				agent.RegisterForTest(t, a)
 				runUUID, members, synthJob := enqueuePanelRun(t, tc, "policy-outcome", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 				setSynthesisAgent(t, tc, runUUID, a.Name())
