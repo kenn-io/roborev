@@ -1054,9 +1054,8 @@ The stored review document records the check in its `check` member: whether the
 checker completed or failed, and for every finding it received, whether the
 finding was kept or dropped, with the checker's evidence and reason. Sync,
 `roborev export reviews`, and the API carry this record; the posted PR comment
-does not. See the
-[review document format](/docs/commands/#exporting-reviews). The job log also
-records each verdict.
+does not. See the [review document format](/docs/commands/#exporting-reviews).
+The job log also records each verdict.
 
 ## Rewriting checked findings
 
