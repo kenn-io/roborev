@@ -9,6 +9,8 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+
+	"go.kenn.io/roborev/internal/procutil"
 )
 
 // ompReadOnlyTools are the built-in omp tools a non-agentic run may use. omp
@@ -99,8 +101,10 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 		return "", errors.New("omp cannot review an untrusted checkout: it has no mode that ignores project configuration")
 	}
 	agentic := effectiveAgentic(ctx, a.Agentic)
-	if !agentic && !ompLimitsTools(ctx, a.Command) {
-		return "", fmt.Errorf("omp reviews need omp %s or later, which limits a run to read-only tools; upgrade omp", ompToolLimitVersion)
+	if !agentic {
+		if err := ompCheckToolLimit(ctx, a.Command, repoPath); err != nil {
+			return "", err
+		}
 	}
 	// A file keeps large prompts off the command line. omp reads a non-TTY
 	// stdin as prompt text, so stdin stays empty.
@@ -113,13 +117,21 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 		"@"+promptPath, "Please follow the instructions in the attached file to review the code.")
 
 	var stream piStream
+	var stopReason string
 	result, err := runStreamingCLI(ctx, streamingCLISpec{
 		Name: "omp", Command: a.Command, Args: args,
-		Dir: repoPath, Output: output, StreamStderr: true, CaptureStdout: true, DrainStdout: true,
+		Dir: repoPath, Output: output, StreamStderr: true, DrainStdout: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			var parseErr error
-			stream, parseErr = parsePiJSON(r, sw)
-			return stream.Text, parseErr
+			err := scanStreamJSONLines(r, sw, func(line string) error {
+				if reason := ompStopReason(line); reason != "" {
+					stopReason = reason
+				}
+				return stream.observe(line)
+			})
+			if err != nil {
+				return stream.Text, fmt.Errorf("read omp stream: %w", err)
+			}
+			return stream.Text, nil
 		},
 	})
 	if err != nil {
@@ -133,8 +145,8 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	if result.WaitErr != nil {
 		// A cost cap or an abort also ends the run with a non-zero exit, and
 		// JSON mode reports why only in the event stream.
-		if reason := ompStopReason(result.Stdout); reason != "" {
-			return "", fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, reason, result.Stderr)
+		if stopReason != "" {
+			return "", fmt.Errorf("omp failed: %w: %s\nstderr: %s", result.WaitErr, stopReason, result.Stderr)
 		}
 		return "", formatStreamingCLIWaitError("omp", result, result.Stderr)
 	}
@@ -154,61 +166,58 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 // Breaking Changes).
 const ompToolLimitVersion = "19.2.0"
 
-var ompToolLimitSupport capabilityCache
-
-// ompLimitsTools reports whether command is an omp release that honors
-// --no-tools. omp prints its version as "omp/19.2.1"; a version it does not
-// report counts as too old.
-func ompLimitsTools(ctx context.Context, command string) bool {
-	cacheKey := capabilityCacheKey(command)
-	if cached, ok := ompToolLimitSupport.Load(cacheKey); ok {
-		return cached.(bool)
-	}
+// ompCheckToolLimit returns an error unless command is an omp release that
+// honors --no-tools. omp prints its version as "omp/19.2.1". The probe runs
+// from repoPath before every read-only run, not from a cache keyed on the
+// command file: a wrapper script or a version manager shim can switch the
+// omp behind an unchanged file, or pin a different omp per directory.
+func ompCheckToolLimit(ctx context.Context, command, repoPath string) error {
 	cmd := exec.CommandContext(ctx, command, "--version")
 	configureCapabilityProbe(ctx, cmd)
+	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		return fmt.Errorf("check omp version: %w", procutil.WithStderr(err))
 	}
-	supported := versionAtLeast(strings.ReplaceAll(string(out), "/", " "), ompToolLimitVersion)
-	ompToolLimitSupport.Store(cacheKey, supported)
-	return supported
+	version := strings.TrimSpace(string(out))
+	if !versionAtLeast(strings.ReplaceAll(version, "/", " "), ompToolLimitVersion) {
+		return fmt.Errorf("omp reviews need omp %s or later, which limits a run to read-only tools, but %q reports %q; upgrade omp", ompToolLimitVersion, command, version)
+	}
+	return nil
 }
 
-// ompStopReason returns why omp stopped a run early: the message of the last
-// error notice, such as the cost gate's refusal, or of an aborted assistant
-// message. It returns "" when the stream names no reason.
-func ompStopReason(stdout string) string {
-	var reason string
-	_ = scanStreamJSONLines(strings.NewReader(stdout), nil, func(line string) error {
-		var ev struct {
-			Type    string         `json:"type"`
-			Level   string         `json:"level"`
-			Message jsontext.Value `json:"message"`
+// ompStopReason returns why omp stopped a run early when line reports it: the
+// cost gate's refusal, or the error message of an aborted assistant message.
+func ompStopReason(line string) string {
+	if !strings.Contains(line, `"cost-gate"`) && !strings.Contains(line, `"aborted"`) {
+		return ""
+	}
+	var ev struct {
+		Type    string         `json:"type"`
+		Level   string         `json:"level"`
+		Source  string         `json:"source"`
+		Message jsontext.Value `json:"message"`
+	}
+	if json.Unmarshal([]byte(line), &ev) != nil {
+		return ""
+	}
+	switch ev.Type {
+	case "notice":
+		var message string
+		if ev.Level == "error" && ev.Source == "cost-gate" && json.Unmarshal(ev.Message, &message) == nil {
+			return strings.TrimSpace(message)
 		}
-		if json.Unmarshal([]byte(line), &ev) != nil {
-			return nil
+	case "message_end":
+		var message struct {
+			Role         string `json:"role"`
+			StopReason   string `json:"stopReason"`
+			ErrorMessage string `json:"errorMessage"`
 		}
-		switch {
-		case ev.Type == "notice" && ev.Level == "error":
-			var message string
-			if json.Unmarshal(ev.Message, &message) == nil && strings.TrimSpace(message) != "" {
-				reason = strings.TrimSpace(message)
-			}
-		case ev.Type == "message_end":
-			var message struct {
-				Role         string `json:"role"`
-				StopReason   string `json:"stopReason"`
-				ErrorMessage string `json:"errorMessage"`
-			}
-			if json.Unmarshal(ev.Message, &message) == nil && message.Role == "assistant" &&
-				message.StopReason == "aborted" && strings.TrimSpace(message.ErrorMessage) != "" {
-				reason = strings.TrimSpace(message.ErrorMessage)
-			}
+		if json.Unmarshal(ev.Message, &message) == nil && message.Role == "assistant" && message.StopReason == "aborted" {
+			return strings.TrimSpace(message.ErrorMessage)
 		}
-		return nil
-	})
-	return reason
+	}
+	return ""
 }
 
 func init() { Register(NewOmpAgent("")) }

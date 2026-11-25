@@ -7,6 +7,13 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**New features**
+
+- Review with [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi), a fork of
+    Pi, using `--agent omp`. Reviews and planning allow only omp's `read`,
+    `grep`, and `glob` tools and need omp 19.2.0 or later. omp can't review
+    untrusted checkouts. See [omp](/docs/agents/#omp).
+
 **Bug fixes**
 
 - Scheduled analysis defaults to 20 files per run when `max_files` is omitted.

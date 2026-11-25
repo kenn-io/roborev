@@ -534,7 +534,7 @@ func (a *PiAgent) Review(
 		return "No review output generated", nil
 	}
 
-	stream, parseErr := parsePiJSON(strings.NewReader(result), nil)
+	stream, parseErr := parsePiJSON(strings.NewReader(result))
 	if parseErr != nil {
 		return "", parseErr
 	}
@@ -649,60 +649,60 @@ func (s piStream) err() error {
 	return fmt.Errorf("pi provider error: %s", s.Error)
 }
 
-// parsePiJSON reads a Pi --mode json event stream, copying each event to
-// output when it is not nil.
-func parsePiJSON(r io.Reader, output io.Writer) (piStream, error) {
+func parsePiJSON(r io.Reader) (piStream, error) {
 	var stream piStream
-	err := scanStreamJSONLines(r, output, func(line string) error {
-		var ev struct {
-			Type    string `json:"type"`
-			Message struct {
-				Role    string `json:"role"`
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text,omitempty"`
-				} `json:"content"`
-				StopReason   string `json:"stopReason"`
-				ErrorMessage string `json:"errorMessage"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			return nil
-		}
-		if ev.Message.Role != "assistant" {
-			return nil
-		}
-		if ev.Type == "message_end" {
-			// A later message, such as a successful retry, clears the error.
-			stream.Error = ""
-			if ev.Message.StopReason == "error" {
-				stream.Error = strings.TrimSpace(ev.Message.ErrorMessage)
-				if stream.Error == "" {
-					stream.Error = "request failed without an error message"
-				}
-			}
-		}
-		var parts []string
-		for _, item := range ev.Message.Content {
-			if item.Type == "text" && item.Text != "" {
-				parts = append(parts, item.Text)
-			}
-		}
-		if len(parts) > 0 {
-			stream.Text = strings.Join(parts, "\n")
-		}
-		return nil
-	})
-	if err != nil {
+	if err := scanStreamJSONLines(r, nil, stream.observe); err != nil {
 		return stream, fmt.Errorf("read pi stream: %w", err)
 	}
 	return stream, nil
 }
 
+// observe records one event of a Pi --mode json event stream.
+func (s *piStream) observe(line string) error {
+	var ev struct {
+		Type    string `json:"type"`
+		Message struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text,omitempty"`
+			} `json:"content"`
+			StopReason   string `json:"stopReason"`
+			ErrorMessage string `json:"errorMessage"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		return nil
+	}
+	if ev.Message.Role != "assistant" {
+		return nil
+	}
+	if ev.Type == "message_end" {
+		// A later message, such as a successful retry, clears the error.
+		s.Error = ""
+		if ev.Message.StopReason == "error" {
+			s.Error = strings.TrimSpace(ev.Message.ErrorMessage)
+			if s.Error == "" {
+				s.Error = "request failed without an error message"
+			}
+		}
+	}
+	var parts []string
+	for _, item := range ev.Message.Content {
+		if item.Type == "text" && item.Text != "" {
+			parts = append(parts, item.Text)
+		}
+	}
+	if len(parts) > 0 {
+		s.Text = strings.Join(parts, "\n")
+	}
+	return nil
+}
+
 // piMissingOutputError explains why a Pi run that exited 0 wrote no
 // structured output. A provider error in the event stream is the usual cause.
 func piMissingOutputError(stdout []byte, label string, readErr error) error {
-	if stream, _ := parsePiJSON(bytes.NewReader(stdout), nil); stream.err() != nil {
+	if stream, _ := parsePiJSON(bytes.NewReader(stdout)); stream.err() != nil {
 		return fmt.Errorf("pi %s failed: %w", label, stream.err())
 	}
 	return fmt.Errorf("read pi %s output: %w", label, readErr)

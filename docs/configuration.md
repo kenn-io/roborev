@@ -988,7 +988,7 @@ opencode_cmd = "/usr/local/bin/opencode-wrapper"
 pi_cmd = "~/bin/pi"
 grok_cmd = "/opt/bin/grok"
 muse_cmd = "/opt/bin/muse"
-omp_cmd = "~/bin/omp"
+omp_cmd = "/opt/bin/omp"
 droid_cmd = "/opt/bin/droid-wrapper"
 ```
 

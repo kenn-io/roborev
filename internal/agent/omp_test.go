@@ -121,17 +121,21 @@ func TestOmpReviewReportsProviderError(t *testing.T) {
 // A cost cap or an abort ends the run with a non-zero exit, and JSON mode
 // reports why only in the event stream.
 func TestOmpReviewReportsStopReason(t *testing.T) {
+	const costCap = "Cost cap reached: this session spent $1.02 of its $1.00 cap (--max-cost / session.maxCost), so the next model request was not sent."
 	tests := []struct {
 		name     string
 		exitCode int
 		stdout   string
 		want     string
+		kind     LimitKind
 	}{
 		{
 			name:     "cost cap",
 			exitCode: 3,
-			stdout:   `{"type":"notice","level":"error","message":"Session cost cap reached: $1.02 of $1.00","source":"cost-gate"}`,
-			want:     "exit status 3: Session cost cap reached: $1.02 of $1.00",
+			stdout:   `{"type":"notice","level":"error","message":"` + costCap + `","source":"cost-gate"}`,
+			want:     "exit status 3: " + costCap,
+			// A retry starts a new omp session that can spend up to the cap again.
+			kind: LimitKindPermanent,
 		},
 		{
 			name:     "aborted",
@@ -140,10 +144,16 @@ func TestOmpReviewReportsStopReason(t *testing.T) {
 			want:     "exit status 1: Request was aborted",
 		},
 		{
+			name:     "error notice from another source",
+			exitCode: 1,
+			stdout:   `{"type":"notice","level":"error","message":"Compaction failed","source":"compaction"}`,
+			want:     "omp failed: exit status 1\nstderr:",
+		},
+		{
 			name:     "no reason in the stream",
 			exitCode: 3,
 			stdout:   `{"type":"session","id":"omp-session-1"}`,
-			want:     "omp failed: exit status 3",
+			want:     "omp failed: exit status 3\nstderr:",
 		},
 	}
 	for _, tt := range tests {
@@ -151,6 +161,7 @@ func TestOmpReviewReportsStopReason(t *testing.T) {
 			mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: []string{tt.stdout}, ExitCode: tt.exitCode})
 			_, err := NewOmpAgent(mock.CmdPath).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 			require.ErrorContains(t, err, tt.want)
+			assert.Equal(t, tt.kind, ClassifyLimit("omp", err.Error()).Kind)
 		})
 	}
 }

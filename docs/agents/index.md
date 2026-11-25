@@ -521,7 +521,8 @@ matches exactly. Reasoning levels map to `--thinking`, and `standard` leaves
 omp's default unchanged.
 
 When omp stops a run early, roborev reports why from omp's event stream: the
-model provider's error message, or the reason for a cost cap or an abort.
+model provider's error message, or the reason for a cost cap or an abort. A job
+that reaches omp's cost cap goes to the backup agent, or fails, without retries.
 
 roborev refuses to run omp on untrusted checkouts; see
 [Agent configuration in the pull request](/docs/integrations/github/#agent-configuration-in-the-pull-request).
