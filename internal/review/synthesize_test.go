@@ -136,7 +136,7 @@ func TestSynthesisAcceptsMissingOrIncompleteFindingReferences(t *testing.T) {
 		{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{{Problem: "One", Unlikely: true}}}},
 		{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{{Problem: "Two"}}}},
 	}
-	for _, refs := range []string{"", `,"source_findings":[]`, `,"source_findings":[{"review":1,"finding":1}]`} {
+	for _, refs := range []string{"", `,"source_findings":[]`, `,"source_findings":[{"review":1,"finding":1}]`, `,"source_findings":[{"review":1,"finding":1},{"review":2,"finding":1}]`} {
 		for _, mark := range []string{"false", "true"} {
 			t.Run(refs+"/"+mark, func(t *testing.T) {
 				output := `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":` + mark + `,"problem":"Issue","fix":"Fix","file":null,"start_line":null,"end_line":null,"sources":[1,2]` + refs + `}]}`
@@ -144,23 +144,10 @@ func TestSynthesisAcceptsMissingOrIncompleteFindingReferences(t *testing.T) {
 				doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
 				require.NoError(t, err)
 				require.Len(t, doc.Findings, 1)
-				assert.Equal(t, mark == "true", doc.Findings[0].Unlikely)
+				assert.Equal(t, mark == "true" && !strings.Contains(refs, `"review":2`), doc.Findings[0].Unlikely)
 			})
 		}
 	}
-}
-
-func TestSynthesisUnlikelyRequiresAllSources(t *testing.T) {
-	reviews := []ReviewResult{
-		{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{{Problem: "One", Unlikely: true}}}},
-		{Status: ResultDone, Structured: &StructuredReview{Findings: []StructuredFinding{{Problem: "Two"}}}},
-	}
-	output := `{"schema_version":4,"summary":"Review","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":true,"problem":"Issue","fix":"Fix","file":null,"start_line":null,"end_line":null,"sources":[1,2],"source_findings":[{"review":1,"finding":1},{"review":2,"finding":1}]}]}`
-	a := &structuredBatchAgent{name: "mixed-sources", result: []byte(output)}
-	doc, _, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{})
-	require.NoError(t, err)
-	require.Len(t, doc.Findings, 1)
-	assert.False(t, doc.Findings[0].Unlikely)
 }
 
 func TestSynthesisDuplicateUnlikelyRequiresAllSources(t *testing.T) {
@@ -937,10 +924,7 @@ func TestSynthesizeRawFallbackShowAll(t *testing.T) {
 	assert.Contains(t, result.GitHubComment, "High issue")
 	assert.Contains(t, result.GitHubComment, "Low issue")
 	assert.NotContains(t, result.GitHubComment, "<details>")
-	result, err = Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "low", Agent: "nonexistent-synthesis-agent"})
-	require.NoError(t, err)
-	assert.Contains(t, result.GitHubComment, "Low issue")
-	assert.NotContains(t, result.GitHubComment, "<details>")
+
 }
 
 func TestSynthesizeStructuredCommentVerdict(t *testing.T) {

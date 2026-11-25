@@ -90,18 +90,13 @@ func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
 		`{"severity":"low","kind":"defect","problem":"p","fix":"f","location":"a.go:1"}]}`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "need schema_version 3")
-	for _, raw := range []string{
-		`{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":false}]}`,
-		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":false}]}`,
-		`{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":true},"verdicts":[]}]}}`,
-	} {
-		_, err := Decode(jsontext.Value(raw))
-		require.ErrorContains(t, err, "unlikely, which needs schema_version 4")
-	}
 }
 
 func TestDecodeRejectsInvalidUnlikely(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want string }{
+		{"version 2 false", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":false}]}`, "unlikely, which needs schema_version 4"},
+		{"version 3 false", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":false}]}`, "unlikely, which needs schema_version 4"},
+		{"version 3 checked finding", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":true},"verdicts":[]}]}}`, "unlikely, which needs schema_version 4"},
 		{"version 1", `{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 2", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 3", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "unlikely, which needs schema_version 4"},

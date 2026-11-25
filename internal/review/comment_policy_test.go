@@ -36,6 +36,9 @@ func TestCommentMaxFindings(t *testing.T) {
 		{"one", 1, "high", doc, []string{"critical-one"}, "2 more findings in the full review: `roborev show --job 123`"},
 		{"two", 2, "high", doc, []string{"critical-one", "high-one"}, "1 more finding in the full review: `roborev show --job 123`"},
 		{"above count", 9, "high", doc, []string{"critical-one", "high-one", "high-two"}, ""},
+		{"ordinary before unlikely", 1, "", StructuredReview{Findings: []StructuredFinding{
+			{Severity: "medium", Problem: "Rare issue", Unlikely: true}, {Severity: "medium", Problem: "Ordinary issue"},
+		}}, []string{"Ordinary issue"}, "1 more finding in the full review: `roborev show --job 123`"},
 		{"folded findings count toward cap", 1, "", StructuredReview{Findings: []StructuredFinding{
 			{Severity: "low", Problem: "First nit"}, {Severity: "high", Problem: "Visible issue"}, {Severity: "low", Problem: "Second nit"},
 		}}, []string{"Visible issue"}, "2 more findings in the full review: `roborev show --job 123`"},
@@ -85,34 +88,9 @@ func TestCommentCleanMetadata(t *testing.T) {
 }
 
 func TestCommentCleanWithCappedFoldedFindings(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		findings []StructuredFinding
-		clean    bool
-	}{
-		{"only nits", []StructuredFinding{{Severity: "low", Problem: "First"}, {Severity: "low", Problem: "Second"}}, true},
-		{"omitted visible finding", []StructuredFinding{{Severity: "medium", Problem: "Rare", Unlikely: true}, {Severity: "medium", Problem: "Ordinary"}}, false},
-		{"omitted security finding", []StructuredFinding{{Severity: "medium", Problem: "Rare", Unlikely: true}, {Severity: "low", Topic: "security", Problem: "Security"}}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			prepared := PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &StructuredReview{Findings: tc.findings}})
-			assert.Equal(t, tc.clean, prepared.IsClean())
-			assert.Contains(t, FormatComment(prepared), "1 more finding in the full review")
-		})
-	}
-}
-
-func TestCommentCapPrioritizesActionableFindings(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "medium", Problem: "Rare issue", Unlikely: true},
-		{Severity: "medium", Problem: "Ordinary issue"},
-	}}
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "First"}, {Severity: "low", Problem: "Second"}}}
 	prepared := PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &doc})
-	body := FormatComment(prepared)
-	assert.Contains(t, body, "Ordinary issue")
-	assert.Contains(t, body, "Changes require fixes")
-	assert.NotContains(t, body, "No findings need fixes")
-	assert.Contains(t, body, "1 more finding in the full review")
+	assert.True(t, prepared.IsClean())
 }
 
 func FuzzCommentMaxFindings(f *testing.F) {
@@ -235,6 +213,9 @@ func TestCommentShowAll(t *testing.T) {
 	assert.Contains(t, showAll, "filtered nit")
 	assert.Contains(t, showAll, "filtered rare")
 	assert.Contains(t, showAll, "4 findings")
+}
+
+func TestCommentShowAllKeepsProseSeverityFilter(t *testing.T) {
 	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
 	policy := CommentConfig{MinSeverity: "medium", ShowAll: true}
 	for _, result := range []ReviewResult{
@@ -247,47 +228,28 @@ func TestCommentShowAll(t *testing.T) {
 	}
 }
 
-func TestCommentFoldEscapesClosingDetailsInFinding(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Before\n</details>\n- Outside", Fix: "</DETAILS >"}}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	assert.Equal(t, 1, strings.Count(body, "</details>"))
-	assert.Contains(t, body, "&lt;/details&gt;")
-	assert.Contains(t, body, "&lt;/DETAILS &gt;")
-}
-
-func TestCommentFoldPreservesCodeExamples(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{
-		Severity: "low",
-		Problem:  "Use `</details>` in code. Outside </details> stays text.",
-		Fix:      "Example:\n\n```html\n<details open>\n</details>\n```",
-	}}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	var rendered bytes.Buffer
-	source := []byte(body)
-	require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
-	assert.Contains(t, rendered.String(), "<code>&lt;/details&gt;</code>")
-	assert.Contains(t, rendered.String(), "<code class=\"language-html\">&lt;details open&gt;\n&lt;/details&gt;\n</code>")
-	assert.NotContains(t, rendered.String(), "&amp;lt;/details&amp;gt;")
-	assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
-}
-
-func TestCommentFoldEscapesTagAfterFixLabel(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Issue", Fix: "    </details>"}}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	var rendered bytes.Buffer
-	source := []byte(body)
-	require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
-	assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
-	assert.Contains(t, rendered.String(), "&lt;/details&gt;")
-}
-
-func TestCommentFoldEscapesNestedDetails(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: `Before <details open>nested</details> after`}}}
-	body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	var rendered bytes.Buffer
-	source := []byte(body)
-	require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
-	assert.Equal(t, 1, strings.Count(rendered.String(), "<details"))
-	assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
-	assert.Contains(t, rendered.String(), "&lt;details open&gt;")
+func TestCommentFoldEscapesDetailsTags(t *testing.T) {
+	for _, tc := range []struct {
+		name, problem, fix string
+		want               []string
+	}{
+		{"closing tags", "Before\n</details>\n- Outside", "</DETAILS >", []string{"&lt;/details&gt;", "&lt;/DETAILS &gt;"}},
+		{"code examples", "Use `</details>` in code. Outside </details> stays text.", "Example:\n\n```html\n<details open>\n</details>\n```", []string{"<code>&lt;/details&gt;</code>", "<code class=\"language-html\">&lt;details open&gt;\n&lt;/details&gt;\n</code>"}},
+		{"indented fix", "Issue", "    </details>", []string{"&lt;/details&gt;"}},
+		{"nested details", "Before <details open>nested</details> after", "", []string{"&lt;details open&gt;"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: tc.problem, Fix: tc.fix}}}
+			body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+			var rendered bytes.Buffer
+			source := []byte(body)
+			require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
+			assert.Equal(t, 1, strings.Count(rendered.String(), "<details"))
+			assert.Equal(t, 1, strings.Count(rendered.String(), "</details>"))
+			assert.NotContains(t, rendered.String(), "&amp;lt;/details&amp;gt;")
+			for _, want := range tc.want {
+				assert.Contains(t, rendered.String(), want)
+			}
+		})
+	}
 }

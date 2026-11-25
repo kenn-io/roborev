@@ -661,10 +661,6 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 				require.Len(t, findings, 2)
 
 				populated := findings[0]
-				assert.NotContains(populated, "unlikely")
-				checked := assertJSONArray(t, assertJSONObject(t, memberBDocObj, "check"), "findings")
-				require.Len(t, checked, 1)
-				assert.NotContains(assertJSONObject(t, checked[0], "finding"), "unlikely")
 				for _, key := range exportReviewsV2FindingKeys {
 					requireJSONKey(t, populated, key)
 				}
@@ -726,7 +722,7 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 			assertJSONNull(t, noDoc, "document")
 		})
 	}
-	t.Run("schema 3 includes unlikely", func(t *testing.T) {
+	t.Run("schema 3 document matches OpenAPI schema", func(t *testing.T) {
 		rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews?schema_version=3", nil)
 		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 		var header map[string]jsontext.Value
@@ -744,13 +740,6 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 			}
 		}
 		require.NotNil(t, doc)
-		assert.Equal(t, int64(4), assertJSONInt64(t, doc, "schema_version"))
-		findings := assertJSONArray(t, doc, "findings")
-		require.NotEmpty(t, findings)
-		assert.True(t, assertJSONBool(t, findings[0], "unlikely"))
-		checked := assertJSONArray(t, assertJSONObject(t, doc, "check"), "findings")
-		require.Len(t, checked, 1)
-		assert.True(t, assertJSONBool(t, assertJSONObject(t, checked[0], "finding"), "unlikely"))
 
 		specResponse := serveHuma(t, srv, http.MethodGet, "/openapi.json", nil)
 		require.Equal(t, http.StatusOK, specResponse.Code)

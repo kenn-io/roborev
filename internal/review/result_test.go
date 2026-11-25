@@ -219,7 +219,7 @@ func TestTruncateCommentFold(t *testing.T) {
 		limit       int
 		wantDetails bool
 	}{
-		{"inside fold", summaryEnd + len(foldClosing) + len(suffix) + 20, true},
+		{"inside fenced block", strings.Index(body, "```go") + len("```go") + 2 + len(foldClosing) + len(suffix), true},
 		{"inside summary", summaryEnd - 1 + len(foldClosing) + len(suffix), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -88,7 +89,9 @@ func TestCICheckApply(t *testing.T) {
 				problems = append(problems, f.Problem)
 			}
 			assert.Equal(t, tc.want, problems)
-			if len(got.Findings) > 0 && got.Findings[0].Problem == "first" {
+			if slices.Contains(tc.want, "first") {
+				require.NotEmpty(t, got.Findings)
+				require.Equal(t, "first", got.Findings[0].Problem)
 				assert.Equal(t, tc.wantUnlikely, got.Findings[0].Unlikely)
 			}
 			assert.Equal(t, tc.summary, got.Summary)
