@@ -33,6 +33,7 @@ func TestFoldedOutput(t *testing.T) {
 }
 
 func TestFoldedOutputHydratedSynthesis(t *testing.T) {
+	t.Parallel()
 	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
