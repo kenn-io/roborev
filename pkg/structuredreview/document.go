@@ -735,18 +735,27 @@ func (r Document) Markdown(minSeverity string) string {
 	}
 	out.WriteString("\n\n## Findings\n")
 	for i, finding := range r.Findings {
-		// Kind, topic, and confidence are data only. Rendered Markdown is
-		// posted to pull requests and never labels a finding with them.
-		fmt.Fprintf(&out, "\n### %d. %s\n\n", i+1, titleSeverity(finding.Severity))
-		if finding.Location != "" {
-			fmt.Fprintf(&out, "**Location:** %s\n\n", finding.Location)
-		}
-		fmt.Fprintf(&out, "**Problem:** %s\n\n", finding.Problem)
-		fmt.Fprintf(&out, "**Fix:** %s\n", finding.Fix)
+		out.WriteString("\n")
+		out.WriteString(finding.Markdown(i + 1))
 		if labels := r.sourceLabels(finding); len(labels) > 0 {
 			fmt.Fprintf(&out, "\n**Reported by:** %s\n", strings.Join(labels, ", "))
 		}
 	}
+	return out.String()
+}
+
+// Markdown renders a finding at its 1-based position within a review.
+// The containing document adds any source attribution labels.
+func (f Finding) Markdown(number int) string {
+	// Kind, topic, and confidence are data only. Rendered Markdown is
+	// posted to pull requests and never labels a finding with them.
+	var out strings.Builder
+	fmt.Fprintf(&out, "### %d. %s\n\n", number, titleSeverity(f.Severity))
+	if f.Location != "" {
+		fmt.Fprintf(&out, "**Location:** %s\n\n", f.Location)
+	}
+	fmt.Fprintf(&out, "**Problem:** %s\n\n", f.Problem)
+	fmt.Fprintf(&out, "**Fix:** %s\n", f.Fix)
 	return out.String()
 }
 

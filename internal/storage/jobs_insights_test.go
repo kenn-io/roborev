@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestListJobsFailedReviewsSince(t *testing.T) {
+func TestListJobsFailedReviewsInWindow(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -16,6 +16,7 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 	other := createRepo(t, db, "/synthetic/other")
 	commit := createCommit(t, db, repo.ID, "abc123")
 	since := time.Date(2026, time.January, 1, 12, 0, 0, 500_000_000, time.UTC)
+	asOf := since.Add(time.Hour)
 	cases := []struct {
 		name, jobType string
 		ref           string
@@ -46,8 +47,10 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 		{name: "other repo", jobType: JobTypeReview, repoID: other.ID},
 		{name: "before window", jobType: JobTypeReview, finished: since.Add(-time.Millisecond).Format(time.RFC3339Nano)},
 		{name: "at window", jobType: JobTypeReview, finished: since.Format(time.RFC3339Nano), want: true},
-		{name: "after window", jobType: JobTypeReview, finished: since.Add(time.Millisecond).Format(time.RFC3339Nano), want: true},
+		{name: "after start", jobType: JobTypeReview, finished: since.Add(time.Millisecond).Format(time.RFC3339Nano), want: true},
 		{name: "offset at window", jobType: JobTypeReview, finished: "2026-01-01T07:00:00.500-05:00", want: true},
+		{name: "at end", jobType: JobTypeReview, finished: asOf.Format(time.RFC3339Nano), want: true},
+		{name: "after end", jobType: JobTypeReview, finished: asOf.Add(time.Millisecond).Format(time.RFC3339Nano)},
 	}
 	var wantIDs []int64
 	for i, tc := range cases {
@@ -61,7 +64,7 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 			tc.ref = "abc123"
 		}
 		if tc.finished == "" {
-			tc.finished = since.Add(time.Hour).Format(time.RFC3339Nano)
+			tc.finished = asOf.Format(time.RFC3339Nano)
 		}
 		if tc.verdict == nil && tc.name != "null verdict" {
 			tc.verdict = 0
@@ -79,7 +82,7 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 			wantIDs = append([]int64{int64(i + 1)}, wantIDs...)
 		}
 	}
-	opts := []ListJobsOption{WithoutPrompt(), WithBranch("main"), WithExcludePanelRole(PanelRoleMember), WithFailedReviewsSince(since)}
+	opts := []ListJobsOption{WithoutPrompt(), WithBranch("main"), WithExcludePanelRole(PanelRoleMember), WithFailedReviewsInWindow(since, asOf)}
 	jobs, err := db.ListJobs(string(JobStatusDone), repo.RootPath, 0, 0, opts...)
 	require.NoError(t, err)
 	var gotIDs []int64
