@@ -62,18 +62,18 @@ func TestRenderSplitMatchesBaselineGrid(t *testing.T) { //nolint:paralleltest //
 		{"detail", focusDetail},
 	}
 	want := map[string]string{
-		"dark/breakpoint/list":      "16c59f415ca9ec5daa7a8998313d2ba084b70b08c47e3a523493b7ce278a400e",
-		"dark/breakpoint/detail":    "cd2ad24ef21ed8be7fca382ff2b684002505cf626d84397535026fd424fd55d7",
-		"dark/intermediate/list":    "75cdb36e478e594b2e78dfb27b9a98cecefe7993189c9270adaae3ec67623611",
-		"dark/intermediate/detail":  "b5e5971c701282798feff9e8895a4cf9787c3c25ec6e03738f535046f97ae46f",
-		"dark/wide/list":            "cd44ef9d6261e15fcf74da2e6656c8a3d51f4a87025e00c7dd79682962a5ec38",
-		"dark/wide/detail":          "3389f1939eff2ab5ad3943cdd17517571d64f8fe629a3baf67884de91cb5898a",
-		"light/breakpoint/list":     "1dce9a5c2275e8e15c2aa9e517184d6658e224d501235269a3150f0b627c6a5f",
-		"light/breakpoint/detail":   "47ebd84e5c81b880c8da6bfae5350188658fcc162e2b20e1e9081562d046c354",
-		"light/intermediate/list":   "5f0351c10d5ad06ed5f7c572fb0e3c8904b60fc0ae5c3f861e2ca270dacd6743",
-		"light/intermediate/detail": "776716a92d73021ab670e564706fcf8e14936ebacbacfb48eff666c50cba7d43",
-		"light/wide/list":           "ff5ac93665353e8f735bddd818d604de5e2105950afd20f990d97c5ed00fd8b6",
-		"light/wide/detail":         "d643825784ebaa9d95a6e5ef2c4e8702f2efcc38d3d21a7812485ad084eb1d5c",
+		"dark/breakpoint/list":      "00650a3fdd365b94c3555375d4dae77ce040fba3b9c369e7a32e7193b0ef46db",
+		"dark/breakpoint/detail":    "62c4d10a74c7be0925f4ac425b5b5c8dce18f21776846d5f8adf5d09e5b55694",
+		"dark/intermediate/list":    "d1498802408547abc42c9962f3d4d507aba649cf6cbfe0a6de7dbf63fe5c003b",
+		"dark/intermediate/detail":  "e9c43b6f536ded0882de5fef81c3760a86e95958556ee9458617fba8ade65da7",
+		"dark/wide/list":            "b33d6cac0be9530eae4e0e53f8e38c8bc7ca6131bcba364f5584246a7bbd3477",
+		"dark/wide/detail":          "61b250e74113faa45411d6690b384e607102016c3d1680f48c14408678d19ff6",
+		"light/breakpoint/list":     "0083f2fc4432f70738b83534ea451484ae56cb5d4f463f98fb4dfd717ec42e6b",
+		"light/breakpoint/detail":   "f445ff52b300f586048998a4cb09b510b95d6fca082d137013de258ae0ff01c8",
+		"light/intermediate/list":   "972c7b0fc45d84d43550f55560a89ee7b8b67da15af04b52e7c43d63a586d78c",
+		"light/intermediate/detail": "91574245e0042379056b1b7a3a02073539998f2ef04dc0ad9837f3132f539b23",
+		"light/wide/list":           "b3b2f986361cee675510f281b1c05297ebc50737f1b25e0c11e56d95f167b0cc",
+		"light/wide/detail":         "f1282d7da8a2f8428ee4ba23833c4b216aca801c183330d8bee31cd6072b7095",
 	}
 	for _, colorMode := range []string{"dark", "light"} {
 		for _, fixture := range fixtures {
