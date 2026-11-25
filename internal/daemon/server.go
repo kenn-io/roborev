@@ -124,6 +124,7 @@ type Server struct {
 	agentHookState          *agenthook.StateStore
 	agentHookStateErr       error
 	scheduleMu              sync.Mutex
+	scheduleRetryMu         sync.Mutex
 	scheduledRepoMu         sync.Mutex
 	scheduleCancel          context.CancelFunc
 	scheduleDone            chan struct{}
@@ -2926,6 +2927,25 @@ func (s *Server) humaRerunJob(
 	)
 	if err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if job.Source == storage.JobSourceScheduled && job.AnalysisType != "" {
+		// Keep the scheduler from overwriting the watch added by the rerun.
+		s.scheduleRetryMu.Lock()
+		defer s.scheduleRetryMu.Unlock()
+		repoCfg, err := config.LoadRepoConfig(job.RepoPath)
+		watch := true
+		if err == nil && repoCfg == nil {
+			repoCfg = &config.RepoConfig{}
+		}
+		if err == nil {
+			schedule, err := config.ResolveSchedule(s.configWatcher.Config().Schedule, repoCfg.Schedule)
+			if err == nil {
+				watch = schedule.Enabled && slices.Contains(schedule.Types, job.AnalysisType)
+			}
+		}
+		if watch {
+			rerunOpts.ScheduleRetry = &storage.AnalysisScheduleEntry{Type: job.AnalysisType, Files: job.AnalysisFiles, Job: job.ID}
+		}
 	}
 
 	resultJobID, replayed, err := s.db.ReenqueueJobWithRequest(

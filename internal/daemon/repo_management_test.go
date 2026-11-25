@@ -43,7 +43,8 @@ func TestRepoManagementWaitsForScheduledEnqueue(t *testing.T) {
 			}}
 			enqueued := make(chan error, 1)
 			go func() {
-				enqueued <- watcher.enqueueType(t.Context(), *source, "refactor", []string{"a.go"}, head)
+				_, err := watcher.enqueueType(t.Context(), *source, "refactor", []string{"a.go"}, head, map[string]string{"a.go": "package a\n"})
+				enqueued <- err
 			}()
 			testutil.ReceiveWithTimeout(t, ready, workerStartTimeout)
 			done := make(chan error, 1)

@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -217,4 +218,20 @@ func Workflow(label string) string {
 		return "security"
 	}
 	return "review"
+}
+
+// IsCodeFile returns true if the file has a recognized code extension.
+// Excludes documentation, configuration, and markup files that are typically not
+// useful for code analysis on a branch.
+func IsCodeFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	codeExts := map[string]bool{
+		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true,
+		".rs": true, ".c": true, ".h": true, ".cpp": true, ".hpp": true, ".cc": true,
+		".java": true, ".kt": true, ".scala": true, ".rb": true, ".php": true,
+		".swift": true, ".m": true, ".cs": true, ".fs": true, ".vb": true,
+		".sh": true, ".bash": true, ".zsh": true, ".fish": true,
+		".sql": true, ".graphql": true, ".proto": true,
+	}
+	return codeExts[ext]
 }

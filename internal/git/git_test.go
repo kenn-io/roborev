@@ -3768,3 +3768,12 @@ func TestResolveSHAsCtx(t *testing.T) {
 	}, resolved)
 	assert.NotEqual(head, resolved["batch-tag"], "annotated tags keep their tag object ID")
 }
+
+func TestListRefFiles(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.CommitFile("nested/source.go", "package sample\n", "add source")
+	files, err := ListRefFiles(t.Context(), repo.Dir, repo.HeadSHA())
+	require.NoError(t, err)
+	oid := strings.TrimSpace(repo.Run("rev-parse", "HEAD:nested/source.go"))
+	assert.Contains(t, files, TreeBlob{Path: "nested/source.go", OID: oid})
+}

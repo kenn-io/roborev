@@ -707,6 +707,9 @@ func TestDeleteRepo(t *testing.T) {
 		last := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), repo.ID, last))
 		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), other.ID, last))
+		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), repo.ID, []AnalysisScheduleEntry{{Type: "refactor"}}))
+		entries := []AnalysisScheduleEntry{{Type: "complexity"}}
+		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), other.ID, entries))
 
 		err = db.DeleteRepo(repo.ID, false)
 		require.NoError(t, err, "DeleteRepo failed: %v")
@@ -725,6 +728,12 @@ func TestDeleteRepo(t *testing.T) {
 		otherLast, err := db.AnalysisScheduleLastRun(t.Context(), other.ID)
 		require.NoError(t, err)
 		assert.Equal(t, last, otherLast)
+		retry, err := db.AnalysisScheduleRetry(t.Context(), repo.ID)
+		require.NoError(t, err)
+		assert.Empty(t, retry)
+		retry, err = db.AnalysisScheduleRetry(t.Context(), other.ID)
+		require.NoError(t, err)
+		assert.Equal(t, entries, retry)
 	})
 
 	t.Run("delete repo with jobs without cascade returns error", func(t *testing.T) {
@@ -891,6 +900,11 @@ func TestMergeRepos(t *testing.T) {
 			target.RootPath, sharedWorktree, "main", now.Add(2*time.Hour),
 		)
 		require.NoError(t, err)
+		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), source.ID, []AnalysisScheduleEntry{{Type: "refactor"}}))
+		require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), target.ID, []AnalysisScheduleEntry{{Type: "complexity"}}))
+		last := now.Truncate(time.Second)
+		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), source.ID, last))
+		require.NoError(t, db.SetAnalysisScheduleLastRun(t.Context(), target.ID, last))
 
 		_, err = db.MergeRepos(source.ID, target.ID)
 		require.NoError(t, err)
@@ -911,6 +925,18 @@ func TestMergeRepos(t *testing.T) {
 			`SELECT COUNT(*) FROM agent_hook_snoozes WHERE repo_id = ?`, source.ID,
 		).Scan(&sourceCount))
 		assert.Zero(t, sourceCount)
+		retry, err := db.AnalysisScheduleRetry(t.Context(), source.ID)
+		require.NoError(t, err)
+		assert.Empty(t, retry)
+		retry, err = db.AnalysisScheduleRetry(t.Context(), target.ID)
+		require.NoError(t, err)
+		assert.Equal(t, []AnalysisScheduleEntry{{Type: "complexity"}}, retry)
+		sourceLast, err := db.AnalysisScheduleLastRun(t.Context(), source.ID)
+		require.NoError(t, err)
+		assert.True(t, sourceLast.IsZero())
+		targetLast, err := db.AnalysisScheduleLastRun(t.Context(), target.ID)
+		require.NoError(t, err)
+		assert.Equal(t, last, targetLast)
 	})
 }
 

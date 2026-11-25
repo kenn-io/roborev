@@ -2,12 +2,17 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -80,6 +85,8 @@ func (w *analysisScheduler) poll(ctx context.Context, now time.Time) {
 }
 
 func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, global *config.Config, now time.Time) error {
+	w.server.scheduleRetryMu.Lock()
+	defer w.server.scheduleRetryMu.Unlock()
 	repoCfg, err := config.LoadRepoConfig(repo.RootPath)
 	if err != nil {
 		return err
@@ -91,13 +98,14 @@ func (w *analysisScheduler) pollRepo(ctx context.Context, repo storage.Repo, glo
 	if err != nil {
 		return err
 	}
-	if !schedule.Enabled {
-		return nil
+	retry, err := w.pruneRetry(ctx, repo.ID, schedule.Types)
+	if err != nil || !schedule.Enabled {
+		return err
 	}
-	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, now)
+	return w.runRepo(ctx, repo, repoCfg, global.ForRepo(repo.RootPath), schedule, retry, now)
 }
 
-func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, now time.Time) error {
+func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, entries []storage.AnalysisScheduleEntry, now time.Time) error {
 	last, loaded := w.lastRun[repo.ID]
 	if !loaded {
 		var err error
@@ -107,14 +115,88 @@ func (w *analysisScheduler) runRepo(ctx context.Context, repo storage.Repo, repo
 		}
 		w.lastRun[repo.ID] = last
 	}
-	if !last.IsZero() && now.Sub(last) < schedule.Interval {
-		return nil
+	var watched []storage.AnalysisScheduleEntry
+	only := map[string][]string{}
+	for _, entry := range entries {
+		if entry.Job != 0 {
+			job, err := w.server.db.GetJobByIDContext(ctx, entry.Job)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			switch job.Status {
+			case storage.JobStatusQueued, storage.JobStatusRunning:
+				watched = append(watched, entry)
+				continue
+			case storage.JobStatusFailed:
+			default:
+				continue
+			}
+		}
+		files, exists := only[entry.Type]
+		if !exists {
+			only[entry.Type] = entry.Files
+		} else if files == nil || entry.Files == nil {
+			only[entry.Type] = nil
+		} else {
+			only[entry.Type] = append(files, entry.Files...)
+		}
 	}
-	if err := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); err != nil {
-		return err
+	var errs []error
+	if len(only) > 0 {
+		retrySchedule := schedule
+		retrySchedule.Types = nil
+		for _, typ := range schedule.Types {
+			if _, ok := only[typ]; ok {
+				retrySchedule.Types = append(retrySchedule.Types, typ)
+			}
+		}
+		result, err := w.scheduleRepo(ctx, repo, repoCfg, global, retrySchedule, only)
+		if result == nil {
+			for _, typ := range retrySchedule.Types {
+				result = append(result, storage.AnalysisScheduleEntry{Type: typ, Files: only[typ]})
+			}
+		}
+		watched = append(watched, result...)
+		errs = append(errs, err)
+	}
+	if err := w.server.db.SetAnalysisScheduleRetry(ctx, repo.ID, watched); err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	if !last.IsZero() && now.Sub(last) < schedule.Interval {
+		return errors.Join(errs...)
+	}
+	result, err := w.scheduleRepo(ctx, repo, repoCfg, global, schedule, nil)
+	if result == nil {
+		for _, typ := range schedule.Types {
+			result = append(result, storage.AnalysisScheduleEntry{Type: typ})
+		}
+	}
+	watched = append(watched, result...)
+	errs = append(errs, err)
+	if err := w.server.db.SetAnalysisScheduleRetry(ctx, repo.ID, watched); err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	if setErr := w.server.db.SetAnalysisScheduleLastRun(ctx, repo.ID, now); setErr != nil {
+		return errors.Join(append(errs, setErr)...)
 	}
 	w.lastRun[repo.ID] = now
-	return w.scheduleRepo(ctx, repo, repoCfg, global, schedule)
+	return errors.Join(errs...)
+}
+
+// pruneRetry drops watched entries for types outside the schedule.
+func (w *analysisScheduler) pruneRetry(ctx context.Context, repoID int64, types []string) ([]storage.AnalysisScheduleEntry, error) {
+	saved, err := w.server.db.AnalysisScheduleRetry(ctx, repoID)
+	if err != nil {
+		return nil, err
+	}
+	kept := slices.DeleteFunc(slices.Clone(saved), func(entry storage.AnalysisScheduleEntry) bool { return !slices.Contains(types, entry.Type) })
+	if len(kept) == len(saved) {
+		return kept, nil
+	}
+	return kept, w.server.db.SetAnalysisScheduleRetry(ctx, repoID, kept)
 }
 
 type changeSet struct {
@@ -124,23 +206,26 @@ type changeSet struct {
 
 type analysisCandidate struct {
 	path   string
+	oid    string
 	due    map[string]bool
 	oldest time.Time
 }
 
-func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule) error {
+// scheduleRepo returns watched jobs and failed enqueues. A nil result means the pass failed before enqueueing.
+func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo, repoCfg *config.RepoConfig, global *config.Config, schedule config.Schedule, only map[string][]string) ([]storage.AnalysisScheduleEntry, error) {
 	head, err := git.ResolveCommitCtx(ctx, repo.RootPath, "HEAD")
 	if err != nil {
-		return fmt.Errorf("scheduled repository unavailable: %w", err)
+		return nil, fmt.Errorf("scheduled repository unavailable: %w", err)
 	}
-	paths, err := git.ListRefFiles(ctx, repo.RootPath, head)
+	tree, err := git.ListRefFiles(ctx, repo.RootPath, head)
 	if err != nil {
-		return fmt.Errorf("scheduled repository unavailable: %w", err)
+		return nil, fmt.Errorf("scheduled repository unavailable: %w", err)
 	}
-	candidates, err := scheduleCandidates(paths, schedule.Paths)
+	candidates, err := scheduleCandidates(tree, schedule.Paths)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	entries := []storage.AnalysisScheduleEntry{}
 	usable := make(map[string]bool)
 	var errs []error
 	for _, typ := range schedule.Types {
@@ -153,40 +238,128 @@ func (w *analysisScheduler) scheduleRepo(ctx context.Context, repo storage.Repo,
 			}
 		}
 		if err != nil {
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: only[typ]})
 			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			continue
 		}
 		usable[typ] = true
-		if err := w.markDue(ctx, repo, head, typ, candidates); err != nil {
-			return err
+		typeCandidates := candidates
+		if names, restricted := only[typ]; restricted && names != nil {
+			typeCandidates = make(map[string]*analysisCandidate)
+			for _, name := range names {
+				if candidate, ok := candidates[name]; ok {
+					typeCandidates[name] = candidate
+				}
+			}
+		}
+		if pending, err := w.markDue(ctx, repo, head, typ, typeCandidates); err != nil {
+			return nil, err
+		} else if only != nil && len(pending) > 0 {
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: pending})
 		}
 	}
-	selected := selectCandidates(candidates, schedule.MaxFiles)
+	ordered := selectCandidates(candidates)
+	if len(ordered) == 0 {
+		return entries, errors.Join(errs...)
+	}
+	var attributes []git.TreeBlob
+	var oids, names []string
+	for _, blob := range tree {
+		if path.Base(blob.Path) == ".gitattributes" {
+			attributes = append(attributes, blob)
+			oids = append(oids, blob.OID)
+		}
+	}
+	for _, candidate := range ordered {
+		oids, names = append(oids, candidate.oid), append(names, candidate.path)
+	}
+	missing, large, err := git.CheckBlobs(ctx, repo.RootPath, oids, config.ResolveMaxPromptSize(repo.RootPath, global)+1)
+	if err != nil {
+		return nil, err
+	}
+	binary, err := git.BinaryAttributes(ctx, repo.RootPath, head, names)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := git.NewBlobReader(ctx, repo.RootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	files := map[string]string{}
+	var skipped []string
+	for i, candidate := range ordered {
+		if len(files) == schedule.MaxFiles {
+			if only == nil {
+				ordered = ordered[:i]
+			}
+			break
+		}
+		if missing[candidate.oid] || attributesMissing(attributes, missing, candidate.path) {
+			continue
+		}
+		if binary[candidate.path] || large[candidate.oid] {
+			skipped = append(skipped, candidate.path)
+			continue
+		}
+		content, err := reader.Read(candidate.oid)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			errs = append(errs, err)
+			continue
+		}
+		if !isSourceContent(content) {
+			skipped = append(skipped, candidate.path)
+			continue
+		}
+		files[candidate.path] = string(content)
+	}
+	if len(skipped) > 0 {
+		log.Printf("analysis scheduler %s: skipped %d binary or oversized files: %s", repo.RootPath, len(skipped), strings.Join(skipped[:min(len(skipped), 3)], ", "))
+	}
 	for _, typ := range schedule.Types {
 		if !usable[typ] {
 			continue
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
-		if names := dueNames(selected, typ); len(names) > 0 {
-			if err := w.enqueueType(ctx, repo, typ, names, head); err != nil {
+		if names := dueNames(ordered, typ, files, true); len(names) > 0 {
+			id, err := w.enqueueType(ctx, repo, typ, names, head, files)
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names, Job: id})
+			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", typ, err))
 			}
 		}
+		if names := dueNames(ordered, typ, files, false); len(names) > 0 {
+			entries = append(entries, storage.AnalysisScheduleEntry{Type: typ, Files: names})
+		}
 	}
-	return errors.Join(errs...)
+	return entries, errors.Join(errs...)
 }
 
-func scheduleCandidates(paths, patterns []string) (map[string]*analysisCandidate, error) {
+// attributesMissing reports whether a committed .gitattributes file that can
+// apply to p is unavailable locally, leaving p's classification unknown.
+func attributesMissing(attributes []git.TreeBlob, missing map[string]bool, p string) bool {
+	for _, file := range attributes {
+		if dir := path.Dir(file.Path); missing[file.OID] && (dir == "." || strings.HasPrefix(p, dir+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
+func scheduleCandidates(tree []git.TreeBlob, patterns []string) (map[string]*analysisCandidate, error) {
 	candidates := map[string]*analysisCandidate{}
-	for _, path := range paths {
-		matched, err := matchesSchedulePaths(patterns, path)
+	for _, blob := range tree {
+		matched, err := matchesSchedulePaths(patterns, blob.Path)
 		if err != nil {
 			return nil, err
 		}
-		if matched {
-			candidates[path] = &analysisCandidate{path: path, due: map[string]bool{}}
+		if matched && analyze.IsCodeFile(blob.Path) {
+			candidates[blob.Path] = &analysisCandidate{path: blob.Path, oid: blob.OID, due: map[string]bool{}}
 		}
 	}
 	return candidates, nil
@@ -209,10 +382,10 @@ func matchesSchedulePaths(patterns []string, path string) (bool, error) {
 }
 
 // markDue records which candidates need an analysis of the given type.
-func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) error {
+func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head, typ string, candidates map[string]*analysisCandidate) (deferred []string, err error) {
 	jobs, err := w.server.db.ListJobs("", "", 0, 0, storage.WithRepoIDs([]int64{repo.ID}), storage.WithAnalysisType(typ), storage.WithoutPrompt())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pending := map[string]bool{}
 	baseline := map[string]storage.ReviewJob{}
@@ -225,16 +398,15 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
 				pending[path] = true
 			}
-			if job.Status == storage.JobStatusDone && job.AnalysisCommitSHA != "" {
-				if _, ok := baseline[path]; !ok {
-					baseline[path] = job
-				}
+			if _, ok := baseline[path]; !ok && job.Status == storage.JobStatusDone && job.AnalysisCommitSHA != "" {
+				baseline[path] = job
 			}
 		}
 	}
 	changes := map[string]changeSet{}
 	for path, candidate := range candidates {
 		if pending[path] {
+			deferred = append(deferred, path)
 			continue
 		}
 		job, ok := baseline[path]
@@ -243,7 +415,7 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			changed, cached := changes[job.AnalysisCommitSHA]
 			if !cached {
 				if changed, err = changedSince(ctx, repo.RootPath, job.AnalysisCommitSHA, head); err != nil {
-					return err
+					return nil, err
 				}
 				changes[job.AnalysisCommitSHA] = changed
 			}
@@ -258,7 +430,8 @@ func (w *analysisScheduler) markDue(ctx context.Context, repo storage.Repo, head
 			}
 		}
 	}
-	return nil
+	sort.Strings(deferred)
+	return deferred, nil
 }
 
 // changedSince lists paths modified between base and head; an unresolvable
@@ -279,7 +452,7 @@ func changedSince(ctx context.Context, repoRoot, base, head string) (changeSet, 
 	return changed, err
 }
 
-func selectCandidates(candidates map[string]*analysisCandidate, limit int) []*analysisCandidate {
+func selectCandidates(candidates map[string]*analysisCandidate) []*analysisCandidate {
 	var selected []*analysisCandidate
 	for _, c := range candidates {
 		if len(c.due) > 0 {
@@ -292,33 +465,18 @@ func selectCandidates(candidates map[string]*analysisCandidate, limit int) []*an
 		}
 		return selected[i].oldest.Before(selected[j].oldest)
 	})
-	if len(selected) > limit {
-		selected = selected[:limit]
-	}
 	return selected
 }
 
-func dueNames(selected []*analysisCandidate, typ string) []string {
+// dueNames lists candidates due for typ whose content was read, or was not.
+func dueNames(candidates []*analysisCandidate, typ string, read map[string]string, wantRead bool) []string {
 	var names []string
-	for _, c := range selected {
-		if c.due[typ] {
+	for _, c := range candidates {
+		if _, ok := read[c.path]; c.due[typ] && ok == wantRead {
 			names = append(names, c.path)
 		}
 	}
 	return names
-}
-
-// buildTypePrompt reads names at head, honoring ctx cancellation, and builds typ's prompt.
-func buildTypePrompt(ctx context.Context, root, typ, head string, names []string) (string, error) {
-	files := make(map[string]string, len(names))
-	for _, name := range names {
-		content, err := git.ReadFile(ctx, root, head, name)
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", name, err)
-		}
-		files[name] = string(content)
-	}
-	return analyze.GetType(typ).BuildPrompt(files)
 }
 
 // lockRegistered coordinates enqueue with repo deletion, merge, and move so it
@@ -332,14 +490,18 @@ func (w *analysisScheduler) lockRegistered(repo storage.Repo) (func(), error) {
 	return w.server.scheduledRepoMu.Unlock, nil
 }
 
-func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string) error {
-	prompt, err := buildTypePrompt(ctx, repo.RootPath, typ, head, names)
+func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, typ string, names []string, head string, contents map[string]string) (int64, error) {
+	files := make(map[string]string, len(names))
+	for _, name := range names {
+		files[name] = contents[name]
+	}
+	prompt, err := analyze.GetType(typ).BuildPrompt(files)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	unlock, err := w.lockRegistered(repo)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer unlock()
 	if w.testHookBeforeEnqueue != nil {
@@ -347,10 +509,23 @@ func (w *analysisScheduler) enqueueType(ctx context.Context, repo storage.Repo, 
 	}
 	result, err := w.server.humaEnqueue(ctx, &EnqueueInput{Body: EnqueueRequest{RepoPath: repo.RootPath, GitRef: typ, ReviewType: analyze.ReviewType(typ), CustomPrompt: prompt, OutputPrefix: analyze.BuildOutputPrefix(typ, names), AnalysisType: typ, AnalysisFiles: names, AnalysisCommitSHA: head, Source: storage.JobSourceScheduled}})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if result.Status != 201 {
-		return fmt.Errorf("enqueue analysis: %v", result.Body)
+		return 0, fmt.Errorf("enqueue analysis: %v", result.Body)
 	}
-	return nil
+	created, ok := result.Body.(EnqueueCreatedResponse)
+	if !ok || created.ReviewJob == nil {
+		return 0, fmt.Errorf("enqueue analysis: unexpected response")
+	}
+	return created.ID, nil
+}
+
+// isSourceContent accepts non-NUL source text, including legacy encodings such
+// as Latin-1, and rejects content with a binary signature such as PDF or with
+// no valid UTF-8 at all.
+func isSourceContent(content []byte) bool {
+	text, kind := string(content), http.DetectContentType(content)
+	return !strings.ContainsRune(text, 0) && (text == "" || strings.ToValidUTF8(text, "") != "") &&
+		(strings.HasPrefix(kind, "text/") || kind == "application/octet-stream" && utf8.Valid(content))
 }

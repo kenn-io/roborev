@@ -87,3 +87,15 @@ func TestQueuePauseStateDefaultsAndPersists(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, paused)
 }
+
+func TestAnalysisScheduleRetryRoundTrip(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, t.TempDir())
+	entries := []AnalysisScheduleEntry{{Type: "complexity", Files: []string{"invalid\xff.go"}, Job: 7}}
+	require.NoError(t, db.SetAnalysisScheduleRetry(t.Context(), repo.ID, entries))
+	retry, err := db.AnalysisScheduleRetry(t.Context(), repo.ID)
+	require.NoError(t, err)
+	assert.Equal(t, entries, retry)
+}

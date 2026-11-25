@@ -1702,15 +1702,16 @@ func (db *DB) MarkJobRebased(jobID int64) error {
 }
 
 type ReenqueueOpts struct {
-	Agent       string
-	Model       string
-	Provider    string
-	Reasoning   string
-	ReviewType  string
-	MinSeverity string
-	BackupAgent string
-	BackupModel string
-	RestorePlan bool
+	Agent         string
+	Model         string
+	Provider      string
+	Reasoning     string
+	ReviewType    string
+	MinSeverity   string
+	BackupAgent   string
+	BackupModel   string
+	RestorePlan   bool
+	ScheduleRetry *AnalysisScheduleEntry
 }
 
 // ReenqueueJob resets a completed, failed, or canceled job back to queued status.
@@ -1853,6 +1854,29 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 	if rows == 0 {
 		return 0, false, sql.ErrNoRows
+	}
+	if opts.ScheduleRetry != nil {
+		var repoID int64
+		if err := conn.QueryRowContext(ctx, `SELECT repo_id FROM review_jobs WHERE id = ?`, jobID).Scan(&repoID); err != nil {
+			return 0, false, err
+		}
+		entries, err := analysisScheduleRetry(ctx, conn, repoID)
+		if err != nil {
+			return 0, false, err
+		}
+		found := false
+		for _, entry := range entries {
+			if entry.Job == jobID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			entries = append(entries, *opts.ScheduleRetry)
+			if err := setAnalysisScheduleRetry(ctx, conn, repoID, entries); err != nil {
+				return 0, false, err
+			}
+		}
 	}
 	if _, err := conn.ExecContext(ctx, `
 		UPDATE job_content
