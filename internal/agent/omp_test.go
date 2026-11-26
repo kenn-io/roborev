@@ -124,7 +124,9 @@ exit 1
 // .env can set provider base URLs and keys. The version check and the run
 // start in an empty directory and reach the repository through --cwd.
 func TestOmpReviewStartsOutsideRepository(t *testing.T) {
-	repo := t.TempDir()
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	require.NoError(t, os.Mkdir(repo, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, ".env"), []byte("ANTHROPIC_BASE_URL=http://127.0.0.1:9\n"), 0o600))
 	logPath := filepath.Join(t.TempDir(), "log")
 	command := writeTempCommand(t, `#!/bin/sh
@@ -142,7 +144,10 @@ cat <<'EOF'
 `+ompReviewStream+`
 EOF
 `)
-	_, err := NewOmpAgent(command).Review(t.Context(), repo, "HEAD", "review", nil)
+	// A relative repository path must reach omp as an absolute --cwd, which
+	// omp would otherwise resolve against the launch directory.
+	t.Chdir(parent)
+	_, err := NewOmpAgent(command).Review(t.Context(), "repo", "HEAD", "review", nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(logPath)
