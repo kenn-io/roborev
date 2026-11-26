@@ -1340,6 +1340,7 @@ func TestCodexSandboxLogDir(t *testing.T) {
 		{"empty label", logs, ""},
 		{"leading whitespace label", logs, " job"},
 		{"trailing whitespace label", logs, "job "},
+		{"cleaned whitespace label", logs, "./  /."},
 		{"absolute label", logs, work},
 		{"parent label", logs, "../outside"},
 		{"relative directory", "logs", "job"},
