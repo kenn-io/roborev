@@ -1362,7 +1362,7 @@ func TestCodexSandboxLogDir(t *testing.T) {
 		assert.Contains(t, job.Env, "CODEX_HOME="+home)
 		metadata, err := os.ReadFile(filepath.Join(home, "roborev.json"))
 		require.NoError(t, err)
-		assert.Equal(t, `{"label":"nested/job"}`, string(metadata))
+		assert.JSONEq(t, `{"label":"nested/job"}`, string(metadata))
 		if i == 0 {
 			sessions := filepath.Join(home, "sessions")
 			require.NoError(t, os.Mkdir(sessions, 0o700))
