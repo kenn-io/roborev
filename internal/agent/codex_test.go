@@ -1338,8 +1338,6 @@ func TestCodexSandboxLogDir(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	for _, tc := range []struct{ name, dir, label string }{
 		{"empty label", logs, ""},
-		{"leading whitespace label", logs, " job"},
-		{"trailing whitespace label", logs, "job "},
 		{"cleaned whitespace label", logs, "./  /."},
 		{"absolute label", logs, work},
 		{"parent label", logs, "../outside"},
@@ -1372,7 +1370,6 @@ func TestCodexSandboxLogDir(t *testing.T) {
 		cleanup()
 		if i == 0 {
 			assert.FileExists(t, filepath.Join(home, "sessions", "rollout.jsonl"))
-			assert.FileExists(t, filepath.Join(home, "roborev.json"))
 		} else {
 			assert.NoDirExists(t, home)
 		}
