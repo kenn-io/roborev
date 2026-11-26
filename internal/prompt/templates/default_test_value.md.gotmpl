@@ -26,9 +26,9 @@ Do not report:
 
 For each finding, provide:
 - Severity, using these definitions:
-  - **high**: A worthless test that also creates separately established harm beyond its own cost, such as claiming regression coverage for a behavior it cannot detect
-  - **medium**: A confirmed worthless test, case, assertion, or helper under the removal rules above. This is the default for confirmed findings; do not downgrade them to low merely because they are test-only changes
-  - **low**: A redundant assertion or case inside an otherwise valuable test, where removal is a minor simplification
+  - **high**: A test that fails to detect an established defect causing data loss, a security breach, a crash, or incorrect results
+  - **medium**: A test that claims to protect important correctness, permission, or data-safety behavior but fails to detect a concrete regression that no remaining test catches, unless the finding meets the high definition
+  - **low**: Any other confirmed worthless test, case, assertion, or helper under the removal rules above
 - File and line reference, naming the changed test or assertion
 - What the test proves today and why that provides no unique value. Include the dependency-owned contract, enforcing invariant, existing test, or production mistake the assertion fails to detect, as applicable
 - The specific test, case, assertion, or now-unused helper to delete. Recommend a focused rewrite only when you can name the owned behavior and realistic failure that deserve protection. Removing a worthless test creates no obligation to replace it or restore its coverage percentage
