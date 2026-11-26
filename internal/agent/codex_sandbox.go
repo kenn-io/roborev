@@ -123,6 +123,7 @@ wire_api = "responses"
 		return job, nil, err
 	}
 	if s.LogDir != "" {
+		// This string-only struct cannot produce a json.Marshal error.
 		metadata, _ := json.Marshal(struct {
 			Label string `json:"label"`
 		}{Label: filepath.ToSlash(filepath.Clean(s.Label))})
