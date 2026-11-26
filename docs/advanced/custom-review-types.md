@@ -181,17 +181,22 @@ configuration error; Roborev never substitutes the generic review prompt.
 ## Structured results and compatible agents
 
 Custom types require an agent with native JSON Schema output support. Roborev
-currently supports custom reviews with `codex`, `claude-code`, `pi`, and `grok`.
-If the resolved agent lacks that capability, Roborev rejects the review before
-enqueue instead of storing a job that can only fail or falling back to
-unconstrained prose.
+currently supports custom reviews with `codex`, `claude-code`, `pi`, `grok`, and
+`gemini` when it runs the `agy` CLI. ACP agents and the legacy `gemini` CLI have
+no schema option. If the resolved agent lacks that capability, Roborev rejects
+the review before enqueue instead of storing a job that can only fail or falling
+back to unconstrained prose. `roborev config validate` applies the same check to
+each custom type, each panel member, and each `[ci]` review matrix entry when no
+CI panel is set, including their backup agents. It also checks the config each
+experiment produces, enabled or not. A configuration fails validation before a
+post-commit hook or the CI poller tries to queue it.
 
 Roborev does not impose one shared minimum version across those independent
 CLIs. The installed command must support the schema mechanism used by its
-adapter: `--output-schema` for Codex, `--json-schema` for Claude Code and Grok,
-and the `pi-json-schema` extension for Pi. An unsupported flag or missing Pi
-extension is reported as an agent execution error; update the CLI or install the
-extension before retrying the review.
+adapter: `--output-schema` for Codex, `--json-schema` for Claude Code, Grok, and
+`agy` (1.1.8 or later), and the `pi-json-schema` extension for Pi. An
+unsupported flag or missing Pi extension is reported as an agent execution
+error; update the CLI or install the extension before retrying the review.
 
 The schema is fixed by roborev. The agent must return:
 

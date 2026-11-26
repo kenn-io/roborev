@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -359,6 +360,168 @@ default_panel = "shared"
 	err := validateConfigForScope(env.Resolver, scopeMerged)
 
 	require.NoError(t, err)
+}
+
+func TestValidateConfigForScopeRejectsCustomTypeOnAgentWithoutSchemaOutput(t *testing.T) {
+	const reviewType = `
+[review.types.ux]
+template = "ux.md"
+`
+	tests := []struct {
+		name    string
+		global  string
+		path    []string
+		wantErr string
+	}{
+		{
+			name: "ACP panel member",
+			global: reviewType + `
+[acp.agy]
+command = "agy"
+args = ["acp", "--disable-telemetry"]
+model = "gemini-4-neon"
+
+[review.subagents.ux]
+agent = "acp.agy"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+`,
+			wantErr: `panel "full" member "ux": agent "acp.agy" does not support schema-constrained reviews`,
+		},
+		{
+			name: "review type agent",
+			global: `
+[review.types.ux]
+template = "ux.md"
+agent = "kilo"
+`,
+			wantErr: `review type "ux": agent "kilo" does not support schema-constrained reviews`,
+		},
+		{
+			name: "member backup agent",
+			global: `default_backup_agent = "kilo"
+` + reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+`,
+			wantErr: `panel "full" member "ux": invalid backup agent: agent "kilo" does not support schema-constrained reviews`,
+		},
+		{
+			name: "gemini resolved to the legacy CLI",
+			global: `
+[review.types.ux]
+template = "ux.md"
+agent = "gemini"
+`,
+			path:    []string{"gemini"},
+			wantErr: `review type "ux": agent "gemini" does not support schema-constrained reviews`,
+		},
+		{
+			name: "gemini resolved to agy",
+			global: `
+[review.types.ux]
+template = "ux.md"
+agent = "gemini"
+`,
+			path: []string{"agy", "gemini"},
+		},
+		{
+			name: "uninstalled gemini backup configured for agy",
+			global: `default_backup_agent = "gemini"
+gemini_cmd = "agy"
+` + reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+`,
+		},
+		{
+			name: "CI review matrix agent",
+			global: reviewType + `
+[ci.reviews]
+kilo = ["ux"]
+`,
+			wantErr: `ci review type "ux": agent "kilo" does not support schema-constrained reviews`,
+		},
+		{
+			name: "CI review matrix unused while a CI panel is set",
+			global: reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+
+[ci]
+panel = "full"
+
+[ci.reviews]
+kilo = ["ux"]
+`,
+		},
+		{
+			name: "disabled experiment moves panel member to kilo",
+			global: reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+
+[experiments.try-kilo]
+enabled = false
+ratio = 0.5
+workflows = ["review"]
+
+[experiments.try-kilo.config.review.subagents.ux]
+agent = "kilo"
+`,
+			wantErr: `experiment "try-kilo" config: panel "full" member "ux": agent "kilo" does not support schema-constrained reviews`,
+		},
+		{
+			name: "schema agent panel member",
+			global: reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin := t.TempDir()
+			for _, name := range tt.path {
+				if runtime.GOOS == "windows" {
+					name += ".exe"
+				}
+				require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+			}
+			t.Setenv("PATH", bin)
+			env := setupConfigEnv(t, tt.global, "")
+
+			err := validateConfigForScope(env.Resolver, scopeMerged)
+
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
 }
 
 func TestConfigValidateCommand(t *testing.T) {

@@ -191,8 +191,10 @@ Rules that matter:
     `~/.roborev/config.toml` only when the user wants the same review in every
     repository, and only with their approval.
 - Custom types need an agent with JSON Schema output: `codex`, `claude-code`,
-    `pi`, or `grok`. Pi also needs its `pi-json-schema` extension, which
-    validation and doctor do not check. Custom types do not inherit
+    `pi`, `grok`, or `gemini` running `agy` 1.1.8 or later. ACP agents and the
+    legacy `gemini` CLI cannot run them, and validation rejects a custom type
+    or panel member that resolves to one. Pi also needs its `pi-json-schema`
+    extension, which validation and doctor do not check. Custom types do not inherit
     `review_agent`. Their agent resolves from type-specific repository settings,
     the repository's generic `agent`, type-specific global settings, then global
     `default_agent` (or `codex` when none is set). Check the effective agent for
