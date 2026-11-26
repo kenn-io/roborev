@@ -432,6 +432,64 @@ agent = "gemini"
 			path: []string{"agy", "gemini"},
 		},
 		{
+			name: "uninstalled gemini backup configured for agy",
+			global: `default_backup_agent = "gemini"
+gemini_cmd = "agy"
+` + reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+`,
+		},
+		{
+			name: "CI review matrix agent",
+			global: reviewType + `
+[ci.reviews]
+kilo = ["ux"]
+`,
+			wantErr: `ci review type "ux": agent "kilo" does not support schema-constrained reviews`,
+		},
+		{
+			name: "CI review matrix unused while a CI panel is set",
+			global: reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+
+[ci]
+panel = "full"
+
+[ci.reviews]
+kilo = ["ux"]
+`,
+		},
+		{
+			name: "disabled experiment moves panel member to kilo",
+			global: reviewType + `
+[review.subagents.ux]
+agent = "codex"
+review_type = "ux"
+
+[review.panels.full]
+members = ["ux"]
+
+[experiments.try-kilo]
+enabled = false
+ratio = 0.5
+workflows = ["review"]
+
+[experiments.try-kilo.config.review.subagents.ux]
+agent = "kilo"
+`,
+			wantErr: `experiment "try-kilo" config: panel "full" member "ux": agent "kilo" does not support schema-constrained reviews`,
+		},
+		{
 			name: "schema agent panel member",
 			global: reviewType + `
 [review.subagents.ux]

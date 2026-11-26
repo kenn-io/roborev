@@ -4271,7 +4271,7 @@ func TestCIPollerProcessPR_RepoExperimentValidationFailureSetsConfigurationStatu
 				Config:    map[string]any{"not_review_config": true},
 			},
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 	require.Error(t, validationErr)
 	h.Poller.loadRepoConfigFn = func(string) (ciRepoConfigSource, error) {
 		return ciRepoConfigSource{}, validationErr

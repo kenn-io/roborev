@@ -713,7 +713,7 @@ func TestValidateExperimentConfigsMaterializesDisabledDefinitions(t *testing.T) 
 				Config:    map[string]any{"review_min_severity": "urgent"},
 			},
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "review_min_severity")
@@ -729,6 +729,7 @@ func TestValidateRepoExperimentConfigsAllowsEnablementOnlyOverride(t *testing.T)
 		map[string]any{"experiments": map[string]any{
 			"global-v1": map[string]any{"enabled": false},
 		}},
+		nil,
 	)
 
 	require.NoError(t, err)
@@ -757,7 +758,7 @@ func TestValidateExperimentConfigsRejectsMergedWorkflowConflict(t *testing.T) {
 		"review-b-v1": map[string]any{"enabled": true},
 	}}
 
-	err := ValidateExperimentConfigs(global, repo, rawRepo)
+	err := ValidateExperimentConfigs(global, repo, rawRepo, nil)
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "review-a-v1")
@@ -842,7 +843,7 @@ func TestValidateExperimentConfigsRejectsSemanticOverlayErrors(t *testing.T) {
 						Config: tt.overlay,
 					},
 				},
-			}, nil, nil)
+			}, nil, nil, nil)
 
 			require.Error(t, err)
 			require.ErrorContains(t, err, tt.want)

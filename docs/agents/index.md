@@ -299,7 +299,8 @@ the same way Claude Code and Grok do, so the Gemini agent can run
 [custom review types](../advanced/custom-review-types.md) when it resolves to
 `agy`. The legacy `gemini` CLI has no schema option: it runs built-in review
 types and cannot run custom ones. `roborev config validate` reports a custom
-type or panel member that would resolve to it.
+type, panel member, or CI review that would resolve to it. A Gemini backup agent
+that is not installed counts as `agy` when `gemini_cmd` names `agy`.
 
 ## Pi Structured Output
 

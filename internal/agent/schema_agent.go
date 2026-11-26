@@ -121,7 +121,8 @@ func ValidateStructuredReviewBackup(
 // structuredReviewCandidate returns the agent a name would run as, without
 // requiring it to be installed. An installed agent carries the command it
 // resolved to, which decides schema support for Gemini (agy versus the legacy
-// gemini CLI); an uninstalled one is checked as registered.
+// gemini CLI); an uninstalled one is checked as registered, with its configured
+// command override, such as gemini_cmd = "agy".
 func structuredReviewCandidate(
 	name string, repoCfg *config.RepoConfig, globalCfg *config.Config,
 ) (Agent, error) {
@@ -131,17 +132,24 @@ func structuredReviewCandidate(
 	if isConfiguredACPAgentNameFromConfig(name, globalCfg, repoCfg) {
 		return configuredACPAgentFromConfig(name, repoCfg, globalCfg)
 	}
-	return Get(name)
+	registered, err := Get(name)
+	if err != nil {
+		return nil, err
+	}
+	return applyCommandOverrides(registered, globalCfg), nil
 }
 
 // ValidateStructuredReviewConfig rejects configuration that puts a custom
 // review type on an agent that cannot run schema-constrained reviews. It checks
-// each custom review type's own agent and each panel member, applying the
-// selection and backup checks that enqueue applies, so a configuration that
-// passes here does not fail later in the post-commit hook. Panels that do not
-// resolve are left to the panel validation that reports them.
+// each custom review type's own agent, each panel member, and, when no CI
+// panel is set, each entry of the CI review matrix, applying the selection and
+// backup checks that enqueue and the CI poller apply, so a configuration that
+// passes here does not fail later in the post-commit hook or CI poller. Panels
+// that do not resolve are left to the panel validation that reports them.
+// rawRepo is the repository config as written, which decides whether its CI
+// matrix settings override the global ones.
 func ValidateStructuredReviewConfig(
-	repoCfg *config.RepoConfig, globalCfg *config.Config,
+	repoCfg *config.RepoConfig, globalCfg *config.Config, rawRepo map[string]any,
 ) error {
 	merged := config.MergeReviewConfigFromConfig(repoCfg, globalCfg)
 	var errs []error
@@ -169,6 +177,23 @@ func ValidateStructuredReviewConfig(
 			); err != nil {
 				errs = append(errs, fmt.Errorf(
 					"panel %q member %q: %w", panel, m.Name, err,
+				))
+			}
+		}
+	}
+	if config.ResolveCIPanelName(repoCfg, globalCfg) == "" {
+		for _, entry := range config.ResolveCIReviewMatrix(repoCfg, rawRepo, globalCfg) {
+			reasoning, err := config.ResolveCIMatrixMemberReasoning(
+				repoCfg, globalCfg, entry.ReviewType,
+			)
+			if err != nil {
+				continue
+			}
+			if err := validateStructuredReviewWorkflow(
+				entry.Agent, entry.ReviewType, reasoning, repoCfg, globalCfg,
+			); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"ci review type %q: %w", entry.ReviewType, err,
 				))
 			}
 		}

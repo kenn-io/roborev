@@ -303,6 +303,86 @@ func (c *RepoCIConfig) ResolvedReviewMatrix() []AgentReviewType {
 	return nil
 }
 
+// ResolveCIReviewMatrix returns the (agent, reviewType) pairs the CI poller
+// reviews a pull request with when no CI panel is configured, applying repo
+// overrides over global config. Review types are canonicalized and pairs that
+// collapse to the same (agent, type) are deduplicated. A repo [ci.reviews] is
+// authoritative even when empty (disables reviews).
+func ResolveCIReviewMatrix(
+	repoCfg *RepoConfig, rawRepoCfg map[string]any, globalCfg *Config,
+) []AgentReviewType {
+	var matrix []AgentReviewType
+	if globalCfg != nil {
+		matrix = globalCfg.CI.ResolvedReviewMatrix()
+	}
+	if repoCfg != nil {
+		switch {
+		case ExperimentOverridesCIReviews(repoCfg):
+			matrix = repoCfg.CI.ResolvedReviewMatrix()
+		case ExperimentOverridesCIFlatMatrix(repoCfg):
+			matrix = matrixFromFlatOverrides(repoCfg, globalCfg)
+		case IsKeyInTOMLFile(rawRepoCfg, "ci.reviews"):
+			matrix = repoCfg.CI.ResolvedReviewMatrix()
+		case IsKeyInTOMLFile(rawRepoCfg, "ci.agents") ||
+			IsKeyInTOMLFile(rawRepoCfg, "ci.review_types"):
+			matrix = matrixFromFlatOverrides(repoCfg, globalCfg)
+		}
+	}
+	return canonicalizeMatrix(matrix)
+}
+
+// ResolveCIMatrixMemberReasoning returns the reasoning level the CI poller
+// runs one review type of the CI matrix at. A repo [ci].reasoning applies to
+// every type, falling back to "thorough" when it is invalid, unless a project
+// panel reasoning override is set; otherwise each type resolves its own level.
+func ResolveCIMatrixMemberReasoning(
+	repoCfg *RepoConfig, globalCfg *Config, reviewType string,
+) (string, error) {
+	if globalCfg.PanelReasoningOverride() == "" && repoCfg != nil &&
+		strings.TrimSpace(repoCfg.CI.Reasoning) != "" {
+		reasoning, err := ResolveCIReasoning("", repoCfg, globalCfg)
+		if err != nil {
+			return "thorough", nil
+		}
+		return reasoning, nil
+	}
+	return ResolveCIReviewReasoningForType("", repoCfg, globalCfg, reviewType)
+}
+
+// matrixFromFlatOverrides builds the matrix from the repo's flat agents/
+// review_types lists, falling back to global lists for the unset dimension.
+func matrixFromFlatOverrides(repoCfg *RepoConfig, globalCfg *Config) []AgentReviewType {
+	reviewTypes := ResolveCIReviewTypes("", repoCfg, globalCfg)
+	agents := ResolveCIAgents("", repoCfg, globalCfg)
+	matrix := make([]AgentReviewType, 0, len(reviewTypes)*len(agents))
+	for _, rt := range reviewTypes {
+		for _, ag := range agents {
+			matrix = append(matrix, AgentReviewType{Agent: ag, ReviewType: rt})
+		}
+	}
+	return matrix
+}
+
+// canonicalizeMatrix canonicalizes review types (e.g. "review" -> "default")
+// and removes entries that collapse to the same (agent, type) pair.
+func canonicalizeMatrix(matrix []AgentReviewType) []AgentReviewType {
+	seen := make(map[string]bool, len(matrix))
+	canonical := matrix[:0]
+	for _, m := range matrix {
+		rt := m.ReviewType
+		if rt != "" && IsDefaultReviewType(rt) {
+			rt = ReviewTypeDefault
+		}
+		key := m.Agent + "|" + rt
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		canonical = append(canonical, AgentReviewType{Agent: m.Agent, ReviewType: rt})
+	}
+	return canonical
+}
+
 // reviewsMapToMatrix converts a Reviews map to a sorted slice of
 // AgentReviewType pairs. Agents are sorted alphabetically; review
 // types preserve their declared order within each agent.

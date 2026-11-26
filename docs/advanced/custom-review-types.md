@@ -186,8 +186,10 @@ currently supports custom reviews with `codex`, `claude-code`, `pi`, `grok`, and
 no schema option. If the resolved agent lacks that capability, Roborev rejects
 the review before enqueue instead of storing a job that can only fail or falling
 back to unconstrained prose. `roborev config validate` applies the same check to
-each custom type and panel member, so the configuration fails validation before
-a post-commit hook tries to queue it.
+each custom type, each panel member, and each `[ci]` review matrix entry when no
+CI panel is set, including their backup agents. It also checks the config each
+experiment produces, enabled or not. A configuration fails validation before a
+post-commit hook or the CI poller tries to queue it.
 
 Roborev does not impose one shared minimum version across those independent
 CLIs. The installed command must support the schema mechanism used by its
