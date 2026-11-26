@@ -1338,6 +1338,8 @@ func TestCodexSandboxLogDir(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	for _, tc := range []struct{ name, dir, label string }{
 		{"empty label", logs, ""},
+		{"leading whitespace label", logs, " job"},
+		{"trailing whitespace label", logs, "job "},
 		{"absolute label", logs, work},
 		{"parent label", logs, "../outside"},
 		{"relative directory", "logs", "job"},

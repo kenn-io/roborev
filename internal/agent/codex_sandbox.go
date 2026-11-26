@@ -85,8 +85,8 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	}
 	homeDir, prefix := job.WorkDir, ".codex-home-"
 	if s.LogDir != "" {
-		if !filepath.IsAbs(s.LogDir) || !filepath.IsLocal(s.Label) {
-			return job, nil, fmt.Errorf("sandbox log directory must be absolute and label must be local")
+		if !filepath.IsAbs(s.LogDir) || !filepath.IsLocal(s.Label) || strings.TrimSpace(s.Label) != s.Label {
+			return job, nil, fmt.Errorf("sandbox log directory must be absolute and label must be trimmed and local")
 		}
 		for component := range strings.SplitSeq(filepath.Clean(s.Label), string(filepath.Separator)) {
 			if strings.HasPrefix(component, ".codex-run-v1-") {
@@ -123,13 +123,10 @@ wire_api = "responses"
 		return job, nil, err
 	}
 	if s.LogDir != "" {
-		metadata, err := json.Marshal(struct {
+		metadata, _ := json.Marshal(struct {
 			Label string `json:"label"`
 		}{Label: filepath.ToSlash(filepath.Clean(s.Label))})
-		if err == nil {
-			err = os.WriteFile(filepath.Join(home, "roborev.json"), metadata, 0o600)
-		}
-		if err != nil {
+		if err := os.WriteFile(filepath.Join(home, "roborev.json"), metadata, 0o600); err != nil {
 			cleanup()
 			return job, nil, err
 		}
