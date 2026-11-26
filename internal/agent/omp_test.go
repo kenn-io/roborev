@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -119,16 +120,42 @@ exit 1
 	assert.NotContains(t, err.Error(), "upgrade omp")
 }
 
-// A relative omp_cmd such as ./bin/omp runs from the repository, so the
-// version check must find the same file there.
-func TestOmpReviewRelativeCommand(t *testing.T) {
-	mock := mockAgentCLI(t, MockCLIOpts{Version: ompVersionOutput, StdoutLines: strings.Split(ompReviewStream, "\n")})
+// omp loads .env files from the directory it starts in, and a repository's
+// .env can set provider base URLs and keys. The version check and the run
+// start in an empty directory and reach the repository through --cwd.
+func TestOmpReviewStartsOutsideRepository(t *testing.T) {
 	repo := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(repo, "bin"), 0o755))
-	require.NoError(t, os.Symlink(mock.CmdPath, filepath.Join(repo, "bin", "omp")))
-	result, err := NewOmpAgent("./bin/omp").Review(t.Context(), repo, "HEAD", "review", nil)
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".env"), []byte("ANTHROPIC_BASE_URL=http://127.0.0.1:9\n"), 0o600))
+	logPath := filepath.Join(t.TempDir(), "log")
+	command := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+log='`+logPath+`'
+echo "start $(pwd)" >> "$log"
+test -e .env && echo env-visible >> "$log"
+if [ "$1" = --version ]; then echo `+ompVersionOutput+`; exit 0; fi
+prev=
+for arg in "$@"; do
+  [ "$prev" = --cwd ] && echo "cwd $arg" >> "$log"
+  prev="$arg"
+done
+cat <<'EOF'
+`+ompReviewStream+`
+EOF
+`)
+	_, err := NewOmpAgent(command).Review(t.Context(), repo, "HEAD", "review", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "No issues found.", result)
+
+	data, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	log := string(data)
+	assert := assert.New(t)
+	assert.NotContains(log, "env-visible")
+	assert.Contains(log, "cwd "+repo+"\n")
+	starts := regexp.MustCompile(`(?m)^start (.+)$`).FindAllStringSubmatch(log, -1)
+	require.Len(t, starts, 2, "the version check and the run")
+	assert.Equal(starts[0][1], starts[1][1], "the version check starts where the run does")
+	assert.NotEqual(repo, starts[0][1])
+	assert.NoDirExists(starts[0][1], "the launch directory is removed after the run")
 }
 
 func TestOmpReviewPromptAndOutput(t *testing.T) {

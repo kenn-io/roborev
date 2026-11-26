@@ -488,8 +488,16 @@ Muse uses its own model settings.
 
 [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) is a fork of Pi with its
 own tools, flags, and session store, so roborev runs it as a separate agent. Set
-`omp_cmd` in global config to use a custom binary path. The flags were verified
-against omp 19.2.1.
+`omp_cmd` in global config to a command name on `PATH` or an absolute path. The
+flags were verified against omp 19.2.1.
+
+roborev starts omp in an empty temporary directory and passes `--cwd` with the
+repository. omp loads the `.env` in the directory it starts in, so a
+repository's `.env` can't set omp's provider keys or base URLs. Tools, sessions,
+and context files such as `AGENTS.md` still use the repository. Put provider
+settings in the daemon's environment or in `~/.omp/agent/.env`. A version
+manager shim also resolves omp from the temporary directory, so an omp version
+pinned inside the repository doesn't apply.
 
 Reviews and planning run omp with a read-only tool allowlist:
 

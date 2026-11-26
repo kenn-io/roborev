@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"go.kenn.io/roborev/internal/procutil"
@@ -106,15 +108,24 @@ func (a *OmpAgent) PlanningCommandLine() string {
 }
 
 func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	// omp has no mode that ignores project configuration: it loads the
-	// checkout's .env, which can redirect provider requests and the
-	// credentials they carry, and reads its .omp/config.yml.
+	// omp has no mode that ignores project configuration: it reads the
+	// checkout's SYSTEM.md, which replaces its system prompt, and merges its
+	// .omp/config.yml.
 	if untrustedCheckout(ctx) {
 		return "", errors.New("omp cannot review an untrusted checkout: it has no mode that ignores project configuration")
 	}
+	// omp loads the .env in the directory it starts in (omp 19.2.1
+	// packages/utils/src/env.ts), before --cwd moves it into the repository.
+	// That file can set provider base URLs and keys, so omp starts in an
+	// empty directory.
+	launchDir, err := os.MkdirTemp("", "roborev-omp-")
+	if err != nil {
+		return "", fmt.Errorf("create omp launch directory: %w", err)
+	}
+	defer os.RemoveAll(launchDir)
 	agentic := effectiveAgentic(ctx, a.Agentic)
 	if !agentic {
-		if err := ompCheckReadOnlyVersion(ctx, a.Command, repoPath); err != nil {
+		if err := ompCheckReadOnlyVersion(ctx, a.Command, launchDir); err != nil {
 			return "", err
 		}
 	}
@@ -125,13 +136,19 @@ func (a *OmpAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 		return "", err
 	}
 	defer cleanup()
-	args := append(a.buildArgs(agentic),
+	// --cwd is resolved against the launch directory, so it gets an absolute
+	// path.
+	workDir, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve omp working directory: %w", err)
+	}
+	args := append(a.buildArgs(agentic), "--cwd", workDir,
 		"@"+promptPath, "Please follow the instructions in the attached file to review the code.")
 
 	var stream ompStream
 	result, err := runStreamingCLI(ctx, streamingCLISpec{
 		Name: "omp", Command: a.Command, Args: args,
-		Dir: repoPath, Output: output, StreamStderr: true, DrainStdout: true,
+		Dir: launchDir, Output: output, StreamStderr: true, DrainStdout: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
 			if err := scanStreamJSONLines(r, sw, stream.observe); err != nil {
 				return stream.Text, fmt.Errorf("read omp stream: %w", err)
@@ -231,12 +248,11 @@ func ompStopReason(line string) string {
 // that honors --no-tools. omp prints its version as "omp/19.2.1". The probe
 // runs before every read-only run, not from a cache keyed on the command
 // file: a wrapper script or a version manager shim can switch the omp behind
-// an unchanged file, or pin a different omp per directory. It is set up like
-// the run, not as a capability probe from the temp directory, so it resolves
-// the same command from the same directory.
-func ompCheckReadOnlyVersion(ctx context.Context, command, repoPath string) error {
+// an unchanged file, or pick a version by directory. It starts in launchDir
+// with the run's environment, so it resolves the same omp as the run.
+func ompCheckReadOnlyVersion(ctx context.Context, command, launchDir string) error {
 	cmd := exec.CommandContext(ctx, command, "--version")
-	cmd.Dir = repoPath
+	cmd.Dir = launchDir
 	configureSubprocess(ctx, cmd)
 	out, err := cmd.Output()
 	if err != nil {

@@ -1697,7 +1697,7 @@ Local reviews of your own commits are unchanged.
 | Copilot | Removes `COPILOT_ALLOW_ALL` and the `GITHUB_COPILOT_PROMPT_MODE_*` variables. Prompt mode then skips repository hooks and workspace MCP servers. A folder you trusted before is still trusted. |
 | Kilo | Sets `KILO_DISABLE_PROJECT_CONFIG=1`, which skips project config, plugins, and MCP servers. |
 | Muse | Already runs non-agentic reviews in a private home without trusted workspaces. |
-| omp | Fails the review. omp has no way to skip the checkout's configuration: it loads the checkout's `.env`, which can send provider requests, with your credentials, to another host. |
+| omp | Fails the review. omp has no way to skip the checkout's configuration: the checkout's `SYSTEM.md` replaces omp's system prompt, and its `.omp/config.yml` changes omp's settings. |
 
 Some agents have no way to skip project configuration. Do not use them to review
 pull requests from authors you do not trust:
