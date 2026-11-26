@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -120,6 +121,18 @@ wire_api = "responses"
 	if err != nil {
 		cleanup()
 		return job, nil, err
+	}
+	if s.LogDir != "" {
+		metadata, err := json.Marshal(struct {
+			Label string `json:"label"`
+		}{Label: filepath.ToSlash(filepath.Clean(s.Label))})
+		if err == nil {
+			err = os.WriteFile(filepath.Join(home, "roborev.json"), metadata, 0o600)
+		}
+		if err != nil {
+			cleanup()
+			return job, nil, err
+		}
 	}
 	job.Env = append(append([]string{}, job.Env...), "CODEX_HOME="+home)
 	return job, cleanup, nil
