@@ -86,7 +86,7 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	homeDir, prefix := job.WorkDir, ".codex-home-"
 	if s.LogDir != "" {
 		label := filepath.Clean(s.Label)
-		if !filepath.IsAbs(s.LogDir) || !filepath.IsLocal(s.Label) || strings.TrimSpace(label) != label {
+		if !filepath.IsAbs(s.LogDir) || !filepath.IsLocal(s.Label) || strings.TrimSpace(s.Label) != s.Label || strings.TrimSpace(label) != label {
 			return job, nil, fmt.Errorf("sandbox log directory must be absolute and label must be trimmed and local")
 		}
 		for component := range strings.SplitSeq(label, string(filepath.Separator)) {
