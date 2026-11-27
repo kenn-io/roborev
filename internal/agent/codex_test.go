@@ -1338,6 +1338,9 @@ func TestCodexSandboxLogDir(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	for _, tc := range []struct{ name, dir, label string }{
 		{"empty label", logs, ""},
+		{"leading whitespace label", logs, " job"},
+		{"trailing whitespace label", logs, "job "},
+		{"cleaned whitespace label", logs, "./  /."},
 		{"absolute label", logs, work},
 		{"parent label", logs, "../outside"},
 		{"relative directory", "logs", "job"},
@@ -1358,6 +1361,9 @@ func TestCodexSandboxLogDir(t *testing.T) {
 		assert.Equal(t, filepath.Join(logs, "nested", "job"), filepath.Dir(home))
 		assert.True(t, strings.HasPrefix(filepath.Base(home), ".codex-run-v1-"))
 		assert.Contains(t, job.Env, "CODEX_HOME="+home)
+		metadata, err := os.ReadFile(filepath.Join(home, "roborev.json"))
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"label":"nested/job"}`, string(metadata))
 		if i == 0 {
 			sessions := filepath.Join(home, "sessions")
 			require.NoError(t, os.Mkdir(sessions, 0o700))
@@ -1375,5 +1381,13 @@ func TestCodexSandboxLogDir(t *testing.T) {
 	job, cleanup, err := (&CodexSandbox{Job: sandbox.Job{WorkDir: work}}).prepare(work)
 	require.NoError(t, err)
 	assert.Empty(t, job.WritePaths)
+	var home string
+	for _, env := range job.Env {
+		if value, ok := strings.CutPrefix(env, "CODEX_HOME="); ok {
+			home = value
+		}
+	}
+	require.NotEmpty(t, home)
+	assert.NoFileExists(t, filepath.Join(home, "roborev.json"))
 	cleanup()
 }

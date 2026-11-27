@@ -1255,7 +1255,8 @@ set, it takes priority over the matrix fields for that repo.
 
 Each run keeps its Codex home under `check_log_dir/<label>/.codex-run-v1-*/`. CI
 uses `job-<id>` as the default label. Session logs are in the `sessions/`
-directory there. Label components may not begin with the reserved
+directory there, and `roborev.json` records the label as `{"label":"team/case"}`
+for AgentsView to read. Label components may not begin with the reserved
 `.codex-run-v1-` prefix. Roborev does not prune these files.
 
 When `agents` is empty, the poller auto-detects the first available agent from:
