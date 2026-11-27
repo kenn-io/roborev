@@ -139,9 +139,6 @@ func formatSingleResult(
 	var foldAt *CommentFold
 	if commentConfig != nil {
 		prepared := PrepareComment(*commentConfig, r)
-		if prepared.structured {
-			passed = prepared.IsClean()
-		}
 		output, foldAt = FormatCommentWithFold(prepared)
 	}
 	var header string

@@ -830,7 +830,7 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 		showAll bool
 		heading string
 	}{
-		{"folded", StructuredFinding{Severity: "medium", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Passed"},
+		{"folded", StructuredFinding{Severity: "medium", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Complete"},
 		{"show all", StructuredFinding{Severity: "low", Problem: "Low finding", Fix: "Fix"}, true, "Review Passed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -839,6 +839,10 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 			require.NoError(t, err)
 			assert.Contains(t, result.GitHubComment, tc.heading)
 			assert.Contains(t, result.GitHubComment, tc.finding.Problem)
+			if !tc.showAll {
+				assert.Contains(t, result.GitHubComment, "<details>")
+				assert.Contains(t, result.GitHubComment, "Changes require fixes for 1 finding.")
+			}
 		})
 	}
 }

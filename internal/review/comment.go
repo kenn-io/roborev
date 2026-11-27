@@ -100,6 +100,9 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				comment.omitted++
 				continue
 			}
+			if config.SeverityRank(finding.Severity) >= verdictThreshold {
+				comment.actionable++
+			}
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
 			if fold && finding.Nit {
 				comment.nits = append(comment.nits, item)
@@ -107,9 +110,6 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				comment.unlikely = append(comment.unlikely, item)
 			} else {
 				comment.findings = append(comment.findings, item)
-				if config.SeverityRank(finding.Severity) >= verdictThreshold {
-					comment.actionable++
-				}
 			}
 		}
 	} else {

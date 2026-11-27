@@ -104,7 +104,7 @@ func TestCommentCleanMetadata(t *testing.T) {
 func TestCommentCleanWithCappedFoldedFindings(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "First", Nit: true}, {Severity: "low", Problem: "Second", Nit: true}}}
 	prepared := PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &doc})
-	assert.True(t, prepared.IsClean())
+	assert.False(t, prepared.IsClean())
 }
 
 func FuzzCommentMaxFindings(f *testing.F) {
@@ -202,8 +202,8 @@ func TestCommentFold(t *testing.T) {
 	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
 
 	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
-	assert.True(t, folded.IsClean())
-	assert.Contains(t, FormatComment(folded), "No findings need fixes before merge")
+	assert.False(t, folded.IsClean())
+	assert.Contains(t, FormatComment(folded), "Changes require fixes for 2 findings.")
 	visible := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: []StructuredFinding{
 		{Severity: "high", Problem: "high rare", Unlikely: true},
 		{Severity: "critical", Problem: "critical rare", Unlikely: true},

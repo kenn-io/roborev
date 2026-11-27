@@ -902,7 +902,7 @@ finding.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
 synthesis has no findings after filtering, even if the stored review has
-findings. A comment with only folded findings is also suppressed.
+findings. Folded findings at or above the severity floor remain publishable.
 Severity-parsed prose is also silent when no labelled findings or unlabelled
 blocks survive. Verbatim prose and legacy Markdown remain publishable, even if
 their text says the review is clean. Roborev does not infer cleanliness from
