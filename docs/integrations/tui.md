@@ -430,6 +430,7 @@ The review detail view shows:
 Review #42 myrepo (codex: gpt-5.5)
 /path/to/repo abc1234 on feature-branch
 Review type: default | Reasoning: xhigh Verdict: Pass [CLOSED]
+Queued: 2026-11-20 15:00 | Finished: 2026-11-20 15:04 | Took: 3m12s
 ```
 
 - **Line 1**: Review identity: job ID, repo name, agent and model (if explicitly
@@ -437,6 +438,8 @@ Review type: default | Reasoning: xhigh Verdict: Pass [CLOSED]
 - **Line 2**: Location: repo path, git ref, branch
 - **Line 3**: Review type, recorded reasoning, verdict and closed state. Missing
     reasoning displays as `—`.
+- **Line 4**: Timing: when the job was queued and finished, in local time, and
+    how long it ran. A job still running shows its start time instead.
 
 ## Verdicts
 

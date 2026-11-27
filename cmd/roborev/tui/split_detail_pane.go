@@ -21,9 +21,9 @@ const reviewFixPanelPaneReserve = 5
 
 // reviewPaneHeaderLines returns the compact header lines rendered above the
 // markdown body in the split detail pane: title, an optional verdict/closed/
-// tokens line, and a trailing blank separator. renderReviewPaneBody and
-// reviewPaneScrollInfo both call this so their header-height accounting can
-// never drift apart.
+// tokens line, an optional timing line, and a trailing blank separator.
+// renderReviewPaneBody and reviewPaneScrollInfo both call this so their
+// header-height accounting can never drift apart.
 func (m model) reviewPaneHeaderLines(innerW int) []string {
 	review := m.currentReview
 	if review == nil || review.Job == nil {
@@ -59,6 +59,9 @@ func (m model) reviewPaneHeaderLines(innerW int) []string {
 	}
 	if len(verdictParts) > 0 {
 		out = append(out, xansi.Truncate(strings.Join(verdictParts, " "), innerW, ""))
+	}
+	if timing := m.reviewTimingMetadata(*review.Job); timing != "" {
+		out = append(out, xansi.Truncate(statusStyle.Render(timing), innerW, ""))
 	}
 	out = append(out, "")
 	return out

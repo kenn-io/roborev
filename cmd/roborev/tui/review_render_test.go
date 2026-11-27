@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"charm.land/lipgloss/v2"
@@ -476,6 +477,21 @@ func TestRenderReviewShowsReviewType(t *testing.T) {
 	out := stripANSI(m.renderReviewView())
 
 	assert.Contains(t, out, "Review type: project-conventions")
+}
+
+func TestReviewDetailsShowTiming(t *testing.T) {
+	t.Parallel()
+	enqueued := time.Date(2026, 11, 20, 15, 0, 0, 0, time.Local)
+	started := enqueued.Add(time.Minute)
+	finished := started.Add(3*time.Minute + 12*time.Second)
+	job := makeJob(42, withStartedAt(started), withFinishedAt(&finished))
+	job.EnqueuedAt = enqueued
+	m := setupRenderModel(viewReview, makeReview(1, &job, withReviewOutput("Review output")))
+	m.width, m.height = 120, 30
+
+	want := "Queued: 2026-11-20 15:00 | Finished: 2026-11-20 15:04 | Took: 3m12s"
+	assert.Contains(t, stripANSI(m.renderReviewView()), want)
+	assert.Contains(t, stripANSI(strings.Join(m.reviewPaneHeaderLines(120), "\n")), want)
 }
 
 func TestReviewDetailsIdentifyPanelMember(t *testing.T) {

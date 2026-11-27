@@ -297,7 +297,7 @@ func TestVimNavigationSplitReviewPageAndBottom(t *testing.T) {
 	m.currentView, m.focus = viewReview, focusDetail
 	m.reviewFixPanelOpen = true // unfocused panel reduces the visible body
 	m, _ = pressKey(m, 'd')
-	assert.Equal(t, 26, m.reviewScroll, "pane body excludes borders, chrome, header and fix panel")
+	assert.Equal(t, 25, m.reviewScroll, "pane body excludes borders, chrome, header and fix panel")
 	m, _ = pressKey(m, 'G')
 	assert.Contains(t, m.viewContent(), "LASTLINE")
 	m, _ = pressKey(m, 'g')

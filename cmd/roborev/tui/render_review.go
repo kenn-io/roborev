@@ -82,6 +82,25 @@ func reviewTypeMetadata(job storage.ReviewJob) string {
 	return label
 }
 
+// reviewTimingMetadata returns when the job was queued and finished, and how
+// long it ran, or "" when the job carries no timestamps.
+func (m model) reviewTimingMetadata(job storage.ReviewJob) string {
+	const layout = "2006-01-02 15:04"
+	var parts []string
+	if !job.EnqueuedAt.IsZero() {
+		parts = append(parts, "Queued: "+job.EnqueuedAt.Local().Format(layout))
+	}
+	if job.FinishedAt != nil {
+		parts = append(parts, "Finished: "+job.FinishedAt.Local().Format(layout))
+	} else if job.StartedAt != nil {
+		parts = append(parts, "Started: "+job.StartedAt.Local().Format(layout))
+	}
+	if elapsed := m.jobElapsedCell(job); elapsed != "" {
+		parts = append(parts, "Took: "+elapsed)
+	}
+	return strings.Join(parts, " | ")
+}
+
 func (m model) renderReviewView() string {
 	var b strings.Builder
 
@@ -167,6 +186,14 @@ func (m model) renderReviewView() string {
 		b.WriteString(metadataLine)
 		b.WriteString("\x1b[K") // Clear to end of line
 		b.WriteString("\n")
+		if timing := m.reviewTimingMetadata(*review.Job); timing != "" {
+			timingLine := statusStyle.Render(timing)
+			if m.width > 0 {
+				timingLine = xansi.Truncate(timingLine, m.width, "")
+			}
+			b.WriteString(timingLine)
+			b.WriteString("\x1b[K\n")
+		}
 	} else {
 		title = "Review"
 		titleLen = len(title)
@@ -215,6 +242,9 @@ func (m model) renderReviewView() string {
 	headerHeight := titleLines + locationLines + 1 + helpLines
 	if review.Job != nil {
 		headerHeight++ // Review type/verdict/closed/tokens line
+		if m.reviewTimingMetadata(*review.Job) != "" {
+			headerHeight++
+		}
 	}
 	panelReserve := 0
 	if m.reviewFixPanelOpen {
