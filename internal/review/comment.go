@@ -106,7 +106,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				comment.omitted++
 				continue
 			}
-			if config.SeverityRank(finding.Severity) >= verdictThreshold {
+			if !fold && config.SeverityRank(finding.Severity) >= verdictThreshold {
 				comment.actionable++
 			}
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
@@ -200,7 +200,7 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 		out.WriteString("**Verdict:** Changes require fixes before merge.")
 	}
 	folded := len(comment.nits) + len(comment.unlikely)
-	fmt.Fprintf(&out, "\n\n%d findings shown; %d folded (nits/unlikely)", len(comment.findings)+folded, folded)
+	fmt.Fprintf(&out, "\n\n%d findings shown; %d folded (nits/unlikely)", len(comment.findings), folded)
 	for _, severity := range []string{"critical", "high", "medium", "low"} {
 		heading := false
 		for _, finding := range comment.findings {
