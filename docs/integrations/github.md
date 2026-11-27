@@ -898,11 +898,13 @@ finding inline, ignoring the comment severity and confidence floors and finding
 cap. The setting also applies to structured GitHub comments from
 `roborev ci review`, including structured raw fallback comments. Text-only and
 legacy comments keep their existing filters. Stored reviews retain every
-finding.
+finding. Comments show the review verdict and counts of inline and folded
+findings.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
-synthesis has no findings after filtering, even if the stored review has
-findings. Folded findings at or above the severity floor remain publishable.
+synthesis has no inline findings at or above the severity floor after filtering,
+even if the stored review has findings. Folded findings alone do not create a
+comment.
 Severity-parsed prose is also silent when no labelled findings or unlabelled
 blocks survive. Verbatim prose and legacy Markdown remain publishable, even if
 their text says the review is clean. Roborev does not infer cleanliness from
