@@ -890,8 +890,8 @@ saving, or reloading configuration. If confidence removes a finding that passed
 the severity filter and no findings remain, the comment says "No findings match
 the comment filters." Confidence does not filter prose.
 
-By default, structured CI comments apply the severity and confidence floors and finding cap,
-then fold nits and unlikely findings into a collapsible section.
+By default, structured CI comments apply the severity and confidence floors and
+finding cap, then fold nits and unlikely findings into a collapsible section.
 High, Critical, and security findings remain in the main list. Set
 `comment_show_all = true` globally or per repository to show every structured
 finding inline, ignoring the comment severity and confidence floors and finding
@@ -904,21 +904,19 @@ Set `comment_when_clean = false` to avoid creating a comment when structured
 synthesis has no findings after filtering, even if the stored review has
 findings. A comment with only folded findings is also suppressed.
 Severity-parsed prose is also silent when no labelled findings or unlabelled
-blocks survive. Verbatim prose and legacy Markdown remain
-publishable, even if their text says the review is clean. Roborev does not infer
-cleanliness from text or the stored verdict. With `upsert_comments = true`,
-silent reviews update an existing marker comment to the no-findings line.
-Missing or deleted comments are successful no-ops; cleanup never creates a
-replacement. Permission and transient delivery errors keep the normal error and
-retry behavior.
+blocks survive. Verbatim prose and legacy Markdown remain publishable, even if
+their text says the review is clean. Roborev does not infer cleanliness from
+text or the stored verdict. With `upsert_comments = true`, silent reviews update
+an existing marker comment to the no-findings line. Missing or deleted comments
+are successful no-ops; cleanup never creates a replacement. Permission and
+transient delivery errors keep the normal error and retry behavior.
 
 All four settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
 explicit repo cap of `0` restores unlimited findings; a confidence floor of `0`
-disables a global floor; an explicit `true` restores clean comments.
-The other display settings apply only to synthesized GitHub daemon comments.
-Raw member fallback diagnostics, daemon-free `roborev ci`, and GitLab keep
-their existing behavior.
-Complete stored reviews, verdicts, prompts, and execution statuses are
+disables a global floor; an explicit `true` restores clean comments. The other
+display settings apply only to synthesized GitHub daemon comments. Raw member
+fallback diagnostics, daemon-free `roborev ci`, and GitLab keep their existing
+behavior. Complete stored reviews, verdicts, prompts, and execution statuses are
 unchanged. Unlike these display settings, `ci.min_severity` also controls the
 synthesis verdict.
 
