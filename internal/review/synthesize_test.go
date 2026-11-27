@@ -838,6 +838,15 @@ func TestSingleResultTruncationPreservesVisibleExample(t *testing.T) {
 	assert.Contains(t, got, CommentTruncSuffix)
 }
 
+func TestSingleResultTruncatesWithoutFold(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "high", Problem: strings.Repeat("x", MaxCommentLen), Fix: "Fix it."}}}
+	result := ReviewResult{Structured: &doc, Output: doc.Markdown("")}
+	comment := formatSingleResult(result, "abcdef123456", &CommentConfig{})
+	assert.LessOrEqual(t, len(CommentMarker)+1+len(comment), MaxCommentLen)
+	assert.Contains(t, comment, CommentTruncSuffix)
+	assert.Greater(t, len(formatSingleResult(result, "abcdef123456", nil)), MaxCommentLen)
+}
+
 func TestSynthesizedCommentKeepsFoldClosedAtTransportLimit(t *testing.T) {
 	doc := StructuredReview{Summary: "combined", Verdict: "fail", Findings: []StructuredFinding{{Severity: "medium", Kind: "improvement", Confidence: .8, Nit: true, Problem: strings.Repeat("x", MaxCommentLen), Fix: "Rename", Sources: []int{1, 2}}}}
 	raw, err := json.Marshal(doc)

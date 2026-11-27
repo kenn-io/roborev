@@ -155,7 +155,7 @@ func formatSingleResult(
 			gitrepo.ShortSHA(headSHA))
 	}
 
-	if foldAt >= 0 {
+	if commentConfig != nil {
 		output = TruncateCommentTo(output, foldAt, MaxCommentLen-len(CommentMarker)-1-len(header), CommentTruncSuffix)
 	}
 	return header + output
