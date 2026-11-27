@@ -1,14 +1,11 @@
 package review
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yuin/goldmark/v2/parser"
-	"github.com/yuin/goldmark/v2/renderer/html"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -210,64 +207,14 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 }
 
 func TestTruncateCommentFold(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Nit: true, Problem: "Issue\n\n```go\n" + strings.Repeat("code\n", 100) + "```"}}}
-	body, foldAt := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	const suffix = "\n\nfooter"
-	summaryEnd := strings.Index(body, "</summary>") + len("</summary>")
-	for _, tc := range []struct {
-		name        string
-		limit       int
-		wantDetails bool
-	}{
-		{"inside fenced block", strings.Index(body, "```go") + len("```go") + 2 + len(foldClosing) + len(suffix), true},
-		{"inside summary", summaryEnd - 1 + len(foldClosing) + len(suffix), false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := TruncateCommentTo(body, foldAt, tc.limit, suffix)
-			var rendered bytes.Buffer
-			source := []byte(got)
-			require.NoError(t, html.New(html.WithUnsafe()).Render(&rendered, source, parser.New().Parse(source)))
-			if tc.wantDetails {
-				assert.Contains(t, rendered.String(), "</details>")
-				assert.NotContains(t, got, "```go")
-			} else {
-				assert.NotContains(t, got, "<details>")
-				assert.Equal(t, body[:foldAt.Start]+suffix, got)
-			}
-			assert.LessOrEqual(t, len(got), tc.limit)
-			assert.True(t, strings.HasSuffix(got, suffix))
-		})
-	}
-}
-
-func TestTruncateCommentKeepsCompleteFoldedFindings(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "low", Nit: true, Problem: "First finding.\n\n```go\n- looks like a finding\n```", Fix: "First fix."},
-		{Severity: "low", Nit: true, Problem: "Second finding.", Fix: "Second fix."},
-		{Severity: "low", Unlikely: true, Problem: "Third finding." + strings.Repeat(" long", 100), Fix: "Third fix."},
-	}}
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Nit: true, Problem: strings.Repeat("finding ", 100)}}}
 	body, fold := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	require.Len(t, fold.Ends, 4)
 	const suffix = "\n\nfooter"
-	for _, tc := range []struct {
-		name   string
-		budget int
-		end    int
-	}{
-		{"inside first", fold.Ends[1] - 1, 0},
-		{"exact first", fold.Ends[1], 1},
-		{"inside second", fold.Ends[2] - 1, 1},
-		{"exact second", fold.Ends[2], 2},
-		{"inside third group", (fold.Ends[2] + fold.Ends[3]) / 2, 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			limit := tc.budget + len(foldClosing) + len(suffix)
-			got := TruncateCommentTo(body, fold, limit, suffix)
-			want := strings.TrimRight(body[:fold.Ends[tc.end]], "\n") + foldClosing + suffix
-			assert.Equal(t, want, got)
-			assert.LessOrEqual(t, len(got), limit)
-		})
-	}
+	limit := fold.Start + len("\n\n<details><summary>") + len(suffix)
+	got := TruncateCommentTo(body, fold, limit, suffix)
+	assert.Equal(t, body[:fold.Start]+suffix, got)
+	assert.Equal(t, strings.Count(got, "<details"), strings.Count(got, "</details>"))
+	assert.True(t, strings.HasSuffix(got, suffix))
 }
 
 func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
@@ -284,7 +231,7 @@ func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
 		want  string
 	}{
 		{"before fold", foldAt.Start - 5 + len(suffix), body[:foldAt.Start-5] + suffix},
-		{"inside fold", foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(foldClosing) + len(suffix), body[:foldAt.Start] + "\n\n<details><summary>1 nit hidden</summary>" + foldClosing + suffix},
+		{"inside fold", foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(suffix), body[:foldAt.Start] + suffix},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, TruncateCommentTo(body, foldAt, tc.limit, suffix))

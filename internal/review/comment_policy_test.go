@@ -203,7 +203,7 @@ func TestCommentFold(t *testing.T) {
 
 	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
 	assert.False(t, folded.IsClean())
-	assert.Contains(t, FormatComment(folded), "Changes require fixes for 2 findings.")
+	assert.Contains(t, FormatComment(folded), "Changes require fixes before merge.")
 	visible := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: []StructuredFinding{
 		{Severity: "high", Problem: "high rare", Unlikely: true},
 		{Severity: "critical", Problem: "critical rare", Unlikely: true},
@@ -226,7 +226,7 @@ func TestCommentShowAll(t *testing.T) {
 	showAll := FormatComment(PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high", MinConfidence: .95, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
 	assert.Contains(t, showAll, "filtered nit")
 	assert.Contains(t, showAll, "filtered rare")
-	assert.Contains(t, showAll, "2 findings")
+	assert.Contains(t, showAll, "4 findings shown; 0 folded")
 }
 
 func TestCommentShowAllKeepsReviewSeverityVerdict(t *testing.T) {
@@ -236,12 +236,12 @@ func TestCommentShowAllKeepsReviewSeverityVerdict(t *testing.T) {
 		clean    bool
 		verdict  string
 	}{
-		{"below floor", []StructuredFinding{{Severity: "low", Problem: "Low issue"}}, true, "No findings need fixes before merge."},
-		{"mixed", []StructuredFinding{{Severity: "low", Problem: "Low issue"}, {Severity: "high", Problem: "High issue"}}, false, "Changes require fixes for 1 finding."},
+		{"below floor", []StructuredFinding{{Severity: "low", Problem: "Low issue"}}, true, "No fixes needed before merge."},
+		{"mixed", []StructuredFinding{{Severity: "low", Problem: "Low issue"}, {Severity: "high", Problem: "High issue"}}, false, "Changes require fixes before merge."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := StructuredReview{Findings: tc.findings}
-			prepared := PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "medium"}, ReviewResult{Structured: &doc})
+			prepared := PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high"}, ReviewResult{Structured: &doc})
 			assert.Equal(t, tc.clean, prepared.IsClean())
 			body := FormatComment(prepared)
 			assert.Contains(t, body, tc.verdict)
@@ -269,7 +269,6 @@ func TestCommentFoldEscapesDetailsTags(t *testing.T) {
 		want               []string
 	}{
 		{"closing tags", "Before\n</details>\n- Outside", "</DETAILS >", []string{"&lt;/details&gt;", "&lt;/DETAILS &gt;"}},
-		{"code examples", "Use `</details>` in code. Outside </details> stays text.", "Example:\n\n```html\n<details open>\n</details>\n```", []string{"<code>&lt;/details&gt;</code>", "<code class=\"language-html\">&lt;details open&gt;\n&lt;/details&gt;\n</code>"}},
 		{"indented fix", "Issue", "    </details>", []string{"&lt;/details&gt;"}},
 		{"nested details", "Before <details open>nested</details> after", "", []string{"&lt;details open&gt;"}},
 	} {

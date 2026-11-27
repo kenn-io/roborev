@@ -159,7 +159,7 @@ func TruncateComment(body string) string {
 	return TrimPartialRune(body[:MaxCommentLen-len(CommentTruncSuffix)]) + CommentTruncSuffix
 }
 
-// TruncateCommentTo fits a comment within limit bytes, closing a folded
+// TruncateCommentTo fits a comment within limit bytes, dropping a folded
 // section if the cut falls inside it. The suffix is included in the limit.
 func TruncateCommentTo(body string, fold *CommentFold, limit int, suffix string) string {
 	if len(body) <= limit {
@@ -167,23 +167,10 @@ func TruncateCommentTo(body string, fold *CommentFold, limit int, suffix string)
 	}
 	budget := max(limit-len(suffix), 0)
 	if fold != nil && budget > fold.Start {
-		foldBudget := budget - len(foldClosing)
-		end := fold.Start
-		for _, boundary := range fold.Ends {
-			if boundary > foldBudget {
-				break
-			}
-			end = boundary
-		}
-		if end > fold.Start {
-			return strings.TrimRight(body[:end], "\n") + foldClosing + suffix
-		}
 		return body[:fold.Start] + suffix
 	}
 	return TrimPartialRune(body[:budget]) + suffix
 }
-
-const foldClosing = "\n</details>"
 
 // OutputTruncSuffix marks a single review's output as cut short. It is
 // deliberately not CommentTruncSuffix: this is one section being capped inside a

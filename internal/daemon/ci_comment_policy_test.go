@@ -390,14 +390,14 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	assert.Contains(t, body, "naming issue")
 }
 
-func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
+func TestCIPanelCommentTruncationDropsFold(t *testing.T) {
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Nit: true, Problem: strings.Repeat("x", 100)}}}
 	body, foldAt := reviewpkg.FormatCommentWithFold(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))
 	got := truncatePanelPRBodyForFooter(body, foldAt, "footer", 150)
-	assert.True(t, strings.HasSuffix(got, "\n</details>"+panelCommentTruncSuffix))
+	assert.Equal(t, body[:foldAt.Start]+panelCommentTruncSuffix, got)
 }
 
-func TestCIPanelCommentTruncationKeepsCompleteFoldedFinding(t *testing.T) {
+func TestCIPanelCommentTruncationDropsFoldedFindings(t *testing.T) {
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{
 		{Severity: "low", Nit: true, Problem: "Keep this finding.", Fix: "Fix it."},
 		{Severity: "low", Nit: true, Problem: strings.Repeat("oversized ", reviewpkg.MaxCommentLen), Fix: "Fix it."},
@@ -405,9 +405,9 @@ func TestCIPanelCommentTruncationKeepsCompleteFoldedFinding(t *testing.T) {
 	prepared := reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc})
 	stored := &storage.Review{Job: &storage.ReviewJob{Agent: "test"}}
 	got := formatPreparedPanelPRCommentWithHead(prepared, stored, "F", nil, false, "abcdef123456")
-	assert.Contains(t, got, "Keep this finding.")
+	assert.NotContains(t, got, "Keep this finding.")
 	assert.NotContains(t, got, "oversized")
-	assert.Contains(t, got, "</details>"+panelCommentTruncSuffix)
+	assert.Contains(t, got, panelCommentTruncSuffix)
 	assert.LessOrEqual(t, len(got), reviewpkg.MaxCommentLen)
 }
 
@@ -421,7 +421,7 @@ func TestCIPanelCommentTruncationPreservesVisibleExample(t *testing.T) {
 	stored := &storage.Review{Job: &storage.ReviewJob{Agent: "test"}}
 	got := formatPreparedPanelPRCommentWithHead(prepared, stored, "F", nil, false, "abcdef123456")
 	assert.Contains(t, got, example)
-	assert.Contains(t, got, "<details><summary>1 nit hidden</summary>\n</details>")
+	assert.NotContains(t, got, "1 nit hidden")
 	assert.Contains(t, got, "Reviewers:")
 	assert.LessOrEqual(t, len(got), reviewpkg.MaxCommentLen)
 }

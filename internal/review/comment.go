@@ -30,6 +30,7 @@ type CommentConfig struct {
 // so formatting receives only findings selected by PrepareComment.
 type PreparedComment struct {
 	minSeverity         string
+	passed              bool
 	confidenceFiltered  bool
 	actionable          int
 	legacy              bool
@@ -68,6 +69,11 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		doc = nil
 	}
 	if doc != nil {
+		effective := comment.minSeverity
+		if effective == "" {
+			effective = r.MinSeverity
+		}
+		comment.passed = !doc.UnableToReview() && doc.Passed(effective)
 		if cfg.ShowAll {
 			comment.minSeverity, threshold, cfg.MinConfidence, cfg.MaxFindings = "", 0, 0, 0
 		}
@@ -153,10 +159,9 @@ func FormatComment(comment PreparedComment) string {
 	return body
 }
 
-// CommentFold records safe truncation points in a generated fold.
+// CommentFold records the start of a generated fold.
 type CommentFold struct {
 	Start int
-	Ends  []int
 }
 
 // Shift returns fold offsets adjusted for a prefix.
@@ -164,14 +169,10 @@ func (f *CommentFold) Shift(prefix int) *CommentFold {
 	if f == nil {
 		return nil
 	}
-	shifted := &CommentFold{Start: f.Start + prefix, Ends: make([]int, len(f.Ends))}
-	for i, end := range f.Ends {
-		shifted.Ends[i] = end + prefix
-	}
-	return shifted
+	return &CommentFold{Start: f.Start + prefix}
 }
 
-// FormatCommentWithFold also returns safe boundaries of the generated fold.
+// FormatCommentWithFold also returns the start of the generated fold.
 func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 	if comment.verbatim != nil {
 		return *comment.verbatim, nil
@@ -193,15 +194,13 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 		return strings.Join(blocks, "\n\n---\n\n"), nil
 	}
 	var out strings.Builder
-	noun := "findings"
-	if comment.actionable == 1 {
-		noun = "finding"
-	}
-	if comment.actionable == 0 {
-		out.WriteString("**Verdict:** No findings need fixes before merge.")
+	if comment.passed {
+		out.WriteString("**Verdict:** No fixes needed before merge.")
 	} else {
-		fmt.Fprintf(&out, "**Verdict:** Changes require fixes for %d %s.", comment.actionable, noun)
+		out.WriteString("**Verdict:** Changes require fixes before merge.")
 	}
+	folded := len(comment.nits) + len(comment.unlikely)
+	fmt.Fprintf(&out, "\n\n%d findings shown; %d folded (nits/unlikely)", len(comment.findings)+folded, folded)
 	for _, severity := range []string{"critical", "high", "medium", "low"} {
 		heading := false
 		for _, finding := range comment.findings {
@@ -233,7 +232,6 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 		}
 		fold = &CommentFold{Start: out.Len()}
 		fmt.Fprintf(&out, "\n\n<details><summary>%s hidden</summary>", strings.Join(labels, " and "))
-		fold.Ends = append(fold.Ends, out.Len())
 		out.WriteString("\n")
 		for _, group := range groups {
 			if len(group.findings) > 0 {
@@ -243,7 +241,6 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 				var item strings.Builder
 				renderCommentFinding(&item, finding)
 				out.WriteString(escapeFoldClose(item.String()))
-				fold.Ends = append(fold.Ends, out.Len()-1)
 			}
 		}
 		out.WriteString("\n</details>\n")
@@ -257,50 +254,9 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 var foldCloseTag = regexp.MustCompile(`(?i)</?details(?:\s[^>]*|/?)>`)
 
 func escapeFoldClose(s string) string {
-	matches := foldCloseTag.FindAllStringIndex(s, -1)
-	if len(matches) == 0 {
-		return s
-	}
-	// Mask details tags before parsing so an HTML block cannot hide later code.
-	source := []byte(s)
-	for _, match := range matches {
-		source[match[0]] = 'x'
-	}
-	var code [][2]int
-	root := parser.New().Parse(source)
-	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-		switch n := node.(type) {
-		case *ast.CodeSpan:
-			if !n.Value.IsOwned() {
-				index := n.Value.Index()
-				code = append(code, [2]int{index.Start, index.Stop})
-			}
-		case *ast.CodeBlock:
-			for _, segment := range n.Value.Segments() {
-				code = append(code, [2]int{segment.Start, segment.Stop})
-			}
-		}
-		return ast.WalkContinue, nil
+	return foldCloseTag.ReplaceAllStringFunc(s, func(tag string) string {
+		return "&lt;" + tag[1:len(tag)-1] + "&gt;"
 	})
-	var out strings.Builder
-	last := 0
-	for _, match := range matches {
-		out.WriteString(s[last:match[0]])
-		inCode := slices.ContainsFunc(code, func(span [2]int) bool {
-			return span[0] <= match[0] && match[1] <= span[1]
-		})
-		if inCode {
-			out.WriteString(s[match[0]:match[1]])
-		} else {
-			out.WriteString("&lt;" + s[match[0]+1:match[1]-1] + "&gt;")
-		}
-		last = match[1]
-	}
-	out.WriteString(s[last:])
-	return out.String()
 }
 
 func renderCommentFinding(out *strings.Builder, finding commentFinding) {

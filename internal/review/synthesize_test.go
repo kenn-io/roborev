@@ -841,7 +841,7 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 			assert.Contains(t, result.GitHubComment, tc.finding.Problem)
 			if !tc.showAll {
 				assert.Contains(t, result.GitHubComment, "<details>")
-				assert.Contains(t, result.GitHubComment, "Changes require fixes for 1 finding.")
+				assert.Contains(t, result.GitHubComment, "Changes require fixes before merge.")
 			}
 		})
 	}
@@ -855,7 +855,7 @@ func TestSingleResultTruncationPreservesVisibleExample(t *testing.T) {
 	}}
 	got := formatSingleResult(ReviewResult{Structured: &doc}, "abcdef123456", &CommentConfig{})
 	assert.Contains(t, got, example)
-	assert.Contains(t, got, "<details><summary>1 nit hidden</summary>\n</details>")
+	assert.NotContains(t, got, "1 nit hidden")
 	assert.Contains(t, got, CommentTruncSuffix)
 }
 
@@ -879,7 +879,6 @@ func TestSynthesizedCommentKeepsFoldClosedAtTransportLimit(t *testing.T) {
 	result, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: a.Name()})
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(CommentMarker)+1+len(result.GitHubComment), MaxCommentLen)
-	assert.Contains(t, result.GitHubComment, "<details>")
-	assert.Contains(t, result.GitHubComment, "</details>")
+	assert.NotContains(t, result.GitHubComment, "<details>")
 	assert.Contains(t, result.GitHubComment, "Synthesized from 2 reviews")
 }
