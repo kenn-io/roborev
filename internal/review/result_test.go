@@ -212,7 +212,7 @@ func TestTruncateCommentFold(t *testing.T) {
 	const suffix = "\n\nfooter"
 	limit := fold.Start + len("\n\n<details><summary>") + len(suffix)
 	got := TruncateCommentTo(body, fold, limit, suffix)
-	assert.Equal(t, body[:fold.Start]+suffix, got)
+	assert.Equal(t, body[:fold.Start]+"\n\nFold omitted."+suffix, got)
 	assert.Equal(t, strings.Count(got, "<details"), strings.Count(got, "</details>"))
 	assert.True(t, strings.HasSuffix(got, suffix))
 }
@@ -231,7 +231,7 @@ func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
 		want  string
 	}{
 		{"before fold", foldAt.Start - 5 + len(suffix), body[:foldAt.Start-5] + suffix},
-		{"inside fold", foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(suffix), body[:foldAt.Start] + suffix},
+		{"inside fold", foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(suffix), body[:foldAt.Start] + "\n\nFold omitted." + suffix},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, TruncateCommentTo(body, foldAt, tc.limit, suffix))

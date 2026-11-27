@@ -164,9 +164,18 @@ func TruncateCommentTo(body string, fold *CommentFold, limit int, suffix string)
 	}
 	budget := max(limit-len(suffix), 0)
 	if fold != nil && budget > fold.Start {
-		return body[:fold.Start] + suffix
+		return truncateFold(body, fold.Start, limit, suffix)
 	}
 	return TrimPartialRune(body[:budget]) + suffix
+}
+
+func truncateFold(body string, start, limit int, suffix string) string {
+	const notice = "\n\nFold omitted."
+	if limit < len(notice)+len(suffix) {
+		return body[:start] + suffix
+	}
+	budget := max(limit-len(suffix)-len(notice), 0)
+	return TrimPartialRune(body[:min(start, budget)]) + notice + suffix
 }
 
 // OutputTruncSuffix marks a single review's output as cut short. It is

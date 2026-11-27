@@ -426,7 +426,7 @@ func TestCIPanelCommentTruncationDropsFold(t *testing.T) {
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Nit: true, Problem: strings.Repeat("x", 100)}}}
 	body, foldAt := reviewpkg.FormatCommentWithFold(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))
 	got := truncatePanelPRBodyForFooter(body, foldAt, "footer", 150)
-	assert.Equal(t, body[:foldAt.Start]+panelCommentTruncSuffix, got)
+	assert.Equal(t, body[:foldAt.Start]+"\n\nFold omitted."+panelCommentTruncSuffix, got)
 }
 
 func TestCIPanelCommentTruncationDropsFoldedFindings(t *testing.T) {
