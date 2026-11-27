@@ -209,7 +209,7 @@ func TestEnqueueReviewPromptSurvivesCommitRemapping(t *testing.T) {
 
 func TestEnqueueReviewPromptAppliesSeverityThreshold(t *testing.T) {
 	t.Parallel()
-	const lowOnly = `{"schema_version":5,"summary":"One minor concern.","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"unlikely":false,"nit":false,"problem":"A name is unclear.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
+	const lowOnly = `{"schema_version":4,"summary":"One minor concern.","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"unlikely":false,"nit":false,"problem":"A name is unclear.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
 	tests := []struct {
 		name         string
 		minSeverity  string

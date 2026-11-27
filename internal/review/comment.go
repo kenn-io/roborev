@@ -52,10 +52,6 @@ type commentFinding struct {
 // PrepareComment ingests structured or prose review data and applies the
 // supplied publication policy. It never changes the review or its findings.
 func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
-	return prepareComment(cfg, r, true)
-}
-
-func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) PreparedComment {
 	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
 	threshold := config.SeverityRank(comment.minSeverity)
 	doc := r.Structured
@@ -76,7 +72,7 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 		comment.structured = true
 		findings := slices.Clone(doc.Findings)
 		shouldFold := func(finding StructuredFinding) bool {
-			return foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Nit || finding.Unlikely)
+			return !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Nit || finding.Unlikely)
 		}
 		slices.SortStableFunc(findings, func(a, b StructuredFinding) int {
 			if shouldFold(a) != shouldFold(b) {
@@ -89,7 +85,7 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 		})
 		selected := 0
 		for _, finding := range findings {
-			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold && !shouldFold(finding) {
+			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold {
 				continue
 			}
 			// Stored findings carry kind and confidence together.

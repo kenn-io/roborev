@@ -890,9 +890,8 @@ saving, or reloading configuration. If confidence removes a finding that passed
 the severity filter and no findings remain, the comment says "No findings match
 the comment filters." Confidence does not filter prose.
 
-By default, structured CI comments apply the confidence floor and finding cap,
-then fold nits and unlikely findings into a collapsible section. The severity
-floor applies to findings shown outside the fold.
+By default, structured CI comments apply the severity and confidence floors and finding cap,
+then fold nits and unlikely findings into a collapsible section.
 High, Critical, and security findings remain in the main list. Set
 `comment_show_all = true` globally or per repository to show every structured
 finding inline, ignoring the comment severity and confidence floors and finding

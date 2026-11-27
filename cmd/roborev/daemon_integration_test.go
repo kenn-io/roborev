@@ -545,7 +545,7 @@ case "$*" in
 esac
 sleep 2
 printf '%s\n' '{"type":"thread.started","thread_id":"integration-session"}'
-printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"schema_version\":5,\"summary\":\"No issues found.\",\"verdict\":\"pass\",\"findings\":[]}"}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"schema_version\":4,\"summary\":\"No issues found.\",\"verdict\":\"pass\",\"findings\":[]}"}}'
 `
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o755))
 	return path

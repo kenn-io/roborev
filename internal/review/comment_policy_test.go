@@ -68,6 +68,20 @@ func TestCommentMaxFindings(t *testing.T) {
 	assert.Contains(t, FormatComment(PrepareComment(CommentConfig{MinSeverity: "high", MaxFindings: 1}, ReviewResult{Output: prose})), "Second")
 }
 
+func TestCommentSeverityFloorBeforeFolding(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "low", Nit: true, Problem: "Low nit"},
+		{Severity: "low", Unlikely: true, Problem: "Low unlikely"},
+		{Severity: "medium", Nit: true, Problem: "Medium nit"},
+		{Severity: "medium", Unlikely: true, Problem: "Medium unlikely"},
+	}}
+	body := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
+	assert.NotContains(t, body, "Low nit")
+	assert.NotContains(t, body, "Low unlikely")
+	assert.Contains(t, body, "Medium nit")
+	assert.Contains(t, body, "Medium unlikely")
+}
+
 func TestCommentCleanMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -184,7 +198,7 @@ func TestCommentFold(t *testing.T) {
 		{Severity: "medium", Problem: "another"},
 	}}
 	filteredSeverity := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
-	assert.Contains(t, filteredSeverity, "naming issue")
+	assert.NotContains(t, filteredSeverity, "naming issue")
 	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
 
 	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
@@ -265,6 +279,6 @@ func TestCommentFoldsClassifiedNits(t *testing.T) {
 	assert.Greater(t, strings.Index(body, "Rename variable"), strings.Index(body, "<details>"))
 	assert.Contains(t, body, "2 nits hidden")
 	body = FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
-	assert.Contains(t, body, "Fix spelling")
-	assert.Contains(t, body, "2 nits hidden")
+	assert.NotContains(t, body, "Fix spelling")
+	assert.Contains(t, body, "1 nit hidden")
 }

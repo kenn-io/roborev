@@ -202,7 +202,7 @@ The schema is fixed by roborev. The agent must return:
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 4,
   "summary": "Overall assessment",
   "verdict": "fail",
   "findings": [
@@ -250,7 +250,7 @@ Every finding requires these members:
 
 Stored findings omit `unlikely` and `nit` when false; an absent value means
 false, including for historical reviews. Upgrade consumers and machines sharing
-reviews together because older readers cannot read the version 5 format.
+reviews together because older readers cannot read the version 4 format.
 
 `kind`, `topic`, and `confidence` are stored in the review document and exported
 with it. They never appear in the rendered review or in pull request comments.

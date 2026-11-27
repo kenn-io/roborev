@@ -49,9 +49,9 @@ import (
 )
 
 // SchemaVersion is the only version roborev writes and the version agents
-// must return. Versions 1 through 4 are still decoded so stored reviews keep
+// must return. Versions 1 through 3 are still decoded so stored reviews keep
 // working.
-const SchemaVersion = 5
+const SchemaVersion = 4
 
 // Kind values tell a proven fault apart from a suggestion. Every finding from
 // a reviewing agent has one.
@@ -473,7 +473,7 @@ func Decode(raw jsontext.Value) (Document, error) {
 				"structured review schema_version 1 does not carry a verdict",
 			)
 		}
-	case 2, 3, 4, SchemaVersion:
+	case 2, 3, SchemaVersion:
 		switch result.Verdict {
 		case VerdictPass, VerdictFail, VerdictUnableToReview:
 		case "":
@@ -582,7 +582,7 @@ func decodeCheck(wire checkWire, version int) (Check, error) {
 // location field and none of the version 3 fields.
 func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
 	if len(wire.Nit) > 0 {
-		return Finding{}, fmt.Errorf("has nit, which needs schema_version 5")
+		return Finding{}, fmt.Errorf("has nit, which needs schema_version 4")
 	}
 	if len(wire.Unlikely) > 0 {
 		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
@@ -613,8 +613,8 @@ func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
 // stored location is derived from the file and lines when there is a file,
 // and is kept as free text when there is not.
 func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
-	if len(wire.Nit) > 0 && version < 5 {
-		return Finding{}, fmt.Errorf("has nit, which needs schema_version 5")
+	if len(wire.Nit) > 0 && version < 4 {
+		return Finding{}, fmt.Errorf("has nit, which needs schema_version 4")
 	}
 	if len(wire.Nit) > 0 && !bytes.Equal(wire.Nit, []byte("true")) && !bytes.Equal(wire.Nit, []byte("false")) {
 		return Finding{}, fmt.Errorf("has invalid nit: expected a boolean")

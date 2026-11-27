@@ -123,7 +123,7 @@ func BuildSynthesisPrompt(
 	b.WriteString(
 		intro +
 			"Return exactly one JSON object with this shape and no code fence: " +
-			`{"schema_version":5,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"unlikely":false,"nit":false,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
+			`{"schema_version":4,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"unlikely":false,"nit":false,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
 			"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. " +
 			"List every finding that requires changes in `findings`; " +
 			"return an empty `findings` array if the reviewers agree " + material + " is clean.\n" +
@@ -328,7 +328,7 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
 			if cfg != nil {
-				b.WriteString(FormatComment(prepareComment(*cfg, r, false)))
+				b.WriteString(FormatComment(PrepareComment(*cfg, r)))
 			} else {
 				b.WriteString(r.Output)
 			}
