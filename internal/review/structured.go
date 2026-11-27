@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -24,7 +25,7 @@ func DecodeStructuredReview(raw jsontext.Value) (StructuredReview, error) {
 // with no finding says nothing actionable, and unable_to_review means the
 // agent never assessed the change; both are agent errors so retry and backup
 // failover run instead of recording a misleading review.
-func validateLiveDocument(agentName string, doc StructuredReview) error {
+func validateLiveDocument(agentName string, doc StructuredReview, raw jsontext.Value) error {
 	if doc.SchemaVersion != structuredreview.SchemaVersion {
 		return fmt.Errorf(
 			"agent %s returned structured review schema_version %d, want %d",
@@ -53,6 +54,24 @@ func validateLiveDocument(agentName string, doc StructuredReview) error {
 			"agent %s could not review the change: %s",
 			agentName, doc.Summary,
 		)
+	}
+	return validateLiveClassifications(agentName, raw)
+}
+
+func validateLiveClassifications(agentName string, raw jsontext.Value) error {
+	var document struct {
+		Findings []struct {
+			Nit      *bool `json:"nit"`
+			Unlikely *bool `json:"unlikely"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return fmt.Errorf("decode agent %s classifications: %w", agentName, err)
+	}
+	for i, finding := range document.Findings {
+		if finding.Nit == nil || finding.Unlikely == nil {
+			return fmt.Errorf("agent %s returned structured review finding %d without nit or unlikely", agentName, i+1)
+		}
 	}
 	return nil
 }

@@ -131,7 +131,7 @@ func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.V
 	if err != nil {
 		return SynthesisDocument{}, err
 	}
-	if err := validateLiveDocument(a.Name(), doc); err != nil {
+	if err := validateLiveDocument(a.Name(), doc, document); err != nil {
 		return SynthesisDocument{}, err
 	}
 	// minSeverity never removes findings; callers apply it when rendering

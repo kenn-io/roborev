@@ -153,10 +153,7 @@ const CommentTruncSuffix = "\n\n...(truncated — comment exceeded size limit)"
 // TruncateComment caps a forge comment body at MaxCommentLen, replacing
 // the overflow with CommentTruncSuffix and keeping the cut UTF-8 safe.
 func TruncateComment(body string) string {
-	if len(body) <= MaxCommentLen {
-		return body
-	}
-	return TrimPartialRune(body[:MaxCommentLen-len(CommentTruncSuffix)]) + CommentTruncSuffix
+	return TruncateCommentTo(body, nil, MaxCommentLen, CommentTruncSuffix)
 }
 
 // TruncateCommentTo fits a comment within limit bytes, dropping a folded
