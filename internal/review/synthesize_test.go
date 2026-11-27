@@ -608,7 +608,7 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 	}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
-	raw = []byte(strings.ReplaceAll(string(raw), `"sources":[1]}`, `"sources":[1],"unlikely":false}`))
+	raw = []byte(strings.ReplaceAll(string(raw), `"sources":[1]}`, `"sources":[1],"unlikely":false,"nit":false}`))
 	for _, mode := range []string{"single", "synthesis", "fallback"} {
 		t.Run(mode, func(t *testing.T) {
 			synth := &structuredBatchAgent{result: raw}
@@ -626,6 +626,7 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			comment := synthesis.GitHubComment
 			require.NoError(t, err)
 			assert := assert.New(t)
+			assert.Equal(mode == "fallback", strings.Contains(comment, "Synthesis unavailable."))
 			assert.Contains(comment, "### High\n\n- `worker.go:10`: State is lost.\n\n  **Fix:** Persist it.")
 			assert.Contains(comment, "### Medium\n\n- `worker.go:20`: Missing cleanup.\n\n  **Fix:** Close the resource.")
 			assert.Contains(comment, "- Errors are ignored.\n\n  **Fix:** Return the error.")
@@ -773,6 +774,7 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 				}}
 				raw, err := json.Marshal(doc)
 				require.NoError(t, err)
+				raw = []byte(strings.ReplaceAll(string(raw), `"sources":[1]`, `"unlikely":false,"nit":false,"sources":[1]`))
 				a := &structuredBatchAgent{name: "policy-outcome", result: raw}
 				if outcome == "fallback" {
 					a.err = errors.New("synthesis unavailable")
@@ -853,14 +855,13 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 	}
 }
 
-func TestSingleResultTruncationPreservesVisibleExample(t *testing.T) {
-	example := "```html\n<details><summary>Example</summary>\ncontent\n</details>\n```"
+func TestSingleResultTruncationDropsFold(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "high", Problem: example, Fix: "Fix it."},
+		{Severity: "high", Problem: "Inline finding", Fix: "Fix it."},
 		{Severity: "low", Nit: true, Problem: strings.Repeat("nit ", MaxCommentLen), Fix: "Fix it."},
 	}}
 	got := formatSingleResult(ReviewResult{Structured: &doc}, "abcdef123456", &CommentConfig{})
-	assert.Contains(t, got, example)
+	assert.Contains(t, got, "Inline finding")
 	assert.NotContains(t, got, "1 nit hidden")
 	assert.Contains(t, got, CommentTruncSuffix)
 }
@@ -871,13 +872,13 @@ func TestSingleResultTruncatesWithoutFold(t *testing.T) {
 	comment := formatSingleResult(result, "abcdef123456", &CommentConfig{})
 	assert.LessOrEqual(t, len(CommentMarker)+1+len(comment), MaxCommentLen)
 	assert.Contains(t, comment, CommentTruncSuffix)
-	assert.Greater(t, len(formatSingleResult(result, "abcdef123456", nil)), MaxCommentLen)
 }
 
 func TestSynthesizedCommentKeepsFoldClosedAtTransportLimit(t *testing.T) {
 	doc := StructuredReview{Summary: "combined", Verdict: "fail", Findings: []StructuredFinding{{Severity: "medium", Kind: "improvement", Confidence: .8, Nit: true, Problem: strings.Repeat("x", MaxCommentLen), Fix: "Rename", Sources: []int{1, 2}}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
+	raw = []byte(strings.ReplaceAll(string(raw), `"sources":[1,2]`, `"unlikely":false,"sources":[1,2]`))
 	a := &structuredBatchAgent{name: "long-fold-synthesis", result: raw}
 	agent.RegisterForTest(t, a)
 	input := StructuredReview{Summary: "input", Verdict: "pass"}

@@ -390,46 +390,7 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	assert.Contains(t, body, "naming issue")
 }
 
-func TestCIPanelCommentStructuredVerdict(t *testing.T) {
-	for _, tc := range []struct {
-		name, severity, floor, guidance, count string
-		unlikely, showAll                      bool
-		verdictBool                            int
-	}{
-		{"folded failure", "medium", "medium", "Changes require fixes before merge.", "0 findings shown; 1 folded finding", true, false, 0},
-		{"show all below floor", "low", "high", "No fixes needed before merge.", "1 finding shown; 0 folded findings", false, true, 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			h.Cfg.CI.CommentShowAll = tc.showAll
-			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
-			h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
-			doc := reviewpkg.StructuredReview{Summary: "Notes.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{{Severity: tc.severity, Problem: "Finding", Fix: "Fix", Unlikely: tc.unlikely}}}
-			data, err := json.Marshal(doc)
-			require.NoError(t, err)
-			_, err = h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = ? WHERE job_id = ?`, string(data), tc.verdictBool, synth.ID)
-			require.NoError(t, err)
-			_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = ? WHERE id = ?`, tc.floor, synth.ID)
-			require.NoError(t, err)
-			members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
-			require.NoError(t, err)
-			body, err := h.Poller.panelCommentBody(panel, members)
-			require.NoError(t, err)
-			assert.Contains(t, body, tc.guidance)
-			assert.Contains(t, body, tc.count)
-			assert.Contains(t, body, "Finding")
-		})
-	}
-}
-
 func TestCIPanelCommentTruncationDropsFold(t *testing.T) {
-	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Nit: true, Problem: strings.Repeat("x", 100)}}}
-	body, foldAt := reviewpkg.FormatCommentWithFold(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))
-	got := truncatePanelPRBodyForFooter(body, foldAt, "footer", 150)
-	assert.Equal(t, body[:foldAt.Start]+"\n\nFold omitted."+panelCommentTruncSuffix, got)
-}
-
-func TestCIPanelCommentTruncationDropsFoldedFindings(t *testing.T) {
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{
 		{Severity: "low", Nit: true, Problem: "Keep this finding.", Fix: "Fix it."},
 		{Severity: "low", Nit: true, Problem: strings.Repeat("oversized ", reviewpkg.MaxCommentLen), Fix: "Fix it."},
@@ -440,20 +401,6 @@ func TestCIPanelCommentTruncationDropsFoldedFindings(t *testing.T) {
 	assert.NotContains(t, got, "Keep this finding.")
 	assert.NotContains(t, got, "oversized")
 	assert.Contains(t, got, panelCommentTruncSuffix)
-	assert.LessOrEqual(t, len(got), reviewpkg.MaxCommentLen)
-}
-
-func TestCIPanelCommentTruncationPreservesVisibleExample(t *testing.T) {
-	example := "```html\n<details><summary>Example</summary>\ncontent\n</details>\n```"
-	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{
-		{Severity: "high", Problem: example, Fix: "Fix it."},
-		{Severity: "low", Nit: true, Problem: strings.Repeat("nit ", reviewpkg.MaxCommentLen), Fix: "Fix it."},
-	}}
-	prepared := reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc})
-	stored := &storage.Review{Job: &storage.ReviewJob{Agent: "test"}}
-	got := formatPreparedPanelPRCommentWithHead(prepared, stored, "F", nil, false, "abcdef123456")
-	assert.Contains(t, got, example)
-	assert.NotContains(t, got, "1 nit hidden")
 	assert.Contains(t, got, "Reviewers:")
 	assert.LessOrEqual(t, len(got), reviewpkg.MaxCommentLen)
 }

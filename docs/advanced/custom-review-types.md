@@ -237,8 +237,8 @@ Every finding requires these members:
 - `topic`: `tests`, `documentation`, `security`, `performance`, or `design` when
     the finding is about one of those areas, otherwise `null`. A defect can have
     a topic, and so can an improvement.
-- `confidence`: a number from 0 to 1. Roborev uses it to order findings and
-    apply an optional CI comment confidence floor.
+- `confidence`: a number from 0 to 1. Roborev uses it to break ties when it
+    orders findings and to apply an optional CI comment confidence floor.
 - `unlikely`: true only when unusual timing or input reaches the finding. Keep
     the severity the finding would otherwise have.
 - `nit`: true only for a minor style or naming suggestion that does not affect

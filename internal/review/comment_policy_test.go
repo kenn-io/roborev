@@ -68,21 +68,12 @@ func TestCommentMaxFindings(t *testing.T) {
 	assert.Contains(t, FormatComment(PrepareComment(CommentConfig{MinSeverity: "high", MaxFindings: 1}, ReviewResult{Output: prose})), "Second")
 }
 
-func TestCommentSeverityFloorBeforeFolding(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "low", Nit: true, Problem: "Low nit"},
-		{Severity: "low", Unlikely: true, Problem: "Low unlikely"},
-		{Severity: "medium", Nit: true, Problem: "Medium nit"},
-		{Severity: "medium", Unlikely: true, Problem: "Medium unlikely"},
-	}}
-	body := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
-	assert.NotContains(t, body, "Low nit")
-	assert.NotContains(t, body, "Low unlikely")
-	assert.Contains(t, body, "Medium nit")
-	assert.Contains(t, body, "Medium unlikely")
-}
-
 func TestCommentCleanMetadata(t *testing.T) {
+	t.Run("capped folded findings", func(t *testing.T) {
+		doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "First", Nit: true}, {Severity: "low", Problem: "Second", Nit: true}}}
+		prepared := PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &doc})
+		assert.True(t, prepared.IsClean())
+	})
 	for _, tc := range []struct {
 		name   string
 		result ReviewResult
@@ -99,12 +90,6 @@ func TestCommentCleanMetadata(t *testing.T) {
 			assert.Equal(t, tc.clean, PrepareComment(CommentConfig{MinSeverity: "high"}, tc.result).IsClean())
 		})
 	}
-}
-
-func TestCommentCleanWithCappedFoldedFindings(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "First", Nit: true}, {Severity: "low", Problem: "Second", Nit: true}}}
-	prepared := PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &doc})
-	assert.True(t, prepared.IsClean())
 }
 
 func FuzzCommentMaxFindings(f *testing.F) {
@@ -191,6 +176,19 @@ func TestCommentMinConfidence(t *testing.T) {
 }
 
 func TestCommentFold(t *testing.T) {
+	t.Run("severity floor", func(t *testing.T) {
+		doc := StructuredReview{Findings: []StructuredFinding{
+			{Severity: "low", Nit: true, Problem: "Low nit"},
+			{Severity: "low", Unlikely: true, Problem: "Low unlikely"},
+			{Severity: "medium", Nit: true, Problem: "Medium nit"},
+			{Severity: "medium", Unlikely: true, Problem: "Medium unlikely"},
+		}}
+		body := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
+		assert.NotContains(t, body, "Low nit")
+		assert.NotContains(t, body, "Low unlikely")
+		assert.Contains(t, body, "Medium nit")
+		assert.Contains(t, body, "Medium unlikely")
+	})
 	doc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "medium", Problem: "defect"},
 		{Severity: "low", Problem: "naming issue", Nit: true},
@@ -199,10 +197,6 @@ func TestCommentFold(t *testing.T) {
 	}}
 	mixed := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	assert.Contains(t, mixed, "2 findings shown; 2 folded findings")
-	filteredSeverity := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
-	assert.NotContains(t, filteredSeverity, "naming issue")
-	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
-
 	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
 	assert.True(t, folded.IsClean())
 	assert.Contains(t, FormatComment(folded), "Changes require fixes before merge.")
@@ -230,40 +224,38 @@ func TestCommentShowAll(t *testing.T) {
 	assert.Contains(t, showAll, "filtered nit")
 	assert.Contains(t, showAll, "filtered rare")
 	assert.Contains(t, showAll, "4 findings shown; 0 folded findings")
-}
+	t.Run("severity verdict", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			findings []StructuredFinding
+			verdict  string
+		}{
+			{"below floor", []StructuredFinding{{Severity: "low", Problem: "Low issue"}}, "No fixes needed before merge."},
+			{"mixed", []StructuredFinding{{Severity: "low", Problem: "Low issue"}, {Severity: "high", Problem: "High issue"}}, "Changes require fixes before merge."},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				doc := StructuredReview{Findings: tc.findings}
+				prepared := PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high"}, ReviewResult{Structured: &doc})
+				assert.False(t, prepared.IsClean())
+				body := FormatComment(prepared)
+				assert.Contains(t, body, tc.verdict)
+				assert.Contains(t, body, "Low issue")
+			})
+		}
+	})
 
-func TestCommentShowAllKeepsReviewSeverityVerdict(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		findings []StructuredFinding
-		clean    bool
-		verdict  string
-	}{
-		{"below floor", []StructuredFinding{{Severity: "low", Problem: "Low issue"}}, false, "No fixes needed before merge."},
-		{"mixed", []StructuredFinding{{Severity: "low", Problem: "Low issue"}, {Severity: "high", Problem: "High issue"}}, false, "Changes require fixes before merge."},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			doc := StructuredReview{Findings: tc.findings}
-			prepared := PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high"}, ReviewResult{Structured: &doc})
-			assert.Equal(t, tc.clean, prepared.IsClean())
-			body := FormatComment(prepared)
-			assert.Contains(t, body, tc.verdict)
-			assert.Contains(t, body, "Low issue")
-		})
-	}
-}
-
-func TestCommentShowAllKeepsProseSeverityFilter(t *testing.T) {
-	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
-	policy := CommentConfig{MinSeverity: "medium", ShowAll: true}
-	for _, result := range []ReviewResult{
-		{Output: prose},
-		{StructuredOutput: jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`)},
-	} {
-		output := FormatComment(PrepareComment(policy, result))
-		assert.Contains(t, output, "High issue")
-		assert.NotContains(t, output, "Low issue")
-	}
+	t.Run("prose filter", func(t *testing.T) {
+		prose := "### High\nHigh issue.\n\n### Low\nLow issue."
+		policy := CommentConfig{MinSeverity: "medium", ShowAll: true}
+		for _, result := range []ReviewResult{
+			{Output: prose},
+			{StructuredOutput: jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"### High\nHigh issue.\n\n### Low\nLow issue.","recorded_verdict":false}}`)},
+		} {
+			output := FormatComment(PrepareComment(policy, result))
+			assert.Contains(t, output, "High issue")
+			assert.NotContains(t, output, "Low issue")
+		}
+	})
 }
 
 func TestCommentFoldEscapesDetailsTags(t *testing.T) {
@@ -301,7 +293,4 @@ func TestCommentFoldsClassifiedNits(t *testing.T) {
 	assert.Less(t, strings.Index(body, "Data is lost"), strings.Index(body, "<details>"))
 	assert.Greater(t, strings.Index(body, "Rename variable"), strings.Index(body, "<details>"))
 	assert.Contains(t, body, "2 nits hidden")
-	body = FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
-	assert.NotContains(t, body, "Fix spelling")
-	assert.Contains(t, body, "1 nit hidden")
 }

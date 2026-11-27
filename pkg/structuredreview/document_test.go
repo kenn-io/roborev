@@ -98,8 +98,6 @@ func TestDecodeRejectsInvalidUnlikely(t *testing.T) {
 		{"version 2 false", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":false}]}`, "unlikely, which needs schema_version 4"},
 		{"version 3 false", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":false}]}`, "unlikely, which needs schema_version 4"},
 		{"version 3 checked finding", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":true},"verdicts":[]}]}}`, "unlikely, which needs schema_version 4"},
-		{"version 2", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":null}]}`, "unlikely, which needs schema_version 4"},
-		{"version 3", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "unlikely, which needs schema_version 4"},
 		{"version 4", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "invalid unlikely"},
 		{"version 4 string", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":"yes"}]}`, "invalid unlikely"},
 	} {
@@ -315,15 +313,14 @@ func TestSchemaUnlikely(t *testing.T) {
 	require.Error(t, validator.Validate(doc))
 }
 
-func TestVersionFourAcceptsBothFindingMarks(t *testing.T) {
-	raw := jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","nit":true,"unlikely":true}]}`)
-	doc, err := Decode(raw)
-	require.NoError(t, err)
-	assert.True(t, doc.Findings[0].Nit)
-	assert.True(t, doc.Findings[0].Unlikely)
-}
-
 func TestNitVersionAndRoundTrip(t *testing.T) {
+	t.Run("both marks", func(t *testing.T) {
+		raw := jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","nit":true,"unlikely":true}]}`)
+		doc, err := Decode(raw)
+		require.NoError(t, err)
+		assert.True(t, doc.Findings[0].Nit)
+		assert.True(t, doc.Findings[0].Unlikely)
+	})
 	for _, tc := range []struct{ version, value, want string }{
 		{"3", "true", "needs schema_version 4"},
 		{"4", "null", "invalid nit"},

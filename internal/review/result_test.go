@@ -206,17 +206,6 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 	assert.NotContains(combined.Output, "No findings at or above")
 }
 
-func TestTruncateCommentFold(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Nit: true, Problem: strings.Repeat("finding ", 100)}}}
-	body, fold := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	const suffix = "\n\nfooter"
-	limit := fold.Start + len("\n\n<details><summary>") + len(suffix)
-	got := TruncateCommentTo(body, fold, limit, suffix)
-	assert.Equal(t, body[:fold.Start]+"\n\nFold omitted."+suffix, got)
-	assert.Equal(t, strings.Count(got, "<details"), strings.Count(got, "</details>"))
-	assert.True(t, strings.HasSuffix(got, suffix))
-}
-
 func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "high", Problem: "Example:\n\n```html\n<details><summary>Example</summary>\ncontent\n</details>\n```\nKeep this finding.", Fix: "Fix it."},
@@ -234,7 +223,10 @@ func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
 		{"inside fold", foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(suffix), body[:foldAt.Start] + "\n\nFold omitted." + suffix},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, TruncateCommentTo(body, foldAt, tc.limit, suffix))
+			got := TruncateCommentTo(body, foldAt, tc.limit, suffix)
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, strings.Count(got, "<details"), strings.Count(got, "</details>"))
+			assert.True(t, strings.HasSuffix(got, suffix))
 		})
 	}
 }
