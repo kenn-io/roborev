@@ -390,6 +390,38 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	assert.Contains(t, body, "naming issue")
 }
 
+func TestCIPanelCommentStructuredVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name, severity, floor, guidance, count string
+		unlikely, showAll                      bool
+		verdictBool                            int
+	}{
+		{"folded failure", "medium", "medium", "Changes require fixes before merge.", "0 findings shown; 1 folded", true, false, 0},
+		{"show all below floor", "low", "high", "No fixes needed before merge.", "1 findings shown; 0 folded", false, true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.CommentShowAll = tc.showAll
+			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
+			h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
+			doc := reviewpkg.StructuredReview{Summary: "Notes.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{{Severity: tc.severity, Problem: "Finding", Fix: "Fix", Unlikely: tc.unlikely}}}
+			data, err := json.Marshal(doc)
+			require.NoError(t, err)
+			_, err = h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = ? WHERE job_id = ?`, string(data), tc.verdictBool, synth.ID)
+			require.NoError(t, err)
+			_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = ? WHERE id = ?`, tc.floor, synth.ID)
+			require.NoError(t, err)
+			members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
+			require.NoError(t, err)
+			body, err := h.Poller.panelCommentBody(panel, members)
+			require.NoError(t, err)
+			assert.Contains(t, body, tc.guidance)
+			assert.Contains(t, body, tc.count)
+			assert.Contains(t, body, "Finding")
+		})
+	}
+}
+
 func TestCIPanelCommentTruncationDropsFold(t *testing.T) {
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Nit: true, Problem: strings.Repeat("x", 100)}}}
 	body, foldAt := reviewpkg.FormatCommentWithFold(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))

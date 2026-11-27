@@ -167,11 +167,12 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	checks.Equal([]int{1, 2}, got[0].Sources, "a merged finding keeps every source")
 	t.Run("marks require both copies in either order", func(t *testing.T) {
 		marked, unmarked := first, second
-		marked.Severity, unmarked.Severity = "high", "medium"
+		marked.Severity, unmarked.Severity = "medium", "medium"
+		marked.Confidence, unmarked.Confidence = 0.9, 0.5
 		for _, findings := range [][]structuredreview.Finding{{marked, unmarked}, {unmarked, marked}} {
 			got := tidyFindings(findings)
 			require.Len(t, got, 1)
-			assert.Equal(t, "high", got[0].Severity)
+			assert.Equal(t, "medium", got[0].Severity)
 			assert.False(t, got[0].Unlikely)
 			assert.False(t, got[0].Nit)
 		}
