@@ -16,7 +16,7 @@ import (
 // invokeReview uses the same read-capable agent entry point for ordinary and
 // synthesis reviews. The caller supplies the prompt and output schema.
 func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt string, schema jsontext.Value, out io.Writer) (string, error) {
-	if structured, ok := a.(agent.StructuredReviewAgent); ok {
+	if structured, ok := agent.AsStructuredReviewAgent(a); ok {
 		raw, err := structured.ReviewWithSchema(ctx, repoPath, gitRef, prompt, schema, out)
 		return string(raw), err
 	}

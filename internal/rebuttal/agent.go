@@ -24,7 +24,7 @@ func RunAgentAssessment(
 		return "", fmt.Errorf("agent %q cannot enforce read-only assessments", a.Name())
 	}
 	ctx = agent.WithReadOnlyReview(ctx)
-	if structured, ok := a.(agent.StructuredReviewAgent); ok {
+	if structured, ok := agent.AsStructuredReviewAgent(a); ok {
 		result, err := structured.ReviewWithSchema(
 			ctx, repoPath, gitRef, prompt, jsontext.Value(assessmentJSONSchema), out,
 		)

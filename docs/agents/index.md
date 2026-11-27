@@ -291,14 +291,19 @@ when using `agy`. To avoid Antigravity's global settings and unsandboxed review
 path, pin the legacy CLI with `gemini_cmd = "gemini"` in your config, or choose
 another agent.
 
-Antigravity does not currently accept a `--model` flag, so an explicit `--model`
-returns an error whenever the Gemini agent resolves to `agy` — even when the
-legacy `gemini` CLI is also installed — rather than silently ignoring the
-override.
+A configured model reaches `agy` as `--model`. Use the names `agy models` lists,
+such as `gemini-4-neon-high`, which include the thinking level. The built-in
+default model belongs to the legacy CLI, so roborev sends `--model` to `agy`
+only when you configure one. Print mode before agy 1.1.10 ignores `--model`, so
+roborev fails the review there instead of running the wrong model.
 
-If you rely on model selection, pin the legacy CLI with `gemini_cmd = "gemini"`
-in your config, install only the legacy CLI, or shadow `agy` on your `PATH` with
-a wrapper that exec's `gemini`.
+Reviews on `agy` 1.1.8 and later return the review JSON through `--json-schema`,
+the same way Claude Code and Grok do, so the Gemini agent can run
+[custom review types](../advanced/custom-review-types.md) when it resolves to
+`agy`. The legacy `gemini` CLI has no schema option: it runs built-in review
+types and cannot run custom ones. `roborev config validate` reports a custom
+type, panel member, or CI review that would resolve to it. A Gemini backup agent
+that is not installed counts as `agy` when `gemini_cmd` names `agy`.
 
 ## Pi Structured Output
 

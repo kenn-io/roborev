@@ -581,6 +581,7 @@ func envKeyIn(keys []string, key string) bool {
 var claudeStripKeys = []string{
 	"ANTHROPIC_API_KEY",
 	"CLAUDECODE",
+	"CLAUDE_CODE_ENTRYPOINT",
 	"ANTHROPIC_BASE_URL",
 	"ANTHROPIC_AUTH_TOKEN",
 	"ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -621,7 +622,10 @@ func buildClaudeEnv(baseEnv []string, model, baseURL string) ([]string, error) {
 	} else if apiKey := AnthropicAPIKey(); apiKey != "" {
 		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
 	}
-	env = append(env, "CLAUDE_NO_SOUND=1")
+	// Tag sessions with CLAUDE_CODE_ENTRYPOINT=roborev so transcript readers
+	// can distinguish roborev runs from interactive or other SDK launches,
+	// matching Codex's --thread-source roborev.
+	env = append(env, "CLAUDE_NO_SOUND=1", "CLAUDE_CODE_ENTRYPOINT=roborev")
 	return env, nil
 }
 

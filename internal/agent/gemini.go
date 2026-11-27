@@ -1,15 +1,19 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os/exec"
 	"path"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -130,12 +134,45 @@ func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
 }
 
 func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	if a.usesAntigravity() && a.ModelExplicit {
-		return "", fmt.Errorf("antigravity CLI does not support explicit Gemini model selection; remove the model override or configure gemini_cmd to the legacy gemini CLI")
-	}
+	return a.review(ctx, repoPath, prompt, nil, output)
+}
 
+// ReviewWithSchema runs agy with --json-schema and returns the result event's
+// structured_output. The legacy gemini CLI has no schema mode, so
+// StructuredReviewSupported reports false for it and callers use Review.
+func (a *GeminiAgent) ReviewWithSchema(
+	ctx context.Context,
+	repoPath, gitRef, prompt string,
+	schema jsontext.Value,
+	out io.Writer,
+) (jsontext.Value, error) {
+	if !a.usesAntigravity() {
+		return nil, fmt.Errorf("gemini CLI %q has no JSON Schema output mode; schema-constrained reviews need agy", a.Command)
+	}
+	result, err := a.review(ctx, repoPath, prompt, schema, out)
+	if err != nil {
+		return nil, err
+	}
+	return jsontext.Value(result), nil
+}
+
+// StructuredReviewSupported reports whether the resolved command can run
+// schema-constrained reviews: agy can, the legacy gemini CLI cannot.
+func (a *GeminiAgent) StructuredReviewSupported() bool {
+	return a.usesAntigravity()
+}
+
+// review runs one review turn. A non-nil schema makes agy constrain the final
+// reply and return it as the result.
+func (a *GeminiAgent) review(ctx context.Context, repoPath, prompt string, schema jsontext.Value, output io.Writer) (string, error) {
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	capabilities := a.capabilities(ctx)
+	if a.usesAntigravity() && a.ModelExplicit && !capabilities.model {
+		return "", fmt.Errorf("antigravity CLI before %s ignores --model in print mode; upgrade agy or remove the model override", antigravityModelVersion)
+	}
+	if schema != nil && !capabilities.streamJSON {
+		return "", fmt.Errorf("antigravity CLI before %s has no --json-schema; upgrade agy to run schema-constrained reviews", antigravityStreamJSONVersion)
+	}
 	if a.SessionID != "" && !capabilities.resume {
 		if resetErr := resetSessionCapture(output); resetErr != nil {
 			return "", resetErr
@@ -145,7 +182,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	model := a.Model
 	for {
 		args := a.buildArgsWithModel(model, agenticMode)
-		result, stderrStr, turnStarted, err := a.runGemini(ctx, repoPath, prompt, args, capabilities, output)
+		result, stderrStr, turnStarted, err := a.runGemini(ctx, repoPath, prompt, args, schema, capabilities, output)
 		switch {
 		case err != nil && !turnStarted && model == defaultGeminiModel && isModelNotFoundError(stderrStr):
 			// Built-in default model may be stale (Google renames
@@ -194,10 +231,14 @@ func resetSessionCapture(output io.Writer) error {
 }
 
 // buildArgsWithModel builds CLI args with an explicit model override
-// (empty string omits the -m flag entirely).
+// (empty string omits the -m flag entirely). agy gets only a configured
+// model: the built-in default names a legacy gemini CLI model.
 func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []string {
 	if a.usesAntigravity() {
-		return a.buildAntigravityArgs(agenticMode)
+		if !a.ModelExplicit {
+			model = ""
+		}
+		return a.buildAntigravityArgs(model, agenticMode)
 	}
 
 	args := []string{"--output-format", "stream-json"}
@@ -220,9 +261,10 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []strin
 }
 
 type geminiCLICapabilities struct {
-	streamJSON bool
+	streamJSON bool // agy stream-json, which also carries --json-schema results
 	resume     bool
 	promptFlag bool
+	model      bool // agy applies --model in print mode
 }
 
 const geminiResumeVersion = "0.20.0" // newer releases accept resumed prompts on stdin
@@ -237,6 +279,7 @@ func (a *GeminiAgent) capabilities(ctx context.Context) geminiCLICapabilities {
 			resume:     versionAtLeast(version, antigravityStreamJSONVersion),
 			// An undetectable version keeps the established --prompt contract.
 			promptFlag: !versionAtLeast(version, "0") || antigravityVersionUsesPromptFlag(version),
+			model:      versionAtLeast(version, antigravityModelVersion),
 		}
 	}
 	return geminiCLICapabilities{resume: versionAtLeast(version, geminiResumeVersion)}
@@ -252,12 +295,15 @@ func commandBaseName(command string) string {
 	return base
 }
 
-func (a *GeminiAgent) buildAntigravityArgs(agenticMode bool) []string {
+func (a *GeminiAgent) buildAntigravityArgs(model string, agenticMode bool) []string {
 	// These are the flags common to both print-mode contracts. runAntigravity
 	// adds the prompt-carrying flag (a bare --print for old agy that reads
 	// stdin, or --prompt <text> for agy >= 1.1.1) after detecting the version,
 	// so no --print is emitted here where it would swallow --print-timeout.
 	args := []string{"--print-timeout", "30m"}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
 
 	if agenticMode {
 		args = append(args, "--dangerously-skip-permissions")
@@ -271,9 +317,9 @@ func (a *GeminiAgent) buildAntigravityArgs(agenticMode bool) []string {
 
 // runGemini returns the review result, captured stderr, whether the turn
 // started, and any error from the CLI.
-func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, args []string, capabilities geminiCLICapabilities, output io.Writer) (string, string, bool, error) {
+func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, args []string, schema jsontext.Value, capabilities geminiCLICapabilities, output io.Writer) (string, string, bool, error) {
 	if a.usesAntigravity() {
-		return a.runAntigravity(ctx, repoPath, prompt, args, capabilities, output)
+		return a.runAntigravity(ctx, repoPath, prompt, args, schema, capabilities, output)
 	}
 
 	var turnStarted bool
@@ -320,11 +366,12 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 // the reported version rather than assuming one contract.
 const (
 	antigravityPromptFlagVersion   = "1.1.1"
-	antigravityStreamJSONVersion   = "1.1.8" // stream-json and --conversation
+	antigravityStreamJSONVersion   = "1.1.8"  // stream-json, --conversation, and --json-schema
+	antigravityModelVersion        = "1.1.10" // earlier print mode ignored --model
 	antigravityVersionProbeTimeout = 10 * time.Second
 )
 
-func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt string, args []string, capabilities geminiCLICapabilities, output io.Writer) (string, string, bool, error) {
+func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt string, args []string, schema jsontext.Value, capabilities geminiCLICapabilities, output io.Writer) (string, string, bool, error) {
 	// Headless print mode soft-denies tools that need a confirmation. Merge
 	// read_file(*) and inspect command() allows into the official settings
 	// file before launch so reviews emit output. Agentic runs already pass
@@ -349,10 +396,17 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	if a.SessionID != "" {
 		args = append(args, "--conversation", a.SessionID)
 	}
+	if schema != nil {
+		converted, err := antigravityJSONSchema(schema)
+		if err != nil {
+			return "", "", false, err
+		}
+		args = append(args, "--json-schema", string(converted))
+	}
 	if capabilities.streamJSON {
 		args = append(args, "--output-format", "stream-json")
 		parse = func(r io.Reader, sw *syncWriter) (string, error) {
-			result, started, err := parseAntigravityStreamJSON(r, sw)
+			result, started, err := parseAntigravityStreamJSON(r, sw, schema != nil)
 			turnStarted = started
 			return result, err
 		}
@@ -432,6 +486,72 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 }
 
 var errAntigravityPrintTimeout = errors.New("antigravity print timed out; response is partial")
+
+// antigravityJSONSchema rewrites each nullable type array that carries other
+// keywords, such as {"type": ["integer", "null"], "minimum": 1}, into the
+// equivalent anyOf of the typed schema and {"type": "null"}. agy 1.5.13 turns
+// --json-schema into a Gemini "finish" function declaration, and Gemini
+// rejects such a property with "schema didn't specify the schema type field".
+// A bare nullable type array and anyOf both pass, so the rest stays as given.
+func antigravityJSONSchema(schema jsontext.Value) (jsontext.Value, error) {
+	var doc any
+	if err := json.Unmarshal(schema, &doc); err != nil {
+		return nil, fmt.Errorf("decode review JSON schema: %w", err)
+	}
+	converted, err := json.Marshal(nullableTypesToAnyOf(doc))
+	if err != nil {
+		return nil, fmt.Errorf("encode review JSON schema for antigravity: %w", err)
+	}
+	return jsontext.Value(converted), nil
+}
+
+func nullableTypesToAnyOf(node any) any {
+	switch v := node.(type) {
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = nullableTypesToAnyOf(item)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, value := range v {
+			out[key] = nullableTypesToAnyOf(value)
+		}
+		typeName, ok := nullableTypeName(out["type"])
+		if !ok || len(out) == 1 {
+			return out
+		}
+		typed := maps.Clone(out)
+		typed["type"] = typeName
+		if values, ok := typed["enum"].([]any); ok {
+			typed["enum"] = slices.DeleteFunc(slices.Clone(values), func(value any) bool { return value == nil })
+		}
+		return map[string]any{"anyOf": []any{typed, map[string]any{"type": "null"}}}
+	default:
+		return node
+	}
+}
+
+// nullableTypeName returns T for a type array of exactly T and "null".
+func nullableTypeName(value any) (string, bool) {
+	types, ok := value.([]any)
+	if !ok || len(types) != 2 {
+		return "", false
+	}
+	first, firstOK := types[0].(string)
+	second, secondOK := types[1].(string)
+	switch {
+	case !firstOK || !secondOK:
+		return "", false
+	case second == "null" && first != "null":
+		return first, true
+	case first == "null" && second != "null":
+		return second, true
+	default:
+		return "", false
+	}
+}
 
 // cliVersion returns `--version` output, or "" when detection fails; agy's
 // `agy version` subcommand needs a TTY and fails in pipes/subprocesses.
@@ -624,12 +744,15 @@ type antigravityStreamEvent struct {
 		Error          string `json:"error"`
 		FinishedReason string `json:"finished_reason"`
 		NumTurns       int    `json:"num_turns"`
+		// StructuredOutput is the reply agy validated against --json-schema.
+		StructuredOutput jsontext.Value `json:"structured_output"`
 	} `json:"result"`
 }
 
 // parseAntigravityStreamJSON reads the documented result event and reports
-// whether a non-init event shows that the turn started.
-func parseAntigravityStreamJSON(r io.Reader, sw *syncWriter) (string, bool, error) {
+// whether a non-init event shows that the turn started. With structured set,
+// the result is the event's structured_output.
+func parseAntigravityStreamJSON(r io.Reader, sw *syncWriter, structured bool) (string, bool, error) {
 	var final *antigravityStreamEvent
 	var turnStarted bool
 	err := scanStreamJSONLines(r, sw, func(line string) error {
@@ -647,8 +770,31 @@ func parseAntigravityStreamJSON(r io.Reader, sw *syncWriter) (string, bool, erro
 	if err != nil {
 		return "", turnStarted, err
 	}
+	if structured {
+		result, err := final.structuredResult()
+		return result, turnStarted, err
+	}
 	result, err := final.reviewResult()
 	return result, turnStarted, err
+}
+
+// structuredResult returns the JSON object agy produced for --json-schema. A
+// successful turn without one means the model never satisfied the schema.
+func (event *antigravityStreamEvent) structuredResult() (string, error) {
+	if event == nil {
+		return "", errNoStreamJSON
+	}
+	if event.Result.FinishedReason == "print_timeout" {
+		return "", errAntigravityPrintTimeout
+	}
+	if event.Result.Status != "SUCCESS" {
+		return "", fmt.Errorf("antigravity ended with status %q: %s", event.Result.Status, event.Result.Error)
+	}
+	output := bytes.TrimSpace(event.Result.StructuredOutput)
+	if len(output) == 0 || output[0] != '{' {
+		return "", fmt.Errorf("antigravity result has no structured_output object for --json-schema; reply: %s", strings.TrimSpace(event.Result.Response))
+	}
+	return string(output), nil
 }
 
 func (event *antigravityStreamEvent) reviewResult() (string, error) {
@@ -664,6 +810,8 @@ func (event *antigravityStreamEvent) reviewResult() (string, error) {
 	}
 	return strings.TrimSpace(event.Result.Response), nil
 }
+
+var _ StructuredReviewAgent = (*GeminiAgent)(nil)
 
 func init() {
 	Register(NewGeminiAgent(""))

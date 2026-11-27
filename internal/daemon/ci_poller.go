@@ -1391,17 +1391,13 @@ func (p *CIPoller) resolveCIMatrixMembers(
 
 	members := make([]config.ResolvedMember, 0, len(matrix))
 	for i, entry := range matrix {
-		memberReasoning := reasoning
-		if cfg.PanelReasoningOverride() != "" || repoCfg == nil || strings.TrimSpace(repoCfg.CI.Reasoning) == "" {
-			var err error
-			memberReasoning, err = config.ResolveCIReviewReasoningForType(
-				"", repoCfg, cfg, entry.ReviewType,
+		memberReasoning, err := config.ResolveCIMatrixMemberReasoning(
+			repoCfg, cfg, entry.ReviewType,
+		)
+		if err != nil {
+			return nil, config.SynthesisSpec{}, fmt.Errorf(
+				"resolve reasoning for type %q: %w", entry.ReviewType, err,
 			)
-			if err != nil {
-				return nil, config.SynthesisSpec{}, fmt.Errorf(
-					"resolve reasoning for type %q: %w", entry.ReviewType, err,
-				)
-			}
 		}
 		resolvedAgent, resolvedModel, backupAgent, backupModel, err := p.resolveMatrixMemberAgent(repo, repoCfg, cfg, entry, memberReasoning)
 		if err != nil {
@@ -1601,67 +1597,18 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 		backupAgent, backupModel, nil
 }
 
-// resolveCIMatrix returns the (agent, reviewType) matrix and reasoning for a PR,
-// applying repo overrides over global config. Review types are canonicalized
-// and pairs that collapse to the same (agent, type) are deduplicated. A repo
-// [ci.reviews] is authoritative even when empty (disables reviews).
+// resolveCIMatrix returns the (agent, reviewType) matrix and reasoning for a
+// PR. See config.ResolveCIReviewMatrix for the matrix rules.
 func resolveCIMatrix(
 	repoCfg *config.RepoConfig, rawRepoCfg map[string]any,
 	cfg *config.Config, ghRepo string,
 ) ([]config.AgentReviewType, string) {
-	matrix := cfg.CI.ResolvedReviewMatrix()
-	reasoning := ciReasoning(repoCfg, cfg)
 	if repoCfg != nil {
-		switch {
-		case config.ExperimentOverridesCIReviews(repoCfg):
-			matrix = repoCfg.CI.ResolvedReviewMatrix()
-		case config.ExperimentOverridesCIFlatMatrix(repoCfg):
-			matrix = matrixFromFlatOverrides(repoCfg, cfg)
-		case config.IsKeyInTOMLFile(rawRepoCfg, "ci.reviews"):
-			matrix = repoCfg.CI.ResolvedReviewMatrix()
-		case config.IsKeyInTOMLFile(rawRepoCfg, "ci.agents") ||
-			config.IsKeyInTOMLFile(rawRepoCfg, "ci.review_types"):
-			matrix = matrixFromFlatOverrides(repoCfg, cfg)
-		}
 		if _, err := config.NormalizeReasoning(repoCfg.CI.Reasoning); err != nil {
 			log.Printf("CI poller: invalid reasoning %q in repo config for %s, using default", repoCfg.CI.Reasoning, ghRepo)
 		}
 	}
-	return canonicalizeMatrix(matrix), reasoning
-}
-
-// matrixFromFlatOverrides builds the matrix from the repo's flat agents/
-// review_types lists, falling back to global lists for the unset dimension.
-func matrixFromFlatOverrides(repoCfg *config.RepoConfig, cfg *config.Config) []config.AgentReviewType {
-	reviewTypes := config.ResolveCIReviewTypes("", repoCfg, cfg)
-	agents := config.ResolveCIAgents("", repoCfg, cfg)
-	matrix := make([]config.AgentReviewType, 0, len(reviewTypes)*len(agents))
-	for _, rt := range reviewTypes {
-		for _, ag := range agents {
-			matrix = append(matrix, config.AgentReviewType{Agent: ag, ReviewType: rt})
-		}
-	}
-	return matrix
-}
-
-// canonicalizeMatrix canonicalizes review types (e.g. "review" → "default")
-// and removes entries that collapse to the same (agent, type) pair.
-func canonicalizeMatrix(matrix []config.AgentReviewType) []config.AgentReviewType {
-	seen := make(map[string]bool, len(matrix))
-	canonical := matrix[:0]
-	for _, m := range matrix {
-		rt := m.ReviewType
-		if rt != "" && config.IsDefaultReviewType(rt) {
-			rt = config.ReviewTypeDefault
-		}
-		key := m.Agent + "|" + rt
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		canonical = append(canonical, config.AgentReviewType{Agent: m.Agent, ReviewType: rt})
-	}
-	return canonical
+	return config.ResolveCIReviewMatrix(repoCfg, rawRepoCfg, cfg), ciReasoning(repoCfg, cfg)
 }
 
 // validateMatrixReviewTypes returns an error if the matrix names an invalid

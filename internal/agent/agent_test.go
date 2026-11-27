@@ -788,7 +788,7 @@ func TestGeminiWithModelKeepsAutoSelectedAntigravity(t *testing.T) {
 	assert.Equal(t, "agy", gemini.CommandName())
 	assert.True(t, gemini.ModelExplicit)
 	assert.True(t, gemini.CommandAuto)
-	assert.NotContains(t, gemini.CommandLine(), "-m")
+	assert.Equal(t, "agy --print-timeout 30m --model gemini-1.5-pro", gemini.CommandLine())
 }
 
 func TestGetAvailableWithConfigGeminiCmdPinsLegacyCommand(t *testing.T) {

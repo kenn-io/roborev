@@ -406,6 +406,33 @@ func TestClaudeReviewProxyModeOverridesInheritedEnv(t *testing.T) {
 	assert.Equal(1, countSonnet, "expected exactly one ANTHROPIC_DEFAULT_SONNET_MODEL")
 }
 
+func TestClaudeReviewSetsRoborevEntrypoint(t *testing.T) {
+	// Even when roborev is launched from inside another Claude wrapper
+	// (such as an IDE or T3 Code), Claude subprocesses must receive a
+	// single CLAUDE_CODE_ENTRYPOINT=roborev entry.
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+
+	mock := mockAgentCLI(t, MockCLIOpts{
+		CaptureEnv: true,
+		StdoutLines: []string{
+			`{"type":"result","result":"ok"}`,
+		},
+	})
+
+	a := NewClaudeAgent(mock.CmdPath).WithModel("sonnet").(*ClaudeAgent)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+
+	env := readMockEnv(t, mock.EnvFile)
+	var entrypoints []string
+	for _, e := range env {
+		if strings.HasPrefix(e, "CLAUDE_CODE_ENTRYPOINT=") {
+			entrypoints = append(entrypoints, e)
+		}
+	}
+	assert.Equal(t, []string{"CLAUDE_CODE_ENTRYPOINT=roborev"}, entrypoints)
+}
+
 func TestClaudeReviewProxyTokenRejectsControlChars(t *testing.T) {
 	// Tokens containing embedded control characters would either be rejected
 	// by exec (NUL) or produce malformed HTTP headers. Fail fast with a clear

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -311,7 +312,12 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		if err := globalCfg.Validate(); err != nil {
 			return fmt.Errorf("validate global config: %w", err)
 		}
-		if err := config.ValidateExperimentConfigs(globalCfg, nil, nil); err != nil {
+		if err := agent.ValidateStructuredReviewConfig(nil, globalCfg, nil); err != nil {
+			return fmt.Errorf("validate global config: %w", err)
+		}
+		if err := config.ValidateExperimentConfigs(
+			globalCfg, nil, nil, structuredReviewExperimentCheck(globalCfg),
+		); err != nil {
 			return fmt.Errorf("validate global config: %w", err)
 		}
 		return nil
@@ -334,7 +340,12 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		if err := config.ValidateEffectiveReviewConfig(nil, repoCfg); err != nil {
 			return fmt.Errorf("validate local config: %w", err)
 		}
-		if err := config.ValidateRepoExperimentConfigs(repoCfg, rawRepo); err != nil {
+		if err := agent.ValidateStructuredReviewConfig(repoCfg, nil, rawRepo); err != nil {
+			return fmt.Errorf("validate local config: %w", err)
+		}
+		if err := config.ValidateRepoExperimentConfigs(
+			repoCfg, rawRepo, structuredReviewExperimentCheck(nil),
+		); err != nil {
 			return fmt.Errorf("validate local config: %w", err)
 		}
 		return nil
@@ -365,10 +376,24 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		if err := config.ValidateEffectiveReviewConfig(globalCfg, repoCfg); err != nil {
 			return fmt.Errorf("validate merged config: %w", err)
 		}
-		if err := config.ValidateExperimentConfigs(globalCfg, repoCfg, rawRepo); err != nil {
+		if err := agent.ValidateStructuredReviewConfig(repoCfg, globalCfg, rawRepo); err != nil {
+			return fmt.Errorf("validate merged config: %w", err)
+		}
+		if err := config.ValidateExperimentConfigs(
+			globalCfg, repoCfg, rawRepo, structuredReviewExperimentCheck(globalCfg),
+		); err != nil {
 			return fmt.Errorf("validate merged config: %w", err)
 		}
 		return nil
+	}
+}
+
+// structuredReviewExperimentCheck applies the custom review type agent check
+// to each experiment's config, since an experiment can move a review type or
+// panel member onto an agent that cannot run it.
+func structuredReviewExperimentCheck(globalCfg *config.Config) config.ExperimentConfigCheck {
+	return func(effective *config.RepoConfig, raw map[string]any) error {
+		return agent.ValidateStructuredReviewConfig(effective, globalCfg, raw)
 	}
 }
 

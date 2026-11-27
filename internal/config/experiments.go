@@ -84,10 +84,17 @@ type canonicalExperimentDefinition struct {
 	Config    map[string]any       `json:"config"`
 }
 
+// ExperimentConfigCheck validates one materialized experiment config beyond
+// what this package can check, such as whether its agents can run its review
+// types. raw is the overlaid repository config as written.
+type ExperimentConfigCheck func(effective *RepoConfig, raw map[string]any) error
+
 // ValidateExperimentConfigs validates every materialized experiment overlay
-// after merging global definitions with repository enablement overrides.
+// after merging global definitions with repository enablement overrides. A
+// non-nil check also runs on each materialized config.
 func ValidateExperimentConfigs(
 	global *Config, repo *RepoConfig, rawRepo map[string]any,
+	check ExperimentConfigCheck,
 ) error {
 	if repo != nil && rawRepo == nil {
 		return markExperimentConfigError(
@@ -98,13 +105,16 @@ func ValidateExperimentConfigs(
 	if err != nil {
 		return markExperimentConfigError(err)
 	}
-	return validateMaterializedExperimentConfigs(global, rawRepo, definitions)
+	return validateMaterializedExperimentConfigs(global, rawRepo, definitions, check)
 }
 
 // ValidateRepoExperimentConfigs validates complete experiment definitions in
 // repository config. Enablement-only entries need their global definition and
-// are validated by ValidateExperimentConfigs in merged scope.
-func ValidateRepoExperimentConfigs(repo *RepoConfig, rawRepo map[string]any) error {
+// are validated by ValidateExperimentConfigs in merged scope. A non-nil check
+// also runs on each materialized config.
+func ValidateRepoExperimentConfigs(
+	repo *RepoConfig, rawRepo map[string]any, check ExperimentConfigCheck,
+) error {
 	if repo == nil {
 		return nil
 	}
@@ -122,12 +132,12 @@ func ValidateRepoExperimentConfigs(repo *RepoConfig, rawRepo map[string]any) err
 			definitions[id] = definition
 		}
 	}
-	return validateMaterializedExperimentConfigs(nil, rawRepo, definitions)
+	return validateMaterializedExperimentConfigs(nil, rawRepo, definitions, check)
 }
 
 func validateMaterializedExperimentConfigs(
 	global *Config, rawRepo map[string]any,
-	definitions map[string]ExperimentDefinition,
+	definitions map[string]ExperimentDefinition, check ExperimentConfigCheck,
 ) error {
 	for _, id := range sortedMapKeys(definitions) {
 		effectiveRaw, err := applyExperimentOverlay(
@@ -142,6 +152,12 @@ func validateMaterializedExperimentConfigs(
 		}
 		effectiveCfg.experimentOverlay = cloneExperimentMap(definitions[id].Config)
 		if err := ValidateEffectiveReviewConfig(global, effectiveCfg); err != nil {
+			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+		}
+		if check == nil {
+			continue
+		}
+		if err := check(effectiveCfg, effectiveRaw); err != nil {
 			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 	}

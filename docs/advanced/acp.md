@@ -152,12 +152,12 @@ disable_mode_negotiation = true
 
 ### Example: Model-Selectable Gemini via a Bridge
 
-The `agy` (Antigravity) CLI does not support explicit Gemini model selection, so
-the built-in `gemini` agent runs default-model-only when it resolves to `agy`.
-An ACP bridge that wraps the Google Antigravity SDK restores model selection
-(including thinking-level control) through the generic ACP agent — no roborev
-changes required. One such bridge is
-[agy-acp](https://github.com/mjacobs/agy-acp) (`uv tool install agy-acp`):
+The built-in `gemini` agent already passes a configured model to `agy`, and only
+the built-in agent can run custom review types, because ACP has no way to
+request schema-shaped output. An ACP bridge that wraps the Google Antigravity
+SDK is another way to reach Gemini models for built-in review types. One such
+bridge is [agy-acp](https://github.com/mjacobs/agy-acp)
+(`uv tool install agy-acp`):
 
 ```toml
 # ~/.roborev/config.toml or .roborev.toml
