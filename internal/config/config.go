@@ -418,6 +418,7 @@ type Config struct {
 	PiCmd         string `toml:"pi_cmd"`
 	OpenCodeCmd   string `toml:"opencode_cmd"`
 	MuseCmd       string `toml:"muse_cmd"`
+	OmpCmd        string `toml:"omp_cmd"`
 	GrokCmd       string `toml:"grok_cmd"`
 	DroidCmd      string `toml:"droid_cmd"`
 
@@ -1063,6 +1064,7 @@ func DefaultConfig() *Config {
 		PiCmd:              "pi",
 		OpenCodeCmd:        "opencode",
 		MuseCmd:            "muse",
+		OmpCmd:             "omp",
 		GrokCmd:            "grok",
 		DroidCmd:           "droid",
 		MouseEnabled:       true,

@@ -330,10 +330,15 @@ func TestSuppliedReviewInvocationKeepsAdapterEvidence(t *testing.T) {
 		{"copilot", "copilot", `{"type":"assistant.message","data":{"messageId":"msg-1","content":` + string(encodedNarration) + `,"toolRequests":[]}}` + "\n" +
 			`{"type":"result","exitCode":0,"sessionId":"invocation-session"}`, false},
 		{"muse", "muse", narration, false},
+		{"omp", "omp", `{"type":"session","id":"invocation-session"}` + "\n" +
+			`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":` + string(encoded) + `}],"stopReason":"stop","usage":{"input":10,"output":3}}}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testenv.SetDataDir(t)
 			script := "#!/bin/sh\nfor arg in \"$@\"; do if [ \"$arg\" = --help ]; then echo '--sandbox --effort --allow-all-tools --stream --output-format --disable-builtin-mcps'; exit 0; fi; done\ncat >/dev/null\ncat <<'OUTPUT'\n" + tc.stream + "\nOUTPUT\n"
+			if tc.command == "omp" {
+				script = strings.Replace(script, "#!/bin/sh\n", "#!/bin/sh\n[ \"$1\" = --version ] && { echo omp/19.2.1; exit 0; }\n", 1)
+			}
 			t.Cleanup(testutil.MockBinaryInPath(t, tc.command, script))
 			server, db, _ := newTestServer(t)
 			var usageSessions []string

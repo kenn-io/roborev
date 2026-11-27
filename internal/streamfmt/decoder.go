@@ -19,7 +19,7 @@ func DecoderForAgent(agent string) Decoder {
 		return &codexDecoder{}
 	case "opencode", "kilo":
 		return &openCodeDecoder{}
-	case "pi":
+	case "pi", "omp":
 		return &piDecoder{}
 	case "grok", "grok-build":
 		return &grokDecoder{}

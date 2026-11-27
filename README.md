@@ -103,7 +103,7 @@ You can also choose the exact binary path with
   refactoring, test fixtures, dead code, security) that agents can fix
   automatically.
 - **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
-  OpenCode, Cursor, Kiro, Kilo, Droid, Pi, and Muse Code.
+  OpenCode, Cursor, Kiro, Kilo, Droid, Pi, Muse Code, and omp.
 - **Runs Locally** - No hosted service or additional infrastructure.
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
@@ -453,6 +453,7 @@ hook, so a configured integration never goes dark unnoticed.
 | Droid | [factory.ai](https://factory.ai/) |
 | Pi | [pi.dev](https://pi.dev/) |
 | Muse Code | [Meta installation guide](https://dev.meta.ai/docs/overview) |
+| omp | [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi) |
 
 roborev auto-detects installed agents.
 

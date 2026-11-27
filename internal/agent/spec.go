@@ -197,6 +197,21 @@ var allAgentSpecs = []agentSpec{
 		},
 	},
 	{
+		Name:            "omp",
+		DefaultCommand:  "omp",
+		FallbackRank:    13,
+		CommandOverride: func(cfg *config.Config) string { return cfg.OmpCmd },
+		CloneWithCommand: func(a Agent, command string) Agent {
+			agent, ok := a.(*OmpAgent)
+			if !ok {
+				return a
+			}
+			clone := *agent
+			clone.Command = command
+			return &clone
+		},
+	},
+	{
 		Name:           defaultACPName,
 		DefaultCommand: defaultACPCommand,
 	},

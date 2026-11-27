@@ -152,8 +152,8 @@ Before enabling the CI poller, you need:
 
 1. **At least one AI agent** installed. The poller auto-detects installed agents
     in this order: `codex`, `claude-code`, `gemini`, `copilot`, `opencode`,
-    `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`, `muse`. You can check
-    what's available with:
+    `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`, `muse`, `omp`. You can
+    check what's available with:
 
     ```bash
     roborev agent check             # smoke-test all installed agents
@@ -1260,7 +1260,7 @@ directory there. Label components may not begin with the reserved
 
 When `agents` is empty, the poller auto-detects the first available agent from:
 codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi,
-grok, muse.
+grok, muse, omp.
 
 ### Quiet Hours Options
 
@@ -1697,6 +1697,7 @@ Local reviews of your own commits are unchanged.
 | Copilot | Removes `COPILOT_ALLOW_ALL` and the `GITHUB_COPILOT_PROMPT_MODE_*` variables. Prompt mode then skips repository hooks and workspace MCP servers. A folder you trusted before is still trusted. |
 | Kilo | Sets `KILO_DISABLE_PROJECT_CONFIG=1`, which skips project config, plugins, and MCP servers. |
 | Muse | Already runs non-agentic reviews in a private home without trusted workspaces. |
+| omp | Fails the review. omp has no way to skip the checkout's configuration: the checkout's `SYSTEM.md` replaces omp's system prompt, and its `.omp/config.yml` changes omp's settings. |
 
 Some agents have no way to skip project configuration. Do not use them to review
 pull requests from authors you do not trust:

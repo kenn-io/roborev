@@ -651,50 +651,51 @@ func (s piStream) err() error {
 
 func parsePiJSON(r io.Reader) (piStream, error) {
 	var stream piStream
-	err := scanStreamJSONLines(r, nil, func(line string) error {
-		var ev struct {
-			Type    string `json:"type"`
-			Message struct {
-				Role    string `json:"role"`
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text,omitempty"`
-				} `json:"content"`
-				StopReason   string `json:"stopReason"`
-				ErrorMessage string `json:"errorMessage"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			return nil
-		}
-		if ev.Message.Role != "assistant" {
-			return nil
-		}
-		if ev.Type == "message_end" {
-			// A later message, such as a successful retry, clears the error.
-			stream.Error = ""
-			if ev.Message.StopReason == "error" {
-				stream.Error = strings.TrimSpace(ev.Message.ErrorMessage)
-				if stream.Error == "" {
-					stream.Error = "request failed without an error message"
-				}
-			}
-		}
-		var parts []string
-		for _, item := range ev.Message.Content {
-			if item.Type == "text" && item.Text != "" {
-				parts = append(parts, item.Text)
-			}
-		}
-		if len(parts) > 0 {
-			stream.Text = strings.Join(parts, "\n")
-		}
-		return nil
-	})
-	if err != nil {
+	if err := scanStreamJSONLines(r, nil, stream.observe); err != nil {
 		return stream, fmt.Errorf("read pi stream: %w", err)
 	}
 	return stream, nil
+}
+
+func (s *piStream) observe(line string) error {
+	var ev struct {
+		Type    string `json:"type"`
+		Message struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text,omitempty"`
+			} `json:"content"`
+			StopReason   string `json:"stopReason"`
+			ErrorMessage string `json:"errorMessage"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		return nil
+	}
+	if ev.Message.Role != "assistant" {
+		return nil
+	}
+	if ev.Type == "message_end" {
+		// A later message, such as a successful retry, clears the error.
+		s.Error = ""
+		if ev.Message.StopReason == "error" {
+			s.Error = strings.TrimSpace(ev.Message.ErrorMessage)
+			if s.Error == "" {
+				s.Error = "request failed without an error message"
+			}
+		}
+	}
+	var parts []string
+	for _, item := range ev.Message.Content {
+		if item.Type == "text" && item.Text != "" {
+			parts = append(parts, item.Text)
+		}
+	}
+	if len(parts) > 0 {
+		s.Text = strings.Join(parts, "\n")
+	}
+	return nil
 }
 
 // piMissingOutputError explains why a Pi run that exited 0 wrote no

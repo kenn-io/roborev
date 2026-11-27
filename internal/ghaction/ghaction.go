@@ -17,6 +17,7 @@ import (
 // Pi remains local-only: its review mode does not yet disable builtin tools,
 // so it must not receive generated-workflow credentials on untrusted PRs.
 // Muse remains local-only: the workflow generator has no Muse install or auth step.
+// omp remains local-only: it cannot review an untrusted checkout.
 var (
 	allowedAgents = []string{
 		"codex", "claude-code", "gemini",

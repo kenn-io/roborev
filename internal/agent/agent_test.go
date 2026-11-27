@@ -353,6 +353,7 @@ var agentFixtures = []agentTestDef{
 	{"kilo", func(s string) Agent { return NewKiloAgent(s) }, "--model", "", "anthropic/claude-sonnet-4-20250514", false, false},
 	{"grok", func(s string) Agent { return NewGrokAgent(s) }, "-m", "", "grok-4.5", false, false},
 	{"muse", func(s string) Agent { return NewMuseAgent(s) }, "--model", "", "muse-spark-1.3", false, false},
+	{"omp", func(s string) Agent { return NewOmpAgent(s) }, "--model", "", "anthropic/claude-sonnet-4-5", false, false},
 }
 
 func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
@@ -371,6 +372,7 @@ func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
 		{"gemini", NewGeminiAgent("gemini"), "--approval-mode yolo", "--approval-mode plan"},
 		{"grok", NewGrokAgent("grok"), "--always-approve", "--sandbox read-only"},
 		{"muse", NewMuseAgent("muse"), "--yolo", `-c run.toolset=["read_file","search"] -c hooks={}`},
+		{"omp", NewOmpAgent("omp"), "--approval-mode yolo", "--tools " + ompReadOnlyTools + " --no-tools --approval-mode always-ask"},
 		{"kilo", NewKiloAgent("kilo"), "--auto", "--agent plan"},
 		{"kiro", NewKiroAgent("kiro"), "--trust-all-tools", "--no-interactive"},
 		{"opencode", NewOpenCodeAgent("opencode"), "--write", "--agent plan"},

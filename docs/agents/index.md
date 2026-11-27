@@ -22,6 +22,7 @@ installed.
 | Pi | `pi` | `npm install -g @mariozechner/pi-coding-agent` |
 | Grok Build | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` ([x.ai/cli](https://x.ai/cli)) |
 | Muse Code | `muse` | `curl -fsSL https://dev.meta.ai/install.sh \| sh` ([Meta installation guide](https://dev.meta.ai/docs/overview)) |
+| omp | `omp` | `curl -fsSL https://omp.sh/install \| sh` ([can1357/oh-my-pi](https://github.com/can1357/oh-my-pi)) |
 
 For Claude Code, Codex, and Copilot, roborev checks the resolved executable's
 path, size, and modification time before reusing cached CLI capabilities. When
@@ -44,6 +45,7 @@ roborev auto-detects installed agents and falls back in this order:
 1. Pi
 1. Grok Build
 1. Muse Code
+1. omp
 
 The first available agent is used unless you specify one explicitly.
 
@@ -97,6 +99,7 @@ roborev refine --model claude-sonnet-4-20250514
 | Pi | Model name | `claude-sonnet-4-20250514`, `gpt-4.1` |
 | Grok Build | xAI model ID | `grok-4.5` (see [x.ai/cli](https://x.ai/cli)) |
 | Muse Code | Meta model ID | `muse-spark-1.3` |
+| omp | Model name, or `provider/model` for an exact match | `claude-sonnet-4-5`, `anthropic/claude-sonnet-4-5` |
 
 ### Configuration
 
@@ -367,6 +370,7 @@ and commands):
 | Pi | Full (agentic runs use Pi's default tools) |
 | Grok Build | Full (uses `--always-approve` in agentic mode; review uses layered read-only safety — see below) |
 | Muse Code | Full (uses `--yolo`; reviews and planning allow only `read_file` and `search`) |
+| omp | Full (uses `--approval-mode yolo`; reviews and planning allow only `read`, `grep`, and `glob`) |
 
 See [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/) for details on
 review vs agentic modes.
@@ -484,6 +488,59 @@ Muse 1.4.10 defaults to `muse-spark-1.3-contributor`, so set
 `model = "muse-spark-1.3"` in roborev to keep pay-as-you-go reviews off that
 tier. roborev passes `--model` only when it has a model configured; otherwise,
 Muse uses its own model settings.
+
+## omp
+
+[omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) is a fork of Pi with its
+own tools, flags, and session store, so roborev runs it as a separate agent. Set
+`omp_cmd` in global config to a command name on `PATH` or an absolute path. The
+flags were verified against omp 19.2.1.
+
+roborev starts omp in an empty temporary directory and passes `--cwd` with the
+repository. omp loads the `.env` in the directory it starts in, so a
+repository's `.env` can't set omp's provider keys or base URLs. Tools, sessions,
+and context files such as `AGENTS.md` still use the repository. Put provider
+settings in the daemon's environment or in `~/.omp/agent/.env`. A version
+manager shim also resolves omp from the temporary directory, so an omp version
+pinned inside the repository doesn't apply.
+
+Reviews and planning run omp with a read-only tool allowlist:
+
+```bash
+omp -p --mode json --tools read,grep,glob --no-tools --approval-mode always-ask
+```
+
+- `--tools read,grep,glob` names the built-in tools the run may use. omp has no
+    `ls` tool, and its `find` tool is a semantic search that calls a second
+    model, so `glob` takes their place.
+- `--no-tools` leaves out MCP, extension, custom, and memory tools, and stops
+    extensions and LSP from loading.
+- `--approval-mode always-ask` refuses every tool call that needs approval, such
+    as a `read` of an `ssh://` path, because print mode has nobody to answer the
+    prompt.
+
+Reviews and planning need omp 19.2.0 or later. Earlier releases accept
+`--no-tools` but still add MCP, extension, and custom tools, so roborev checks
+`omp --version` and fails the review on those releases.
+
+Fix and refine use omp's default tools with `--approval-mode yolo`, whatever
+approval mode your omp settings choose. Per-tool `deny` rules and restricted
+folders in those settings still apply. Setting `allow_unsafe_agents = true` also
+enables that mode for reviews. Planning always uses the read-only allowlist.
+
+roborev passes `--model` only when it has a model configured; otherwise, omp
+uses its own default. omp matches a bare model name fuzzily; `provider/model`
+matches exactly. Reasoning levels map to `--thinking`, and `standard` leaves
+omp's default unchanged.
+
+When omp stops a run early, roborev reports why from omp's event stream: the
+model provider's error message, or the reason for a cost cap or an abort. A job
+that reaches omp's cost cap goes to the backup agent, or fails, without retries.
+
+roborev refuses to run omp on untrusted checkouts; see
+[Agent configuration in the pull request](/docs/integrations/github/#agent-configuration-in-the-pull-request).
+omp has no session resume, rebuttal, or structured-output (schema) review or
+classification support in roborev.
 
 ## Grok Build
 

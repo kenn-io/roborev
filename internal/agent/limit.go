@@ -80,6 +80,11 @@ type limitRule struct {
 // local retry with backoff (no cooldown), so the bar is deliberately
 // kept high to avoid retrying deterministic failures forever.
 var defaultLimitRules = []limitRule{
+	// The omp adapter writes this marker when omp's cost cap (--max-cost /
+	// session.maxCost) stopped the run, decided by omp's exit status. It
+	// precedes the quota rules so stderr text cannot reclassify it. A retry
+	// starts a new session that can spend up to the cap again.
+	{Agents: []string{"omp"}, Substring: ompCostCapStopped, Kind: LimitKindPermanent},
 	{Agents: []string{"*"}, Substring: "resource exhausted", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "quota exceeded", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "quota_exceeded", Kind: LimitKindQuota},
