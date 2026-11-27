@@ -210,7 +210,7 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 }
 
 func TestTruncateCommentFold(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "Issue\n\n```go\n" + strings.Repeat("code\n", 100) + "```"}}}
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Nit: true, Problem: "Issue\n\n```go\n" + strings.Repeat("code\n", 100) + "```"}}}
 	body, foldAt := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	const suffix = "\n\nfooter"
 	summaryEnd := strings.Index(body, "</summary>") + len("</summary>")
@@ -232,7 +232,7 @@ func TestTruncateCommentFold(t *testing.T) {
 				assert.NotContains(t, got, "```go")
 			} else {
 				assert.NotContains(t, got, "<details>")
-				assert.Equal(t, body[:foldAt]+suffix, got)
+				assert.Equal(t, body[:foldAt.Start]+suffix, got)
 			}
 			assert.LessOrEqual(t, len(got), tc.limit)
 			assert.True(t, strings.HasSuffix(got, suffix))
@@ -240,21 +240,51 @@ func TestTruncateCommentFold(t *testing.T) {
 	}
 }
 
+func TestTruncateCommentKeepsCompleteFoldedFindings(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "low", Nit: true, Problem: "First finding.\n\n```go\n- looks like a finding\n```", Fix: "First fix."},
+		{Severity: "low", Nit: true, Problem: "Second finding.", Fix: "Second fix."},
+		{Severity: "low", Unlikely: true, Problem: "Third finding." + strings.Repeat(" long", 100), Fix: "Third fix."},
+	}}
+	body, fold := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	require.Len(t, fold.Ends, 4)
+	const suffix = "\n\nfooter"
+	for _, tc := range []struct {
+		name   string
+		budget int
+		end    int
+	}{
+		{"inside first", fold.Ends[1] - 1, 0},
+		{"exact first", fold.Ends[1], 1},
+		{"inside second", fold.Ends[2] - 1, 1},
+		{"exact second", fold.Ends[2], 2},
+		{"inside third group", (fold.Ends[2] + fold.Ends[3]) / 2, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			limit := tc.budget + len(foldClosing) + len(suffix)
+			got := TruncateCommentTo(body, fold, limit, suffix)
+			want := strings.TrimRight(body[:fold.Ends[tc.end]], "\n") + foldClosing + suffix
+			assert.Equal(t, want, got)
+			assert.LessOrEqual(t, len(got), limit)
+		})
+	}
+}
+
 func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "high", Problem: "Example:\n\n```html\n<details><summary>Example</summary>\ncontent\n</details>\n```\nKeep this finding.", Fix: "Fix it."},
-		{Severity: "low", Problem: strings.Repeat("nit ", 100), Fix: "Fix it."},
+		{Severity: "low", Nit: true, Problem: strings.Repeat("nit ", 100), Fix: "Fix it."},
 	}}
 	body, foldAt := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	const suffix = "\n\nfooter"
-	require.Positive(t, foldAt)
+	require.Positive(t, foldAt.Start)
 	for _, tc := range []struct {
 		name  string
 		limit int
 		want  string
 	}{
-		{"before fold", foldAt - 5 + len(suffix), body[:foldAt-5] + suffix},
-		{"inside fold", foldAt + len("\n\n<details><summary>1 nit hidden</summary>") + len(foldClosing) + len(suffix), body[:foldAt] + "\n\n<details><summary>1 nit hidden</summary>" + foldClosing + suffix},
+		{"before fold", foldAt.Start - 5 + len(suffix), body[:foldAt.Start-5] + suffix},
+		{"inside fold", foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(foldClosing) + len(suffix), body[:foldAt.Start] + "\n\n<details><summary>1 nit hidden</summary>" + foldClosing + suffix},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, TruncateCommentTo(body, foldAt, tc.limit, suffix))

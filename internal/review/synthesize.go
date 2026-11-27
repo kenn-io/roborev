@@ -136,7 +136,7 @@ func formatSingleResult(
 		passed = true
 	}
 	output := r.Output
-	foldAt := -1
+	var foldAt *CommentFold
 	if commentConfig != nil {
 		prepared := PrepareComment(*commentConfig, r)
 		if prepared.structured {
@@ -206,7 +206,7 @@ func runSynthesis(
 	}
 
 	body, foldAt := FormatCommentWithFold(PrepareComment(commentConfig, ReviewResult{Structured: &doc}))
-	if foldAt >= 0 {
+	if foldAt != nil {
 		wrapperLen := len(FormatSynthesizedComment("", results, opts.HeadSHA))
 		body = TruncateCommentTo(body, foldAt, MaxCommentLen-len(CommentMarker)-1-wrapperLen, CommentTruncSuffix)
 	}

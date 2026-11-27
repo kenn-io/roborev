@@ -161,18 +161,24 @@ func TruncateComment(body string) string {
 
 // TruncateCommentTo fits a comment within limit bytes, closing a folded
 // section if the cut falls inside it. The suffix is included in the limit.
-func TruncateCommentTo(body string, foldAt, limit int, suffix string) string {
+func TruncateCommentTo(body string, fold *CommentFold, limit int, suffix string) string {
 	if len(body) <= limit {
 		return body
 	}
 	budget := max(limit-len(suffix), 0)
-	if foldAt >= 0 && budget > foldAt {
-		budget = max(budget-len(foldClosing), 0)
-		summaryEnd := strings.Index(body[foldAt:], "</summary>")
-		if summaryEnd >= 0 && budget >= foldAt+summaryEnd+len("</summary>") {
-			return body[:foldAt+summaryEnd+len("</summary>")] + foldClosing + suffix
+	if fold != nil && budget > fold.Start {
+		foldBudget := budget - len(foldClosing)
+		end := fold.Start
+		for _, boundary := range fold.Ends {
+			if boundary > foldBudget {
+				break
+			}
+			end = boundary
 		}
-		return body[:foldAt] + suffix
+		if end > fold.Start {
+			return strings.TrimRight(body[:end], "\n") + foldClosing + suffix
+		}
+		return body[:fold.Start] + suffix
 	}
 	return TrimPartialRune(body[:budget]) + suffix
 }

@@ -152,26 +152,44 @@ func FormatComment(comment PreparedComment) string {
 	return body
 }
 
-// FormatCommentWithFold also returns the offset of the generated fold, or -1.
-func FormatCommentWithFold(comment PreparedComment) (string, int) {
+// CommentFold records safe truncation points in a generated fold.
+type CommentFold struct {
+	Start int
+	Ends  []int
+}
+
+// Shift returns fold offsets adjusted for a prefix.
+func (f *CommentFold) Shift(prefix int) *CommentFold {
+	if f == nil {
+		return nil
+	}
+	shifted := &CommentFold{Start: f.Start + prefix, Ends: make([]int, len(f.Ends))}
+	for i, end := range f.Ends {
+		shifted.Ends[i] = end + prefix
+	}
+	return shifted
+}
+
+// FormatCommentWithFold also returns safe boundaries of the generated fold.
+func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 	if comment.verbatim != nil {
-		return *comment.verbatim, -1
+		return *comment.verbatim, nil
 	}
 	if len(comment.findings) == 0 && len(comment.nits)+len(comment.unlikely) == 0 {
 		if comment.confidenceFiltered {
-			return "**Verdict:** No findings match the comment filters.\n", -1
+			return "**Verdict:** No findings match the comment filters.\n", nil
 		}
 		if comment.minSeverity != "" && comment.minSeverity != "low" {
-			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", comment.minSeverity), -1
+			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", comment.minSeverity), nil
 		}
-		return "**Verdict:** No issues found.\n", -1
+		return "**Verdict:** No issues found.\n", nil
 	}
 	if !comment.structured {
 		blocks := make([]string, len(comment.findings))
 		for i, finding := range comment.findings {
 			blocks[i] = finding.markdown
 		}
-		return strings.Join(blocks, "\n\n---\n\n"), -1
+		return strings.Join(blocks, "\n\n---\n\n"), nil
 	}
 	var out strings.Builder
 	noun := "findings"
@@ -198,7 +216,7 @@ func FormatCommentWithFold(comment PreparedComment) (string, int) {
 			renderCommentFinding(&out, finding)
 		}
 	}
-	foldAt := -1
+	var fold *CommentFold
 	if len(comment.nits)+len(comment.unlikely) > 0 {
 		groups := []struct {
 			title, one, many string
@@ -212,8 +230,10 @@ func FormatCommentWithFold(comment PreparedComment) (string, int) {
 				labels = append(labels, fmt.Sprintf("%d %s", n, group.many))
 			}
 		}
-		foldAt = out.Len()
-		fmt.Fprintf(&out, "\n\n<details><summary>%s hidden</summary>\n", strings.Join(labels, " and "))
+		fold = &CommentFold{Start: out.Len()}
+		fmt.Fprintf(&out, "\n\n<details><summary>%s hidden</summary>", strings.Join(labels, " and "))
+		fold.Ends = append(fold.Ends, out.Len())
+		out.WriteString("\n")
 		for _, group := range groups {
 			if len(group.findings) > 0 {
 				fmt.Fprintf(&out, "\n#### %s\n", group.title)
@@ -222,14 +242,15 @@ func FormatCommentWithFold(comment PreparedComment) (string, int) {
 				var item strings.Builder
 				renderCommentFinding(&item, finding)
 				out.WriteString(escapeFoldClose(item.String()))
+				fold.Ends = append(fold.Ends, out.Len()-1)
 			}
 		}
 		out.WriteString("\n</details>\n")
 	}
 	if notice := comment.OmissionNotice(); notice != "" {
-		return strings.TrimRight(out.String(), "\n") + notice, foldAt
+		return strings.TrimRight(out.String(), "\n") + notice, fold
 	}
-	return out.String(), foldAt
+	return out.String(), fold
 }
 
 var foldCloseTag = regexp.MustCompile(`(?i)</?details(?:\s[^>]*|/?)>`)

@@ -4304,10 +4304,10 @@ func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, re
 	if notice == "" && len(output) > reviewpkg.MaxCommentLen {
 		output = truncatePanelPRBodyForFooter(output, outputFoldAt, "", reviewpkg.MaxCommentLen)
 	}
-	foldAt := -1
+	var foldAt *reviewpkg.CommentFold
 	if output != "" && (verdict != "P" || headSHA != "") {
-		if outputFoldAt >= 0 && outputFoldAt < len(output) && strings.HasPrefix(output[outputFoldAt:], "\n\n<details><summary>") {
-			foldAt = b.Len() + outputFoldAt
+		if outputFoldAt != nil && outputFoldAt.Start < len(output) && strings.HasPrefix(output[outputFoldAt.Start:], "\n\n<details><summary>") {
+			foldAt = outputFoldAt.Shift(b.Len())
 		}
 		b.WriteString(output)
 		b.WriteString("\n")
@@ -4321,10 +4321,10 @@ func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, re
 const panelCommentTruncSuffix = "\n\n...(truncated)"
 
 func appendPanelPRFooter(body string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
-	return appendPanelPRFooterWithNotice(body, -1, "", review, members, includeCosts)
+	return appendPanelPRFooterWithNotice(body, nil, "", review, members, includeCosts)
 }
 
-func appendPanelPRFooterWithNotice(body string, foldAt int, notice string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
+func appendPanelPRFooterWithNotice(body string, foldAt *reviewpkg.CommentFold, notice string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
 	if review == nil {
 		return body
 	}
@@ -4349,7 +4349,7 @@ func appendPanelPRFooterWithNotice(body string, foldAt int, notice string, revie
 	return strings.TrimRight(body, "\n") + suffix
 }
 
-func truncatePanelPRBodyForFooter(body string, foldAt int, footer string, maxLen int) string {
+func truncatePanelPRBodyForFooter(body string, foldAt *reviewpkg.CommentFold, footer string, maxLen int) string {
 	return reviewpkg.TruncateCommentTo(body, foldAt, max(maxLen-len(footer), 0), panelCommentTruncSuffix)
 }
 

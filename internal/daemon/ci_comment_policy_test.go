@@ -397,6 +397,20 @@ func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
 	assert.True(t, strings.HasSuffix(got, "\n</details>"+panelCommentTruncSuffix))
 }
 
+func TestCIPanelCommentTruncationKeepsCompleteFoldedFinding(t *testing.T) {
+	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{
+		{Severity: "low", Nit: true, Problem: "Keep this finding.", Fix: "Fix it."},
+		{Severity: "low", Nit: true, Problem: strings.Repeat("oversized ", reviewpkg.MaxCommentLen), Fix: "Fix it."},
+	}}
+	prepared := reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc})
+	stored := &storage.Review{Job: &storage.ReviewJob{Agent: "test"}}
+	got := formatPreparedPanelPRCommentWithHead(prepared, stored, "F", nil, false, "abcdef123456")
+	assert.Contains(t, got, "Keep this finding.")
+	assert.NotContains(t, got, "oversized")
+	assert.Contains(t, got, "</details>"+panelCommentTruncSuffix)
+	assert.LessOrEqual(t, len(got), reviewpkg.MaxCommentLen)
+}
+
 func TestCIPanelCommentTruncationPreservesVisibleExample(t *testing.T) {
 	example := "```html\n<details><summary>Example</summary>\ncontent\n</details>\n```"
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{
