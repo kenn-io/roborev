@@ -12,7 +12,7 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v10.3.3'
         - 'jdx/mise-action@v5.2.5'
-        - 'kenn-io/kit@v0.58.1'
+        - 'kenn-io/kit@v0.60.0'
         - 'step-security/codecov-action@v7.1.1'
         - 'step-security/golangci-lint-action@v9.3.0'
         - 'step-security/paths-filter@v4.0.3'
@@ -34,12 +34,12 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'actions/upload-artifact@v7.0.2'
-        - 'kenn-io/kit@v0.58.1'
+        - 'kenn-io/kit@v0.60.0'
         - 'step-security/paths-filter@v4.0.3'
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'kenn-io/kit@v0.58.1'
+        - 'kenn-io/kit@v0.60.0'
         - 'step-security/jactionlint@v2.2.0'
 dependencies:
     'actions/cache@v6.1.0':
@@ -100,9 +100,9 @@ dependencies:
         uses:
             - 'actions/checkout@v7.0.1'
             - 'actions/setup-go@v7.0.0'
-    'kenn-io/kit@v0.58.1':
-        ref: 'v0.58.1'
-        commit: 'sha1-839192443564f9b106f9e2b6ccb3072aa861d0f2'
+    'kenn-io/kit@v0.60.0':
+        ref: 'v0.60.0'
+        commit: 'sha1-3c58f34760d8d7faea0f05955fbdb03535d125bb'
         owner_id: 259885253
         repo_id: 1238000987
     'step-security/codecov-action@v7.1.1':
