@@ -198,7 +198,7 @@ func TestCommentFold(t *testing.T) {
 		{Severity: "medium", Problem: "another"},
 	}}
 	mixed := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	assert.Contains(t, mixed, "2 findings shown; 2 folded")
+	assert.Contains(t, mixed, "2 findings shown; 2 folded findings")
 	filteredSeverity := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
 	assert.NotContains(t, filteredSeverity, "naming issue")
 	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
@@ -206,7 +206,7 @@ func TestCommentFold(t *testing.T) {
 	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
 	assert.True(t, folded.IsClean())
 	assert.Contains(t, FormatComment(folded), "Changes require fixes before merge.")
-	assert.Contains(t, FormatComment(folded), "0 findings shown; 2 folded")
+	assert.Contains(t, FormatComment(folded), "0 findings shown; 2 folded findings")
 	visible := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: []StructuredFinding{
 		{Severity: "high", Problem: "high rare", Unlikely: true},
 		{Severity: "critical", Problem: "critical rare", Unlikely: true},
@@ -229,7 +229,7 @@ func TestCommentShowAll(t *testing.T) {
 	showAll := FormatComment(PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high", MinConfidence: .95, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
 	assert.Contains(t, showAll, "filtered nit")
 	assert.Contains(t, showAll, "filtered rare")
-	assert.Contains(t, showAll, "4 findings shown; 0 folded")
+	assert.Contains(t, showAll, "4 findings shown; 0 folded findings")
 }
 
 func TestCommentShowAllKeepsReviewSeverityVerdict(t *testing.T) {

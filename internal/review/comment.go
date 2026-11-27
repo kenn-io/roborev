@@ -200,7 +200,14 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 		out.WriteString("**Verdict:** Changes require fixes before merge.")
 	}
 	folded := len(comment.nits) + len(comment.unlikely)
-	fmt.Fprintf(&out, "\n\n%d findings shown; %d folded (nits/unlikely)", len(comment.findings), folded)
+	shownNoun, foldedNoun := "findings", "findings"
+	if len(comment.findings) == 1 {
+		shownNoun = "finding"
+	}
+	if folded == 1 {
+		foldedNoun = "finding"
+	}
+	fmt.Fprintf(&out, "\n\n%d %s shown; %d folded %s (nits/unlikely)", len(comment.findings), shownNoun, folded, foldedNoun)
 	for _, severity := range []string{"critical", "high", "medium", "low"} {
 		heading := false
 		for _, finding := range comment.findings {

@@ -396,8 +396,8 @@ func TestCIPanelCommentStructuredVerdict(t *testing.T) {
 		unlikely, showAll                      bool
 		verdictBool                            int
 	}{
-		{"folded failure", "medium", "medium", "Changes require fixes before merge.", "0 findings shown; 1 folded", true, false, 0},
-		{"show all below floor", "low", "high", "No fixes needed before merge.", "1 findings shown; 0 folded", false, true, 1},
+		{"folded failure", "medium", "medium", "Changes require fixes before merge.", "0 findings shown; 1 folded finding", true, false, 0},
+		{"show all below floor", "low", "high", "No fixes needed before merge.", "1 finding shown; 0 folded findings", false, true, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
