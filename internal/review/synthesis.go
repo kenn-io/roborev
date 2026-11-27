@@ -15,7 +15,8 @@ import (
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
-// SynthesisSchema requires each finding to cite its input reviews.
+// SynthesisSchema is the structured review schema with one addition: every
+// finding cites the input review numbers that reported it.
 var SynthesisSchema = structuredreview.SourcedSchema
 
 // SynthesisDocument is the structured result returned by a synthesis agent.
@@ -128,8 +129,7 @@ func BuildSynthesisPrompt(
 			"List every finding that requires changes in `findings`; " +
 			"return an empty `findings` array if the reviewers agree " + material + " is clean.\n" +
 			"In `sources`, list the numbers of the reviews below (### Review N) " +
-			"that reported the finding.\n" +
-			"Rules:\n" +
+			"that reported the finding.\nRules:\n" +
 			scopeRules +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
 			rubricRule +
@@ -300,8 +300,16 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 		if i > 0 {
 			b.WriteString("---\n\n")
 		}
+		status := r.Status
+		if IsQuotaFailure(r) {
+			status = "skipped (quota)"
+		} else if IsTransientFailure(r) {
+			status = "skipped (provider unavailable)"
+		} else if r.Skipped || r.Status == ResultSkipped {
+			status = "skipped"
+		}
 		fmt.Fprintf(&b, "### Review %d (%s)\n\n",
-			i+1, rawReviewStatus(r))
+			i+1, status)
 
 		if r.Skipped || r.Status == ResultSkipped {
 			reason := r.SkipReason
@@ -343,19 +351,6 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 		return TruncateCommentTo(b.String(), foldAt, MaxCommentLen-len(CommentMarker)-1, CommentTruncSuffix)
 	}
 	return b.String()
-}
-
-func rawReviewStatus(r ReviewResult) string {
-	switch {
-	case IsQuotaFailure(r):
-		return "skipped (quota)"
-	case IsTransientFailure(r):
-		return "skipped (provider unavailable)"
-	case r.Skipped || r.Status == ResultSkipped:
-		return "skipped"
-	default:
-		return r.Status
-	}
 }
 
 func rawFoldCrossesLimit(prefix int, output string, fold *CommentFold) bool {
