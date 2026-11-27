@@ -264,7 +264,6 @@ func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
 	assert.NotContains(t, prompt, "Agent=gemini")
 	assert.NotContains(t, prompt, "Type=security")
 	assert.NotContains(t, prompt, "Type=design")
-	assert.NotContains(t, prompt, "security")
 	assert.NotContains(t, prompt, "design")
 }
 
@@ -308,7 +307,8 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 		"- Do not use tools except to read referenced prompt or review-input files in full\n"+
 		"- Deduplicate findings reported by multiple reviewers and cite every source\n"+
 		"- Order findings by severity (Critical > High > Medium > Low)\n"+
-		"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n"+
+		"- Keep each finding's kind, using the majority value when reviewers disagree\n"+
+		"- Set topic to security if any source gave security; otherwise use the majority value\n"+
 		"- Mark a merged finding unlikely only when every source marked it unlikely\n"+
 		"- Preserve the known trigger, actual wrong behavior, expected outcome, and legitimate behavior to preserve in each finding's problem and fix\n"+
 		"- When merging duplicates, keep all distinct behavior and preservation constraints; sharing a location alone does not make two findings duplicates\n"+

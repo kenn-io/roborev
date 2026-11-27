@@ -2124,7 +2124,7 @@ const (
 // SupportedExportReviewsSchemaVersions returns the export schema versions
 // served by GET /api/export/reviews and `roborev export reviews`.
 func SupportedExportReviewsSchemaVersions() []int {
-	return []int{ExportReviewsSchemaVersion, 3}
+	return []int{ExportReviewsSchemaVersion}
 }
 
 // FormatSupportedExportReviewsSchemaVersions formats the supported export
@@ -2228,16 +2228,15 @@ func (s *Server) humaExportReviews(
 	}
 
 	page, err := s.db.ExportReviews(storage.ExportReviewsOptions{
-		SchemaVersion: schemaVersion,
-		Profile:       storage.ExportProfile(profile),
-		Since:         since,
-		Until:         until,
-		Cursor:        input.Cursor,
-		ClosedOnly:    input.ClosedOnly,
-		UpdatedSince:  updatedSince,
-		Repo:          input.Repo,
-		Project:       input.Project,
-		Limit:         limit,
+		Profile:      storage.ExportProfile(profile),
+		Since:        since,
+		Until:        until,
+		Cursor:       input.Cursor,
+		ClosedOnly:   input.ClosedOnly,
+		UpdatedSince: updatedSince,
+		Repo:         input.Repo,
+		Project:      input.Project,
+		Limit:        limit,
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrExportCursorDatabaseMismatch) {

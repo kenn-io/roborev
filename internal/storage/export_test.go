@@ -1313,12 +1313,6 @@ func TestExportReviewsCheckedDocumentMatchesSchema(t *testing.T) {
 	wantV2 := strings.ReplaceAll(strings.Replace(exportTestCheckedDocument, `"schema_version":4`, `"schema_version":3`, 1), `"unlikely":true,`, "")
 	assert.JSONEq(wantV2, string(raw))
 	assert.NotContains(string(raw), `"unlikely"`)
-	v3, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, SchemaVersion: 3, Limit: 10})
-	require.NoError(t, err)
-	require.Len(t, v3.Reviews, 1)
-	rawV3, err := json.Marshal(v3.Reviews[0].Document)
-	require.NoError(t, err)
-	assert.JSONEq(exportTestCheckedDocument, string(rawV3))
 	assert.NotContains(derefString(page.Reviews[0].Content), "go build", "content stays the review Markdown")
 
 	var value any

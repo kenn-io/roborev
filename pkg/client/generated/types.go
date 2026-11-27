@@ -4423,8 +4423,8 @@ type StructuredReviewDocument struct {
 	Check    *StructuredReviewCheck    `json:"check,omitempty"`
 	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
 
-	// SchemaVersion Version of the document format, separate from the export schema_version. Export schema 2 writes version 3; export schema 3 writes version 4.
-	SchemaVersion int64 `json:"schema_version" validate:"gte=1,lte=4"`
+	// SchemaVersion Version of the document format, separate from the export schema_version. Export schema_version 2 writes structured documents in version 3.
+	SchemaVersion int64 `json:"schema_version" validate:"gte=1,lte=3"`
 
 	// SourceLabels Names of the input reviews that findings cite in sources, indexed by review number minus one.
 	SourceLabels []string `json:"source_labels,omitempty"`
@@ -4453,7 +4453,7 @@ func (s StructuredReviewDocument) Validate() error {
 			}
 		}
 	}
-	if err := typesValidator.Var(s.SchemaVersion, "gte=1,lte=4"); err != nil {
+	if err := typesValidator.Var(s.SchemaVersion, "gte=1,lte=3"); err != nil {
 		errors = errors.Append("SchemaVersion", err)
 	}
 	if err := typesValidator.Var(s.Summary, "required"); err != nil {
@@ -4495,9 +4495,6 @@ type StructuredReviewFinding struct {
 
 	// Topic One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents.
 	Topic *string `json:"topic,omitempty"`
-
-	// Unlikely Whether only unusual timing or input reaches the finding. Introduced in version 4; omitted when false.
-	Unlikely *bool `json:"unlikely,omitempty"`
 }
 
 func (s StructuredReviewFinding) Validate() error {

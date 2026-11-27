@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,8 +36,7 @@ func TestCICheckApply(t *testing.T) {
 		want               []string
 		outcomes           []string
 		// firstVerdicts are the verdicts recorded for finding 1.
-		firstVerdicts                 []structuredreview.CheckVerdict
-		initialUnlikely, wantUnlikely bool
+		firstVerdicts []structuredreview.CheckVerdict
 	}{
 		{
 			name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, summary: "1 finding.", want: []string{"second"},
@@ -70,14 +68,8 @@ func TestCICheckApply(t *testing.T) {
 		},
 		{name: "missing verdict", raw: `{"verdicts":[]}`, outcomes: []string{kept, kept}},
 		{name: "unknown finding number", raw: `{"verdicts":[{"finding":3,"keep":false,"evidence":"ok","reason":"refuted"}]}`, outcomes: []string{kept, kept}},
-		{name: "checker marks unlikely", raw: `{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"e","reason":"r"}]}`, outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &keep, Evidence: "e", Reason: "r"}}, wantUnlikely: true},
-		{name: "reviewer mark survives", raw: `{"verdicts":[{"finding":1,"keep":true,"unlikely":false,"evidence":"e","reason":"r"}]}`, outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &keep, Evidence: "e", Reason: "r"}}, initialUnlikely: true, wantUnlikely: true},
-		{name: "mark without evidence", raw: `{"verdicts":[{"finding":1,"keep":true,"unlikely":true,"evidence":"","reason":""}]}`, outcomes: []string{kept, kept}, firstVerdicts: []structuredreview.CheckVerdict{{Keep: &keep}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			doc := doc
-			doc.Findings = append([]structuredreview.Finding(nil), doc.Findings...)
-			doc.Findings[0].Unlikely = tc.initialUnlikely
 			if tc.want == nil {
 				tc.want, tc.summary = []string{"first", "second"}, doc.Summary
 			}
@@ -89,11 +81,6 @@ func TestCICheckApply(t *testing.T) {
 				problems = append(problems, f.Problem)
 			}
 			assert.Equal(t, tc.want, problems)
-			if slices.Contains(tc.want, "first") {
-				require.NotEmpty(t, got.Findings)
-				require.Equal(t, "first", got.Findings[0].Problem)
-				assert.Equal(t, tc.wantUnlikely, got.Findings[0].Unlikely)
-			}
 			assert.Equal(t, tc.summary, got.Summary)
 			assert.Equal(t, strings.Count(tc.raw, `"finding":`), strings.Count(log.String(), "CI checker verdict: "), "the job log keeps every verdict")
 			require.NotNil(t, got.Check)

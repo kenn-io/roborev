@@ -177,7 +177,7 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 		security.Topic, security.Confidence = "security", 0.4
 		other := security
 		other.Topic, other.Confidence = "", 0.9
-		for _, findings := range [][]structuredreview.Finding{{security, other}, {other, security}} {
+		for _, findings := range [][]structuredreview.Finding{{security, other}, {other, security}, {other, security, other}} {
 			got := tidyFindings(findings)
 			require.Len(t, got, 1)
 			assert.Equal("security", got[0].Topic)

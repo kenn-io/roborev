@@ -46,12 +46,11 @@ var (
 )
 
 type ExportReviewsOptions struct {
-	SchemaVersion int
-	Profile       ExportProfile
-	Since         time.Time
-	Until         time.Time
-	Cursor        string
-	ClosedOnly    bool
+	Profile    ExportProfile
+	Since      time.Time
+	Until      time.Time
+	Cursor     string
+	ClosedOnly bool
 	// UpdatedSince is an inclusive lower bound on the review's updated_at. It
 	// is a filter, not a window: ordering and the cursor stay on completed_at.
 	UpdatedSince time.Time
@@ -111,17 +110,13 @@ type ExportSubagent struct {
 
 // ExportDocument is a stored structured review document as the export emits
 // it. It always holds a document that passed structuredreview.Decode, and it
-// encodes it at the requested export schema's document version.
+// encodes it in the document version used by export schema 2.
 type ExportDocument struct {
 	structuredreview.Document
-	ExportSchemaVersion int `json:"-"`
 }
 
 func (d ExportDocument) MarshalJSON() ([]byte, error) {
-	if d.ExportSchemaVersion != 3 {
-		return d.MarshalVersion3()
-	}
-	return json.Marshal(d.Document)
+	return d.MarshalVersion3()
 }
 
 // UnmarshalJSON decodes and validates an exported document. The embedded
@@ -161,7 +156,6 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 			"kind":       {Type: huma.TypeString, Nullable: true, Description: "defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents."},
 			"topic":      {Type: huma.TypeString, Nullable: true, Description: "One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents."},
 			"confidence": {Type: huma.TypeNumber, Format: "double", Nullable: true, Minimum: new(float64(0)), Maximum: new(float64(1)), Description: "The reviewer's estimate, from 0 to 1, that the problem is real. Null exactly when kind is null. Present on version 3 documents."},
-			"unlikely":   {Type: huma.TypeBoolean, Description: "Whether only unusual timing or input reaches the finding. Introduced in version 4; omitted when false."},
 			"problem":    {Type: huma.TypeString},
 			"fix":        {Type: huma.TypeString},
 			"file":       {Type: huma.TypeString, Nullable: true, Description: "Path relative to the repository root, or null. Present on version 3 documents."},
@@ -216,7 +210,7 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Type:        huma.TypeObject,
 		Description: "The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.",
 		Properties: map[string]*huma.Schema{
-			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(4)), Description: "Version of the document format, separate from the export schema_version. Export schema 2 writes version 3; export schema 3 writes version 4."},
+			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(3)), Description: "Version of the document format, separate from the export schema_version. Export schema_version 2 writes structured documents in version 3."},
 			"summary":        {Type: huma.TypeString},
 			"verdict": {
 				Type:        huma.TypeString,
@@ -350,9 +344,6 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 			break
 		}
 		review := row.toExportReview(opts.Profile, machineID)
-		if review.Document != nil {
-			review.Document.ExportSchemaVersion = opts.SchemaVersion
-		}
 		review.Experiments, err = db.GetExperimentAssignmentsForJobUUID(row.jobUUID)
 		if err != nil {
 			return ExportReviewsPage{}, err
@@ -361,11 +352,6 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 			review.Subagents, err = db.exportSubagents(row.panelRunUUID.V, opts.Profile)
 			if err != nil {
 				return ExportReviewsPage{}, err
-			}
-			for i := range review.Subagents {
-				if review.Subagents[i].Document != nil {
-					review.Subagents[i].Document.ExportSchemaVersion = opts.SchemaVersion
-				}
 			}
 		}
 		page.Reviews = append(page.Reviews, review)

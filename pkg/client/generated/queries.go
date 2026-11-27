@@ -113,7 +113,7 @@ type ExportReviewsQuery struct {
 	// Profile Export profile: content or metadata
 	Profile *string `json:"profile,omitempty"`
 
-	// SchemaVersion Requested export schema version (supported: 2, 3); omit to use the daemon's current default (2)
+	// SchemaVersion Requested export schema version (supported: 2); omit to use the daemon's current default (2)
 	SchemaVersion *int `json:"schema_version,omitempty" validate:"omitempty,gte=1"`
 
 	// Since Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)

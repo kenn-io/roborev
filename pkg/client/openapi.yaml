@@ -4750,9 +4750,9 @@ components:
             $ref: "#/components/schemas/StructuredReviewFinding"
           type: array
         schema_version:
-          description: Version of the document format, separate from the export schema_version. Export schema 2 writes version 3; export schema 3 writes version 4.
+          description: Version of the document format, separate from the export schema_version. Export schema_version 2 writes structured documents in version 3.
           format: int64
-          maximum: 4
+          maximum: 3
           minimum: 1
           type: integer
         source_labels:
@@ -4826,9 +4826,6 @@ components:
           type:
             - string
             - "null"
-        unlikely:
-          description: Whether only unusual timing or input reaches the finding. Introduced in version 4; omitted when false.
-          type: boolean
       required:
         - severity
         - problem
@@ -5931,13 +5928,13 @@ paths:
             default: content
             description: "Export profile: content or metadata"
             type: string
-        - description: "Requested export schema version (supported: 2, 3); omit to use the daemon's current default (2)"
+        - description: "Requested export schema version (supported: 2); omit to use the daemon's current default (2)"
           explode: false
           in: query
           name: schema_version
           schema:
             default: 2
-            description: "Requested export schema version (supported: 2, 3); omit to use the daemon's current default (2)"
+            description: "Requested export schema version (supported: 2); omit to use the daemon's current default (2)"
             minimum: 1
             type: integer
         - description: Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)

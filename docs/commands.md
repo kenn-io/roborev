@@ -539,7 +539,7 @@ A `document` has these members:
 
 | Member | Type | Meaning |
 |--------|------|---------|
-| `schema_version` | integer | Version of the document format. Export schema 2 writes structured documents as version 3; schema 3 writes version 4. Historical unstructured Markdown reviews remain version 0 |
+| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Export `schema_version: 2` writes structured reviews as document version `3` (including reviews stored in older structured versions) and historical unstructured Markdown reviews as version `0` |
 | `summary` | string | The reviewer's summary |
 | `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. Omitted when the review stated none, as in some converted historical reviews. The exported top-level `verdict` comes from the findings, not from this value |
 | `findings` | array | Zero or more findings |
@@ -552,16 +552,15 @@ finding has no location. Findings in a combined panel review also have
 `sources`, the 1-based positions in `source_labels` of the reviews that reported
 the finding.
 
-Findings also have these members. Unless noted, they are `null` when the review
-that produced the finding did not set them, as in goal reviews and converted
-historical reviews:
+Findings also have these members. They are `null` when the review that produced
+the finding did not set them, as in goal reviews and converted historical
+reviews:
 
 | Member | Type | Meaning |
 |--------|------|---------|
 | `kind` | string or `null` | `defect` when the code behaves wrongly, or `improvement` when it works but should still change |
 | `topic` | string or `null` | `tests`, `documentation`, `security`, `performance`, or `design`, or `null` when no topic applies |
 | `confidence` | number or `null` | The reviewer's estimate, from 0 to 1, that the problem is real. Models are poorly calibrated, so treat it as a weak signal. `null` exactly when `kind` is `null` |
-| `unlikely` | boolean | Present in export schema 3 when only unusual timing or input reaches the finding; absent means false |
 | `file` | string or `null` | Path relative to the repository root |
 | `start_line`, `end_line` | integer or `null` | First and last line of the problem, or `null` when the finding covers the whole file or has no file |
 
@@ -627,7 +626,7 @@ CLI follows daemon cursors until all matching rows are included in the one JSON
 document. With `--limit`, the CLI still pages through bounded daemon responses
 until the requested top-level count is reached or no more rows match.
 
-Review exports support `schema_version` 2 and 3. Version 2 added `closed` and
+Review export documents use `schema_version: 2`. Version 2 added `closed` and
 `updated_at` to every top-level review, and `document` to every top-level review
 and subagent. No version 1 field changed meaning. Documents also include a
 stable `database_id` for the local review database. `database_id` did not bump
@@ -639,11 +638,12 @@ existing CLI flag semantics and exit code `3` (cursor database reset) stay
 stable. Consumers must ignore unknown fields on the document header, reviews,
 subagents, and nested objects (including `document` and its findings). Export
 `schema_version: 2` emits structured `document` objects in document version `3`
-without `unlikely`. Schema 3 emits version 4 with `unlikely`. Both retain
-version `0` for historical unstructured Markdown reviews. Any breaking wire
-change to the envelope, reviews, subagents, or nested `document` introduces a
-new export `schema_version` while prior supported versions remain selectable via
-`--schema-version` (CLI) or `schema_version` (HTTP `GET /api/export/reviews`).
+without `unlikely`
+(and version `0` for historical unstructured Markdown reviews); any breaking
+wire change to the envelope, reviews, subagents, or nested `document` introduces
+a new export `schema_version` while prior supported versions remain selectable
+via `--schema-version` (CLI) or `schema_version` (HTTP
+`GET /api/export/reviews`).
 
 Omitting `--schema-version` or `schema_version` uses the connected daemon's
 current default version (`2`). Consumers that require wire stability across

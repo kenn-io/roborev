@@ -102,14 +102,14 @@ updated_at lower bound that works as a filter: it combines with --since,
 ordered by completed_at. Consumers that track closed state should combine the
 completed_at cursor pull with a separate --updated-since pull.
 
-Use --schema-version to pin a specific export schema version.
+Use --schema-version to pin a specific export schema version (supported: 2).
 Omitting --schema-version uses the connected daemon's current default; consumers
 that require stability across upgrades should pass --schema-version explicitly.
 Within a schema version, changes are strictly additive: existing fields are
 never removed, renamed, or changed in type or nullability, and consumers should
 ignore unknown fields. Export schema_version 2 emits structured document objects
-in document version 3; schema_version 3 emits version 4. Both keep historical
-unstructured Markdown reviews in document version 0.`),
+in document version 3 without unlikely (and version 0 for historical
+unstructured Markdown reviews).`),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limitSet := cmd.Flags().Changed("limit")
 			opts.schemaVersionSet = cmd.Flags().Changed("schema-version")

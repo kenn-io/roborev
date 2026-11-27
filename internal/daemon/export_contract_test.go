@@ -5,18 +5,15 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
-	"go.kenn.io/roborev/pkg/client/generated"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -225,11 +222,6 @@ func TestHumaExportReviewsSchemaVersionNegotiation(t *testing.T) {
 			assert.Equal(t, int64(2), assertJSONInt64(t, raw, "schema_version"))
 		})
 	}
-	rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews?schema_version=3", nil)
-	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
-	var raw map[string]jsontext.Value
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &raw))
-	assert.Equal(t, int64(3), assertJSONInt64(t, raw, "schema_version"))
 
 	for _, tc := range []struct {
 		path    string
@@ -237,7 +229,7 @@ func TestHumaExportReviewsSchemaVersionNegotiation(t *testing.T) {
 	}{
 		{path: "/api/export/reviews?schema_version=0", wantMsg: "unsupported export schema_version"},
 		{path: "/api/export/reviews?schema_version=1", wantMsg: "superset of version 1"},
-		{path: "/api/export/reviews?schema_version=4", wantMsg: "unsupported export schema_version"},
+		{path: "/api/export/reviews?schema_version=3", wantMsg: "unsupported export schema_version"},
 		{path: "/api/export/reviews?schema_version=99", wantMsg: "unsupported export schema_version"},
 		{path: "/api/export/reviews?schema_version=-1", wantMsg: "unsupported export schema_version"},
 		{path: "/api/export/reviews?schema_version=abc", wantMsg: "invalid export schema_version"},
@@ -722,48 +714,6 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 			assertJSONNull(t, noDoc, "document")
 		})
 	}
-	t.Run("schema 3 document matches OpenAPI schema", func(t *testing.T) {
-		rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews?schema_version=3", nil)
-		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
-		var header map[string]jsontext.Value
-		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &header))
-		var doc map[string]jsontext.Value
-		for _, review := range assertJSONArray(t, header, "reviews") {
-			if assertJSONString(t, review, "review_id") != synthStoredReview.UUID.String() {
-				continue
-			}
-			for _, sub := range assertJSONArray(t, review, "subagents") {
-				if assertJSONString(t, sub, "name") != "reviewer-b" {
-					continue
-				}
-				doc = assertJSONObject(t, sub, "document")
-			}
-		}
-		require.NotNil(t, doc)
-
-		specResponse := serveHuma(t, srv, http.MethodGet, "/openapi.json", nil)
-		require.Equal(t, http.StatusOK, specResponse.Code)
-		var spec struct {
-			Components struct {
-				Schemas jsontext.Value `json:"schemas"`
-			} `json:"components"`
-		}
-		require.NoError(t, json.Unmarshal(specResponse.Body.Bytes(), &spec))
-		var definitions map[string]*jsonschema.Schema
-		require.NoError(t, json.Unmarshal([]byte(strings.ReplaceAll(string(spec.Components.Schemas), "#/components/schemas/", "#/$defs/")), &definitions))
-		schema := &jsonschema.Schema{Ref: "#/$defs/StructuredReviewDocument", Defs: definitions}
-		validator, err := schema.Resolve(nil)
-		require.NoError(t, err)
-		rawDoc, err := json.Marshal(doc)
-		require.NoError(t, err)
-		var value any
-		require.NoError(t, json.Unmarshal(rawDoc, &value))
-		assert.NoError(t, validator.Validate(value))
-		var clientDoc generated.ExportReview_Document
-		require.NoError(t, json.Unmarshal(rawDoc, &clientDoc))
-		assert.NoError(t, clientDoc.Validate())
-	})
-
 	t.Run("window bounds pagination and empty page", func(t *testing.T) {
 		assert := assert.New(t)
 

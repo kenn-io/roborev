@@ -904,17 +904,21 @@ Set `comment_when_clean = false` to avoid creating a comment when structured
 synthesis has no findings after filtering, even if the stored review has
 findings. A comment with only folded findings is also suppressed.
 Severity-parsed prose is also silent when no labelled findings or unlabelled
-blocks survive. Verbatim prose and legacy Markdown remain publishable, even if
-their text says the review is clean. Roborev does not infer cleanliness from
-text or the stored verdict. With `upsert_comments = true`, silent reviews update
-an existing marker comment to the no-findings line. Missing or deleted comments
-are successful no-ops; cleanup never creates a replacement. Permission and
-transient delivery errors keep the normal error and retry behavior.
+blocks survive. Verbatim prose and legacy Markdown remain
+publishable, even if their text says the review is clean. Roborev does not infer
+cleanliness from text or the stored verdict. With `upsert_comments = true`,
+silent reviews update an existing marker comment to the no-findings line.
+Missing or deleted comments are successful no-ops; cleanup never creates a
+replacement. Permission and transient delivery errors keep the normal error and
+retry behavior.
 
 All four settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
 explicit repo cap of `0` restores unlimited findings; a confidence floor of `0`
-disables a global floor; an explicit `true` restores clean comments. These
-settings leave stored reviews, verdicts, prompts, and execution statuses
+disables a global floor; an explicit `true` restores clean comments.
+The other display settings apply only to synthesized GitHub daemon comments.
+Raw member fallback diagnostics, daemon-free `roborev ci`, and GitLab keep
+their existing behavior.
+Complete stored reviews, verdicts, prompts, and execution statuses are
 unchanged. Unlike these display settings, `ci.min_severity` also controls the
 synthesis verdict.
 
@@ -1044,8 +1048,7 @@ sockets outside scratch remain blocked. Tests can read their own scope's CPU and
 memory limits, which DuckDB needs at startup. Model calls use nono's credential
 route, which reads the host's current Codex login outside the sandbox. Tests
 that start TCP loopback servers cannot run in this sandbox; the checker keeps
-findings it cannot try. The checker can mark a finding unlikely but never clears
-a reviewer's mark.
+findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. If every finding drops, the
