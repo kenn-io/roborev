@@ -16,7 +16,7 @@ import (
 const structuredReviewOutputInstruction = `
 
 Return exactly one JSON object, without a code fence or other text, with this shape:
-{"schema_version":4,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":null,"confidence":0.8,"unlikely":false,"problem":"...","fix":"...","file":"path/to/file.go","start_line":12,"end_line":14}]}
+{"schema_version":5,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":null,"confidence":0.8,"unlikely":false,"nit":false,"problem":"...","fix":"...","file":"path/to/file.go","start_line":12,"end_line":14}]}
 Use an empty findings array when there are no findings. This JSON format
 replaces any Markdown output format specified earlier in the prompt. Return a
 concise summary, your overall verdict, and every actionable finding.
@@ -34,6 +34,7 @@ Each finding needs:
   real.
 - unlikely: true only when nothing but a timing window or an input normal use
   doesn't produce reaches the problem; keep the severity the problem would otherwise have.
+- nit: true only for a minor stylistic or naming suggestion that does not affect behavior or materially hinder maintenance. Use false when in doubt, regardless of severity.
 - problem: for a defect, name the known input, state, or ordering that triggers
   it and the actual incorrect behavior, explaining the cause where known.
 - fix: describe the correct observable behavior and any known legitimate

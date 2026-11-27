@@ -41,7 +41,7 @@ func TestProcessJobCIReviewSkipsProjectAgentConfig(t *testing.T) {
 			argsFile := filepath.Join(bin, "args")
 			stream := filepath.Join(bin, "stream.jsonl")
 			require.NoError(t, os.WriteFile(stream, []byte(
-				`{"type":"result","result":"{\"schema_version\":4,\"summary\":\"No findings.\",\"verdict\":\"pass\",\"findings\":[]}"}`+"\n",
+				`{"type":"result","result":"{\"schema_version\":5,\"summary\":\"No findings.\",\"verdict\":\"pass\",\"findings\":[]}"}`+"\n",
 			), 0o600))
 			claude := filepath.Join(bin, "claude")
 			require.NoError(t, os.WriteFile(claude, []byte(`#!/bin/sh

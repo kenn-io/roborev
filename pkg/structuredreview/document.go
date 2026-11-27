@@ -25,7 +25,7 @@
 // A version 3 or later finding from a reviewing agent carries a kind, a confidence, and
 // a file and line range. Producers without that data, such as goal reviews and
 // converted historical reviews, leave kind and confidence null and may give a
-// free-text location instead of a file. Versions 1 through 3 are only decoded, so
+// free-text location instead of a file. Versions 1 through 4 are only decoded, so
 // stored reviews keep working: versions 1 and 2 carry a free-text location, and version 1
 // has no verdict. [Schema] and [SourcedSchema] are the JSON Schemas that
 // constrain agent output, and [ConversionSchema] and [ConversionSourcedSchema]
@@ -49,9 +49,9 @@ import (
 )
 
 // SchemaVersion is the only version roborev writes and the version agents
-// must return. Versions 1 through 3 are still decoded so stored reviews keep
+// must return. Versions 1 through 4 are still decoded so stored reviews keep
 // working.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // Kind values tell a proven fault apart from a suggestion. Every finding from
 // a reviewing agent has one.
@@ -111,7 +111,7 @@ var ConversionSchema = schema(false, true)
 var ConversionSourcedSchema = schema(true, true)
 
 func schema(withSources, conversion bool) jsontext.Value {
-	required := `"severity", "kind", "topic", "confidence", "unlikely", "problem", "fix", "file", "start_line", "end_line"`
+	required := `"severity", "kind", "topic", "confidence", "unlikely", "nit", "problem", "fix", "file", "start_line", "end_line"`
 	// A live agent must state a verdict, a kind, and a confidence.
 	verdictType, kindType, confidenceType, nullable := `"string"`, `"string"`, `"number"`, ""
 	location := ""
@@ -160,6 +160,7 @@ func schema(withSources, conversion bool) jsontext.Value {
           },
           "confidence": {"type": %s, "minimum": 0, "maximum": 1},
           "unlikely": {"type": "boolean"},
+          "nit": {"type": "boolean"},
           "problem": {"type": "string", "minLength": 1},
           "fix": {"type": "string", "minLength": 1},
           "file": {"type": ["string", "null"]},
@@ -276,12 +277,14 @@ func (r Document) MarshalVersion3() ([]byte, error) {
 		r.Findings = slices.Clone(r.Findings)
 		for i := range r.Findings {
 			r.Findings[i].Unlikely = false
+			r.Findings[i].Nit = false
 		}
 		if r.Check != nil {
 			check := *r.Check
 			check.Findings = slices.Clone(check.Findings)
 			for i := range check.Findings {
 				check.Findings[i].Finding.Unlikely = false
+				check.Findings[i].Finding.Nit = false
 			}
 			r.Check = &check
 		}
@@ -305,8 +308,10 @@ type Finding struct {
 	// real. Models are poorly calibrated, so treat it as a weak signal.
 	Confidence float64 `json:"confidence,omitempty"`
 	Unlikely   bool    `json:"unlikely,omitzero"`
-	Problem    string  `json:"problem"`
-	Fix        string  `json:"fix"`
+	// Nit marks a minor style or naming suggestion.
+	Nit     bool   `json:"nit,omitzero"`
+	Problem string `json:"problem"`
+	Fix     string `json:"fix"`
 	// File is a path relative to the repository root. StartLine and EndLine
 	// are 1-based and inclusive, or zero when the finding covers the whole
 	// file or has no file.
@@ -348,7 +353,7 @@ func (f *Finding) SetLocation(file string, startLine, endLine int) {
 }
 
 // MarshalJSON writes the current shape. Fields without values use null, except
-// unlikely, which is omitted when false. A finding without a kind has no confidence.
+// unlikely and nit, which are omitted when false. A finding without a kind has no confidence.
 func (f Finding) MarshalJSON() ([]byte, error) {
 	var location *string
 	if f.Location != "" {
@@ -360,6 +365,7 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 		Topic      *string  `json:"topic"`
 		Confidence *float64 `json:"confidence"`
 		Unlikely   bool     `json:"unlikely,omitzero"`
+		Nit        bool     `json:"nit,omitzero"`
 		Problem    string   `json:"problem"`
 		Fix        string   `json:"fix"`
 		File       *string  `json:"file"`
@@ -369,7 +375,7 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 		Sources    []int    `json:"sources,omitempty"`
 	}
 	w := wire{
-		Severity: f.Severity, Problem: f.Problem, Fix: f.Fix, Unlikely: f.Unlikely,
+		Severity: f.Severity, Problem: f.Problem, Fix: f.Fix, Unlikely: f.Unlikely, Nit: f.Nit,
 		Location: location, Sources: f.Sources,
 	}
 	if f.Kind != "" {
@@ -414,6 +420,7 @@ type findingWire struct {
 	Topic      *string        `json:"topic"`
 	Confidence *float64       `json:"confidence"`
 	Unlikely   jsontext.Value `json:"unlikely"`
+	Nit        jsontext.Value `json:"nit"`
 	Problem    string         `json:"problem"`
 	Fix        string         `json:"fix"`
 	File       *string        `json:"file"`
@@ -466,7 +473,7 @@ func Decode(raw jsontext.Value) (Document, error) {
 				"structured review schema_version 1 does not carry a verdict",
 			)
 		}
-	case 2, 3, SchemaVersion:
+	case 2, 3, 4, SchemaVersion:
 		switch result.Verdict {
 		case VerdictPass, VerdictFail, VerdictUnableToReview:
 		case "":
@@ -574,6 +581,9 @@ func decodeCheck(wire checkWire, version int) (Check, error) {
 // decodeTextLocatedFinding reads a version 1 or 2 finding, which must carry a
 // location field and none of the version 3 fields.
 func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
+	if len(wire.Nit) > 0 {
+		return Finding{}, fmt.Errorf("has nit, which needs schema_version 5")
+	}
 	if len(wire.Unlikely) > 0 {
 		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
 	}
@@ -603,6 +613,12 @@ func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
 // stored location is derived from the file and lines when there is a file,
 // and is kept as free text when there is not.
 func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
+	if len(wire.Nit) > 0 && version < 5 {
+		return Finding{}, fmt.Errorf("has nit, which needs schema_version 5")
+	}
+	if len(wire.Nit) > 0 && !bytes.Equal(wire.Nit, []byte("true")) && !bytes.Equal(wire.Nit, []byte("false")) {
+		return Finding{}, fmt.Errorf("has invalid nit: expected a boolean")
+	}
 	if len(wire.Unlikely) > 0 && version < 4 {
 		return Finding{}, fmt.Errorf("has unlikely, which needs schema_version 4")
 	}
@@ -645,6 +661,7 @@ func decodeLocatedFinding(wire findingWire, version int) (Finding, error) {
 		Topic:      topic,
 		Confidence: confidence,
 		Unlikely:   bytes.Equal(wire.Unlikely, []byte("true")),
+		Nit:        bytes.Equal(wire.Nit, []byte("true")),
 		Problem:    wire.Problem,
 		Fix:        wire.Fix,
 		Sources:    wire.Sources,

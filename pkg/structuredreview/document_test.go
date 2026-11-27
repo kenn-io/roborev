@@ -3,6 +3,7 @@ package structuredreview
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -303,8 +304,31 @@ func TestSchemaUnlikely(t *testing.T) {
 	validator, err := schema.Resolve(nil)
 	require.NoError(t, err)
 	finding := map[string]any{"severity": "low", "kind": "defect", "topic": nil, "confidence": .5, "problem": "p", "fix": "f", "file": nil, "start_line": nil, "end_line": nil}
-	doc := map[string]any{"schema_version": float64(4), "summary": "s", "verdict": "fail", "findings": []any{finding}}
+	doc := map[string]any{"schema_version": float64(5), "summary": "s", "verdict": "fail", "findings": []any{finding}}
 	require.Error(t, validator.Validate(doc))
 	finding["unlikely"] = false
+	require.Error(t, validator.Validate(doc))
+	finding["nit"] = false
 	require.NoError(t, validator.Validate(doc))
+}
+
+func TestNitVersionAndRoundTrip(t *testing.T) {
+	for _, tc := range []struct{ version, value, want string }{
+		{"4", "true", "needs schema_version 5"},
+		{"5", "null", "invalid nit"},
+		{"5", `"yes"`, "invalid nit"},
+	} {
+		raw := fmt.Sprintf(`{"schema_version":%s,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","nit":%s}]}`, tc.version, tc.value)
+		_, err := Decode(jsontext.Value(raw))
+		require.ErrorContains(t, err, tc.want)
+	}
+	doc := Document{Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "medium", Problem: "p", Fix: "f", Nit: true}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	decoded, err := Decode(raw)
+	require.NoError(t, err)
+	assert.True(t, decoded.Findings[0].Nit)
+	old, err := doc.MarshalVersion3()
+	require.NoError(t, err)
+	assert.NotContains(t, string(old), `"nit"`)
 }

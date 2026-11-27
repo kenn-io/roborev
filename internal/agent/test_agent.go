@@ -11,6 +11,8 @@ import (
 	"time"
 
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // TestAgentCall records a single Review() invocation for assertion in tests.
@@ -147,8 +149,8 @@ func (a *TestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	body := fmt.Sprintf("%s\n\nCommit: %s\nRepo: %s", a.Output, shortSHA, repoPath)
 	if jsontext.Value([]byte(a.Output)).IsValid() {
 		body = a.Output
-	} else if strings.Contains(prompt, `"schema_version":4`) {
-		raw, err := json.Marshal(map[string]any{"schema_version": 4, "summary": a.Output, "verdict": "pass", "findings": []any{}})
+	} else if strings.Contains(prompt, fmt.Sprintf(`"schema_version":%d`, structuredreview.SchemaVersion)) {
+		raw, err := json.Marshal(map[string]any{"schema_version": structuredreview.SchemaVersion, "summary": a.Output, "verdict": "pass", "findings": []any{}})
 		if err != nil {
 			return "", err
 		}

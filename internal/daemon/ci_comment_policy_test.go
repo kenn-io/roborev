@@ -373,7 +373,7 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
-	document := `{"schema_version":4,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"defect","fix":"fix"},{"severity":"low","kind":"improvement","confidence":0.9,"problem":"naming issue","fix":"fix"},{"severity":"high","kind":"defect","confidence":0.9,"problem":"rare","fix":"fix","unlikely":true},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"rare medium","fix":"fix","unlikely":true}]}`
+	document := `{"schema_version":5,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"defect","fix":"fix"},{"severity":"low","kind":"improvement","confidence":0.9,"problem":"naming issue","fix":"fix","nit":true},{"severity":"high","kind":"defect","confidence":0.9,"problem":"rare","fix":"fix","unlikely":true},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"rare medium","fix":"fix","unlikely":true}]}`
 	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, document, synth.ID)
 	require.NoError(t, err)
 	_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'medium' WHERE id = ?`, synth.ID)
@@ -391,7 +391,7 @@ func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
 }
 
 func TestCIPanelCommentTruncationClosesFold(t *testing.T) {
-	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Problem: strings.Repeat("x", 100)}}}
+	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{{Severity: "low", Nit: true, Problem: strings.Repeat("x", 100)}}}
 	body, foldAt := reviewpkg.FormatCommentWithFold(reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc}))
 	got := truncatePanelPRBodyForFooter(body, foldAt, "footer", 150)
 	assert.True(t, strings.HasSuffix(got, "\n</details>"+panelCommentTruncSuffix))
@@ -401,7 +401,7 @@ func TestCIPanelCommentTruncationPreservesVisibleExample(t *testing.T) {
 	example := "```html\n<details><summary>Example</summary>\ncontent\n</details>\n```"
 	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{
 		{Severity: "high", Problem: example, Fix: "Fix it."},
-		{Severity: "low", Problem: strings.Repeat("nit ", reviewpkg.MaxCommentLen), Fix: "Fix it."},
+		{Severity: "low", Nit: true, Problem: strings.Repeat("nit ", reviewpkg.MaxCommentLen), Fix: "Fix it."},
 	}}
 	prepared := reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc})
 	stored := &storage.Review{Job: &storage.ReviewJob{Agent: "test"}}

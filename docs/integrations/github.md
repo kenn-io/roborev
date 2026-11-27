@@ -866,7 +866,7 @@ nothing survives the display filters. The defaults are:
 [ci]
 comment_max_findings = 0   # Unlimited structured findings
 comment_when_clean = true # Create comments even when no findings survive
-comment_show_all = false # Fold eligible Low and unlikely findings
+comment_show_all = false # Fold eligible nits and unlikely findings
 # comment_min_confidence = 0.8 # Optional; unset disables confidence filtering
 ```
 
@@ -890,8 +890,9 @@ saving, or reloading configuration. If confidence removes a finding that passed
 the severity filter and no findings remain, the comment says "No findings match
 the comment filters." Confidence does not filter prose.
 
-By default, structured CI comments apply the severity and confidence floors and
-the finding cap, then fold Low and unlikely findings into a collapsible section.
+By default, structured CI comments apply the confidence floor and finding cap,
+then fold nits and unlikely findings into a collapsible section. The severity
+floor applies to findings shown outside the fold.
 High, Critical, and security findings remain in the main list. Set
 `comment_show_all = true` globally or per repository to show every structured
 finding inline, ignoring the comment severity and confidence floors and finding

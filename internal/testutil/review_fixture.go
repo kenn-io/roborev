@@ -74,9 +74,9 @@ func ReviewFixtureJSON(summary string) jsontext.Value {
 	if err != nil {
 		panic(err)
 	}
-	// Agent output requires unlikely even when false; stored documents omit it.
+	// Agent output requires both classifications even when false; stored documents omit it.
 	if len(doc.Findings) > 0 {
-		raw = bytes.ReplaceAll(raw, []byte(`"problem":`), []byte(`"unlikely":false,"problem":`))
+		raw = bytes.ReplaceAll(raw, []byte(`"problem":`), []byte(`"unlikely":false,"nit":false,"problem":`))
 	}
 	return raw
 }

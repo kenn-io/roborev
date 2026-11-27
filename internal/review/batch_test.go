@@ -423,11 +423,11 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	structuredAgent := &structuredBatchAgent{
 		name: "structured-batch",
 		result: jsontext.Value(`{
-	  "schema_version":4,
+	  "schema_version":5,
 	  "verdict": "pass",
 	  "summary":"High: no actionable findings.",
   "findings":[
-    {"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"nit":false,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	}

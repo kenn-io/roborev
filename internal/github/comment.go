@@ -15,7 +15,7 @@ import (
 // CommentMarker is an invisible HTML marker embedded in every roborev PR
 // comment so subsequent runs can find and update the existing comment
 // instead of creating duplicates.
-const CommentMarker = "<!-- roborev-pr-comment -->"
+const CommentMarker = review.CommentMarker
 
 // FindExistingComment searches for an existing roborev comment on the
 // given PR. It returns the comment ID if found, or 0 if no match exists.

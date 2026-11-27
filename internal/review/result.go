@@ -139,6 +139,9 @@ func IsSubstantiveOutput(result ReviewResult) bool {
 	return storage.ClassifyOutput(result.Output) == storage.OutputReviewed
 }
 
+// CommentMarker identifies roborev comments on GitHub.
+const CommentMarker = "<!-- roborev-pr-comment -->"
+
 // MaxCommentLen is the maximum length for a GitHub PR comment.
 // GitHub's hard limit is ~65536; we leave headroom.
 const MaxCommentLen = 60000

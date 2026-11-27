@@ -42,7 +42,7 @@ func (a *budgetRecordingAgent) Review(_ context.Context, _, _, prompt string, _ 
 	if a.err != nil {
 		return "", a.err
 	}
-	return `{"schema_version":4,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+	return `{"schema_version":5,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
 }
 
 type budgetStructuredReviewAgent struct{ *budgetRecordingAgent }

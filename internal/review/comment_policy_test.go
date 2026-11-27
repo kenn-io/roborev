@@ -88,7 +88,7 @@ func TestCommentCleanMetadata(t *testing.T) {
 }
 
 func TestCommentCleanWithCappedFoldedFindings(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "First"}, {Severity: "low", Problem: "Second"}}}
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: "First", Nit: true}, {Severity: "low", Problem: "Second", Nit: true}}}
 	prepared := PrepareComment(CommentConfig{MaxFindings: 1}, ReviewResult{Structured: &doc})
 	assert.True(t, prepared.IsClean())
 }
@@ -179,12 +179,12 @@ func TestCommentMinConfidence(t *testing.T) {
 func TestCommentFold(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "medium", Problem: "defect"},
-		{Severity: "low", Problem: "naming issue", Unlikely: true},
+		{Severity: "low", Problem: "naming issue", Nit: true},
 		{Severity: "medium", Problem: "rare", Unlikely: true},
 		{Severity: "medium", Problem: "another"},
 	}}
 	filteredSeverity := FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
-	assert.NotContains(t, filteredSeverity, "naming issue")
+	assert.Contains(t, filteredSeverity, "naming issue")
 	assert.Contains(t, filteredSeverity, "1 unlikely finding hidden")
 
 	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
@@ -239,7 +239,7 @@ func TestCommentFoldEscapesDetailsTags(t *testing.T) {
 		{"nested details", "Before <details open>nested</details> after", "", []string{"&lt;details open&gt;"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Problem: tc.problem, Fix: tc.fix}}}
+			doc := StructuredReview{Findings: []StructuredFinding{{Severity: "low", Nit: true, Problem: tc.problem, Fix: tc.fix}}}
 			body := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 			var rendered bytes.Buffer
 			source := []byte(body)
@@ -252,4 +252,19 @@ func TestCommentFoldEscapesDetailsTags(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCommentFoldsClassifiedNits(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "low", Problem: "Data is lost"},
+		{Severity: "medium", Problem: "Rename variable", Nit: true},
+		{Severity: "low", Problem: "Fix spelling", Nit: true},
+	}}
+	body := FormatComment(PrepareComment(CommentConfig{MinSeverity: "low"}, ReviewResult{Structured: &doc}))
+	assert.Less(t, strings.Index(body, "Data is lost"), strings.Index(body, "<details>"))
+	assert.Greater(t, strings.Index(body, "Rename variable"), strings.Index(body, "<details>"))
+	assert.Contains(t, body, "2 nits hidden")
+	body = FormatComment(PrepareComment(CommentConfig{MinSeverity: "medium"}, ReviewResult{Structured: &doc}))
+	assert.Contains(t, body, "Fix spelling")
+	assert.Contains(t, body, "2 nits hidden")
 }

@@ -76,7 +76,7 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 		comment.structured = true
 		findings := slices.Clone(doc.Findings)
 		shouldFold := func(finding StructuredFinding) bool {
-			return foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Severity == "low" || finding.Unlikely)
+			return foldFindings && !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Nit || finding.Unlikely)
 		}
 		slices.SortStableFunc(findings, func(a, b StructuredFinding) int {
 			if shouldFold(a) != shouldFold(b) {
@@ -89,7 +89,7 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 		})
 		selected := 0
 		for _, finding := range findings {
-			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold {
+			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold && !shouldFold(finding) {
 				continue
 			}
 			// Stored findings carry kind and confidence together.
@@ -103,7 +103,7 @@ func prepareComment(cfg CommentConfig, r ReviewResult, foldFindings bool) Prepar
 				continue
 			}
 			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
-			if fold && finding.Severity == "low" {
+			if fold && finding.Nit {
 				comment.nits = append(comment.nits, item)
 			} else if fold && finding.Unlikely {
 				comment.unlikely = append(comment.unlikely, item)

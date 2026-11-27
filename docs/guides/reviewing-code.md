@@ -660,7 +660,7 @@ roborev storage legacy-reviews import 1 < converted-review.json
 ```
 
 Import sends the document to the selected daemon. It accepts every structured
-document version, stores the document as version 4, and replaces the whole
+document version, stores the document as version 5, and replaces the whole
 legacy body, rather than merging individual findings. A converted finding may
 leave out `kind`, `confidence`, `file`, and the line numbers. It preserves the
 active review's identity, metadata, and open/closed state, and derives its
@@ -675,7 +675,7 @@ An agent working with the running daemon can instead submit the same document to
 {
   "review_id": 42,
   "document": {
-    "schema_version": 4,
+    "schema_version": 5,
     "summary": "The write can lose data.",
     "verdict": "fail",
     "findings": [{

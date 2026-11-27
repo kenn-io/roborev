@@ -136,14 +136,13 @@ func formatSingleResult(
 		passed = true
 	}
 	output := r.Output
+	foldAt := -1
 	if commentConfig != nil {
 		prepared := PrepareComment(*commentConfig, r)
 		if prepared.structured {
 			passed = prepared.IsClean()
 		}
-		var foldAt int
 		output, foldAt = FormatCommentWithFold(prepared)
-		output = TruncateCommentTo(output, foldAt, MaxCommentLen, CommentTruncSuffix)
 	}
 	var header string
 	if passed {
@@ -156,6 +155,9 @@ func formatSingleResult(
 			gitrepo.ShortSHA(headSHA))
 	}
 
+	if foldAt >= 0 {
+		output = TruncateCommentTo(output, foldAt, MaxCommentLen-len(CommentMarker)-1-len(header), CommentTruncSuffix)
+	}
 	return header + output
 }
 
@@ -203,8 +205,13 @@ func runSynthesis(
 		return SynthesisResult{}, fmt.Errorf("synthesis review: %w", err)
 	}
 
+	body, foldAt := FormatCommentWithFold(PrepareComment(commentConfig, ReviewResult{Structured: &doc}))
+	if foldAt >= 0 {
+		wrapperLen := len(FormatSynthesizedComment("", results, opts.HeadSHA))
+		body = TruncateCommentTo(body, foldAt, MaxCommentLen-len(CommentMarker)-1-wrapperLen, CommentTruncSuffix)
+	}
 	return SynthesisResult{
 		Output:        FormatSynthesizedComment(doc.Markdown(opts.MinSeverity), results, opts.HeadSHA),
-		GitHubComment: FormatSynthesizedComment(FormatComment(PrepareComment(commentConfig, ReviewResult{Structured: &doc})), results, opts.HeadSHA),
+		GitHubComment: FormatSynthesizedComment(body, results, opts.HeadSHA),
 	}, nil
 }

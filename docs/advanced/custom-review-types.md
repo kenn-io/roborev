@@ -202,7 +202,7 @@ The schema is fixed by roborev. The agent must return:
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "summary": "Overall assessment",
   "verdict": "fail",
   "findings": [
@@ -212,6 +212,7 @@ The schema is fixed by roborev. The agent must return:
       "topic": "security",
       "confidence": 0.8,
       "unlikely": false,
+      "nit": false,
       "problem": "What is wrong and why it matters",
       "fix": "A concrete correction",
       "file": "internal/file.go",
@@ -223,7 +224,7 @@ The schema is fixed by roborev. The agent must return:
 ```
 
 `schema_version`, `summary`, `verdict`, and `findings` are required. The current
-schema version is `4`. Stored versions `1`, `2`, and `3` still load, and Roborev
+schema version is `5`. Stored versions `1` through `4` still load, and Roborev
 rejects missing or unsupported versions. `verdict` is `pass`, `fail`, or
 `unable_to_review`.
 
@@ -240,14 +241,16 @@ Every finding requires these members:
     apply an optional CI comment confidence floor.
 - `unlikely`: true only when unusual timing or input reaches the finding. Keep
     the severity the finding would otherwise have.
+- `nit`: true only for a minor style or naming suggestion that does not affect
+    behavior or materially hinder maintenance. Use false when unsure.
 - `problem` and `fix`.
 - `file`, `start_line`, and `end_line`: the path relative to the repository root
     and the line range in the reviewed code. Use `null` for the lines when a
     finding covers a whole file, and `null` for all three when it has no file.
 
-Stored and exported findings omit `unlikely` when false; an absent value means
+Stored findings omit `unlikely` and `nit` when false; an absent value means
 false, including for historical reviews. Upgrade consumers and machines sharing
-reviews together because older readers cannot read the version 4 format.
+reviews together because older readers cannot read the version 5 format.
 
 `kind`, `topic`, and `confidence` are stored in the review document and exported
 with it. They never appear in the rendered review or in pull request comments.
