@@ -22,6 +22,8 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'github/codeql-action@v4.39.1'
+    '.github/workflows/delete-waiting-runs.yml':
+        - 'kenn-io/actions@main'
     '.github/workflows/release-commands.yml':
         - 'actions/checkout@v7.0.1'
         - 'kenn-io/actions@main'
@@ -92,7 +94,7 @@ dependencies:
         repo_id: 738284564
     'kenn-io/actions@main':
         ref: 'main'
-        commit: 'sha1-1791c94d02222ed022f31d41eab3118e4f4fcc15'
+        commit: 'sha1-5fd6669b1a32f9a82763de1964d1a3b9bbbb16e0'
         owner_id: 259885253
         repo_id: 1427332808
         uses:
