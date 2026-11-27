@@ -543,7 +543,7 @@ func TestRenderReviewMetadataFitsTerminalWidth(t *testing.T) {
 
 func TestFoldedReviewToggle(t *testing.T) {
 	t.Parallel()
-	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit problem", Fix: "fix"}}}
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit problem", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	var structured storage.StructuredOutput
@@ -584,7 +584,7 @@ func TestFoldedReviewToggle(t *testing.T) {
 
 func TestFoldedReviewCountIsMuted(t *testing.T) {
 	t.Setenv("ROBOREV_COLOR_MODE", "dark")
-	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	var structured storage.StructuredOutput
@@ -609,7 +609,7 @@ func TestReviewHelpShowsFoldKey(t *testing.T) {
 
 func TestFoldControlsIgnoreStaleSplitReview(t *testing.T) {
 	t.Parallel()
-	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	var structured storage.StructuredOutput
@@ -627,7 +627,7 @@ func TestFoldControlsIgnoreStaleSplitReview(t *testing.T) {
 
 func TestAcceptedReviewStartsFolded(t *testing.T) {
 	t.Parallel()
-	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	var structured storage.StructuredOutput

@@ -13,7 +13,7 @@ import (
 
 func TestFoldedOutput(t *testing.T) {
 	t.Parallel()
-	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	var structured StructuredOutput
@@ -22,6 +22,7 @@ func TestFoldedOutput(t *testing.T) {
 	output, ok := review.FoldedOutput()
 	assert.True(t, ok)
 	assert.Equal(t, doc.FoldedMarkdown(""), output)
+	assert.Contains(t, output, "1 nit hidden")
 	review.Output = "different"
 	output, ok = review.FoldedOutput()
 	assert.False(t, ok)
@@ -34,7 +35,7 @@ func TestFoldedOutput(t *testing.T) {
 
 func TestFoldedOutputHydratedSynthesis(t *testing.T) {
 	t.Parallel()
-	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	review := Review{Job: &ReviewJob{JobType: JobTypeSynthesis}}
@@ -43,4 +44,5 @@ func TestFoldedOutputHydratedSynthesis(t *testing.T) {
 	output, ok := review.FoldedOutput()
 	assert.True(t, ok)
 	assert.Equal(t, NonVotingBanner+fields.OutputPrefix+doc.FoldedMarkdown(""), output)
+	assert.Contains(t, output, "1 nit hidden")
 }
