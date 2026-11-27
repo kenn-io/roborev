@@ -902,9 +902,8 @@ finding. Comments show the review verdict and counts of inline and folded
 findings.
 
 Set `comment_when_clean = false` to avoid creating a comment when structured
-synthesis has no inline findings at or above the severity floor after filtering,
-even if the stored review has findings. Folded findings alone do not create a
-comment.
+synthesis has no inline findings after the display filters, even if the stored
+review has findings. Folded findings alone do not create a comment.
 Severity-parsed prose is also silent when no labelled findings or unlabelled
 blocks survive. Verbatim prose and legacy Markdown remain publishable, even if
 their text says the review is clean. Roborev does not infer cleanliness from

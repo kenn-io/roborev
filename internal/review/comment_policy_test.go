@@ -239,7 +239,7 @@ func TestCommentShowAllKeepsReviewSeverityVerdict(t *testing.T) {
 		clean    bool
 		verdict  string
 	}{
-		{"below floor", []StructuredFinding{{Severity: "low", Problem: "Low issue"}}, true, "No fixes needed before merge."},
+		{"below floor", []StructuredFinding{{Severity: "low", Problem: "Low issue"}}, false, "No fixes needed before merge."},
 		{"mixed", []StructuredFinding{{Severity: "low", Problem: "Low issue"}, {Severity: "high", Problem: "High issue"}}, false, "Changes require fixes before merge."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

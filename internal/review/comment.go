@@ -73,7 +73,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		}
 		comment.passed = !doc.UnableToReview() && doc.Passed(effective)
 		if cfg.ShowAll {
-			threshold, cfg.MinConfidence, cfg.MaxFindings = 0, 0, 0
+			comment.minSeverity, threshold, cfg.MinConfidence, cfg.MaxFindings = "", 0, 0, 0
 		}
 		comment.structured = true
 		findings := slices.Clone(doc.Findings)
@@ -144,15 +144,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 // IsClean reports whether filtering proved there is nothing to publish.
 // Verbatim prose has no reliable finding metadata and remains publishable.
 func (comment PreparedComment) IsClean() bool {
-	if comment.legacy || comment.verbatim != nil {
-		return false
-	}
-	if !comment.structured {
-		return len(comment.findings) == 0
-	}
-	return !slices.ContainsFunc(comment.findings, func(finding commentFinding) bool {
-		return config.SeverityRank(finding.severity) >= config.SeverityRank(comment.minSeverity)
-	})
+	return !comment.legacy && comment.verbatim == nil && len(comment.findings) == 0
 }
 
 // FormatComment renders prepared findings. It does not resolve configuration,
