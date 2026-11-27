@@ -288,6 +288,7 @@ func FormatRawBatchComment(
 
 func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentConfig) string {
 	var b strings.Builder
+	var foldAt *CommentFold
 	fmt.Fprintf(&b,
 		"## roborev: Combined Review (`%s`)\n\n",
 		gitrepo.ShortSHA(headSHA))
@@ -299,16 +300,8 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 		if i > 0 {
 			b.WriteString("---\n\n")
 		}
-		status := r.Status
-		if IsQuotaFailure(r) {
-			status = "skipped (quota)"
-		} else if IsTransientFailure(r) {
-			status = "skipped (provider unavailable)"
-		} else if r.Skipped || r.Status == ResultSkipped {
-			status = "skipped"
-		}
 		fmt.Fprintf(&b, "### Review %d (%s)\n\n",
-			i+1, status)
+			i+1, rawReviewStatus(r))
 
 		if r.Skipped || r.Status == ResultSkipped {
 			reason := r.SkipReason
@@ -328,7 +321,11 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
 			if cfg != nil {
-				b.WriteString(FormatComment(PrepareComment(*cfg, r)))
+				output, fold := FormatCommentWithFold(PrepareComment(*cfg, r))
+				if rawFoldCrossesLimit(b.Len(), output, fold) {
+					foldAt = fold.Shift(b.Len())
+				}
+				b.WriteString(output)
 			} else {
 				b.WriteString(r.Output)
 			}
@@ -342,7 +339,32 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 		b.WriteString(note)
 	}
 
+	if foldAt != nil {
+		return TruncateCommentTo(b.String(), foldAt, MaxCommentLen-len(CommentMarker)-1, CommentTruncSuffix)
+	}
 	return b.String()
+}
+
+func rawReviewStatus(r ReviewResult) string {
+	switch {
+	case IsQuotaFailure(r):
+		return "skipped (quota)"
+	case IsTransientFailure(r):
+		return "skipped (provider unavailable)"
+	case r.Skipped || r.Status == ResultSkipped:
+		return "skipped"
+	default:
+		return r.Status
+	}
+}
+
+func rawFoldCrossesLimit(prefix int, output string, fold *CommentFold) bool {
+	if fold == nil {
+		return false
+	}
+	budget := MaxCommentLen - len(CommentMarker) - 1 - len(CommentTruncSuffix) - prefix
+	end := fold.Start + strings.Index(output[fold.Start:], "</details>") + len("</details>")
+	return budget > fold.Start && budget < end
 }
 
 // FormatAllFailedComment formats a comment when every job in a

@@ -509,6 +509,14 @@ func TestFormatRawBatchComment(t *testing.T) {
 	assert.NotContains(t, comment, "<details>", "raw batch comment should not use <details> blocks")
 }
 
+func TestRawBatchCommentTruncationClosesFold(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "medium", Nit: true, Problem: strings.Repeat("finding ", MaxCommentLen)}}}
+	comment := FormatRawBatchComment(CommentConfig{}, []ReviewResult{{Status: ResultDone, Output: "review", Structured: &doc}}, "def456789012")
+	posted := TruncateComment(CommentMarker + "\n" + comment)
+	assert.Equal(t, strings.Count(posted, "<details>"), strings.Count(posted, "</details>"))
+	assert.Contains(t, posted, CommentTruncSuffix)
+}
+
 func TestFormatAllFailedComment(t *testing.T) {
 	t.Run("real failures", func(t *testing.T) {
 		reviews := []ReviewResult{
