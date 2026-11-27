@@ -831,7 +831,7 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 		heading string
 	}{
 		{"folded", StructuredFinding{Severity: "medium", Problem: "Rare finding", Fix: "Fix", Unlikely: true}, false, "Review Passed"},
-		{"show all", StructuredFinding{Severity: "low", Problem: "Low finding", Fix: "Fix"}, true, "Review Complete"},
+		{"show all", StructuredFinding{Severity: "low", Problem: "Low finding", Fix: "Fix"}, true, "Review Passed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := StructuredReview{Summary: "Review", Verdict: "fail", Findings: []StructuredFinding{tc.finding}}

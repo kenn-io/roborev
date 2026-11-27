@@ -305,11 +305,14 @@ func TestSchemaUnlikely(t *testing.T) {
 	require.NoError(t, err)
 	finding := map[string]any{"severity": "low", "kind": "defect", "topic": nil, "confidence": .5, "problem": "p", "fix": "f", "file": nil, "start_line": nil, "end_line": nil}
 	doc := map[string]any{"schema_version": float64(4), "summary": "s", "verdict": "fail", "findings": []any{finding}}
-	require.Error(t, validator.Validate(doc))
 	finding["unlikely"] = false
-	require.Error(t, validator.Validate(doc))
 	finding["nit"] = false
 	require.NoError(t, validator.Validate(doc))
+	delete(finding, "unlikely")
+	require.Error(t, validator.Validate(doc))
+	finding["unlikely"] = false
+	delete(finding, "nit")
+	require.Error(t, validator.Validate(doc))
 }
 
 func TestVersionFourAcceptsBothFindingMarks(t *testing.T) {

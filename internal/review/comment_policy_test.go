@@ -40,7 +40,7 @@ func TestCommentMaxFindings(t *testing.T) {
 			{Severity: "medium", Problem: "Rare issue", Unlikely: true}, {Severity: "medium", Problem: "Ordinary issue"},
 		}}, []string{"Ordinary issue"}, "1 more finding in the full review: `roborev show --job 123`"},
 		{"folded findings count toward cap", 1, "", StructuredReview{Findings: []StructuredFinding{
-			{Severity: "low", Problem: "First nit"}, {Severity: "high", Problem: "Visible issue"}, {Severity: "low", Problem: "Second nit"},
+			{Severity: "low", Nit: true, Problem: "First nit"}, {Severity: "high", Problem: "Visible issue"}, {Severity: "low", Nit: true, Problem: "Second nit"},
 		}}, []string{"Visible issue"}, "2 more findings in the full review: `roborev show --job 123`"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -226,7 +226,28 @@ func TestCommentShowAll(t *testing.T) {
 	showAll := FormatComment(PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high", MinConfidence: .95, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
 	assert.Contains(t, showAll, "filtered nit")
 	assert.Contains(t, showAll, "filtered rare")
-	assert.Contains(t, showAll, "4 findings")
+	assert.Contains(t, showAll, "2 findings")
+}
+
+func TestCommentShowAllKeepsReviewSeverityVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		findings []StructuredFinding
+		clean    bool
+		verdict  string
+	}{
+		{"below floor", []StructuredFinding{{Severity: "low", Problem: "Low issue"}}, true, "No findings need fixes before merge."},
+		{"mixed", []StructuredFinding{{Severity: "low", Problem: "Low issue"}, {Severity: "high", Problem: "High issue"}}, false, "Changes require fixes for 1 finding."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := StructuredReview{Findings: tc.findings}
+			prepared := PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "medium"}, ReviewResult{Structured: &doc})
+			assert.Equal(t, tc.clean, prepared.IsClean())
+			body := FormatComment(prepared)
+			assert.Contains(t, body, tc.verdict)
+			assert.Contains(t, body, "Low issue")
+		})
+	}
 }
 
 func TestCommentShowAllKeepsProseSeverityFilter(t *testing.T) {

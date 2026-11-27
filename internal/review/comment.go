@@ -31,6 +31,7 @@ type CommentConfig struct {
 type PreparedComment struct {
 	minSeverity         string
 	confidenceFiltered  bool
+	actionable          int
 	legacy              bool
 	structured          bool
 	verbatim            *string
@@ -54,6 +55,7 @@ type commentFinding struct {
 func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
 	threshold := config.SeverityRank(comment.minSeverity)
+	verdictThreshold := threshold
 	doc := r.Structured
 	if doc == nil && len(r.StructuredOutput) > 0 {
 		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
@@ -105,6 +107,9 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				comment.unlikely = append(comment.unlikely, item)
 			} else {
 				comment.findings = append(comment.findings, item)
+				if config.SeverityRank(finding.Severity) >= verdictThreshold {
+					comment.actionable++
+				}
 			}
 		}
 	} else {
@@ -138,7 +143,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 // IsClean reports whether filtering proved there is nothing to publish.
 // Verbatim prose has no reliable finding metadata and remains publishable.
 func (comment PreparedComment) IsClean() bool {
-	return !comment.legacy && comment.verbatim == nil && len(comment.findings) == 0
+	return !comment.legacy && comment.verbatim == nil && (comment.structured && comment.actionable == 0 || !comment.structured && len(comment.findings) == 0)
 }
 
 // FormatComment renders prepared findings. It does not resolve configuration,
@@ -189,13 +194,13 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 	}
 	var out strings.Builder
 	noun := "findings"
-	if len(comment.findings) == 1 {
+	if comment.actionable == 1 {
 		noun = "finding"
 	}
-	if len(comment.findings) == 0 {
+	if comment.actionable == 0 {
 		out.WriteString("**Verdict:** No findings need fixes before merge.")
 	} else {
-		fmt.Fprintf(&out, "**Verdict:** Changes require fixes for %d %s.", len(comment.findings), noun)
+		fmt.Fprintf(&out, "**Verdict:** Changes require fixes for %d %s.", comment.actionable, noun)
 	}
 	for _, severity := range []string{"critical", "high", "medium", "low"} {
 		heading := false

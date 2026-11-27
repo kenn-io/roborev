@@ -165,10 +165,13 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	checks.Equal("high", got[0].Severity, "the more severe copy is kept")
 	checks.Equal("Stop retrying on 503.", got[0].Fix)
 	checks.Equal([]int{1, 2}, got[0].Sources, "a merged finding keeps every source")
-	t.Run("unlikely requires both copies in either order", func(t *testing.T) {
-		for _, findings := range [][]structuredreview.Finding{{first, second}, {second, first}} {
+	t.Run("marks require both copies in either order", func(t *testing.T) {
+		marked, unmarked := first, second
+		marked.Severity, unmarked.Severity = "high", "medium"
+		for _, findings := range [][]structuredreview.Finding{{marked, unmarked}, {unmarked, marked}} {
 			got := tidyFindings(findings)
 			require.Len(t, got, 1)
+			assert.Equal(t, "high", got[0].Severity)
 			assert.False(t, got[0].Unlikely)
 			assert.False(t, got[0].Nit)
 		}
