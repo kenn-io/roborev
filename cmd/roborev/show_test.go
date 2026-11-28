@@ -724,7 +724,7 @@ func TestShowFoldedFindings(t *testing.T) {
 	fromSkill = false
 	t.Cleanup(func() { fromSkill = previousFromSkill })
 	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
-		{Severity: "low", Problem: "nit problem", Fix: "fix"},
+		{Severity: "low", Nit: true, Problem: "nit problem", Fix: "fix"},
 		{Severity: "medium", Unlikely: true, Problem: "rare problem", Fix: "fix"},
 	}}
 	raw, err := json.Marshal(doc)
@@ -759,7 +759,7 @@ func TestFoldedReviewFollowupServer(t *testing.T) {
 	}
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("[remote_client]\nexternal_url='https://example.org/history'\n"), 0o600))
-	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Problem: "nit", Fix: "fix"}}}
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	var structured storage.StructuredOutput
