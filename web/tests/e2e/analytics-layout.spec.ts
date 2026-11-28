@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 
 import { openAnalytics } from "./support";
 
-// Headless Chromium hides scrollbars by default, which would hide the
-// scrollbar-width shift this test guards against.
+// Headless Chromium hides scrollbars by default, which would mask a
+// regression back to classic layout-consuming scrollbars.
 test.use({
   launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] },
   viewport: { width: 1700, height: 700 },
@@ -24,7 +24,8 @@ test("keeps the centered analytics column in place when data makes the page scro
 
   await page.reload();
   await expect(page.getByText("Loading analytics…")).toBeVisible();
-  const view = page.locator(".analytics-view");
+  const frame = page.locator(".analytics-frame");
+  const view = frame.locator(".analytics-view");
   const heading = page.getByRole("heading", { name: "Review analytics" });
   expect(
     await view.evaluate(
@@ -37,11 +38,20 @@ test("keeps the centered analytics column in place when data makes the page scro
   await expect(
     page.getByRole("table", { name: "Project analytics" }),
   ).toBeVisible();
+  await expect
+    .poll(() =>
+      view.evaluate((element) => element.scrollHeight > element.clientHeight),
+    )
+    .toBe(true);
   expect(
     await view.evaluate(
       (element) => (element as HTMLElement).offsetWidth - element.clientWidth,
     ),
-  ).toBeGreaterThan(0);
+  ).toBe(0);
+  await view.hover();
+  await expect(
+    frame.locator('.kit-scrollbar--y[data-visible="true"]'),
+  ).toBeVisible();
   const loadedBox = await heading.boundingBox();
 
   expect(loadedBox?.x).toBe(loadingBox?.x);

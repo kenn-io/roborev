@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbars } from "@kenn-io/kit-ui";
   import { onMount, tick } from "svelte";
 
   import {
@@ -12,18 +13,19 @@
 
   type ViewState = "checking" | "login" | "authenticated" | "error";
 
-  let view: ViewState = "checking";
-  let token = "";
-  let errorMessage = "";
-  let connecting = false;
-  let retryAfterSeconds = 0;
+  let view = $state<ViewState>("checking");
+  let frame = $state<HTMLDivElement>();
+  let token = $state("");
+  let errorMessage = $state("");
+  let connecting = $state(false);
+  let retryAfterSeconds = $state(0);
   let cooldownDeadline = 0;
   let cooldownTimer: ReturnType<typeof setInterval> | undefined;
-  let capabilities: SessionCapabilities = {
+  let capabilities = $state<SessionCapabilities>({
     cancelAnyJob: false,
     cancelReviewJob: false,
     rerunJob: false,
-  };
+  });
 
   onMount(() => {
     const handleSessionLost = () => void checkSession();
@@ -111,53 +113,60 @@
   }
 </script>
 
-<main class:application={view === "authenticated"}>
-  {#if view === "checking"}
-    <section class="card status" aria-live="polite">
-      <p class="brand-lockup"><BrandMark />Roborev</p>
-      <p class="muted">Checking browser session…</p>
-    </section>
-  {:else if view === "login"}
-    <section class="card login-card">
-      <p class="brand-lockup"><BrandMark />Roborev</p>
-      <h1>Connect to Roborev</h1>
-      <p class="muted">
-        Enter the browser access token configured for this daemon. It is
-        exchanged once and is not retained by the application.
-      </p>
-      <form onsubmit={connect}>
-        <label for="daemon-token">Daemon token</label>
-        <input
-          id="daemon-token"
-          type="password"
-          autocomplete="current-password"
-          bind:value={token}
-          disabled={connecting || retryAfterSeconds > 0}
-          required
-        />
-        {#if retryAfterSeconds > 0}
-          <p class="login-warning" role="status">
-            Too many attempts. Try again in {retryAfterSeconds}
-            {retryAfterSeconds === 1 ? "second" : "seconds"}.
-          </p>
-        {/if}
-        <button type="submit" disabled={connecting || retryAfterSeconds > 0}>
-          {connecting
-            ? "Connecting…"
-            : retryAfterSeconds > 0
-              ? `Try again in ${retryAfterSeconds}s`
-              : "Connect"}
-        </button>
-      </form>
-    </section>
-  {:else if view === "authenticated"}
-    <AppShell {capabilities} />
-  {:else}
-    <section class="card status" role="alert">
-      <p class="brand-lockup"><BrandMark />Roborev</p>
-      <h1>Roborev is unavailable</h1>
-      <p class="muted">{errorMessage}</p>
-      <button type="button" onclick={checkSession}>Retry</button>
-    </section>
-  {/if}
-</main>
+<div class="app-frame" bind:this={frame}>
+  <main
+    class:application={view === "authenticated"}
+    {@attach view !== "authenticated"
+      ? overlayScrollbars({ axis: "y", host: frame })
+      : undefined}
+  >
+    {#if view === "checking"}
+      <section class="card status" aria-live="polite">
+        <p class="brand-lockup"><BrandMark />Roborev</p>
+        <p class="muted">Checking browser session…</p>
+      </section>
+    {:else if view === "login"}
+      <section class="card login-card">
+        <p class="brand-lockup"><BrandMark />Roborev</p>
+        <h1>Connect to Roborev</h1>
+        <p class="muted">
+          Enter the browser access token configured for this daemon. It is
+          exchanged once and is not retained by the application.
+        </p>
+        <form onsubmit={connect}>
+          <label for="daemon-token">Daemon token</label>
+          <input
+            id="daemon-token"
+            type="password"
+            autocomplete="current-password"
+            bind:value={token}
+            disabled={connecting || retryAfterSeconds > 0}
+            required
+          />
+          {#if retryAfterSeconds > 0}
+            <p class="login-warning" role="status">
+              Too many attempts. Try again in {retryAfterSeconds}
+              {retryAfterSeconds === 1 ? "second" : "seconds"}.
+            </p>
+          {/if}
+          <button type="submit" disabled={connecting || retryAfterSeconds > 0}>
+            {connecting
+              ? "Connecting…"
+              : retryAfterSeconds > 0
+                ? `Try again in ${retryAfterSeconds}s`
+                : "Connect"}
+          </button>
+        </form>
+      </section>
+    {:else if view === "authenticated"}
+      <AppShell {capabilities} />
+    {:else}
+      <section class="card status" role="alert">
+        <p class="brand-lockup"><BrandMark />Roborev</p>
+        <h1>Roborev is unavailable</h1>
+        <p class="muted">{errorMessage}</p>
+        <button type="button" onclick={checkSession}>Retry</button>
+      </section>
+    {/if}
+  </main>
+</div>

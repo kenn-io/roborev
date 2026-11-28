@@ -169,7 +169,7 @@
 
 <style>
   .breakdown {
-    overflow-x: auto;
+    min-width: 0;
   }
 
   .breakdown :global(.kit-th) {

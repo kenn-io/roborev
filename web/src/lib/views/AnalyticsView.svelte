@@ -9,6 +9,7 @@
     formatCost,
     formatDuration,
     formatNumber,
+    overlayScrollbars,
     type FilterDropdownSection,
     type SegmentedControlOption,
     type SelectDropdownOption,
@@ -100,6 +101,7 @@
   const hiddenSeries = new SvelteSet<string>();
   let latencyPercentile = $state<LatencyPercentile>("p50_secs");
   let emphasizedSeries = $state<string | null>(null);
+  let frame = $state<HTMLDivElement>();
 
   const projectSections = $derived(
     filterSections(
@@ -338,316 +340,332 @@
   }
 </script>
 
-<section class="analytics-view">
-  <div class="analytics-page">
-    <header class="analytics-header">
-      <div>
-        <h1>Review analytics</h1>
-        <p class="lede">
-          Volume, cost, outcomes, and latency from this daemon's review history.
-        </p>
-      </div>
-      <RefreshControl
-        lastUpdatedAt={analytics.getLastUpdatedAt()}
-        busy={loading}
-        onRefresh={() => void analytics.refresh()}
-        label="Refresh analytics"
-      />
-    </header>
+<div class="analytics-frame" bind:this={frame}>
+  <section
+    class="analytics-view"
+    {@attach overlayScrollbars({ axis: "both", host: frame })}
+  >
+    <div class="analytics-page">
+      <header class="analytics-header">
+        <div>
+          <h1>Review analytics</h1>
+          <p class="lede">
+            Volume, cost, outcomes, and latency from this daemon's review
+            history.
+          </p>
+        </div>
+        <RefreshControl
+          lastUpdatedAt={analytics.getLastUpdatedAt()}
+          busy={loading}
+          onRefresh={() => void analytics.refresh()}
+          label="Refresh analytics"
+        />
+      </header>
 
-    <div class="toolbar">
-      <div class="filter-row" role="group" aria-label="Analytics filters">
-        <SelectDropdown
-          title="Time range"
-          value={filters.range}
-          options={rangeOptions}
-          onchange={(value) => update({ range: value as AnalyticsRange })}
-        />
-        <SelectDropdown
-          title="Time bucket"
-          value={filters.bucket}
-          options={bucketOptions}
-          onchange={(value) => update({ bucket: value as AnalyticsBucket })}
-        />
-        <span class="toolbar-divider" aria-hidden="true"></span>
-        <FilterDropdown
-          label="Projects"
-          badgeCount={filters.projects.length}
-          sections={projectSections}
-          searchable
-          resetLabel="All projects"
-          onReset={() => update({ projects: [] })}
-        />
-        <FilterDropdown
-          label="Sources"
-          badgeCount={filters.sources.length}
-          sections={sourceSections}
-          resetLabel="All sources"
-          onReset={() => update({ sources: [] })}
-        />
-        <SelectDropdown
-          title="Agent"
-          value={filters.agent}
-          options={agentOptions}
-          onchange={(agent) => update({ agent })}
-        />
-        <SelectDropdown
-          title="Model"
-          value={filters.model}
-          options={modelOptions}
-          onchange={(model) => update({ model })}
-        />
+      <div class="toolbar">
+        <div class="filter-row" role="group" aria-label="Analytics filters">
+          <SelectDropdown
+            title="Time range"
+            value={filters.range}
+            options={rangeOptions}
+            onchange={(value) => update({ range: value as AnalyticsRange })}
+          />
+          <SelectDropdown
+            title="Time bucket"
+            value={filters.bucket}
+            options={bucketOptions}
+            onchange={(value) => update({ bucket: value as AnalyticsBucket })}
+          />
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <FilterDropdown
+            label="Projects"
+            badgeCount={filters.projects.length}
+            sections={projectSections}
+            searchable
+            resetLabel="All projects"
+            onReset={() => update({ projects: [] })}
+          />
+          <FilterDropdown
+            label="Sources"
+            badgeCount={filters.sources.length}
+            sections={sourceSections}
+            resetLabel="All sources"
+            onReset={() => update({ sources: [] })}
+          />
+          <SelectDropdown
+            title="Agent"
+            value={filters.agent}
+            options={agentOptions}
+            onchange={(agent) => update({ agent })}
+          />
+          <SelectDropdown
+            title="Model"
+            value={filters.model}
+            options={modelOptions}
+            onchange={(model) => update({ model })}
+          />
+        </div>
+        <div class="split-control">
+          <span class="split-label" id="split-label">Break down by</span>
+          <SegmentedControl
+            ariaLabel="Break down by"
+            options={splitOptions}
+            value={filters.split}
+            onchange={setSplit}
+          />
+        </div>
       </div>
-      <div class="split-control">
-        <span class="split-label" id="split-label">Break down by</span>
-        <SegmentedControl
-          ariaLabel="Break down by"
-          options={splitOptions}
-          value={filters.split}
-          onchange={setSplit}
-        />
-      </div>
-    </div>
 
-    {#if stale && snapshot}
-      <div class="stale-notice" role="status">
-        <span
-          >Showing earlier analytics because the latest refresh failed{error
-            ? `: ${error}`
-            : "."}</span
-        >
-        <Button size="sm" onclick={() => void analytics.refresh()}>Retry</Button
-        >
-      </div>
-    {/if}
-
-    {#if snapshot === null && loading}
-      <div class="state-panel" aria-live="polite">Loading analytics…</div>
-    {:else if snapshot === null && error}
-      <div class="state-panel" role="alert">
-        <h2>Analytics unavailable</h2>
-        <p>{error}</p>
-        <Button tone="info" onclick={() => void analytics.refresh()}
-          >Retry</Button
-        >
-      </div>
-    {:else if snapshot && snapshot.summary.reviews.total === 0 && snapshot.summary.attempts.eligible === 0}
-      <div class="state-panel">
-        <h2>No reviews in this range</h2>
-        <p>Change the time range or remove filters to see review activity.</p>
-      </div>
-    {:else if snapshot}
-      {@const verdicts = snapshot.summary.verdicts}
-      {@const failedVerdicts = verdicts.fail_open + verdicts.fail_closed}
-      <div class="metric-grid">
-        <MetricCard
-          label="Reviews"
-          value={formatNumber(snapshot.summary.reviews.total)}
-          detail={`${countLabel(snapshot.summary.reviews.run_errors, "run error")} · ${snapshot.summary.reviews.canceled} canceled · ${snapshot.summary.reviews.skipped} skipped`}
-        />
-        <MetricCard
-          label="Failure rate"
-          value={percentage(verdicts.failure_rate)}
-          detail={`${failedVerdicts} failed reviews out of ${verdicts.rated} reviews with a verdict`}
-        >
-          {#if verdicts.rated > 0}
-            <div
-              class="outcome-meter"
-              role="img"
-              aria-label={`${verdicts.passed} passed, ${verdicts.fail_closed} failed and addressed, ${verdicts.fail_open} failed and open`}
-            >
-              <span
-                class="outcome pass"
-                style:flex-grow={verdicts.passed}
-                title={`${verdicts.passed} passed`}
-              ></span>
-              <span
-                class="outcome addressed"
-                style:flex-grow={verdicts.fail_closed}
-                title={`${verdicts.fail_closed} failed, addressed`}
-              ></span>
-              <span
-                class="outcome open"
-                style:flex-grow={verdicts.fail_open}
-                title={`${verdicts.fail_open} failed, open`}
-              ></span>
-            </div>
-            <dl class="outcome-legend">
-              <div>
-                <dt class="pass">Pass</dt>
-                <dd>{verdicts.passed}</dd>
-              </div>
-              <div>
-                <dt class="addressed">Fail, addressed</dt>
-                <dd>{verdicts.fail_closed}</dd>
-              </div>
-              <div>
-                <dt class="open">Fail, open</dt>
-                <dd>{verdicts.fail_open}</dd>
-              </div>
-            </dl>
-          {/if}
-        </MetricCard>
-        <MetricCard
-          label="Median review latency"
-          value={seconds(snapshot.summary.review_latency.p50_secs)}
-          detail={`p90 ${seconds(snapshot.summary.review_latency.p90_secs)} · p99 ${seconds(snapshot.summary.review_latency.p99_secs)}`}
-        />
-        <MetricCard
-          label="Estimated cost"
-          value={formatCost(snapshot.summary.cost.total_usd)}
-          detail={`${snapshot.summary.cost.priced_attempts} of ${snapshot.summary.cost.eligible_attempts} eligible attempts priced`}
-        >
+      {#if stale && snapshot}
+        <div class="stale-notice" role="status">
           <span
-            class="coverage"
-            class:incomplete={!snapshot.summary.cost.complete}
+            >Showing earlier analytics because the latest refresh failed{error
+              ? `: ${error}`
+              : "."}</span
           >
-            {snapshot.summary.cost.complete
-              ? "All eligible attempts priced"
-              : "Estimated cost is a lower bound"}
-          </span>
-        </MetricCard>
-      </div>
-
-      {#if groups.length > 1}
-        <div class="legend" role="group" aria-label="Chart series">
-          {#each groups as group (group.key)}
-            <button
-              type="button"
-              class="legend-item"
-              class:off={hiddenSeries.has(group.key)}
-              aria-pressed={!hiddenSeries.has(group.key)}
-              title={hiddenSeries.has(group.key)
-                ? `Show ${group.label}`
-                : `Hide ${group.label}`}
-              onclick={() => toggleSeries(group.key)}
-              onpointerenter={() => emphasize(group.key)}
-              onpointerleave={() => (emphasizedSeries = null)}
-              onfocus={() => emphasize(group.key)}
-              onblur={() => (emphasizedSeries = null)}
-            >
-              <span
-                class="swatch"
-                style:background={hiddenSeries.has(group.key)
-                  ? undefined
-                  : group.color}
-              ></span>
-              <span class="legend-label">{group.label}</span>
-              <span class="legend-count"
-                >{formatNumber(group.summary.reviews.total)}</span
-              >
-            </button>
-          {/each}
-          {#if hiddenSeries.size > 0}
-            <button
-              type="button"
-              class="legend-reset"
-              onclick={() => hiddenSeries.clear()}>Show all</button
-            >
-          {/if}
+          <Button size="sm" onclick={() => void analytics.refresh()}
+            >Retry</Button
+          >
         </div>
       {/if}
 
-      <div class="chart-grid">
-        <Card level="raised" title="Review volume" meta="Logical reviews">
-          <AnalyticsChart
-            label="Logical reviews over time"
-            kind="bars"
-            {periods}
-            emphasis={emphasizedSeries}
-            series={volumeSeries}
-            formatValue={formatNumber}
-            formatTick={compactNumber}
+      {#if snapshot === null && loading}
+        <div class="state-panel" aria-live="polite">Loading analytics…</div>
+      {:else if snapshot === null && error}
+        <div class="state-panel" role="alert">
+          <h2>Analytics unavailable</h2>
+          <p>{error}</p>
+          <Button tone="info" onclick={() => void analytics.refresh()}
+            >Retry</Button
+          >
+        </div>
+      {:else if snapshot && snapshot.summary.reviews.total === 0 && snapshot.summary.attempts.eligible === 0}
+        <div class="state-panel">
+          <h2>No reviews in this range</h2>
+          <p>Change the time range or remove filters to see review activity.</p>
+        </div>
+      {:else if snapshot}
+        {@const verdicts = snapshot.summary.verdicts}
+        {@const failedVerdicts = verdicts.fail_open + verdicts.fail_closed}
+        <div class="metric-grid">
+          <MetricCard
+            label="Reviews"
+            value={formatNumber(snapshot.summary.reviews.total)}
+            detail={`${countLabel(snapshot.summary.reviews.run_errors, "run error")} · ${snapshot.summary.reviews.canceled} canceled · ${snapshot.summary.reviews.skipped} skipped`}
           />
-        </Card>
-        <Card
-          level="raised"
-          title="Estimated cost"
-          meta={`${snapshot.summary.cost.priced_attempts} priced attempts`}
-        >
-          <AnalyticsChart
-            label="Estimated cost over time"
-            kind="bars"
-            {periods}
-            emphasis={emphasizedSeries}
-            series={costSeries}
-            formatValue={formatCost}
-            formatTick={formatCost}
+          <MetricCard
+            label="Failure rate"
+            value={percentage(verdicts.failure_rate)}
+            detail={`${failedVerdicts} failed reviews out of ${verdicts.rated} reviews with a verdict`}
+          >
+            {#if verdicts.rated > 0}
+              <div
+                class="outcome-meter"
+                role="img"
+                aria-label={`${verdicts.passed} passed, ${verdicts.fail_closed} failed and addressed, ${verdicts.fail_open} failed and open`}
+              >
+                <span
+                  class="outcome pass"
+                  style:flex-grow={verdicts.passed}
+                  title={`${verdicts.passed} passed`}
+                ></span>
+                <span
+                  class="outcome addressed"
+                  style:flex-grow={verdicts.fail_closed}
+                  title={`${verdicts.fail_closed} failed, addressed`}
+                ></span>
+                <span
+                  class="outcome open"
+                  style:flex-grow={verdicts.fail_open}
+                  title={`${verdicts.fail_open} failed, open`}
+                ></span>
+              </div>
+              <dl class="outcome-legend">
+                <div>
+                  <dt class="pass">Pass</dt>
+                  <dd>{verdicts.passed}</dd>
+                </div>
+                <div>
+                  <dt class="addressed">Fail, addressed</dt>
+                  <dd>{verdicts.fail_closed}</dd>
+                </div>
+                <div>
+                  <dt class="open">Fail, open</dt>
+                  <dd>{verdicts.fail_open}</dd>
+                </div>
+              </dl>
+            {/if}
+          </MetricCard>
+          <MetricCard
+            label="Median review latency"
+            value={seconds(snapshot.summary.review_latency.p50_secs)}
+            detail={`p90 ${seconds(snapshot.summary.review_latency.p90_secs)} · p99 ${seconds(snapshot.summary.review_latency.p99_secs)}`}
           />
-        </Card>
-        <Card
-          level="raised"
-          title="Review failure rate"
-          meta="Failed reviews out of reviews with a verdict"
-        >
-          <AnalyticsChart
-            label="Review failure rate over time"
-            kind="lines"
-            {periods}
-            emphasis={emphasizedSeries}
-            series={failureSeries}
-            formatValue={percentage}
-            formatTick={percentage}
-            maxValue={1}
-          />
-        </Card>
-        <Card
-          level="raised"
-          title={`${latencyNames[latencyPercentile]} review latency`}
-        >
-          {#snippet actions()}
-            <SegmentedControl
-              ariaLabel="Latency percentile"
-              options={latencyOptions}
-              value={latencyPercentile}
-              onchange={(value) =>
-                (latencyPercentile = value as LatencyPercentile)}
-            />
-          {/snippet}
-          <AnalyticsChart
-            label={`${latencyNames[latencyPercentile]} review latency over time`}
-            kind="lines"
-            {periods}
-            emphasis={emphasizedSeries}
-            series={latencySeries}
-            formatValue={seconds}
-            formatTick={secondsTick}
-            tickSteps={durationTickSteps}
-          />
-        </Card>
-      </div>
+          <MetricCard
+            label="Estimated cost"
+            value={formatCost(snapshot.summary.cost.total_usd)}
+            detail={`${snapshot.summary.cost.priced_attempts} of ${snapshot.summary.cost.eligible_attempts} eligible attempts priced`}
+          >
+            <span
+              class="coverage"
+              class:incomplete={!snapshot.summary.cost.complete}
+            >
+              {snapshot.summary.cost.complete
+                ? "All eligible attempts priced"
+                : "Estimated cost is a lower bound"}
+            </span>
+          </MetricCard>
+        </div>
 
-      <Card
-        level="raised"
-        padding="none"
-        class="breakdown-card"
-        title={activeSplit === ""
-          ? "Projects"
-          : `By ${splitNames[activeSplit].toLowerCase()}`}
-        meta={activeSplit === ""
-          ? "Choose Break down by to compare agents, models, or sources"
-          : `${breakdownRows.length} ${breakdownRows.length === 1 ? "value" : "values"}`}
-      >
-        <BreakdownTable
-          ariaLabel={activeSplit === ""
-            ? "Project analytics"
-            : `${splitNames[activeSplit]} analytics`}
-          dimensionLabel={splitNames[activeSplit]}
-          rows={breakdownRows}
-        />
-      </Card>
-    {/if}
-  </div>
-</section>
+        {#if groups.length > 1}
+          <div class="legend" role="group" aria-label="Chart series">
+            {#each groups as group (group.key)}
+              <button
+                type="button"
+                class="legend-item"
+                class:off={hiddenSeries.has(group.key)}
+                aria-pressed={!hiddenSeries.has(group.key)}
+                title={hiddenSeries.has(group.key)
+                  ? `Show ${group.label}`
+                  : `Hide ${group.label}`}
+                onclick={() => toggleSeries(group.key)}
+                onpointerenter={() => emphasize(group.key)}
+                onpointerleave={() => (emphasizedSeries = null)}
+                onfocus={() => emphasize(group.key)}
+                onblur={() => (emphasizedSeries = null)}
+              >
+                <span
+                  class="swatch"
+                  style:background={hiddenSeries.has(group.key)
+                    ? undefined
+                    : group.color}
+                ></span>
+                <span class="legend-label">{group.label}</span>
+                <span class="legend-count"
+                  >{formatNumber(group.summary.reviews.total)}</span
+                >
+              </button>
+            {/each}
+            {#if hiddenSeries.size > 0}
+              <button
+                type="button"
+                class="legend-reset"
+                onclick={() => hiddenSeries.clear()}>Show all</button
+              >
+            {/if}
+          </div>
+        {/if}
+
+        <div class="chart-grid">
+          <Card level="raised" title="Review volume" meta="Logical reviews">
+            <AnalyticsChart
+              label="Logical reviews over time"
+              kind="bars"
+              {periods}
+              emphasis={emphasizedSeries}
+              series={volumeSeries}
+              formatValue={formatNumber}
+              formatTick={compactNumber}
+            />
+          </Card>
+          <Card
+            level="raised"
+            title="Estimated cost"
+            meta={`${snapshot.summary.cost.priced_attempts} priced attempts`}
+          >
+            <AnalyticsChart
+              label="Estimated cost over time"
+              kind="bars"
+              {periods}
+              emphasis={emphasizedSeries}
+              series={costSeries}
+              formatValue={formatCost}
+              formatTick={formatCost}
+            />
+          </Card>
+          <Card
+            level="raised"
+            title="Review failure rate"
+            meta="Failed reviews out of reviews with a verdict"
+          >
+            <AnalyticsChart
+              label="Review failure rate over time"
+              kind="lines"
+              {periods}
+              emphasis={emphasizedSeries}
+              series={failureSeries}
+              formatValue={percentage}
+              formatTick={percentage}
+              maxValue={1}
+            />
+          </Card>
+          <Card
+            level="raised"
+            title={`${latencyNames[latencyPercentile]} review latency`}
+          >
+            {#snippet actions()}
+              <SegmentedControl
+                ariaLabel="Latency percentile"
+                options={latencyOptions}
+                value={latencyPercentile}
+                onchange={(value) =>
+                  (latencyPercentile = value as LatencyPercentile)}
+              />
+            {/snippet}
+            <AnalyticsChart
+              label={`${latencyNames[latencyPercentile]} review latency over time`}
+              kind="lines"
+              {periods}
+              emphasis={emphasizedSeries}
+              series={latencySeries}
+              formatValue={seconds}
+              formatTick={secondsTick}
+              tickSteps={durationTickSteps}
+            />
+          </Card>
+        </div>
+
+        <Card
+          level="raised"
+          padding="none"
+          class="breakdown-card"
+          title={activeSplit === ""
+            ? "Projects"
+            : `By ${splitNames[activeSplit].toLowerCase()}`}
+          meta={activeSplit === ""
+            ? "Choose Break down by to compare agents, models, or sources"
+            : `${breakdownRows.length} ${breakdownRows.length === 1 ? "value" : "values"}`}
+        >
+          <BreakdownTable
+            ariaLabel={activeSplit === ""
+              ? "Project analytics"
+              : `${splitNames[activeSplit]} analytics`}
+            dimensionLabel={splitNames[activeSplit]}
+            rows={breakdownRows}
+          />
+        </Card>
+      {/if}
+    </div>
+  </section>
+</div>
 
 <style>
-  .analytics-view {
+  .analytics-frame {
+    position: relative;
+    display: flex;
+    flex: 1;
     width: 100%;
     min-width: 0;
+    min-height: 0;
+    overflow: clip;
+  }
+
+  .analytics-view {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
     overflow: auto;
-    /* Reserve the scrollbar's width up front so the centered column does not
-       shift left when loaded data first makes the page scroll. */
-    scrollbar-gutter: stable;
   }
 
   .analytics-page {

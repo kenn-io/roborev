@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, SearchInput } from "@kenn-io/kit-ui";
+  import { Button, SearchInput, overlayScrollbars } from "@kenn-io/kit-ui";
   import { Effect } from "effect";
   import { onDestroy, onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -31,6 +31,7 @@
   let loadingBranches = $state(false);
   let branchError = $state(false);
   let pickerRef = $state<HTMLDivElement>();
+  let dropdownEl = $state<HTMLDivElement>();
   let branchGeneration = 0;
 
   const selectedRepo = $derived(stores.roborevJobs?.getFilterRepo());
@@ -300,7 +301,7 @@
   </button>
 
   {#if open}
-    <div class="dropdown">
+    <div class="dropdown" bind:this={dropdownEl}>
       <div class="search-wrap">
         <SearchInput
           bind:value={search}
@@ -310,7 +311,10 @@
           ariaLabel="Filter repos"
         />
       </div>
-      <div class="dropdown-list">
+      <div
+        class="dropdown-list"
+        {@attach overlayScrollbars({ axis: "y", host: dropdownEl })}
+      >
         <button
           class="dropdown-item"
           class:active={!selectedRepo}
@@ -461,10 +465,8 @@
   }
 
   .dropdown-list {
+    min-height: 0;
     overflow-y: auto;
-    /* Reserve the scrollbar's width up front so the right-aligned counts do
-       not shift left when expanding a repository makes the list scroll. */
-    scrollbar-gutter: stable;
     padding: 4px 0;
   }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CopyButton } from "@kenn-io/kit-ui";
+  import { CopyButton, overlayScrollbars } from "@kenn-io/kit-ui";
   import { initMarkdownMermaidRendering } from "@kenn-io/kit-ui/utils/markdown-mermaid";
   import { renderMarkdown, renderMarkdownSync } from "../markdown/render";
 
@@ -32,7 +32,18 @@
     if (!container || !html) return;
     const controller = initMarkdownMermaidRendering(container);
     controller.renderNow();
-    return () => controller.disconnect();
+    const cleanups: Array<() => void> = [];
+    for (const element of container.querySelectorAll<HTMLElement>(
+      "pre:not(.mermaid), table",
+    )) {
+      if (element.closest(".kit-mermaid-viewer")) continue;
+      const cleanup = overlayScrollbars({ axis: "both" })(element);
+      if (cleanup) cleanups.push(cleanup);
+    }
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+      controller.disconnect();
+    };
   });
 
   $effect(() => {
@@ -53,7 +64,11 @@
 {:else if pending}
   <div class="review-pending">Review in progress...</div>
 {:else if output}
-  <div class="review-content markdown-body" bind:this={markdownContainer}>
+  <div
+    class="review-content markdown-body"
+    bind:this={markdownContainer}
+    {@attach overlayScrollbars({ axis: "x" })}
+  >
     <div class="review-actions">
       <CopyButton
         text={output}

@@ -6,6 +6,7 @@
     CopyButton,
     FitStages,
     IconButton,
+    overlayScrollbars,
   } from "@kenn-io/kit-ui";
   import BanIcon from "@lucide/svelte/icons/ban";
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
@@ -54,6 +55,7 @@
   const readable = $derived(selectedJob?.readable ?? false);
   let visibleJobId = $state<number>();
   let activity = $state(0);
+  let commandFrame = $state<HTMLDivElement>();
   onMount(() => {
     function returned(): void {
       if (!document.hidden) activity++;
@@ -249,7 +251,11 @@
       {#if selectedJob?.command_line}
         <div class="command-line">
           <span>Command</span>
-          <code>{selectedJob.command_line}</code>
+          <div class="command-code-frame" bind:this={commandFrame}>
+            <code {@attach overlayScrollbars({ axis: "x", host: commandFrame })}
+              >{selectedJob.command_line}</code
+            >
+          </div>
           <CopyButton
             text={selectedJob.command_line}
             ariaLabel="Copy command"
@@ -499,9 +505,16 @@
     color: var(--text-secondary);
   }
 
-  .command-line code {
+  .command-code-frame {
+    position: relative;
     flex: 1;
     min-width: 0;
+    overflow: clip;
+  }
+
+  .command-line code {
+    display: block;
+    width: 100%;
     overflow-x: auto;
     white-space: pre;
     font-family: var(--font-mono);

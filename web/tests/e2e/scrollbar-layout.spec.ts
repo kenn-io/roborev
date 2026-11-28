@@ -5,8 +5,8 @@ import { expect, test, type Locator } from "@playwright/test";
 
 import { openReviews } from "./support";
 
-// Headless Chromium hides scrollbars by default, which would hide the
-// scrollbar-width shift these tests guard against.
+// Headless Chromium hides scrollbars by default, which would mask a
+// regression back to classic layout-consuming scrollbars.
 test.use({
   launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] },
 });
@@ -58,7 +58,8 @@ test("keeps the centered release notes column in place when a longer release scr
   await openReviews(page);
   await page.getByRole("button", { name: "Release notes" }).click();
 
-  const copy = page.locator(".release-copy");
+  const copyFrame = page.locator(".release-copy-frame");
+  const copy = copyFrame.locator(".release-copy");
   const heading = copy.getByRole("heading", { name: "Summary" });
   await expect(heading).toBeVisible();
   expect(await overflows(copy)).toBe(false);
@@ -66,7 +67,11 @@ test("keeps the centered release notes column in place when a longer release scr
 
   await page.getByRole("button", { name: /Long release/ }).click();
   await expect.poll(() => overflows(copy)).toBe(true);
-  expect(await scrollbarWidth(copy)).toBeGreaterThan(0);
+  expect(await scrollbarWidth(copy)).toBe(0);
+  await copy.hover();
+  await expect(
+    copyFrame.locator('.kit-scrollbar--y[data-visible="true"]'),
+  ).toBeVisible();
 
   expect(await left(heading)).toBe(shortX);
 });
@@ -101,7 +106,8 @@ test("keeps repository counts in place when expanding branches makes the picker 
   await openReviews(page);
   await page.locator(".picker-button").click();
 
-  const list = page.locator(".dropdown-list");
+  const dropdown = page.locator(".dropdown");
+  const list = dropdown.locator(".dropdown-list");
   const row = page.locator(".repo-row", { hasText: "repo-2" });
   const count = row.locator(".count");
   await expect(count).toBeVisible();
@@ -111,7 +117,10 @@ test("keeps repository counts in place when expanding branches makes the picker 
   await row.locator(".expand-btn").click();
   await expect(page.locator(".branch-item").first()).toBeVisible();
   expect(await overflows(list)).toBe(true);
-  expect(await scrollbarWidth(list)).toBeGreaterThan(0);
+  expect(await scrollbarWidth(list)).toBe(0);
+  await expect(
+    dropdown.locator('.kit-scrollbar--y[data-visible="true"]'),
+  ).toBeVisible();
 
   expect(await left(count)).toBe(collapsedX);
 });
@@ -132,7 +141,8 @@ test("keeps job table columns in place when opening a review makes the table scr
   });
   await openReviews(page);
 
-  const table = page.locator(".table-wrapper");
+  const frame = page.locator(".table-frame");
+  const table = frame.locator(".table-wrapper");
   const headerPositions = () =>
     page
       .locator(".job-table th")
@@ -147,7 +157,11 @@ test("keeps job table columns in place when opening a review makes the table scr
     page.getByRole("region", { name: "Review details" }),
   ).toBeVisible();
   await expect.poll(() => overflows(table)).toBe(true);
-  expect(await scrollbarWidth(table)).toBeGreaterThan(0);
+  expect(await scrollbarWidth(table)).toBe(0);
+  await table.hover();
+  await expect(
+    frame.locator('.kit-scrollbar--y[data-visible="true"]'),
+  ).toBeVisible();
 
   expect(await headerPositions()).toEqual(closedPositions);
 });
@@ -167,15 +181,21 @@ test("keeps the login card in place when it makes a short window scroll, then re
   await page.goto("/reviews");
   await expect(page.getByText("Checking browser session")).toBeVisible();
 
-  const root = page.locator("html");
+  const appFrame = page.locator(".app-frame");
+  const scroller = appFrame.locator("main");
   const brand = page.locator(".brand-lockup");
-  expect(await overflows(root)).toBe(false);
+  expect(await overflows(scroller)).toBe(false);
   const checkingX = await left(brand);
 
   releaseSession();
   const login = page.getByLabel("Daemon token");
   await expect(login).toBeVisible();
-  expect(await overflows(root)).toBe(true);
+  expect(await overflows(scroller)).toBe(true);
+  expect(await scrollbarWidth(scroller)).toBe(0);
+  await scroller.hover();
+  await expect(
+    appFrame.locator('.kit-scrollbar--y[data-visible="true"]'),
+  ).toBeVisible();
   expect(await left(brand)).toBe(checkingX);
 
   await login.fill(process.env.ROBOREV_E2E_TOKEN ?? "");
