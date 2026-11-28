@@ -128,9 +128,9 @@ func TestLegacyReviewsExportSchemasAcceptFaithfulConversions(t *testing.T) {
 
 	// A historical review states no verdict, kind, or confidence, and gives
 	// its location as free text. Converting it must not invent them.
-	finding := `{"severity":"medium","kind":null,"topic":null,"confidence":null,"problem":"Retries never stop.","fix":"Cap the retries.","file":null,"start_line":null,"end_line":null,"location":"the retry loop in worker.go"%s}`
-	single := fmt.Sprintf(`{"schema_version":3,"summary":"Historical review.","verdict":null,"findings":[`+finding+`]}`, "")
-	sourced := fmt.Sprintf(`{"schema_version":3,"summary":"Historical review.","verdict":null,"findings":[`+finding+`]}`, `,"sources":[1]`)
+	finding := `{"severity":"medium","kind":null,"topic":null,"confidence":null,"unlikely":false,"nit":false,"problem":"Retries never stop.","fix":"Cap the retries.","file":null,"start_line":null,"end_line":null,"location":"the retry loop in worker.go"%s}`
+	single := fmt.Sprintf(`{"schema_version":4,"summary":"Historical review.","verdict":null,"findings":[`+finding+`]}`, "")
+	sourced := fmt.Sprintf(`{"schema_version":4,"summary":"Historical review.","verdict":null,"findings":[`+finding+`]}`, `,"sources":[1]`)
 	for _, tc := range []struct {
 		name     string
 		schema   *jsonschema.Schema
@@ -160,7 +160,7 @@ func TestLegacyReviewsExportSchemasAcceptFaithfulConversions(t *testing.T) {
 	require.NoError(t, json.Unmarshal(structuredreview.Schema, &live))
 	validator, err := live.Resolve(nil)
 	require.NoError(t, err)
-	liveDoc := `{"schema_version":3,"summary":"Live review.","verdict":"fail","findings":[{"severity":"medium","kind":%s,"topic":null,"confidence":%s,"problem":"Retries never stop.","fix":"Cap the retries.","file":null,"start_line":null,"end_line":null}]}`
+	liveDoc := `{"schema_version":4,"summary":"Live review.","verdict":"fail","findings":[{"severity":"medium","kind":%s,"topic":null,"confidence":%s,"unlikely":false,"nit":false,"problem":"Retries never stop.","fix":"Cap the retries.","file":null,"start_line":null,"end_line":null}]}`
 	liveValue := func(kind, confidence string) any {
 		var value any
 		require.NoError(t, json.Unmarshal(fmt.Appendf(nil, liveDoc, kind, confidence), &value))

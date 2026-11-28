@@ -110,14 +110,13 @@ type ExportSubagent struct {
 
 // ExportDocument is a stored structured review document as the export emits
 // it. It always holds a document that passed structuredreview.Decode, and it
-// encodes as that document's canonical JSON in the current version rather
-// than the stored bytes.
+// encodes it in the document version used by export schema 2.
 type ExportDocument struct {
 	structuredreview.Document
 }
 
 func (d ExportDocument) MarshalJSON() ([]byte, error) {
-	return json.Marshal(d.Document)
+	return d.MarshalVersion3()
 }
 
 // UnmarshalJSON decodes and validates an exported document. The embedded

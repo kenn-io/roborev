@@ -139,6 +139,9 @@ func IsSubstantiveOutput(result ReviewResult) bool {
 	return storage.ClassifyOutput(result.Output) == storage.OutputReviewed
 }
 
+// CommentMarker identifies roborev comments on GitHub.
+const CommentMarker = "<!-- roborev-pr-comment -->"
+
 // MaxCommentLen is the maximum length for a GitHub PR comment.
 // GitHub's hard limit is ~65536; we leave headroom.
 const MaxCommentLen = 60000
@@ -150,10 +153,32 @@ const CommentTruncSuffix = "\n\n...(truncated — comment exceeded size limit)"
 // TruncateComment caps a forge comment body at MaxCommentLen, replacing
 // the overflow with CommentTruncSuffix and keeping the cut UTF-8 safe.
 func TruncateComment(body string) string {
-	if len(body) <= MaxCommentLen {
+	return TruncateCommentTo(body, nil, MaxCommentLen, CommentTruncSuffix)
+}
+
+// TruncateCommentTo fits a comment within limit bytes, dropping a folded
+// section if the cut falls inside it. The suffix is included in the limit.
+func TruncateCommentTo(body string, fold *CommentFold, limit int, suffix string) string {
+	if len(body) <= limit {
 		return body
 	}
-	return TrimPartialRune(body[:MaxCommentLen-len(CommentTruncSuffix)]) + CommentTruncSuffix
+	budget := max(limit-len(suffix), 0)
+	if fold != nil && budget > fold.Start {
+		return truncateFold(body, fold, limit, suffix)
+	}
+	return TrimPartialRune(body[:budget]) + suffix
+}
+
+func truncateFold(body string, fold *CommentFold, limit int, suffix string) string {
+	notice := "\n\nFold omitted."
+	if fold.FullReviewReference != "" {
+		notice += " Full review: `" + fold.FullReviewReference + "`"
+	}
+	if limit < len(notice)+len(suffix) {
+		return TrimPartialRune(body[:min(fold.Start, max(limit-len(suffix), 0))]) + suffix
+	}
+	budget := max(limit-len(suffix)-len(notice), 0)
+	return TrimPartialRune(body[:min(fold.Start, budget)]) + notice + suffix
 }
 
 // OutputTruncSuffix marks a single review's output as cut short. It is

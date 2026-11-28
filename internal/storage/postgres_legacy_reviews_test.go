@@ -257,7 +257,7 @@ func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) { //nolint:par
 		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM reviews WHERE uuid = $1`, id).Scan(&count))
 		return count
 	}
-	wantDocument := `{"schema_version":3,"summary":"The change adds a save routine.","findings":[
+	wantDocument := `{"schema_version":4,"summary":"The change adds a save routine.","findings":[
 		{"severity":"high","kind":null,"topic":null,"confidence":null,"problem":"The write is not atomic.","fix":"Write to a temporary file and rename it.","file":null,"start_line":null,"end_line":null,"location":"store/save.go:88"},
 		{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"The comment is stale.","fix":"Update the comment.","file":null,"start_line":null,"end_line":null,"location":"store/save.go:12"}]}`
 

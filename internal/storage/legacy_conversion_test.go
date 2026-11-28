@@ -112,7 +112,7 @@ func TestUpgradeConvertsMarkdownReviewsRoborevWroteAndArchivesTheRest(t *testing
 		assert := assert.New(t)
 		got := readStoredReview(t, env.db, findings.jobID)
 		assert.Empty(got.output)
-		assert.JSONEq(`{"schema_version":3,"summary":"The change adds a save routine.","findings":[
+		assert.JSONEq(`{"schema_version":4,"summary":"The change adds a save routine.","findings":[
 			{"severity":"high","kind":null,"topic":null,"confidence":null,"problem":"The write is not atomic.","fix":"Write to a temporary file and rename it.","file":null,"start_line":null,"end_line":null,"location":"store/save.go:88"},
 			{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"The comment is stale.","fix":"Update the comment.","file":null,"start_line":null,"end_line":null,"location":"store/save.go:12"}]}`, got.document)
 		assert.True(got.closed, "closed state is unchanged")
@@ -138,12 +138,12 @@ func TestUpgradeConvertsMarkdownReviewsRoborevWroteAndArchivesTheRest(t *testing
 			assert.True(t, *got.verdict)
 		}
 		got := readStoredReview(t, env.db, clean.jobID)
-		assert.JSONEq(t, `{"schema_version":3,"summary":"The change renames a helper.","findings":[]}`, got.document)
+		assert.JSONEq(t, `{"schema_version":4,"summary":"The change renames a helper.","findings":[]}`, got.document)
 	})
 
 	t.Run("rendered Markdown keeps the stated agent verdict", func(t *testing.T) {
 		got := readStoredReview(t, env.db, rendered.jobID)
-		assert.JSONEq(t, `{"schema_version":3,"summary":"The change adds a cache.","verdict":"fail","findings":[
+		assert.JSONEq(t, `{"schema_version":4,"summary":"The change adds a cache.","verdict":"fail","findings":[
 			{"severity":"medium","kind":null,"topic":null,"confidence":null,"problem":"The cache is never invalidated.","fix":"Invalidate on write.","file":null,"start_line":null,"end_line":null,"location":null}]}`, got.document)
 	})
 
@@ -310,7 +310,7 @@ func TestConvertLegacySynthesisReviews(t *testing.T) {
 
 	var document string
 	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT structured_output FROM reviews WHERE job_id = ?`, clean).Scan(&document))
-	assert.JSONEq(t, `{"schema_version":3,"summary":"No issues found.","findings":[],"source_labels":["test (security)","test (design)"]}`, document)
+	assert.JSONEq(t, `{"schema_version":4,"summary":"No issues found.","findings":[],"source_labels":["test (security)","test (design)"]}`, document)
 
 	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT structured_output FROM reviews WHERE job_id = ?`, attributed).Scan(&document))
 	doc, err := structuredreview.Decode(jsontext.Value(document))

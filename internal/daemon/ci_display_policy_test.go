@@ -83,6 +83,15 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						assert.NotContains(body, "Missing cleanup.")
 					}
 					assert.Contains(body, "State is lost.")
+					if mode == "fallback" && policy.name == "stricter override" {
+						cfg := config.DefaultConfig()
+						cfg.CI.CommentShowAll = true
+						poller.cfgGetter = NewStaticConfig(cfg)
+						showAllBody, err := poller.panelCommentBody(&storage.CIPanel{PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project"}, rows)
+						require.NoError(t, err)
+						assert.Contains(showAllBody, "Minor naming issue.")
+						assert.Contains(showAllBody, "Missing cleanup.")
+					}
 
 					member, err := tc.DB.GetReviewByJobID(members[1].ID)
 					require.NoError(t, err)
@@ -112,9 +121,9 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 	} {
 		t.Run(policy.name, func(t *testing.T) {
 			assert := assert.New(t)
-			document := jsontext.Value(`{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
+			document := jsontext.Value(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
 			// Storage holds the canonical encoding, which adds the derived location.
-			canonical := `{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","topic":null,"confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1,2]}]}`
+			canonical := `{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","topic":null,"confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1,2]}]}`
 			a := &synthesisEntrypointTestAgent{name: "threshold-synthesis", result: string(document)}
 			agent.RegisterForTest(t, a)
 			runUUID, members, synthJob := enqueuePanelRun(t, tc, "threshold-synthesis", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
@@ -174,7 +183,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 		for _, outcome := range []string{"synthesis", "fallback"} {
 			t.Run(policy.name+"/"+outcome, func(t *testing.T) {
 				assert := assert.New(t)
-				doc := reviewpkg.StructuredReview{SchemaVersion: 3, Verdict: "fail", Summary: "Review complete.", Findings: []reviewpkg.StructuredFinding{
+				doc := reviewpkg.StructuredReview{SchemaVersion: 4, Verdict: "fail", Summary: "Review complete.", Findings: []reviewpkg.StructuredFinding{
 					{Severity: "low", Kind: "defect", Confidence: 0.8, Problem: "Low finding.", Fix: "Fix it.", Sources: []int{1}},
 					{Severity: "medium", Kind: "defect", Confidence: 0.8, Problem: "Medium finding.", Fix: "Fix it.", Sources: []int{1}},
 					{Severity: "high", Kind: "defect", Confidence: 0.8, Problem: "High finding.", Fix: "Fix it.", Sources: []int{1}},

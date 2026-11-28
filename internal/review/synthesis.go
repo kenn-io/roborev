@@ -124,7 +124,7 @@ func BuildSynthesisPrompt(
 	b.WriteString(
 		intro +
 			"Return exactly one JSON object with this shape and no code fence: " +
-			`{"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
+			`{"schema_version":4,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"unlikely":false,"nit":false,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
 			"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. " +
 			"List every finding that requires changes in `findings`; " +
 			"return an empty `findings` array if the reviewers agree " + material + " is clean.\n" +
@@ -134,7 +134,9 @@ func BuildSynthesisPrompt(
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
 			rubricRule +
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
-			"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n" +
+			"- Keep each finding's kind, using the majority value when reviewers disagree\n" +
+			"- Set topic to security if any source gave security; otherwise use the majority value\n" +
+			"- Mark a merged finding unlikely or a nit only when every source marked it so\n" +
 			"- Preserve the known trigger, actual wrong behavior, expected outcome, and legitimate behavior to preserve in each finding's problem and fix\n" +
 			"- When merging duplicates, keep all distinct behavior and preservation constraints; sharing a location alone does not make two findings duplicates\n" +
 			"- Keep uncertainty and the distinction between proposed checks and observed results; do not invent evidence, reproduction steps, or test results\n" +
@@ -286,6 +288,7 @@ func FormatRawBatchComment(
 
 func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentConfig) string {
 	var b strings.Builder
+	var foldAt *CommentFold
 	fmt.Fprintf(&b,
 		"## roborev: Combined Review (`%s`)\n\n",
 		gitrepo.ShortSHA(headSHA))
@@ -326,7 +329,11 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
 			if cfg != nil {
-				b.WriteString(FormatComment(PrepareComment(*cfg, r)))
+				output, fold := FormatCommentWithFold(PrepareComment(*cfg, r))
+				if rawFoldCrossesLimit(b.Len(), output, fold) {
+					foldAt = fold.Shift(b.Len())
+				}
+				b.WriteString(output)
 			} else {
 				b.WriteString(r.Output)
 			}
@@ -340,7 +347,19 @@ func formatRawBatchOutput(reviews []ReviewResult, headSHA string, cfg *CommentCo
 		b.WriteString(note)
 	}
 
+	if foldAt != nil {
+		return TruncateCommentTo(b.String(), foldAt, MaxCommentLen-len(CommentMarker)-1, CommentTruncSuffix)
+	}
 	return b.String()
+}
+
+func rawFoldCrossesLimit(prefix int, output string, fold *CommentFold) bool {
+	if fold == nil {
+		return false
+	}
+	budget := MaxCommentLen - len(CommentMarker) - 1 - len(CommentTruncSuffix) - prefix
+	end := fold.Start + strings.Index(output[fold.Start:], "</details>") + len("</details>")
+	return budget > fold.Start && budget < end
 }
 
 // FormatAllFailedComment formats a comment when every job in a

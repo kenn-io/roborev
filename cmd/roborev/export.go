@@ -108,8 +108,8 @@ that require stability across upgrades should pass --schema-version explicitly.
 Within a schema version, changes are strictly additive: existing fields are
 never removed, renamed, or changed in type or nullability, and consumers should
 ignore unknown fields. Export schema_version 2 emits structured document objects
-in document version 3 (and version 0 for historical unstructured Markdown
-reviews).`),
+in document version 3 without unlikely or nit (and version 0 for historical
+unstructured Markdown reviews).`),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limitSet := cmd.Flags().Changed("limit")
 			opts.schemaVersionSet = cmd.Flags().Changed("schema-version")

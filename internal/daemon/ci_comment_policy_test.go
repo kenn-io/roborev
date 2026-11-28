@@ -147,7 +147,7 @@ func TestCIPanelCommentCapReference(t *testing.T) {
 	h.Cfg.CI.CommentMaxFindings = 1
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
-	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Notes.","verdict":"fail","findings":[{"severity":"low","problem":"Minor concern.","fix":"Fix it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`, synth.ID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","problem":"Minor concern.","fix":"Fix it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`, synth.ID)
 	require.NoError(t, err)
 	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
 	require.NoError(t, err)
@@ -219,7 +219,7 @@ func TestCIPanelCappedPublicationPreservesOmissionNotice(t *testing.T) {
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
 	document := reviewpkg.StructuredReview{SchemaVersion: 2, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
 		{Severity: "high", Problem: strings.Repeat("界", reviewpkg.MaxCommentLen), Fix: "Persist it."},
-		{Severity: "low", Problem: "Omitted concern.", Fix: "Fix it."},
+		{Severity: "medium", Problem: "Omitted concern.", Fix: "Fix it."},
 	}}
 	raw, err := json.Marshal(document)
 	require.NoError(t, err)
@@ -252,7 +252,7 @@ func TestCIPanelCommentMinConfidence(t *testing.T) {
 	floor := 0.8
 	h.Cfg.CI.CommentMinConfidence = &floor
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
-	document := reviewpkg.StructuredReview{SchemaVersion: 3, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
+	document := reviewpkg.StructuredReview{SchemaVersion: 4, Summary: "Complete review.", Verdict: "fail", Findings: []reviewpkg.StructuredFinding{
 		{Severity: "high", Kind: "defect", Confidence: 0.5, Problem: "Filtered finding.", Fix: "Fix it."},
 		{Severity: "high", Kind: "defect", Confidence: 0.9, Problem: "Published finding.", Fix: "Fix it."},
 	}}
@@ -367,4 +367,40 @@ func TestCICommentRemembersID(t *testing.T) {
 			assert.Equal(t, fmt.Sprintf("PATCH /repos/acme/api/issues/comments/%d", pages*100+2), requests[pages+2])
 		})
 	}
+}
+
+func TestCIPanelCommentFoldAndShowAll(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
+	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
+	document := `{"schema_version":4,"summary":"Notes.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"defect","fix":"fix"},{"severity":"low","kind":"improvement","confidence":0.9,"problem":"naming issue","fix":"fix","nit":true},{"severity":"high","kind":"defect","confidence":0.9,"problem":"rare","fix":"fix","unlikely":true},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"rare medium","fix":"fix","unlikely":true}]}`
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, document, synth.ID)
+	require.NoError(t, err)
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'medium' WHERE id = ?`, synth.ID)
+	require.NoError(t, err)
+	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
+	require.NoError(t, err)
+	body, err := h.Poller.panelCommentBody(panel, members)
+	require.NoError(t, err)
+	assert.Contains(t, body, "<details>")
+	h.Cfg.CI.CommentShowAll = true
+	body, err = h.Poller.panelCommentBody(panel, members)
+	require.NoError(t, err)
+	assert.NotContains(t, body, "<details>")
+	assert.Contains(t, body, "naming issue")
+}
+
+func TestCIPanelCommentTruncationDropsFold(t *testing.T) {
+	doc := reviewpkg.StructuredReview{Findings: []reviewpkg.StructuredFinding{
+		{Severity: "low", Nit: true, Problem: "Keep this finding.", Fix: "Fix it."},
+		{Severity: "low", Nit: true, Problem: strings.Repeat("oversized ", reviewpkg.MaxCommentLen), Fix: "Fix it."},
+	}}
+	prepared := reviewpkg.PrepareComment(reviewpkg.CommentConfig{}, reviewpkg.ReviewResult{Structured: &doc})
+	stored := &storage.Review{Job: &storage.ReviewJob{Agent: "test"}}
+	got := formatPreparedPanelPRCommentWithHead(prepared, stored, "F", nil, false, "abcdef123456")
+	assert.NotContains(t, got, "Keep this finding.")
+	assert.NotContains(t, got, "oversized")
+	assert.Contains(t, got, panelCommentTruncSuffix)
+	assert.Contains(t, got, "Reviewers:")
+	assert.LessOrEqual(t, len(got), reviewpkg.MaxCommentLen)
 }

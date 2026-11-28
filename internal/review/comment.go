@@ -2,6 +2,7 @@ package review
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 // all findings; preparation never inherits policy from review data.
 type CommentConfig struct {
 	MinSeverity string
+	ShowAll     bool
 	// MinConfidence filters stated structured confidence; zero disables it.
 	MinConfidence float64
 	// MaxFindings limits structured findings; zero leaves them unlimited.
@@ -28,11 +30,14 @@ type CommentConfig struct {
 // so formatting receives only findings selected by PrepareComment.
 type PreparedComment struct {
 	minSeverity         string
+	passed              bool
 	confidenceFiltered  bool
 	legacy              bool
 	structured          bool
 	verbatim            *string
 	findings            []commentFinding
+	nits                []commentFinding
+	unlikely            []commentFinding
 	omitted             int
 	fullReviewReference string
 }
@@ -62,8 +67,30 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		doc = nil
 	}
 	if doc != nil {
+		effective := comment.minSeverity
+		if effective == "" {
+			effective = r.MinSeverity
+		}
+		comment.passed = !doc.UnableToReview() && doc.Passed(effective)
+		if cfg.ShowAll {
+			comment.minSeverity, threshold, cfg.MinConfidence, cfg.MaxFindings = "", 0, 0, 0
+		}
 		comment.structured = true
-		for _, finding := range doc.Findings {
+		findings := slices.Clone(doc.Findings)
+		shouldFold := func(finding StructuredFinding) bool {
+			return !cfg.ShowAll && finding.Topic != "security" && finding.Severity != "high" && finding.Severity != "critical" && (finding.Nit || finding.Unlikely)
+		}
+		slices.SortStableFunc(findings, func(a, b StructuredFinding) int {
+			if shouldFold(a) != shouldFold(b) {
+				if shouldFold(a) {
+					return 1
+				}
+				return -1
+			}
+			return config.SeverityRank(b.Severity) - config.SeverityRank(a.Severity)
+		})
+		selected := 0
+		for _, finding := range findings {
 			if finding.Severity != "" && config.SeverityRank(finding.Severity) < threshold {
 				continue
 			}
@@ -72,10 +99,19 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 				comment.confidenceFiltered = true
 				continue
 			}
-			comment.findings = append(comment.findings, commentFinding{
-				severity: finding.Severity, problem: finding.Problem,
-				fix: finding.Fix, location: finding.Location,
-			})
+			fold := shouldFold(finding)
+			if selected++; cfg.MaxFindings > 0 && selected > cfg.MaxFindings {
+				comment.omitted++
+				continue
+			}
+			item := commentFinding{severity: finding.Severity, problem: finding.Problem, fix: finding.Fix, location: finding.Location}
+			if fold && finding.Nit {
+				comment.nits = append(comment.nits, item)
+			} else if fold && finding.Unlikely {
+				comment.unlikely = append(comment.unlikely, item)
+			} else {
+				comment.findings = append(comment.findings, item)
+			}
 		}
 	} else {
 		// Publication supplies the current header; a stored wrapper is content
@@ -102,52 +138,72 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 			return comment
 		}
 	}
-	if comment.structured {
-		slices.SortStableFunc(comment.findings, func(a, b commentFinding) int {
-			return config.SeverityRank(b.severity) - config.SeverityRank(a.severity)
-		})
-		if cfg.MaxFindings > 0 && len(comment.findings) > cfg.MaxFindings {
-			comment.omitted = len(comment.findings) - cfg.MaxFindings
-			comment.findings = comment.findings[:cfg.MaxFindings]
-		}
-	}
 	return comment
 }
 
 // IsClean reports whether filtering proved there is nothing to publish.
 // Verbatim prose has no reliable finding metadata and remains publishable.
 func (comment PreparedComment) IsClean() bool {
-	return !comment.legacy && comment.verbatim == nil && len(comment.findings) == 0 && comment.omitted == 0
+	return !comment.legacy && comment.verbatim == nil && len(comment.findings) == 0
 }
 
 // FormatComment renders prepared findings. It does not resolve configuration,
 // parse review output, or filter findings.
 func FormatComment(comment PreparedComment) string {
-	if comment.verbatim != nil {
-		return *comment.verbatim
+	body, _ := FormatCommentWithFold(comment)
+	return body
+}
+
+// CommentFold records the start of a generated fold.
+type CommentFold struct {
+	Start               int
+	FullReviewReference string
+}
+
+// Shift returns fold offsets adjusted for a prefix.
+func (f *CommentFold) Shift(prefix int) *CommentFold {
+	if f == nil {
+		return nil
 	}
-	if len(comment.findings) == 0 {
+	return &CommentFold{Start: f.Start + prefix, FullReviewReference: f.FullReviewReference}
+}
+
+// FormatCommentWithFold also returns the start of the generated fold.
+func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
+	if comment.verbatim != nil {
+		return *comment.verbatim, nil
+	}
+	if len(comment.findings) == 0 && len(comment.nits)+len(comment.unlikely) == 0 {
 		if comment.confidenceFiltered {
-			return "**Verdict:** No findings match the comment filters.\n"
+			return "**Verdict:** No findings match the comment filters.\n", nil
 		}
 		if comment.minSeverity != "" && comment.minSeverity != "low" {
-			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", comment.minSeverity)
+			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", comment.minSeverity), nil
 		}
-		return "**Verdict:** No issues found.\n"
+		return "**Verdict:** No issues found.\n", nil
 	}
 	if !comment.structured {
 		blocks := make([]string, len(comment.findings))
 		for i, finding := range comment.findings {
 			blocks[i] = finding.markdown
 		}
-		return strings.Join(blocks, "\n\n---\n\n")
+		return strings.Join(blocks, "\n\n---\n\n"), nil
 	}
 	var out strings.Builder
-	noun := "findings"
-	if len(comment.findings) == 1 {
-		noun = "finding"
+	if comment.passed {
+		out.WriteString("**Verdict:** No fixes needed before merge.")
+	} else {
+		out.WriteString("**Verdict:** Changes require fixes before merge.")
 	}
-	fmt.Fprintf(&out, "**Verdict:** Changes require fixes for %d %s.", len(comment.findings), noun)
+	folded := len(comment.nits) + len(comment.unlikely)
+	shownNoun, foldedNoun := "findings", "findings"
+	if len(comment.findings) == 1 {
+		shownNoun = "finding"
+	}
+	if folded == 1 {
+		foldedNoun = "finding"
+	}
+	fmt.Fprintf(&out, "\n\n%d %s shown; %d folded %s (nits/unlikely)", len(comment.findings), shownNoun, folded, foldedNoun)
 	for _, severity := range []string{"critical", "high", "medium", "low"} {
 		heading := false
 		for _, finding := range comment.findings {
@@ -160,21 +216,62 @@ func FormatComment(comment PreparedComment) string {
 			}
 			// Reviewer attribution belongs in the comment footer, not on
 			// each finding.
-			out.WriteString("\n- ")
-			if finding.location != "" {
-				fmt.Fprintf(&out, "`%s`: ", finding.location)
-			}
-			out.WriteString(finding.problem)
-			if finding.fix != "" {
-				fmt.Fprintf(&out, "\n\n  **Fix:** %s", finding.fix)
-			}
-			out.WriteString("\n")
+			renderCommentFinding(&out, finding)
 		}
 	}
-	if notice := comment.OmissionNotice(); notice != "" {
-		return strings.TrimRight(out.String(), "\n") + notice
+	var fold *CommentFold
+	if len(comment.nits)+len(comment.unlikely) > 0 {
+		groups := []struct {
+			title, one, many string
+			findings         []commentFinding
+		}{{"Nits", "nit", "nits", comment.nits}, {"Unlikely findings", "unlikely finding", "unlikely findings", comment.unlikely}}
+		var labels []string
+		for _, group := range groups {
+			if n := len(group.findings); n == 1 {
+				labels = append(labels, "1 "+group.one)
+			} else if n > 1 {
+				labels = append(labels, fmt.Sprintf("%d %s", n, group.many))
+			}
+		}
+		fold = &CommentFold{Start: out.Len(), FullReviewReference: comment.fullReviewReference}
+		fmt.Fprintf(&out, "\n\n<details><summary>%s hidden</summary>", strings.Join(labels, " and "))
+		out.WriteString("\n")
+		for _, group := range groups {
+			if len(group.findings) > 0 {
+				fmt.Fprintf(&out, "\n#### %s\n", group.title)
+			}
+			for _, finding := range group.findings {
+				var item strings.Builder
+				renderCommentFinding(&item, finding)
+				out.WriteString(escapeFoldClose(item.String()))
+			}
+		}
+		out.WriteString("\n</details>\n")
 	}
-	return out.String()
+	if notice := comment.OmissionNotice(); notice != "" {
+		return strings.TrimRight(out.String(), "\n") + notice, fold
+	}
+	return out.String(), fold
+}
+
+var foldCloseTag = regexp.MustCompile(`(?i)</?details(?:\s[^>]*|/?)>`)
+
+func escapeFoldClose(s string) string {
+	return foldCloseTag.ReplaceAllStringFunc(s, func(tag string) string {
+		return "&lt;" + tag[1:len(tag)-1] + "&gt;"
+	})
+}
+
+func renderCommentFinding(out *strings.Builder, finding commentFinding) {
+	out.WriteString("\n- ")
+	if finding.location != "" {
+		fmt.Fprintf(out, "`%s`: ", finding.location)
+	}
+	out.WriteString(finding.problem)
+	if finding.fix != "" {
+		fmt.Fprintf(out, "\n\n  **Fix:** %s", finding.fix)
+	}
+	out.WriteString("\n")
 }
 
 // OmissionNotice returns the cap explanation separately so publishers can

@@ -70,7 +70,7 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 		data, err := os.ReadFile(matches[0])
 		require.NoError(t, err)
 		assert.Contains(t, string(data), "+VISIBLE_CHANGE")
-		return `{"schema_version":3,"summary":"Check missing","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"problem":"Missing check.","fix":"Add check.","file":null,"start_line":null,"end_line":null}]}`, nil
+		return `{"schema_version":4,"summary":"Check missing","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"problem":"Missing check.","fix":"Add check.","file":null,"start_line":null,"end_line":null}]}`, nil
 	}})
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "supplied-panel-synthesis", ReviewFn: func(_ context.Context, root, gotRef, text string, _ io.Writer) (string, error) {
 		synthesisCalls++
@@ -142,7 +142,7 @@ func TestSuppliedPanelKeepsInputsThroughExecutionAndRerun(t *testing.T) {
 		assert.Nil(t, reports.Invocations[0].Usage)
 		structured, err := json.Marshal(reports.Invocations[0].StructuredOutput)
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[],"source_labels":["supplied-panel-member","supplied-panel-member"]}`, string(structured))
+		assert.JSONEq(t, `{"schema_version":4,"summary":"No issues found.","verdict":"pass","findings":[],"source_labels":["supplied-panel-member","supplied-panel-member"]}`, string(structured))
 		runner.WaitUntilIdle()
 		server.hookRunner.WaitUntilIdle()
 		if run == 0 {
@@ -376,7 +376,7 @@ func TestSuppliedPanelRecordsStrictClaudeSynthesisUsage(t *testing.T) {
 		t.Run(fmt.Sprintf("failed=%t", failed), func(t *testing.T) {
 			testenv.SetDataDir(t)
 			t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-			result, exit := `{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`, "0"
+			result, exit := `{"schema_version":4,"summary":"No findings.","verdict":"pass","findings":[]}`, "0"
 			if failed {
 				result, exit = "review failed", "1"
 			}

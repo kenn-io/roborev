@@ -384,6 +384,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 			Model:        config.ResolveCISynthesisModel(globalCfg),
 			Reasoning:    globalCfg.ProjectSynthesisReasoning(),
 			MinSeverity:  ciMinSev,
+			ShowAll:      config.ResolveCICommentShowAll(repoCfg, globalCfg),
 			RepoPath:     root,
 			GitRef:       gitRef,
 			HeadSHA:      headSHA,

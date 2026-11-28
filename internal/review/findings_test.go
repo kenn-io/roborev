@@ -142,6 +142,8 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	first.Problem = "The retry loop never stops when the server returns 503."
 	first.Fix = "Stop retrying on 503."
 	first.Severity = "medium"
+	first.Unlikely = true
+	first.Nit = true
 	first.Sources = []int{2}
 	second := located("a.go", 13, 13)
 	second.Problem = first.Problem
@@ -159,10 +161,34 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	got := tidyFindings([]structuredreview.Finding{first, second, otherProblem, otherFile, unlocated, unlocatedTwin})
 
 	require.Len(t, got, 5, "only the two retry findings in a.go merge")
-	assert := assert.New(t)
-	assert.Equal("high", got[0].Severity, "the more severe copy is kept")
-	assert.Equal("Stop retrying on 503.", got[0].Fix)
-	assert.Equal([]int{1, 2}, got[0].Sources, "a merged finding keeps every source")
+	checks := assert.New(t)
+	checks.Equal("high", got[0].Severity, "the more severe copy is kept")
+	checks.Equal("Stop retrying on 503.", got[0].Fix)
+	checks.Equal([]int{1, 2}, got[0].Sources, "a merged finding keeps every source")
+	t.Run("marks require both copies in either order", func(t *testing.T) {
+		marked, unmarked := first, second
+		marked.Severity, unmarked.Severity = "medium", "medium"
+		marked.Confidence, unmarked.Confidence = 0.9, 0.5
+		for _, findings := range [][]structuredreview.Finding{{marked, unmarked}, {unmarked, marked}} {
+			got := tidyFindings(findings)
+			require.Len(t, got, 1)
+			assert.Equal(t, "medium", got[0].Severity)
+			assert.False(t, got[0].Unlikely)
+			assert.False(t, got[0].Nit)
+		}
+	})
+	t.Run("security topic survives either order", func(t *testing.T) {
+		assert := assert.New(t)
+		security := located("a.go", 10, 10)
+		security.Topic, security.Confidence = "security", 0.4
+		other := security
+		other.Topic, other.Confidence = "", 0.9
+		for _, findings := range [][]structuredreview.Finding{{security, other}, {other, security}, {other, security, other}} {
+			got := tidyFindings(findings)
+			require.Len(t, got, 1)
+			assert.Equal("security", got[0].Topic)
+		}
+	})
 }
 
 // Reviewers often report one problem per field or variable on neighboring
@@ -262,7 +288,7 @@ func TestRunAgentReviewStoresSettledFindings(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: jsontext.Value(`{
-  "schema_version": 3,
+  "schema_version": 4,
   "verdict": "fail",
   "summary": "Two problems.",
   "findings": [
@@ -293,7 +319,7 @@ func TestRunAgentReviewPreservesDifferentCorrections(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: jsontext.Value(`{
-  "schema_version": 3,
+  "schema_version": 4,
   "summary": "Two missing checks.",
   "verdict": "fail",
   "findings": [

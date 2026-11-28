@@ -1286,10 +1286,10 @@ func exportDocumentValidator(t *testing.T) *jsonschema.Resolved {
 // exportTestCheckedDocument is a combined review after the CI checker kept
 // one finding and dropped another. One verdict has no reason, and the dropped
 // finding has no location.
-const exportTestCheckedDocument = `{"schema_version":3,"summary":"1 finding.","verdict":"fail","source_labels":["codex"],"findings":[` +
-	`{"severity":"high","kind":"defect","topic":null,"confidence":0.9,"problem":"Saves lose data.","fix":"Flush before rename.","file":"save.go","start_line":10,"end_line":12,"location":"save.go:10-12","sources":[1]}],` +
+const exportTestCheckedDocument = `{"schema_version":4,"summary":"1 finding.","verdict":"fail","source_labels":["codex"],"findings":[` +
+	`{"severity":"high","kind":"defect","topic":null,"confidence":0.9,"unlikely":true,"problem":"Saves lose data.","fix":"Flush before rename.","file":"save.go","start_line":10,"end_line":12,"location":"save.go:10-12","sources":[1]}],` +
 	`"check":{"status":"completed","findings":[` +
-	`{"outcome":"kept","finding":{"severity":"high","kind":"defect","topic":null,"confidence":0.9,"problem":"Saves lose data.","fix":"Flush before rename.","file":"save.go","start_line":10,"end_line":12,"location":"save.go:10-12","sources":[1]},"verdicts":[{"keep":true,"evidence":"go test ./save: FAIL"}]},` +
+	`{"outcome":"kept","finding":{"severity":"high","kind":"defect","topic":null,"confidence":0.9,"unlikely":true,"problem":"Saves lose data.","fix":"Flush before rename.","file":"save.go","start_line":10,"end_line":12,"location":"save.go:10-12","sources":[1]},"verdicts":[{"keep":true,"evidence":"go test ./save: FAIL"}]},` +
 	`{"outcome":"dropped","finding":{"severity":"medium","kind":"defect","topic":null,"confidence":0.6,"problem":"Build breaks.","fix":"Add the import.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1]},"verdicts":[{"keep":false,"evidence":"go build ./...: ok","reason":"The import exists."}]}]}}`
 
 func TestExportReviewsCheckedDocumentMatchesSchema(t *testing.T) {
@@ -1310,7 +1310,8 @@ func TestExportReviewsCheckedDocumentMatchesSchema(t *testing.T) {
 	require.NotNil(t, got.Check, "export keeps the checker record")
 	raw, err := json.Marshal(got)
 	require.NoError(t, err)
-	assert.JSONEq(exportTestCheckedDocument, string(raw))
+	wantV2 := strings.ReplaceAll(strings.Replace(exportTestCheckedDocument, `"schema_version":4`, `"schema_version":3`, 1), `"unlikely":true,`, "")
+	assert.JSONEq(wantV2, string(raw))
 	assert.NotContains(derefString(page.Reviews[0].Content), "go build", "content stays the review Markdown")
 
 	var value any

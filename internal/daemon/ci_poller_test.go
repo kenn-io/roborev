@@ -814,6 +814,21 @@ func TestFormatPanelPRComment_DoesNotTruncateWhenCommentFits(t *testing.T) {
 	assert.NotContains(t, comment, "...(truncated)")
 }
 
+func TestPanelCommentReservesMarkerForFold(t *testing.T) {
+	stored := &storage.Review{Job: &storage.ReviewJob{Agent: "test"}}
+	doc := review.StructuredReview{Findings: []review.StructuredFinding{{Severity: "low", Nit: true, Problem: "minor"}}}
+	prepared := review.PrepareComment(review.CommentConfig{}, review.ReviewResult{Structured: &doc})
+	body, fold := review.FormatCommentWithFold(prepared)
+	footer := formatPanelPRFooter(stored.Job, stored.Agent, nil, false)
+	padding := review.MaxCommentLen - len(body) - len(footer) - 1
+	body = strings.Repeat("x", padding) + body
+	comment := appendPanelPRFooterWithNotice(body, fold.Shift(padding), "", stored, nil, false)
+	posted := review.TruncateComment(review.CommentMarker + "\n" + comment)
+	assert.LessOrEqual(t, len(posted), review.MaxCommentLen)
+	assert.Equal(t, strings.Count(posted, "<details>"), strings.Count(posted, "</details>"))
+	assert.Contains(t, posted, "Reviewers:")
+}
+
 func TestAppendPanelPRFooterBoundsOversizedFooter(t *testing.T) {
 	storedReview := &storage.Review{
 		Job: &storage.ReviewJob{

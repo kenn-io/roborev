@@ -860,12 +860,13 @@ matrix has no synthesis instructions setting; use a named panel for that.
 ## Comment display policy
 
 The GitHub daemon poller can cap synthesized comments and stay silent when
-nothing survives the display filters. Defaults preserve existing behavior:
+nothing survives the display filters. The defaults are:
 
 ```toml
 [ci]
 comment_max_findings = 0   # Unlimited structured findings
 comment_when_clean = true # Create comments even when no findings survive
+comment_show_all = false # Fold eligible nits and unlikely findings
 # comment_min_confidence = 0.8 # Optional; unset disables confidence filtering
 ```
 
@@ -889,23 +890,34 @@ saving, or reloading configuration. If confidence removes a finding that passed
 the severity filter and no findings remain, the comment says "No findings match
 the comment filters." Confidence does not filter prose.
 
-Set `comment_when_clean = false` to avoid creating a comment when structured
-synthesis has no findings after filtering, even if the stored review has
-findings. Severity-parsed prose is also silent when no labelled findings or
-unlabelled blocks survive. Verbatim prose and legacy Markdown remain
-publishable, even if their text says the review is clean. Roborev does not infer
-cleanliness from text or the stored verdict. With `upsert_comments = true`,
-silent reviews update an existing marker comment to the no-findings line.
-Missing or deleted comments are successful no-ops; cleanup never creates a
-replacement. Permission and transient delivery errors keep the normal error and
-retry behavior.
+By default, structured CI comments apply the severity and confidence floors and
+finding cap, then fold nits and unlikely findings into a collapsible section.
+High, Critical, and security findings remain in the main list. Set
+`comment_show_all = true` globally or per repository to show every structured
+finding inline, ignoring the comment severity and confidence floors and finding
+cap. The setting also applies to structured GitHub comments from
+`roborev ci review`, including structured raw fallback comments. Text-only and
+legacy comments keep their existing filters. Stored reviews retain every
+finding. Comments show the review verdict and counts of inline and folded
+findings.
 
-All three settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
+Set `comment_when_clean = false` to avoid creating a comment when structured
+synthesis has no inline findings after the display filters, even if the stored
+review has findings. Folded findings alone do not create a comment.
+Severity-parsed prose is also silent when no labelled findings or unlabelled
+blocks survive. Verbatim prose and legacy Markdown remain publishable, even if
+their text says the review is clean. Roborev does not infer cleanliness from
+text or the stored verdict. With `upsert_comments = true`, silent reviews update
+an existing marker comment to the no-findings line. Missing or deleted comments
+are successful no-ops; cleanup never creates a replacement. Permission and
+transient delivery errors keep the normal error and retry behavior.
+
+All four settings accept per-repo `[ci]` overrides in `.roborev.toml`. An
 explicit repo cap of `0` restores unlimited findings; a confidence floor of `0`
-disables a global floor; an explicit `true` restores clean comments. These
-settings apply only to synthesized GitHub daemon comments. Raw member fallback
-diagnostics, daemon-free `roborev ci`, and GitLab keep existing behavior.
-Complete stored reviews, verdicts, prompts, and execution statuses are
+disables a global floor; an explicit `true` restores clean comments. The other
+display settings apply only to synthesized GitHub daemon comments. Raw member
+fallback diagnostics, daemon-free `roborev ci`, and GitLab keep their existing
+behavior. Complete stored reviews, verdicts, prompts, and execution statuses are
 unchanged. Unlike these display settings, `ci.min_severity` also controls the
 synthesis verdict.
 
@@ -1203,6 +1215,7 @@ set, it takes priority over the matrix fields for that repo.
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
 | `comment_min_confidence` | float | global `comment_min_confidence` | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Zero disables filtering. |
 | `comment_max_findings` | int | global `comment_max_findings` | Maximum structured findings in synthesized GitHub daemon comments; `0` restores unlimited |
+| `comment_show_all` | bool | global `comment_show_all` | Show all findings inline in CI comments |
 | `comment_when_clean` | bool | global `comment_when_clean` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
@@ -1247,6 +1260,7 @@ set, it takes priority over the matrix fields for that repo.
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `comment_min_confidence` | float | unset | Minimum recorded synthesis confidence in GitHub daemon comments. Finite `0`–`1`. Unset disables filtering. |
 | `comment_max_findings` | int | `0` | Maximum structured findings in synthesized GitHub daemon comments; `0` is unlimited |
+| `comment_show_all` | bool | `false` | Show all findings inline in CI comments |
 | `comment_when_clean` | bool | `true` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |

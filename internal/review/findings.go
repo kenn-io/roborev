@@ -175,7 +175,8 @@ const nearbyLines = 3
 // with the same fix is merged: case, punctuation, word order, and corrections
 // can distinguish independent issues. Findings without a file are never
 // merged, because nothing ties them to one place. A merged finding keeps the
-// more severe or more confident copy and every source.
+// more severe or more confident copy and every source. It is a nit or unlikely
+// only when both copies have the respective classification.
 func tidyFindings(findings []structuredreview.Finding) []structuredreview.Finding {
 	kept := make([]structuredreview.Finding, 0, len(findings))
 	for _, finding := range findings {
@@ -188,10 +189,16 @@ func tidyFindings(findings []structuredreview.Finding) []structuredreview.Findin
 			continue
 		}
 		sources := mergeSources(kept[twin].Sources, finding.Sources)
+		unlikely := kept[twin].Unlikely && finding.Unlikely
+		nit := kept[twin].Nit && finding.Nit
+		security := kept[twin].Topic == "security" || finding.Topic == "security"
 		if better(finding, kept[twin]) {
 			kept[twin] = finding
 		}
-		kept[twin].Sources = sources
+		kept[twin].Sources, kept[twin].Unlikely, kept[twin].Nit = sources, unlikely, nit
+		if security {
+			kept[twin].Topic = "security"
+		}
 	}
 	slices.SortStableFunc(kept, func(a, b structuredreview.Finding) int {
 		return cmp.Or(

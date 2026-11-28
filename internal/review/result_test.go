@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -203,4 +204,37 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 	assert.Equal(storage.VerdictFail, combined.Verdict)
 	assert.Equal("medium", combined.MinSeverity)
 	assert.NotContains(combined.Output, "No findings at or above")
+}
+
+func TestTruncateCommentTo(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{
+		{Severity: "high", Problem: "Example:\n\n```html\n<details><summary>Example</summary>\ncontent\n</details>\n```\nKeep this finding.", Fix: "Fix it."},
+		{Severity: "low", Nit: true, Problem: strings.Repeat("nit ", 100), Fix: "Fix it."},
+	}}
+	body, foldAt := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
+	const suffix = "\n\nfooter"
+	require.Positive(t, foldAt.Start)
+	reference := foldAt.Shift(0)
+	reference.FullReviewReference = "roborev show --job 42"
+	prose := "Review:\n<details><summary>Example</summary>\n" + strings.Repeat("text ", 100) + "\n</details>"
+	for _, tc := range []struct {
+		name, body string
+		fold       *CommentFold
+		limit      int
+		want       string
+	}{
+		{"before fold", body, foldAt, foldAt.Start - 5 + len(suffix), body[:foldAt.Start-5] + suffix},
+		{"inside fold", body, foldAt, foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(suffix), body[:foldAt.Start] + "\n\nFold omitted." + suffix},
+		{"fold reference", body, reference, foldAt.Start + 100, body[:foldAt.Start] + "\n\nFold omitted. Full review: `roborev show --job 42`" + suffix},
+		{"prose details", prose, nil, 100, prose[:100-len(suffix)] + suffix},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := TruncateCommentTo(tc.body, tc.fold, tc.limit, suffix)
+			assert.Equal(t, tc.want, got)
+			if tc.fold != nil {
+				assert.Equal(t, strings.Count(got, "<details"), strings.Count(got, "</details>"))
+			}
+			assert.True(t, strings.HasSuffix(got, suffix))
+		})
+	}
 }

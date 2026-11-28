@@ -41,6 +41,7 @@ type SynthesizeOpts struct {
 	// MinSeverity is the lowest severity that fails the combined review.
 	// Findings below it are hidden in the comment but retained in review data.
 	MinSeverity string
+	ShowAll     bool
 	// RepoPath is the working directory for the synthesis agent.
 	RepoPath string
 	// GitRef is the reviewed git ref, passed to the synthesis agent.
@@ -74,7 +75,7 @@ func Synthesize(
 		results[i] = results[i].ApplyMinSeverity(opts.MinSeverity)
 	}
 	opts.MinSeverity = ResolveSynthesisMinSeverity(results, opts.MinSeverity)
-	commentConfig := CommentConfig{MinSeverity: opts.MinSeverity}
+	commentConfig := CommentConfig{MinSeverity: opts.MinSeverity, ShowAll: opts.ShowAll}
 
 	successCount := 0
 	for _, r := range results {
@@ -147,7 +148,8 @@ func formatSingleResult(
 
 	output := r.Output
 	if commentConfig != nil {
-		output = TruncateComment(FormatComment(PrepareComment(*commentConfig, r)))
+		body, foldAt := FormatCommentWithFold(PrepareComment(*commentConfig, r))
+		output = TruncateCommentTo(body, foldAt, MaxCommentLen-len(CommentMarker)-1-len(header), CommentTruncSuffix)
 	}
 	return header + output
 }
@@ -196,8 +198,13 @@ func runSynthesis(
 		return SynthesisResult{}, fmt.Errorf("synthesis review: %w", err)
 	}
 
+	body, foldAt := FormatCommentWithFold(PrepareComment(commentConfig, ReviewResult{Structured: &doc}))
+	if foldAt != nil {
+		wrapperLen := len(FormatSynthesizedComment("", results, opts.HeadSHA))
+		body = TruncateCommentTo(body, foldAt, MaxCommentLen-len(CommentMarker)-1-wrapperLen, CommentTruncSuffix)
+	}
 	return SynthesisResult{
 		Output:        FormatSynthesizedComment(doc.Markdown(opts.MinSeverity), results, opts.HeadSHA),
-		GitHubComment: FormatSynthesizedComment(FormatComment(PrepareComment(commentConfig, ReviewResult{Structured: &doc})), results, opts.HeadSHA),
+		GitHubComment: FormatSynthesizedComment(body, results, opts.HeadSHA),
 	}, nil
 }

@@ -3,8 +3,10 @@ package structuredreview
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +92,23 @@ func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
 	assert.Contains(t, err.Error(), "need schema_version 3")
 }
 
+func TestDecodeRejectsInvalidClassifications(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"version 2 false", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":false}]}`, "unlikely, which needs schema_version 4"},
+		{"version 3 false", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":false}]}`, "unlikely, which needs schema_version 4"},
+		{"version 3 checked finding", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f","unlikely":true},"verdicts":[]}]}}`, "unlikely, which needs schema_version 4"},
+		{"version 4", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "invalid unlikely"},
+		{"version 4 string", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":"yes"}]}`, "invalid unlikely"},
+	} {
+		for _, field := range []string{"unlikely", "nit"} {
+			t.Run(field+"/"+tc.name, func(t *testing.T) {
+				_, err := Decode(jsontext.Value(strings.ReplaceAll(tc.raw, "unlikely", field)))
+				require.ErrorContains(t, err, strings.ReplaceAll(tc.want, "unlikely", field))
+			})
+		}
+	}
+}
+
 func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 	located := Finding{Severity: "high", Kind: KindDefect, Confidence: 0.75, Problem: "p", Fix: "f", Sources: []int{2}}
 	located.SetLocation("a.go", 3, 8)
@@ -98,9 +117,10 @@ func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 		name string
 		doc  Document
 	}{
-		{name: "version 3", doc: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{located, unlocated}}},
-		{name: "free-text location without kind", doc: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "Kata abc"}}}},
-		{name: "no verdict", doc: Document{SchemaVersion: 3, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}}},
+		{name: "current version", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{located, unlocated}}},
+		{name: "classifications", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "high", Problem: "p", Fix: "f", Unlikely: true, Nit: true}, {Severity: "low", Problem: "q", Fix: "f"}}}},
+		{name: "free-text location without kind", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "Kata abc"}}}},
+		{name: "no verdict", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,12 +142,17 @@ func TestEncodingAnOlderDocumentWritesTheCurrentVersion(t *testing.T) {
 		{
 			name: "version 1",
 			raw:  `{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":"a.go:3"}]}`,
-			want: Document{SchemaVersion: 3, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "a.go:3"}}},
+			want: Document{SchemaVersion: SchemaVersion, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "a.go:3"}}},
 		},
 		{
 			name: "version 2",
 			raw:  `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null}]}`,
-			want: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}},
+			want: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}},
+		},
+		{
+			name: "version 3 with check",
+			raw:  `{"schema_version":3,"summary":"s","verdict":"fail","findings":[],"check":{"status":"completed","findings":[{"outcome":"kept","finding":{"severity":"low","problem":"p","fix":"f"},"verdicts":[{"keep":true,"evidence":"e"}]}]}}`,
+			want: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{}, Check: &Check{Status: CheckCompleted, Findings: []CheckedFinding{{Outcome: CheckKept, Finding: Finding{Severity: "low", Problem: "p", Fix: "f"}, Verdicts: []CheckVerdict{{Keep: new(true), Evidence: "e"}}}}}},
 		},
 	}
 	for _, tc := range tests {
@@ -268,4 +293,36 @@ func TestMarkdownLeavesTheCheckRecordOut(t *testing.T) {
 	unchecked.Check = nil
 	assert.Equal(t, unchecked.Markdown("medium"), checked.Markdown("medium"),
 		"rendered reviews are posted to pull requests and must not change when a checker ran")
+}
+
+func TestSchemaClassifications(t *testing.T) {
+	var schema jsonschema.Schema
+	require.NoError(t, json.Unmarshal(Schema, &schema))
+	validator, err := schema.Resolve(nil)
+	require.NoError(t, err)
+	finding := map[string]any{"severity": "low", "kind": "defect", "topic": nil, "confidence": .5, "problem": "p", "fix": "f", "file": nil, "start_line": nil, "end_line": nil}
+	doc := map[string]any{"schema_version": float64(4), "summary": "s", "verdict": "fail", "findings": []any{finding}}
+	finding["unlikely"] = false
+	finding["nit"] = false
+	require.NoError(t, validator.Validate(doc))
+	delete(finding, "unlikely")
+	require.Error(t, validator.Validate(doc))
+	finding["unlikely"] = false
+	delete(finding, "nit")
+	require.Error(t, validator.Validate(doc))
+}
+
+func TestNitVersionAndRoundTrip(t *testing.T) {
+	finding := Finding{Severity: "medium", Problem: "p", Fix: "f", Nit: true, Unlikely: true}
+	doc := Document{Summary: "s", Verdict: VerdictFail, Findings: []Finding{finding}, Check: &Check{Status: CheckCompleted, Findings: []CheckedFinding{{Outcome: CheckKept, Finding: finding, Verdicts: []CheckVerdict{}}}}}
+	old, err := doc.MarshalVersion3()
+	require.NoError(t, err)
+	assert.Contains(t, string(old), `"schema_version":3`)
+	assert.NotContains(t, string(old), `"nit"`)
+	assert.NotContains(t, string(old), `"unlikely"`)
+	decoded, err := Decode(old)
+	require.NoError(t, err)
+	require.Len(t, decoded.Findings, 1)
+	require.NotNil(t, decoded.Check)
+	require.Len(t, decoded.Check.Findings, 1)
 }

@@ -22,7 +22,7 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: jsontext.Value(`{
-	  "schema_version": 3,
+	  "schema_version": 4,
 	  "verdict": "pass",
 	  "summary": "High: no actionable findings remain.",
   "findings": [
@@ -51,7 +51,7 @@ func TestRunAgentReviewUsesSchemaForBuiltInTypesWhenSupported(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured", output: "PROSE FALLBACK",
 		result: jsontext.Value(`{
-  "schema_version": 3,
+  "schema_version": 4,
   "verdict": "pass",
   "summary": "One real bug.",
   "findings": [
@@ -85,13 +85,27 @@ func TestRunAgentReviewRequiresJSONWithoutNativeSchema(t *testing.T) {
 }
 
 func TestRunAgentReviewAcceptsJSONWithoutNativeSchema(t *testing.T) {
-	raw := `{"schema_version":3,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
+	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
 	a := &mockAgent{name: "plain", output: raw}
 	got, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, got.Structured)
 	assert.JSONEq(t, canonicalDocument(t, raw), string(got.StructuredOutput))
 	assert.Equal(t, storage.VerdictPass, got.Verdict)
+}
+
+func TestRunAgentReviewAcceptsMissingClassifications(t *testing.T) {
+	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"nit":false,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
+	for _, field := range []string{`"unlikely":false,`, `"nit":false,`} {
+		t.Run(field, func(t *testing.T) {
+			a := &mockAgent{name: "plain", output: strings.Replace(raw, field, "", 1)}
+			got, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil, nil)
+			require.NoError(t, err)
+			require.Len(t, got.Structured.Findings, 1)
+			assert.False(t, got.Structured.Findings[0].Nit)
+			assert.False(t, got.Structured.Findings[0].Unlikely)
+		})
+	}
 }
 
 func TestNoVerdictMessage(t *testing.T) {
@@ -126,7 +140,7 @@ func TestRunAgentReviewTreatsUnableToReviewAsFailure(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: jsontext.Value(`{
-  "schema_version": 3,
+  "schema_version": 4,
   "summary": "The diff was truncated before any code appeared.",
   "verdict": "unable_to_review",
   "findings": []
@@ -145,7 +159,7 @@ func TestRunAgentReviewRendersAgentVerdict(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: jsontext.Value(`{
-  "schema_version": 3,
+  "schema_version": 4,
   "summary": "Clean change.",
   "verdict": "pass",
   "findings": []
@@ -170,13 +184,13 @@ func TestRunAgentReviewRejectsOldSchemaFromLiveAgent(t *testing.T) {
 	_, err := RunAgentReview(
 		t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
 	)
-	require.ErrorContains(t, err, "schema_version 1, want 3")
+	require.ErrorContains(t, err, "schema_version 1, want 4")
 }
 
 func TestRunAgentReviewRejectsFailWithoutFindings(t *testing.T) {
 	a := &structuredBatchAgent{
 		name:   "structured",
-		result: jsontext.Value(`{"schema_version":3,"summary":"Bad.","verdict":"fail","findings":[]}`),
+		result: jsontext.Value(`{"schema_version":4,"summary":"Bad.","verdict":"fail","findings":[]}`),
 	}
 	_, err := RunAgentReview(
 		t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
@@ -209,7 +223,7 @@ func plainAgent(raw string) *agent.FakeAgent {
 }
 
 func TestRunAgentReviewRecoversJSONAfterNarration(t *testing.T) {
-	document := `{"schema_version":3,"summary":"Clean change.","verdict":"pass","findings":[]}`
+	document := `{"schema_version":4,"summary":"Clean change.","verdict":"pass","findings":[]}`
 	tests := []struct {
 		name      string
 		narration string
@@ -241,7 +255,7 @@ func TestRunAgentReviewRecoversJSONAfterNarration(t *testing.T) {
 func TestRunAgentReviewValidatesRecoveredDocument(t *testing.T) {
 	a := plainAgent(narratedReview(
 		"I could not read the diff.",
-		`{"schema_version":3,"summary":"The diff was unreadable.","verdict":"unable_to_review","findings":[]}`,
+		`{"schema_version":4,"summary":"The diff was unreadable.","verdict":"unable_to_review","findings":[]}`,
 	))
 	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil)
 	require.ErrorContains(t, err, "could not review the change")
@@ -258,7 +272,7 @@ func TestRunAgentReviewClassifiesProseWithoutDocument(t *testing.T) {
 }
 
 func TestDecodeSynthesisResultRecoversJSONAfterNarration(t *testing.T) {
-	document := `{"schema_version":3,"summary":"Clean.","verdict":"pass","findings":[]}`
+	document := `{"schema_version":4,"summary":"Clean.","verdict":"pass","findings":[]}`
 	raw := narratedReview("I couldn't read the diff, so I compared the reviews.", document)
 	reviews := []ReviewResult{{Agent: "codex"}, {Agent: "gemini"}}
 

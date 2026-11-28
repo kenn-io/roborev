@@ -3017,7 +3017,7 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	}
 	commentConfig := reviewpkg.CommentConfig{MinSeverity: reviewpkg.ResolveSynthesisMinSeverity(results, threshold)}
 	raw := func() panelCommentPublication {
-		// Raw diagnostics retain their existing publication policy.
+		_, _, _, commentConfig.ShowAll = p.resolveCommentPolicy(row.GithubRepo)
 		return panelCommentPublication{body: reviewpkg.FormatRawBatchComment(commentConfig, results, row.HeadSHA)}
 	}
 	if synth == nil || synth.Status != storage.JobStatusDone {
@@ -3027,7 +3027,8 @@ func (p *CIPoller) preparePanelComment(row *storage.CIPanel, members []storage.B
 	if err != nil || rev == nil {
 		return raw(), nil
 	}
-	maxFindings, minConfidence, whenClean := p.resolveCommentPolicy(row.GithubRepo)
+	maxFindings, minConfidence, whenClean, showAll := p.resolveCommentPolicy(row.GithubRepo)
+	commentConfig.ShowAll = showAll
 	commentConfig.MaxFindings = maxFindings
 	commentConfig.MinConfidence = minConfidence
 	commentConfig.FullReviewReference = fmt.Sprintf("roborev show --job %d", synth.ID)
@@ -4298,58 +4299,50 @@ func formatPreparedPanelPRCommentWithHead(prepared reviewpkg.PreparedComment, re
 	}
 
 	notice := prepared.OmissionNotice()
-	output := strings.TrimSuffix(reviewpkg.FormatComment(prepared), notice)
-	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
+	output, outputFoldAt := reviewpkg.FormatCommentWithFold(prepared)
+	output = strings.TrimSuffix(output, notice)
 	if notice == "" && len(output) > reviewpkg.MaxCommentLen {
-		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix
+		output = truncatePanelPRBodyForFooter(output, outputFoldAt, "", reviewpkg.MaxCommentLen)
 	}
+	var foldAt *reviewpkg.CommentFold
 	if output != "" && (verdict != "P" || headSHA != "") {
+		if outputFoldAt != nil && outputFoldAt.Start < len(output) && strings.HasPrefix(output[outputFoldAt.Start:], "\n\n<details><summary>") {
+			foldAt = outputFoldAt.Shift(b.Len())
+		}
 		b.WriteString(output)
 		b.WriteString("\n")
 	} else if verdict == "P" && headSHA != "" {
 		b.WriteString("No issues found.\n")
 	}
 
-	return appendPanelPRFooterWithNotice(b.String(), notice, review, members, includeCosts)
+	return appendPanelPRFooterWithNotice(b.String(), foldAt, notice, review, members, includeCosts)
 }
 
 const panelCommentTruncSuffix = "\n\n...(truncated)"
 
 func appendPanelPRFooter(body string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
-	return appendPanelPRFooterWithNotice(body, "", review, members, includeCosts)
+	return appendPanelPRFooterWithNotice(body, nil, "", review, members, includeCosts)
 }
 
-func appendPanelPRFooterWithNotice(body, notice string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
-	if review == nil {
-		return body
+func appendPanelPRFooterWithNotice(body string, foldAt *reviewpkg.CommentFold, notice string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
+	var footer string
+	if review != nil {
+		footer = formatPanelPRFooter(review.Job, review.Agent, members, includeCosts)
 	}
-	footer := formatPanelPRFooter(review.Job, review.Agent, members, includeCosts)
-	if footer == "" && notice == "" {
-		return body
-	}
-	maxLen := reviewpkg.MaxCommentLen
-	if notice != "" {
-		// Capped publications must keep their retrieval notice through the
-		// GitHub client's final sizing after it prepends this marker.
-		maxLen -= len(ghpkg.CommentMarker) + len("\n")
-	}
-	if len(footer)+len(notice)+len(panelCommentTruncSuffix) > maxLen {
+	maxLen := reviewpkg.MaxCommentLen - len(ghpkg.CommentMarker) - len("\n")
+	if review != nil && len(footer)+len(notice)+len(panelCommentTruncSuffix) > maxLen {
 		footer = formatCompactPanelPRFooter(review.Job, review.Agent, members, includeCosts)
 	}
 	if len(footer)+len(notice)+len(panelCommentTruncSuffix) > maxLen {
 		footer = truncateUTF8(footer, max(maxLen-len(notice)-len(panelCommentTruncSuffix), 0))
 	}
 	suffix := strings.TrimRight(notice, "\n") + footer
-	body = truncatePanelPRBodyForFooter(body, suffix, maxLen)
+	body = truncatePanelPRBodyForFooter(body, foldAt, suffix, maxLen)
 	return strings.TrimRight(body, "\n") + suffix
 }
 
-func truncatePanelPRBodyForFooter(body string, footer string, maxLen int) string {
-	if len(body)+len(footer) <= maxLen {
-		return body
-	}
-	maxBodyLen := max(maxLen-len(footer)-len(panelCommentTruncSuffix), 0)
-	return truncateUTF8(body, maxBodyLen) + panelCommentTruncSuffix
+func truncatePanelPRBodyForFooter(body string, foldAt *reviewpkg.CommentFold, footer string, maxLen int) string {
+	return reviewpkg.TruncateCommentTo(body, foldAt, max(maxLen-len(footer), 0), panelCommentTruncSuffix)
 }
 
 func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members []storage.BatchReviewResult, includeCosts bool) string {
@@ -4646,7 +4639,7 @@ func (p *CIPoller) updateExistingPRComment(ghRepo string, prNumber int, body str
 
 // resolveCommentPolicy loads publication overrides from the default branch,
 // following the same precedence as existing comment upsert/cost settings.
-func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, float64, bool) {
+func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, float64, bool, bool) {
 	var repoCfg *config.RepoConfig
 	repo, err := p.findLocalRepo(context.Background(), ghRepo)
 	if err == nil && repo != nil {
@@ -4655,7 +4648,7 @@ func (p *CIPoller) resolveCommentPolicy(ghRepo string) (int, float64, bool) {
 		}
 	}
 	cfg := p.cfgGetter.Config()
-	return config.ResolveCICommentMaxFindings(repoCfg, cfg), config.ResolveCICommentMinConfidence(repoCfg, cfg), config.ResolveCICommentWhenClean(repoCfg, cfg)
+	return config.ResolveCICommentMaxFindings(repoCfg, cfg), config.ResolveCICommentMinConfidence(repoCfg, cfg), config.ResolveCICommentWhenClean(repoCfg, cfg), config.ResolveCICommentShowAll(repoCfg, cfg)
 }
 
 // resolveUpsertComments determines whether to upsert PR comments

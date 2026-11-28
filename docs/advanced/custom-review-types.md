@@ -202,7 +202,7 @@ The schema is fixed by roborev. The agent must return:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "summary": "Overall assessment",
   "verdict": "fail",
   "findings": [
@@ -211,6 +211,8 @@ The schema is fixed by roborev. The agent must return:
       "kind": "defect",
       "topic": "security",
       "confidence": 0.8,
+      "unlikely": false,
+      "nit": false,
       "problem": "What is wrong and why it matters",
       "fix": "A concrete correction",
       "file": "internal/file.go",
@@ -222,8 +224,8 @@ The schema is fixed by roborev. The agent must return:
 ```
 
 `schema_version`, `summary`, `verdict`, and `findings` are required. The current
-schema version is `3`. Stored version `1` and `2` documents still load, and
-Roborev rejects missing or unsupported versions. `verdict` is `pass`, `fail`, or
+schema version is `4`. Stored versions `1` through `3` still load, and Roborev
+rejects missing or unsupported versions. `verdict` is `pass`, `fail`, or
 `unable_to_review`.
 
 Every finding requires these members:
@@ -235,12 +237,20 @@ Every finding requires these members:
 - `topic`: `tests`, `documentation`, `security`, `performance`, or `design` when
     the finding is about one of those areas, otherwise `null`. A defect can have
     a topic, and so can an improvement.
-- `confidence`: a number from 0 to 1. Roborev uses it only to break ties when it
-    orders findings.
+- `confidence`: a number from 0 to 1. Roborev uses it to break ties when it
+    orders findings and to apply an optional CI comment confidence floor.
+- `unlikely`: true only when unusual timing or input reaches the finding. Keep
+    the severity the finding would otherwise have.
+- `nit`: true only for a minor style or naming suggestion that does not affect
+    behavior or materially hinder maintenance. Use false when unsure.
 - `problem` and `fix`.
 - `file`, `start_line`, and `end_line`: the path relative to the repository root
     and the line range in the reviewed code. Use `null` for the lines when a
     finding covers a whole file, and `null` for all three when it has no file.
+
+Stored findings omit `unlikely` and `nit` when false; an absent value means
+false, including for historical reviews. Upgrade consumers and machines sharing
+reviews together because older readers cannot read the version 4 format.
 
 `kind`, `topic`, and `confidence` are stored in the review document and exported
 with it. They never appear in the rendered review or in pull request comments.
