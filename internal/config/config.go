@@ -23,6 +23,7 @@ import (
 	tomlv2 "github.com/pelletier/go-toml/v2"
 	"go.kenn.io/kit/atomicfile"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/secretref"
 
 	"go.kenn.io/roborev/internal/agentname"
 	"go.kenn.io/roborev/internal/git"
@@ -235,8 +236,11 @@ func (c CostConfig) ResolvedTimeout() time.Duration {
 // Config holds the daemon configuration
 type Config struct {
 	// project holds the remote-specific defaults selected by ForRepo.
-	project    ProjectConfig
-	daemonErrs []error
+	project             ProjectConfig
+	daemonErrs          []error
+	legacyAPIKeyEnv     string
+	legacyAPIKeyEnvNote string
+	deprecationWarnings []string
 
 	Projects                   map[string]ProjectConfig        `toml:"projects"`
 	AuthKey                    string                          `toml:"auth_key" json:"-" sensitive:"true" comment:"Shared key for daemon API access: 64 lowercase hex characters from openssl rand -hex 32. Empty disables authentication. Requires daemon restart."`
@@ -1180,6 +1184,9 @@ func parseGlobalFrom(path string) (*Config, error) {
 		return nil, safeGlobalConfigError(path, err)
 	}
 	cfg.migrateDeprecated(md)
+	if err := cfg.migrateSearchEmbeddingsAPIKeyEnv(path, md); err != nil {
+		return nil, safeGlobalConfigError(path, err)
+	}
 	return cfg, nil
 }
 
@@ -1204,6 +1211,19 @@ func normalizeClientConfig(cfg *Config) error {
 // DaemonConfigWarnings returns daemon-section errors collected during loading.
 func (c *Config) DaemonConfigWarnings() []error {
 	return c.daemonErrs
+}
+
+// DeprecationWarnings returns human-readable deprecation notices recorded while
+// loading the configuration file.
+func (c *Config) DeprecationWarnings() []string {
+	return slices.Clone(c.deprecationWarnings)
+}
+
+// SearchEmbeddingsLegacyAPIKeyEnv reports whether [search.embeddings] used the
+// deprecated api_key_env key, returning the promoted env var name or a note when
+// the legacy value had no usable variable name.
+func (c *Config) SearchEmbeddingsLegacyAPIKeyEnv() (envName, invalidNote string) {
+	return c.legacyAPIKeyEnv, c.legacyAPIKeyEnvNote
 }
 
 func applyDaemonSections(c *Config) []error {
@@ -1452,6 +1472,45 @@ func (c *Config) migrateDeprecated(md toml.MetaData) {
 	if explicitlyEmpty {
 		c.HiddenColumns = []string{HiddenColumnsNoneSentinel}
 	}
+}
+
+func (c *Config) migrateSearchEmbeddingsAPIKeyEnv(path string, md toml.MetaData) error {
+	if !md.IsDefined("search", "embeddings", "api_key_env") {
+		return nil
+	}
+	raw := make(map[string]any)
+	if _, err := toml.DecodeFile(path, &raw); err != nil {
+		return err
+	}
+	searchTbl, _ := raw["search"].(map[string]any)
+	embedTbl, _ := searchTbl["embeddings"].(map[string]any)
+	rawVal, ok := embedTbl["api_key_env"]
+	if !ok {
+		return nil
+	}
+	envName, isString := rawVal.(string)
+	envName = strings.TrimSpace(envName)
+	hasExplicitAPIKey := md.IsDefined("search", "embeddings", "api_key")
+	if isString && envName != "" {
+		c.deprecationWarnings = append(
+			c.deprecationWarnings,
+			fmt.Sprintf(
+				"search.embeddings.api_key_env is deprecated; use api_key = { env = %q } instead",
+				envName,
+			),
+		)
+		if !hasExplicitAPIKey && c.Search.Embeddings != nil && c.Search.Embeddings.APIKey.IsZero() {
+			c.Search.Embeddings.APIKey = secretref.Ref{Env: envName}
+			c.legacyAPIKeyEnv = envName
+		}
+		return nil
+	}
+	const note = `search.embeddings.api_key_env is deprecated and has no valid variable name; set api_key = { env = "NAME" }`
+	c.deprecationWarnings = append(c.deprecationWarnings, note)
+	if !hasExplicitAPIKey {
+		c.legacyAPIKeyEnvNote = note
+	}
+	return nil
 }
 
 // RepoConfigPath returns the .roborev.toml path that should be read for

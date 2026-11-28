@@ -121,3 +121,59 @@ func TestSearchEmbeddingAPIKeySurvivesSaveAndLoad(t *testing.T) {
 		assert.Equal(t, key, loaded.Search.Embeddings.APIKey)
 	}
 }
+
+func TestSearchEmbeddingsDeprecatedAPIKeyEnvMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[search.embeddings]
+base_url = "https://api.voyageai.com/v1"
+model = "voyage-3-lite"
+dims = 512
+api_key_env = "VOYAGE_API_KEY"
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Search.Embeddings)
+	assert.Equal(t, secretref.Ref{Env: "VOYAGE_API_KEY"}, cfg.Search.Embeddings.APIKey)
+	legacyEnv, legacyNote := cfg.SearchEmbeddingsLegacyAPIKeyEnv()
+	assert.Equal(t, "VOYAGE_API_KEY", legacyEnv)
+	assert.Empty(t, legacyNote)
+	require.Len(t, cfg.DeprecationWarnings(), 1)
+	assert.Contains(t, cfg.DeprecationWarnings()[0], `api_key = { env = "VOYAGE_API_KEY" }`)
+}
+
+func TestSearchEmbeddingsExplicitAPIKeyWinsOverDeprecatedKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[search.embeddings]
+base_url = "https://api.voyageai.com/v1"
+model = "voyage-3-lite"
+dims = 512
+api_key_env = "OLD_KEY"
+api_key = { env = "NEW_KEY" }
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Search.Embeddings)
+	assert.Equal(t, secretref.Ref{Env: "NEW_KEY"}, cfg.Search.Embeddings.APIKey)
+	legacyEnv, legacyNote := cfg.SearchEmbeddingsLegacyAPIKeyEnv()
+	assert.Empty(t, legacyEnv)
+	assert.Empty(t, legacyNote)
+	assert.NotEmpty(t, cfg.DeprecationWarnings())
+}
+
+func TestSearchEmbeddingsEmptyDeprecatedAPIKeyEnvSetsNote(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[search.embeddings]
+base_url = "https://api.voyageai.com/v1"
+model = "voyage-3-lite"
+dims = 512
+api_key_env = ""
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	legacyEnv, legacyNote := cfg.SearchEmbeddingsLegacyAPIKeyEnv()
+	assert.Empty(t, legacyEnv)
+	assert.Contains(t, legacyNote, `api_key = { env = "NAME" }`)
+}
