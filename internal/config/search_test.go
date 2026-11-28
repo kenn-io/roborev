@@ -177,3 +177,46 @@ api_key_env = ""
 	assert.Empty(t, legacyEnv)
 	assert.Contains(t, legacyNote, `api_key = { env = "NAME" }`)
 }
+
+func TestSearchEmbeddingsInvalidLegacyAPIKeyEnvSurvivesSaveAndReload(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		rawLine   string
+		wantError bool
+	}{
+		{name: "empty string", rawLine: `api_key_env = ""`},
+		{name: "non-string", rawLine: `api_key_env = 123`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte(`[search.embeddings]
+base_url = "https://api.voyageai.com/v1"
+model = "voyage-3-lite"
+dims = 512
+`+tc.rawLine+"\n"), 0o600))
+
+			cfg, err := LoadGlobalFrom(path)
+			require.NoError(t, err)
+			cfg.DefaultAgent = "claude"
+			require.NoError(t, SaveGlobalTo(path, cfg))
+
+			reloaded, err := LoadGlobalFrom(path)
+			require.NoError(t, err)
+			assert.Equal(t, "claude", reloaded.DefaultAgent)
+			require.NotNil(t, reloaded.Search.Embeddings)
+			assert.True(t, reloaded.Search.Embeddings.APIKey.IsZero())
+			_, legacyNote := reloaded.SearchEmbeddingsLegacyAPIKeyEnv()
+			assert.Contains(t, legacyNote, `api_key = { env = "NAME" }`)
+			assert.NotEmpty(t, reloaded.DeprecationWarnings())
+
+			// Once explicitly corrected with api_key, the legacy key is not re-emitted.
+			reloaded.Search.Embeddings.APIKey = secretref.Ref{Env: "VOYAGE_API_KEY"}
+			require.NoError(t, SaveGlobalTo(path, reloaded))
+			fixed, err := LoadGlobalFrom(path)
+			require.NoError(t, err)
+			assert.Equal(t, secretref.Ref{Env: "VOYAGE_API_KEY"}, fixed.Search.Embeddings.APIKey)
+			_, fixedNote := fixed.SearchEmbeddingsLegacyAPIKeyEnv()
+			assert.Empty(t, fixedNote)
+		})
+	}
+}

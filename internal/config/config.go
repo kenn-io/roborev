@@ -236,11 +236,13 @@ func (c CostConfig) ResolvedTimeout() time.Duration {
 // Config holds the daemon configuration
 type Config struct {
 	// project holds the remote-specific defaults selected by ForRepo.
-	project             ProjectConfig
-	daemonErrs          []error
-	legacyAPIKeyEnv     string
-	legacyAPIKeyEnvNote string
-	deprecationWarnings []string
+	project                   ProjectConfig
+	daemonErrs                []error
+	legacyAPIKeyEnv           string
+	legacyAPIKeyEnvNote       string
+	legacyAPIKeyEnvRaw        any
+	hasLegacyInvalidAPIKeyEnv bool
+	deprecationWarnings       []string
 
 	Projects                   map[string]ProjectConfig        `toml:"projects"`
 	AuthKey                    string                          `toml:"auth_key" json:"-" sensitive:"true" comment:"Shared key for daemon API access: 64 lowercase hex characters from openssl rand -hex 32. Empty disables authentication. Requires daemon restart."`
@@ -1490,7 +1492,12 @@ func (c *Config) migrateSearchEmbeddingsAPIKeyEnv(path string, md toml.MetaData)
 	}
 	envName, isString := rawVal.(string)
 	envName = strings.TrimSpace(envName)
-	hasExplicitAPIKey := md.IsDefined("search", "embeddings", "api_key")
+	rawAPIKey, hasAPIKeyEntry := embedTbl["api_key"]
+	emptyAPIKeyTable := false
+	if m, ok := rawAPIKey.(map[string]any); ok && len(m) == 0 {
+		emptyAPIKeyTable = true
+	}
+	hasExplicitAPIKey := md.IsDefined("search", "embeddings", "api_key") && hasAPIKeyEntry && !emptyAPIKeyTable
 	if isString && envName != "" {
 		c.deprecationWarnings = append(
 			c.deprecationWarnings,
@@ -1509,6 +1516,8 @@ func (c *Config) migrateSearchEmbeddingsAPIKeyEnv(path string, md toml.MetaData)
 	c.deprecationWarnings = append(c.deprecationWarnings, note)
 	if !hasExplicitAPIKey {
 		c.legacyAPIKeyEnvNote = note
+		c.legacyAPIKeyEnvRaw = rawVal
+		c.hasLegacyInvalidAPIKeyEnv = true
 	}
 	return nil
 }
@@ -2556,6 +2565,9 @@ func SaveGlobalTo(path string, cfg *Config) error {
 	if err != nil {
 		return err
 	}
+	if data, err = preserveLegacyEmbeddingAPIKeyEnvTOML(data, cfg); err != nil {
+		return err
+	}
 
 	f, err := os.CreateTemp(filepath.Dir(path), ".roborev-config-*.toml")
 	if err != nil {
@@ -2575,6 +2587,32 @@ func SaveGlobalTo(path string, cfg *Config) error {
 		return err
 	}
 	return atomicfile.Replace(tmpPath, path)
+}
+
+func preserveLegacyEmbeddingAPIKeyEnvTOML(data []byte, cfg *Config) ([]byte, error) {
+	if !cfg.hasLegacyInvalidAPIKeyEnv || cfg.Search.Embeddings == nil || !cfg.Search.Embeddings.APIKey.IsZero() {
+		return data, nil
+	}
+	lineBytes, err := tomlv2.Marshal(struct {
+		APIKeyEnv any `toml:"api_key_env"`
+	}{APIKeyEnv: cfg.legacyAPIKeyEnvRaw})
+	if err != nil {
+		return nil, err
+	}
+	const sectionHeader = "[search.embeddings]\n"
+	text := string(data)
+	idx := strings.Index(text, sectionHeader)
+	if idx < 0 {
+		// Fallback for CRLF or missing section header.
+		crlfHeader := "[search.embeddings]\r\n"
+		if crlfIdx := strings.Index(text, crlfHeader); crlfIdx >= 0 {
+			insertAt := crlfIdx + len(crlfHeader)
+			return []byte(text[:insertAt] + string(lineBytes) + text[insertAt:]), nil
+		}
+		return append(data, []byte("\n"+sectionHeader+string(lineBytes))...), nil
+	}
+	insertAt := idx + len(sectionHeader)
+	return []byte(text[:insertAt] + string(lineBytes) + text[insertAt:]), nil
 }
 
 // defaultHooksExample is appended (commented) only when creating the global
@@ -2607,6 +2645,9 @@ func WriteDefaultGlobalConfigTo(path string, cfg *Config) error {
 
 	data, err := tomlv2.Marshal(cfg)
 	if err != nil {
+		return err
+	}
+	if data, err = preserveLegacyEmbeddingAPIKeyEnvTOML(data, cfg); err != nil {
 		return err
 	}
 	data = append(data, []byte(defaultHooksExample)...)
