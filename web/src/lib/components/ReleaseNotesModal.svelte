@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Modal } from "@kenn-io/kit-ui";
+  import { Button, Modal, overlayScrollbars } from "@kenn-io/kit-ui";
   import type { Component } from "svelte";
 
   import type { ReleaseNote } from "../api/generated/models";
@@ -25,6 +25,8 @@
   let { open, releases, loading, stale, error, onclose, onretry }: Props =
     $props();
   let selectedTag = $state("");
+  let listFrame = $state<HTMLDivElement>();
+  let copyFrame = $state<HTMLDivElement>();
   let ReleaseContent = $state<ReleaseContentComponent>();
   let rendererError = $state(false);
   let rendererPromise: Promise<void> | undefined;
@@ -98,23 +100,29 @@
       <div class="release-state">No published releases found.</div>
     {:else}
       <div class="release-layout">
-        <nav class="release-list" aria-label="Recent releases">
-          {#each releases as release (release.tag_name)}
-            <button
-              type="button"
-              class:active={release.tag_name === selectedRelease?.tag_name}
-              aria-current={release.tag_name === selectedRelease?.tag_name
-                ? "true"
-                : undefined}
-              onclick={() => (selectedTag = release.tag_name)}
-            >
-              <span>{release.name}</span>
-              <small>
-                {release.tag_name} · {releaseDate(release.published_at)}
-              </small>
-            </button>
-          {/each}
-        </nav>
+        <div class="release-list-frame" bind:this={listFrame}>
+          <nav
+            class="release-list"
+            aria-label="Recent releases"
+            {@attach overlayScrollbars({ axis: "both", host: listFrame })}
+          >
+            {#each releases as release (release.tag_name)}
+              <button
+                type="button"
+                class:active={release.tag_name === selectedRelease?.tag_name}
+                aria-current={release.tag_name === selectedRelease?.tag_name
+                  ? "true"
+                  : undefined}
+                onclick={() => (selectedTag = release.tag_name)}
+              >
+                <span>{release.name}</span>
+                <small>
+                  {release.tag_name} · {releaseDate(release.published_at)}
+                </small>
+              </button>
+            {/each}
+          </nav>
+        </div>
 
         {#if selectedRelease}
           <article class="release-detail">
@@ -134,23 +142,30 @@
                 rel="noreferrer">View on GitHub</a
               >
             </header>
-            <div class="release-copy">
-              {#if ReleaseContent}
-                <ReleaseContent
-                  output={selectedRelease.body}
-                  copyLabel="Copy release notes as Markdown"
-                  emptyMessage="No release notes were provided."
-                />
-              {:else if rendererError}
-                <div class="release-state release-error" role="alert">
-                  <strong>Could not render release notes</strong>
-                  <Button onclick={() => void loadRenderer()}>Try again</Button>
-                </div>
-              {:else}
-                <div class="release-state" aria-live="polite">
-                  Rendering release notes...
-                </div>
-              {/if}
+            <div class="release-copy-frame" bind:this={copyFrame}>
+              <div
+                class="release-copy"
+                {@attach overlayScrollbars({ axis: "both", host: copyFrame })}
+              >
+                {#if ReleaseContent}
+                  <ReleaseContent
+                    output={selectedRelease.body}
+                    copyLabel="Copy release notes as Markdown"
+                    emptyMessage="No release notes were provided."
+                  />
+                {:else if rendererError}
+                  <div class="release-state release-error" role="alert">
+                    <strong>Could not render release notes</strong>
+                    <Button onclick={() => void loadRenderer()}
+                      >Try again</Button
+                    >
+                  </div>
+                {:else}
+                  <div class="release-state" aria-live="polite">
+                    Rendering release notes...
+                  </div>
+                {/if}
+              </div>
             </div>
           </article>
         {/if}
@@ -171,11 +186,23 @@
     grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
   }
 
-  .release-list {
-    overflow-y: auto;
-    padding: var(--space-2);
+  .release-list-frame {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: clip;
     border-right: var(--border-width) solid var(--border-default);
     background: var(--bg-inset);
+  }
+
+  .release-list {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-2);
   }
 
   .release-list button {
@@ -250,11 +277,13 @@
     text-underline-offset: 3px;
   }
 
+  .release-copy-frame {
+    position: relative;
+    overflow: clip;
+  }
+
   .release-copy {
     overflow-y: auto;
-    /* Reserve the scrollbar's width up front so the centered column does not
-       shift left when a longer release makes the notes scroll. */
-    scrollbar-gutter: stable;
     max-height: min(520px, calc(100vh - 230px));
   }
 
@@ -299,12 +328,16 @@
       grid-template-rows: auto minmax(0, 1fr);
     }
 
+    .release-list-frame {
+      border-right: 0;
+      border-bottom: var(--border-width) solid var(--border-default);
+    }
+
     .release-list {
       display: flex;
       overflow-x: auto;
+      overflow-y: hidden;
       padding: var(--space-2);
-      border-right: 0;
-      border-bottom: var(--border-width) solid var(--border-default);
     }
 
     .release-list button {

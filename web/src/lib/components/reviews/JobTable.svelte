@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { CopyButton, EmptyState, TableHeaderCell } from "@kenn-io/kit-ui";
+  import {
+    CopyButton,
+    EmptyState,
+    TableHeaderCell,
+    overlayScrollbars,
+  } from "@kenn-io/kit-ui";
   import { getReviewStores } from "../../stores/context";
   import type { SortColumn } from "../../stores/roborev/jobs.svelte";
   import { isPanelParent } from "../../utils/roborev-panel";
@@ -28,7 +33,9 @@
     { key: "enqueued_at", label: "Queued", numeric: true },
   ];
 
+  let frame = $state<HTMLDivElement>();
   let scroller = $state<HTMLDivElement>();
+  let tableHead = $state<HTMLTableSectionElement>();
   let sentinel = $state<HTMLDivElement>();
 
   const canLoadMore = $derived(
@@ -105,196 +112,211 @@
   }
 </script>
 
-<!-- Scrollable regions need keyboard access. -->
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div
-  class="table-wrapper"
-  role="region"
-  aria-label="Review jobs"
-  tabindex="0"
-  bind:this={scroller}
->
-  <table
-    class="job-table"
-    class:sorting={jobsStore?.isSortPending()}
-    aria-busy={jobsStore?.isSortPending() ?? false}
+<div class="table-frame" bind:this={frame}>
+  <!-- Scrollable regions need keyboard access. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div
+    class="table-wrapper"
+    role="region"
+    aria-label="Review jobs"
+    tabindex="0"
+    bind:this={scroller}
+    {@attach overlayScrollbars({
+      axis: "both",
+      host: frame,
+      insetTop: () => tableHead ?? null,
+    })}
   >
-    <thead>
-      <tr>
-        {#each columns as col (col.key)}
-          <TableHeaderCell
-            label={col.label}
-            numeric={col.numeric ?? false}
-            sortable
-            sortDirection={sortDirection(col)}
-            onsort={() => sortBy(col.key)}
-            class={`th-${col.key}`}
-          />
-        {/each}
-      </tr>
-      {#if jobsStore && jobsStore.getSortError() !== null}
-        <tr class="sort-error-row">
-          <td colspan={columns.length}>
-            <div class="sort-error" role="alert">
-              Could not sort jobs.
-              <button
-                type="button"
-                class="sort-retry"
-                onclick={() => jobsStore.retrySort()}
-              >
-                Retry
-              </button>
-            </div>
-          </td>
+    <table
+      class="job-table"
+      class:sorting={jobsStore?.isSortPending()}
+      aria-busy={jobsStore?.isSortPending() ?? false}
+    >
+      <thead bind:this={tableHead}>
+        <tr>
+          {#each columns as col (col.key)}
+            <TableHeaderCell
+              label={col.label}
+              numeric={col.numeric ?? false}
+              sortable
+              sortDirection={sortDirection(col)}
+              onsort={() => sortBy(col.key)}
+              class={`th-${col.key}`}
+            />
+          {/each}
         </tr>
-      {/if}
-    </thead>
-    <tbody>
-      {#if jobsStore}
-        {#each jobsStore.getJobs() as job (job.id)}
-          {@const runUuid = job.panel_run_uuid ?? undefined}
-          {@const expandable = isPanelParent(job) && runUuid !== undefined}
-          {@const expanded =
-            expandable &&
-            runUuid !== undefined &&
-            jobsStore.isPanelExpanded(runUuid)}
-          {@const members =
-            runUuid !== undefined
-              ? jobsStore.getPanelMembers(runUuid)
-              : undefined}
-          {@const memberError =
-            runUuid !== undefined
-              ? jobsStore.getPanelMemberError(runUuid)
-              : undefined}
-          <JobRow
-            {job}
-            {members}
-            {expandable}
-            {expanded}
-            selected={jobsStore.getSelectedJobId() === job.id}
-            highlighted={jobsStore.getHighlightedJobId() === job.id}
-            onclick={() => jobsStore.selectJob(job.id)}
-            ontoggle={() => jobsStore.togglePanel(job)}
-          />
-          {#if expanded && runUuid !== undefined}
-            {#if jobsStore.isLoadingMembers(runUuid) && members === undefined}
-              <tr class="members-status-row">
-                <td colspan={columns.length}>Loading reviewers…</td>
-              </tr>
-            {:else}
-              {#each members ?? [] as panelMember (panelMember.id)}
-                <JobRow
-                  job={panelMember}
-                  member
-                  selected={jobsStore.getSelectedJobId() === panelMember.id}
-                  highlighted={jobsStore.getHighlightedJobId() ===
-                    panelMember.id}
-                  onclick={() => jobsStore.selectJob(panelMember.id)}
-                />
-              {/each}
-              {#if jobsStore.isLoadingMembers(runUuid)}
+        {#if jobsStore && jobsStore.getSortError() !== null}
+          <tr class="sort-error-row">
+            <td colspan={columns.length}>
+              <div class="sort-error" role="alert">
+                Could not sort jobs.
+                <button
+                  type="button"
+                  class="sort-retry"
+                  onclick={() => jobsStore.retrySort()}
+                >
+                  Retry
+                </button>
+              </div>
+            </td>
+          </tr>
+        {/if}
+      </thead>
+      <tbody>
+        {#if jobsStore}
+          {#each jobsStore.getJobs() as job (job.id)}
+            {@const runUuid = job.panel_run_uuid ?? undefined}
+            {@const expandable = isPanelParent(job) && runUuid !== undefined}
+            {@const expanded =
+              expandable &&
+              runUuid !== undefined &&
+              jobsStore.isPanelExpanded(runUuid)}
+            {@const members =
+              runUuid !== undefined
+                ? jobsStore.getPanelMembers(runUuid)
+                : undefined}
+            {@const memberError =
+              runUuid !== undefined
+                ? jobsStore.getPanelMemberError(runUuid)
+                : undefined}
+            <JobRow
+              {job}
+              {members}
+              {expandable}
+              {expanded}
+              selected={jobsStore.getSelectedJobId() === job.id}
+              highlighted={jobsStore.getHighlightedJobId() === job.id}
+              onclick={() => jobsStore.selectJob(job.id)}
+              ontoggle={() => jobsStore.togglePanel(job)}
+            />
+            {#if expanded && runUuid !== undefined}
+              {#if jobsStore.isLoadingMembers(runUuid) && members === undefined}
                 <tr class="members-status-row">
-                  <td colspan={columns.length}>Refreshing reviewers…</td>
+                  <td colspan={columns.length}>Loading reviewers…</td>
                 </tr>
-              {/if}
-              {#if memberError}
-                <tr class="members-status-row error">
-                  <td colspan={columns.length}>
-                    Could not refresh reviewers.
-                    <button
-                      type="button"
-                      class="members-retry"
-                      onclick={() => jobsStore.refreshPanelMembers(runUuid)}
-                    >
-                      Retry
-                    </button>
-                  </td>
-                </tr>
+              {:else}
+                {#each members ?? [] as panelMember (panelMember.id)}
+                  <JobRow
+                    job={panelMember}
+                    member
+                    selected={jobsStore.getSelectedJobId() === panelMember.id}
+                    highlighted={jobsStore.getHighlightedJobId() ===
+                      panelMember.id}
+                    onclick={() => jobsStore.selectJob(panelMember.id)}
+                  />
+                {/each}
+                {#if jobsStore.isLoadingMembers(runUuid)}
+                  <tr class="members-status-row">
+                    <td colspan={columns.length}>Refreshing reviewers…</td>
+                  </tr>
+                {/if}
+                {#if memberError}
+                  <tr class="members-status-row error">
+                    <td colspan={columns.length}>
+                      Could not refresh reviewers.
+                      <button
+                        type="button"
+                        class="members-retry"
+                        onclick={() => jobsStore.refreshPanelMembers(runUuid)}
+                      >
+                        Retry
+                      </button>
+                    </td>
+                  </tr>
+                {/if}
               {/if}
             {/if}
-          {/if}
-        {/each}
-      {/if}
-    </tbody>
-  </table>
+          {/each}
+        {/if}
+      </tbody>
+    </table>
 
-  {#if jobsStore?.getHasMore()}
-    <div class="scroll-sentinel" aria-hidden="true" bind:this={sentinel}></div>
-  {/if}
+    {#if jobsStore?.getHasMore()}
+      <div
+        class="scroll-sentinel"
+        aria-hidden="true"
+        bind:this={sentinel}
+      ></div>
+    {/if}
 
-  {#if jobsStore?.isLoading()}
-    <div class="loading-bar" role="status">Loading...</div>
-  {/if}
+    {#if jobsStore?.isLoading()}
+      <div class="loading-bar" role="status">Loading...</div>
+    {/if}
 
-  <!-- Any list error stops scroll loading, so it always offers Retry. A
+    <!-- Any list error stops scroll loading, so it always offers Retry. A
        transport failure has an empty message. -->
-  {#if jobsStore && jobsStore.getError() !== null}
-    <div class="error-bar" role="alert">
-      {jobsStore.getError() || "Could not load jobs."}
-      <button
-        type="button"
-        class="list-retry"
-        onclick={() => jobsStore.loadJobs()}
-      >
-        Retry
-      </button>
-    </div>
-  {/if}
+    {#if jobsStore && jobsStore.getError() !== null}
+      <div class="error-bar" role="alert">
+        {jobsStore.getError() || "Could not load jobs."}
+        <button
+          type="button"
+          class="list-retry"
+          onclick={() => jobsStore.loadJobs()}
+        >
+          Retry
+        </button>
+      </div>
+    {/if}
 
-  {#if showFirstReview}
-    <div class="first-review">
-      <EmptyState
-        title="No reviews yet"
-        description="Your next commit starts a review.&#10;To review the current commit now, run:"
-      >
-        <span class="first-review-command">
-          <code>roborev review</code>
-          <CopyButton
-            text="roborev review"
-            ariaLabel="Copy command"
-            title="Copy command"
-          />
-        </span>
-      </EmptyState>
-    </div>
-  {:else if jobsStore && !jobsStore.isLoading() && jobsStore.getJobs().length === 0}
-    <EmptyState title="No jobs found" />
-  {/if}
+    {#if showFirstReview}
+      <div class="first-review">
+        <EmptyState
+          title="No reviews yet"
+          description="Your next commit starts a review.&#10;To review the current commit now, run:"
+        >
+          <span class="first-review-command">
+            <code>roborev review</code>
+            <CopyButton
+              text="roborev review"
+              ariaLabel="Copy command"
+              title="Copy command"
+            />
+          </span>
+        </EmptyState>
+      </div>
+    {:else if jobsStore && !jobsStore.isLoading() && jobsStore.getJobs().length === 0}
+      <EmptyState title="No jobs found" />
+    {/if}
 
-  {#if jobsStore && jobsStore.getLoadMoreError() !== null}
-    <div class="error-bar" role="alert">
-      Could not load more jobs.
-      <button
-        type="button"
-        class="load-more-retry"
-        onclick={() => jobsStore.loadMore()}
-      >
-        Retry
-      </button>
-    </div>
-  {/if}
+    {#if jobsStore && jobsStore.getLoadMoreError() !== null}
+      <div class="error-bar" role="alert">
+        Could not load more jobs.
+        <button
+          type="button"
+          class="load-more-retry"
+          onclick={() => jobsStore.loadMore()}
+        >
+          Retry
+        </button>
+      </div>
+    {/if}
 
-  {#if hitJobLimit && jobsStore}
-    <div class="loading-bar">
-      Showing the first {jobsStore.getJobs().length.toLocaleString()} jobs in this
-      order, the most the table loads. Filter the list to reach the rest.
-    </div>
-  {/if}
+    {#if hitJobLimit && jobsStore}
+      <div class="loading-bar">
+        Showing the first {jobsStore.getJobs().length.toLocaleString()} jobs in this
+        order, the most the table loads. Filter the list to reach the rest.
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
-  /* Tables scroll both axes in narrow hosts (640px workspace sidebar), so
-     this stays a native scroller instead of the vertical-only ScrollBox:
-     hiding the native bars would drop the horizontal affordance, and a
-     nested x-scroller would detach the sticky thead from the scrollport. */
-  .table-wrapper {
-    background: var(--bg-surface);
-    overflow: auto;
-    /* Reserve the scrollbar's width up front so the columns do not shift left
-       when opening a review shortens the table enough to make it scroll. */
-    scrollbar-gutter: stable;
+  .table-frame {
+    position: relative;
+    display: flex;
+    flex-direction: column;
     flex: 1;
+    min-width: 0;
     min-height: 0;
+    overflow: clip;
+    background: var(--bg-surface);
+  }
+
+  .table-wrapper {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
   }
 
   .job-table {

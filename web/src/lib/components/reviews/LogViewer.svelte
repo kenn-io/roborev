@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { StatusDot } from "@kenn-io/kit-ui";
+  import { StatusDot, overlayScrollbars } from "@kenn-io/kit-ui";
   import { getReviewStores } from "../../stores/context";
 
   interface Props {
@@ -10,6 +10,7 @@
 
   const stores = getReviewStores();
   const logStore = stores.roborevLog;
+  let viewer = $state<HTMLDivElement>();
   let container: HTMLElement | undefined;
   const lines = $derived(logStore?.getLines() ?? []);
   const lineCount = $derived(lines.length);
@@ -40,7 +41,7 @@
   }
 </script>
 
-<div class="log-viewer">
+<div class="log-viewer" bind:this={viewer}>
   <div class="log-toolbar">
     <span class="log-status">
       {#if isStreaming}
@@ -59,7 +60,11 @@
       Follow
     </button>
   </div>
-  <div class="log-container" bind:this={container}>
+  <div
+    class="log-container"
+    bind:this={container}
+    {@attach overlayScrollbars({ axis: "y", host: viewer })}
+  >
     {#if logStore}
       {#each lines as line, index (`${line.ts}:${index}`)}
         <div class="log-line {lineClass(line.lineType)}">
@@ -77,9 +82,11 @@
 
 <style>
   .log-viewer {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
+    overflow: clip;
   }
 
   .log-toolbar {
@@ -121,6 +128,7 @@
 
   .log-container {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     background: var(--bg-inset);
     padding: 8px 12px;
