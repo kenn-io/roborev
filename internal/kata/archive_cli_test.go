@@ -28,7 +28,7 @@ func TestArchiveRubricPinnedCLI(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		uploads int
-	}{{"0.45.0", 1}, {"0.44.0", 0}} {
+	}{{"0.47.0", 1}, {"0.46.0", 0}} {
 		t.Run(tc.version, func(t *testing.T) {
 			var mu sync.Mutex
 			var uploads int
@@ -86,7 +86,7 @@ func TestArchiveRubricPinnedCLI(t *testing.T) {
 			if tc.uploads == 1 {
 				require.NoError(t, err)
 			} else {
-				require.ErrorContains(t, err, "requires daemon API 0.45.0")
+				require.ErrorContains(t, err, "requires daemon API 0.47.0")
 			}
 			mu.Lock()
 			defer mu.Unlock()

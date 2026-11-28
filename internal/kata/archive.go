@@ -68,13 +68,20 @@ func (c *CLIClient) supportsAttachmentReuse(ctx context.Context) (bool, error) {
 	state := uint32(1)
 	for line := range strings.SplitSeq(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) > 0 && fields[0] == "--reuse-existing" {
+		if len(fields) > 0 && isReuseExistingFlag(fields[0]) {
 			state = 2
 			break
 		}
 	}
 	c.archiveReuse.Store(state)
 	return state == 2, nil
+}
+
+// isReuseExistingFlag matches the flag column of Kata's help, which newer
+// releases print with its value syntax, as in --reuse-existing[=true|false].
+func isReuseExistingFlag(field string) bool {
+	rest, ok := strings.CutPrefix(field, "--reuse-existing")
+	return ok && (rest == "" || strings.HasPrefix(rest, "[=") || strings.HasPrefix(rest, "="))
 }
 
 // ArchiveRubric uses atomic reuse when available, or serializes the legacy

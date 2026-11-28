@@ -242,6 +242,8 @@ func TestAttachmentReuseDetection(t *testing.T) {
 		want bool
 	}{
 		{"  --reuse-existing   reuse an attachment\n", true},
+		{"      --reuse-existing[=true|false]   reuse an attachment\n", true},
+		{"  --reuse-existing-extra[=true|false]  no\n", false},
 		{"  --reuse-existing-extra  no\n", false},
 		{"Use --reuse-existing to reuse\n", false},
 		{"  --other string   mentions --reuse-existing\n", false},
