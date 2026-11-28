@@ -33,7 +33,7 @@ Name the concrete trigger for every Medium or High finding; a transient state th
 
 Before finalizing, re-check each finding against the code: keep it only if you can cite a concrete scenario that reaches it (exact timing or environment may be uncertain — name what would confirm it); drop it if the code or a guard elsewhere disproves it. Verify claims about a dependency's behavior against the pinned version, not memory. Every finding must cite the narrowest location, carry a severity matching its described impact, and not contradict another finding.
 
-List findings most-severe first. Merge duplicates and findings that make the same point in different places. Report every verified bug regardless of count; include quality and testing findings only when clearly worth acting on.
+List findings most-severe first. Merge duplicates and findings that make the same point in different places. Report every verified bug regardless of count; include quality and testing findings only when clearly worth acting on. In each Fix, describe the smallest complete correction that restores the affected behavior and preserves adjacent supported behavior. Suggest a focused check through an existing entry point when useful. Recommend a new interface, deployment change, or rewrite only when it is necessary to fix the demonstrated problem.
 
 If you find no issues, state "No issues found." on its own line after the summary.
 

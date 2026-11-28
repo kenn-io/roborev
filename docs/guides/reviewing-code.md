@@ -18,6 +18,10 @@ including known legitimate behavior to preserve. For example, a cross-tenant
 invoice read should be rejected while the caller can still read their own
 invoices.
 
+The default reviewer describes the smallest complete fix that preserves
+surrounding behavior. It suggests a focused check through an existing entry
+point when useful.
+
 When known, a finding can suggest an observation or regression check that
 distinguishes incorrect from correct behavior. These suggestions are optional; a
 proposed test is not a claim that it ran. Findings should state uncertainty and
