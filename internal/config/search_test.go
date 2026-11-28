@@ -186,6 +186,7 @@ func TestSearchEmbeddingsInvalidLegacyAPIKeyEnvSurvivesSaveAndReload(t *testing.
 	}{
 		{name: "empty string", rawLine: `api_key_env = ""`},
 		{name: "non-string", rawLine: `api_key_env = 123`},
+		{name: "table", rawLine: `api_key_env = { env = "VOYAGE_API_KEY" }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")
@@ -204,6 +205,9 @@ dims = 512
 			require.NoError(t, err)
 			assert.Equal(t, "claude", reloaded.DefaultAgent)
 			require.NotNil(t, reloaded.Search.Embeddings)
+			assert.Equal(t, "https://api.voyageai.com/v1", reloaded.Search.Embeddings.BaseURL)
+			assert.Equal(t, "voyage-3-lite", reloaded.Search.Embeddings.Model)
+			assert.Equal(t, 512, reloaded.Search.Embeddings.Dims)
 			assert.True(t, reloaded.Search.Embeddings.APIKey.IsZero())
 			_, legacyNote := reloaded.SearchEmbeddingsLegacyAPIKeyEnv()
 			assert.Contains(t, legacyNote, `api_key = { env = "NAME" }`)

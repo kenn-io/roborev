@@ -2593,26 +2593,59 @@ func preserveLegacyEmbeddingAPIKeyEnvTOML(data []byte, cfg *Config) ([]byte, err
 	if !cfg.hasLegacyInvalidAPIKeyEnv || cfg.Search.Embeddings == nil || !cfg.Search.Embeddings.APIKey.IsZero() {
 		return data, nil
 	}
-	lineBytes, err := tomlv2.Marshal(struct {
-		APIKeyEnv any `toml:"api_key_env"`
-	}{APIKeyEnv: cfg.legacyAPIKeyEnvRaw})
+	var wrapper struct {
+		Search struct {
+			Embeddings struct {
+				APIKeyEnv any `toml:"api_key_env"`
+			} `toml:"embeddings"`
+		} `toml:"search"`
+	}
+	wrapper.Search.Embeddings.APIKeyEnv = cfg.legacyAPIKeyEnvRaw
+	wrapped, err := tomlv2.Marshal(wrapper)
 	if err != nil {
 		return nil, err
 	}
-	const sectionHeader = "[search.embeddings]\n"
-	text := string(data)
-	idx := strings.Index(text, sectionHeader)
-	if idx < 0 {
-		// Fallback for CRLF or missing section header.
-		crlfHeader := "[search.embeddings]\r\n"
-		if crlfIdx := strings.Index(text, crlfHeader); crlfIdx >= 0 {
-			insertAt := crlfIdx + len(crlfHeader)
-			return []byte(text[:insertAt] + string(lineBytes) + text[insertAt:]), nil
-		}
-		return append(data, []byte("\n"+sectionHeader+string(lineBytes))...), nil
+	const prefix = "[search]\n[search.embeddings]\n"
+	wrappedText := strings.ReplaceAll(string(wrapped), "\r\n", "\n")
+	fragment := strings.TrimPrefix(wrappedText, prefix)
+	if fragment == wrappedText {
+		return append(data, append([]byte("\n"), wrapped...)...), nil
 	}
-	insertAt := idx + len(sectionHeader)
-	return []byte(text[:insertAt] + string(lineBytes) + text[insertAt:]), nil
+
+	text := string(data)
+	header := "[search.embeddings]\n"
+	idx := strings.Index(text, header)
+	if idx < 0 {
+		header = "[search.embeddings]\r\n"
+		idx = strings.Index(text, header)
+	}
+	if idx < 0 {
+		return append(data, []byte("\n[search.embeddings]\n"+fragment)...), nil
+	}
+	sectionStart := idx + len(header)
+	trimmed := strings.TrimLeft(fragment, "\r\n")
+	if strings.HasPrefix(trimmed, "[") {
+		// Table / array-of-tables headers ([search.embeddings.api_key_env]) must come
+		// after all scalar keys in [search.embeddings] so subsequent keys remain inside
+		// [search.embeddings] instead of landing under api_key_env.
+		insertAt := len(text)
+		rest := text[sectionStart:]
+		if nextHeader := strings.Index(rest, "\n["); nextHeader >= 0 {
+			insertAt = sectionStart + nextHeader + 1
+		}
+		block := trimmed
+		if !strings.HasSuffix(block, "\n") {
+			block += "\n"
+		}
+		if insertAt < len(text) && !strings.HasSuffix(block, "\n\n") {
+			block += "\n"
+		}
+		if insertAt == len(text) && !strings.HasSuffix(text, "\n") {
+			block = "\n" + block
+		}
+		return []byte(text[:insertAt] + block + text[insertAt:]), nil
+	}
+	return []byte(text[:sectionStart] + fragment + text[sectionStart:]), nil
 }
 
 // defaultHooksExample is appended (commented) only when creating the global
