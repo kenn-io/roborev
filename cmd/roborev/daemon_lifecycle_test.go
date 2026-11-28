@@ -740,3 +740,103 @@ func TestStartDaemonTakeoverAfterTransientReady(t *testing.T) {
 		assert.Equal(t, 3, probes)
 	})
 }
+
+func TestDaemonSearchLegacyAPIKeyEnvMissingCredentialStartsLexical(t *testing.T) {
+	var requests atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(401)
+	}))
+	defer provider.Close()
+	t.Setenv("ROBOREV_TEST_LEGACY_EMBEDDING_KEY", "")
+
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(cfgPath, fmt.Appendf(nil, `[search.embeddings]
+base_url = %q
+model = "test"
+dims = 2
+api_key_env = "ROBOREV_TEST_LEGACY_EMBEDDING_KEY"
+trust_private_network = true
+`, provider.URL), 0o600))
+
+	cfg, err := config.LoadGlobalFrom(cfgPath)
+	require.NoError(t, err)
+
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := storage.Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, search.Close()) })
+
+	health := search.reconciler.Health()
+	assert.Equal(t, "missing", health.Credential)
+	assert.Equal(t, "env:ROBOREV_TEST_LEGACY_EMBEDDING_KEY", health.CredentialSource)
+	assert.Contains(t, health.CredentialReason, `api_key = { env = "ROBOREV_TEST_LEGACY_EMBEDDING_KEY" }`)
+	assert.Zero(t, requests.Load())
+}
+
+func TestDaemonSearchEmptyLegacyAPIKeyEnvReportsMissing(t *testing.T) {
+	var requests atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(401)
+	}))
+	defer provider.Close()
+
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(cfgPath, fmt.Appendf(nil, `[search.embeddings]
+base_url = %q
+model = "test"
+dims = 2
+api_key_env = ""
+trust_private_network = true
+`, provider.URL), 0o600))
+
+	cfg, err := config.LoadGlobalFrom(cfgPath)
+	require.NoError(t, err)
+
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := storage.Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	search, err := newDaemonSearch(t.Context(), db, dbPath, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, search.Close()) })
+
+	health := search.reconciler.Health()
+	assert.Equal(t, "missing", health.Credential)
+	assert.Contains(t, health.CredentialReason, `api_key = { env = "NAME" }`)
+	assert.Zero(t, requests.Load())
+}
+
+func TestLogGlobalConfigDiagnosticsLogsDeprecationsAndUnknownKeys(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`
+defualt_agent = "codex"
+
+[search.embeddings]
+base_url = "https://api.voyageai.com/v1"
+model = "voyage-3-lite"
+dims = 512
+api_key_env = "VOYAGE_API_KEY"
+`), 0o600))
+
+	cfg, err := config.LoadGlobalFrom(cfgPath)
+	require.NoError(t, err)
+
+	var logs bytes.Buffer
+	original := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(original) })
+
+	logGlobalConfigDiagnostics(cfgPath, cfg)
+	out := logs.String()
+	assert.Contains(t, out, `search.embeddings.api_key_env is deprecated; use api_key = { env = "VOYAGE_API_KEY" }`)
+	assert.Contains(t, out, "unknown key(s)")
+	assert.Contains(t, out, "defualt_agent")
+	assert.NotContains(t, out, "unknown key(s) in "+cfgPath+" are ignored: defualt_agent, search.embeddings.api_key_env")
+}

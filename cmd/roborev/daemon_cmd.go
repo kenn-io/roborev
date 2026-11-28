@@ -82,9 +82,16 @@ func newDaemonSearch(
 			return nil, err
 		}
 		reconcilerConfig.CredentialSource = embeddingKeySource(embeddings.APIKey)
-		if credentialErr != nil {
-			reconcilerConfig.CredentialReason = "no embedding API key (" +
+		legacyEnv, legacyNote := cfg.SearchEmbeddingsLegacyAPIKeyEnv()
+		if legacyNote != "" && embeddings.APIKey.IsZero() {
+			reconcilerConfig.CredentialReason = legacyNote
+		} else if credentialErr != nil {
+			reason := "no embedding API key (" +
 				strings.TrimPrefix(credentialErr.Error(), "embed api_key: secretref: ") + ")"
+			if legacyEnv != "" && embeddings.APIKey.Env == legacyEnv {
+				reason += fmt.Sprintf("; search.embeddings.api_key_env is deprecated, use api_key = { env = %q }", legacyEnv)
+			}
+			reconcilerConfig.CredentialReason = reason
 		} else {
 			embedder = client
 		}
@@ -109,6 +116,30 @@ func embeddingKeySource(ref secretref.Ref) string {
 		return "inline"
 	default:
 		return ""
+	}
+}
+
+func logGlobalConfigDiagnostics(path string, cfg *config.Config) {
+	hasDeprecatedAPIKeyEnv := false
+	for _, w := range cfg.DeprecationWarnings() {
+		log.Printf("Warning: %s", w)
+		if strings.Contains(w, "search.embeddings.api_key_env") {
+			hasDeprecatedAPIKeyEnv = true
+		}
+	}
+	unknown, err := config.UnknownGlobalKeys(path)
+	if err != nil || len(unknown) == 0 {
+		return
+	}
+	filtered := make([]string, 0, len(unknown))
+	for _, key := range unknown {
+		if hasDeprecatedAPIKeyEnv && key == "search.embeddings.api_key_env" {
+			continue
+		}
+		filtered = append(filtered, key)
+	}
+	if len(filtered) > 0 {
+		log.Printf("Warning: unknown key(s) in %s are ignored: %s", path, strings.Join(filtered, ", "))
 	}
 }
 
@@ -331,6 +362,7 @@ func daemonRunCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load config from %s: %w", configPath, err)
 			}
+			logGlobalConfigDiagnostics(configPath, cfg)
 
 			// Fail fast on invalid auto-design heuristic config. An
 			// unchecked typo in trigger_paths/skip_paths or in one of
