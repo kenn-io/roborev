@@ -231,6 +231,15 @@ func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
 	}
 }
 
+func TestTruncateCommentFoldReference(t *testing.T) {
+	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "medium", Nit: true, Problem: strings.Repeat("x", 1000)}}}
+	body, fold := FormatCommentWithFold(PrepareComment(CommentConfig{FullReviewReference: "roborev show --job 42"}, ReviewResult{Structured: &doc}))
+	got := TruncateCommentTo(body, fold.Shift(0), fold.Start+100, "\nfooter")
+	assert.Contains(t, got, "Fold omitted. Full review: `roborev show --job 42`")
+	assert.NotContains(t, got, "<details>")
+	assert.True(t, strings.HasSuffix(got, "\nfooter"))
+}
+
 func TestTruncateCommentKeepsProseDetails(t *testing.T) {
 	body := "Review:\n<details><summary>Example</summary>\n" + strings.Repeat("text ", MaxCommentLen) + "\n</details>"
 	got := TruncateComment(body)

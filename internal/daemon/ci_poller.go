@@ -4325,20 +4325,12 @@ func appendPanelPRFooter(body string, review *storage.Review, members []storage.
 }
 
 func appendPanelPRFooterWithNotice(body string, foldAt *reviewpkg.CommentFold, notice string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
-	if review == nil {
-		return body
+	var footer string
+	if review != nil {
+		footer = formatPanelPRFooter(review.Job, review.Agent, members, includeCosts)
 	}
-	footer := formatPanelPRFooter(review.Job, review.Agent, members, includeCosts)
-	if footer == "" && notice == "" {
-		return body
-	}
-	maxLen := reviewpkg.MaxCommentLen
-	if notice != "" {
-		// Capped publications must keep their retrieval notice through the
-		// GitHub client's final sizing after it prepends this marker.
-		maxLen -= len(ghpkg.CommentMarker) + len("\n")
-	}
-	if len(footer)+len(notice)+len(panelCommentTruncSuffix) > maxLen {
+	maxLen := reviewpkg.MaxCommentLen - len(ghpkg.CommentMarker) - len("\n")
+	if review != nil && len(footer)+len(notice)+len(panelCommentTruncSuffix) > maxLen {
 		footer = formatCompactPanelPRFooter(review.Job, review.Agent, members, includeCosts)
 	}
 	if len(footer)+len(notice)+len(panelCommentTruncSuffix) > maxLen {

@@ -148,10 +148,13 @@ func TestRunSynthesisAgentPrefersSchemaReviewOverPlainReview(t *testing.T) {
 	assert.Equal([]int{1}, doc.Findings[0].Sources)
 }
 
-func TestSynthesisRejectsMissingClassifications(t *testing.T) {
+func TestSynthesisAcceptsMissingClassifications(t *testing.T) {
 	raw := jsontext.Value(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"Issue.","fix":"Fix it.","file":null,"start_line":null,"end_line":null,"sources":[1]}]}`)
-	_, err := decodeSynthesisResult(&mockAgent{name: "plain"}, []ReviewResult{{Agent: "reviewer"}}, raw, nil)
-	require.ErrorContains(t, err, "without nit or unlikely")
+	doc, err := decodeSynthesisResult(&mockAgent{name: "plain"}, []ReviewResult{{Agent: "reviewer"}}, raw, nil)
+	require.NoError(t, err)
+	require.Len(t, doc.Findings, 1)
+	assert.False(t, doc.Findings[0].Nit)
+	assert.False(t, doc.Findings[0].Unlikely)
 }
 
 type invalidSynthesisAgent struct {

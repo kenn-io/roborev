@@ -156,7 +156,8 @@ func FormatComment(comment PreparedComment) string {
 
 // CommentFold records the start of a generated fold.
 type CommentFold struct {
-	Start int
+	Start               int
+	FullReviewReference string
 }
 
 // Shift returns fold offsets adjusted for a prefix.
@@ -164,7 +165,7 @@ func (f *CommentFold) Shift(prefix int) *CommentFold {
 	if f == nil {
 		return nil
 	}
-	return &CommentFold{Start: f.Start + prefix}
+	return &CommentFold{Start: f.Start + prefix, FullReviewReference: f.FullReviewReference}
 }
 
 // FormatCommentWithFold also returns the start of the generated fold.
@@ -232,7 +233,7 @@ func FormatCommentWithFold(comment PreparedComment) (string, *CommentFold) {
 				labels = append(labels, fmt.Sprintf("%d %s", n, group.many))
 			}
 		}
-		fold = &CommentFold{Start: out.Len()}
+		fold = &CommentFold{Start: out.Len(), FullReviewReference: comment.fullReviewReference}
 		fmt.Fprintf(&out, "\n\n<details><summary>%s hidden</summary>", strings.Join(labels, " and "))
 		out.WriteString("\n")
 		for _, group := range groups {

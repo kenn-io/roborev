@@ -117,7 +117,7 @@ func TestStructuredReviewUnableToReview(t *testing.T) {
 func TestLiveReviewRejectsHistoricalDocument(t *testing.T) {
 	doc, err := DecodeStructuredReview(jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"Historical text","recorded_verdict":false}}`))
 	require.NoError(t, err)
-	require.ErrorContains(t, validateLiveDocument("test", doc, nil), "schema_version")
+	require.ErrorContains(t, validateLiveDocument("test", doc), "schema_version")
 }
 
 // Stored version 3 documents from goal reviews and converted historical
@@ -145,7 +145,7 @@ func TestLiveReviewRequiresVerdictAndKind(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			doc, err := DecodeStructuredReview(jsontext.Value(tc.raw))
 			require.NoError(t, err)
-			require.ErrorContains(t, validateLiveDocument("test", doc, nil), tc.want)
+			require.ErrorContains(t, validateLiveDocument("test", doc), tc.want)
 		})
 	}
 }

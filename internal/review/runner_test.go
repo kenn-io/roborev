@@ -94,13 +94,17 @@ func TestRunAgentReviewAcceptsJSONWithoutNativeSchema(t *testing.T) {
 	assert.Equal(t, storage.VerdictPass, got.Verdict)
 }
 
-func TestRunAgentReviewRejectsMissingClassifications(t *testing.T) {
+func TestRunAgentReviewAcceptsMissingClassifications(t *testing.T) {
 	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"nit":false,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
 	for _, field := range []string{`"unlikely":false,`, `"nit":false,`} {
 		t.Run(field, func(t *testing.T) {
 			a := &mockAgent{name: "plain", output: strings.Replace(raw, field, "", 1)}
-			_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil, nil)
-			require.Error(t, err)
+			got, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil, nil)
+			require.NoError(t, err)
+			require.Len(t, got.Structured.Findings, 1)
+			assert.False(t, got.Structured.Findings[0].Nit)
+			assert.False(t, got.Structured.Findings[0].Unlikely)
+			assert.Contains(t, FormatComment(PrepareComment(CommentConfig{}, got)), "Vague name.")
 		})
 	}
 }
