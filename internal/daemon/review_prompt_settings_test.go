@@ -39,7 +39,7 @@ func TestSuppliedReviewSettingsIgnoreCheckoutPolicy(t *testing.T) {
 		data, err := os.ReadFile(matches[0])
 		require.NoError(t, err)
 		assert.Contains(string(data), "+VISIBLE_CHANGE")
-		return `{"schema_version":4,"summary":"Minor defect","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"unlikely":false,"nit":false,"problem":"Missing check.","fix":"Add check.","file":null,"start_line":null,"end_line":null}]}`, nil
+		return `{"schema_version":4,"summary":"Minor defect","verdict":"fail","findings":[{"severity":"low","kind":"defect","confidence":0.8,"problem":"Missing check.","fix":"Add check.","file":null,"start_line":null,"end_line":null}]}`, nil
 	}})
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", map[string]any{
 		"repo_path": repo.Path(), "git_ref": base + ".." + head, "agent": "supplied-settings", "model": "supplied-model",

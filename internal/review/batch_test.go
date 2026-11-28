@@ -427,7 +427,7 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	  "verdict": "pass",
 	  "summary":"High: no actionable findings.",
   "findings":[
-    {"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"nit":false,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"low","kind":"improvement","confidence":0.7,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	}

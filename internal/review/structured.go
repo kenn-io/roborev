@@ -19,7 +19,8 @@ func DecodeStructuredReview(raw jsontext.Value) (StructuredReview, error) {
 
 // validateLiveDocument rejects documents a live agent must not return. Stored
 // documents may be older versions, or come from producers without a verdict,
-// kind, or confidence, but a live agent must supply those fields. A failing verdict
+// kind, or confidence, but a live agent must supply those fields. Missing nit
+// and unlikely classifications default to false. A failing verdict
 // with no finding says nothing actionable, and unable_to_review means the
 // agent never assessed the change; both are agent errors so retry and backup
 // failover run instead of recording a misleading review.

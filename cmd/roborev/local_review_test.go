@@ -184,7 +184,7 @@ func TestLocalReviewRetainsLocationsForDirtyBranch(t *testing.T) {
 		NameStr: "test-dirty-branch",
 		ReviewFn: func(_ context.Context, _, ref, _ string, _ io.Writer) (string, error) {
 			assert.Equal(t, head, ref, "committed targets are resolved before invoking the agent")
-			return `{"schema_version":4,"verdict":"fail","summary":"One problem.","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"unlikely":false,"nit":false,"problem":"The value is incorrect.","fix":"Correct it.","file":"added.go","start_line":2,"end_line":2}]}`, nil
+			return `{"schema_version":4,"verdict":"fail","summary":"One problem.","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The value is incorrect.","fix":"Correct it.","file":"added.go","start_line":2,"end_line":2}]}`, nil
 		},
 	}
 	agent.RegisterForTest(t, a)

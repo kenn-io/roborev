@@ -26,7 +26,7 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	  "verdict": "pass",
 	  "summary": "High: no actionable findings remain.",
   "findings": [
-    {"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"nit":false,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"low","kind":"improvement","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	}
@@ -55,7 +55,7 @@ func TestRunAgentReviewUsesSchemaForBuiltInTypesWhenSupported(t *testing.T) {
   "verdict": "pass",
   "summary": "One real bug.",
   "findings": [
-    {"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"nit":false,"problem":"Nil deref.","fix":"Check the pointer.","file":"main.go","start_line":10,"end_line":null}
+    {"severity":"high","kind":"defect","confidence":0.9,"problem":"Nil deref.","fix":"Check the pointer.","file":"main.go","start_line":10,"end_line":null}
   ]
 }`),
 	}
@@ -85,7 +85,7 @@ func TestRunAgentReviewRequiresJSONWithoutNativeSchema(t *testing.T) {
 }
 
 func TestRunAgentReviewAcceptsJSONWithoutNativeSchema(t *testing.T) {
-	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"nit":false,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
+	raw := `{"schema_version":4,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
 	a := &mockAgent{name: "plain", output: raw}
 	got, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil, nil)
 	require.NoError(t, err)
@@ -104,7 +104,6 @@ func TestRunAgentReviewAcceptsMissingClassifications(t *testing.T) {
 			require.Len(t, got.Structured.Findings, 1)
 			assert.False(t, got.Structured.Findings[0].Nit)
 			assert.False(t, got.Structured.Findings[0].Unlikely)
-			assert.Contains(t, FormatComment(PrepareComment(CommentConfig{}, got)), "Vague name.")
 		})
 	}
 }

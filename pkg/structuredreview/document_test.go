@@ -3,7 +3,6 @@ package structuredreview
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -93,7 +92,7 @@ func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
 	assert.Contains(t, err.Error(), "need schema_version 3")
 }
 
-func TestDecodeRejectsInvalidUnlikely(t *testing.T) {
+func TestDecodeRejectsInvalidClassifications(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want string }{
 		{"version 2 false", `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null,"unlikely":false}]}`, "unlikely, which needs schema_version 4"},
 		{"version 3 false", `{"schema_version":3,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":false}]}`, "unlikely, which needs schema_version 4"},
@@ -101,10 +100,12 @@ func TestDecodeRejectsInvalidUnlikely(t *testing.T) {
 		{"version 4", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":null}]}`, "invalid unlikely"},
 		{"version 4 string", `{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","unlikely":"yes"}]}`, "invalid unlikely"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := Decode(jsontext.Value(tc.raw))
-			require.ErrorContains(t, err, tc.want)
-		})
+		for _, field := range []string{"unlikely", "nit"} {
+			t.Run(field+"/"+tc.name, func(t *testing.T) {
+				_, err := Decode(jsontext.Value(strings.ReplaceAll(tc.raw, "unlikely", field)))
+				require.ErrorContains(t, err, strings.ReplaceAll(tc.want, "unlikely", field))
+			})
+		}
 	}
 }
 
@@ -113,12 +114,11 @@ func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 	located.SetLocation("a.go", 3, 8)
 	unlocated := Finding{Severity: "low", Kind: KindImprovement, Topic: TopicTests, Confidence: 0, Problem: "p2", Fix: "f2"}
 	tests := []struct {
-		name          string
-		doc           Document
-		unlikelyCount int
+		name string
+		doc  Document
 	}{
 		{name: "current version", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{located, unlocated}}},
-		{name: "unlikely", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "high", Problem: "p", Fix: "f", Unlikely: true}, {Severity: "low", Problem: "q", Fix: "f"}}}, unlikelyCount: 1},
+		{name: "classifications", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "high", Problem: "p", Fix: "f", Unlikely: true, Nit: true}, {Severity: "low", Problem: "q", Fix: "f"}}}},
 		{name: "free-text location without kind", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "Kata abc"}}}},
 		{name: "no verdict", doc: Document{SchemaVersion: SchemaVersion, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}}},
 	}
@@ -129,7 +129,6 @@ func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 			got, err := Decode(raw)
 			require.NoError(t, err)
 			assert.Equal(t, tc.doc, got)
-			assert.Equal(t, tc.unlikelyCount, strings.Count(string(raw), `"unlikely"`))
 		})
 	}
 }
@@ -296,7 +295,7 @@ func TestMarkdownLeavesTheCheckRecordOut(t *testing.T) {
 		"rendered reviews are posted to pull requests and must not change when a checker ran")
 }
 
-func TestSchemaUnlikely(t *testing.T) {
+func TestSchemaClassifications(t *testing.T) {
 	var schema jsonschema.Schema
 	require.NoError(t, json.Unmarshal(Schema, &schema))
 	validator, err := schema.Resolve(nil)
@@ -314,29 +313,16 @@ func TestSchemaUnlikely(t *testing.T) {
 }
 
 func TestNitVersionAndRoundTrip(t *testing.T) {
-	t.Run("both marks", func(t *testing.T) {
-		raw := jsontext.Value(`{"schema_version":4,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","nit":true,"unlikely":true}]}`)
-		doc, err := Decode(raw)
-		require.NoError(t, err)
-		assert.True(t, doc.Findings[0].Nit)
-		assert.True(t, doc.Findings[0].Unlikely)
-	})
-	for _, tc := range []struct{ version, value, want string }{
-		{"3", "true", "needs schema_version 4"},
-		{"4", "null", "invalid nit"},
-		{"4", `"yes"`, "invalid nit"},
-	} {
-		raw := fmt.Sprintf(`{"schema_version":%s,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","nit":%s}]}`, tc.version, tc.value)
-		_, err := Decode(jsontext.Value(raw))
-		require.ErrorContains(t, err, tc.want)
-	}
-	doc := Document{Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "medium", Problem: "p", Fix: "f", Nit: true}}}
-	raw, err := json.Marshal(doc)
-	require.NoError(t, err)
-	decoded, err := Decode(raw)
-	require.NoError(t, err)
-	assert.True(t, decoded.Findings[0].Nit)
+	finding := Finding{Severity: "medium", Problem: "p", Fix: "f", Nit: true, Unlikely: true}
+	doc := Document{Summary: "s", Verdict: VerdictFail, Findings: []Finding{finding}, Check: &Check{Status: CheckCompleted, Findings: []CheckedFinding{{Outcome: CheckKept, Finding: finding, Verdicts: []CheckVerdict{}}}}}
 	old, err := doc.MarshalVersion3()
 	require.NoError(t, err)
+	assert.Contains(t, string(old), `"schema_version":3`)
 	assert.NotContains(t, string(old), `"nit"`)
+	assert.NotContains(t, string(old), `"unlikely"`)
+	decoded, err := Decode(old)
+	require.NoError(t, err)
+	require.Len(t, decoded.Findings, 1)
+	require.NotNil(t, decoded.Check)
+	require.Len(t, decoded.Check.Findings, 1)
 }

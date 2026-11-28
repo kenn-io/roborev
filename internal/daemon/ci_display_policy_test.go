@@ -83,7 +83,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						assert.NotContains(body, "Missing cleanup.")
 					}
 					assert.Contains(body, "State is lost.")
-					if mode == "fallback" {
+					if mode == "fallback" && policy.name == "stricter override" {
 						cfg := config.DefaultConfig()
 						cfg.CI.CommentShowAll = true
 						poller.cfgGetter = NewStaticConfig(cfg)
@@ -121,7 +121,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 	} {
 		t.Run(policy.name, func(t *testing.T) {
 			assert := assert.New(t)
-			document := jsontext.Value(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"unlikely":false,"nit":false,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
+			document := jsontext.Value(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
 			// Storage holds the canonical encoding, which adds the derived location.
 			canonical := `{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","topic":null,"confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1,2]}]}`
 			a := &synthesisEntrypointTestAgent{name: "threshold-synthesis", result: string(document)}
@@ -151,8 +151,11 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 			p := &CIPoller{db: tc.DB, cfgGetter: NewStaticConfig(config.DefaultConfig())}
 			body, err := p.panelCommentBody(&storage.CIPanel{PanelRunUUID: runUUID, HeadSHA: "abcdef123456", GithubRepo: "example/project"}, rows)
 			require.NoError(t, err)
-			visible := policy.effective == "" || policy.effective == "low"
-			assert.Equal(visible, strings.Contains(body, "Minor naming issue."))
+			if policy.verdict == storage.VerdictFail {
+				assert.Contains(body, "Minor naming issue.")
+			} else {
+				assert.NotContains(body, "Minor naming issue.")
+			}
 			for i, m := range members {
 				original, err := tc.DB.GetReviewByJobID(m.ID)
 				require.NoError(t, err)
@@ -187,8 +190,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 				}}
 				raw, err := json.Marshal(doc)
 				require.NoError(t, err)
-				liveOutput := strings.ReplaceAll(string(raw), `"sources":[1]`, `"unlikely":false,"nit":false,"sources":[1]`)
-				a := &synthesisEntrypointTestAgent{name: "policy-outcome", result: liveOutput}
+				a := &synthesisEntrypointTestAgent{name: "policy-outcome", result: string(raw)}
 				agent.RegisterForTest(t, a)
 				runUUID, members, synthJob := enqueuePanelRun(t, tc, "policy-outcome", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 				setSynthesisAgent(t, tc, runUUID, a.Name())

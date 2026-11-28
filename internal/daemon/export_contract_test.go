@@ -344,7 +344,6 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 				Kind:       "defect",
 				Topic:      "security",
 				Confidence: 0.85,
-				Unlikely:   true,
 				Problem:    "Missing validation.",
 				Fix:        "Validate input.",
 				File:       "auth/login.go",
@@ -358,14 +357,6 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 				Fix:      "Update comment wording.",
 			},
 		},
-	}
-	memberBDoc.Check = &structuredreview.Check{
-		Status: structuredreview.CheckCompleted,
-		Findings: []structuredreview.CheckedFinding{{
-			Outcome:  structuredreview.CheckKept,
-			Finding:  memberBDoc.Findings[0],
-			Verdicts: []structuredreview.CheckVerdict{},
-		}},
 	}
 	synthDoc := structuredreview.Document{
 		SchemaVersion: structuredreview.SchemaVersion,
@@ -714,6 +705,7 @@ func TestHumaExportReviewsV2SchemaContract(t *testing.T) {
 			assertJSONNull(t, noDoc, "document")
 		})
 	}
+
 	t.Run("window bounds pagination and empty page", func(t *testing.T) {
 		assert := assert.New(t)
 

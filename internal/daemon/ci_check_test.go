@@ -140,7 +140,7 @@ func TestCICheckSnapshot(t *testing.T) {
 
 func setupCICheckCompletion(t *testing.T, threshold, instructions string, usage *tokens.Usage) (*workerTestContext, *storage.ReviewJob, structuredreview.Document, synthesisResult) {
 	t.Helper()
-	const raw = `{"schema_version":4,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"nit":false,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"unlikely":false,"nit":false,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
+	const raw = `{"schema_version":4,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
 	tc := newWorkerTestContext(t, 1)
 	tc.Pool.cfgGetter.Config().CodexCmd = "custom-codex"
 	synthAgent := &synthesisEntrypointTestAgent{name: "checker-agent", result: raw}

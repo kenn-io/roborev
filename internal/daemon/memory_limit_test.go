@@ -185,7 +185,7 @@ func TestSynthesisBreachBeforeCheckFailsJob(t *testing.T) {
 	agent.RegisterForTest(t, &agent.FakeAgent{NameStr: synth, ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 		_ = runMemoryHog(ctx)
 		<-ctx.Done()
-		return `{"schema_version":4,"summary":"combined","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"nit":false,"problem":"Build claim","fix":"Fix build","sources":[1]}]}`, nil
+		return `{"schema_version":4,"summary":"combined","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]}]}`, nil
 	}})
 	tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, _ structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
 		return structuredreview.Document{}, ctx.Err()

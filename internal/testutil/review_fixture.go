@@ -1,7 +1,6 @@
 package testutil
 
 import (
-	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 
@@ -73,10 +72,6 @@ func ReviewFixtureJSON(summary string) jsontext.Value {
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		panic(err)
-	}
-	// Agent output requires both classifications even when false; stored documents omit it.
-	if len(doc.Findings) > 0 {
-		raw = bytes.ReplaceAll(raw, []byte(`"problem":`), []byte(`"unlikely":false,"nit":false,"problem":`))
 	}
 	return raw
 }

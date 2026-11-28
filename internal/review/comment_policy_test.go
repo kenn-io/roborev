@@ -192,11 +192,15 @@ func TestCommentFold(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "medium", Problem: "defect"},
 		{Severity: "low", Problem: "naming issue", Nit: true},
+		{Severity: "medium", Problem: "rename variable", Nit: true},
 		{Severity: "medium", Problem: "rare", Unlikely: true},
 		{Severity: "medium", Problem: "another"},
 	}}
 	mixed := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
-	assert.Contains(t, mixed, "2 findings shown; 2 folded findings")
+	assert.Contains(t, mixed, "2 findings shown; 3 folded findings")
+	assert.Less(t, strings.Index(mixed, "another"), strings.Index(mixed, "<details>"))
+	assert.Greater(t, strings.Index(mixed, "rename variable"), strings.Index(mixed, "<details>"))
+	assert.Contains(t, mixed, "2 nits hidden")
 	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
 	assert.True(t, folded.IsClean())
 	assert.Contains(t, FormatComment(folded), "Changes require fixes before merge.")
@@ -217,7 +221,7 @@ func TestCommentShowAll(t *testing.T) {
 	confidenceDoc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "low", Kind: "improvement", Confidence: .4, Problem: "filtered nit"},
 		{Severity: "high", Kind: "defect", Confidence: .4, Unlikely: true, Problem: "filtered rare"},
-		{Severity: "low", Kind: "defect", Confidence: .88, Problem: "boundary nit"},
+		{Severity: "low", Kind: "defect", Confidence: .88, Problem: "below floor"},
 		{Severity: "high", Problem: "unscored", Unlikely: true},
 	}}
 	showAll := FormatComment(PrepareComment(CommentConfig{ShowAll: true, MinSeverity: "high", MinConfidence: .95, MaxFindings: 1}, ReviewResult{Structured: &confidenceDoc}))
@@ -281,16 +285,4 @@ func TestCommentFoldEscapesDetailsTags(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCommentFoldsClassifiedNits(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "low", Problem: "Data is lost"},
-		{Severity: "medium", Problem: "Rename variable", Nit: true},
-		{Severity: "low", Problem: "Fix spelling", Nit: true},
-	}}
-	body := FormatComment(PrepareComment(CommentConfig{MinSeverity: "low"}, ReviewResult{Structured: &doc}))
-	assert.Less(t, strings.Index(body, "Data is lost"), strings.Index(body, "<details>"))
-	assert.Greater(t, strings.Index(body, "Rename variable"), strings.Index(body, "<details>"))
-	assert.Contains(t, body, "2 nits hidden")
 }

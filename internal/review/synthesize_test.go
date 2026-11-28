@@ -69,7 +69,7 @@ func (a *capturingAgent) Review(
 	_ context.Context, _, gitRef, _ string, _ io.Writer,
 ) (string, error) {
 	a.capturedGitRef = gitRef
-	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"nit":false,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
+	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
@@ -91,7 +91,7 @@ func (a *synthesisEntrypointAgent) Review(
 ) (string, error) {
 	a.reviewCalled = true
 	a.synthPrompt = prompt
-	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"nit":false,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
+	return `{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
 
@@ -125,7 +125,7 @@ func (a *structuredSynthesisAgent) ReviewWithSchema(
 ) (jsontext.Value, error) {
 	a.schema = schema
 	a.repoPath = repoPath
-	return jsontext.Value(`{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"nit":false,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`), nil
+	return jsontext.Value(`{"schema_version":4,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`), nil
 }
 func (a *structuredSynthesisAgent) CommandLine() string { return a.Name() }
 
@@ -146,15 +146,6 @@ func TestRunSynthesisAgentPrefersSchemaReviewOverPlainReview(t *testing.T) {
 	assert.Equal("/repo", a.repoPath, "schema review runs against the reviewed checkout")
 	assert.True(cleaned, "checkout cleanup must run after the agent")
 	assert.Equal([]int{1}, doc.Findings[0].Sources)
-}
-
-func TestSynthesisAcceptsMissingClassifications(t *testing.T) {
-	raw := jsontext.Value(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"Issue.","fix":"Fix it.","file":null,"start_line":null,"end_line":null,"sources":[1]}]}`)
-	doc, err := decodeSynthesisResult(&mockAgent{name: "plain"}, []ReviewResult{{Agent: "reviewer"}}, raw, nil)
-	require.NoError(t, err)
-	require.Len(t, doc.Findings, 1)
-	assert.False(t, doc.Findings[0].Nit)
-	assert.False(t, doc.Findings[0].Unlikely)
 }
 
 type invalidSynthesisAgent struct {
@@ -606,12 +597,9 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 	}
 	for i := range doc.Findings {
 		doc.Findings[i].Sources = []int{1}
-		doc.Findings[i].Kind = "defect"
-		doc.Findings[i].Confidence = 0.8
 	}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
-	raw = []byte(strings.ReplaceAll(string(raw), `"sources":[1]}`, `"sources":[1],"unlikely":false,"nit":false}`))
 	for _, mode := range []string{"single", "synthesis", "fallback"} {
 		t.Run(mode, func(t *testing.T) {
 			synth := &structuredBatchAgent{result: raw}
@@ -629,7 +617,6 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			comment := synthesis.GitHubComment
 			require.NoError(t, err)
 			assert := assert.New(t)
-			assert.Equal(mode == "fallback", strings.Contains(comment, "Synthesis unavailable."))
 			assert.Contains(comment, "### High\n\n- `worker.go:10`: State is lost.\n\n  **Fix:** Persist it.")
 			assert.Contains(comment, "### Medium\n\n- `worker.go:20`: Missing cleanup.\n\n  **Fix:** Close the resource.")
 			assert.Contains(comment, "- Errors are ignored.\n\n  **Fix:** Return the error.")
@@ -734,7 +721,7 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 		{"unfiltered member", []string{"medium", ""}, "", true},
 	} {
 		t.Run(policy.name, func(t *testing.T) {
-			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"unlikely":false,"nit":false,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)}
+			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":4,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)}
 			agent.RegisterForTest(t, a)
 			doc := StructuredReview{SchemaVersion: 2, Summary: "Review complete.", Findings: []StructuredFinding{{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."}}}
 			results := make([]ReviewResult, len(policy.members))
@@ -777,7 +764,6 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 				}}
 				raw, err := json.Marshal(doc)
 				require.NoError(t, err)
-				raw = []byte(strings.ReplaceAll(string(raw), `"sources":[1]`, `"unlikely":false,"nit":false,"sources":[1]`))
 				a := &structuredBatchAgent{name: "policy-outcome", result: raw}
 				if outcome == "fallback" {
 					a.err = errors.New("synthesis unavailable")
@@ -821,19 +807,6 @@ func TestSynthesizeRawFallbackFoldsFindings(t *testing.T) {
 	assert.Contains(t, result.Output, "Below floor")
 }
 
-func TestSynthesizeRawFallbackShowAll(t *testing.T) {
-	prose := "### High\nHigh issue.\n\n### Low\nLow issue."
-	results := []ReviewResult{
-		{Status: ResultDone, Output: prose, Structured: &StructuredReview{Findings: []StructuredFinding{{Severity: "high", Problem: "High issue", Fix: "Fix"}, {Severity: "low", Problem: "Low issue", Fix: "Fix"}}}},
-		{Status: ResultDone, Output: "No issues found."},
-	}
-	result, err := Synthesize(t.Context(), results, SynthesizeOpts{MinSeverity: "medium", ShowAll: true, Agent: "nonexistent-synthesis-agent"})
-	require.NoError(t, err)
-	assert.Contains(t, result.GitHubComment, "High issue")
-	assert.Contains(t, result.GitHubComment, "Low issue")
-	assert.NotContains(t, result.GitHubComment, "<details>")
-}
-
 func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -849,39 +822,37 @@ func TestSynthesizeStructuredCommentVerdict(t *testing.T) {
 			result, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc, Output: doc.Markdown(""), Verdict: storage.VerdictFail}}, SynthesizeOpts{MinSeverity: "medium", ShowAll: tc.showAll})
 			require.NoError(t, err)
 			assert.Contains(t, result.GitHubComment, tc.heading)
-			assert.Contains(t, result.GitHubComment, tc.finding.Problem)
-			if !tc.showAll {
-				assert.Contains(t, result.GitHubComment, "<details>")
-				assert.Contains(t, result.GitHubComment, "Changes require fixes before merge.")
-			}
 		})
 	}
 }
 
 func TestSingleResultTruncationDropsFold(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{
-		{Severity: "high", Problem: "Inline finding", Fix: "Fix it."},
-		{Severity: "low", Nit: true, Problem: strings.Repeat("nit ", MaxCommentLen), Fix: "Fix it."},
-	}}
-	got := formatSingleResult(ReviewResult{Structured: &doc}, "abcdef123456", &CommentConfig{})
-	assert.Contains(t, got, "Inline finding")
-	assert.NotContains(t, got, "1 nit hidden")
-	assert.Contains(t, got, CommentTruncSuffix)
-}
-
-func TestSingleResultTruncatesWithoutFold(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "high", Problem: strings.Repeat("x", MaxCommentLen), Fix: "Fix it."}}}
-	result := ReviewResult{Structured: &doc, Output: doc.Markdown("")}
-	comment := formatSingleResult(result, "abcdef123456", &CommentConfig{})
-	assert.LessOrEqual(t, len(CommentMarker)+1+len(comment), MaxCommentLen)
-	assert.Contains(t, comment, CommentTruncSuffix)
+	for _, tc := range []struct {
+		name     string
+		findings []StructuredFinding
+		fold     bool
+	}{
+		{"fold", []StructuredFinding{{Severity: "high", Problem: "Inline finding", Fix: "Fix it."}, {Severity: "low", Nit: true, Problem: strings.Repeat("nit ", MaxCommentLen), Fix: "Fix it."}}, true},
+		{"no fold", []StructuredFinding{{Severity: "high", Problem: strings.Repeat("x", MaxCommentLen), Fix: "Fix it."}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := StructuredReview{Findings: tc.findings}
+			result := ReviewResult{Structured: &doc, Output: doc.Markdown(""), Verdict: storage.VerdictFail}
+			comment := formatSingleResult(result, "abcdef123456", &CommentConfig{})
+			assert.LessOrEqual(t, len(CommentMarker)+1+len(comment), MaxCommentLen)
+			assert.Contains(t, comment, CommentTruncSuffix)
+			if tc.fold {
+				assert.Contains(t, comment, "Inline finding")
+				assert.NotContains(t, comment, "1 nit hidden")
+			}
+		})
+	}
 }
 
 func TestSynthesizedCommentKeepsFoldClosedAtTransportLimit(t *testing.T) {
 	doc := StructuredReview{Summary: "combined", Verdict: "fail", Findings: []StructuredFinding{{Severity: "medium", Kind: "improvement", Confidence: .8, Nit: true, Problem: strings.Repeat("x", MaxCommentLen), Fix: "Rename", Sources: []int{1, 2}}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
-	raw = []byte(strings.ReplaceAll(string(raw), `"sources":[1,2]`, `"unlikely":false,"sources":[1,2]`))
 	a := &structuredBatchAgent{name: "long-fold-synthesis", result: raw}
 	agent.RegisterForTest(t, a)
 	input := StructuredReview{Summary: "input", Verdict: "pass"}

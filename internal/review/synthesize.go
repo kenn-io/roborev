@@ -135,12 +135,6 @@ func formatSingleResult(
 		(r.Output == "" || r.Output == "No issues found.") {
 		passed = true
 	}
-	output := r.Output
-	var foldAt *CommentFold
-	if commentConfig != nil {
-		prepared := PrepareComment(*commentConfig, r)
-		output, foldAt = FormatCommentWithFold(prepared)
-	}
 	var header string
 	if passed {
 		header = fmt.Sprintf(
@@ -152,8 +146,10 @@ func formatSingleResult(
 			gitrepo.ShortSHA(headSHA))
 	}
 
+	output := r.Output
 	if commentConfig != nil {
-		output = TruncateCommentTo(output, foldAt, MaxCommentLen-len(CommentMarker)-1-len(header), CommentTruncSuffix)
+		body, foldAt := FormatCommentWithFold(PrepareComment(*commentConfig, r))
+		output = TruncateCommentTo(body, foldAt, MaxCommentLen-len(CommentMarker)-1-len(header), CommentTruncSuffix)
 	}
 	return header + output
 }

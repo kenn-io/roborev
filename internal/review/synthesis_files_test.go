@@ -69,7 +69,7 @@ func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {
 					if fail {
 						return "", errors.New("agent failed")
 					}
-					return `{"schema_version":4,"summary":"combined","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"unlikely":false,"nit":false,"problem":"finding at end two","fix":"fix","file":null,"start_line":null,"end_line":null,"sources":[2]}]}`, nil
+					return `{"schema_version":4,"summary":"combined","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"finding at end two","fix":"fix","file":null,"start_line":null,"end_line":null,"sources":[2]}]}`, nil
 				}
 				var selected agent.Agent = a
 				if schema {

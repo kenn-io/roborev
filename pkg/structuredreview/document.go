@@ -25,7 +25,7 @@
 // A version 3 or later finding from a reviewing agent carries a kind, a confidence, and
 // a file and line range. Producers without that data, such as goal reviews and
 // converted historical reviews, leave kind and confidence null and may give a
-// free-text location instead of a file. Versions 1 through 4 are only decoded, so
+// free-text location instead of a file. Versions 1 through 3 are only decoded, so
 // stored reviews keep working: versions 1 and 2 carry a free-text location, and version 1
 // has no verdict. [Schema] and [SourcedSchema] are the JSON Schemas that
 // constrain agent output, and [ConversionSchema] and [ConversionSourcedSchema]

@@ -263,6 +263,7 @@ func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
 	assert.NotContains(t, prompt, "Agent=codex")
 	assert.NotContains(t, prompt, "Agent=gemini")
 	assert.NotContains(t, prompt, "Type=security")
+	assert.NotContains(t, prompt, "(security)")
 	assert.NotContains(t, prompt, "Type=design")
 	assert.NotContains(t, prompt, "design")
 }

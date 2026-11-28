@@ -206,7 +206,7 @@ func TestApplyMinSeverityStructuredRerendersEveryFinding(t *testing.T) {
 	assert.NotContains(combined.Output, "No findings at or above")
 }
 
-func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
+func TestTruncateCommentTo(t *testing.T) {
 	doc := StructuredReview{Findings: []StructuredFinding{
 		{Severity: "high", Problem: "Example:\n\n```html\n<details><summary>Example</summary>\ncontent\n</details>\n```\nKeep this finding.", Fix: "Fix it."},
 		{Severity: "low", Nit: true, Problem: strings.Repeat("nit ", 100), Fix: "Fix it."},
@@ -214,36 +214,27 @@ func TestTruncateCommentPreservesVisibleDetailsExample(t *testing.T) {
 	body, foldAt := FormatCommentWithFold(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 	const suffix = "\n\nfooter"
 	require.Positive(t, foldAt.Start)
+	reference := foldAt.Shift(0)
+	reference.FullReviewReference = "roborev show --job 42"
+	prose := "Review:\n<details><summary>Example</summary>\n" + strings.Repeat("text ", 100) + "\n</details>"
 	for _, tc := range []struct {
-		name  string
-		limit int
-		want  string
+		name, body string
+		fold       *CommentFold
+		limit      int
+		want       string
 	}{
-		{"before fold", foldAt.Start - 5 + len(suffix), body[:foldAt.Start-5] + suffix},
-		{"inside fold", foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(suffix), body[:foldAt.Start] + "\n\nFold omitted." + suffix},
+		{"before fold", body, foldAt, foldAt.Start - 5 + len(suffix), body[:foldAt.Start-5] + suffix},
+		{"inside fold", body, foldAt, foldAt.Start + len("\n\n<details><summary>1 nit hidden</summary>") + len(suffix), body[:foldAt.Start] + "\n\nFold omitted." + suffix},
+		{"fold reference", body, reference, foldAt.Start + 100, body[:foldAt.Start] + "\n\nFold omitted. Full review: `roborev show --job 42`" + suffix},
+		{"prose details", prose, nil, 100, prose[:100-len(suffix)] + suffix},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := TruncateCommentTo(body, foldAt, tc.limit, suffix)
+			got := TruncateCommentTo(tc.body, tc.fold, tc.limit, suffix)
 			assert.Equal(t, tc.want, got)
-			assert.Equal(t, strings.Count(got, "<details"), strings.Count(got, "</details>"))
+			if tc.fold != nil {
+				assert.Equal(t, strings.Count(got, "<details"), strings.Count(got, "</details>"))
+			}
 			assert.True(t, strings.HasSuffix(got, suffix))
 		})
 	}
-}
-
-func TestTruncateCommentFoldReference(t *testing.T) {
-	doc := StructuredReview{Findings: []StructuredFinding{{Severity: "medium", Nit: true, Problem: strings.Repeat("x", 1000)}}}
-	body, fold := FormatCommentWithFold(PrepareComment(CommentConfig{FullReviewReference: "roborev show --job 42"}, ReviewResult{Structured: &doc}))
-	got := TruncateCommentTo(body, fold.Shift(0), fold.Start+100, "\nfooter")
-	assert.Contains(t, got, "Fold omitted. Full review: `roborev show --job 42`")
-	assert.NotContains(t, got, "<details>")
-	assert.True(t, strings.HasSuffix(got, "\nfooter"))
-}
-
-func TestTruncateCommentKeepsProseDetails(t *testing.T) {
-	body := "Review:\n<details><summary>Example</summary>\n" + strings.Repeat("text ", MaxCommentLen) + "\n</details>"
-	got := TruncateComment(body)
-	require.Len(t, got, MaxCommentLen)
-	assert.Equal(t, body[:MaxCommentLen-len(CommentTruncSuffix)], strings.TrimSuffix(got, CommentTruncSuffix))
-	assert.True(t, strings.HasSuffix(got, CommentTruncSuffix))
 }

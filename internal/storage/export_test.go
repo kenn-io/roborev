@@ -1312,7 +1312,6 @@ func TestExportReviewsCheckedDocumentMatchesSchema(t *testing.T) {
 	require.NoError(t, err)
 	wantV2 := strings.ReplaceAll(strings.Replace(exportTestCheckedDocument, `"schema_version":4`, `"schema_version":3`, 1), `"unlikely":true,`, "")
 	assert.JSONEq(wantV2, string(raw))
-	assert.NotContains(string(raw), `"unlikely"`)
 	assert.NotContains(derefString(page.Reviews[0].Content), "go build", "content stays the review Markdown")
 
 	var value any

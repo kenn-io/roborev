@@ -78,7 +78,7 @@ while [ "$#" -gt 0 ]; do
 done
 printf '%s' "$model" > "$TEST_CI_SYNTHESIS_MODEL"
 cat > /dev/null
-printf '%s\n' '{"type": "item.completed", "item": {"type": "agent_message", "text": "{\"schema_version\": 4, \"summary\": \"Combined test reviews\", \"verdict\": \"fail\", \"findings\": [{\"severity\": \"low\", \"kind\": \"improvement\", \"confidence\": 0.6, \"unlikely\": false, \"nit\": false, \"problem\": \"Minor naming issue.\", \"fix\": \"Rename it.\", \"file\": null, \"start_line\": null, \"end_line\": null, \"sources\": [1]}]}"}}'
+printf '%s\n' '{"type": "item.completed", "item": {"type": "agent_message", "text": "{\"schema_version\": 4, \"summary\": \"Combined test reviews\", \"verdict\": \"fail\", \"findings\": [{\"severity\": \"low\", \"kind\": \"improvement\", \"confidence\": 0.6, \"problem\": \"Minor naming issue.\", \"fix\": \"Rename it.\", \"file\": null, \"start_line\": null, \"end_line\": null, \"sources\": [1]}]}"}}'
 `), 0o755))
 			cfg := fmt.Sprintf(`
 default_model = "unrelated-review-model"
@@ -157,12 +157,12 @@ func TestCIReviewKeepsCommitsWhenHEADMoves(t *testing.T) {
 				moveErr = fmt.Errorf("commit: %w: %s", err, data)
 			}
 		})
-		return `{"schema_version":4,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"unlikely":false,"nit":false,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5}]}`, moveErr
+		return `{"schema_version":4,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5}]}`, moveErr
 	}}
 	var synthesisCall invocation
 	synthesizer := &agent.FakeAgent{NameStr: "ci-moving-head-synthesizer", ReviewFn: func(_ context.Context, _, gitRef, prompt string, _ io.Writer) (string, error) {
 		synthesisCall = invocation{gitRef, prompt}
-		return `{"schema_version":4,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"unlikely":false,"nit":false,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5,"sources":[1,2]}]}`, nil
+		return `{"schema_version":4,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5,"sources":[1,2]}]}`, nil
 	}}
 	agent.RegisterForTest(t, reviewer)
 	agent.RegisterForTest(t, synthesizer)

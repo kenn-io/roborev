@@ -365,8 +365,8 @@ func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
   "summary":"Review complete.",
   "verdict":"fail",
   "findings":[
-    {"severity":"high","kind":"defect","confidence":0.9,"unlikely":false,"nit":false,"problem":"State diverges.","fix":"Use one owner.","file":null,"start_line":null,"end_line":null},
-    {"severity":"low","kind":"improvement","confidence":0.5,"unlikely":false,"nit":false,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"high","kind":"defect","confidence":0.9,"problem":"State diverges.","fix":"Use one owner.","file":null,"start_line":null,"end_line":null},
+    {"severity":"low","kind":"improvement","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	})
@@ -463,7 +463,7 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	  "summary":"High: no actionable findings.",
 	  "verdict":"pass",
   "findings":[
-    {"severity":"low","kind":"improvement","confidence":0.5,"unlikely":false,"nit":false,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"low","kind":"improvement","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	})
@@ -4207,7 +4207,7 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 	setupTestEnv(t)
 	tc := newWorkerTestContext(t, 1)
 	const agentName = "compact-verdict-agent"
-	const output = `{"schema_version":4,"summary":"1 finding remains.","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.8,"unlikely":false,"nit":false,"problem":"A record is lost.","fix":"Retain the record.","file":"file.go","start_line":12,"end_line":12}]}`
+	const output = `{"schema_version":4,"summary":"1 finding remains.","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.8,"problem":"A record is lost.","fix":"Retain the record.","file":"file.go","start_line":12,"end_line":12}]}`
 
 	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
