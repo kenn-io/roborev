@@ -760,10 +760,42 @@ func (r Document) Passed(minSeverity string) bool {
 	return true
 }
 
+// Folds classifies findings hidden in compact review displays.
+func (f Finding) Folds() (nit, unlikely bool) {
+	if f.Severity == "high" || f.Severity == "critical" || f.Topic == TopicSecurity {
+		return false, false
+	}
+	return f.Nit, !f.Nit && f.Unlikely
+}
+
+// FoldLabel describes the hidden findings.
+func FoldLabel(nits, unlikely int) string {
+	var labels []string
+	for _, group := range []struct {
+		n         int
+		one, many string
+	}{{nits, "nit", "nits"}, {unlikely, "unlikely finding", "unlikely findings"}} {
+		if group.n == 1 {
+			labels = append(labels, "1 "+group.one)
+		} else if group.n > 1 {
+			labels = append(labels, fmt.Sprintf("%d %s", group.n, group.many))
+		}
+	}
+	if len(labels) == 0 {
+		return ""
+	}
+	return strings.Join(labels, " and ") + " hidden"
+}
+
 // Markdown renders the summary and every finding. When minSeverity is set and
 // no finding reaches it, the rendering says so before listing the findings so
 // a reader can see why the review passed without losing the content.
-func (r Document) Markdown(minSeverity string) string {
+func (r Document) Markdown(minSeverity string) string { return r.markdown(minSeverity, false) }
+
+// FoldedMarkdown hides nits and unlikely findings while preserving their numbers.
+func (r Document) FoldedMarkdown(minSeverity string) string { return r.markdown(minSeverity, true) }
+
+func (r Document) markdown(minSeverity string, fold bool) string {
 	if r.Legacy != nil {
 		return "**Unstructured historical review.** Finding counts are unavailable.\n\n" + r.Legacy.Markdown
 	}
@@ -784,8 +816,25 @@ func (r Document) Markdown(minSeverity string) string {
 	if severityRank(minSeverity) > severityRank("low") && r.Passed(minSeverity) {
 		fmt.Fprintf(&out, "\n\nNo findings at or above %s severity.", minSeverity)
 	}
-	out.WriteString("\n\n## Findings\n")
+	nits, unlikely, shown := 0, 0, 0
+	for _, finding := range r.Findings {
+		nit, rare := finding.Folds()
+		if fold && nit {
+			nits++
+		} else if fold && rare {
+			unlikely++
+		} else {
+			shown++
+		}
+	}
+	if shown > 0 {
+		out.WriteString("\n\n## Findings\n")
+	}
 	for i, finding := range r.Findings {
+		nit, rare := finding.Folds()
+		if fold && (nit || rare) {
+			continue
+		}
 		// Kind, topic, and confidence are data only. Rendered Markdown is
 		// posted to pull requests and never labels a finding with them.
 		fmt.Fprintf(&out, "\n### %d. %s\n\n", i+1, titleSeverity(finding.Severity))
@@ -797,6 +846,14 @@ func (r Document) Markdown(minSeverity string) string {
 		if labels := r.sourceLabels(finding); len(labels) > 0 {
 			fmt.Fprintf(&out, "\n**Reported by:** %s\n", strings.Join(labels, ", "))
 		}
+	}
+	if label := FoldLabel(nits, unlikely); label != "" {
+		if shown > 0 {
+			out.WriteString("\n")
+		} else {
+			out.WriteString("\n\n")
+		}
+		out.WriteString(label + "\n")
 	}
 	return out.String()
 }

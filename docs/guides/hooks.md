@@ -415,7 +415,7 @@ command = "~/.roborev/hooks/on-review.sh {job_id} {verdict} {sha}"
 job_id=$1 verdict=$2 sha=$3
 
 if [ "$verdict" = "F" ]; then
-    roborev job show --job "$job_id" >> ~/reviews/findings.log
+    roborev job show --job "$job_id" --all >> ~/reviews/findings.log
 fi
 ```
 

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,10 +9,14 @@ import (
 	"uuid"
 
 	"charm.land/lipgloss/v2"
+	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/tui/splitlayout"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // setupRenderModel creates a standardized model for rendering tests
@@ -534,4 +539,112 @@ func TestRenderReviewMetadataFitsTerminalWidth(t *testing.T) {
 	assert.NotEmpty(t, metadataLine)
 	assert.LessOrEqual(t, lipgloss.Width(strings.ReplaceAll(metadataLine, "\x1b[K", "")), m.width)
 	assert.Contains(t, stripANSI(metadataLine), reviewType)
+}
+
+func TestFoldedReviewToggle(t *testing.T) {
+	t.Parallel()
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit problem", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	finished := time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC)
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1, Status: storage.JobStatusDone, FinishedAt: &finished}, StructuredOutput: structured, Output: doc.Markdown("")}
+	for _, split := range []bool{false, true} {
+		m := setupRenderModel(viewReview, review, withDimensions(200, 40), withTasksEnabled(true))
+		if split {
+			m.currentView = viewQueue
+			m.layout = splitlayout.Split
+			m.jobs = []storage.ReviewJob{*review.Job}
+			m.selectedJobID = review.JobID
+		}
+		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
+		if split {
+			assert.Regexp(t, `y copy *▕ e expand *▕`, stripANSI(m.renderSplit()))
+			m.focus = focusDetail
+			assert.Regexp(t, `y copy *▕ e expand *▕`, stripANSI(m.renderSplit()))
+		} else {
+			assert.Regexp(t, `y copy *▕ e expand *▕`, stripANSI(m.renderReviewView()))
+		}
+		m, _ = updateModel(t, m, keyPressMsg('e'))
+		content := m.reviewContentString(review)
+		assert.Contains(t, content, "nit problem")
+		assert.NotContains(t, content, "1 nit hidden")
+		if split {
+			assert.Regexp(t, `y copy *▕ e collapse *▕`, stripANSI(m.renderSplit()))
+			m.focus = focusList
+			assert.Regexp(t, `y copy *▕ e collapse *▕`, stripANSI(m.renderSplit()))
+		} else {
+			assert.Regexp(t, `y copy *▕ e collapse *▕`, stripANSI(m.renderReviewView()))
+		}
+		m, _ = updateModel(t, m, keyPressMsg('e'))
+		assert.Contains(t, m.reviewContentString(review), "1 nit hidden")
+	}
+}
+
+func TestFoldedReviewCountIsMuted(t *testing.T) {
+	t.Setenv("ROBOREV_COLOR_MODE", "dark")
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, Output: doc.Markdown(""), StructuredOutput: structured}
+	m := setupRenderModel(viewReview, review, withDimensions(100, 40))
+	m.currentResponses = []storage.Response{{Responder: "reviewer", Response: "A comment"}}
+	m.mdCache.colorProfile = termenv.TrueColor
+	for _, lines := range [][]string{m.reviewPaneBodyLines(96), strings.Split(m.renderReviewView(), "\n")} {
+		assert.Regexp(t, `\x1b\[38;2;156;163;175m[^\n]*1 nit hidden`, strings.Join(lines, "\n"))
+		assert.Contains(t, stripANSI(strings.Join(lines, "\n")), "A comment")
+	}
+}
+
+func TestReviewHelpShowsFoldKey(t *testing.T) {
+	t.Parallel()
+	m := initTestModel(withCurrentView(viewHelp), withDimensions(100, 200))
+	rendered := stripANSI(m.renderHelpView())
+	assert.Contains(t, rendered, "Review View")
+	assert.Contains(t, rendered, "e              Expand or collapse hidden findings")
+}
+
+func TestFoldControlsIgnoreStaleSplitReview(t *testing.T) {
+	t.Parallel()
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, StructuredOutput: structured, Output: doc.Markdown("")}
+	m := splitModel(withReview(review), withSelection(0, 2))
+	m.jobs = []storage.ReviewJob{{ID: 2, Status: storage.JobStatusRunning}}
+	m.reviewScroll = 5
+	assert.Empty(t, m.foldHint())
+	assert.NotContains(t, stripANSI(m.renderSplit()), "e expand")
+	m, _ = updateModel(t, m, keyPressMsg('e'))
+	assert.False(t, m.foldExpanded)
+	assert.Equal(t, 5, m.reviewScroll)
+}
+
+func TestAcceptedReviewStartsFolded(t *testing.T) {
+	t.Parallel()
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, StructuredOutput: structured, Output: doc.Markdown("")}
+	m := setupRenderModel(viewReview, review)
+	m, _ = updateModel(t, m, keyPressMsg('e'))
+	assert.Contains(t, m.reviewContentString(review), "**Problem:** nit")
+	assert.Equal(t, "collapse", m.foldHint())
+	m.acceptReview(reviewMsg{jobID: 1, review: review})
+	assert.Contains(t, m.reviewContentString(review), "**Problem:** nit")
+	assert.Equal(t, "collapse", m.foldHint())
+	other := *review
+	otherJob := *review.Job
+	other.JobID, otherJob.ID = 2, 2
+	other.Job = &otherJob
+	m.acceptReview(reviewMsg{jobID: 2, review: &other})
+	assert.Contains(t, m.reviewContentString(&other), "1 nit hidden")
+	assert.Equal(t, "expand", m.foldHint())
 }

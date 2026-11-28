@@ -22,11 +22,11 @@ import (
 // goalReviewRunner keeps CLI flow tests independent of an installed agent CLI.
 type goalReviewRunner func(context.Context, agent.Agent, string, goalreview.Snapshot, prompt.SnapshotResult, io.Writer) ([]goalreview.Finding, error)
 
-func runGoalReview(cmd *cobra.Command, root string, options goalreview.AgentOptions, local, wait, quiet bool, spec, plan *string) error {
-	return runGoalReviewWithRunner(cmd, root, options, local, wait, quiet, spec, plan, goalreview.RunPrepared)
+func runGoalReview(cmd *cobra.Command, root string, options goalreview.AgentOptions, local, wait, quiet, all bool, spec, plan *string) error {
+	return runGoalReviewWithRunner(cmd, root, options, local, wait, quiet, all, spec, plan, goalreview.RunPrepared)
 }
 
-func runGoalReviewWithRunner(cmd *cobra.Command, root string, options goalreview.AgentOptions, local, wait, quiet bool, spec, plan *string, runner goalReviewRunner) error {
+func runGoalReviewWithRunner(cmd *cobra.Command, root string, options goalreview.AgentOptions, local, wait, quiet, all bool, spec, plan *string, runner goalReviewRunner) error {
 	if !local {
 		if err := ensureDaemon(); err != nil {
 			return err
@@ -53,7 +53,7 @@ func runGoalReviewWithRunner(cmd *cobra.Command, root string, options goalreview
 			cmd.Println(describeEnqueue(job, 0, false))
 		}
 		if wait {
-			return silenceIfExit(cmd, waitForJob(cmd, ep, job.ID, quiet))
+			return silenceIfExit(cmd, waitForJob(cmd, ep, job.ID, quiet, all))
 		}
 		return nil
 	}

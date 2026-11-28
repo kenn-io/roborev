@@ -157,6 +157,7 @@ type model struct {
 	currentResponses     []storage.Response // Responses for current review (fetched with review)
 	currentBranch        string             // Cached branch name for current review (computed on load)
 	reviewScroll         int
+	foldExpanded         bool
 	promptScroll         int
 	promptFromQueue      bool // true if prompt view was entered from queue (not review)
 	width                int

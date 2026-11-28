@@ -21,10 +21,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func TestShowOpenFailedReviewHint(t *testing.T) {
@@ -712,6 +714,70 @@ func TestShowNumericRefFallback(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			assert.Equal(t, tc.wantCalls, calls)
+		})
+	}
+}
+
+func TestShowFoldedFindings(t *testing.T) {
+	isolateDaemonSelection(t)
+	previousFromSkill := fromSkill
+	fromSkill = false
+	t.Cleanup(func() { fromSkill = previousFromSkill })
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
+		{Severity: "low", Nit: true, Problem: "nit problem", Fix: "fix"},
+		{Severity: "medium", Unlikely: true, Problem: "rare problem", Fix: "fix"},
+	}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	mockReviewDaemon(t, storage.Review{JobID: 7, Agent: "test", Output: doc.Markdown(""), StructuredOutput: structured, Job: &storage.ReviewJob{ID: 7}})
+	for _, tc := range []struct {
+		name string
+		args []string
+		full bool
+	}{{"folded", nil, false}, {"all", []string{"--all"}, true}, {"skill", []string{"--from-skill"}, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"job", "show", "--job", "7"}, tc.args...)
+			run := runCLI(t, args...)
+			require.NoError(t, run.err)
+			if tc.full {
+				assert.Contains(t, run.stdout, "nit problem")
+				assert.Contains(t, run.stdout, "rare problem")
+			} else {
+				assert.NotContains(t, run.stdout, "nit problem")
+				assert.NotContains(t, run.stdout, "rare problem")
+				assert.Contains(t, run.stdout, "1 nit and 1 unlikely finding hidden.\nTo list them:\n  roborev job show --job 7 --all\n")
+			}
+		})
+	}
+}
+
+func TestFoldedReviewFollowupServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a POSIX shell")
+	}
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("[remote_client]\nexternal_url='https://example.org/history'\n"), 0o600))
+	doc := structuredreview.Document{Summary: "Summary", Findings: []structuredreview.Finding{{Severity: "low", Nit: true, Problem: "nit", Fix: "fix"}}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	review := &storage.Review{JobID: 7, Job: &storage.ReviewJob{ID: 7}, Output: doc.Markdown(""), StructuredOutput: structured}
+	oldAddr, oldSkill := serverAddr, fromSkill
+	t.Cleanup(func() { serverAddr, fromSkill = oldAddr, oldSkill })
+	fromSkill = false
+	for _, addr := range []string{"127.0.0.1:7374", "unix:///tmp/review's socket", "https://example.org/history"} {
+		t.Run(addr, func(t *testing.T) {
+			ep, err := daemon.ParseEndpoint(addr)
+			require.NoError(t, err)
+			serverAddr = addr
+			_, command, found := strings.Cut(reviewText(review, false, ep), "\n  ")
+			require.True(t, found)
+			out, err := exec.CommandContext(t.Context(), "sh", "-c", "roborev() { printf '%s\\n' \"$@\"; }; "+command).Output()
+			require.NoError(t, err)
+			assert.Equal(t, []string{"--server", addr, "job", "show", "--job", "7", "--all"}, strings.Split(strings.TrimSpace(string(out)), "\n"))
 		})
 	}
 }

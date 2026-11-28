@@ -16,6 +16,7 @@ func waitCmd() *cobra.Command {
 		shaFlag    string
 		forceJobID bool
 		quiet      bool
+		all        bool
 	)
 
 	cmd := &cobra.Command{
@@ -151,7 +152,7 @@ Examples:
 			}
 
 			ep := getDaemonEndpoint()
-			waitErr := waitForJob(cmd, ep, jobID, quiet)
+			waitErr := waitForJob(cmd, ep, jobID, quiet, all)
 			if waitErr != nil {
 				// Map ErrJobNotFound to exit 1 with a user-facing message
 				// (waitForJob returns a plain error to stay compatible with reviewCmd)
@@ -169,6 +170,7 @@ Examples:
 		},
 	}
 
+	cmd.Flags().BoolVar(&all, "all", false, "list low-severity and unlikely findings instead of folding them")
 	cmd.Flags().StringVar(&shaFlag, "sha", "", "git ref to find the most recent job for")
 	cmd.Flags().BoolVar(&forceJobID, "job", false, "force arguments to be treated as job IDs")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress informational output and the usage block; runtime errors are still printed")
@@ -267,7 +269,7 @@ func waitMultiple(
 		wg.Add(1)
 		go func(idx int, jobID int64) {
 			defer wg.Done()
-			err := waitForJob(cmd, ep, jobID, true)
+			err := waitForJob(cmd, ep, jobID, true, false)
 			results[idx] = result{jobID: jobID, err: err}
 		}(i, id)
 	}

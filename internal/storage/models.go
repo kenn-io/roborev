@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json/v2"
 	"strings"
 	"time"
 	"uuid"
@@ -366,6 +367,26 @@ type Review struct {
 
 	// Joined fields
 	Job *ReviewJob `json:"job,omitempty"`
+}
+
+// FoldedOutput returns a compact display without changing the stored review.
+func (r Review) FoldedOutput() (string, bool) {
+	if r.Job == nil || r.StructuredOutput == nil {
+		return r.Output, false
+	}
+	raw, err := json.Marshal(r.StructuredOutput)
+	if err != nil {
+		return r.Output, false
+	}
+	doc, err := structuredreview.Decode(raw)
+	if err != nil {
+		return r.Output, false
+	}
+	full, folded := doc.Markdown(r.Job.MinSeverity), doc.FoldedMarkdown(r.Job.MinSeverity)
+	if full == folded || !strings.HasSuffix(r.Output, full) {
+		return r.Output, false
+	}
+	return strings.TrimSuffix(r.Output, full) + folded, true
 }
 
 type Response struct {

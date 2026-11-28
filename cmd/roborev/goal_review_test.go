@@ -96,7 +96,7 @@ func TestGoalReviewDaemonEnqueue(t *testing.T) {
 				root := t.TempDir()
 				err := runGoalReview(cmd, root,
 					goalreview.AgentOptions{Agent: "claude", Model: "review-model", Provider: "anthropic", Reasoning: "thorough"},
-					false, false, false, new("chosen spec.md"), new("chosen plan.md"))
+					false, false, false, false, new("chosen spec.md"), new("chosen plan.md"))
 				require.Len(t, requests, 1)
 				assert.Equal(daemon.EnqueueRequest{
 					RepoPath: root, ReviewType: config.ReviewTypeGoal,
@@ -155,7 +155,7 @@ func TestGoalReviewCLI(t *testing.T) {
 		var output bytes.Buffer
 		cmd.SetOut(&output)
 		cmd.SetErr(&output)
-		err := runGoalReviewWithRunner(cmd, repo.Dir, goalreview.AgentOptions{Agent: "pi"}, true, false, false, &spec, &plan,
+		err := runGoalReviewWithRunner(cmd, repo.Dir, goalreview.AgentOptions{Agent: "pi"}, true, false, false, false, &spec, &plan,
 			goalReviewTestRunner(func(snapshot goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
 				return goalreview.Check(snapshot), nil
 			}))
@@ -194,7 +194,7 @@ printf '%s\n' '{"type":"result","result":"{\"findings\":[]}"}'
 	cmd, output := newTestCmd(t)
 	cmd.SetContext(t.Context())
 
-	err := runGoalReview(cmd, repo.Dir, goalreview.AgentOptions{Agent: "claude"}, true, false, false, &spec, nil)
+	err := runGoalReview(cmd, repo.Dir, goalreview.AgentOptions{Agent: "claude"}, true, false, false, false, &spec, nil)
 	require.NoError(t, err)
 	key, err := os.ReadFile(keyFile)
 	require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestGoalReviewCLIAcceptsPromptAboveInlineBudget(t *testing.T) {
 	cmd := reviewCmd()
 	cmd.SetContext(t.Context())
 	var captured string
-	err := runGoalReviewWithRunner(cmd, repo.Dir, goalreview.AgentOptions{Agent: "pi"}, true, false, false, &spec, nil,
+	err := runGoalReviewWithRunner(cmd, repo.Dir, goalreview.AgentOptions{Agent: "pi"}, true, false, false, false, &spec, nil,
 		goalReviewTestRunner(func(_ goalreview.Snapshot, prepared prompt.SnapshotResult) ([]goalreview.Finding, error) {
 			captured = prepared.Prompt
 			if prepared.FilePath != "" {
@@ -268,7 +268,7 @@ func TestGoalReviewCLIFindingsAndMalformedOutput(t *testing.T) {
 			var output bytes.Buffer
 			cmd.SetOut(&output)
 			cmd.SetErr(&output)
-			err := runGoalReviewWithRunner(cmd, repo.Dir, goalreview.AgentOptions{Agent: "pi"}, true, false, false, &spec, &plan,
+			err := runGoalReviewWithRunner(cmd, repo.Dir, goalreview.AgentOptions{Agent: "pi"}, true, false, false, false, &spec, &plan,
 				goalReviewTestRunner(func(snapshot goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
 					if malformed {
 						return nil, fmt.Errorf("findings array is malformed")

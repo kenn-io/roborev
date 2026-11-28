@@ -14,6 +14,7 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 type mockConfig struct {
@@ -602,4 +603,45 @@ func TestWaitWorktreeResolvesRefFromWorktreeAndRepoFromMain(t *testing.T) {
 	// repo should be the main repo path, not the worktree path
 	assert.NotContains(t, lookupQuery, url.QueryEscape(worktreeDir))
 	assert.Contains(t, lookupQuery, url.QueryEscape(repoDir))
+}
+
+func TestWaitFoldedFindings(t *testing.T) {
+	previousFromSkill := fromSkill
+	fromSkill = false
+	t.Cleanup(func() { fromSkill = previousFromSkill })
+	setupFastPolling(t)
+	doc := structuredreview.Document{SchemaVersion: 4, Summary: "Summary", Findings: []structuredreview.Finding{
+		{Severity: "low", Problem: "nit problem", Fix: "fix"},
+		{Severity: "medium", Unlikely: true, Problem: "rare problem", Fix: "fix"},
+	}}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	var structured storage.StructuredOutput
+	require.NoError(t, json.Unmarshal(raw, &structured))
+	review := &storage.Review{JobID: 1, Job: &storage.ReviewJob{ID: 1}, Output: doc.Markdown(""), StructuredOutput: structured, VerdictBool: new(1)}
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T) (string, error)
+	}{
+		{"review", func(t *testing.T) (string, error) {
+			repo, mux := setupTestEnvironment(t)
+			repo.CommitFile("file.txt", "content", "initial commit")
+			mockEnqueueQueued(mux, "abc123")
+			mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) { handleJobsDone(w, r, storage.JobStatusDone) })
+			mux.HandleFunc("/api/review", func(w http.ResponseWriter, _ *http.Request) { respondJSON(w, http.StatusOK, review) })
+			result := runCLI(t, "review", "--repo", repo.Dir, "--wait", "--all")
+			return result.stdout, result.err
+		}},
+		{"wait", func(t *testing.T) (string, error) {
+			newWaitEnv(t, newWaitMockHandler(mockConfig{Jobs: []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone}}, Review: review}))
+			return runWait(t, "--job", "1", "--all")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tc.run(t)
+			require.NoError(t, err)
+			assert.Contains(t, out, "nit problem")
+			assert.Contains(t, out, "rare problem")
+		})
+	}
 }

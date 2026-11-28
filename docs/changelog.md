@@ -7,6 +7,11 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+Reviews shown by `review --wait`, `job wait`, `job show`, and the TUI now fold
+low-severity and unlikely findings. Use `--all` in the CLI or `e` in the TUI to
+show them. Agent skill invocations using `--from-skill` receive all findings in
+text output as part of the agent-output contract.
+
 **Bug fixes**
 
 - Scheduled analysis defaults to 20 files per run when `max_files` is omitted.

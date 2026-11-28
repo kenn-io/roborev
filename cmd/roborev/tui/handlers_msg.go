@@ -729,6 +729,9 @@ func (m *model) releaseReconcileFetch(fetchSeq uint64) {
 func (m *model) acceptReview(msg reviewMsg) {
 	m.consecutiveErrors = 0
 	m.reviewErrReportedJobID = 0
+	if m.currentReview == nil || m.currentReview.JobID != msg.jobID {
+		m.foldExpanded = false
+	}
 	m.currentReview = msg.review
 	m.currentResponses = msg.responses
 	m.currentBranch = msg.branchName
