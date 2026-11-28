@@ -200,7 +200,7 @@ func TestCommentFold(t *testing.T) {
 	assert.Contains(t, mixed, "2 findings shown; 3 folded findings")
 	assert.Less(t, strings.Index(mixed, "another"), strings.Index(mixed, "<details>"))
 	assert.Greater(t, strings.Index(mixed, "rename variable"), strings.Index(mixed, "<details>"))
-	assert.Contains(t, mixed, "2 nits hidden")
+	assert.Contains(t, mixed, "2 nits and 1 unlikely finding hidden")
 	folded := PrepareComment(CommentConfig{}, ReviewResult{Structured: &StructuredReview{Findings: doc.Findings[1:3]}})
 	assert.True(t, folded.IsClean())
 	assert.Contains(t, FormatComment(folded), "Changes require fixes before merge.")
