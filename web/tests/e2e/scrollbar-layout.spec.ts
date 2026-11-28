@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { expect, test, type Locator } from "@playwright/test";
 
-import { openReviews } from "./support";
+import { openReview, openReviews } from "./support";
 
 // Headless Chromium hides scrollbars by default, which would mask a
 // regression back to classic layout-consuming scrollbars.
@@ -164,6 +164,34 @@ test("keeps job table columns in place when opening a review makes the table scr
   ).toBeVisible();
 
   expect(await headerPositions()).toEqual(closedPositions);
+});
+
+test("keeps a rich review expanded inside the dock without triggering a root scrollbar", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await openReview(page, 52);
+  await expect(
+    page.locator(".review-content .kit-mermaid-viewer__pan svg.flowchart"),
+  ).toBeVisible();
+
+  expect(
+    await page.evaluate(
+      () => window.innerWidth - document.documentElement.clientWidth,
+    ),
+  ).toBe(0);
+
+  const reviewContent = page.locator(".review-content");
+  expect(await overflows(reviewContent)).toBe(false);
+
+  const dockFrame = page.locator(".kit-bottom-dock__body-frame");
+  const dockBody = dockFrame.locator(".kit-bottom-dock__body");
+  await expect.poll(() => overflows(dockBody)).toBe(true);
+  expect(await scrollbarWidth(dockBody)).toBe(0);
+  await dockBody.hover();
+  await expect(
+    dockFrame.locator('.kit-scrollbar--y[data-visible="true"]'),
+  ).toBeVisible();
 });
 
 test("keeps the login card in place when it makes a short window scroll, then returns the width", async ({

@@ -237,10 +237,15 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   min-width: 20rem;
-  min-height: 100vh;
   background: var(--bg-primary);
   font-size: var(--font-size-root);
 }

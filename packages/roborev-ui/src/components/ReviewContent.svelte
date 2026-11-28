@@ -110,6 +110,7 @@
 
   .review-content {
     position: relative;
+    flex-shrink: 0;
     padding: 16px 20px;
   }
 
